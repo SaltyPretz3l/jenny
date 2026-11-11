@@ -15,15 +15,13 @@ from types import SimpleNamespace
 
 from sidecar.ai.config import _normalize_tool_policy_snapshot
 from sidecar.ai.config_models import ToolPolicySnapshot
+from sidecar.ai.tools.approval_presentation import approval_presentation_for_call
 from sidecar.ai.tools.catalog import (
     ToolActionSpec,
     effective_side_effecting,
     parse_tool_actions,
 )
-from sidecar.ai.tools.policy import (
-    approval_presentation_for_call,
-    evaluate_tool_policy,
-)
+from sidecar.ai.tools.policy import evaluate_tool_policy
 
 
 def _descriptor(

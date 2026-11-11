@@ -485,7 +485,6 @@ def _run_packaged_sidecar_initialize_probe(
                     "tools_workspace_root": str(ROOT),
                     "tools_enabled": True,
                     "tools_web_enabled": True,
-                    "tools_mermaid_enabled": True,
                 }
             },
         }

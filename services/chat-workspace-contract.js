@@ -13,6 +13,7 @@ const SCHEMA_VERSION = 1;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 const MAX_CHANGE_PATH_CHARS = 1024;
 const REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+const CHANGE_SCOPES = Object.freeze(['working_tree', 'branch']);
 const SECTION_STATES = Object.freeze(['checking', 'available', 'stale', 'unavailable', 'not_applicable']);
 
 // reason -> [error code, retryable]. Anything unlisted degrades to UNAVAILABLE.
@@ -89,6 +90,19 @@ function validateSessionRequest(raw) {
   return { ok: true, value: { session_id: raw.session_id } };
 }
 
+function validScope(raw) {
+  return !Object.hasOwn(raw, 'scope') || CHANGE_SCOPES.includes(raw.scope);
+}
+
+// listChanges: the session request plus an optional change scope (default working_tree).
+function validateListChangesRequest(raw) {
+  if (!isPlainObject(raw) || !hasExactKeys(raw, ['schema_version', 'session_id'], ['scope'])
+    || raw.schema_version !== SCHEMA_VERSION || !validSessionId(raw.session_id) || !validScope(raw)) {
+    return { ok: false, reason: 'invalid_request' };
+  }
+  return { ok: true, value: { session_id: raw.session_id, scope: raw.scope || 'working_tree' } };
+}
+
 function validateSetViewRequest(raw) {
   if (!isPlainObject(raw)
     || !hasExactKeys(raw, ['schema_version', 'session_id', 'expected_revision', 'patch'])
@@ -104,12 +118,12 @@ function validateSetViewRequest(raw) {
 }
 
 function validateChangeDiffRequest(raw) {
-  if (!isPlainObject(raw) || !hasExactKeys(raw, ['schema_version', 'session_id', 'path'])
+  if (!isPlainObject(raw) || !hasExactKeys(raw, ['schema_version', 'session_id', 'path'], ['scope'])
     || raw.schema_version !== SCHEMA_VERSION || !validSessionId(raw.session_id)
-    || !validChangePath(raw.path)) {
+    || !validChangePath(raw.path) || !validScope(raw)) {
     return { ok: false, reason: 'invalid_request' };
   }
-  return { ok: true, value: { session_id: raw.session_id, path: raw.path } };
+  return { ok: true, value: { session_id: raw.session_id, path: raw.path, scope: raw.scope || 'working_tree' } };
 }
 
 // Section wrapper: `{state, sampled_at, reason, data}`. Checking/unavailable/
@@ -132,6 +146,7 @@ function countOrNull(value) {
 }
 
 module.exports = {
+  CHANGE_SCOPES,
   MAX_CHANGE_PATH_CHARS,
   SCHEMA_VERSION,
   SECTION_STATES,
@@ -142,6 +157,7 @@ module.exports = {
   stableReason,
   succeed,
   validateChangeDiffRequest,
+  validateListChangesRequest,
   validateSessionRequest,
   validateSetViewRequest,
   validSessionId,

@@ -5,13 +5,6 @@
   }
   root.rendererRenderPipelineMessageRenderer = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  // Ht-D: syncChatEntryCvExemptAttribute keeps the paint-skip exemption
-  // attribute in lockstep with the 'pending' class on the narrow patch path
-  // below (which bypasses a full markup rebuild).
-  const turnShellUtils = (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell)
-    || (typeof require === 'function' ? require('./renderer-turn-shell') : null)
-    || {};
   const streamDomPatchUtils = (typeof globalThis !== 'undefined' && globalThis.rendererStreamDomPatchUtils)
     || (typeof require === 'function' ? require('./renderer-stream-dom-patch-utils') : null)
     || {};
@@ -26,11 +19,13 @@
   const renderSignatureUtils = (typeof globalThis !== 'undefined' && globalThis.rendererRenderPipelineRenderSignatures)
     || (typeof require === 'function' ? require('./renderer-render-pipeline-render-signatures') : null)
     || {};
-  // CTL-004: pure ref-refresh helpers for the #15 structural-signature cache
-  // hit path below -- see renderer-render-pipeline-projection-cache.js for
-  // the mechanism. Loaded the same way as the sibling UMD modules above so
-  // it resolves off the already-loaded global in the browser (this module
-  // loads after projection-cache.js in index.html) or via require() in Node.
+  const streamingArticleUtils = (typeof globalThis !== 'undefined' && globalThis.rendererRenderPipelineStreamingArticle)
+    || (typeof require === 'function' ? require('./renderer-render-pipeline-streaming-article') : null)
+    || {};
+  const renderPreludeUtils = (typeof globalThis !== 'undefined' && globalThis.rendererRenderPipelineRenderPrelude)
+    || (typeof require === 'function' ? require('./renderer-render-pipeline-render-prelude') : null)
+    || {};
+  // The projection-cache module also owns the #15 cache ref-refresh helpers (used by the prelude).
   const projectionCacheRefreshUtils = (typeof globalThis !== 'undefined' && globalThis.rendererRenderPipelineProjectionCacheUtils)
     || (typeof require === 'function' ? require('./renderer-render-pipeline-projection-cache') : null)
     || {};
@@ -68,7 +63,6 @@
       }
       : null;
   }
-
   function createRenderPipelineMessageRenderer(deps) {
     const settings = deps || {};
     const state = settings.state || {};
@@ -130,24 +124,6 @@
       roots: [],
       nodeById: new Map(),
     }));
-    // CTL-004: refresh the #15 cache's object refs on a structural-signature
-    // hit (see the call site below); fall back to identity if the sibling
-    // module didn't resolve so a cache hit still degrades to "reuse as-is"
-    // (the pre-fix behavior) rather than throwing.
-    const refreshCanonicalMessageRefs = asFn(
-      projectionCacheRefreshUtils.refreshCanonicalMessageRefs,
-      (cachedMessages) => (Array.isArray(cachedMessages) ? cachedMessages : [])
-    );
-    const refreshCanonicalThreadTreeRefs = asFn(
-      projectionCacheRefreshUtils.refreshCanonicalThreadTreeRefs,
-      (threadTree) => threadTree
-    );
-    // Shared id-index builder so a cache hit indexes sourceMessages once for
-    // both refreshes; null fallback makes each refresh build its own.
-    const buildCanonicalMessageIdIndex = asFn(
-      projectionCacheRefreshUtils.buildMessageIdIndex,
-      () => null
-    );
     const canPatchStreamRevealMessage = asFn(callbacks.canPatchStreamRevealMessage, noopFalse);
     // Post-approval flicker RCA: names the comparand that blocked the patch
     // path, so a full render is attributable rather than anonymous.
@@ -199,29 +175,34 @@
     const updateTokenDisplay = asFn(callbacks.updateTokenDisplay, noop);
     const hideAssistantSprite = asFn(callbacks.hideAssistantSprite, noop);
 
-    // A running delegate's agent_status frames land on the next segment's
-    // empty shell, which then becomes derived.streamingMessage but projects no
-    // row: there is no article to birth, so the signature-hold full render
-    // repainted the whole timeline once per frame (80 full renders over one
-    // 49 s delegate turn, 2026-10-19). While the turn's article is on screen such a frame
-    // is a tool-gap write and belongs to the active_turn_root lane, whose
-    // post-render effects clean up predicted heights. A shell that does project
-    // a row is a real segment birth and keeps its one full render.
-    function isRowlessShellOfVisibleTurn(streamingMessageId, projectionContext) {
-      const turnId = projectionContext?.turnIdByMessageId?.get?.(streamingMessageId);
-      const rows = turnId ? projectionContext.rowsByTurnId?.get?.(turnId) : null;
-      if (!Array.isArray(rows) || !rows.length || rows.some((row) => (
-        row?.render_message_id === streamingMessageId
-        || row?.primary_message_id === streamingMessageId
-        || (Array.isArray(row?.source_message_ids) && row.source_message_ids.includes(streamingMessageId))
-      ))) {
-        return false;
-      }
-      // Every row of a turn resolves to the same article, so one lookup (DOM
-      // queries inside) decides; an off-screen turn keeps the old path.
-      const anchor = rows.find((row) => row?.primary_message_id);
-      return Boolean(anchor && resolveVisibleTurnArticleTarget(anchor.primary_message_id, projectionContext));
-    }
+    const prelude = renderPreludeUtils.createRenderPrelude({
+      state,
+      chatTimeline,
+      uiRuntime,
+      isSendBusy,
+      isSendPreflightPending,
+      buildSourceStructureSignature,
+      buildCanonicalTranscriptMessages,
+      buildTranscriptThreadTree,
+      buildInteractiveRecapModel: callbacks.buildInteractiveRecapModel,
+    });
+    const { resolveFollowUpDisabledReason } = prelude;
+    const { patchStreamingArticle, isRowlessShellOfVisibleTurn } = streamingArticleUtils.createStreamingArticlePatcher({
+      state,
+      chatTimeline,
+      uiRuntime,
+      streamClientMetrics,
+      getPaneSessionId,
+      noteStreamRender,
+      resolveVisibleTurnArticleTarget,
+      resolveTurnArticleMessageId,
+      buildMessageArticleMarkup,
+      buildMessageInnerMarkup,
+      buildMessageArticleInnerHtml,
+      replayStreamRevealHandoff,
+      stampStreamingArticleMarkerNode,
+      runPostTimelineRenderEffects,
+    });
 
     function renderMessages(options = {}) {
       const paneSessionId = getPaneSessionId();
@@ -249,106 +230,13 @@
       if (!chatTimeline || !chatThreadScroll) {
         return;
       }
-      // The pane's timeline carries the view for the stylesheet (per pane, not
-      // per document: split view shows two sessions). Written only on change.
-      if (chatTimeline.dataset && chatTimeline.dataset.transcriptView !== transcriptView) {
-        const previousView = chatTimeline.dataset.transcriptView || '';
-        chatTimeline.dataset.transcriptView = transcriptView;
-        // Pane-scoped notice (cluster control, search overlay): a switch or a
-        // pane session change, never a per-delta write.
-        const EventCtor = chatTimeline.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
-        if (typeof EventCtor === 'function') {
-          chatTimeline.dispatchEvent(new EventCtor('transcript-view-rendered', {
-            detail: { view: transcriptView, previousView, sessionId: paneSessionId },
-          }));
-        }
-      }
-      // A forced render wants fresh markup: settled roots cache message-keyed
-      // HTML that cannot see ambient state (e.g. a materialized tool disclosure).
-      if (forceFullRender) {
-        uiRuntime.threadRootMarkupCache?.clear();
-      }
-      // Reflect shared display flags onto the root dataset so the pure row
-      // builders read them without threading state through the whole render
-      // pipeline. Per document only: per-pane state such as the transcript
-      // view travels through render options instead.
-      if (typeof document !== 'undefined' && document.documentElement?.dataset) {
-        const featureFlags = state?.features?.featureFlags || state?.featureFlags || {};
-        // chat_render_content_visibility (Ht-D) rides the dataset channel, but
-        // OFF means the attribute is ABSENT (not 'false') so the CSS
-        // attribute-selector rule in chat-thread.css is inert and markup
-        // stays byte-identical pre-Ht-D — jsdom-pinnable per the design spec.
-        if (featureFlags.chat_render_content_visibility === true) {
-          if (document.documentElement.dataset.chatContentVisibility !== 'on') {
-            document.documentElement.dataset.chatContentVisibility = 'on';
-          }
-        } else if (document.documentElement.dataset.chatContentVisibility !== undefined) {
-          delete document.documentElement.dataset.chatContentVisibility;
-        }
-      }
+      prelude.syncTimelineEnvironment(transcriptView, paneSessionId, forceFullRender);
       // Split view W0-5: the prune keeps the RETAINED set, which with one pane
       // is exactly `[state.currentSessionId]` -- the argument this passed before.
       pruneToolRowProjectionSessionCaches(resolveRetainedSessionIds(state));
-      function resolveFollowUpDisabledReason() {
-        if (state.ui?.branchCommitting === true) {
-      return jt('chat.messageRenderer.waitForBranch', 'Wait for the branch to finish before trying that.');
-        }
-        if (isSendBusy() || isSendPreflightPending()) {
-      return jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
-        }
-        if (!state.auth?.authenticated) {
-      return jt('chat.messageRenderer.signInBeforeTrying', 'Sign in before trying that.');
-        }
-        // model_unavailable keeps follow-up actions live: regenerate /
-        // edit-and-resend retry the model load, matching the composer gates
-        // in renderer-render-pipeline-chrome.js and renderer-send-utils.js.
-        if (!['ready', 'model_unavailable'].includes(String(state.backend?.phase || '').trim())) {
-      return jt('chat.messageRenderer.waitForBackend', 'Wait for Jenny to finish connecting before trying that.');
-        }
-        return '';
-      }
 
       const sourceMessages = getVisibleSessionMessages(paneSessionId);
-      // #15: reuse the canonical transcript + thread tree across renders whose
-      // source structure is unchanged (text-streaming frames, chrome-only
-      // renders, thread/recap toggles). Both builds are pure structural
-      // transforms whose output arrays hold the live message refs, so cached
-      // results stay content-current; the per-render fingerprints + structureHash
-      // below still drive the actual render decision. forceFullRender bypasses
-      // the cache.
-      const sourceStructureSignature = paneSessionId
-        + '\n#\n' + buildSourceStructureSignature(sourceMessages);
-      let messages;
-      let threadTree;
-      if (
-        !forceFullRender
-        && uiRuntime.canonicalBuildSignature === sourceStructureSignature
-        && Array.isArray(uiRuntime.cachedCanonicalMessages)
-        && uiRuntime.cachedThreadTree
-      ) {
-        // CTL-004: a structural-signature match only guarantees STRUCTURE
-        // parity (same ids, same order) -- it does NOT guarantee the cached
-        // arrays' object refs are current, because every settled-content
-        // update here is an OBJECT REPLACEMENT, not an in-place mutation.
-        // Refresh both cached views to the CURRENT source objects by id
-        // (cheap O(n), no rebuild) so the fingerprint pass below sees fresh
-        // content instead of a frozen-in-time ref.
-        const sourceMessageIdIndex = buildCanonicalMessageIdIndex(sourceMessages);
-        messages = refreshCanonicalMessageRefs(
-          uiRuntime.cachedCanonicalMessages, sourceMessages, sourceMessageIdIndex
-        );
-        threadTree = refreshCanonicalThreadTreeRefs(
-          uiRuntime.cachedThreadTree, sourceMessages, sourceMessageIdIndex
-        );
-        uiRuntime.cachedCanonicalMessages = messages;
-        uiRuntime.cachedThreadTree = threadTree;
-      } else {
-        messages = buildCanonicalTranscriptMessages(sourceMessages);
-        threadTree = buildTranscriptThreadTree(messages, { buildInteractiveRecapViewModel: callbacks.buildInteractiveRecapModel });
-        uiRuntime.cachedCanonicalMessages = messages;
-        uiRuntime.cachedThreadTree = threadTree;
-        uiRuntime.canonicalBuildSignature = sourceStructureSignature;
-      }
+      const { messages, threadTree } = prelude.resolveCanonicalTranscript(sourceMessages, paneSessionId, forceFullRender);
       pruneRecapExpansionState(paneSessionId, messages);
       updateTokenDisplay();
       const hasMessages = messages.length > 0;
@@ -463,143 +351,19 @@
       }
 
       function patchVisibleStreamingArticle(streamingMessage, articleOverride) {
-        const streamingMessageId = String(streamingMessage?.id || '').trim();
-        let article = articleOverride || resolveVisibleTurnArticleTarget(streamingMessageId, projectionContext);
-        if (!streamingMessageId || !article) {
-          return false;
-        }
-        const articleMessageId = String(
-          article.getAttribute?.('data-message-id')
-          || resolveTurnArticleMessageId(streamingMessageId, projectionContext)
-        ).trim();
-        const articleMessageMatch = messages.find(
-          (message) => String(message?.id || '').trim() === articleMessageId
-        );
-        const articleMessage = articleMessageMatch || streamingMessage;
-        // timeline-perf 2026-09-30: the row segments let the morph below
-        // reconcile the turn row list per row (settled rows keep their
-        // reconcile stamps) instead of morphing every row of the turn.
-        const rowListSegments = [];
-        const nextArticleMarkup = buildMessageArticleMarkup(
-          articleMessage,
+        return patchStreamingArticle({
           messages,
           latestAssistantMessageId,
           latestReplyAssistantMessageId,
           followUpDisabledReason,
-          String(articleMessage.id || '') === latestReplyAssistantMessageId ? latestRegenerateRequest : null,
+          latestRegenerateRequest,
           projectionContext,
-          { rowListSegmentSink: rowListSegments }
-        );
-        const template = article.ownerDocument?.createElement?.('template') || null;
-        let nextArticle = null;
-        if (template) {
-          template.innerHTML = String(nextArticleMarkup || '').trim();
-          nextArticle = template.content.querySelector('.chat-entry[data-message-id]');
-        }
-        // HB-006: under the turn-activity envelope the live article hosts the WHOLE
-        // turn's row list. When the dispatcher answers with a compat stub (the
-        // anchor moved, or the article's message fell out of `messages` and the
-        // streaming segment stood in), the legacy branch below wrote only that
-        // segment's reasoning into the host and wiped every other row until a
-        // later full render. Refuse, and let the caller render the timeline.
-        const hostsRowList = Boolean(article.querySelector?.('[data-turn-row-list]'));
-        const refusal = nextArticle
-          ? (hostsRowList && !nextArticle.querySelector('[data-turn-row-list]') ? 'refused_row_list_collapse' : '')
-          : (hostsRowList ? 'refused_row_list_collapse' : (articleMessageMatch ? '' : 'refused_article_fallback'));
-        if (refusal) {
-          recordStreamingArticleRebuild({ turnId: articleMessageId, streamingMessageId, outcome: refusal });
-          return false;
-        }
-        noteStructuralRewrite();
-        let rebuildOutcome = 'raw_innerhtml';
-        let rebuildStats;
-        if (nextArticle) {
-          const streamingArticleMorphEnabled =
-            state?.features?.featureFlags?.chat_timeline_streaming_article_morph === true;
-          if (
-            streamingArticleMorphEnabled
-            && typeof streamDomPatchUtils.setOuterHtmlPreservingCodeScroll === 'function'
-          ) {
-            const result = streamDomPatchUtils.setOuterHtmlPreservingCodeScroll(
-              article,
-              nextArticleMarkup,
-              {
-                collectStats: true,
-                rowListSegments: hostsRowList && rowListSegments.length ? rowListSegments : null,
-              }
-            );
-            rebuildOutcome = String(result?.outcome || 'morph_unavailable');
-            rebuildStats = result?.stats;
-            if (result?.rowList) {
-              const rowStats = result.rowList.stats || {};
-              rebuildStats = { ...(rebuildStats || {}), row_list: result.rowList.outcome, kept: rowStats.kept, morphed: rowStats.morphed, added: rowStats.added };
-              streamClientMetrics?.noteRowListMorph?.(getPaneSessionId(), {
-                reason: 'article_rewrite',
-                rowsReused: Number(rowStats.kept) || 0,
-                rowsRebuilt: (Number(rowStats.morphed) || 0) + (Number(rowStats.added) || 0),
-              });
-            }
-            if (rebuildOutcome !== 'morph_applied') {
-              article = resolveVisibleTurnArticleTarget(streamingMessageId, projectionContext) || article;
-            }
-          } else {
-            // The rollback path (chat_timeline_streaming_article_morph off)
-            // shares morphNode's attribute diff (syncElementAttributes) rather
-            // than a second hand-rolled copy that fixes would skip. Optional-
-            // called: without the module setOuterHtmlPreservingCodeScroll is
-            // gone too, and an unsynced attribute is not worth throwing over.
-            article.innerHTML = nextArticle.innerHTML;
-            streamDomPatchUtils.syncElementAttributes?.(article, nextArticle);
-          }
-          recordStreamingArticleRebuild({
-            turnId: articleMessageId,
-            streamingMessageId,
-            outcome: rebuildOutcome,
-            stats: rebuildStats,
-          });
-        } else {
-          const nextMessageModel = buildMessageInnerMarkup(
-            streamingMessage,
-            messages,
-            latestAssistantMessageId,
-            latestReplyAssistantMessageId,
-            followUpDisabledReason,
-            latestRegenerateRequest,
-            projectionContext
-          );
-          const nextInnerHtml = buildMessageArticleInnerHtml(streamingMessage, nextMessageModel.innerHtml);
-          // The helper always returns an { outcome } record, so a nullish result
-          // means only that the module did not resolve -- the last-resort write.
-          if (!streamDomPatchUtils.setInnerHtmlPreservingCodeScroll?.(article, nextInnerHtml)) {
-            article.innerHTML = nextInnerHtml;
-          }
-          article.classList.toggle('pending', nextMessageModel.pending);
-          turnShellUtils.syncChatEntryCvExemptAttribute?.(article, { pending: nextMessageModel.pending });
-          article.dataset.messageStatus = nextMessageModel.status;
-          article.dataset.finalizedAt = nextMessageModel.finalizedAt;
-          recordStreamingArticleRebuild({
-            turnId: articleMessageId,
-            streamingMessageId,
-            outcome: 'legacy_article_innerhtml',
-          });
-        }
-        // The rebuild replaced the live reasoning panel with a settled, hidden
-        // one; replay the eased hand-off before this task paints.
-        replayStreamRevealHandoff();
-        // Through the single writer, so rebuilding one article cannot leave the
-        // previous streaming article still marked.
-        stampStreamingArticleMarkerNode(article, streamingMessageId, chatTimeline);
-        uiRuntime.messageRenderSignature = messageRenderSignature;
-        uiRuntime.recapExpansionSignature = recapExpansionSignature;
-        uiRuntime.threadBranchSignature = threadExpansionSignature;
-        runPostTimelineRenderEffects(messages, {
-          decorateFollowUps: true,
-          inlineMermaidStreaming: true,
-          syncViewport: true,
-          syncChrome: true,
-        });
-        noteStreamRender('patch');
-        return true;
+          messageRenderSignature,
+          recapExpansionSignature,
+          threadExpansionSignature,
+          noteStructuralRewrite,
+          recordStreamingArticleRebuild,
+        }, streamingMessage, articleOverride);
       }
 
       state.ui.animateNextChatActivation = false;

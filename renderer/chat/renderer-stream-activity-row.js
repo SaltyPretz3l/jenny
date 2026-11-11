@@ -287,7 +287,10 @@
         node = createRowNode(documentRef, streamId);
         entry.node = node;
       }
-      if (node.parentNode !== mount || node !== mount.lastElementChild) {
+      // Follow Jenny's tail sits directly under the row and counts as part of it.
+      const last = mount.lastElementChild;
+      if (node.parentNode !== mount
+        || (node !== last && !(node.nextElementSibling === last && last.hasAttribute('data-turn-activity-tail')))) {
         mount.appendChild(node);
         try { onRowMounted(entry.sessionId, node); } catch (_error) { /* affordance only */ }
       }

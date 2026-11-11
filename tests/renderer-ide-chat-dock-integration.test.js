@@ -5,7 +5,7 @@
  *     (leaving Workspace must restore nodes before #ideView goes offscreen).
  *  2. Dock-scoped approval-steer (plan §17 decision 7 / §11 #9): with a
  *     pending approval the DOCK composer stays live and queue-eligible while
- *     MAIN CHAT keeps the pre-dock hard lock; flag-off is byte-identical.
+ *     MAIN CHAT keeps its draft editable but Send waits; only the dock queues.
  *  3. The chat state classes mirror onto #ideChatDockBody. */
 
 const { test } = require('node:test');
@@ -382,7 +382,7 @@ test('approval-steer: dock live keeps the composer enabled + queue-eligible', (t
   );
 });
 
-test('approval-steer stays dock-scoped: main chat keeps the hard lock', (t) => {
+test('main chat during an approval: the draft stays editable and Send waits', (t) => {
   installSurfaceLiveGlobal(t);
   const dom = makeDom();
   const doc = dom.window.document;
@@ -390,10 +390,12 @@ test('approval-steer stays dock-scoped: main chat keeps the hard lock', (t) => {
   const chrome = makeChrome(dom, state);
 
   chrome.renderComposerState();
-  assert.equal(doc.getElementById('chatInput').disabled, true, 'main chat composer locks during an approval gate (unchanged)');
+  assert.equal(doc.getElementById('chatInput').disabled, false, 'the user can keep writing while deciding');
+  assert.equal(doc.getElementById('sendButton').disabled, true, 'queueing stays dock-scoped');
+  assert.notEqual(doc.getElementById('sendButton').textContent, 'Queue — runs in Ask');
 });
 
-test('approval-steer is flag-gated: ide view with the flag OFF keeps the lock (byte-identical)', (t) => {
+test('approval-steer is flag-gated: with the flag OFF the draft is editable but Send does not queue', (t) => {
   installSurfaceLiveGlobal(t);
   const dom = makeDom();
   const doc = dom.window.document;
@@ -402,7 +404,9 @@ test('approval-steer is flag-gated: ide view with the flag OFF keeps the lock (b
   const chrome = makeChrome(dom, state);
 
   chrome.renderComposerState();
-  assert.equal(doc.getElementById('chatInput').disabled, true, 'flag-off keeps the pre-dock lock everywhere');
+  assert.equal(doc.getElementById('chatInput').disabled, false);
+  assert.equal(doc.getElementById('sendButton').disabled, true);
+  assert.notEqual(doc.getElementById('sendButton').textContent, 'Queue — runs in Ask');
 });
 
 test('chat state classes mirror onto #ideChatDockBody', () => {

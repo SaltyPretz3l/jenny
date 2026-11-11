@@ -402,7 +402,7 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
         )
 
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.compact_context",
+        "sidecar.ai.routing.chat_decision_preflight.compact_context",
         fake_compact_context,
     )
     long_user_content = "hello " * 320
@@ -483,7 +483,7 @@ def test_router_returns_terminal_when_runtime_overlays_exceed_post_compaction_bu
         )
 
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.compact_context",
+        "sidecar.ai.routing.chat_decision_preflight.compact_context",
         fake_compact_context,
     )
     memory_store = _PromptMemoryStore()
@@ -2742,85 +2742,6 @@ def test_router_forwards_todo_session_context() -> None:
     assert len(decision.tool_results) == 1
 
 
-def test_router_forwards_mermaid_session_context() -> None:
-    engine = _StubEngine(
-        plans=[
-            _ToolPlan(
-                result=GenerationResult(
-                    content="Rendering diagram.",
-                    tool_calls=(
-                        ToolCallRequest(
-                            tool_id="mermaid_generate",
-                            arguments={
-                                "diagram_type": "flowchart",
-                                "prompt": "graph TD\nA[Start] --> B[End]",
-                                "title": "Flow",
-                            },
-                        ),
-                    ),
-                    finish_reason="tool_calls",
-                )
-            ),
-            _ToolPlan(result=GenerationResult(content="Rendered.", finish_reason="stop")),
-        ]
-    )
-    client = _StubMCPClient(
-        {
-            "mermaid_generate": MCPToolDescriptor(
-                name="mermaid_generate",
-                description="Generate Mermaid",
-                input_schema={"type": "object", "properties": {"prompt": {"type": "string"}}},
-                side_effecting=False,
-                server_name="tools",
-            ),
-        },
-        {
-            "mermaid_generate": MCPToolResult(
-                tool_name="mermaid_generate",
-                output='{"mermaid": "graph TD\\nA[Start] --> B[End]", "diagram_type": "flowchart"}',
-                success=True,
-                generated_artifacts=(
-                    {
-                        "artifact_id": "artifact_file_session_mermaid_flow",
-                        "artifact_kind": "document",
-                        "title": "Flow",
-                        "file_name": "flow.mmd",
-                        "display_path": ".jenny/artifacts/session-mermaid/flow.mmd",
-                        "absolute_path": "/tmp/workspace/.jenny/artifacts/session-mermaid/flow.mmd",
-                        "language": "mermaid",
-                        "editable": True,
-                        "status": "available",
-                    },
-                ),
-            ),
-        },
-    )
-    router = _build_router(
-        config=RuntimeConfig(
-            engine_type="mock",
-            model="mock-v1",
-            tools_mermaid_enabled=True,
-        ),
-        engine=engine,
-        mcp_client=client,
-    )
-
-    decision = router.build_chat_decision(
-        request_id="req_mermaid",
-        session_id="session-mermaid",
-        messages=[{"role": "user", "content": "Render this as a diagram"}],
-        latest_user_content="Render this as a diagram",
-        mode="assist",
-        approvals_pre_granted=True,
-    )
-
-    assert client.last_execute is not None
-    assert client.last_execute[0] == "mermaid_generate"
-    assert client.last_execute[1]["_jenny_session_id"] == "session-mermaid"
-    assert len(decision.tool_results) == 1
-    assert decision.tool_results[0].generated_artifacts[0]["file_name"].endswith(".mmd")
-
-
 def test_router_forwards_error_code_and_metadata_through_tool_pipeline() -> None:
     engine = _StubEngine(
         plans=[
@@ -2889,7 +2810,7 @@ def test_router_dispatches_tool_search_and_expands_deferred_payload() -> None:
                     tool_calls=(
                         ToolCallRequest(
                             tool_id="tool_search",
-                            arguments={"query": "git commit"},
+                            arguments={"query": "select:mcp__git__commit"},
                         ),
                     ),
                     finish_reason="tool_calls",
@@ -3426,7 +3347,7 @@ def test_router_serializes_tool_search_output_via_content_alias(
                     tool_calls=(
                         ToolCallRequest(
                             tool_id="tool_search",
-                            arguments={"query": "git commit"},
+                            arguments={"query": "select:mcp__git__commit"},
                         ),
                     ),
                     finish_reason="tool_calls",
@@ -3488,7 +3409,10 @@ def test_router_serializes_tool_search_output_via_content_alias(
     tool_search_outcome = next(
         outcome for outcome in decision.tool_results if outcome.tool_name == "tool_search"
     )
-    assert tool_search_outcome.output == "Found 1 tool(s):\n- mcp__git__commit: Commit changes"
+    assert tool_search_outcome.output == (
+        "Found 1 tool(s):\n- mcp__git__commit: Commit changes\n"
+        "You can call the listed tools now, by the names listed."
+    )
     assert tool_search_outcome.metadata["match_count"] == 1
 
 
@@ -3887,6 +3811,9 @@ def test_router_enforces_per_turn_tool_cap() -> None:
         assert "cumulative tool invocation limit (3)" in outcome.output
         assert outcome.metadata.get("limit") == 3
         assert outcome.metadata.get("scope") == "turn"
+        # The envelope must agree with the body: a stop, not "reduce and retry".
+        assert outcome.metadata.get("failure_class") == "denied"
+        assert "No more tool calls are allowed this turn" in outcome.metadata["remediation"]
 
 
 def _cap_router(plans: list[_ToolPlan]) -> tuple[Any, _StubEngine]:
@@ -5746,63 +5673,6 @@ def test_router_current_info_request_resets_pseudo_search_before_exact_web_reaso
         event.get("event") == "ai.router.current_info_unavailable_fallback"
         for event in captured_events
     )
-
-
-def test_router_nudges_mermaid_prose_when_executable_tool_is_available() -> None:
-    engine = _StubEngine(
-        plans=[
-            _ToolPlan(
-                result=GenerationResult(
-                    content=(
-                        "I use Mermaid syntax to create structured diagrams. "
-                        "Here is a diagram I would make."
-                    ),
-                    finish_reason="stop",
-                )
-            ),
-            _ToolPlan(
-                result=GenerationResult(
-                    content="Diagram ready.",
-                    finish_reason="stop",
-                )
-            ),
-        ]
-    )
-    router = _build_router(
-        config=RuntimeConfig(
-            engine_type="ollama",
-            model="qwen3.6:35b-a3b",
-            tools_mermaid_enabled=True,
-        ),
-        engine=engine,
-        mcp_client=_StubMCPClient(
-            {
-                "mermaid_generate": MCPToolDescriptor(
-                    name="mermaid_generate",
-                    description="Render a Mermaid diagram.",
-                    input_schema={
-                        "type": "object",
-                        "properties": {"prompt": {"type": "string"}},
-                        "required": ["prompt"],
-                    },
-                    side_effecting=False,
-                    server_name="tools",
-                ),
-            }
-        ),
-    )
-
-    decision = router.build_chat_decision(
-        request_id="req_mermaid_fake_tool_nudge",
-        messages=[{"role": "user", "content": "Please demonstrate the Mermaid tool"}],
-        latest_user_content="Please demonstrate the Mermaid tool",
-        mode="assist",
-        approvals_pre_granted=True,
-    )
-
-    assert decision.response_text == "Diagram ready."
-    assert len(engine.calls) == 2
-    assert "mermaid_generate" in engine.calls[1]["messages"][-1]["content"]
 
 
 def test_router_nudge_example_is_never_a_repo_mutating_tool() -> None:

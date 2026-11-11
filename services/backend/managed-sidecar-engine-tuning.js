@@ -1,8 +1,7 @@
 /* services/backend/managed-sidecar-engine-tuning.js - raw_config resolution for the
  * Advanced engine-tuning knobs.
  *
- * Split out of managed-sidecar-config.js, which sits against the file-size
- * ceiling. Everything here answers one question: what value, if any, has the
+ * Split out of managed-sidecar-config.js for cohesion. Everything here answers one question: what value, if any, has the
  * user set for a given tuning key - and it deliberately says "nothing" rather
  * than inventing a default, so the sidecar's own default stays authoritative.
  *

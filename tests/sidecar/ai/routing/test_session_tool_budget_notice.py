@@ -117,7 +117,6 @@ def test_a_blocked_turn_marks_exactly_one_tool_result_with_the_notice() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     router._config = replace(router._config, max_tool_calls_per_session=1)
     events: list[object] = []

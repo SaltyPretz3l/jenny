@@ -4,19 +4,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MAX_SECRET_BYTES = 16_384;
-const SECRET_FILES = Object.freeze({ openai_compatible_api_key: 'model-api-key' });
+const SECRET_FILES = Object.freeze({
+  openai_compatible_api_key: 'model-api-key',
+});
+// The team host's own key. A separate map: the store handed to the backend as its
+// credential reader is built without it, so nothing behind the backend can name the key.
+const TEAM_HOST_SECRET_FILES = Object.freeze({ team_host_key: 'team-host-key' });
 
 // Operator-provisioned, read-only files. No environment/config fallback and no
 // writable SecureStore facade; desktop safeStorage remains a separate owner.
 class FileSecretStore {
-  constructor({ directory = null } = {}) {
+  constructor({ directory = null, files = SECRET_FILES } = {}) {
+    this.files = files;
     this.directory = directory === null ? null : fs.realpathSync(directory);
     if (this.directory && !fs.statSync(this.directory).isDirectory()) throw new Error('invalid_secret_directory');
   }
 
   get(key) {
-    if (!this.directory || !Object.hasOwn(SECRET_FILES, key)) return null;
-    const target = path.join(this.directory, SECRET_FILES[key]);
+    if (!this.directory || !Object.hasOwn(this.files, key)) return null;
+    const target = path.join(this.directory, this.files[key]);
     let fd;
     try {
       fd = fs.openSync(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)
@@ -51,4 +57,4 @@ class FileSecretStore {
   }
 }
 
-module.exports = { FileSecretStore };
+module.exports = { FileSecretStore, TEAM_HOST_SECRET_FILES };

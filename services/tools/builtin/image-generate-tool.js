@@ -13,6 +13,7 @@ const renderPreview = require('../../image-render-preview');
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { t } = require('../../i18n-main');
 const { manifestSchema } = require('./tool-result');
+const comfyui = require('./image-generate-comfyui');
 
 const IMAGE_GENERATE_BUDGET_MS = 900_000;
 // Restore = kill proof (up to ~30 s) + relaunch readiness (90 s) + margin.
@@ -43,6 +44,11 @@ function cleanText(value) {
   }).join('').trim();
 }
 
+function comfyFailure(reason) {
+  const refused = comfyui.failureFor(reason);
+  return failure(refused.reason, refused.content);
+}
+
 function invalidParameter(parameter) {
   return failure('image_invalid_params', t('error.imageGen.invalidParameter',
     'Invalid {parameter} for image generation.', { parameter }), {
@@ -50,6 +56,33 @@ function invalidParameter(parameter) {
     remediation: t('error.imageGen.parameterRemediation',
       'Correct {parameter} using the image_generate parameter schema before retrying.', { parameter }),
   });
+}
+
+function invalidSize(resolutions, conflict = false) {
+  const sizes = resolutions.join(', ');
+  return failure('image_invalid_params', conflict
+    ? t('error.imageGen.sizeConflict', 'The size and the width or height you sent name different sizes. Supported sizes: {sizes}.', { sizes })
+    : t('error.imageGen.unsupportedSize', 'That image size is not supported. Supported sizes: {sizes}.', { sizes }), {
+    failure_class: 'bad_arguments', effects: 'none',
+    remediation: t('error.imageGen.sizeRemediation',
+      'Retry image_generate with size set to one of {sizes}, or omit size for the 1024x1024 default.', { sizes }),
+  });
+}
+
+// `size` ("1024x1024", also spelled "1024 x 1024", "1024X1024", "1024*1024" or
+// "1024×1024") is read into the width and height the rest of the tool uses. A
+// legacy width/height call passes through; both given must name the same size.
+function resolveSize(input, resolutions) {
+  if (input.size === undefined) return { input };
+  const match = typeof input.size === 'string'
+    ? /^(\d{1,5})x(\d{1,5})$/.exec(input.size.toLowerCase().replace(/\s+/g, '').replace(/[\u00d7*]/g, 'x')) : null;
+  if (!match) return { error: invalidSize(resolutions) };
+  const [width, height] = [Number(match[1]), Number(match[2])];
+  if ((input.width !== undefined && input.width !== width) || (input.height !== undefined && input.height !== height)) {
+    return { error: invalidSize(resolutions, true) };
+  }
+  const { size: _size, ...rest } = input;
+  return { input: { ...rest, width, height } };
 }
 
 function validateParameters(input, family, randomUUID) {
@@ -67,13 +100,7 @@ function validateParameters(input, family, randomUUID) {
   const height = input.height === undefined ? 1024 : input.height;
   if (!Number.isInteger(width) || !Number.isInteger(height)
     || !family.resolutions.includes(`${width}x${height}`)) {
-    return { error: failure('image_invalid_params', t('error.imageGen.invalidResolution',
-      'Invalid width/height. Supported sizes: {sizes}.', { sizes: family.resolutions.join(', ') }), {
-      failure_class: 'bad_arguments', effects: 'none',
-      remediation: t('error.imageGen.resolutionRemediation',
-        'Retry image_generate with a matching width/height pair from {sizes}, or omit both dimensions for the 1024x1024 default.',
-        { sizes: family.resolutions.join(', ') }),
-    }) };
+    return { error: invalidSize(family.resolutions) };
   }
   const steps = input.steps === undefined ? family.defaults.steps : input.steps;
   if (!Number.isInteger(steps) || steps < 1 || steps > 100) return { error: invalidParameter('steps') };
@@ -133,7 +160,15 @@ function sanitizedStderr(lines, sensitiveValues) {
   return cleanText(text).replace(/[\r\n\t]+/g, ' ').slice(0, 500);
 }
 
-function renderFailure(result, extra, sensitiveValues) {
+function renderFailure(result, extra, sensitiveValues, viaComfy = false) {
+  if (viaComfy && result.status === 'failed') {
+    if (/^image_output_/.test(result.reason || '')) {
+      return failure('image_output_invalid', t('error.imageGen.outputInvalid',
+        'The image engine did not produce a valid PNG image.'), extra);
+    }
+    return failure('image_comfyui_failed', t('error.imageGen.comfyuiFailed', 'ComfyUI could not make the image. {detail}',
+      { detail: sanitizedStderr(result.stderrTail, sensitiveValues) }).trim(), extra);
+  }
   switch (result.status) {
     case 'cancelled':
       return failure('image_cancelled', t('error.imageGen.cancelled', 'Image generation was cancelled.'), extra);
@@ -162,16 +197,18 @@ function renderFailure(result, extra, sensitiveValues) {
 function createImageGenerateTool({
   // Resolve only on execution: registry loading does not depend on the runner slice.
   runImageGeneration = (options) => require('../../image-engine-runner').runImageGeneration(options),
+  runComfyGeneration = (options) => require('../../comfyui-runner').runComfyGeneration(options),
   resolveModelSet = modelSets.resolveModelSet,
   listModelSets = modelSets.listModelSets,
   loadFamilies = modelSets.loadFamilies,
+  loadRecipes = modelSets.loadRecipes,
   fs = defaultFs,
   randomUUID = crypto.randomUUID,
   now = Date.now,
   readReference = (options) => readEditReference({ ...options, nativeImage: require('electron').nativeImage }),
   createNativeImage = (buffer) => require('electron').nativeImage.createFromBuffer(buffer),
 } = {}) {
-  async function publishImage(outputPath, opId, context, params, set, family, engine, result, settled, startedAt) {
+  async function publishImage(outputPath, opId, context, params, set, family, engine, result, settled, startedAt, recipe, server) {
     const extra = { chat_restore: settled.restored ? 'ok' : 'failed' };
     if (settled.restored === false) extra.reason = 'image_chat_restore_failed';
     let content;
@@ -205,6 +242,8 @@ function createImageGenerateTool({
     const total = result.seconds?.total ?? Math.max(0, (now() - startedAt) / 1000);
     const lines = [t('imageEdit.named', 'Image: {title}.', { title: params.title }), t('tool.imageGen.generated',
       'Generated a {width}x{height} image (seed {seed}, {steps} steps, {total}s).', { ...params, total })];
+    const ownLabel = typeof set.label === 'string' ? cleanText(set.label) : '';
+    if (recipe) lines.push(...comfyui.adjustmentLines(params, ownLabel || recipe.label));
     if (typeof artifact.display_path === 'string' && artifact.display_path.length > 0) {
       lines.push(t('tool.imageGen.savedAs',
         'Saved as {path}. The image is already shown to the user in the chat.', { path: artifact.display_path }));
@@ -213,7 +252,10 @@ function createImageGenerateTool({
       'The primary image is already shown in chat. Briefly acknowledge completion; do not add another Markdown image or invent an image URL.'));
     lines.push(JSON.stringify({ image_title: params.title, source_artifact_id: artifact.artifact_id }));
     const previewImage = modelImage(content, params, createNativeImage);
-    const quant = set.files.diffusion.name.match(/Q\d[_A-Z0-9]*|BF16|F16|F32/i)?.[0] || '';
+    const quant = recipe ? comfyui.quantOf(set.files.diffusion.name)
+      : set.files.diffusion.name.match(/Q\d[_A-Z0-9]*|BF16|F16|F32/i)?.[0] || '';
+    const engineTag = recipe ? `comfyui-${server?.comfyuiVersion || 'unknown'}`
+      : engine.source === 'custom' ? 'custom' : engine.tag;
     if (settled.restored === false) {
       lines.push(t('error.imageGen.restoreFailed',
         'The chat engine did not come back; send your next message to restart it.'));
@@ -225,8 +267,10 @@ function createImageGenerateTool({
       metadata: {
         result_kind: 'image_generated', ...extra, generatedArtifacts: [artifact],
         provenance: {
-          backend: 'sdcpp', family: set.family, engine_tag: engine.source === 'custom' ? 'custom' : engine.tag, model_set_id: set.id,
-          quant, model_label: (typeof set.label === 'string' && cleanText(set.label)) || [family?.label || set.family, quant].filter(Boolean).join(' · '),
+          backend: recipe ? 'comfyui' : 'sdcpp', family: recipe ? set.recipe : set.family, engine_tag: engineTag, model_set_id: set.id,
+          quant, model_label: ownLabel
+            || [recipe?.label || family?.label || set.family, quant].filter(Boolean).join(' · '),
+          ...(recipe && params.requested !== `${params.width}x${params.height}` ? { requested_size: params.requested } : {}),
           seed: params.seed, width: params.width, height: params.height, steps: params.steps, cfg_scale: params.cfgScale,
           // F29: not `prompt`; the canonical normalizer redacts engine/system prompt keys by that name.
           ...(params.reference ? { source_artifact_id: params.reference.artifactId, image_edit_region: params.reference.region } : {}),
@@ -264,26 +308,25 @@ function createImageGenerateTool({
         return failure('image_tool_unavailable', t('error.imageGen.unavailable',
           'Image generation is not available in this session.'));
       }
-      let engine;
-      try { engine = await imageEngine.resolveExecutable(); } catch (_error) { /* report engine missing */ }
-      if (!engine?.ok) {
-        return failure('image_engine_missing', t('error.imageGen.engineMissing',
-          'No image engine is installed. Install it in Settings > Models > Image engine.'));
-      }
       if (input?.model_set_id !== undefined
         && (typeof input.model_set_id !== 'string' || !MODEL_SET_ID.test(input.model_set_id))) {
         return invalidParameter('model_set_id');
       }
+      // The set decides the backend: sd.cpp sets need the installed engine,
+      // ComfyUI sets (row 127) a recipe and the user's ComfyUI folder.
       let resolved;
       let family;
+      let recipe;
       try {
         const storePath = path.join(userDataPath, 'image-models.json');
         const id = input?.model_set_id ?? (await listModelSets({ storePath })).default_id;
         if (id) resolved = await resolveModelSet(id, { storePath });
-        if (resolved?.ok) family = (await loadFamilies()).families[resolved.set.family];
-      } catch (_error) { /* unreadable stores or presets are unavailable */ }
-      if (!resolved?.ok || !family) {
-        if (resolved?.reason === 'image_model_set_stale') {
+        if (resolved?.ok && resolved.set.backend === 'comfyui') recipe = (await loadRecipes()).recipes[resolved.set.recipe];
+        else if (resolved?.ok) family = (await loadFamilies()).families[resolved.set.family];
+      } catch (_error) { /* unreadable stores, presets or recipes are unavailable */ }
+      if (!resolved?.ok || !(family || recipe)) {
+        // A ComfyUI set whose recipe this build no longer ships is stale, not absent.
+        if (resolved?.reason === 'image_model_set_stale' || resolved?.set?.backend === 'comfyui') {
           return failure('image_model_set_stale', t('error.imageGen.modelSetStale',
             'The saved image model set has changed. Add your model files again in Settings > Models > Image engine.'));
         }
@@ -295,9 +338,30 @@ function createImageGenerateTool({
           'No image model set is saved. Add your model files in Settings > Models > Image engine.'));
       }
       const { set, paths } = resolved;
+      const comfy = recipe ? resolved.comfy : null;
+      const owner = backend.comfyui;
+      let engine;
+      if (recipe) {
+        if (backend.featureFlags?.image_comfyui_enabled === false) {
+          return comfyFailure('image_comfyui_disabled');
+        }
+        if (!comfy?.folder || typeof owner?.start !== 'function' || typeof owner.stop !== 'function') {
+          return comfyFailure('image_comfyui_missing');
+        }
+      } else {
+        try { engine = await imageEngine.resolveExecutable(); } catch (_error) { /* report engine missing */ }
+        if (!engine?.ok) {
+          return failure('image_engine_missing', t('error.imageGen.engineMissing',
+            'No image engine is installed. Install it in Settings > Models > Image engine.'));
+        }
+      }
+      const contract = recipe ? comfyui.recipeContract(recipe) : family;
+      const sized = resolveSize(input, contract.resolutions);
+      if (sized.error) return sized.error;
+      input = sized.input;
       let reference;
       if (input.source_artifact_id !== undefined || input.region !== undefined) {
-        if (!family.vision_flag || !paths.vision_projector) return failure('image_edit_unavailable',
+        if (!family?.vision_flag || !paths.vision_projector) return failure('image_edit_unavailable',
           t('imageEdit.unavailable', 'Image editing needs a saved model set with a matching vision projector.'),
           { failure_class: 'bad_arguments', effects: 'none', remediation: t('imageEdit.configureProjector', 'Choose a compatible projector in Settings > Models > Image engine, then retry the edit.') });
         try {
@@ -314,8 +378,10 @@ function createImageGenerateTool({
         return failure('image_edit_size_unsupported', t('imageEdit.unsupportedSize', 'Edits require a supported source size and matching output dimensions.'),
           { failure_class: 'bad_arguments', effects: 'none', remediation: t('imageEdit.sizeRemediation', 'Use a source with one of these sizes: {sizes}. Keep its dimensions.', { sizes: family.resolutions.join(', ') }) });
       }
-      const params = validateParameters(reference ? { width: reference.width, height: reference.height, ...input } : input || {}, family, randomUUID);
+      let params = validateParameters(reference ? { width: reference.width, height: reference.height, ...input } : input || {},
+        contract, randomUUID);
       if (params.error) return params.error;
+      if (recipe) params = comfyui.applyRecipe(params, input, recipe);
       if (reference) params.reference = reference;
       params.promptSource = pin ? 'user' : 'model';
       // The render must finish inside the sidecar's wait with the restore
@@ -338,15 +404,37 @@ function createImageGenerateTool({
         try { context.onProgress(event); } catch (_error) { /* Progress display never interrupts a render. */ }
       };
       report({ phase: 'gpu' });
+      // A ComfyUI set starts its server before the chat engine is evicted: a
+      // server that is not ours, lacks a node or cannot see a file costs no eviction.
+      // One id names the run: the render record, the output file and, for ComfyUI, the server's user dir.
+      const runId = `img_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      let server = null;
+      const stopServer = async () => {
+        if (!server) return { confirmed: true };
+        try { return await owner.stop(server); } catch (_error) { return { confirmed: false }; }
+      };
+      if (recipe) {
+        // ComfyUI starts before suspend(), so suspend's own preamble runs first:
+        // a retained lease is reconciled, and a held lease refuses before a new
+        // render record could replace the evidence of an unproven render.
+        const held = await comfyui.leaseRefusal(handoff);
+        if (held) return failure(held.code, held.message, { detail: held.reason });
+        const checked = await comfyui.preflight({ owner, comfy, recipe, nodeTypes: modelSets.recipeNodeTypes(recipe),
+          opId: runId, abortSignal: context.abortSignal, set });
+        if (!checked.ok) return failure(checked.failure.reason, checked.failure.content);
+        server = checked.server;
+      }
       try {
-        await handoff.suspend({ kind: 'builtin', tool_name: 'image_generate', call_id: context.callId, stream_id: context.streamId }, {
-          minTotalVramMb: family.min_total_vram_mb,
-          requiredFreeMb: Math.ceil(set.files.diffusion.size_bytes / 1048576) + family.free_vram_headroom_mb,
-        });
+        await handoff.suspend({ kind: 'builtin', tool_name: 'image_generate', call_id: context.callId, stream_id: context.streamId },
+          recipe ? { minTotalVramMb: recipe.min_total_vram_mb, requiredFreeMb: recipe.free_vram_mb } : {
+            minTotalVramMb: family.min_total_vram_mb,
+            requiredFreeMb: Math.ceil(set.files.diffusion.size_bytes / 1048576) + family.free_vram_headroom_mb,
+          });
       } catch (error) {
-        if (error instanceof ChatGpuHandoffError) return failure(error.code, error.message, { detail: error.reason });
-        return failure('image_gpu_eviction_unverified', t('error.imageGen.evictionUnverified',
-          'Jenny could not confirm the chat engine released the GPU, so the image was not started.'));
+        const refused = error instanceof ChatGpuHandoffError ? failure(error.code, error.message, { detail: error.reason })
+          : failure('image_gpu_eviction_unverified', t('error.imageGen.evictionUnverified',
+            'Jenny could not confirm the chat engine released the GPU, so the image was not started.'));
+        return (await stopServer()).confirmed === true ? refused : comfyFailure('image_engine_cleanup_pending');
       }
 
       let outputPath;
@@ -363,7 +451,8 @@ function createImageGenerateTool({
       // tree-death proof is the answer.
       const cancel = async () => {
         controller.abort();
-        if (!running) return { confirmed: true };
+        // Before the render starts, a ComfyUI server from the preflight is still alive.
+        if (!running) return { confirmed: (await stopServer()).confirmed === true };
         try { return { confirmed: (await running).status !== 'unconfirmed' }; }
         catch (_error) { return { confirmed: false }; }
       };
@@ -374,7 +463,7 @@ function createImageGenerateTool({
           controller = new AbortController();
           context.abortSignal?.addEventListener('abort', abort, { once: true });
           if (context.abortSignal?.aborted) controller.abort();
-          opId = `img_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+          opId = runId;
           let scratchDir = path.join(userDataPath, 'image-engine-scratch');
           outputPath = path.join(scratchDir, `${opId}.png`);
           await fs.promises.mkdir(scratchDir, { recursive: true });
@@ -394,6 +483,15 @@ function createImageGenerateTool({
             result = { status: 'stale', exitCode: null, stderrTail: [] };
           } else if (renderDeadline() < MIN_RENDER_DEADLINE_MS) {
             result = { status: 'budget', exitCode: null, stderrTail: [] };
+          } else if (server) {
+            report({ phase: 'load' });
+            running = comfyui.renderAndStop({ owner, server, runComfyGeneration, options: {
+              recipe, loaderNames: comfy.loaderNames, deadlineMs: renderDeadline(), abortSignal: controller.signal,
+              params: { prompt: params.prompt, width: params.width, height: params.height, seed: params.seed },
+              log: context.logger, onProgress: (event) => report(event?.phase === 'sample'
+                ? { phase: 'sample', step: event.step, steps: event.steps } : event),
+            } });
+            result = await running;
           } else {
             // A custom engine may predate --preview; only the pinned build gets it.
             const previewPattern = family.preview && engine.source === 'managed'
@@ -416,6 +514,11 @@ function createImageGenerateTool({
         } catch (_error) {
           result = { status: 'failed', exitCode: null, stderrTail: [] };
         } finally {
+          // Every path out of the render, stale and budget included, ends the
+          // ComfyUI server with proof before the chat engine comes back.
+          if (server && (await stopServer()).confirmed !== true && result.status !== 'unconfirmed') {
+            result = { ...result, status: 'unconfirmed', png: null, recorded: true };
+          }
           try {
             settled = await handoff.restoreAndRelease({
               cleanupConfirmed: result.status !== 'unconfirmed', reason: result.status, recorded: result.recorded !== false,
@@ -429,9 +532,10 @@ function createImageGenerateTool({
         if (result.status === 'ok' && controller?.signal.aborted) result = { ...result, status: 'cancelled', png: null };
         if (result.status !== 'ok') {
           return renderFailure(result, { chat_restore: settled.restored ? 'ok' : 'failed' },
-            [userDataPath, context.workingDirectory, engine.path, outputPath, referencePath, ...Object.values(paths)]);
+            [userDataPath, context.workingDirectory, engine?.path, outputPath, referencePath, comfy?.folder,
+              comfy?.modelsRoot, server?.runDir, ...Object.values(paths)], Boolean(recipe));
         }
-        return await publishImage(outputPath, opId, context, params, set, family, engine, result, settled, startedAt);
+        return await publishImage(outputPath, opId, context, params, set, family, engine, result, settled, startedAt, recipe, server);
       } finally {
         if (referencePath && result.status !== 'unconfirmed') {
           try { await fs.promises.unlink(referencePath); } catch (_error) { /* bounded scratch cleanup */ }

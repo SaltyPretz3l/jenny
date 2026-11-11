@@ -67,7 +67,7 @@ function allowsPlanArtifact(descriptor, args) {
   // The todo list is in-memory session state, never a workspace write. Plan
   // Mode may add a memory; correcting or forgetting one waits for the build.
   return descriptor.plan_mode_artifact_write === true
-    && (descriptor.name === 'mermaid_generate' || descriptor.name === 'todo_write'
+    && (descriptor.name === 'todo_write'
       || (descriptor.name === 'memory' && !!args && args.action === 'remember')
       || (descriptor.name === 'create_artifact' && safeDocument(args)));
 }

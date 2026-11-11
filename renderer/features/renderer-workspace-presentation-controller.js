@@ -53,8 +53,7 @@
   }
 
   const COALESCE_MS = 400;
-  // "Recent typing" horizon: a model switch within this window of the user's
-  // last edit would steal their context mid-thought.
+  // A model switch this soon after the user's last edit would steal their context.
   const TYPING_GUARD_MS = 4000;
   // Oscillation guard: more than this many APPLIED model switches inside the
   // window stops auto-applying (the chip takes over) until the window drains.
@@ -149,8 +148,19 @@
       return appliedTimestamps.length >= OSCILLATION_MAX;
     }
 
-    function isSafeToSwitch() {
-      if (getActiveView() !== 'ide') {
+    // Follow Jenny (row 121) takes the editor under the same guards as a request: only inside
+    // Workspace, never while the user types, never in a switching loop.
+    function canTakeEditor() {
+      return getActiveView() === 'ide' && now() - lastEditAt >= TYPING_GUARD_MS && !isOscillating();
+    }
+
+    function noteTaken() {
+      appliedTimestamps.push(now());
+    }
+
+    function isSafeToSwitch(request) {
+      // From an idle chat a file opens: its chip would sit unseen in the hidden IDE.
+      if (getActiveView() !== 'ide' && (request.view !== 'file' || getActiveView() !== 'chat' || getDom().chatInput?.value?.trim())) {
         return false;
       }
       if (now() - lastEditAt < TYPING_GUARD_MS) {
@@ -369,7 +379,7 @@
         report(request, { decision: 'dropped' });
         return;
       }
-      if (isSafeToSwitch()) {
+      if (isSafeToSwitch(request)) {
         apply(request);
       } else {
         showChip(request);
@@ -475,10 +485,12 @@
       COALESCE_MS,
       TYPING_GUARD_MS,
       bindEvents,
+      canTakeEditor,
       dispose,
       handleContextChange,
       handleRequest,
       noteEdit,
+      noteTaken,
     };
   }
 

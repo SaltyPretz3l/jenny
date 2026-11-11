@@ -18,6 +18,11 @@
   --text-secondary: #b7aa98;
   --text-muted: #8e8275; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
   --text-decorative: #7f7468;
+  --text-bright: #fbf7f0;
+  --text-accent-soft: color-mix(in srgb, #c88f52 52%, #f3ede4);
+  --text-danger-soft: #e89a8c;
+  --text-success-soft: #a8c48e;
+  --text-danger-emphasis: #ec9384;
   --accent: #c88f52;
   --accent-primary: var(--accent);
   --accent-strong: #d9a062;
@@ -25,10 +30,16 @@
   --accent-amber: #e0b072;
   --holo-periwinkle: #c1c8d8;
   --holo-lavender: #d8bca5;
-  --holo-pink: #d59b7b;
-  --holo-cyan: #a6b8cf;
 
-  /* ── Doodle field — dust-blue ink on aubergine, copper hover halo ── */
+  /* ── Syntax tokens — library inks: brass keywords, sage strings, slate types, plum constants ── */
+  --syntax-keyword: #d9a062;
+  --syntax-string: #b3c28c;
+  --syntax-comment: #877b6e;
+  --syntax-number: #df8f7c;
+  --syntax-function: #e8d39a;
+  --syntax-type: #a6b8cf;
+  --syntax-variable: #cfc3b1;
+  --syntax-constant: #cf9cb4;
 
   /* ── Atomic burst — copper lead, dust-blue, editorial gold ── */
   --widget-atomic-burst-color-a: rgba(200, 143, 82, 0.84);
@@ -50,6 +61,7 @@
   /* ── Reactive grid: copper idle, gold active ── */
   --widget-reactive-grid-dot-idle: rgba(200, 143, 82, 0.22);
   --widget-reactive-grid-dot-active: rgba(224, 176, 114, 0.96);
+  --reactive-grid-wave-contrast: 1.3;
 
   /* ── Playlist scroll — copper line, dust-blue ghosts, gold pad accents ── */
   --playlist-scroll-line-color: rgba(216, 156, 92, 0.50);
@@ -61,6 +73,17 @@
 
   --shadow-soft: 0 20px 44px rgba(0, 0, 0, 0.34);
   --shadow-accent: 0 16px 32px rgba(200, 143, 82, 0.18);
+  --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(184, 164, 143, 0.08);
+  --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(184, 164, 143, 0.10);
+  --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(200, 143, 82, 0.10);
+
+  /* ── Borders — parchment hairlines, brass focus ── */
+  --border-subtle: rgba(184, 164, 143, 0.08);
+  --border-default: rgba(184, 164, 143, 0.14);
+  --border-strong: rgba(184, 164, 143, 0.26);
+  --border-focus: rgba(200, 143, 82, 0.40);
+  --focus-outline: rgba(200, 143, 82, 0.66);
+
   --surface-body-background:
     radial-gradient(circle at 18% 16%, rgba(200, 143, 82, 0.12), rgba(16, 13, 17, 0) 30%),
     radial-gradient(circle at 82% 20%, rgba(166, 184, 207, 0.08), rgba(16, 13, 17, 0) 28%),
@@ -87,20 +110,160 @@
     radial-gradient(circle at top left, rgba(200, 143, 82, 0.08), transparent 56%);
   --surface-input-background: rgba(17, 13, 17, 0.92);
   --surface-input-background-strong: rgba(14, 11, 15, 0.9);
+  --surface-toolbar-background: rgba(18, 14, 19, 0.88);
+  --surface-interactive-card-background:
+    linear-gradient(180deg, rgba(23, 19, 25, 0.96), rgba(16, 13, 17, 0.96)),
+    radial-gradient(circle at top left, rgba(200, 143, 82, 0.08), transparent 48%);
+  --surface-composer-inner:
+    linear-gradient(180deg, rgba(24, 19, 26, 0.94), rgba(14, 11, 15, 0.97)),
+    rgba(14, 11, 15, 0.94);
   --surface-composer-signal-background: rgba(18, 14, 18, 0.82);
   --surface-composer-mode-background: rgba(18, 14, 18, 0.78);
   --widget-composer-signal-border: rgba(184, 164, 143, 0.16);
+  --surface-auth-overlay: rgba(8, 6, 9, 0.78);
+  --surface-popover-background: linear-gradient(180deg, rgba(24, 19, 26, 0.98), rgba(14, 11, 15, 0.98));
+  --surface-popover-row: rgba(36, 29, 38, 0.46);
+  --surface-popover-row-hover: rgba(50, 41, 52, 0.58);
   --widget-face-glow-color: var(--accent);
   --widget-face-aura-primary: rgba(200, 143, 82, 0.12);
   --widget-face-aura-secondary: rgba(166, 184, 207, 0.1);
   --widget-face-shine-color: rgba(247, 239, 230, 0.78);
-  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+
+  /* ── Material hierarchy — plum-brown chrome, warm work surface ── */
+  --mat-chrome-bg: linear-gradient(90deg, rgba(24, 19, 25, 0.98), rgba(18, 14, 19, 0.98));
+  --mat-work-bg:
+    radial-gradient(circle at 18% 12%, rgba(200, 143, 82, 0.10), rgba(14, 11, 15, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(166, 184, 207, 0.10), rgba(14, 11, 15, 0) 28%),
+    #151116;
+  --mat-work-text: var(--text-primary);
+  --mat-live-bg: var(--surface-sidebar-background);
   --mat-live-accent: var(--accent-cyan);
   --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 12%, var(--border-subtle));
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.28);
+
+  /* ── Buttons — brass primary with dark ink, parchment secondary ── */
+  --widget-button-primary-bg: linear-gradient(180deg, #d9a062, #c88f52);
+  --widget-button-primary-color: #1a1008;
+  --widget-button-primary-shadow: rgba(200, 143, 82, 0.32);
+  --widget-button-secondary-bg: rgba(27, 22, 29, 0.94);
+  --widget-button-secondary-border: rgba(200, 143, 82, 0.20);
+  --widget-button-secondary-color: #e6ddd0;
+  --widget-button-danger-bg: rgba(214, 104, 88, 0.14);
+  --widget-button-danger-border: rgba(214, 104, 88, 0.28);
+  --widget-button-danger-color: #ea9d90;
+  --widget-close-hover-bg: #b8463a;
+  --widget-hero-avatar-bg: linear-gradient(180deg, #d9a062, #c88f52);
+
+  /* ── Sidebar & item states — brass selection ── */
+  --widget-item-active-bg: linear-gradient(180deg, rgba(200, 143, 82, 0.14), rgba(200, 143, 82, 0.04));
+  --widget-item-active-border: rgba(200, 143, 82, 0.22);
+  --widget-badge-bg: rgba(243, 237, 228, 0.04);
+  --widget-action-bg: rgba(243, 237, 228, 0.04);
+  --widget-action-hover-bg: rgba(200, 143, 82, 0.14);
+  --widget-action-hover-border: rgba(200, 143, 82, 0.30);
+  --widget-action-hover-color: #fbf7f0;
+  --widget-scrollbar-color: rgba(200, 143, 82, 0.28);
+
+  /* ── Chat & copy ── */
+  --widget-chat-meta-error-color: #ea9d90;
+  --widget-copy-chip-bg: linear-gradient(180deg, rgba(27, 22, 29, 0.98), rgba(18, 14, 19, 0.98));
+  --widget-copy-chip-border: rgba(200, 143, 82, 0.22);
+  --widget-copy-chip-color: #e6ddd0;
+
+  /* ── Rail J glyph ── */
+  --widget-sprite-color: rgba(243, 237, 228, 0.94);
+
+  /* ── Tool calls — brass frame, sage success, brick error ── */
+  --widget-tool-bg:
+    linear-gradient(180deg, rgba(23, 19, 25, 0.84), rgba(14, 11, 15, 0.92)),
+    radial-gradient(circle at left center, rgba(200, 143, 82, 0.08), transparent 55%);
+  --widget-tool-border: rgba(200, 143, 82, 0.20);
+  --widget-tool-color: #e6ddd0;
+  --widget-tool-success-color: rgba(168, 196, 142, 0.92);
+  --widget-tool-error-color: rgba(232, 140, 124, 0.9);
+  --widget-tool-denied-color: rgba(150, 140, 128, 0.7);
+  --widget-tool-code-bg: rgba(0, 0, 0, 0.30);
+  --widget-tool-code-color: rgba(228, 219, 205, 0.88);
+  --widget-approve-bg: linear-gradient(180deg, rgba(217, 160, 98, 0.84), rgba(200, 143, 82, 0.90));
+  --widget-approve-border: rgba(224, 176, 114, 0.34);
+  --widget-approve-color: #1a1008;
+  --widget-approve-hover-border: rgba(224, 176, 114, 0.48);
+  --widget-deny-bg: rgba(27, 22, 29, 0.74);
+  --widget-deny-border: rgba(200, 143, 82, 0.22);
+  --widget-deny-color: rgba(236, 228, 216, 0.84);
+
+  /* ── Composer — brass send with dark ink ── */
+  --widget-placeholder-color: #8a7e71;
+  --widget-placeholder-focus-color: #b7aa98;
+  --widget-composer-mode-active-bg: rgba(200, 143, 82, 0.20);
+  --widget-send-bg: linear-gradient(180deg, #d9a062, #c88f52);
+  --widget-send-border: rgba(200, 143, 82, 0.34);
+  --widget-send-color: #1a1008;
+  --widget-send-hover-bg: linear-gradient(180deg, #e0b072, #d9a062);
+  --widget-send-hover-color: #1a1008;
+  --widget-select-caret-color: #7f7468;
+  --widget-select-hover-color: #fbf7f0;
+  --widget-select-option-bg: #171319;
+  --widget-select-option-color: #e6ddd0;
+  --widget-composer-meta-color: #8a7e71;
+  --widget-composer-scrollbar-color: rgba(200, 143, 82, 0.50);
+  --widget-token-pill-bg: rgba(27, 22, 29, 0.66);
+  --widget-token-pill-color: #b7aa98;
+
+  /* ── Interactive mode — brass for active selection ── */
+  --widget-interactive-card-border: rgba(200, 143, 82, 0.24);
+  --widget-interactive-intro-color: rgba(243, 237, 228, 0.92);
+  --widget-interactive-option-bg: rgba(23, 19, 25, 0.36);
+  --widget-interactive-option-border: rgba(200, 143, 82, 0.18);
+  --widget-interactive-option-color: rgba(243, 237, 228, 0.92);
+  --widget-interactive-option-hover-bg: rgba(40, 33, 42, 0.52);
+  --widget-interactive-option-hover-border: rgba(200, 143, 82, 0.36);
+  --widget-interactive-option-selected-bg: rgba(200, 143, 82, 0.30);
+  --widget-interactive-option-selected-border: rgba(224, 176, 114, 0.50);
+  --widget-interactive-option-selected-color: #fbf7f0;
+  --widget-interactive-input-bg: rgba(16, 13, 17, 0.88);
+  --widget-interactive-input-color: rgba(246, 241, 233, 0.94);
+  --widget-interactive-label-color: rgba(158, 146, 132, 0.86);
+  --widget-interactive-prompt-color: rgba(246, 241, 233, 0.94);
+  --widget-interactive-note-color: rgba(176, 165, 150, 0.74);
+  --widget-interactive-disabled-color: rgba(158, 146, 132, 0.5);
+  --widget-input-focus-border: rgba(200, 143, 82, 0.40);
+  --widget-input-focus-glow: rgba(200, 143, 82, 0.20);
+
+  /* ── Activity states — brass pending, sage success ── */
+  --widget-activity-pending-glow: rgba(200, 143, 82, 0.10);
+  --widget-activity-pending-border: rgba(200, 143, 82, 0.50);
+  --widget-activity-pending-color: #e0b072;
+  --widget-activity-success-color: rgba(168, 196, 142, 0.92);
+  --widget-activity-error-color: #ea9d90;
+  --widget-activity-pulse-color: rgba(200, 143, 82, 0.16);
+
+  /* ── Attachments ── */
+  --widget-attachment-bg: rgba(24, 19, 26, 0.88);
+  --widget-attachment-border: rgba(200, 143, 82, 0.18);
+  --widget-attachment-color: #e6ddd0;
+  --widget-attachment-meta-color: #7f7468;
+  --widget-attachment-remove-color: #b7aa98;
+  --widget-attachment-clear-color: #7f7468;
+
+  /* ── Popover badge & stop ── */
+  --widget-stop-bg: rgba(214, 104, 88, 0.16);
+  --widget-stop-color: #ea9d90;
+
+  /* ── Composer holo draw ── */
+  --composer-holo-opacity-active: 0.62;
+  --composer-holo-opacity-streaming: 0.54;
+  --composer-holo-draw-glow-alpha-scale: 1.65;
+
+  /* ── Settings shell — brass badge, slate live accent ── */
+  --widget-settings-badge-bg: rgba(200, 143, 82, 0.18);
   --settings-shell-accent: var(--mat-live-accent);
   --settings-shell-nav-bg: var(--surface-sidebar-background);
   --settings-shell-masthead-bg: var(--surface-card-background);
   --settings-shell-panel-bg: var(--surface-card-background);
   --settings-shell-field-bg: var(--surface-input-background);
-
 }

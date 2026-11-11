@@ -156,3 +156,38 @@ describe('suggest_next_step registration', () => {
     assert.equal(names({ toolsNextStepEnabled: true }).includes('suggest_next_step'), true);
   });
 });
+
+describe('suggest_next_step action message spellings', () => {
+  const withAction = (action) => ({ recap: 'Done.', question: 'Next?', actions: [action] });
+
+  test('action or text is accepted for message when message is absent', async () => {
+    for (const key of ['action', 'text']) {
+      const result = await run(withAction({ label: 'Commit', [key]: 'Commit it.' }));
+      assert.notEqual(result.isError, true, key);
+      assert.deepEqual(result.metadata.actions, [{ label: 'Commit', message: 'Commit it.' }], key);
+    }
+  });
+
+  test('a repeated value under several names is fine', async () => {
+    const result = await run(withAction({ label: 'Go', message: 'Do it.', text: 'Do it.' }));
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(result.metadata.actions, [{ label: 'Go', message: 'Do it.' }]);
+  });
+
+  test('different values under two names fail and say which names conflict', async () => {
+    // A present message wins; an extra name beside it is ignored, as it always was.
+    const result = await run(withAction({ label: 'Go', message: 'Do it.', action: 'commit' }));
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(result.metadata.actions, [{ label: 'Go', message: 'Do it.' }]);
+    const both = await run(withAction({ label: 'Go', action: 'A.', text: 'B.' }));
+    assert.equal(both.isError, true);
+    assert.match(both.content, /action/);
+    assert.match(both.content, /text/);
+  });
+
+  test('a message that is not text still fails as before', async () => {
+    const result = await run(withAction({ label: 'Go', action: 5 }));
+    assert.equal(result.isError, true);
+    assert.match(result.content, /message must be a string/);
+  });
+});

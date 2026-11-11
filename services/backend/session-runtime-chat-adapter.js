@@ -5,7 +5,7 @@ const { prepareLocalEngineChatRequest } = require('./local-engine-requests');
 const { prepareManagedSession } = require('./managed-sidecar-session-preflight');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
-const { inferEngineTypeFromModel, normalizeManagedToolPreferences } = require('./backend-service-utils');
+const { inferEngineTypeFromModel, requestToolPreferences } = require('./backend-service-utils');
 const { resolveSessionLockdownRequest } = require('./session-lockdown-gate');
 const { preemptAuxiliaryInference, preemptibleAuxiliaryCount } = require('./auxiliary-preemption');
 const { assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible, assertRuntimeTranscriptAdmission } = require('./chat-turn-admission');
@@ -22,6 +22,7 @@ const { hydrateRuntimeContinuation, pausedOutcome } = require('./runtime-continu
 const { getManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { managedServerKindForModel } = require('./ninfer-load-path');
 const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
+const { maybeGenerateSessionTitle } = require('./session-auto-title');
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -137,7 +138,7 @@ class SessionRuntimeChatAdapter {
       this.service,
       session,
       { requestedEngine: route.engine_type, requestedModel: copy.runtimePreferredModel },
-      normalizeManagedToolPreferences(copy.toolPreferences, { catalog: this.service.currentStatus?.tools_status })
+      requestToolPreferences(copy.toolPreferences, { catalog: this.service.currentStatus?.tools_status, session, applicationTurn: copy.applicationTurn })
     );
     copy.toolPreferences = lockdown.toolPreferences;
     copy.runtimePreferredEngineType = route.engine_type;
@@ -646,6 +647,8 @@ class SessionRuntimeChatAdapter {
         && (beforeClose.inference?.quarantined ?? beforeClose.quarantined) === 0;
       const toolCleanupPending = turnSettled && !providerSettled && managed.status !== 'paused';
       gateway.close({ producerSettled: providerSettled });
+      // Row 112: after the close, which gives back the inference slot the naming call needs.
+      if (managed.status === 'completed' && providerSettled) void maybeGenerateSessionTitle(this.service, work.session_id);
       if (toolCleanupPending) {
         turnSettledWithToolCleanupPending = true;
         this.service._emitServiceLog?.('WARN', 'session_runtime.tool_cleanup_pending', {

@@ -497,7 +497,7 @@
       observer.disconnect();
       if (typeof stopProgress === 'function') stopProgress();
     }
-    if (typeof root.addEventListener === 'function') root.addEventListener('beforeunload', dispose, { once: true });
+    if (typeof root.addEventListener === 'function') root.addEventListener('pagehide', dispose, { once: true });
     root.document.addEventListener('change', function (event) {
       // aria-disabled = the inert-readable lock (offline/auth/plugin): a
       // label-forwarded change on a locked select must not reach the

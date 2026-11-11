@@ -14,9 +14,10 @@ test.afterEach(cleanupTrackedResources);
 
 const methods = ['getState', 'install', 'cancelInstall', 'remove', 'chooseRuntime',
   'clearRuntime', 'chooseModelFolder', 'scanModels', 'saveModelSet', 'listModelSets',
-  'removeModelSet', 'setDefaultModelSet', 'reconcile', 'forceClear'];
+  'removeModelSet', 'setDefaultModelSet', 'reconcile', 'forceClear',
+  'chooseComfyFolder', 'checkComfyFolder', 'saveComfySet'];
 const payloadless = ['getState', 'cancelInstall', 'chooseRuntime', 'clearRuntime',
-  'chooseModelFolder', 'listModelSets', 'reconcile'];
+  'chooseModelFolder', 'listModelSets', 'reconcile', 'chooseComfyFolder', 'checkComfyFolder'];
 const validSet = { root: 'Z:\\models', diffusion: 'diffusion.bin', text_encoder: 'encoder.bin',
   vae: 'vae.bin', family: 'test_family', label: 'Test set' };
 
@@ -44,11 +45,14 @@ function fixture({ models = {}, platform = 'win32', tools = false } = {}) {
     dialogImpl: { showOpenDialog: async (...args) => { calls.push(['dialog', ...args]); return pick; } },
   };
   const fakeModels = Object.fromEntries(['scanModelFolder', 'saveModelSet', 'listModelSets',
-    'removeModelSet', 'setDefaultModelSet', 'loadFamilies'].map((name) => [name, (...args) => {
+    'removeModelSet', 'setDefaultModelSet', 'loadFamilies', 'loadRecipes', 'comfyFolderHealth', 'setComfyFolder',
+    'saveComfyModelSet'].map((name) => [name, (...args) => {
     calls.push([name, ...args]);
     if (models[name]) return models[name](...args);
     if (name === 'listModelSets') return { sets: [{ id: 'abcdef012345' }], default_id: 'abcdef012345' };
     if (name === 'loadFamilies') return { families: { test_family: { label: 'Test family' } } };
+    if (name === 'loadRecipes') return { recipes: { test_recipe: { label: 'Test recipe', min_comfyui_version: '0.1.0', locked: { steps: 4 } } } };
+    if (name === 'comfyFolderHealth') return null;
     return { ok: true };
   }]));
   const modelPath = require.resolve('../services/image-model-sets');
@@ -240,6 +244,8 @@ test('state merges engine, handoff, model sets and family labels in one call', a
   assert.deepEqual(await f.invoke('getState'), { ok: true, status: 'installed', handoff: { active: false, retained: false, closing: false },
     model_sets: { sets: [{ id: 'abcdef012345' }], default_id: 'abcdef012345' },
     families: { test_family: { label: 'Test family' } },
+    comfyui: { enabled: true, health: null },
+    recipes: { test_recipe: { label: 'Test recipe', min_comfyui_version: '0.1.0', steps: 4 } },
   });
   delete f.backendService.chatGpuHandoff;
   assert.equal((await f.invoke('getState')).handoff, null);

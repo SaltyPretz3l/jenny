@@ -21,6 +21,8 @@ from sidecar.ai.tools.failure_taxonomy import (
     failure_log_level,  # noqa: F401 - router log re-export.
 )
 from sidecar.ai.tools.prompt_marker_guard import neutralize_prompt_markers
+from sidecar.ai.tools.secret_redaction import has_secret_pattern as _has_secret_pattern
+from sidecar.ai.tools.secret_redaction import redact_obvious_secrets
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
@@ -84,57 +86,30 @@ def _is_tool_call_blocks_only(text: str) -> bool:
             position += 1
     return True
 
-_SECRET_PATTERNS = (
-    # Provider keys with dashes/underscores in the body (sk-ant-api03-..., sk-proj-...).
-    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{8,}\b"),
-    re.compile(r"\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{16,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-    # PEM private-key blocks, whole.
-    # The body never re-enters a header and is bounded (an 8192-bit RSA key is
-    # ~6.5 KiB), so thousands of unmatched headers scan linearly.
-    re.compile(
-        r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----(?:(?!-----BEGIN)[\s\S]){0,16384}?"
-        r"-----END [A-Z ]{0,40}PRIVATE KEY-----"
-    ),
-    # URL userinfo: the user:password between the scheme and the host.
-    re.compile(r"(?i)(?<=://)[^\s/:@]+:[^\s/@]+(?=@)"),
-    # Named credentials, including JSON/quoted keys and values and compound
-    # names such as aws_secret_access_key (tool review C7 #3). The match
-    # starts at the keyword (`aws_` survives, the value never does) and the
-    # suffix is bounded: an optional prefix group made `token_token_...`
-    # cubic.
-    re.compile(
-        r"(?i)(?<![A-Za-z0-9])"
-        r"(api[_-]?key|api-key|authorization|token|secret|password|passwd|dsn)"
-        r"(?:_[a-z0-9_]{1,48})?[\"']?\s*[:=]\s*(?:Bearer\s+)?[\"']?([^\s,;'\"{}]+)"
-    ),
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b"),
-    re.compile(
-        r"(?i)\b(?:X-Amz-(?:Signature|Credential|Security-Token)|signature|sig)"
-        r"\s*[:=]\s*([^\s,;'\"{}&]+)"
-    ),
-    re.compile(r"\beyJ[A-Za-z0-9_=-]+\.eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]{8,}\b"),
-)
-
 PROMPT_INJECTION_PATTERNS = (
     (
         "hidden_html_comment",
+        # A directive inside the comment, not a keyword after `-->` or `post-1.2.0`.
         re.compile(
-            r"(?is)<!--(?=[\s\S]{0,1000}?"
-            r"(?:ignore|disregard|reveal|system\s+prompt|developer\s+prompt|"
-            r"instructions?|exfiltrat|upload|send|post))[\s\S]*?-->"
+            r"(?is)<!--(?=(?:(?!-->)[\s\S]){0,1000}?"
+            r"(?:\b(?:ignore|disregard|reveal)\b|\b(?:system|developer)\s+prompt\b|exfiltrat"
+            r"|\binstructions?\s*:|\b(?:new|hidden|secret|real|updated)\s+instructions?\b"
+            r"|\b(?:send|post|upload|email)(?:s|ed|ing)?\b(?:(?!-->)[\s\S]){0,80}?"
+            r"(?:https?://|\bto\s+[\w.-]+\.[a-z]{2,}\b|id_rsa|\.ssh|\.aws|\.env\b"
+            r"|credentials?|api[_-]?key|\btoken|password|secret)))[\s\S]*?-->"
         ),
     ),
     (
+        # One line, whole words: across lines `read`, `token` and `send` turn up in
+        # ordinary code (`store.consume(payload.token)` ... `sender.send(result)`).
         "data_exfiltration",
         re.compile(
-            r"(?is)\b(?:base64|encode|zip|tar|cat|read|copy|extract)"
+            r"(?i)\b(?:base64|encod(?:e|es|ed|ing)|zip|tar|cat|read(?:s|ing)?"
+            r"|cop(?:y|ies|ied|ying)|extract(?:s|ed|ing)?)\b"
             r".{0,120}\b(?:secret|token|password|api[_-]?key|credential|"
             r"\.env|id_rsa|ssh|private\s+key)"
-            r".{0,160}\b(?:https?://|post|send|upload|exfiltrat|curl|wget)"
+            r".{0,160}(?:https?://|exfiltrat"
+            r"|\b(?:post(?:s|ed|ing)?|send(?:s|ing)?|sent|upload(?:s|ed|ing)?|curl|wget)\b)"
         ),
     ),
     ("ignore_previous", re.compile(r"(?i)ignore\s+all\s+previous\s+instructions")),
@@ -160,11 +135,23 @@ PROMPT_INJECTION_PATTERNS = (
     ("override_instructions", re.compile(r"(?i)(?:new|updated|override)\s+instructions")),
     (
         "new_session",
-        re.compile(r"(?i)(?:begin|start)\s+(?:a\s+)?new\s+(?:conversation|session)"),
+        # `Start a new session` alone is UI and error copy; a start-directive needs a
+        # continuation that tells the model what the new session is.
+        re.compile(
+            r"(?i)begin\s+(?:a\s+)?new\s+(?:conversation|session)"
+            r"|start\s+(?:a\s+)?new\s+(?:conversation|session)"
+            r"(?=[ \t]*[:,-]|\s+(?:and|where|in\s+which|with|as|now)\b"
+            r"|[ \t]*[.;(][ \t]*(?:from\s+now|you\b|ignore|forget|obey|disregard|act\b"
+            r"|pretend|system\b))"
+        ),
     ),
     (
+        # `the tool output above` is prose; the directive names what to echo.
         "echo_prior_context",
-        re.compile(r"(?i)(?:output|repeat|print)\s+(?:the\s+)?(?:above|previous|system)"),
+        re.compile(
+            r"(?i)\b(?:output|repeat|print)\s+(?:the\s+(?:above|previous|system)\b"
+            r"|(?:above|previous|system)\s+(?:text|prompt|instructions?|messages?|context))"
+        ),
     ),
     ("role_marker", re.compile(r"\[(?:SYSTEM|USER|ASSISTANT)\]")),
 )
@@ -403,14 +390,6 @@ def _apply_prompt_injection_patterns(normalized: str) -> tuple[str, tuple[str, .
     return normalized, tuple(matched_families)
 
 
-def redact_obvious_secrets(text: str) -> str:
-    """Redact common credential shapes from diagnostic or model-bound text."""
-    redacted = text
-    for pattern in _SECRET_PATTERNS:
-        redacted = pattern.sub("[REDACTED]", redacted)
-    return redacted
-
-
 def _redact_inline_data_uris(text: str) -> str:
     """Strip large inline base64 data URIs from model-visible tool output."""
 
@@ -429,10 +408,6 @@ def _matched_prompt_injection_families_normalized(normalized: str) -> tuple[str,
         for family, pattern in PROMPT_INJECTION_PATTERNS
         if pattern.search(normalized) is not None
     )
-
-
-def _has_secret_pattern(text: str) -> bool:
-    return any(pattern.search(text) is not None for pattern in _SECRET_PATTERNS)
 
 
 def scrub_memory_text(text: str) -> tuple[str, bool]:
@@ -567,6 +542,14 @@ def _visible_cut_index(text: str, limit: int) -> int:
     return best if best > 0 else limit
 
 
+def _width_variant_matters(normalized: str) -> bool:
+    """True when the NFKC text holds a prompt marker or credential the raw text may hide."""
+    return (
+        neutralize_prompt_markers(normalized) != normalized
+        or redact_obvious_secrets(normalized) != normalized
+    )
+
+
 def sanitize_tool_output_no_truncate(
     output: object,
     *,
@@ -580,10 +563,15 @@ def sanitize_tool_output_no_truncate(
     omission store hold only already-redacted bytes.
     """
     raw = str(output or "")
-    normalized = _normalize_whitespace_and_control(raw)
-    normalized = _normalize_prompt_text(normalized)
-    normalized = strip_special_tokens(normalized)
-    normalized = neutralize_prompt_injection(normalized, tool_name=tool_name)
+    cleaned = strip_invisible_chars(_normalize_whitespace_and_control(raw))
+    normalized = _normalize_prompt_text(cleaned)
+    if has_control_tokens(normalized) or _matched_prompt_injection_families_normalized(normalized):
+        normalized = strip_special_tokens(normalized)
+        normalized = neutralize_prompt_injection(normalized, tool_name=tool_name)
+    elif normalized == cleaned or not _width_variant_matters(normalized):
+        # NFKC only serves to catch width variants; otherwise file text keeps `…`
+        # and `²`, so a model editing what it read writes them back unchanged.
+        normalized = cleaned
     # Escape wire-level prompt markers (cache boundary, Llama
     # <<SYS>>/<</SYS>>) that slip past the token/injection regexes.
     normalized = neutralize_prompt_markers(normalized)
@@ -606,5 +594,7 @@ def sanitize_tool_output(
 
 def wrap_untrusted_tool_output(text: str) -> str:
     """Wrap raw tool data in explicit boundaries for model consumption."""
-    body = str(text or "")
+    # The data cannot be allowed to end its own wrapper: page text reaches this path.
+    body = str(text or "").replace(_UNTRUSTED_OPEN_TAG, "<untrusted_tool_output[escaped]>")
+    body = body.replace(_UNTRUSTED_CLOSE_TAG, "</untrusted_tool_output[escaped]>")
     return f"{_UNTRUSTED_OPEN_TAG}\n{body}\n{_UNTRUSTED_CLOSE_TAG}"

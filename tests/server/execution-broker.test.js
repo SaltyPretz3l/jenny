@@ -28,6 +28,11 @@ test('command contract rejects escaping cwd, extra fields and unbounded argument
     assert.throws(() => validateCommand({ command: 'true', ...changes }), /sandbox_/);
   }
 });
+test('the hosted broker always reports the disposable copy, even when asked for a synced workspace', (t) => {
+  const broker = new ExecutionBroker({ userDataPath: fixture(t), workspace: 'synced', request: async () => ready() });
+  assert.equal(broker.status().workspace, 'disposable_copy');
+});
+
 test('terminal result and drain wait for a different authenticated incarnation', async (t) => {
   let state = ready();
   let waiting;

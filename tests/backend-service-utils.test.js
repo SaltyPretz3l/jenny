@@ -259,23 +259,24 @@ test('normalizeManagedToolPreferences ignores absent or invalid payloads', () =>
   assert.equal(normalizeManagedToolPreferences(null), undefined);
   assert.equal(normalizeManagedToolPreferences('invalid'), undefined);
   assert.equal(normalizeManagedToolPreferences([]), undefined);
-  assert.equal(normalizeManagedToolPreferences({}), undefined);
+  // Row 114: an object with no known toggle still resolves, and the default-off browser is denied.
+  assert.deepEqual(normalizeManagedToolPreferences({}), { disabled_tools: ['browser'] });
 });
 
 test('normalizeManagedToolPreferences maps known false toggle to a deny-list', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ web_search: false }), {
-    disabled_tools: ['fetch_url', 'web_search'],
+    disabled_tools: ['browser', 'fetch_url', 'web_search'],
   });
 });
 
 test('normalizeManagedToolPreferences leaves all tools available for true legacy toggles', () => {
-  assert.equal(normalizeManagedToolPreferences({ web_search: true }), undefined);
-  assert.equal(normalizeManagedToolPreferences({ file_tools: true }), undefined);
+  assert.deepEqual(normalizeManagedToolPreferences({ web_search: true }), { disabled_tools: ['browser'] });
+  assert.deepEqual(normalizeManagedToolPreferences({ file_tools: true }), { disabled_tools: ['browser'] });
 });
 
 test('normalizeManagedToolPreferences maps Bash false to all six shell tools', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ Bash: false }), {
-    disabled_tools: ['check_background_job', 'check_monitor', 'monitor',
+    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
       'run_command', 'run_temp_script', 'stop_background_job'],
   });
 });
@@ -298,7 +299,7 @@ test('normalizeManagedToolPreferences resolves raw families and catalog connecti
   };
   assert.deepEqual(normalizeManagedToolPreferences({ families: { web: false },
     connections: { 'mcp:github': false, 'plugin:render': false } }, { catalog }), {
-    disabled_tools: ['fetch_url', 'mcp__github__search', 'plugin_render', 'web_search'],
+    disabled_tools: ['browser', 'fetch_url', 'mcp__github__search', 'plugin_render', 'web_search'],
   });
 });
 
@@ -318,13 +319,13 @@ test('normalizeManagedToolPreferences is idempotent across raw, legacy, and requ
 });
 
 test('normalizeManagedToolPreferences ignores unknown keys and non-boolean values', () => {
-  assert.equal(
+  assert.deepEqual(
     normalizeManagedToolPreferences({
       unknown_toggle: false,
       web_search: 'false',
       Bash: 1,
     }),
-    undefined
+    { disabled_tools: ['browser'] }
   );
 });
 

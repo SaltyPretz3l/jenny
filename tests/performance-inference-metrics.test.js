@@ -215,12 +215,14 @@ test('out-of-range fields are nulled and a cached > processed contradiction disa
   assert.equal(cache.state, 'unavailable');
 });
 
-test('only a live-capable provider reports a warming live metric; llama-server and ollama stay unavailable', () => {
-  const ninfer = fresh();
-  ninfer.observe(payload({ phase: 'waiting' }), 1);
-  assert.equal(ninfer.project(2).live_decode.state, 'warming');
-  assert.equal(ninfer.project(2).live_prefill.state, 'warming');
-  for (const provider_kind of ['llama-server', 'ollama', 'other']) {
+test('only a live-capable provider reports a warming live metric; ollama and others stay unavailable', () => {
+  for (const provider_kind of ['ninfer', 'llama-server']) {
+    const live = fresh();
+    live.observe(payload({ phase: 'waiting', provider_kind }), 1);
+    assert.equal(live.project(2).live_decode.state, 'warming', provider_kind);
+    assert.equal(live.project(2).live_prefill.state, 'warming', provider_kind);
+  }
+  for (const provider_kind of ['ollama', 'other']) {
     const metrics = fresh();
     metrics.observe(payload({ phase: 'waiting', provider_kind }), 1);
     assert.equal(metrics.project(2).live_decode.state, 'unavailable', provider_kind);

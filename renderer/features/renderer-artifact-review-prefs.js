@@ -89,6 +89,8 @@
     // `subagents`: the loader and saver never carry the mode, so a restart cannot
     // reopen the rail.
     if (raw === 'notes') return 'notes';
+    // The browser panel (renderer-browser-use-panel.js). Renderer-local too: its page never outlives the app.
+    if (raw === 'browser') return 'browser';
     return 'artifact';
   }
 

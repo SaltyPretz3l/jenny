@@ -8,6 +8,15 @@ preload bundle when needed), and uses the checkout's `.venv/Scripts/python.exe`
 to run current sidecar source. It does not launch the public unpacked executable
 or require an installer rebuild for source changes.
 
+In a terminal window the launcher prints a readable console instead of the raw
+diagnostic JSON: one row per entry, consecutive repeats folded into a count,
+DEBUG and a short list of quiet events hidden, a rule per chat turn, warnings
+and errors always whole. `JENNY_DEV_CONSOLE=verbose` shows the hidden entries,
+`JENNY_DEV_CONSOLE=raw` prints the JSON lines, and `JENNY_DEV_CONSOLE_HIDE`
+takes a comma-separated list of extra event prefixes to hide. Piped output and
+`npm run dev:agent` always get the JSON lines; `logs/shell.log` is unaffected.
+The formatter lives in `scripts/dev/dev-console-formatter.js`.
+
 Development and public Jenny share the user's existing chats and settings. Close
 the other instance before starting Dev; a busy profile produces a clear startup
 message. The Dev launcher never performs process cleanup automatically.
@@ -81,6 +90,10 @@ majors are intentionally rejected before dependency installation.
   variables, never through committed certificate paths:
   - `WIN_CSC_LINK` or `CSC_LINK`
   - `WIN_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD`
+- Azure Artifact Signing is the preferred Windows route and needs no
+  certificate file; see "Signing (upgrade path)" below. It is opt-in in CI
+  through `scripts/packaging/windows_signing.py`, never in
+  `electron-builder.yml` itself.
 - `electron-builder.yml` intentionally omits `certificateFile` and
   `certificatePassword` so local unsigned smoke builds can pass without a
   developer certificate.
@@ -282,6 +295,42 @@ with the `media` extra keeps PyMuPDF for local PDF reads.
   bundled runtime asset requires a provenance manifest with source URL, version,
   hashes, update policy, and explicit `electron-builder.yml` wiring.
 
+### Native launcher (Windows)
+`jenny-launch.exe` is a small program that the sidecar starts commands, git
+calls and test-runner helpers through on Windows. It is built from the Rust
+crate in `native/jenny-launch/` by `scripts/packaging/build_native_launcher.py`
+(`npm run build:launcher`), which needs `cargo` on the build machine. The script
+copies the result to `build/sidecar/jenny-launch.exe` and writes
+`build/sidecar/jenny-launch.manifest.json` with the hash, the toolchain versions
+and the crates it was built from. `electron-builder.yml` ships the whole
+`build/sidecar/` directory, so the launcher lands in `resources/sidecar/`. The
+script runs after the sidecar build because that build can clear the directory.
+It skips itself on other operating systems, and `--allow-missing-toolchain`
+makes a missing `cargo` a skip instead of an error.
+
+A build without the launcher still works: the sidecar falls back to its Python
+child. Setting `JENNY_ENABLE_NATIVE_LAUNCHER=0` turns the launcher off and uses
+that Python child even when the launcher is present.
+
+### Team bridge (all platforms)
+`jenny-team-bridge` is the Rust program that carries the team server's
+connections (see `docs/plans/TEAM_MEMBERSHIP_SPEC.md`). It is built from the
+crate in `native/jenny-team-bridge/` by `scripts/packaging/build_team_bridge.py`
+(`npm run build:team-bridge`), which needs `cargo` from Rust 1.91 or newer on the
+build machine. Unlike the launcher it builds on Windows, macOS and Linux, and a
+missing `cargo` is an error. The script deletes the previous binary, builds with
+`--locked`, checks that `--version` prints `jenny-team-bridge protocol 1` (on
+Windows it also checks that the C runtime is linked in), copies the result to
+`build/sidecar/jenny-team-bridge` (`.exe` on Windows) and writes
+`build/sidecar/jenny-team-bridge.manifest.json` with the hash, the toolchain
+versions and the crates it was built from. `electron-builder.yml` ships the
+whole `build/sidecar/` directory, so it lands in `resources/sidecar/`, and
+`build/afterPack.js` sets its executable bit on macOS and Linux. The `pack:*`
+scripts and the release workflows run it after the sidecar build, which can
+clear the directory. The release workflows pin one Rust toolchain for all three
+systems; the Linux build installs it with rustup inside the Ubuntu 22.04
+container.
+
 ## Distributing Jenny
 
 ### One-command packaged installation
@@ -403,8 +452,10 @@ CI then, per OS runner:
 1. Sets up Node (from `.nvmrc`) + Python 3.11.
 2. Builds the platform sidecar (`scripts/packaging/build_sidecar_artifact.py` →
    `sidecar.exe` on Windows, `sidecar` on macOS).
-3. Runs `electron-builder --win|--mac --publish never`. No native host is built or
-   shipped, so the release workflow needs no Rust toolchain.
+3. On Windows, builds the native launcher with
+   `scripts/packaging/build_native_launcher.py`, which needs a Rust toolchain
+   (`cargo`) on the build machine. No other OS needs a Rust toolchain. Then runs
+   `electron-builder --win|--mac --publish never`.
 4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar architecture,
    bundled preload, runtime provenance, and framed initialize through
    `scripts/packaging/verify_macos_release.py` before upload.
@@ -461,10 +512,41 @@ Tell friends to expect this; it is normal for an unsigned indie app.
 
 ### Signing (upgrade path — removes the warnings)
 
-Add these as GitHub Actions repo secrets; the release workflow uses them
+Add these to the public release repository (`SaltyPretz3l/jenny`, Settings →
+Secrets and variables → Actions); the release workflow uses them
 automatically (no workflow edit needed):
 
-- **Windows Authenticode:** `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`.
+- **Windows, Azure Artifact Signing (preferred):** set all seven or none.
+  - Repository *variables*: `JENNY_AZURE_SIGNING_ENDPOINT` (the region
+    endpoint, such as `https://eus.codesigning.azure.net/`),
+    `JENNY_AZURE_SIGNING_ACCOUNT` (the Artifact Signing account name),
+    `JENNY_AZURE_SIGNING_PROFILE` (the Public Trust certificate profile name)
+    and `JENNY_AZURE_SIGNING_PUBLISHER` (the certificate's subject CN, exactly:
+    for an individual identity this is your validated legal name).
+  - Repository *secrets*: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and
+    `AZURE_CLIENT_SECRET` for an Entra app registration that holds the
+    "Artifact Signing Certificate Profile Signer" role on the profile.
+  - With all seven set, the Windows job builds from a generated config that
+    extends `electron-builder.yml` with `win.azureSignOptions`,
+    `verifyUpdateCodeSignature: true` and `forceCodeSigning: true`, then
+    "Verify Windows signatures" fails the job unless the installer and every
+    `.exe` in `win-unpacked` has a valid signature from that publisher.
+    Vendor-signed executables keep their own signature (`win.signExts`):
+    `python.exe` and `pythonw.exe` (Python Software Foundation) and node-pty's
+    `OpenConsole.exe` (Microsoft). Signing changes `sidecar.exe`'s bytes, so
+    `build/afterPack.js` re-records its hash in the packaged
+    `resources/sidecar/manifest.json` (keeping the build-time hash as
+    `unsigned_sha256`); without that the app would refuse to start the
+    sidecar. With none set the build stays unsigned; with only some set the
+    job fails.
+  - Once a signed release has shipped, keep signing on: signed installs accept
+    only updates signed by the same publisher. Installs from unsigned releases
+    record no publisher and update to a signed release normally.
+  - SmartScreen still warns until Microsoft has seen enough clean installs of
+    files signed by that publisher; the warning text sections and
+    README/FAQ wording change only after a signed release ships.
+- **Windows Authenticode, certificate file:** `WIN_CSC_LINK`,
+  `WIN_CSC_KEY_PASSWORD`. Ignored when Azure signing is configured.
 - **Apple Developer ID** ($99/yr): `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,
   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Then add `notarize: true` to
   the `mac` block in `electron-builder.yml`.
@@ -476,8 +558,8 @@ Windows NSIS and eligible writable AppImages can offer download followed by
 explicit installation. Other formats offer manual release-page navigation.
 No automatic download or install-on-quit is enabled.
 
-For the unsigned Windows channel, preserve the existing
-`verifyUpdateCodeSignature` setting; revisit it when signing changes. Mac remains
+`electron-builder.yml` keeps `verifyUpdateCodeSignature: false` for unsigned
+builds; only the Azure-signed release config turns it on. Mac remains
 manual until the implementation, signed artifacts and native upgrade path are
 qualified together. Build configuration alone does not establish Mac updates
 or asset availability.
@@ -557,7 +639,7 @@ operator checklist for what must be present before promotion.
 | Packaged sidecar artifact | `build/sidecar/manifest.json` and packaged `resources/sidecar/manifest.json` | Manifest `api_version`, `artifact_name`, `sha256`, `git_commit`, and artifact bytes are recorded. |
 | Builder environment | CI run metadata or local release worksheet | Windows builder, `.nvmrc`, npm lock install, Python 3.11, all three hashed Python locks, `--no-build-isolation`, `pip check`, and `SOURCE_DATE_EPOCH` state are recorded. |
 | Managed Python runtime bundle | `config/python-runtime-bundle-lock.json`, generated embed/wheel manifests, packaged `resources/python-*` | CPython 3.13.14 source hash, lock fingerprints, every generated file hash, and packaged resource presence pass the fail-closed checker. |
-| Signing state | `electron-builder.yml`, CI signing secrets, `signtool verify` when available | Release notes say signed, unsigned, unsigned-dev, or blocked. Signing status must be explicit; current owner-approved Windows releases are unsigned. |
+| Signing state | `electron-builder.yml`, CI signing variables and secrets, the release job's "Verify Windows signatures" step, `signtool verify` when available | Release notes say signed, unsigned, unsigned-dev, or blocked. Signing status must be explicit; current owner-approved Windows releases are unsigned until the Azure Artifact Signing settings are configured and a signed release has been verified. |
 | Notarization state | Platform release notes | Windows-only releases record `not applicable`. Experimental macOS build verification does not qualify a public notarized channel; native install/launch evidence and signing/notarization gates remain required. |
 | Automated packaged smoke | `npm run release:smoke`, `artifacts/logs/packaging-smoke-phase4.log` | Smoke validates sidecar manifest integrity, source freshness, initialize probe, launch resolver, packaged app readiness, and `launchSource == "packaged-binary"`. |
 | Core local-model evidence | `docs/operations/release-evidence/w1-a-core-local-model.json` plus its ignored artifact references | Exact release targets, live Ollama reliability/sampling, direct-vLLM disposition, real vision/refusal, packaged readiness, and managed restart rehydration are explicit; any blocked direct engine or owner UI gate holds W1-A. |

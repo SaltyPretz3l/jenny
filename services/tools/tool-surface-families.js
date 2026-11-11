@@ -12,8 +12,10 @@ const SURFACE_FAMILIES = Object.freeze([
   { id: 'artifacts', section: 'create', sidecarFamilies: ['artifact', 'diagram'], toolNames: [] },
   { id: 'images', section: 'create', sidecarFamilies: [], toolNames: ['image_generate'] },
   { id: 'web', section: 'reach', sidecarFamilies: ['web'], toolNames: [] },
+  // Row 114: the model-driven browser; off unless a chat's switch says true (DEFAULT_OFF_FAMILIES below).
+  { id: 'browser_use', section: 'reach', sidecarFamilies: ['browser_use'], toolNames: [] },
   { id: 'knowledge', section: 'reach', sidecarFamilies: ['knowledge'], toolNames: [] },
-  { id: 'home', section: 'reach', sidecarFamilies: ['home'], toolNames: ['automation_list', 'automation_read'] },
+  { id: 'home', section: 'reach', sidecarFamilies: ['home'], toolNames: ['automation_list'] },
   // Row 69 Q6 (2026-10-20): the session directory joined Helpers when it left the always-on list.
   { id: 'helpers', section: 'reach', sidecarFamilies: [],
     toolNames: ['delegate', 'sessions_list', 'session_status', 'session_transcript', 'session_stop',
@@ -31,6 +33,15 @@ const SURFACE_FAMILIES = Object.freeze([
       'away_digest'] },
 ].map(family => Object.freeze({ ...family,
   sidecarFamilies: Object.freeze(family.sidecarFamilies), toolNames: Object.freeze(family.toolNames) })));
+
+// Every other family is on until a chat switches it off. These are off until a chat switches them on,
+// so a request that carries no preference (delegates, scheduled turns, CLI, hosted) never offers them.
+const DEFAULT_OFF_FAMILIES = new Set(['browser_use']);
+
+// A request that names no preference still follows the chat's own switch for these.
+function defaultOffFamilySwitches(overrides) {
+  return Object.fromEntries([...DEFAULT_OFF_FAMILIES].map(id => [id, overrides?.[id] === true]));
+}
 
 const ALWAYS_ON_TOOL_NAMES = Object.freeze([
   'ask_user', 'suggest_next_step', 'exit_plan_mode', 'todo_write', 'todo_read', 'operation_status', 'jenny_status',
@@ -75,8 +86,8 @@ function resolveRequestToolPreferences(raw, catalog) {
     ? raw.families : {};
   const connections = raw?.connections && typeof raw.connections === 'object' && !Array.isArray(raw.connections)
     ? raw.connections : {};
-  const disabledFamilies = new Set(SURFACE_FAMILIES.filter(family => families[family.id] === false)
-    .map(family => family.id));
+  const disabledFamilies = new Set(SURFACE_FAMILIES.filter(family => families[family.id] === false
+    || (DEFAULT_OFF_FAMILIES.has(family.id) && families[family.id] !== true)).map(family => family.id));
   if (families.files === false && typeof families.artifacts !== 'boolean') disabledFamilies.add('artifacts');
   const disabledConnections = new Set(Object.keys(connections).filter(id => connections[id] === false));
   const disabledTools = new Set();
@@ -95,4 +106,4 @@ function resolveRequestToolPreferences(raw, catalog) {
 }
 
 module.exports = { SURFACE_FAMILIES, ALWAYS_ON_TOOL_NAMES, LEGACY_TOGGLE_TO_SURFACE,
-  surfaceFamilyForTool, connectionIdForTool, resolveRequestToolPreferences };
+  surfaceFamilyForTool, connectionIdForTool, resolveRequestToolPreferences, defaultOffFamilySwitches };

@@ -4,7 +4,7 @@ from sidecar.ai.routing.loop_events import StreamResetEvent, TokenDeltaEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_loop import _empty_post_tool_context_response
-from sidecar.ai.routing.tool_loop_recovery import _max_iterations_fallback_response
+from sidecar.ai.routing.tool_loop_wind_down import _max_iterations_fallback_response
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 
 from .test_tool_loop import (
@@ -30,7 +30,6 @@ def _run(plans: list[_ToolPlan], *, engine_type=_ToolLoopEngine):
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     decision = router.build_chat_decision(
         request_id="req_empty_final_winddown",
@@ -199,7 +198,6 @@ def test_max_iteration_wind_down_resets_stale_text_before_fallback() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
     runtime = LoopRuntime(
@@ -275,13 +273,13 @@ def test_thinking_budget_checkpoint_after_tool_work_continues_instead_of_winding
 
 
 def test_wind_down_notes_never_speak_for_the_user() -> None:
-    from sidecar.ai.routing import thinking_checkpoint, tool_loop_recovery
+    from sidecar.ai.routing import thinking_checkpoint, tool_loop_wind_down
 
     for note in (
-        tool_loop_recovery._EMPTY_FINAL_WIND_DOWN,
-        tool_loop_recovery._BUDGET_EXHAUSTED_WIND_DOWN,
-        tool_loop_recovery._NO_PROGRESS_WIND_DOWN,
-        tool_loop_recovery._MAX_ITERATIONS_WIND_DOWN,
+        tool_loop_wind_down._EMPTY_FINAL_WIND_DOWN,
+        tool_loop_wind_down._BUDGET_EXHAUSTED_WIND_DOWN,
+        tool_loop_wind_down._NO_PROGRESS_WIND_DOWN,
+        tool_loop_wind_down._MAX_ITERATIONS_WIND_DOWN,
         thinking_checkpoint._THINKING_BUDGET_WIND_DOWN,
     ):
         assert "user wants" not in note.lower()
@@ -315,7 +313,6 @@ def test_max_iterations_wind_down_runs_with_thinking_off() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     decision = router.build_chat_decision(
         request_id="req_max_iteration_thinking_off",

@@ -118,7 +118,7 @@ async function mountReadingLayout(browser, { viewport, split, sidebarCollapsed =
     const view = document.getElementById('chatView');
     // mountComposer lays out a fixed two-pane grid; hand the grid back to the app's CSS.
     view.style.gridTemplateColumns = '';
-    // The app's default: the context panel is collapsed until the user opens it (renderer-context-panel-utils prefs.collapsed !== false).
+    // The app's default: the context panel is collapsed until the user opens it (renderer-chat-activity.js createContextPanelController).
     document.getElementById('chatContextPanel').classList.add('collapsed');
     view.classList.remove('chat-empty');
     view.classList.add('chat-active');

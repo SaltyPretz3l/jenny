@@ -3,7 +3,9 @@ from typing import Any
 
 import pytest
 
+from sidecar.ai.context.compaction import CompactionCircuitBreaker, compact_context
 from sidecar.ai.context.compaction_prompts import CompactionReply
+from sidecar.ai.context.token_budget import TokenBudget
 from sidecar.ai.routing import generation_runtime
 from sidecar.ai.tools.models import GenerationResult
 
@@ -80,6 +82,48 @@ def test_codex_cli_compaction_keeps_the_lowest_effort_its_models_accept(
 
     assert generate([{"role": "user", "content": "compact"}]) == "summary"
     assert observed["reasoning_effort"] == "low"
+
+
+def test_a_stalled_summary_call_is_a_timeout_and_is_not_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 2026-11-08 row 66 sitting: at 223k tokens the stream watchdog ended the
+    # summary call with its synthetic "timed out" text. Compaction read that as
+    # a sectionless reply and re-asked, a second full 5-minute prefill.
+    kernel = SimpleNamespace(
+        _config=SimpleNamespace(
+            engine_type="vllm", model="local-model", feature_flags={}, reasoning_effort="high"
+        )
+    )
+    calls: list[int] = []
+
+    def fake_stream(_kernel: object, **_kwargs: Any) -> tuple[GenerationResult, set[str]]:
+        calls.append(1)
+        stalled = "Generation timed out before the model produced any output."
+        return GenerationResult(content=stalled, finish_reason="timeout"), set()
+
+    def fake_execute(*, operation: Any, **_kwargs: Any) -> GenerationResult:
+        return operation(SimpleNamespace(max_tokens=64))
+
+    monkeypatch.setattr(generation_runtime, "stream_generate_with_tools", fake_stream)
+    monkeypatch.setattr(generation_runtime, "execute_with_provider_retry", fake_execute)
+    generate = generation_runtime.build_compaction_generate_fn(
+        kernel, request_id="req-compaction", max_tokens=64, prompt_cache_enabled=False
+    )
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Do something."}]
+    for index in range(10):
+        messages.append({"role": "assistant", "content": f"Step {index}. " + "x" * 800})
+        messages.append({"role": "user", "content": f"Next {index}."})
+
+    result = compact_context(
+        messages,
+        TokenBudget(context_window=2_000, max_output_tokens=200, reserved_for_summary=200),
+        generate_fn=generate,
+        circuit_breaker=CompactionCircuitBreaker(max_failures=3),
+    )
+
+    assert calls == [1]
+    assert result.summary_failure_code == "summary_timeout"
 
 
 def test_compaction_failure_does_not_leave_its_purpose_for_the_next_call(

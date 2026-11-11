@@ -1008,7 +1008,7 @@ def test_python_approval_is_mandatory_during_one_send_auto_run() -> None:
 
 
 def test_python_is_the_only_temp_script_language_that_launches_python() -> None:
-    # tool_execution._runs_python keys the mandatory gate on language == "python".
+    # tool_execution_admission.runs_python keys the mandatory gate on language == "python".
     from sidecar.ai.tools.builtins.temp_script_interpreter import SCRIPT_INTERPRETERS
 
     assert [

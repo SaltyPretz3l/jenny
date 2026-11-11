@@ -581,6 +581,7 @@
         ideView: 'ideView',
         ideShell: 'ideShell',
         ideMain: 'ideMain',
+        chatInput: 'chatInput',
         ideTabStrip: 'ideTabStrip',
         ideBreadcrumbs: 'ideBreadcrumbs',
         ideDiffToolbar: 'ideDiffToolbar',

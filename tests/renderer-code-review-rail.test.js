@@ -8,8 +8,10 @@ const { JSDOM } = require('jsdom');
 const {
   CHANGES_VIEW_SCRIPTS,
   WORKING_TREE_SCRIPTS,
+  CHANGE_PICTURES_SCRIPTS,
   createCodeReviewRail,
   loadChangesViewModules,
+  loadChangePictures,
 } = require('../renderer/features/renderer-code-review-rail');
 const changesViewModule = require('../renderer/features/renderer-changes-view');
 const workingTreeModule = require('../renderer/features/renderer-changes-working-tree');
@@ -94,27 +96,65 @@ function keydown(h, target, key) {
 test('CHANGES_VIEW_SCRIPTS loads in order and stops at the first failure', async () => {
   const windowRef = {};
   const loaded = [];
+  const ALL = [...CHANGES_VIEW_SCRIPTS, ...WORKING_TREE_SCRIPTS, ...CHANGE_PICTURES_SCRIPTS];
   const ensureScript = async ({ src }) => {
     loaded.push(src);
-    const entry = [...CHANGES_VIEW_SCRIPTS, ...WORKING_TREE_SCRIPTS].find(([path]) => path === src);
+    const entry = ALL.find(([path]) => path === src);
     windowRef[entry[1]] = entry[1] === 'rendererChangesView' ? changesViewModule : {};
     return true;
   };
   assert.equal(await loadChangesViewModules({ ensureScript, windowRef }), changesViewModule);
-  assert.deepEqual(loaded, [...CHANGES_VIEW_SCRIPTS, ...WORKING_TREE_SCRIPTS].map(([src]) => src), 'the Working tree page loads after the view');
+  assert.deepEqual(loaded, ALL.map(([src]) => src), 'the Working tree page, then the pictures, load after the view');
   loaded.length = 0;
   assert.equal(await loadChangesViewModules({ ensureScript, windowRef }), changesViewModule);
   assert.deepEqual(loaded, [], 'already-loaded modules are not fetched again');
   assert.equal(await loadChangesViewModules({ ensureScript: async () => false, windowRef: {} }), null);
-  // The Working tree page is best effort: a failure there still returns the view.
+  // The Working tree page and the pictures are best effort: a failure there still returns the view.
   const partial = {};
-  const failWorkingTree = async ({ src }) => {
+  const failExtras = async ({ src }) => {
     const entry = CHANGES_VIEW_SCRIPTS.find(([path]) => path === src);
     if (!entry) return false;
     partial[entry[1]] = entry[1] === 'rendererChangesView' ? changesViewModule : {};
     return true;
   };
-  assert.equal(await loadChangesViewModules({ ensureScript: failWorkingTree, windowRef: partial }), changesViewModule);
+  assert.equal(await loadChangesViewModules({ ensureScript: failExtras, windowRef: partial }), changesViewModule);
+});
+
+test('the pictures modules load on their own for the transcript and answer nothing on a failure', async () => {
+  const windowRef = { scriptLoaderUtils: { ensureScript: async ({ src }) => {
+    windowRef[CHANGE_PICTURES_SCRIPTS.find(([path]) => path === src)[1]] = { src };
+    return true;
+  } } };
+  const module = await loadChangePictures({ windowRef });
+  assert.deepEqual(module, { src: 'renderer/features/renderer-change-pictures.js' }, 'the page loader is the default');
+  assert.equal(await loadChangePictures({ windowRef: {}, ensureScript: async () => false }), null);
+  assert.equal(await loadChangePictures({ windowRef: {} }), null, 'no loader, no pictures');
+});
+
+test('the page hands its picture slots to the pictures module once and lets go on dispose', async () => {
+  const attached = [];
+  let disposals = 0;
+  const h = buildHarness({ railDeps: { getChangePicturesModule: () => ({
+    attachPanel(rootEl, deps) { attached.push({ rootEl, deps }); return { dispose() { disposals += 1; } }; },
+  }) } });
+  h.rail.openCodeReviewTarget({ scope: 'turn', turnId: 't1' });
+  await settle();
+  h.renderRail();
+  assert.equal(attached.length, 1, 'a re-render does not attach again');
+  const { rootEl, deps } = attached[0];
+  assert.equal(rootEl, h.detailPanel.querySelector('.changes-detail-page'));
+  assert.deepEqual([deps.getSessionId(), deps.getWorkspaceId(), deps.getTurnViewModels('sess_1')], ['sess_1', 'default', TURNS]);
+  assert.deepEqual([...rootEl.querySelectorAll('.cp-slot[data-cp-turn]')].map((slot) => slot.dataset.cpTurn).sort(), ['t1', 't2']);
+  h.rail.dispose();
+  assert.equal(disposals, 1);
+});
+
+test('a pictures module that throws on attach leaves the Changes page working', async () => {
+  const h = buildHarness({ railDeps: { getChangePicturesModule: () => ({ attachPanel() { throw new Error('boom'); } }) } });
+  h.rail.openCodeReviewTarget({ scope: 'turn', turnId: 't1' });
+  await settle();
+  assert.ok(h.detailPanel.querySelector('.changes-view-host .changes-view'));
+  assert.ok(h.log.some((entry) => entry.code === 'code_review.change_pictures_attach_failed'));
 });
 
 test('the IDE script manifest lists the same Changes view files', () => {
@@ -282,11 +322,19 @@ function wtListing(files) {
 }
 
 function wtHarness(options = {}) {
-  const calls = { claim: [], list: [], diff: [], git: 0, workspace: [] };
+  const calls = { claim: [], list: [], branch: [], diff: [], git: 0, workspace: [] };
   // The panel's session, as the shell bridge's sidePanel.getSessionId() gives it: the claimed owner (split view).
   const panel = { sessionId: null };
   const bridge = {
-    listChanges: async (request) => { calls.list.push(request); return wtListing([{ path: 'src/a.js', change: 'modified', binary: false, additions: 1, deletions: 0 }]); },
+    listChanges: async (request) => {
+      // A Whole branch read carries scope "branch"; this chat has no comparison unless a test brings one.
+      if (request.scope === 'branch') {
+        calls.branch.push(request);
+        return options.branchListing || { schema_version: 1, ok: true, state: 'not_applicable', reason: 'no_base', sampled_at: null, data: null };
+      }
+      calls.list.push(request);
+      return wtListing(options.workingFiles || [{ path: 'src/a.js', change: 'modified', binary: false, additions: 1, deletions: 0 }]);
+    },
     getChangeDiff: async (request) => { calls.diff.push(request); return { ok: true, binary: false, diff: '@@ -1 +1 @@\n-a\n+b\n' }; },
     onChanged: () => () => {},
   };
@@ -445,4 +493,97 @@ test('a chat findings list opens the Working tree page with its findings on thei
   assert.equal(comment.getAttribute('data-review-focus'), 'true');
   assert.equal(comment.getAttribute('data-tool-call-id'), 'call_7');
   assert.notEqual(h.document.activeElement.getAttribute('data-value'), 'working_tree', 'the page scrolls to the comment instead of focusing the switch');
+});
+
+test('Whole branch is a git page in the host: the ledger view steps aside and the page keeps the dataset scope', async () => {
+  const branchListing = { ...wtListing([{ path: 'docs/plan.md', change: 'added', binary: false, additions: 4, deletions: 0 }]) };
+  branchListing.data = { ...branchListing.data, scope: 'branch', base_ref: 'main', merge_base: 'def5678', commit_count: 2 };
+  const h = wtHarness({ branchListing });
+  h.rail.openWorkingTree({ ownerSessionId: 'sess_a', opener: h.document.getElementById('opener') });
+  await settle();
+  await settle();
+  const option = (value) => h.detailPanel.querySelector(`.inv-segmented-option[data-value="${value}"]`);
+  const click = (value) => option(value).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+  assert.ok(option('branch'), 'the tab shows once the branch probe answered');
+  assert.equal(h.calls.branch[0].session_id, 'sess_a');
+  click('branch');
+  await settle();
+  const page = h.detailPanel.querySelector('.changes-detail-page');
+  const host = h.detailPanel.querySelector('.changes-view-host');
+  assert.equal(page.dataset.changesScope, 'branch');
+  assert.equal(host.hidden, true, 'the ledger is not shown for Whole branch');
+  assert.equal(h.detailPanel.querySelector('.changes-wt-scroll').hidden, false);
+  assert.equal(h.detailPanel.querySelector('.changes-wt-summary-text').textContent, '2 commits since main, plus uncommitted work');
+  assert.ok(h.detailPanel.querySelector('.file-diff[data-diff-id="wt:docs/plan.md"]'));
+  click('this_chat');
+  assert.equal(page.dataset.changesScope, 'this_chat');
+  assert.equal(host.hidden, false);
+  assert.equal(h.detailPanel.querySelector('.changes-wt-summary-text').textContent, 'What this chat changed');
+});
+
+// A rail with the ledger and suggestion deps this chat's changed paths come from, over the harness's panel and bridge.
+function chatPathsRail(h, deps) {
+  const rail = createCodeReviewRail({
+    state: h.state,
+    dom: { artifactReviewPanel: h.artifactReviewPanel },
+    loadChangesView: async () => changesViewModule,
+    getActiveSessionId: () => 'sess_1',
+    getWorkspaceId: () => 'default',
+    getChatWorkspace: () => h.bridge,
+    getWorkingTreeModule: () => workingTreeModule,
+    setArtifactRailMode: () => {},
+    renderArtifactReviewPanel: () => rail.renderRailContent({ key: 'split', detailPanel: h.detailPanel, detailEmpty: null }),
+    ...deps,
+  });
+  return rail;
+}
+
+const THREE_FILES = ['src/a.js', 'src/b.js', 'src/c.js'].map((path) => ({ path, change: 'modified', binary: false, additions: 1, deletions: 0 }));
+
+test('the Working tree page learns this chat\'s changed paths from the ledger and the applied suggestions', async () => {
+  const model = { buildAppliedHistory: (list) => ({ changes: list.applied ? [{ path: 'src/c.js' }] : [] }) };
+  const ledger = { changes: [{ path: 'src/a.js' }], skipped: [], notices: [] };
+  for (const [applied, expected] of [[false, /^2 of these files were not changed by this chat\./], [true, /^1 of these files was not changed by this chat\./]]) {
+    const h = wtHarness({ workingFiles: THREE_FILES });
+    h.rail.dispose();
+    const list = { entries: [], applied };
+    const rail = chatPathsRail(h, {
+      buildJennyChangeLedgerFromTurnViewModels: () => ledger,
+      getTurnViewModelsForActiveSession: () => TURNS,
+      getSuggestedClient: () => ({ get: () => list, subscribe: () => () => {} }),
+      getSuggestedModel: () => model,
+    });
+    rail.openWorkingTree({ ownerSessionId: 'sess_1', opener: null });
+    await settle();
+    await settle();
+    assert.match(h.detailPanel.querySelector('[data-changes-wt-not-chat]')?.textContent || '', expected, `applied suggestions: ${applied}`);
+    rail.dispose();
+  }
+});
+
+test('an unknown chat list shows no note: no turns, suggestions still loading, omitted paths, unreadable paths', async () => {
+  const files = THREE_FILES.slice(0, 2);
+  const none = { changes: [], skipped: [], notices: [] };
+  const cases = [
+    { name: 'no turns loaded', turns: [], list: { entries: [] }, ledger: none },
+    { name: 'suggestions still loading', turns: TURNS, list: null, ledger: none },
+    { name: 'a run that omitted paths', turns: TURNS, list: { entries: [] }, ledger: { ...none, notices: [{ omittedCount: 3, state: 'available', reason: null }] } },
+    { name: 'a change with no readable path', turns: TURNS, list: { entries: [] }, ledger: { ...none, skipped: [{ reason: 'invalid_path' }] } },
+  ];
+  for (const item of cases) {
+    const h = wtHarness({ workingFiles: files });
+    h.rail.dispose();
+    const rail = chatPathsRail(h, {
+      buildJennyChangeLedgerFromTurnViewModels: () => item.ledger,
+      getTurnViewModelsForActiveSession: () => item.turns,
+      getSuggestedClient: () => ({ get: () => item.list, subscribe: () => () => {} }),
+      getSuggestedModel: () => ({ buildAppliedHistory: () => ({ changes: [] }) }),
+    });
+    rail.openWorkingTree({ ownerSessionId: 'sess_1', opener: null });
+    await settle();
+    await settle();
+    assert.equal(h.detailPanel.querySelectorAll('.file-diff').length, 2, `${item.name}: the list shows`);
+    assert.equal(h.detailPanel.querySelector('[data-changes-wt-not-chat]'), null, item.name);
+    rail.dispose();
+  }
 });

@@ -40,8 +40,15 @@
   align-items: center;
 }
 
+/* Row 127: as wide as a saved set row, so the folder buttons stay beside the path. */
+.model-library-image-engine-folder {
+  max-width: 680px;
+}
+
 .model-library-image-engine-folder .model-library-folders-path {
   flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .model-library-image-engine-slots {
@@ -85,4 +92,19 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/* Row 127: one line per ComfyUI recipe, as wide as a saved set row so Add set stays beside it. */
+.model-library-image-engine-recipe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: 680px;
+}
+
+.model-library-image-engine-recipe-text {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 260px;
 }

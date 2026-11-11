@@ -184,11 +184,7 @@
       + '<h4 class="settings-group-heading" id="knowledgeFoldersHeading">' + escapeHtml(jt('knowledge.foldersHeading', 'Knowledge folders')) + '</h4>'
       + '<p class="settings-group-copy">' + escapeHtml(jt('knowledge.foldersDescription', 'Folders the assistant can search and read with the knowledge tools.')) + '</p>'
       + '<div class="knowledge-folders-list">' + rowsHtml + '</div>'
-      + '<div class="settings-field-row knowledge-folders-add-row">'
-      + '<div class="settings-field-row-text">'
-      + '<label class="settings-field-label" for="knowledgeFolderPathInput">Add a folder</label>'
-      + '<p class="settings-field-description">' + escapeHtml(jt('knowledge.addFolderDescription', 'Pick a folder or paste its full path.')) + '</p>'
-      + '</div>'
+      + '<div class="knowledge-folders-add-row">'
       + resolveTextField()({
         id: 'knowledgeFolderPathInput',
         placeholder: jt('knowledge.folderPathPlaceholder', 'C:\\Users\\you\\Documents\\notes'),
@@ -197,8 +193,7 @@
         ariaLabel: jt('knowledge.folderPathLabel', 'Folder path to register'),
         className: 'knowledge-folders-add-input',
       })
-      + '</div>'
-      + '<div class="settings-actions">'
+      + browseButtonHtml
       + actionButton({
         plain: true,
         className: 'settings-primary',
@@ -206,10 +201,9 @@
         disabled: view.addBusy,
         dataset: { 'knowledge-folders-action': 'add' },
       })
-      + browseButtonHtml
       + '</div>'
       + '<div class="settings-note knowledge-folders-error" aria-live="polite">' + escapeHtml(view.errorMessage || '') + '</div>'
-      + (catalog ? catalog.blockHtml() : '')
+      + (catalog ? catalog.blockHtml({ hasFolders: view.roots.length > 0 }) : '')
       + '</div>';
   }
 
@@ -326,8 +320,13 @@
       var html = buildGroupHtml(view, hasPicker, catalog);
       var existing = card.querySelector('#' + GROUP_ID);
       var focusKey = catalog ? catalog.captureFocus() : '';
+      // First insert goes in the page grid, right after Files and documents.
+      var filesHeading = existing ? null : card.querySelector('#toolsFilesHeading');
+      var filesGroup = filesHeading ? filesHeading.closest('.settings-group') : null;
       if (existing) {
         existing.outerHTML = html;
+      } else if (filesGroup) {
+        filesGroup.insertAdjacentHTML('afterend', html);
       } else {
         card.insertAdjacentHTML('beforeend', html);
       }

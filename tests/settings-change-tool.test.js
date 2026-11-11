@@ -42,7 +42,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 function executor() {
   return new ToolExecutor({ registry: createDefaultRegistry({ toolsPrimarySettingsEnabled: true }),

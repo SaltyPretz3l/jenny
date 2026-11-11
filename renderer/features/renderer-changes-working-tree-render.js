@@ -1,7 +1,8 @@
 /* renderer/features/renderer-changes-working-tree-render.js
- * Pure markup for the read-only "Working tree" page of the Changes side panel
- * (row 59 checkpoint 2). The scope row (branch, tools, Working tree / This chat
- * switch) and the page body (summary, file rows, footer, states). No DOM,
+ * Pure markup for the read-only "Working tree" and "Whole branch" pages of the
+ * Changes side panel (row 59 checkpoint 2). The scope row (branch, Working tree /
+ * This chat / Whole branch switch), the summary line with the list tools, and the
+ * page body (file rows, footer, states). No DOM,
  * listeners or state: renderer-changes-working-tree.js owns those.
  *
  * Read-only by contract: nothing here stages, commits or discards. "Open in Git"
@@ -37,7 +38,7 @@
     ? stringUtils.escapeHtml
     : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  const SCOPES = Object.freeze(['working_tree', 'this_chat']);
+  const SCOPES = Object.freeze(['working_tree', 'this_chat', 'branch']);
   const BRANCH_GLYPH = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2-7 4"/></svg>';
   const FILTER_GLYPH = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>';
   const EXPAND_GLYPH = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l3-3 3 3M5 10l3 3 3-3"/></svg>';
@@ -71,28 +72,28 @@
       return typeof actionButton === 'function' ? actionButton(options) : '';
     }
 
-    /* ── Scope row: branch -> working tree, tools, Working tree / This chat ── */
+    /* ── Scope row: branch -> working tree, Working tree / This chat / Whole branch, then the summary line ── */
 
     function buildScopeRowHtml(model) {
       const scope = SCOPES.includes(model.scope) ? model.scope : 'working_tree';
-      const working = scope === 'working_tree';
-      const branch = working && model.branch ? String(model.branch) : '';
+      const branch = scope !== 'this_chat' && model.branch ? String(model.branch) : '';
       const branchText = branch
         ? jt('chat.changesDetail.branchLine', '{branch} → working tree', { branch })
         : jt('chat.changesDetail.branchLineNoBranch', 'Working tree');
-      const branchHtml = working
+      const branchHtml = scope === 'working_tree' || (scope === 'branch' && branch)
         ? `<span class="changes-scope-branch" title="${escape(branchText)}">${BRANCH_GLYPH}<span class="changes-scope-branch-text" dir="auto">${escape(branchText)}</span></span>`
         : '';
+      const options = [
+        { value: 'working_tree', label: jt('chat.changesDetail.scopeWorkingTree', 'Working tree') },
+        { value: 'this_chat', label: jt('chat.changesDetail.scopeThisChat', 'This chat') },
+      ];
+      if (model.branchAvailable === true) options.push({ value: 'branch', label: jt('chat.changesDetail.scopeBranch', 'Whole branch') });
       const switcher = typeof segmented === 'function'
         ? segmented({
-          id: 'changes-scope', className: 'inv-segmented--compact changes-scope-switch', ariaLabel: jt('chat.changesDetail.scopeLabel', 'Changes scope'), value: scope,
-          options: [
-            { value: 'working_tree', label: jt('chat.changesDetail.scopeWorkingTree', 'Working tree') },
-            { value: 'this_chat', label: jt('chat.changesDetail.scopeThisChat', 'This chat') },
-          ],
+          id: 'changes-scope', className: 'inv-segmented--compact changes-scope-switch', ariaLabel: jt('chat.changesDetail.scopeLabel', 'Changes scope'), value: scope, options,
         })
         : '';
-      return `<div class="changes-scope" data-changes-scope-row>${branchHtml}<span class="changes-scope-spacer"></span>${switcher}</div>`;
+      return `<div class="changes-scope" data-changes-scope-row>${branchHtml}<span class="changes-scope-spacer"></span>${switcher}</div>${buildSummaryHtml(model)}`;
     }
 
     /* ── Rows ── */
@@ -169,16 +170,32 @@
         });
     }
 
-    function buildSummaryHtml(model) {
-      const count = Number.isFinite(model.fileCount) ? model.fileCount : (Array.isArray(model.files) ? model.files.length : 0);
-      const parts = [escape(jtn('chat.changesDetail.summaryFiles', count, { count }, '{count} file', '{count} files'))];
-      if (Number.isFinite(model.additions) && Number.isFinite(model.deletions)) {
-        parts.push(`<span class="changes-wt-add">+${escape(model.additions)}</span> <span class="changes-wt-del">−${escape(model.deletions)}</span>`);
+    function summaryText(model) {
+      if (model.scope === 'this_chat') return jt('chat.changesDetail.summaryThisChat', 'What this chat changed');
+      if (model.scope === 'branch') {
+        const count = Number.isFinite(model.commitCount) ? model.commitCount : 0;
+        return jtn('chat.changesDetail.summaryBranch', count, { count, base: String(model.baseRef || '') },
+          '{count} commit since {base}, plus uncommitted work', '{count} commits since {base}, plus uncommitted work');
       }
-      parts.push(escape(jt('chat.changesDetail.summaryNote', 'includes changes this chat didn’t make')));
+      return jt('chat.changesDetail.summaryWorkingTree', 'Uncommitted in this folder');
+    }
+
+    // Under the scope row: what the page shows on the left; file count and line counts on the right (none when empty).
+    function buildSummaryHtml(model) {
+      const listed = model.scope !== 'this_chat';
+      if (listed && model.status !== 'ready') return '';
+      let counts = '';
+      if (listed) {
+        const count = Number.isFinite(model.fileCount) ? model.fileCount : (Array.isArray(model.files) ? model.files.length : 0);
+        const parts = [escape(jtn('chat.changesDetail.summaryFiles', count, { count }, '{count} file', '{count} files'))];
+        if (Number.isFinite(model.additions) && Number.isFinite(model.deletions)) {
+          parts.push(`<span class="changes-wt-add">+${escape(model.additions)}</span> <span class="changes-wt-del">−${escape(model.deletions)}</span>`);
+        }
+        counts = `<span class="changes-wt-summary-counts">${parts.join(' ')}</span>`;
+      }
       return '<div class="changes-wt-summary-row">'
-        + `<p class="changes-wt-summary" data-changes-summary>${parts.join(' · ')}</p>`
-        + `<span class="changes-wt-tools">${buildToolsHtml(model)}</span></div>`;
+        + `<p class="changes-wt-summary" data-changes-summary><span class="changes-wt-summary-text">${escape(summaryText(model))}</span>${counts}</p>`
+        + (listed ? `<span class="changes-wt-tools">${buildToolsHtml(model)}</span>` : '') + '</div>';
     }
 
     function buildFilterHtml(model) {
@@ -197,6 +214,16 @@
         + '</footer>';
     }
 
+    // Working tree only: files another chat or an editor changed. Unknown (null) shows nothing.
+    function buildNotFromChatHtml(model) {
+      const count = model.notFromChat;
+      if (model.scope !== 'working_tree' || !Number.isSafeInteger(count) || count < 1) return '';
+      const text = jtn('chat.changesDetail.notFromChat', count, { count },
+        '{count} of these files was not changed by this chat. Another chat or editor may have touched it.',
+        '{count} of these files were not changed by this chat. Another chat or editor may have touched them.');
+      return `<p class="changes-wt-limit" data-changes-wt-not-chat>${escape(text)}</p>`;
+    }
+
     function stateNote(text) {
       return typeof emptyNote === 'function' ? emptyNote({ text, role: 'status' }) : `<p role="status">${escape(text)}</p>`;
     }
@@ -206,10 +233,14 @@
     function buildBodyHtml(model) {
       let content;
       const files = Array.isArray(model.files) ? model.files : [];
-      if (model.status === 'checking') content = stateNote(jt('chat.changesDetail.checking', 'Checking the working tree…'));
+      const branchPage = model.scope === 'branch';
+      if (model.status === 'checking') content = stateNote(branchPage ? jt('chat.changesDetail.checkingBranch', 'Checking this branch…') : jt('chat.changesDetail.checking', 'Checking the working tree…'));
       else if (model.status === 'not_applicable') content = stateNote(jt('chat.changesDetail.notRepository', 'Not a Git repository'));
-      else if (model.status === 'unavailable') content = stateNote(jt('chat.changesDetail.unavailable', 'Working tree changes are unavailable right now.')) + buildFooterHtml();
-      else if (model.status === 'empty') content = stateNote(jt('chat.changesDetail.clean', 'No uncommitted changes')) + buildFooterHtml();
+      else if (model.status === 'unavailable') {
+        content = stateNote(branchPage ? jt('chat.changesDetail.unavailableBranch', 'Branch changes are unavailable right now.') : jt('chat.changesDetail.unavailable', 'Working tree changes are unavailable right now.')) + buildFooterHtml();
+      } else if (model.status === 'empty') {
+        content = stateNote(branchPage ? jt('chat.changesDetail.cleanBranch', 'No changes since {base}', { base: String(model.baseRef || '') }) : jt('chat.changesDetail.clean', 'No uncommitted changes')) + buildFooterHtml();
+      }
       else {
         const rows = files.map((file) => buildRowHtml(file, model.review)).join('');
         const list = files.length
@@ -218,7 +249,7 @@
         const truncated = model.truncated === true
           ? `<p class="changes-wt-limit" role="status">${escape(jt('chat.changesDetail.listTruncated', 'The list is limited. Open Git for every file.'))}</p>`
           : '';
-        content = buildSummaryHtml(model) + list + truncated + buildFooterHtml();
+        content = list + truncated + buildNotFromChatHtml(model) + buildFooterHtml();
       }
       // Two regions: the controller replaces the filter field only when it opens or closes, so typing
       // in it (caret, composition) is never interrupted by a content refresh.
@@ -227,7 +258,12 @@
         + `<div class="changes-wt-content" data-changes-wt-region="content">${content}</div></div>`;
     }
 
-    return { buildScopeRowHtml, buildBodyHtml, buildRowHtml, noteWords };
+    // Row 122: the empty slot the pictures module fills. `listing` names the listing it stands for.
+    function buildPicturesSlotHtml(listing) {
+      return `<div class="cp-slot" data-cp-working-tree="${escape(listing)}"></div>`;
+    }
+
+    return { buildScopeRowHtml, buildBodyHtml, buildRowHtml, buildPicturesSlotHtml, noteWords };
   }
 
   return { createWorkingTreeRender, SCOPES };

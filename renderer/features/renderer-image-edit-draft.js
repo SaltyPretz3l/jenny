@@ -35,7 +35,7 @@
   function promptContext(record) {
     if (!valid(record)) return '';
     return '\n\n[Image selected by the user for editing in this chat. Use image_generate to edit this reference; do not generate an unrelated replacement. '
-      + 'Copy source_artifact_id and region exactly; if region is absent, omit region. Omit width and height to keep the source size. Give the edited variant a short descriptive title.\n'
+      + 'Copy source_artifact_id and region exactly; if region is absent, omit region. Omit size to keep the source size. Give the edited variant a short descriptive title.\n'
       + JSON.stringify({ source_artifact_id: record.artifactId, ...(record.region ? { region: normalize(record).region } : {}) }) + ']';
   }
   function createController({ documentRef: doc, windowRef: win, getBindings, readArtifact, storage }) {

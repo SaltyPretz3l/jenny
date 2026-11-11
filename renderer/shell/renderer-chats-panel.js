@@ -35,6 +35,7 @@
   var focusQuiet = scrollUi.focusQuiet;
   var unreadUi = globalThis.rendererSessionUnread || (typeof require === 'function' ? require('./renderer-session-unread') : { count: function () { return 0; }, titleClass: function () { return ''; }, markup: function () { return ''; } });
 
+  var soundUi = globalThis.rendererAppSound || require('./renderer-app-sound');
   var modelUi = globalThis.rendererChatsPanelModel || require('./renderer-chats-panel-model');
   var PAGE_SIZE = modelUi.PAGE_SIZE;
   var MAX_VISIBLE = modelUi.MAX_VISIBLE;
@@ -219,7 +220,7 @@
     function rowSignature(session, active, node) {
       var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       return JSON.stringify({
-        unread: unreadUi.count(session),
+        unread: unreadUi.count(session), sound: soundUi.rowMarkup(session),
         title: resolveDefaultTitle(session.title),
         updatedAt: session.updated_at || session.created_at || '',
         preview: session.last_message_preview || '',
@@ -285,7 +286,7 @@
           : lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) })) + outcomeLine,
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-open': session.id, 'session-id': session.id },
-        trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span><span class="session-row__dot" aria-hidden="true"></span>'
+        trustedHtml: '<span class="session-row__dot" aria-hidden="true"></span>'
           + '<span class="conversation-title session-row__title' + unreadUi.titleClass(session) + '">' + pinMarkup + typeMarkup + lockdownMarkup
           + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + pausedMarkup + outboxMarkup + '</span>'
           + unreadUi.markup(session) + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatSessionTime(timestamp)) + '</time>'
@@ -302,7 +303,7 @@
         dataset: { 'session-action': 'menu', 'session-id': session.id },
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.25" cy="8" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="12.75" cy="8" r="1.25" /></svg>',
       });
-      return openMarkup + treeUi.branchMarkup(node, accessibleTitle, actionButton) + menuMarkup;
+      return openMarkup + soundUi.rowMarkup(session) + treeUi.branchMarkup(node, accessibleTitle, actionButton) + menuMarkup;
     }
 
     function ensureRow(session, active, tabStop, node) {
@@ -968,6 +969,7 @@
     dom.scopeSlot && dom.scopeSlot.addEventListener('click', handleFilterControlsClick);
     dom.projectRow && dom.projectRow.addEventListener('click', handleFilterControlsClick);
     if (typeof callbacks.getProjectSwitcher === 'function') windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
+    soundUi.onChatsChanged(scheduleRender);
     dom.conversationGroups && dom.conversationGroups.addEventListener('click', handlePanelClick);
     dom.conversationGroups && dom.conversationGroups.addEventListener('contextmenu', projectsCtl.handleContextMenu);
     observeListSize();

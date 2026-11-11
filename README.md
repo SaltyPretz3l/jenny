@@ -8,18 +8,18 @@ With a local model, Jenny processes your prompts locally; no cloud account is ne
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.6.1
+## Jenny 1.7.0
 
-**[Jenny 1.6.1 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.6.1)**.
-The headline is a Jenny chat that can run the app for you: it changes
-settings, organizes and moves chats, creates projects, opens views, reads and
-runs terminal commands and runs approved checks on a schedule, each behind a
-card you decide and rules you set. Also new: read-only commands without
-approval cards, background jobs Jenny keeps working through, live test-run
-progress, chats that take turns instead of colliding, a Wide transcript, Home
-usage stats and a Your data page. 1.6.0 brought the Jenny chat, your own API
-keys beside the local engines, push-to-talk dictation and a Workspace IDE that
-follows VS Code.
+**[Jenny 1.7.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.7.0)**.
+The headline is a local model that can browse in a page you watch beside the
+chat, with back, forward, find, zoom, sound controls and ad blocking in your
+hands and Take over at any time. Also new: Follow Jenny, which shows a file
+arriving in Workspace as the model writes it; before and after pictures of the
+web pages a turn changes; a live IDE preview; ComfyUI as a second image engine;
+chat names written by your local model; multi-select in the chats sidebar; Full
+auto for the Jenny chat; and a shorter, plainer tool list for local models.
+1.6.x brought the Jenny chat that runs the app for you, read-only commands
+without approval cards, your own API keys and push-to-talk dictation.
 It retains the Workspace PDF/DOCX editor, the optional PDF reading add-on, 19
 interface languages, Arabic RTL, and explicit update controls. See the
 [release notes](RELEASE_NOTES.md).
@@ -87,7 +87,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.6.1 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.7.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -95,9 +95,9 @@ The 1.6.1 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.6.1 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.7.0 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.6.1).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.7.0).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -298,7 +298,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.6.1
+### Source version 1.7.0
 
 This source tree includes guided setup, local coding tools with live command output, and experimental platform and Docker workflows. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. Crash reporting is optional and off by default.
 

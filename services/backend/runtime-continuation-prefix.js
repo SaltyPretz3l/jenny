@@ -2,7 +2,7 @@
 
 const { buildCapturedTurnEventForStorage } = require('./canonical-turn-event-collector-normalize');
 const { isContinuationEvent, isContinuationTextProjection } = require('../session-runtime/continuation-events');
-const { decisionProjection } = require('./runtime-continuation-effects');
+const { approvedPendingDecision, decisionProjection } = require('./runtime-continuation-effects');
 const { stableJson } = require('../session-runtime/contracts');
 const { hasDurableProof } = require('./conversation-store-port');
 
@@ -25,7 +25,8 @@ function persistRuntimeContinuationPrefix({ collector, conversationStore, sessio
   if (captured.length > 4096) fail('runtime_continuation_prefix_capacity');
   const dependencyProven = typeof validateDependency === 'function' && validateDependency(captured) === true;
   const decisionProven = typeof validateDecision === 'function' && validateDecision(captured) === true;
-  const decisionContext = { decision, sessionId, turnId, streamId, pendingCalls, events: captured };
+  const decisionContext = { decision: decision || approvedPendingDecision({ events: captured, pendingCalls, streamId }),
+    sessionId, turnId, streamId, pendingCalls, events: captured };
   const announced = new Set();
   for (const event of captured) {
     const pending = pendingCalls.find(call => call.call_id === event.tool_call_id);

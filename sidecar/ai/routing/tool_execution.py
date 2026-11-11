@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import (
     CMP_LOOP_TOOL_INTERRUPTED,
-    CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced
@@ -26,7 +25,9 @@ from sidecar.ai.routing import resource_pressure as _resource_pressure
 from sidecar.ai.routing import route_policy_runtime as _route_policy_runtime
 from sidecar.ai.routing import tool_authority as _tool_authority
 from sidecar.ai.routing import tool_dispatch as _tool_dispatch
+from sidecar.ai.routing import tool_execution_admission as _admission
 from sidecar.ai.routing import tool_execution_ask_user_wait as _ask_user_wait
+from sidecar.ai.routing import tool_execution_outcomes as _outcomes
 from sidecar.ai.routing import tool_execution_results as _results
 from sidecar.ai.routing import tool_execution_snapshots as _snap
 from sidecar.ai.routing import tool_execution_tool_handlers as _handlers
@@ -37,8 +38,6 @@ from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
 from sidecar.ai.tools import read_only_command_grant as _read_only
-from sidecar.ai.tools import sanitization as _sanitization
-from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools import tool_actions as _tool_actions
 from sidecar.ai.tools.builtins import shell_security as _shell_security
 from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
@@ -47,25 +46,16 @@ from sidecar.ai.tools.policy import (
     POLICY_DECISION_AUTO,
     POLICY_DECISION_DENY,
     ToolPolicyDecision,
-    ToolPolicyFilterContext,
-    ToolPolicyFilterResult,
     tool_policy_call_key,
-)
-from sidecar.ai.tools.policy import filter_tool_calls_by_policy as _filter_tool_calls_by_policy
-from sidecar.ai.tools.trusted_attachments import (
-    admit_trusted_attachments,
-    strip_attachment_shaped_metadata,
 )
 from sidecar.runtime import operation_ledger as _operation_ledger
 from sidecar.runtime.chat_models import TerminalChatStateError
-from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.electron_tool_bridge import (
     ElectronToolBridgeRequest,
     execute_electron_tool,
 )
 from sidecar.runtime.tool_execution_support import (
     CMP_LOOP_INVALID_TOOL_CALL,
-    CMP_LOOP_TOOL_INPUT_VALIDATION,
     CMP_MODE_TOOL_BLOCKED,
     CMP_TOOL_COMMAND_BLOCKED,
     CMP_TOOL_DISABLED,
@@ -78,7 +68,6 @@ from sidecar.runtime.tool_execution_support import (
     escalate_out_of_root,
     is_feature_flag_enabled,
     scan_tool_arguments,
-    validate_descriptor_arguments,
 )
 from sidecar.runtime.turn_state import current_live_run_mode_state
 
@@ -86,20 +75,6 @@ if TYPE_CHECKING:
     from sidecar.runtime.tool_execution_support import ApprovalRequest, ToolExecutionOutcome
 
 MAX_RESPONSE_CHARS = _harness_helpers.MAX_RESPONSE_CHARS
-_ALWAYS_ASK_DESTRUCTIVE_TOOLS = frozenset({"delete_file", "move_file", "worktree_delete"})
-
-
-def _runs_python(tool_name: str, arguments: dict[str, Any]) -> bool:
-    """python_execute, or a run_temp_script that launches a Python interpreter."""
-    # temp_script._validated_language accepts only exact SCRIPT_INTERPRETERS keys
-    # (omitted = cmd/sh), and "python" is the only key mapped to a Python
-    # interpreter; test_tool_execution_security pins that. Not imported here:
-    # this module is at its import fan-out cap.
-    return tool_name == "python_execute" or (
-        tool_name == "run_temp_script" and arguments.get("language") == "python"
-    )
-
-
 # Hub attributes below have consumers outside this module (router.py, tool_recall.py,
 # tool_execution_tool_handlers.py) or are monkeypatch seams in tests; keep each one live.
 assistant_tool_call_message = _results.assistant_tool_call_message
@@ -123,6 +98,11 @@ rebuild_read_snapshot_cache = _snap.rebuild_read_snapshot_cache
 freeze_effective_execution_inputs = _snap.freeze_effective_execution_inputs
 tool_outcome_from_handler_result = _handlers.tool_outcome_from_handler_result
 execute_tool_search = _handlers.execute_tool_search
+assert_valid_tool_call = _admission.assert_valid_tool_call
+filter_tool_calls_by_policy = _admission.filter_tool_calls_by_policy
+_descriptor_validation_outcome = _admission.descriptor_validation_outcome
+_blocked_outcome = _admission.blocked_outcome
+_audit_tool_event = _outcomes.audit_tool_event
 
 # Lazy import helpers -- resolved once and cached at module level so that
 # the heavy ``router`` module is *never* imported at module-load time.
@@ -139,24 +119,6 @@ def _router() -> Any:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _audit_tool_event(
-    runtime: Any | None,
-    kind: str,
-    call: ToolCallRequest,
-    *,
-    tool_name: str | None = None,
-    error_code: str | None = None,
-) -> None:
-    """Record one KIND_TOOL_EXECUTION_* audit event for *call* (no-op without a runtime)."""
-    if runtime is None:
-        return
-    name = str(tool_name or call.tool_id or "")
-    runtime.audit(
-        kind, tool_call_id=str(call.call_id or ""), tool_name=name,
-        error_code=error_code, summary=f"{kind} {name}",
-    )
 
 
 # W2-1 live tool-output tail: host-side re-bounding of transport chunk
@@ -253,16 +215,6 @@ def _dispatch_tool_call(
     )
 
 
-def _blocked_outcome(
-    outcome_type: Any, call: ToolCallRequest, reason: str | None, tool_input: dict[str, object]
-) -> ToolExecutionOutcome:
-    return outcome_type(
-        tool_name=call.tool_id, output=blocked_tool_message(call.tool_id, reason),
-        success=False, tool_input=tool_input, error_code=blocked_tool_error_code(reason),
-        metadata=blocked_tool_metadata(reason), call_id=call.call_id,
-    )
-
-
 def _tool_timeout_for_runtime(
     kernel: Any,
     runtime: Any | None,
@@ -271,59 +223,6 @@ def _tool_timeout_for_runtime(
     from sidecar.ai.routing import iteration_limits as _iteration_limits
 
     return _iteration_limits.tool_timeout_for_runtime(kernel._config, runtime, call)
-
-
-def _descriptor_validation_outcome(
-    *,
-    kernel: Any,
-    call: ToolCallRequest,
-    descriptor: Any | None,
-    visible_tool_arguments: dict[str, object],
-    request_id: str,
-    outcome_type: Any,
-) -> ToolExecutionOutcome | None:
-    if descriptor is None or (
-        call.coerced and not _tool_actions.effective_side_effecting(descriptor, call.arguments)
-    ):
-        return None
-    try:
-        validate_descriptor_arguments(call.tool_id, visible_tool_arguments, descriptor)
-    except ToolExecutionFailure as error:
-        repair_hints = _tools_schema_examples.tool_schema_repair_hints(descriptor.input_schema)
-        message = error.message.strip()
-        sentence = message if not message or message.endswith((".", "!", "?")) else f"{message}."
-        log_event(
-            logger,
-            logging.WARNING,
-            component="ai.router",
-            event="ai.router.tool_call_input_validation_failed",
-            message=f"Rejected tool call with invalid arguments: {call.tool_id}",
-            status="failure",
-            data={
-                "tool": call.tool_id,
-                "validation_error": error.message,
-                "code": CMP_LOOP_TOOL_INPUT_VALIDATION,
-                "request_id": request_id,
-            },
-        )
-        increment_counter_for_kernel(kernel, "validation_failure")
-        return outcome_type(
-            tool_name=call.tool_id,
-            output=(
-                f"Tool '{call.tool_id}' rejected malformed arguments: "
-                f"{sentence}{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
-            ),
-            success=False,
-            tool_input=visible_tool_arguments,
-            error_code=CMP_LOOP_TOOL_INPUT_VALIDATION,
-            metadata={
-                "validation_error": error.message,
-                "required_keys": repair_hints["required_keys"],
-                "minimal_valid_arguments": repair_hints["minimal_valid_arguments"],
-            },
-            call_id=call.call_id,
-        )
-    return None
 
 
 def approval_if_needed(
@@ -448,7 +347,7 @@ def approval_if_needed(
         # Python is resource-contained but deliberately not a filesystem or
         # network sandbox. Every initial Python execution remains approval-
         # gated, even for a one-send auto-run grant or an AUTO policy rule.
-        if _runs_python(descriptor.name, call.arguments) and not approvals_pre_granted:
+        if _admission.runs_python(descriptor.name, call.arguments) and not approvals_pre_granted:
             return _route_policy_runtime.build_approval_request(
                 ApprovalRequest_, call, descriptor,
                 mode=mode,
@@ -457,7 +356,10 @@ def approval_if_needed(
             )
         # Raw shell rm always asks; typed equivalents must too, or auto_run
         # could route around the file-safety gate.
-        if descriptor.name in _ALWAYS_ASK_DESTRUCTIVE_TOOLS and not approvals_pre_granted:
+        if (
+            descriptor.name in _admission.ALWAYS_ASK_DESTRUCTIVE_TOOLS
+            and not approvals_pre_granted
+        ):
             return _route_policy_runtime.build_approval_request(
                 ApprovalRequest_, call, descriptor,
                 mode=mode,
@@ -598,35 +500,6 @@ def approval_if_needed(
     return None
 
 
-def filter_tool_calls_by_policy(
-    kernel: Any,
-    calls: tuple[ToolCallRequest, ...],
-    *,
-    mode: str,
-    mode_allows_side_effecting: bool,
-    resolution_context: Any | None,
-    tool_contract: Any | None = None,
-    plan_mode: bool = False,
-    read_only: bool = False,
-    request_disabled_tools: frozenset[str] = frozenset(),
-    policy_snapshot: Any | None = None,
-) -> ToolPolicyFilterResult:
-    return _filter_tool_calls_by_policy(
-        kernel,
-        calls,
-        ToolPolicyFilterContext(
-            mode=mode,
-            mode_allows_side_effecting=mode_allows_side_effecting,
-            resolution_context=resolution_context,
-            tool_contract=tool_contract,
-            plan_mode=plan_mode,
-            read_only=read_only,
-            request_disabled_tools=request_disabled_tools,
-            policy_snapshot=policy_snapshot,
-        ),
-    )
-
-
 def classify_run_command_for_approval(
     kernel: Any,
     call: ToolCallRequest,
@@ -654,21 +527,6 @@ def classify_run_command_for_approval(
         cwd=cwd if isinstance(cwd, str) else None,
         powershell=powershell,
     )
-
-
-def assert_valid_tool_call(call: ToolCallRequest) -> None:
-    if not call.tool_id.strip():
-        raise ToolExecutionFailure(
-            code=CMP_LOOP_INVALID_TOOL_CALL,
-            message="model returned a tool call without a tool_id",
-            retryable=False,
-        )
-    if not isinstance(call.arguments, dict):
-        raise ToolExecutionFailure(
-            code=CMP_LOOP_INVALID_TOOL_CALL,
-            message=f"tool '{call.tool_id}' arguments must be an object",
-            retryable=False,
-        )
 
 
 def inject_dispatch_trace_id(
@@ -818,11 +676,8 @@ def execute_tool(
         _mark_dispatch_ready()
         return validation_outcome
     tool_arguments = dict(frozen_inputs.effective_tool_arguments)
-    plan_artifact_write = (
-        tool_arguments.pop(_plan_artifact_policy.PLAN_ARTIFACT_WRITE_ARG, None) is True
-    )
-    if call.tool_id == "mermaid_generate" and plan_artifact_write:
-        tool_arguments["_jenny_read_only"] = False
+    # The reserved plan-artifact marker never reaches a handler.
+    tool_arguments.pop(_plan_artifact_policy.PLAN_ARTIFACT_WRITE_ARG, None)
     timeout_seconds = _tool_timeout_for_runtime(kernel, runtime, call)
     # Sidecar-owned synthetic tools run in-process through one name -> handler table.
     synthetic_handler = _handlers.SYNTHETIC_TOOL_HANDLERS.get(call.tool_id)
@@ -887,65 +742,17 @@ def execute_tool(
         except ValueError:
             raise _tool_resource_deferral.resource_wait_failure(error.wait) from error
     except MCPError as error:
-        # Runtime MCP servers / the Electron bridge may surface a blank or
-        # non-`CMP-` code; normalise to a `CMP-TOOL-*` subcode so the failure
-        # never reaches the chat error path uncoded (which would classify as
-        # `unknown` instead of a recoverable tool failure).
-        failure_code = _results.coerce_tool_failure_code(error.code)
-        log_event(
-            logger,
-            _sanitization.failure_log_level(failure_code, retryable=error.retryable),
-            component="ai.router",
-            event="ai.router.tool_call_failed",
-            message=f"MCP tool call failed: {call.tool_id}",
-            status="failure",
-            data={
-                "tool": call.tool_id,
-                "code": failure_code,
-                "mcp_code": str(error.code or ""),
-                # HB-017: the model keeps real paths; the log never does.
-                "error_message": _sanitization.redact_error_paths(error.message),
-                "request_id": request_id,
-                **error.to_metadata(),
-            },
-        )
-        _audit_tool_event(runtime, KIND_TOOL_EXECUTION_FAILED, call, error_code=failure_code)
-        failure = ToolExecutionFailure(
-            code=failure_code, message=error.message, retryable=error.retryable,
-            error_details=error.to_metadata(),
-        )
-        # Row 34: a failed scripted call's user-only change evidence, builtin server only.
-        builtin = getattr(descriptor, "server_name", "") == BUILTIN_MCP_SERVER_NAME
-        if error.observed_changes and builtin:
-            failure.result_metadata = dict(error.observed_changes)
-        raise failure from error
+        raise _outcomes.mcp_tool_failure(
+            error, call=call, descriptor=descriptor, runtime=runtime, request_id=request_id
+        ) from error
     except (TerminalChatStateError, ToolExecutionFailure) as error:
         _audit_started_failure(error)
         raise
     except Exception as error:
-        log_event(
-            logger,
-            logging.WARNING,
-            component="ai.router",
-            event="ai.router.tool_call_failed",
-            message=f"MCP tool call raised unexpected exception: {call.tool_id}",
-            status="failure",
-            data={
-                "tool": call.tool_id,
-                "code": CMP_TOOL_EXECUTION_FAILED,
-                "error_type": type(error).__name__,
-                "error_message": str(error),
-                "request_id": request_id,
-            },
-        )
-        _audit_tool_event(
-            runtime, KIND_TOOL_EXECUTION_FAILED, call, error_code=CMP_TOOL_EXECUTION_FAILED
-        )
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message=f"tool '{call.tool_id}' execution failed: {error}",
-            retryable=True,
+        raise _outcomes.unexpected_tool_failure(
+            error, call=call, runtime=runtime, request_id=request_id
         ) from error
+    _ask_user_wait.credit_browser_consent_wait(runtime, call, descriptor, result)
     result_tool_name = str(result.tool_name or call.tool_id or "")
     sanitized_output, router_output_truncated = bounded_tool_output(
         result.output,
@@ -962,45 +769,11 @@ def execute_tool(
     if delivery:
         metadata["model_delivery_status"] = delivery
         sanitized_output += "\n" + notice
-    if call.tool_id == "read_file":
-        snapshot = metadata.get("read_snapshot")
-        scope = snapshot.get("scope") if isinstance(snapshot, dict) else None
-        metadata.setdefault("snapshot_scope", scope)
-        metadata.setdefault("write_eligible", bool(scope == "full"))
-        metadata.setdefault("content_display_truncated", False)
-    if router_output_truncated:
-        metadata["router_output_truncated"] = True
-        metadata["router_output_limit_chars"] = MAX_RESPONSE_CHARS
-        if call.tool_id == "read_file" and metadata.get("snapshot_scope") == "full":
-            metadata["content_display_truncated"] = True
-    # WIDE-019 fail-closed admission: only builtin read_file/python_execute
-    # results may carry typed attachments; anything else (external MCP,
-    # electron bridge, spoofed payloads) is stripped here. Attachment-shaped
-    # payloads smuggled through metadata are stripped unconditionally — the
-    # typed field is the only channel.
-    metadata = strip_attachment_shaped_metadata(metadata)
-    admitted_attachments = admit_trusted_attachments(
-        attachments=getattr(result, "trusted_attachments", ()) or (),
-        tool_id=str(call.tool_id or ""),
-        source_kind=str(getattr(descriptor, "source_kind", "") or "") if descriptor else "",
-    )
-    _audit_tool_event(
-        runtime,
-        KIND_TOOL_EXECUTION_OBSERVED if result.success else KIND_TOOL_EXECUTION_FAILED,
-        call,
-        tool_name=result_tool_name,
-        error_code=None if result.success else (str(result.error_code or "") or None),
-    )
-    return ToolExecutionOutcome_(
-        tool_name=result.tool_name,
-        output=sanitized_output,
-        success=result.success,
-        tool_input=visible_tool_arguments,
-        content_type=result.content_type,
-        ui_payload=result.ui_payload,
-        generated_artifacts=tuple(dict(item) for item in result.generated_artifacts),
-        error_code=result.error_code,
-        metadata=metadata,
-        call_id=call.call_id,
-        trusted_attachments=admitted_attachments,
+    return _outcomes.finalize_tool_outcome(
+        call=call, result=result, descriptor=descriptor, runtime=runtime,
+        metadata=metadata, sanitized_output=sanitized_output,
+        router_output_truncated=router_output_truncated,
+        max_response_chars=MAX_RESPONSE_CHARS,
+        visible_tool_arguments=visible_tool_arguments,
+        outcome_type=ToolExecutionOutcome_,
     )

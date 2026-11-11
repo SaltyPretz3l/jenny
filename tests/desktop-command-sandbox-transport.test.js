@@ -181,6 +181,8 @@ test('Docker launcher uses fixed, non-shell container argv and rejects unsafe in
   assert.equal(create.args.includes('--platform') && create.args[create.args.indexOf('--platform') + 1], 'linux/amd64');
   assert.equal(create.args.at(-2), '-c');
   assert.match(create.args.at(-1), /server\.worker\.supervisor/u);
+  // Per-run containers skip the hosted worker's 10 s readiness delay.
+  assert.match(create.args.at(-1), /main\(ready_delay=0\.0\)$/u);
   assert.equal(create.args.includes('tcp://127.0.0.1:2375'), false);
   await assert.rejects(launcher.create({ imageId: 'latest', snapshotDirectory }), /docker_create_arguments_invalid/u);
   await assert.rejects(launcher.create({ imageId: IMAGE_ID, snapshotDirectory: 'relative' }), /docker_create_arguments_invalid/u);
@@ -225,4 +227,91 @@ test('Docker Desktop bind inspection resolves only the exact staging source', ()
  assert.equal(validBindSource('/run/desktop/mnt/host/c/Users/test/live', 'C:/Users/test/stage', 'win32'), false);
  assert.equal(validBindSource('/host_mnt/Users/test/stage', '/Users/test/stage', 'darwin'), true);
  assert.equal(validBindSource('/workspace', '/stage', 'linux'), false);
+});
+
+// Row 106: synced layout argv and the mode-exact verify.
+const MIRROR_ID = 'd'.repeat(16);
+function syncedInspect(snapshotDirectory, outboxDirectory, overrides = {}) {
+  const value = inspectValue(snapshotDirectory);
+  value.Mounts = [
+    value.Mounts[0], value.Mounts[1],
+    { Type: 'volume', Name: 'jenny-mirror-' + OWNER_ID + '-' + MIRROR_ID, Destination: '/workspace', RW: true, ...overrides.workspace },
+    { Type: 'bind', Source: outboxDirectory, Destination: '/run/jenny-sync/outbox', RW: true, ...overrides.outbox },
+    { Type: 'tmpfs', Destination: '/tmp', RW: true },
+  ].filter((mount) => !mount.drop);
+  return value;
+}
+
+test('synced layout mounts the mirror volume and the outbox and never a /workspace tmpfs', async () => {
+  const calls = [];
+  const snapshotDirectory = path.resolve('snapshot');
+  const outboxDirectory = path.resolve('outbox');
+  const launcher = new DockerLauncher({ ownerId: OWNER_ID, platform: 'linux', env: { PATH: 'safe' },
+    spawnImpl: (_command, args) => {
+      calls.push(args);
+      if (args.includes('create')) return fakeChild({ stdout: CONTAINER_ID + '\n' });
+      if (args.includes('inspect')) return fakeChild({ stdout: JSON.stringify([syncedInspect(snapshotDirectory, outboxDirectory)]) });
+      return fakeChild({ stdout: '' });
+    } });
+  launcher.endpoint = ENDPOINT;
+  const mirror = { mirrorId: MIRROR_ID, volume: launcher.mirrorVolumeName(MIRROR_ID), outboxDirectory };
+  assert.equal(await launcher.create({ imageId: IMAGE_ID, snapshotDirectory, mirror }), CONTAINER_ID);
+  const create = calls.find((args) => args.includes('create'));
+  assert.ok(create.includes('type=volume,source=jenny-mirror-' + OWNER_ID + '-' + MIRROR_ID + ',target=/workspace'));
+  assert.ok(create.includes('type=bind,source=' + outboxDirectory + ',target=/run/jenny-sync/outbox'));
+  assert.equal(create.some((arg) => arg.startsWith('/workspace:')), false);
+  assert.ok(create.includes('type=bind,source=' + snapshotDirectory + ',target=/inputs,readonly'));
+  assert.equal(create[create.indexOf('--network') + 1], 'none');
+  await assert.rejects(launcher.create({ imageId: IMAGE_ID, snapshotDirectory, mirror: { ...mirror, volume: 'jenny-command-' + OWNER_ID } }),
+    /docker_create_arguments_invalid/u);
+  await assert.rejects(launcher.create({ imageId: IMAGE_ID, snapshotDirectory, mirror: { ...mirror, outboxDirectory: outboxDirectory + ',x' } }),
+    /docker_create_arguments_invalid/u);
+  assert.throws(() => launcher.mirrorVolumeName('../x'), /docker_mirror_identity_invalid/u);
+});
+
+test('verify is mode-exact: a synced container never passes as copy and drifted mounts fail', async () => {
+  const snapshotDirectory = path.resolve('snapshot');
+  const outboxDirectory = path.resolve('outbox');
+  const launcher = new DockerLauncher({ ownerId: OWNER_ID, platform: 'linux' });
+  launcher.endpoint = ENDPOINT;
+  const mirror = { mirrorId: MIRROR_ID, volume: launcher.mirrorVolumeName(MIRROR_ID), outboxDirectory };
+  const check = (value, options) => { launcher.inspect = async () => value; return launcher.verify(CONTAINER_ID, { imageId: IMAGE_ID, snapshotDirectory, ...options }); };
+  await check(syncedInspect(snapshotDirectory, outboxDirectory), { mirror });
+  await check(inspectValue(snapshotDirectory), {});
+  await assert.rejects(check(syncedInspect(snapshotDirectory, outboxDirectory), {}), /docker_security_contract_invalid/u);
+  await assert.rejects(check(inspectValue(snapshotDirectory), { mirror }), /docker_security_contract_invalid/u);
+  for (const overrides of [
+    { workspace: { Name: 'jenny-mirror-' + OWNER_ID + '-' + 'e'.repeat(16) } },
+    { workspace: { RW: false } },
+    { workspace: { Type: 'bind', Source: path.resolve('live-folder') } },
+    { outbox: { Source: path.resolve('elsewhere') } },
+    { outbox: { RW: false } },
+    { outbox: { Destination: '/outbox' } },
+  ]) {
+    await assert.rejects(check(syncedInspect(snapshotDirectory, outboxDirectory, overrides), { mirror }), /docker_mount_contract_invalid/u,
+      JSON.stringify(overrides));
+  }
+});
+
+test('mirror volumes carry owner, version and mirror labels and only owned names are listed', async () => {
+  const calls = [];
+  let listed = '';
+  const launcher = new DockerLauncher({ ownerId: OWNER_ID, platform: 'linux',
+    spawnImpl: (_command, args) => {
+      calls.push(args);
+      if (args.includes('inspect')) {
+        return fakeChild({ stdout: JSON.stringify([{ Name: 'jenny-mirror-' + OWNER_ID + '-' + MIRROR_ID, Driver: 'local',
+          Labels: { [OWNER]: OWNER_ID, [VERSION]: '1', 'com.jenny.command.mirror': MIRROR_ID } }]) });
+      }
+      if (args.includes('ls')) return fakeChild({ stdout: listed });
+      return fakeChild({ stdout: '' });
+    } });
+  launcher.endpoint = ENDPOINT;
+  assert.deepEqual(await launcher.ensureMirrorVolume(MIRROR_ID), { name: 'jenny-mirror-' + OWNER_ID + '-' + MIRROR_ID, created: true });
+  const create = calls.find((args) => args.includes('create'));
+  assert.ok(create.includes('com.jenny.command.mirror=' + MIRROR_ID));
+  listed = 'jenny-mirror-' + OWNER_ID + '-' + MIRROR_ID + '\n';
+  assert.deepEqual(await launcher.listMirrorVolumes(), [MIRROR_ID]);
+  listed = 'someone-else\n';
+  await assert.rejects(launcher.listMirrorVolumes(), /docker_owned_resource_limit/u);
 });

@@ -466,6 +466,31 @@
   margin-bottom: var(--space-4);
 }
 
+.inv-step-modal-body .handoff-intent-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.inv-step-modal-body .handoff-intent .inv-segmented {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inv-step-modal-body .handoff-intent .inv-segmented-option {
+  flex: 1 1 50%;
+  min-width: 0;
+  max-width: none;
+}
+
+.inv-step-modal-body .handoff-intent-hint {
+  margin: var(--space-2) 0 var(--space-4);
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
 .inv-step-modal-body .handoff-note-mentions {
   display: block;
   margin: var(--space-2) 0 0;

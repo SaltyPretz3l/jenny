@@ -5,7 +5,7 @@
  * pipeline, the INVARIANT that workspace HTML always renders in the strict
  * sandboxed iframe (staged jenny-artifact:// src + sandbox="allow-scripts",
  * never srcdoc — srcdoc inherits the parent CSP — and never DOMPurify inline),
- * the self-contained v1 messaging, bounded unsupported/missing/binary/too-
+ * the linked-file note, bounded unsupported/missing/binary/too-
  * large states, display precedence (explicit target > active editor file >
  * empty), buffer-first reads, and open() pinning + stage activation. */
 
@@ -19,7 +19,6 @@ const ideState = require('../renderer/features/renderer-ide-state');
 const {
   createIdePreviewStage,
   MAX_PREVIEW_BYTES,
-  SELF_CONTAINED_NOTE,
   SUPPORTED_LABEL,
 } = require('../renderer/features/renderer-ide-preview-stage');
 const { createIdeFileOperations } = require('../renderer/features/renderer-ide-file-operations');
@@ -181,7 +180,7 @@ test('markdown previews never request fill sizing', async (t) => {
   assert.equal(frameFactoryCalled, false);
 });
 
-test('INVARIANT: workspace HTML always takes the sandboxed iframe path (staged src, allow-scripts, note copy)', async (t) => {
+test('INVARIANT: workspace HTML always takes the sandboxed iframe path (staged src, allow-scripts)', async (t) => {
   cleanupGlobals(t);
   const html = '<h1>App</h1><script>document.title="x"</script>';
   const h = makeStage({ files: { 'site/index.html': html } });
@@ -203,10 +202,7 @@ test('INVARIANT: workspace HTML always takes the sandboxed iframe path (staged s
   assert.ok(h.calls.stagedDocuments[0].includes(html), 'document body embedded in the staged document, never file://');
   // The raw HTML must never be injected inline into the stage body.
   assert.equal(h.hostEl.querySelector('.ide-preview-stage-body h1'), null, 'no DOMPurify-style inline injection');
-  const note = h.hostEl.querySelector('[data-preview-note]');
-  assert.ok(note, 'self-contained note visible');
-  assert.equal(note.textContent, SELF_CONTAINED_NOTE);
-  assert.match(note.textContent, /not loaded/);
+  assert.equal(h.hostEl.querySelector('[data-preview-note]'), null, 'a page with no linked files has no note');
 });
 
 test('frame failure card relays the artifact\'s own error text — escaped and length-capped', async (t) => {

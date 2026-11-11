@@ -62,8 +62,12 @@ def test_tool_manifest_uses_known_canonical_tool_families() -> None:
     assert families <= KNOWN_TOOL_FAMILIES
     assert "mermaid" not in families
 
-    tools = {tool["name"]: tool for tool in manifest["tools"]}
-    assert tools["mermaid_generate"]["tool_family"] == "diagram"
+
+def test_mermaid_generate_is_not_a_manifest_tool() -> None:
+    manifest = json.loads(tool_manifest_path().read_text(encoding="utf-8"))
+
+    assert "mermaid_generate" not in {tool["name"] for tool in manifest["tools"]}
+    assert "mermaid_generate" not in {descriptor.name for descriptor in build_tool_catalog()}
 
 
 def test_recall_is_registered_without_a_subprocess_descriptor() -> None:
@@ -186,26 +190,17 @@ def test_tool_catalog_includes_default_off_automation_bridge_descriptors() -> No
     by_name = {item.name: item for item in catalog}
 
     listed = by_name["automation_list"]
-    read = by_name["automation_read"]
+    assert "automation_read" not in by_name  # merged into automation_list (row 129)
 
     assert listed.read_only is True
     assert listed.tool_family == "runtime"
     assert listed.surfaces == ("managed_sidecar",)
     assert listed.availability.config_flag == "tools_automations_enabled"
     assert listed.availability.workspace_required is True
-    assert listed.input_schema == {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {},
-        "required": [],
-    }
-
-    assert read.read_only is True
-    assert read.side_effecting is False
-    assert read.tool_family == "runtime"
-    assert read.surfaces == ("managed_sidecar",)
-    assert read.availability.config_flag == "tools_automations_enabled"
-    assert read.input_schema["required"] == ["automation_id"]
+    assert listed.side_effecting is False
+    assert listed.input_schema["additionalProperties"] is False
+    assert list(listed.input_schema["properties"]) == ["automation_id"]
+    assert listed.input_schema["required"] == []
 
 
 def test_tool_catalog_includes_merged_lsp_descriptor() -> None:

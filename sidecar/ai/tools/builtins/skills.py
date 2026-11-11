@@ -267,7 +267,6 @@ def load_skill_tool(
 ) -> ToolHandlerResult:
     # Skills live in scope roots outside the tools workspace root by design;
     # WorkspaceGuard has nothing to authorize here.
-    del workspace
 
     raw_name = arguments.get("name")
     name = raw_name.strip() if isinstance(raw_name, str) else ""
@@ -310,9 +309,15 @@ def load_skill_tool(
             )
         return _read_skill(scope_root, name, skill_path)
 
+    # The failure below lists "scope/name" labels, so a label copied into name loads
+    # too (row 129, B5). Only after the plain lookup: a nested skill id wins.
+    label_scope, _, label_name = name.partition("/")
+    if requested_scope is None and label_name and label_scope in SCOPE_PRECEDENCE:
+        return load_skill_tool({**arguments, "name": label_name, "scope": label_scope}, workspace)
+
     available = _available_skill_labels()
     hint = (
-        f" Available skills: {', '.join(available)}."
+        f" Available skills: {', '.join(available)}. Pass one of these as name."
         if available
         else " No skills are currently indexed."
     )

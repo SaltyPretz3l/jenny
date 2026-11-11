@@ -87,8 +87,9 @@ def test_no_native_plugin_host_is_required_or_verified():
     assert not hasattr(verifier, 'verify_native_hosts')
     assert not any('native/' in relative for relative in verifier.VERIFIED_APP_FILES)
     runs = '\n'.join(step.get('run', '') for step in workflow()['jobs']['build']['steps'])
+    # The retired plugin host stays out; Rust itself is allowed again (the native launcher and the
+    # team bridge are Rust components under native/, owner 2026-11-10).
     assert 'full-host-supervisor' not in runs
-    assert 'rustup' not in runs
 
 
 def test_verification_fails_closed_on_foreign_host(monkeypatch):

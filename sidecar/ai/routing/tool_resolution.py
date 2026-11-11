@@ -33,7 +33,7 @@ from sidecar.ai.tools.catalog import (
     electron_owned_manifest_entries,
     manifest_tool_entry,
 )
-from sidecar.ai.tools.tool_search import hidden_unexposed_tool_names
+from sidecar.ai.tools.tool_search import hidden_unexposed_tool_names, runtime_child_tools_offered
 from sidecar.runtime.chat_models import ChatRequestContext
 from sidecar.runtime.diagnostics import log_event
 
@@ -69,6 +69,13 @@ def _config_bool(config: Any, key: str) -> bool:
     return False
 
 
+_RUNTIME_CHILD_TOOL_NAMES = frozenset({"session_spawn", "session_wait", "session_result"})
+# Owner decision 2026-11-10 (tool review, row 129): no chat called these in a month and
+# ``delegate`` does the same job in one call, so they are no longer offered. The runtime
+# behind them stays; ``JENNY_ENABLE_RUNTIME_CHILD_TOOLS=1`` offers them again (the flag
+# lives in ``tool_search.RUNTIME_CHILD_TOOLS_FLAG``).
+
+
 def _electron_bridge_runtime_descriptors(
     config: Any, *, runtime_children_enabled: bool = False,
 ) -> tuple[Any, ...]:
@@ -97,8 +104,9 @@ def _electron_bridge_runtime_descriptors(
         name = str(entry.get("name") or "").strip()
         if not name:
             continue
-        if (name in {"session_spawn", "session_wait", "session_result"}
-                and not runtime_children_enabled):
+        if name in _RUNTIME_CHILD_TOOL_NAMES and not (
+            runtime_children_enabled and runtime_child_tools_offered()
+        ):
             continue
         availability = entry.get("availability")
         config_flag = (

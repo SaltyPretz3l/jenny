@@ -27,6 +27,11 @@
       || (typeof require === 'function' ? require('./model-library/model-library-sources') : null);
   }
 
+  function resolveAddMove() {
+    return (root && root.modelLibraryAddMove)
+      || (typeof require === 'function' ? require('./model-library/model-library-add-move') : null);
+  }
+
   // The Tune drawer's engine utils load after this file, so they resolve when
   // a pick needs them rather than when the module loads.
   function resolveEngineUtils() {
@@ -100,6 +105,27 @@
       || typeof sources.sharesModelName !== 'function') {
       throw new Error('renderer-model-library-folders: missing required dependency');
     }
+    // Move and add (row 107): the note under the folder list. It loads with
+    // the Settings script batch, so it is made on first use; until then a
+    // picked file is added where it is.
+    var addMove = null;
+    function moveFlow() {
+      var module = !addMove && !disposed ? resolveAddMove() : null;
+      if (module && typeof module.createModelLibraryAddMove === 'function') {
+        addMove = module.createModelLibraryAddMove({
+          windowRef: windowRef,
+          documentRef: documentRef,
+          escapeHtml: escapeHtml,
+          actionButton: actionButton,
+          rerender: function () { render(); },
+          announce: function (message) { announce(message); },
+          writeModel: function (filePath, pickedDir) { return writeModel(filePath, pickedDir, resolveEngineUtils()); },
+          addRefusal: addRefusal,
+          tagFor: function (filePath) { return sources.libraryTagFromPath(firstShardPath(filePath)); },
+        });
+      }
+      return addMove;
+    }
 
     function host() {
       return documentRef && documentRef.getElementById
@@ -130,6 +156,7 @@
     function rowHtml(path, index) {
       return '<div class="model-library-folders-row">'
         + '<code class="model-library-folders-path">' + escapeHtml(path) + '</code>'
+        + (index === 0 ? '<span class="model-library-folders-home-note">' + escapeHtml(jt('models.library.folders.homeNote', 'new models go here')) + '</span>' : '')
         + actionButton({
           label: jt('common.remove', 'Remove'),
           variant: 'ghost',
@@ -146,10 +173,11 @@
       var currentRoots = roots();
       var rowsHtml = currentRoots.length
         ? currentRoots.map(rowHtml).join('')
-        : '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.folders.empty', 'No folders yet · llama-server finds mtp-*.gguf drafters beside the models in these folders')) + '</span>';
+        : '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.folders.emptyHome', 'No folders yet · added models can move to Jenny\'s own models folder. A GGUF folder holds one folder per model, with its drafter and projector beside it.')) + '</span>';
       target.innerHTML = '<div class="model-library-folders">'
         + '<span class="model-library-folders-title">' + escapeHtml(jt('models.library.folders.title', 'GGUF folders')) + '</span>'
         + '<div class="model-library-folders-list">' + rowsHtml + '</div>'
+        + (addMove ? addMove.html() : '')
         + '<div class="model-library-folders-actions">'
         + actionButton({
           label: jt('models.library.folders.add', 'Add folder…'),
@@ -338,43 +366,54 @@
         }).catch(function () {
           return null;
         });
-        return null;
+        return 'added';
       }, function () {
         return disposed ? null : failed();
       });
     }
 
-    // Checks a picked file before any write: nothing for a projector or
-    // drafter, for a name another model already answers to, or past main's
-    // 64 saved models.
-    function writeModel(filePath, pickedDir, engineUtils) {
+    // Why a picked file can't be added, or '' when it can: a projector or
+    // drafter, a name another model already answers to, or past main's 64
+    // saved models. Move and add asks this before it moves anything.
+    function addRefusal(filePath) {
       var addFailed = jt('models.library.folders.addFailed', 'Could not add the model.');
       if (sources.isAuxiliaryGguf(filePath)) {
-        return announce(jt('models.library.folders.notMainModel', "That file is a vision projector or MTP drafter, not a model. Choose the model's main .gguf file."));
+        return Promise.resolve(jt('models.library.folders.notMainModel', "That file is a vision projector or MTP drafter, not a model. Choose the model's main .gguf file."));
       }
       var modelPath = firstShardPath(filePath);
       var tag = sources.libraryTagFromPath(modelPath);
       var key = tag ? mergeUtils.managedModelKey(tag) : '';
-      if (!key) return announce(addFailed);
+      if (!key) return Promise.resolve(addFailed);
       var current = library();
       var saved = savedEntryNamed(current.perModel, key, tag);
       if (saved && sources.sameModelPath(firstShardPath(saved.modelPath), modelPath)) {
-        return announce(jt('models.library.folders.alreadyAdded', '{model} is already in the library.', { model: String(saved.tag || tag) }));
+        return Promise.resolve(jt('models.library.folders.alreadyAdded', '{model} is already in the library.', { model: String(saved.tag || tag) }));
       }
       var taken = jt('models.library.folders.nameTaken', 'Another model is already named {model}. Rename the file, then add it.', { model: tag });
-      if (saved) return announce(taken);
+      if (saved) return Promise.resolve(taken);
       var engines = windowRef.jennyShell && windowRef.jennyShell.engines;
-      if (!engines || typeof engines.updateSettings !== 'function') return announce(addFailed);
+      if (!engines || typeof engines.updateSettings !== 'function') return Promise.resolve(addFailed);
       return currentOllamaTags(current).then(function (ollamaTags) {
-        if (disposed) return null;
         var owned = ollamaTags.concat(current.installed).some(function (item) {
           return sources.sharesModelName(mergeUtils.entryTag(item), tag);
         });
-        if (owned) return announce(taken);
+        if (owned) return taken;
         var existed = Object.prototype.hasOwnProperty.call(current.perModel, key);
-        if (!existed && Object.keys(current.perModel).length >= MAX_SAVED_MODELS) return announce(addFailed);
-        return sendModel(engines, engineUtils, {
-          tag: tag, key: key, modelPath: modelPath, lastPickDir: usableFolder(pickedDir), existed: existed,
+        return !existed && Object.keys(current.perModel).length >= MAX_SAVED_MODELS ? addFailed : '';
+      });
+    }
+
+    // Checks a picked file, then writes its managed entry.
+    function writeModel(filePath, pickedDir, engineUtils) {
+      return addRefusal(filePath).then(function (refusal) {
+        if (disposed) return null;
+        if (refusal) return announce(refusal);
+        var modelPath = firstShardPath(filePath);
+        var tag = sources.libraryTagFromPath(modelPath);
+        var key = mergeUtils.managedModelKey(tag);
+        return sendModel(windowRef.jennyShell.engines, engineUtils, {
+          tag: tag, key: key, modelPath: modelPath, lastPickDir: usableFolder(pickedDir),
+          existed: Object.prototype.hasOwnProperty.call(library().perModel, key),
         });
       });
     }
@@ -396,8 +435,11 @@
         if (disposed) return null;
         if (result && result.ok === false) return announce(engineUtils.pickerFailureText(result));
         var filePath = result && typeof result.path === 'string' ? result.path : '';
-        // A cancelled pick writes nothing and says nothing.
-        return filePath ? writeModel(filePath, result.dir, engineUtils) : null;
+        // A cancelled pick writes nothing and says nothing. A file outside
+        // every GGUF folder first gets the Move and add note.
+        if (!filePath) return null;
+        var flow = moveFlow();
+        return flow ? flow.begin(filePath, result.dir) : writeModel(filePath, result.dir, engineUtils);
       }, function () {
         return announce(pickerFailed);
       }).catch(function () {
@@ -443,6 +485,7 @@
     function handleClick(event) {
       var target = event && event.target;
       if (!target || typeof target.closest !== 'function') return;
+      if (addMove && boundHost && boundHost.contains(target) && addMove.handleClick(target)) return;
       var add = target.closest('[data-model-library-folder-action="add"]');
       if (add && boundHost && boundHost.contains(add)) {
         void addFolder();
@@ -472,6 +515,7 @@
       if (disposed) return;
       disposed = true;
       generation += 1;
+      if (addMove) addMove.dispose();
       if (boundHost) boundHost.removeEventListener('click', handleClick);
       boundHost = null;
     }

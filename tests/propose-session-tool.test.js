@@ -551,3 +551,41 @@ test('propose_session accepts the model when the catalog cannot be read or lists
     assert.equal(harness.calls.published.length, 1);
   }
 });
+
+// ---------- row 129, C11: a project chat is told the primary-only arguments are for the Jenny chat ----------
+
+// The real argument validator (the harness's fake accepts any project_id and drops the fork id).
+const withRealRecords = (harness) => {
+  harness.deps.records = require('../services/backend/chat-proposal-session-records');
+  return harness;
+};
+
+test('propose_session from a project chat refuses primary-only arguments first, in words that name no absent tool', async () => {
+  const cases = [
+    { project_id: 'proj_9' }, { project_id: 'p'.repeat(300) }, { project_id: 7 },
+    { fork_of_session_id: 'sess_2' }, { fork_of_session_id: 'f'.repeat(300) }, { project_id: 'proj_9', fork_of_session_id: 'sess_2' },
+  ];
+  for (const extra of cases) {
+    const harness = withRealRecords(withPrimary(makeHarness(), { primary: false }));
+    let listed = 0;
+    harness.backendService.listModels = async () => { listed += 1; return { data: [] }; };
+    const result = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'not-installed:1b', ...extra }, harness.context);
+    assert.equal(result.isError, true, JSON.stringify(extra));
+    assert.match(result.content, /Only the Jenny chat can (choose a project|fork a chat); omit (project_id|fork_of_session_id)\./u, JSON.stringify(extra));
+    assert.doesNotMatch(result.content, /sessions_list|argument is missing|installed/u, JSON.stringify(extra));
+    assert.equal(listed, 0, 'the model catalog is not read for a refusal that does not depend on it');
+    assert.equal(harness.calls.published.length, 0);
+    assertNoEcho(result);
+  }
+});
+
+test('propose_session keeps its primary-chat refusals and the invalid-argument message for a project chat without them', async () => {
+  const primary = withRealRecords(withPrimary(makeHarness()));
+  const bad = await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: 'p'.repeat(300) }, primary.context);
+  assert.match(bad.content, /'project_id' argument is missing or not in the right form/u);
+  const project = withRealRecords(withPrimary(makeHarness(), { primary: false }));
+  const untitled = await proposeSessionTool.execute({ ...OFFER_ARGS, title: '' }, project.context);
+  assert.match(untitled.content, /'title' argument is missing or not in the right form/u);
+  const plain = await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: null }, project.context);
+  assert.equal(plain.isError, false);
+});

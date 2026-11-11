@@ -16,7 +16,7 @@ from sidecar.ai.context.token_budget import (
     TokenBudget,
 )
 from sidecar.ai.routing import tool_budget_filter as tool_budget_filter_module
-from sidecar.ai.routing.chat_decision import (
+from sidecar.ai.routing.chat_decision_preflight import (
     _BudgetPreflightContext,
     _CompactionInput,
     _terminal_compaction_result,

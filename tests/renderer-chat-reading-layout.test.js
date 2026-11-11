@@ -90,22 +90,19 @@ test('reading layout: Large text widens the character budget (the cap follows th
   });
 });
 
-/* The floating transcript utilities (the labelled Artifacts toggle) never sit
-   over the text: the pane publishes their reach as --chat-utility-reserve
-   (renderer-chat-pane-surface-controllers.js) and the one-pane gutter holds it. */
+/* The transcript utilities (the labelled Artifacts toggle) never sit over the text: they are the
+   session bar above the stage (styles/chat-session-bar.css), and the gutter reserves nothing for them. */
 const ROOT = path.resolve(__dirname, '..');
 const READING_FLOOR_PX = 320;
 const injectModules = (page, files) => files.reduce((chain, file) => chain.then(() => page.addScriptTag({ content: fs.readFileSync(path.join(ROOT, file), 'utf8') })), Promise.resolve());
 
-test('reading layout: the floating utilities never cover the measure; the composer keeps its edges', { skip: SKIP, timeout: 180000 }, async () => {
+test('reading layout: the session bar never covers the measure; the composer keeps its edges', { skip: SKIP, timeout: 180000 }, async () => {
   const collector = createCollector();
   await withBrowser(async (browser) => {
     for (const { name, viewport, sidebarCollapsed = false } of VIEWPORTS.filter((cell) => !cell.split)) {
       const page = await mountReadingLayout(browser, { viewport, split: false, sidebarCollapsed });
-      await injectModules(page, ['renderer/chat/renderer-chat-pane-surface-controllers.js']);
       await page.evaluate(() => {
         document.getElementById('artifactSplitViewToggle').hidden = false;
-        window.rendererChatPaneSurfaceControllers.observeUtilityReserve(document.getElementById('chatThreadStage'), document.getElementById('chatTimelineUtilityCluster'), window);
       });
       for (const fontScale of FONT_SCALE_IDS) {
         for (const chatWidth of CHAT_WIDTH_IDS) {
@@ -113,17 +110,12 @@ test('reading layout: the floating utilities never cover the measure; the compos
           await setReadingAppearance(page, { fontScale, chatWidth });
           await frames(page, 3);
           const box = await page.evaluate(() => {
-            const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; };
+            const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, bottom: r.bottom }; };
             return { cluster: rect(document.getElementById('chatTimelineUtilityCluster')), stage: rect(document.getElementById('chatThreadStage')), measure: rect(document.getElementById('chatTimeline')), composer: rect(document.querySelector('#chatPane0 .composer')) };
           });
           collector.ok(box.cluster.right > box.cluster.left, `${label}: the utility cluster is shown`);
-          // Room for the utilities on both sides only while the measure keeps the 320px reading floor.
-          const reach = box.stage.right - box.cluster.left;
-          if (box.stage.width - 2 * reach >= READING_FLOOR_PX + 8) {
-            collector.ok(box.measure.right <= box.cluster.left, `${label}: the measure end ${fmt(box.measure.right)} stays clear of the utilities at ${fmt(box.cluster.left)}`);
-          } else {
-            collector.ok(box.measure.width >= Math.min(READING_FLOOR_PX, box.stage.width - 2 * 40) - 1, `${label}: a pane too narrow to clear the utilities keeps its reading width (${fmt(box.measure.width)}px in a ${fmt(box.stage.width)}px pane)`);
-          }
+          collector.ok(box.cluster.bottom <= box.stage.top + 0.5, `${label}: the bar ends at ${fmt(box.cluster.bottom)}, above the stage at ${fmt(box.stage.top)}, so nothing covers the measure`);
+          collector.ok(box.measure.width >= Math.min(READING_FLOOR_PX, box.stage.width - 2 * 40) - 1, `${label}: the measure keeps its reading width (${fmt(box.measure.width)}px in a ${fmt(box.stage.width)}px pane)`);
           collector.ok(Math.abs(box.composer.left - box.measure.left) <= 1 && Math.abs(box.composer.right - box.measure.right) <= 1,
             `${label}: composer [${fmt(box.composer.left)}, ${fmt(box.composer.right)}] keeps the measure's edges [${fmt(box.measure.left)}, ${fmt(box.measure.right)}]`);
         }

@@ -218,9 +218,8 @@ function createBackendServiceWithDeps({
     renderRecordSummary: () => readRenderRecordSummary({ userDataPath: app.getPath('userData') }),
     log,
   });
-  backendService.imageEngineRuntime = {
-    killRenderSync: () => killRenderRecordSync({ userDataPath: app.getPath('userData'), log }),
-  };
+  backendService.imageEngineRuntime = { killRenderSync: () => killRenderRecordSync({ userDataPath: app.getPath('userData'), log }) };
+  backendService.comfyui = require('./comfyui-wiring').lazyComfyOwner({ userDataPath: app.getPath('userData'), log }); // row 127
   // Managed NInfer runtime (row 54): eligibility, installer and artifact
   // downloader; the manager in runtime-shutdown.js reads them from here.
   const { createNinferRuntime } = require('./ninfer-runtime-wiring');

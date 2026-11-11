@@ -20,7 +20,7 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_LIST_ENTRIES = 500
 MAX_LIST_SCAN_ENTRIES = 10_000
-MAX_LIST_OUTPUT_CHARS = 14_000
+MAX_LIST_OUTPUT_CHARS = 8_000
 
 
 class ListedEntry(NamedTuple):
@@ -153,8 +153,15 @@ def list_dir_tool(
         or omitted_output_entries > 0
     )
     output = "\n".join(formatted) if formatted else "(empty directory)"
-    if truncated:
-        output = f"{output}\n...[directory listing truncated]"
+    total_entries = len(scanned) if scan_complete else MAX_LIST_SCAN_ENTRIES
+    left_out = total_entries - len(formatted) - failed_entries
+    if left_out > 0:
+        at_least = "" if scan_complete else "at least "
+        output = (
+            f"{output}\n...[directory listing truncated: showed {len(formatted)} of "
+            f"{at_least}{total_entries} entries, {at_least}{left_out} left out. List a subfolder "
+            "or use glob_files with a pattern to see the rest.]"
+        )
     if failed_entries:
         output = f"{output}\n...[{failed_entries} entries could not be inspected and were skipped]"
     relative_path = workspace_relative_path(resolved, workspace.root)

@@ -21,10 +21,14 @@ from sidecar.runtime.continuation_outcomes import (  # noqa: F401 - compatibilit
 def build_restored_approval_result(
     run: Any, *, hydrated: Any, checkpoint: dict, result: Any, approval: Any
 ) -> Any:
+    # A resource wait saved no card, so its pending call is the one being asked about.
+    decision = checkpoint.get("decision") or {
+        "kind": "approval", "call_id": checkpoint["pending_call"]["call_id"],
+    }
     if (
-        checkpoint["decision"]["kind"] != "approval"
+        decision["kind"] != "approval"
         or approval is None
-        or approval.tool_call_id != checkpoint["decision"]["call_id"]
+        or approval.tool_call_id != decision["call_id"]
         or len(hydrated.restored_inputs()) != len(result.tool_calls)
     ):
         attention("decision_approval_changed")

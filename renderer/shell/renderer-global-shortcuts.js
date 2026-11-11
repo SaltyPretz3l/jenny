@@ -2,7 +2,8 @@
    Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+N (new chat), Ctrl+B
    (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
    most recent other tab beside, or close the non-focused pane), Ctrl+Alt+W
-   (row 92: Wide transcript on/off).
+   (row 92: Wide transcript on/off), Ctrl+\ (row 115: close the open side panel,
+   else hide the focused pane's docked Session rail, else nothing).
 
    Inside the Workspace view (row 82, picks O1/O2) Ctrl+1..5 and Ctrl+N belong to
    the IDE keymap (editor groups, new file); Ctrl+Alt+1..5 switch views from
@@ -14,6 +15,9 @@
    split chord also fires from a chat composer (.composer-input) and stands
    down in every other editor (Monaco binds Ctrl+Shift+\ to jump-to-bracket).
    Ctrl+Alt+W follows the split chord's editor rule, and stands down for AltGr.
+   Ctrl+\ (no Shift, no Alt) follows the same rule, also stands down inside the
+   Workspace view (Monaco owns it), and only prevents the default when
+   deps.callbacks.closeFocusedPanel() closed something.
    Every chord here stands down while the shared overlay manager reports an
    open overlay, with one exception: over a launcher-style overlay listed in
    deps.captureYieldingOverlayIds (the command palette) the capture chord
@@ -65,6 +69,12 @@
       && (event.code === 'Backslash' || event.key === '\\' || event.key === '|'));
   }
 
+  function isPanelCloseChord(event) {
+    return Boolean(event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+      && !event.defaultPrevented && !event.isComposing
+      && (event.code === 'Backslash' || event.key === '\\'));
+  }
+
   function isChatWidthChord(event) {
     return Boolean(event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
       && !event.defaultPrevented && !event.isComposing
@@ -83,6 +93,7 @@
       openCapture,
       togglePaneSplit,
       toggleChatWidth,
+      closeFocusedPanel,
       appendClientLog,
     } = deps.callbacks || {};
     const isOverlayOpen = typeof deps.isOverlayOpen === 'function'
@@ -146,6 +157,16 @@
         if (event.repeat) return;
         // The toggle logs chat.chat_width_toggle with source 'shortcut'.
         toggleChatWidth();
+        return;
+      }
+      if (isPanelCloseChord(event)) {
+        if (typeof closeFocusedPanel !== 'function' || event.repeat || isInsideWorkspaceView(event)
+          || isForeignTextEditingSurfaceFocused(documentRef)) return;
+        // The chord is claimed only when it closed something; otherwise the key keeps its default.
+        if (closeFocusedPanel() === true) {
+          event.preventDefault();
+          appendClientLog?.('INFO', 'shortcuts.panel_close', { key: 'Ctrl+\\' });
+        }
         return;
       }
       if (isPaneSplitChord(event)) {

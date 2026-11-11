@@ -504,6 +504,7 @@ function createRuntimeShutdownController({
     } catch (_error) {
       // runShutdownStage already logged the failure
     }
+    try { await runShutdownStage('browser_use', () => getBackendService()?.toolExecutor?.browserUse?.dispose?.(), signal); } catch (_error) { /* the stage logged it */ }
     try {
       await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown(), signal);
     } catch (_error) {

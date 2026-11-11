@@ -34,7 +34,8 @@ test('pending plan renders as an expanded first-class document with safe markup'
   assert.match(markup, /data-plan-add-step/);
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.equal(markup.includes('<script>'), false);
-  assert.equal(markup.includes('<details'), false);
+  assert.equal(markup.includes('<details class="plan-document-receipt"'), false);
+  assert.match(markup, /<details class="plan-document__section" data-plan-section="notes" open>/);
 });
 
 test('model-written plan text takes its own direction inside an RTL interface', () => {
@@ -44,7 +45,7 @@ test('model-written plan text takes its own direction inside an RTL interface', 
     files_read: [], state: 'pending',
   }, { renderMarkdown: (text) => `<p>${text}</p>` });
   const doc = new JSDOM(`<body dir="rtl">${markup}</body>`).window.document;
-  const texts = doc.querySelectorAll('.plan-document__title, .plan-document__summary, [data-plan-step-text], .plan-document__notes, .plan-document__verification p');
+  const texts = doc.querySelectorAll('.plan-document__title, .plan-document__summary, [data-plan-step-text], .plan-document__notes, .plan-document__check');
   assert.equal(texts.length, 6);
   for (const node of texts) assert.equal(node.getAttribute('dir'), 'auto', node.className || node.tagName);
 });
@@ -332,4 +333,214 @@ test('an accepted transition coalesces and replays as a collapsed accepted recei
   assert.equal(rows[0].payload.transition, 'accepted');
   assert.equal(documentUi.normalizePlanDocument(rows[0].payload).state, 'accepted');
   assert.match(documentUi.fullDocumentMarkup(rows[0].payload), /^<details[^>]*data-plan-state="accepted"/);
+});
+
+// --- Readable plan presentation: display-only split of a step into lead and detail. ---
+
+const plainEscape = require('../renderer/shared/string-utils').escapeHtml;
+const LONG_FLOW = 'Wrap the download stream call in the retry helper so that a cancel aborts the backoff wait cleanly';
+
+test('splitPlanStep applies the five rules in order', () => {
+  const { splitPlanStep } = documentUi;
+  assert.deepEqual(splitPlanStep('**Add retry**: backoff to 30 s'),
+    { lead: 'Add retry', detail: 'Backoff to 30 s', flow: false });
+  assert.deepEqual(splitPlanStep('**Add retry** - backoff to 30 s'),
+    { lead: 'Add retry', detail: 'Backoff to 30 s', flow: false });
+  assert.deepEqual(splitPlanStep('Add the helper: backoff from 2 s to 30 s'),
+    { lead: 'Add the helper', detail: 'Backoff from 2 s to 30 s', flow: false });
+  assert.deepEqual(splitPlanStep('Resume partial files. Store the ETag beside it.'),
+    { lead: 'Resume partial files', detail: 'Store the ETag beside it.', flow: false });
+  assert.deepEqual(splitPlanStep('Wire the status line — translate the keys'),
+    { lead: 'Wire the status line', detail: 'Translate the keys', flow: false });
+  assert.deepEqual(splitPlanStep('Wire the status line – translate the keys'),
+    { lead: 'Wire the status line', detail: 'Translate the keys', flow: false });
+  assert.deepEqual(splitPlanStep('Wire the status line - translate the keys'),
+    { lead: 'Wire the status line', detail: 'Translate the keys', flow: false });
+  assert.deepEqual(splitPlanStep('Update the models manifest'),
+    { lead: 'Update the models manifest', detail: '', flow: false });
+  assert.ok(LONG_FLOW.length > 90);
+  assert.deepEqual(splitPlanStep(LONG_FLOW), {
+    lead: 'Wrap the download stream call in the retry helper',
+    detail: ' so that a cancel aborts the backoff wait cleanly',
+    flow: true,
+  });
+  const unbroken = 'x'.repeat(120);
+  assert.deepEqual(splitPlanStep(unbroken), { lead: '', detail: unbroken, flow: false });
+});
+
+test('plan grids can shrink and long tokens wrap, so a step never widens the chat column', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'styles', 'chat-plan-document.css'), 'utf8');
+  const rule = css.match(/:is\(([^)]*)\)\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
+  assert.ok(rule, 'the shrink and wrap rule exists');
+  for (const selector of ['.plan-document', '.plan-document__steps', '.plan-document__step-text', '.plan-document-receipt__body']) {
+    assert.ok(rule[1].split(',').map((part) => part.trim()).includes(selector), selector);
+  }
+});
+
+test('splitPlanStep only treats a whole-word abbreviation as no sentence end', () => {
+  assert.deepEqual(documentUi.splitPlanStep('Update the envs. Then redeploy the service'),
+    { lead: 'Update the envs', detail: 'Then redeploy the service', flow: false });
+});
+
+test('splitPlanStep ignores breaks inside backticks and abbreviations', () => {
+  const { splitPlanStep } = documentUi;
+  assert.deepEqual(splitPlanStep('Call `fn: x` then stop'),
+    { lead: 'Call `fn: x` then stop', detail: '', flow: false });
+  const eg = splitPlanStep('Cover the edge cases, e.g. empty input. Then ship it');
+  assert.equal(eg.lead, 'Cover the edge cases, e.g. empty input');
+  assert.equal(eg.detail, 'Then ship it');
+});
+
+test('flow keeps the whole sentence and every markup shape is exact', () => {
+  assert.equal(documentUi.planStepInnerMarkup(LONG_FLOW, plainEscape),
+    '<span class="plan-document__step-flow"><strong>Wrap the download stream call in the retry helper</strong> so that a cancel aborts the backoff wait cleanly</span>');
+  assert.equal(documentUi.planStepInnerMarkup('Plain step', plainEscape),
+    '<span class="plan-document__step-lead">Plain step</span>');
+  assert.equal(documentUi.planStepInnerMarkup('Add it: do it', plainEscape),
+    '<span class="plan-document__step-lead">Add it</span><span class="plan-document__step-detail">Do it</span>');
+  assert.equal(documentUi.planStepInnerMarkup('y'.repeat(120), plainEscape),
+    `<span class="plan-document__step-plain">${'y'.repeat(120)}</span>`);
+});
+
+test('planInlineMarkup escapes first and keeps code spans literal', () => {
+  const html = documentUi.planInlineMarkup('<img src=x onerror=alert(1)> **bold** `**x**` and `<b>`', plainEscape);
+  assert.equal(html.includes('<img'), false);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /<strong>bold<\/strong>/);
+  assert.match(html, /<code>\*\*x\*\*<\/code>/);
+  assert.match(html, /<code>&lt;b&gt;<\/code>/);
+  assert.equal(documentUi.planInlineMarkup('[a](http://x) ![i](y)', plainEscape), '[a](http://x) ![i](y)');
+});
+
+test('hostile plan text renders escaped in summary, steps and verification', () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const markup = documentUi.fullDocumentMarkup({
+    tool_call_id: 'c', title: 'T', summary: hostile, steps: [`Do ${hostile}: now`],
+    verification: hostile, state: 'pending',
+  });
+  assert.equal(markup.includes('<img'), false);
+  assert.equal((markup.match(/&lt;img src=x onerror=alert\(1\)&gt;/g) || []).length >= 4, true);
+  const receipt = documentUi.collapsedReceiptMarkup({
+    title: 'T', summary: hostile, steps: [hostile], verification: hostile, state: 'approved',
+  });
+  assert.equal(receipt.includes('<img'), false);
+});
+
+test('a 1200 character summary and verification render in full', () => {
+  const summary = `${'s'.repeat(1199)}!`;
+  const verification = `${'v'.repeat(1199)}?`;
+  const markup = documentUi.fullDocumentMarkup({
+    tool_call_id: 'c', title: 'T', summary, steps: ['A'], verification, state: 'pending',
+  });
+  assert.equal(markup.includes(summary), true);
+  assert.equal(markup.includes(verification), true);
+  const normalized = documentUi.normalizePlanDocument({ summary: 's'.repeat(2000), verification: 'v'.repeat(2000) });
+  assert.equal(normalized.summary.length, 1200);
+  assert.equal(normalized.verification.length, 1200);
+});
+
+test('the step span carries an escaped raw attribute and formatted contents', () => {
+  const raw = 'Add `a: b` & "quote": <done>';
+  const markup = documentUi.fullDocumentMarkup({ tool_call_id: 'c', title: 'T', steps: [raw], state: 'pending' });
+  const span = new JSDOM(markup).window.document.querySelector('[data-plan-step-text]');
+  assert.equal(span.dataset.planStepRaw, raw);
+  assert.equal(span.getAttribute('role'), 'button');
+  assert.equal(span.getAttribute('dir'), 'auto');
+  assert.ok(span.querySelector('code'));
+  assert.equal(span.textContent.includes('`'), false);
+});
+
+test('notes open at 700 characters and close at 701; check always opens', () => {
+  const build = (length) => new JSDOM(documentUi.fullDocumentMarkup({
+    tool_call_id: 'c', title: 'T', steps: ['A'], notes: 'n'.repeat(length), verification: 'Run it', state: 'pending',
+  })).window.document;
+  const open = build(700);
+  assert.equal(open.querySelector('details[data-plan-section="notes"]').open, true);
+  assert.equal(open.querySelector('details[data-plan-section="check"]').open, true);
+  assert.equal(build(701).querySelector('details[data-plan-section="notes"]').open, false);
+  const labels = [...open.querySelectorAll('details[data-plan-section] > summary')].map((n) => n.textContent);
+  assert.deepEqual(labels, ['Notes', 'How it gets checked']);
+  assert.equal(open.querySelector('.plan-document__check').getAttribute('dir'), 'auto');
+});
+
+test('an expanded receipt carries summary, steps, notes, check and real feedback only', () => {
+  const base = {
+    title: 'Done', summary: 'The **why**', steps: ['Add it: now'], notes: 'Some note', verification: 'Run `npm test`',
+    state: 'rejected',
+  };
+  const html = documentUi.collapsedReceiptMarkup({ ...base, feedback: 'Cover rollback' },
+    { renderMarkdown: (text) => `<p>${text}</p>` });
+  const doc = new JSDOM(html).window.document;
+  assert.equal(doc.querySelector('.plan-document__summary strong').textContent, 'why');
+  assert.equal(doc.querySelectorAll('.plan-document__steps > li').length, 1);
+  assert.equal(doc.querySelector('.plan-document__steps [data-plan-step-controls]'), null);
+  assert.equal(doc.querySelector('.plan-document__steps [data-plan-step-raw]'), null);
+  assert.equal(doc.querySelector('[data-plan-section="notes"] .plan-document__notes').textContent, 'Some note');
+  assert.equal(doc.querySelector('[data-plan-section="check"] code').textContent, 'npm test');
+  assert.match(doc.querySelector('.plan-document-receipt__body').textContent, /Cover rollback/);
+  const hidden = documentUi.collapsedReceiptMarkup({ ...base, feedback: '<no feedback given>' });
+  assert.equal(hidden.includes('no feedback given'), false);
+  assert.equal(hidden.includes('Feedback:'), false);
+});
+
+function mountPlan(plan, onApprove) {
+  const dom = new JSDOM(`<!doctype html><body><main id="chatTimeline">${documentUi.fullDocumentMarkup(plan)}</main></body>`, { pretendToBeVisual: true });
+  dom.window.jennyShell = { tools: { approve: async (...args) => { onApprove?.(args); return true; } } };
+  const controller = createPlanDocumentController({ windowRef: dom.window, actionButton, textField });
+  return { dom, controller, host: dom.window.document.querySelector('[data-plan-document]') };
+}
+
+test('approving an unedited formatted plan reports not edited and omits the plan', async () => {
+  const decisions = [];
+  const raw = 'Add the `retry: helper`: backoff to **30 s**';
+  const { dom, controller, host } = mountPlan({ tool_call_id: 'fmt', title: 'T', steps: [raw], state: 'pending' },
+    (args) => decisions.push(args));
+  assert.equal(host.querySelector('[data-plan-edited]').hidden, true);
+  host.querySelector('[data-plan-decision="approved"]').click();
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(decisions, [['fmt', { decision: 'approved', feedback: '' }]]);
+  controller.dispose();
+  dom.window.close();
+});
+
+test('editing a formatted step by clicking nested code shows and sends the raw string', async () => {
+  const decisions = [];
+  const raw = 'Add the `retry: helper`: backoff to **30 s**';
+  const { dom, controller, host } = mountPlan({ tool_call_id: 'edit', title: 'T', steps: [raw], state: 'pending' },
+    (args) => decisions.push(args));
+  assert.ok(host.querySelector('[data-plan-step-text] code'));
+  host.querySelector('[data-plan-step-text] code').click();
+  const input = host.querySelector('[data-plan-step-index="0"] input');
+  assert.ok(input);
+  assert.equal(input.value, raw);
+  input.value = `${raw} again`;
+  input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.equal(host.querySelector('[data-plan-edited]').hidden, false);
+  assert.equal(host.querySelector('[data-plan-step-text]').dataset.planStepRaw, `${raw} again`);
+  assert.ok(host.querySelector('[data-plan-step-text] code'));
+  host.querySelector('[data-plan-decision="approved"]').click();
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(decisions[0][1].plan, { title: 'T', steps: [`${raw} again`] });
+  controller.dispose();
+  dom.window.close();
+});
+
+test('re-rendered plan restores the fold state of its sections', async () => {
+  const plan = { tool_call_id: 'fold', title: 'T', steps: ['A'], notes: 'short', verification: 'Run it', state: 'pending' };
+  const { dom, controller, host } = mountPlan(plan);
+  const notes = host.querySelector('[data-plan-section="notes"]');
+  const check = host.querySelector('[data-plan-section="check"]');
+  assert.equal(notes.open, true);
+  notes.open = false;
+  notes.dispatchEvent(new dom.window.Event('toggle'));
+  check.open = false;
+  check.dispatchEvent(new dom.window.Event('toggle'));
+  const timeline = dom.window.document.getElementById('chatTimeline');
+  timeline.innerHTML = documentUi.fullDocumentMarkup(plan);
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  const again = timeline.querySelector('[data-plan-document]');
+  assert.equal(again.querySelector('[data-plan-section="notes"]').open, false);
+  assert.equal(again.querySelector('[data-plan-section="check"]').open, false);
+  controller.dispose();
+  dom.window.close();
 });

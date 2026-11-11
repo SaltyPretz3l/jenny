@@ -77,15 +77,6 @@ test('a collapsing reasoning panel zeroes its block padding so the clip reaches 
   assert.match(rule, /padding-bottom:\s*0;/);
 });
 
-test('the jump-to-latest host enters briefly and honors reduced motion', () => {
-  const css = readStyle('chat-composer-meta-affordances.css');
-  const selector = '.composer-wayfinder-host:not([hidden])';
-  assert.match(blockFor(css, selector), /animation:\s*chat-wayfinder-enter var\(--motion-duration-fast\)/);
-
-  const reducedMotion = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-  assert.match(blockFor(reducedMotion, selector), /animation:\s*none/);
-});
-
 test('the live reasoning box is flag-scoped, holds through the collapse and keeps its cap under reduced motion', () => {
   // Row 101 Phase 2: the cap applies only under the root flag attribute, in the Thinking view
   // (Answers view excluded), to a streaming body and to a marked body while its panel is open

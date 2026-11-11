@@ -10,7 +10,6 @@ const HOSTED_ENABLED_TOOL_CAPABILITIES = [
   'tools_edit_file_enabled',
   'tools_glob_enabled',
   'tools_grep_enabled',
-  'tools_mermaid_enabled',
 ];
 
 test('hosted managed config applies an explicit closed tool capability policy', () => {
@@ -30,6 +29,7 @@ test('hosted managed config applies an explicit closed tool capability policy', 
       tools_automations_enabled: true,
       tools_home_enabled: true,
       tools_preview_test_enabled: true,
+      tools_browser_use_enabled: true,
       tools_task_board_enabled: true,
       tools_project_notes_enabled: true,
       memory_v2_enabled: true,

@@ -21,7 +21,7 @@ function validInput(input) {
   return !Object.hasOwn(input, 'purpose') || (typeof input.purpose === 'string' && input.purpose.length <= 1024);
 }
 
-const result = (value) => jsonToolResult(NAME, 'Session stop', value, { cleanup: value.cleanup });
+const result = (value) => ({ ...jsonToolResult(NAME, 'Session stop', value, { cleanup: value.cleanup }), isError: value.ok !== true });
 
 module.exports = {
   name: NAME, ...manifestSchema(NAME), category: 'builtin', workspaceRequired: false,

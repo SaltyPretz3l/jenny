@@ -202,7 +202,7 @@ test('the preparation restriction ignores a requested tool preference and surviv
 
 test('managedToolPreferenceInput only replaces the preference input for a preparation turn', () => {
   assert.deepEqual(managedToolPreferenceInput({ disabled_tools: ['read_file'] }), { disabled_tools: ['read_file'] });
-  assert.equal(managedToolPreferenceInput(undefined), undefined);
+  assert.deepEqual(managedToolPreferenceInput(undefined), { disabled_tools: ['browser'] }, 'browser is off unless a chat turns it on');
   assert.deepEqual(managedToolPreferenceInput({ disabled_tools: ['read_file'] }, { handoffPreparation: PREPARATION }),
     { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] });
 });

@@ -388,6 +388,10 @@ async function loadRendererApp({
   // The starfield holds a warm start for 900 ms and collapses over 750 ms;
   // harness boots run the plain curtain unless a test opts into the sky.
   window.__JENNY_STARTUP_ANIMATION = settings.startupAnimation || 'off';
+  if (settings.startupAnimation === 'on') {
+    window.HTMLCanvasElement.prototype.transferControlToOffscreen = () => ({});
+    window.Worker = class FakeSkyWorker { postMessage() {} terminate() {} };
+  }
   window.jennyShell = createShellStub(settings.shell);
   if (settings.appearance) {
     window.localStorage.setItem('jenny.appearance.v2', JSON.stringify(settings.appearance));

@@ -5,7 +5,6 @@ must independently attest the suspended waiter and canonical completed outcomes.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import math
@@ -29,7 +28,7 @@ from sidecar.runtime.approval_input_bundle import checkpoint_approval_input, enc
 from sidecar.runtime.continuation_checkpoint import _exchange, _request_params
 from sidecar.runtime.continuation_codec import encode_continuation_checkpoint
 from sidecar.runtime.continuation_context import ContinuationContext
-from sidecar.runtime.continuation_outcomes import outcome_refs
+from sidecar.runtime.continuation_outcomes import outcome_refs, saved_output_sha256
 from sidecar.runtime.mutation_continuation import (
     FrozenMutationCheckpoint,
     prepare_mutation_checkpoint,
@@ -79,7 +78,7 @@ def _completed(plan: Any, previous: list[dict]) -> list[dict]:
         seen.add(outcome.call_id)
         ref = {"call_id": outcome.call_id, "tool_id": outcome.tool_name,
                "success": outcome.success,
-               "result_sha256": hashlib.sha256(outcome.output.encode()).hexdigest()}
+               "result_sha256": saved_output_sha256(outcome)}
         if outcome.call_id in refs and refs[outcome.call_id] != ref:
             raise ValueError("decision_outcome_conflict")
         refs[outcome.call_id] = ref

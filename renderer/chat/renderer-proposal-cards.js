@@ -113,6 +113,8 @@
     read_only: jt('chat.proposal.runReadOnly', "Run isn't available in a read-only chat."),
     unsupported_capability: jt('chat.proposal.runUnsupported', "Run isn't available yet."),
     lockdown: jt('chat.proposal.runLockdown', "Run isn't available while this chat is in offline lockdown."),
+    sandbox_not_ready: jt('chat.proposal.runSandboxNotReady', "Run isn't available until the command sandbox is ready (Settings)."),
+    sandbox_mode_changed: jt('chat.proposal.runSandboxModeChanged', "Run isn't available because the command sandbox mode changed since this was proposed (Settings)."),
   });
 
   function choiceUnavailableText(action, reason) {

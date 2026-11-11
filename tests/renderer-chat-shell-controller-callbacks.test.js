@@ -332,6 +332,7 @@ test('chat shell controller keeps toggleThreadBranch safe when the callback bund
       escapeHtml(value) { return String(value || ''); },
       showToastMessage() {},
       getCurrentSessionMessages() { return []; },
+      getCurrentVisibleMessages() { return [{ id: 'u1', role: 'user' }]; },
       getCurrentRuntimePreferences() {
         return {
           contextPreferences: {
@@ -390,4 +391,6 @@ test('chat shell controller keeps toggleThreadBranch safe when the callback bund
   assert.doesNotThrow(() => {
     receivedCallbacks.toggleThreadBranch('assistant_stream_1');
   });
+  // Without it the More menu's Back to prompt finds no prompt and stays disabled in the main pane.
+  assert.deepEqual(receivedCallbacks.getCurrentVisibleMessages(), [{ id: 'u1', role: 'user' }]);
 });

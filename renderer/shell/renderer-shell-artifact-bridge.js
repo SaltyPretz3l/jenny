@@ -20,10 +20,13 @@
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton, artifactPanelV2Module, artifactFilePreviewModule, taskRailModule, subagentRailModule) {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-  const jt = (globalRef.jennyI18n && globalRef.jennyI18n.t) || globalRef.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function noop() {}
   function noopNull() { return null; }
   function noopArr() { return []; }
+  const loadSiblingModule = (globalName, modulePath) => globalRef[globalName] || (typeof require === 'function' ? require(modulePath) : null);
+  const prefsUtils = loadSiblingModule('rendererShellArtifactPrefs', './renderer-shell-artifact-prefs');
+  const sidePanelUtils = loadSiblingModule('rendererShellSidePanel', './renderer-shell-side-panel');
+  const railsUtils = loadSiblingModule('rendererShellArtifactRails', './renderer-shell-artifact-rails');
 
   function createShellArtifactBridge(deps) {
     const {
@@ -84,109 +87,13 @@
     // presents only artifacts produced since (owner decision 2026-09-29).
     const runStartedAt = Date.now();
     let panelV2Controller = null;
-    // Cache the parsed review prefs keyed by the raw stored string. renderAll (per
-    // streaming frame, while the surface controller is still null) re-reads this;
-    // keying on the literal stored value means a write here or in another window
-    // is picked up on the next read, so the cache only ever skips re-parsing an
-    // unchanged blob -- it cannot go stale.
-    let cachedReviewPrefsRaw = null;
-    let cachedReviewPrefs = null;
     const artifactSessionCache = new Map();
-    let codeReviewRailController = null;
-    let codeReviewRailBound = false;
-    let filePreviewController = null;
-    let filePreviewBound = false;
-    let taskRailController = null;
-    let subagentRailController = null;
-    // Project Notes (renderer-project-notes-entry.js is always loaded; the rail loads lazily).
-    let projectNotesRailController = null;
-    let projectNotesEntry = null;
-    let memoryChatEntry = null;
-    // Artifact Panel V2: per-entry validation for the per-session width map —
-    // non-empty string key, finite positive number, clamped to the static
-    // 320..560 range; malformed entries dropped; oversized maps trimmed to the
-    // newest 40 (matching the prefs module's oldest-first eviction).
-    function normalizeArtifactReviewWidthBySession(value) {
-      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-      const normalized = {};
-      for (const key of Object.keys(source)) {
-        const sessionId = String(key || '').trim();
-        const numeric = Number(source[key]);
-        if (!sessionId || !Number.isFinite(numeric) || numeric <= 0) continue;
-        normalized[sessionId] = Math.max(320, Math.min(560, Math.round(numeric)));
-      }
-      const keys = Object.keys(normalized);
-      for (let i = 0; i < keys.length - 40; i += 1) {
-        delete normalized[keys[i]];
-      }
-      return normalized;
-    }
-
-    function normalizeArtifactReviewMaximizedBySession(value) {
-      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-      const normalized = {};
-      for (const key of Object.keys(source)) {
-        const sessionId = String(key || '').trim();
-        if (sessionId && source[key] === true) normalized[sessionId] = true;
-      }
-      const keys = Object.keys(normalized);
-      for (let i = 0; i < keys.length - 40; i += 1) delete normalized[keys[i]];
-      return normalized;
-    }
-
-    function normalizeArtifactReviewPreferences(value) {
-      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-      const textWrap = source.textWrap && typeof source.textWrap === 'object' ? source.textWrap : {};
-      const normalized = {
-        // One closed state: a retired `collapsed: true` reads as closed.
-        enabled: source.enabled === true && source.collapsed !== true,
-        width: Math.max(320, Math.min(560, Math.round(Number(source.width || 420) || 420))),
-        // Must stay in lockstep with the manager-side normalizer
-        // (renderer-artifact-review-prefs.js, wired through
-        // renderer-artifacts-utils.js): the two drifting is the named auto-open
-        // desync failure mode. The lockstep covers widthBySession (Artifact
-        // Panel V2), the per-chat dismissal (shell chrome area 3, D1) and the
-        // per-kind wrap: stripping any here would make the next save lose it.
-        // The retired global `userDismissed` is ignored, never carried.
-        textWrap: { output: source.textWrap === false ? false : textWrap.output !== false, code: source.textWrap === false ? false : textWrap.code !== false },
-      };
-      const widthBySession = normalizeArtifactReviewWidthBySession(source.widthBySession);
-      if (Object.keys(widthBySession).length > 0) {
-        normalized.widthBySession = widthBySession;
-      }
-      const dismissedForSession = normalizeArtifactReviewMaximizedBySession(source.dismissedForSession);
-      if (Object.keys(dismissedForSession).length > 0) normalized.dismissedForSession = dismissedForSession;
-      const maximizedBySession = normalizeArtifactReviewMaximizedBySession(source.maximizedBySession);
-      if (Object.keys(maximizedBySession).length > 0) normalized.maximizedBySession = maximizedBySession;
-      return normalized;
-    }
-
-    function loadArtifactReviewPreferences() {
-      try {
-        const raw = windowRef?.localStorage?.getItem?.(ARTIFACT_REVIEW_STORAGE_KEY) ?? null;
-        if (raw === cachedReviewPrefsRaw && cachedReviewPrefs) {
-          return cachedReviewPrefs;
-        }
-        cachedReviewPrefsRaw = raw;
-        cachedReviewPrefs = normalizeArtifactReviewPreferences(raw ? JSON.parse(raw) : {});
-        return cachedReviewPrefs;
-      } catch (_error) {
-        cachedReviewPrefsRaw = null;
-        cachedReviewPrefs = null;
-        return normalizeArtifactReviewPreferences({});
-      }
-    }
-
-    function getArtifactReviewPreferenceState() {
-      const existing = state.ui?.artifactReview && typeof state.ui.artifactReview === 'object'
-        ? state.ui.artifactReview
-        : {};
-      state.ui.artifactReview = normalizeArtifactReviewPreferences({
-        ...existing,
-        ...loadArtifactReviewPreferences(),
-      });
-      return state.ui.artifactReview;
-    }
+    let rails = null; // built below, once the artifact surface accessors exist
+    const { getArtifactReviewPreferenceState } = prefsUtils.createArtifactReviewPrefsReader({
+      state,
+      windowRef,
+      ARTIFACT_REVIEW_STORAGE_KEY,
+    });
 
     function isArtifactReviewVisible() {
       if (artifactSurfaceController?.isArtifactReviewVisible) {
@@ -258,95 +165,13 @@
       artifactSurfaceController?.pruneSessionArtifacts?.(validSessionIds);
     }
 
-    // Split view W3-2 (spec W3_SPEC_2026-09-26 §3): the one
-    // side panel (artifact review, or the context panel sharing its column)
-    // shows the session renderer-side-panel-owner.js resolves: with two panes
-    // the chat that opened it, whichever pane has focus. With one pane every
-    // answer here is exactly the pre-split one (the focused session), and the
-    // owner line is never inserted.
-    function isSplitLayout() {
-      return Boolean(sidePanelOwner) && (Array.isArray(state.panes?.panes) ? state.panes.panes.length : 0) > 1;
-    }
-    function findSession(sessionId) {
-      return (Array.isArray(state.sessions) ? state.sessions : []).find((session) => session?.id === sessionId) || null;
-    }
-    function getPanelSession() {
-      return isSplitLayout() ? findSession(sidePanelOwner.resolvePanelSessionId(state)) : getActiveSession();
-    }
-    // The owner line names the chat the way its pane kicker does (the summary
-    // title, else "New session"). Rebuilt only when the owner, its title or
-    // the line's presence changes; `mode` is the artifact rail mode, or
-    // 'context' for the context panel. Code review and file preview are
-    // workspace-level, so they carry no line.
-    const ownerLineKeys = new WeakMap();
-    function syncOwnerLine(panelEl, mode) {
-      if (!panelEl || typeof panelEl.querySelector !== 'function') return;
-      // The Subagent Monitor's record ends with its mode, its panel or its session (renderer-subagent-rail.js).
-      if (mode !== 'context' && mode !== 'activity') subagentRailController?.handleLayoutSync?.(mode, !panelEl.classList?.contains('hidden'));
-      // Changes (code_review) and Activity name their owner in one-pane view too (row 59 checkpoint 2).
-      const named = mode === 'code_review' || mode === 'activity' || (isSplitLayout() && (mode === 'artifact' || mode === 'context' || mode === 'subagents'));
-      const sessionId = Boolean(sidePanelOwner) && named ? sidePanelOwner.resolvePanelSessionId(state) : '';
-      const title = sessionId
-        ? String(findSession(sessionId)?.title || '').trim() || jt('chat.empty.newSession', 'New session')
-        : '';
-      const key = sessionId ? `${sessionId}\n${title}` : '';
-      const previous = ownerLineKeys.get(panelEl) || '';
-      if (!key && !previous) return; // nothing inserted, nothing to read (one pane lands here)
-      let line = panelEl.querySelector(':scope > .side-panel-owner-line');
-      if (key === previous && line) return;
-      ownerLineKeys.set(panelEl, key);
-      if (!key) {
-        line?.remove();
-        return;
-      }
-      const documentRef = panelEl.ownerDocument;
-      if (!line) {
-        line = documentRef.createElement('p');
-        line.className = 'side-panel-owner-line';
-        panelEl.prepend(line);
-      }
-      // The localized template is split around {title} so the title alone
-      // sits in the ellipsizing span, wherever a language places it.
-      const [before = '', after = ''] = String(jt('artifacts.panel.fromChat', 'From {title}')).split('{title}');
-      const titleEl = documentRef.createElement('span');
-      titleEl.className = 'side-panel-owner-title';
-      titleEl.setAttribute('dir', 'auto'); // an English title keeps LTR inside RTL chrome
-      titleEl.textContent = title;
-      titleEl.title = title;
-      line.replaceChildren(...[before.trim(), titleEl, after.trim()].filter(Boolean));
-    }
-    // An explicit open presents the panel for its chat, so auto-open must not
-    // present it again on the next render and swap the artifact just chosen
-    // for the newest (a second pane's chat was never auto-presented: the hook
-    // only runs for the chat the panel shows). Same FIFO as the auto-open.
-    function markPresented(sessionId) {
-      const id = String(sessionId || '').trim();
-      const presented = state.artifacts?.autoOpenedSessionIds;
-      if (!id || !Array.isArray(presented) || presented.includes(id)) return;
-      state.artifacts.autoOpenedSessionIds = presented.concat(id).slice(-50);
-    }
-    const sidePanel = {
-      getSessionId: () => (isSplitLayout() ? sidePanelOwner.resolvePanelSessionId(state) : state.currentSessionId),
-      // No argument: an explicit open from the focused pane (a pointerdown or
-      // focusin in a pane focuses it before its click runs). With one: the
-      // session an auto-open presented. A no-op with one pane.
-      claim: (sessionId) => {
-        if (!isSplitLayout()) return false;
-        if (sessionId !== undefined) return sidePanelOwner.claimPanelOwner(state, sessionId);
-        markPresented(state.currentSessionId);
-        return sidePanelOwner.claimPanelOwner(state, state.currentSessionId);
-      },
-      getAutoOpenSessionId: (panelVisible) => (isSplitLayout()
-        ? sidePanelOwner.resolveAutoOpenSessionId(state, panelVisible)
-        : String((typeof getActiveSession === 'function' ? getActiveSession()?.id : '') || '').trim()),
-      syncOwnerLine,
-      // "Jump to chat" (artifact and code review) scrolls the pane showing the
-      // panel's chat; null = pane 0's own timeline (always with one pane).
-      getJumpTarget: () => (isSplitLayout()
-        ? (windowRef?.rendererAppPaneComposition || globalRef.rendererAppPaneComposition)?.getPaneComposition?.()
-          ?.getSessionPaneTarget?.(sidePanelOwner.resolvePanelSessionId(state)) || null
-        : null),
-    };
+    const { sidePanel, getPanelSession } = sidePanelUtils.createShellSidePanel({
+      state,
+      windowRef,
+      sidePanelOwner,
+      getActiveSession,
+      getSubagentRailController: () => rails?.getSubagentRailController() || null,
+    });
 
     // The owning pane closed (the layout reconcile's 'collapse'): collapse a
     // showing panel WITHOUT the sticky dismissal, so auto-open still works.
@@ -455,14 +280,15 @@
             recordChatTimelineRolloutSignal: (...args) => recordChatTimelineRolloutSignal(...args),
             rollbackChatTimelineRowModel: (...args) => rollbackChatTimelineRowModel(...args),
             toErrorMessage: (...args) => toErrorMessage(...args),
-            renderCodeReviewSurface: (surface) => codeReviewRailController?.renderRailContent?.(surface),
+            renderCodeReviewSurface: (surface) => rails.getCodeReviewRailController()?.renderRailContent?.(surface),
             // Late-bound like the code-review rail: the preview controller is
             // built after the surface (it needs the surface's rail helpers).
-            renderFilePreviewSurface: (surface) => filePreviewController?.renderRailContent?.(surface),
+            renderFilePreviewSurface: (surface) => rails.getFilePreviewController()?.renderRailContent?.(surface),
             renderTasksSurface: (surface) => ensureTaskRailController()?.renderRailContent?.(surface) === true,
-            renderSubagentsSurface: (surface) => subagentRailController?.renderSubagentsSurface?.(surface) === true,
+            renderSubagentsSurface: (surface) => rails.getSubagentRailController()?.renderSubagentsSurface?.(surface) === true,
             renderNotesSurface: (surface) => ensureProjectNotesRail()?.renderRailContent?.(surface) === true,
-            resetFilePreview: () => filePreviewController?.reset?.(),
+            renderBrowserSurface: (surface) => rails.getBrowserPanel()?.renderRailContent?.(surface) === true,
+            resetFilePreview: () => rails.getFilePreviewController()?.reset?.(),
             panelV2: panelV2Controller,
             sidePanel,
             getRunStartedAt: () => runStartedAt,
@@ -512,301 +338,35 @@
       return artifactSurfaceController;
     }
 
-    // One Changes undo controller for both hosts (row 34 S5): the IDE chat
-    // dock and the side panel. Created once its lazily loaded script is ready.
-    let changesUndoController = null;
-    function getChangesUndoController() {
-      const factory = globalRef.rendererChangesUndo?.createChangesUndo;
-      if (changesUndoController || typeof factory !== 'function') return changesUndoController;
-      const renderDiffHunks = codeReviewRailDeps.renderDiffHunks;
-      changesUndoController = factory({
-        getSessionId: () => String(state.currentSessionId || ''),
-        showToast: (...args) => showToastMessage(...args),
-        requestRender: () => renderAll(),
-        renderDiffBody: typeof renderDiffHunks === 'function'
-          ? (change) => renderDiffHunks(change.hunks, escapeHtml, { path: change.path })
-          : null,
-        escapeHtml,
-        appendClientLog: (...args) => appendClientLog(...args),
-      });
-      registerCleanup(() => changesUndoController?.dispose?.());
-      return changesUndoController;
-    }
-
-    function ensureCodeReviewRail() {
-      if (codeReviewRailController || !artifactSurfaceController) {
-        return codeReviewRailController;
-      }
-      const railFactory = codeReviewRailDeps.codeReviewRailFactory;
-      const buildLedger = codeReviewRailDeps.buildJennyChangeLedgerFromTurnViewModels;
-      const renderDiffHunks = codeReviewRailDeps.renderDiffHunks;
-      if (typeof railFactory !== 'function') {
-        return null;
-      }
-      // In split view the review belongs to the chat that owns the side panel.
-      const getSessionId = () => String(sidePanel.getSessionId() || '');
-      try {
-        codeReviewRailController = railFactory({
-          state,
-          // Same undefined-eager-dep root cause as ensurePanelV2: pass the
-          // getElementById-resolved container so the rail's bind() attaches its
-          // keydown listener instead of early-returning on a null dep.
-          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
-          loadChangesView: codeReviewRailDeps.loadChangesView,
-          buildJennyChangeLedgerFromTurnViewModels: typeof buildLedger === 'function' ? buildLedger : null,
-          renderDiffBody: typeof renderDiffHunks === 'function'
-            ? (change) => (change && Array.isArray(change.hunks) && change.hunks.length
-              ? renderDiffHunks(change.hunks, escapeHtml, { path: change.path })
-              : '')
-            : null,
-          getTurnViewModelsForActiveSession: () => codeReviewRailDeps.getTurnViewModelsForActiveSession?.(getSessionId()) || [],
-          getActiveSessionId: getSessionId,
-          getWorkspaceId: codeReviewRailDeps.getWorkspaceId || (() => 'default'),
-          getSessionMessages: () => codeReviewRailDeps.getSessionMessages?.(getSessionId()) || [],
-          openInWorkspace: codeReviewRailDeps.openChangeInWorkspace || null,
-          claimOwner: (sessionId) => sidePanel.claim(sessionId),
-          getUndoController: getChangesUndoController,
-          setArtifactRailMode: (mode) => artifactSurfaceController?.setArtifactRailMode?.(mode),
-          openArtifactRail: (mode) => artifactSurfaceController?.openArtifactRail?.(mode),
-          renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
-          syncArtifactReviewLayout: () => artifactSurfaceController?.syncArtifactReviewLayout?.(),
-          appendClientLog: (...args) => appendClientLog(...args),
-          showComposerActionError: codeReviewRailDeps.showComposerActionError || noop,
-          escapeHtml,
-        });
-        if (codeReviewRailController && !codeReviewRailBound) {
-          codeReviewRailController.bind?.();
-          codeReviewRailBound = true;
-          registerCleanup(() => codeReviewRailController?.dispose?.());
-        }
-      } catch (error) {
-        codeReviewRailController = null;
-        codeReviewRailBound = false;
-        appendClientLog('ERROR', 'code_review.surface_init_failed', {
-          message: error?.message || String(error),
-        });
-        return null;
-      }
-      return codeReviewRailController;
-    }
-
-    // Read-only chat-rail file preview (file_preview rail mode). Same lazy
-    // shape as ensureCodeReviewRail: built once, after the surface controller
-    // exists, bound to the stable #artifactReviewPanel container, and torn
-    // down through registerCleanup. A construction failure is logged and
-    // degrades to "no preview owner", which makes openFilePreviewTarget
-    // resolve false so the chat click falls back to the IDE ladder.
-    function ensureFilePreviewController() {
-      if (filePreviewController || !artifactSurfaceController) {
-        return filePreviewController;
-      }
-      if (typeof artifactFilePreviewModule?.createArtifactFilePreview !== 'function') {
-        return null;
-      }
-      try {
-        filePreviewController = artifactFilePreviewModule.createArtifactFilePreview({
-          state,
-          windowRef,
-          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
-          escapeHtml,
-          getWorkspaceFsApi: () => (windowRef?.jennyShell?.workspaceFs) || null,
-          markdownUtils: windowRef?.markdownUtils || globalRef.markdownUtils || null,
-          codeHighlight: windowRef?.rendererCodeHighlight || globalRef.rendererCodeHighlight || null,
-          frameUtils: windowRef?.rendererHtmlArtifactFrameUtils || globalRef.rendererHtmlArtifactFrameUtils || null,
-          openArtifactRail: (mode) => artifactSurfaceController?.openArtifactRail?.(mode),
-          renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
-          syncArtifactReviewLayout: () => artifactSurfaceController?.syncArtifactReviewLayout?.(),
-          appendClientLog: (...args) => appendClientLog(...args),
-          showToastMessage: (...args) => showToastMessage(...args),
-        });
-        if (filePreviewController && !filePreviewBound) {
-          filePreviewController.bind?.();
-          filePreviewBound = true;
-          registerCleanup(() => filePreviewController?.dispose?.());
-          // A committed workspace-root switch invalidates the preview: its
-          // bytes belong to the OLD root while its path now resolves in the
-          // new one. Event dispatched by refreshWorkspaceRootDependents.
-          const onRootCommitted = () => filePreviewController?.handleWorkspaceRootCommitted?.();
-          if (typeof windowRef?.addEventListener === 'function') {
-            windowRef.addEventListener('workspace:root-committed', onRootCommitted);
-            registerCleanup(() => windowRef.removeEventListener('workspace:root-committed', onRootCommitted));
-          }
-        }
-      } catch (error) {
-        filePreviewController = null;
-        filePreviewBound = false;
-        appendClientLog('ERROR', 'artifact_file_preview.surface_init_failed', {
-          message: error?.message || String(error),
-        });
-        return null;
-      }
-      return filePreviewController;
-    }
-
-    function ensureTaskRailController() {
-      if (taskRailController) {
-        taskRailController.bind?.();
-        return taskRailController;
-      }
-      if (typeof taskRailModule?.createTaskRail !== 'function') return null;
-      try {
-        const documentRef = windowRef?.document;
-        const chatInput = documentRef?.getElementById?.('chatInput') || null;
-        taskRailController = taskRailModule.createTaskRail({
-          state,
-          windowRef,
-          dom: {
-            artifactReviewPanel: resolveArtifactReviewPanelEl(),
-            utilityCluster: documentRef?.getElementById?.('chatTimelineUtilityCluster') || null,
-            chatInput,
-          },
-          escapeHtml,
-          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
-          renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
-          toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
-          activateWorkspaceSession: (sessionId) => callbacks.activateWorkspaceSession?.(sessionId),
-          // The rail's project scope menu reuses the shared (lazy) project switcher.
-          getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
-          setActiveView: (...args) => setActiveView(...args),
-          // The composer's own input listener resizes the textarea.
-          syncComposerInputHeight: () => chatInput?.dispatchEvent?.(new windowRef.Event('input', { bubbles: true })),
-          renderAll: (...args) => renderAll(...args),
-          appendClientLog: (...args) => appendClientLog(...args),
-          showToastMessage: (...args) => showToastMessage(...args),
-        });
-        taskRailController?.bind?.();
-        registerCleanup(() => taskRailController?.dispose?.());
-      } catch (error) {
-        taskRailController = null;
-        appendClientLog('ERROR', 'task_rail.surface_init_failed', {
-          message: error?.message || String(error),
-        });
-        return null;
-      }
-      return taskRailController;
-    }
-
-    // The Subagent Monitor rail (renderer-subagent-rail.js): late-bound like the
-    // task rail, published on windowRef.rendererSubagentRailHost for the pane
-    // monitor controllers, which never see the surface controller directly.
-    function ensureSubagentRail() {
-      if (subagentRailController) return subagentRailController;
-      if (typeof subagentRailModule?.createSubagentRail !== 'function') return null;
-      try {
-        subagentRailController = subagentRailModule.createSubagentRail({
-          state,
-          windowRef,
-          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
-          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
-          renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
-          restoreArtifactReviewPrefs: (patch) => artifactSurfaceController?.restoreArtifactReviewPrefs?.(patch),
-          // Building the surface loads the persisted prefs the snapshot reads.
-          getPrefs: () => { ensureArtifactSurface(); return state.ui?.artifactReview || {}; },
-          getPanelSessionId: () => sidePanel.getSessionId(),
-        });
-        subagentRailController?.bind?.();
-        registerCleanup(() => subagentRailController?.dispose?.());
-      } catch (error) {
-        subagentRailController = null;
-        appendClientLog('ERROR', 'subagent_rail.surface_init_failed', {
-          message: error?.message || String(error),
-        });
-        return null;
-      }
-      return subagentRailController;
-    }
-
-    // The always-loaded Notes entry (toggle, chat rows). Built once the module is
-    // present; an absent module stays null and the next ensure retries.
-    function ensureProjectNotesEntry() {
-      if (projectNotesEntry) return projectNotesEntry;
-      if (typeof windowRef?.rendererProjectNotesEntry?.createProjectNotesEntry !== 'function') return null;
-      try {
-        const documentRef = windowRef?.document;
-        projectNotesEntry = windowRef.rendererProjectNotesEntry.createProjectNotesEntry({
-          state,
-          windowRef,
-          escapeHtml,
-          dom: {
-            utilityCluster: documentRef?.getElementById?.('chatTimelineUtilityCluster') || null,
-            artifactReviewPanel: resolveArtifactReviewPanelEl(),
-          },
-          appendClientLog: (...args) => appendClientLog(...args),
-          showToastMessage: (...args) => showToastMessage(...args),
-          // The rail loads lazily: asking for the host builds it once its modules are present.
-          getHost: () => { ensureProjectNotesRail(); return windowRef.rendererProjectNotesHost || null; },
-        }) || null;
-        projectNotesEntry?.bind?.();
-        const built = projectNotesEntry;
-        registerCleanup(() => built?.dispose?.());
-      } catch (error) {
-        projectNotesEntry = null;
-        appendClientLog('ERROR', 'project_notes.entry_init_failed', { message: error?.message || String(error) });
-        return null;
-      }
-      return projectNotesEntry;
-    }
-
-    // The memory chip's Undo delegate (renderer-memory-chat-entry.js, row 58 W1).
-    function ensureMemoryChatEntry() {
-      if (memoryChatEntry) return memoryChatEntry;
-      if (typeof windowRef?.rendererMemoryChatEntry?.createMemoryChatEntry !== 'function') return null;
-      try {
-        memoryChatEntry = windowRef.rendererMemoryChatEntry.createMemoryChatEntry({
-          state, windowRef,
-          appendClientLog: (...args) => appendClientLog(...args),
-          showToastMessage: (...args) => showToastMessage(...args),
-        }) || null;
-        memoryChatEntry?.bind?.();
-        const built = memoryChatEntry;
-        registerCleanup(() => built?.dispose?.());
-      } catch (error) {
-        memoryChatEntry = null;
-        appendClientLog('ERROR', 'memory.chat_entry_init_failed', { message: error?.message || String(error) });
-      }
-      return memoryChatEntry;
-    }
-
-    // The Project Notes rail (renderer-project-notes-rail.js): resolved at CALL
-    // time because the modules load on first open. Publishes the host the entry drives.
-    function ensureProjectNotesRail() {
-      if (projectNotesRailController) return projectNotesRailController;
-      if (typeof windowRef?.rendererProjectNotesRail?.createProjectNotesRail !== 'function') return null;
-      try {
-        const controller = windowRef.rendererProjectNotesRail.createProjectNotesRail({
-          state,
-          windowRef,
-          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
-          escapeHtml,
-          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
-          renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
-          toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
-          getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
-          getEntry: () => projectNotesEntry,
-          appendClientLog: (...args) => appendClientLog(...args),
-          showToastMessage: (...args) => showToastMessage(...args),
-        });
-        controller.bind?.();
-        const host = {
-          open: () => controller.open() === true,
-          toggle: () => { controller.toggle(); return true; },
-          isOpen: () => controller.isOpen() === true,
-          refresh: () => controller.refresh(),
-          markSeen: (...args) => projectNotesEntry?.markSeen?.(...args),
-        };
-        windowRef.rendererProjectNotesHost = host;
-        registerCleanup(() => {
-          controller.dispose?.();
-          if (windowRef.rendererProjectNotesHost === host) delete windowRef.rendererProjectNotesHost;
-        });
-        projectNotesRailController = controller;
-      } catch (error) {
-        projectNotesRailController = null;
-        appendClientLog('ERROR', 'project_notes.rail_init_failed', { message: error?.message || String(error) });
-        return null;
-      }
-      return projectNotesRailController;
-    }
+    rails = railsUtils.createShellArtifactRails({
+      state,
+      windowRef,
+      escapeHtml,
+      callbacks,
+      codeReviewRailDeps,
+      registerCleanup,
+      sidePanel,
+      appendClientLog,
+      showToastMessage,
+      renderAll,
+      setActiveView,
+      getSurface: () => artifactSurfaceController,
+      ensureArtifactSurface,
+      resolveArtifactReviewPanelEl,
+      artifactFilePreviewModule,
+      taskRailModule,
+      subagentRailModule,
+    });
+    const {
+      ensureCodeReviewRail,
+      ensureFilePreviewController,
+      ensureTaskRailController,
+      ensureSubagentRail,
+      ensureProjectNotesEntry,
+      ensureMemoryChatEntry,
+      ensureProjectNotesRail,
+      getChangesUndoController,
+    } = rails;
 
     async function openFilePreviewTarget(payload) {
       ensureArtifactSurface();

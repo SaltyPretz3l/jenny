@@ -12,6 +12,11 @@
   pointer-events: none;
 }
 
+/* A live browser page paints above everything, so a toast waits beside it, not on it. */
+:root:has(.artifact-review-panel[data-artifact-review-mode="browser"]:not(.hidden):not(.artifact-review-overlay)):not(:has(.artifact-review-maximized)) .toast-viewport {
+  inset-inline-end: calc(var(--artifact-review-width, 420px) + var(--space-10));
+}
+
 /* Split view (gate §C/D14, 2026-09-26): with two panes the stack starts below
  * pane 1's kicker row, so a sticky toast never covers its close glyph. The
  * toast controller measures the kicker into --toast-split-top on each render;

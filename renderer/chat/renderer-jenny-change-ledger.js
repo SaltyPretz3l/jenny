@@ -236,7 +236,8 @@
     const kind = normalizeLower(safeGet(point, 'kind'));
     const createdAt = normalizeId(safeGet(point, 'created_at'));
     const ref = normalizeId(safeGet(point, 'ref'));
-    if (kind === 'git_checkpoint' && createdAt && ref.startsWith('refs/jenny/checkpoints/')) return { kind, ref, createdAt };
+    const namespaced = ref.startsWith('refs/jenny/checkpoints/') || ref.startsWith('refs/jenny/sandbox/');
+    if (kind === 'git_checkpoint' && createdAt && namespaced) return { kind, ref, createdAt };
     if (kind === 'head' && createdAt) return { kind, createdAt };
     const reason = normalizeLower(safeGet(point, 'reason'));
     return kind === 'none' && reason ? { kind, reason } : null;

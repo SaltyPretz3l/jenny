@@ -53,11 +53,9 @@
     'chatTimeline',
     'chatScrollSentinel',
     'jumpToTopButton',
-    'jumpToLastPromptButton',
     'jumpToBottomButton',
     'chatTimelineUtilityCluster',
     'artifactSplitViewToggle',
-    'composerWayfinderHost',
     'composerWrap',
     'chatInput',
     'sendButton',
@@ -250,7 +248,6 @@
       composerModelSelect,
       composerEffortSelect,
       jumpToTopButton: $('jumpToTopButton'),
-      jumpToLastPromptButton: $('jumpToLastPromptButton'),
       jumpToBottomButton: $('jumpToBottomButton'),
       composerAttachMenu: $('composerAttachMenu'),
       commandPaletteOverlay: $('commandPaletteOverlay'),
@@ -321,8 +318,6 @@
       chatOriginChip: $('chatOriginChip'),
       chatOriginLabel: $('chatOriginLabel'),
       chatContextPanel: $('chatContextPanel'),
-      contextSessionLogs: $('contextSessionLogs'),
-      contextPanelToggle: $('contextPanelToggle'),
     };
   }
 
@@ -410,7 +405,6 @@
         stopStreamButton: dom.stopStreamButton,
         sendButton: dom.sendButton,
         jumpToTopButton: dom.jumpToTopButton,
-        jumpToLastPromptButton: dom.jumpToLastPromptButton,
         jumpToBottomButton: dom.jumpToBottomButton,
         chatView: dom.chatView,
         chatSurfaceEffects: dom.chatSurfaceEffects,

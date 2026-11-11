@@ -121,6 +121,27 @@ describe('BrowserSessionService / Electron-direct sessions', () => {
     assert.equal(factory.windows[0].options.webPreferences.backgroundThrottling, false);
   });
 
+  test('a picture session sizes the page itself and hides its scrollbars; other sessions do neither', async () => {
+    const factory = createFakeBrowserWindowFactory();
+    const service = new BrowserSessionService({ browserWindowFactory: factory });
+
+    await service.open({ sessionId: 'plain', url: 'http://localhost:3000/a', bounds: { width: 390, height: 844 } });
+    await service.open({
+      sessionId: 'picture', url: 'http://localhost:3000/a', bounds: { width: 390, height: 844, contentSize: true }, hideScrollbars: true,
+    });
+
+    const [plain, picture] = factory.windows;
+    assert.equal(Object.prototype.hasOwnProperty.call(plain.options, 'useContentSize'), false);
+    assert.deepEqual(plain.insertedCss, []);
+    assert.equal(picture.options.useContentSize, true);
+    assert.equal(picture.options.width, 390);
+    assert.equal(picture.options.height, 844);
+    assert.equal(picture.insertedCss.length, 1);
+    assert.match(picture.insertedCss[0].css, /::-webkit-scrollbar \{ display: none !important; \}/);
+    assert.equal(picture.insertedCss[0].options.cssOrigin, 'user');
+    await service.dispose();
+  });
+
   test('screenshot returns a bitmap thumbnail from a resizable capture result', async () => {
     const bitmap = Buffer.alloc(160 * 100 * 4, 42);
     const factory = createFakeBrowserWindowFactory({

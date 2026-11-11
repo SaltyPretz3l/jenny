@@ -21,24 +21,6 @@
   function formatMessageTerminalTimestamp(value) {
     return formatDate(value, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }, '');
   }
-  function getTimelineEntryWeight(messages) {
-    let total = 0;
-    for (const message of Array.isArray(messages) ? messages : []) {
-      if (!message || typeof message !== 'object') continue;
-      const seen = new Set();
-      const entryGroups = [message.reasoning?.entries]
-        .concat((Array.isArray(message.reasoning_phases) ? message.reasoning_phases : []).map((phase) => phase?.entries));
-      total = Math.min(Number.MAX_SAFE_INTEGER, total + (typeof message.content === 'string' ? message.content.length : 0));
-      for (const entries of entryGroups) {
-        for (const entry of Array.isArray(entries) ? entries : []) {
-          if (!entry || typeof entry !== 'object' || seen.has(entry)) continue;
-          seen.add(entry);
-          total = Math.min(Number.MAX_SAFE_INTEGER, total + (typeof entry.text === 'string' ? entry.text.length : 0));
-        }
-      }
-    }
-    return total;
-  }
   function resolveModule(globalName, requirePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
       return globalThis[globalName];
@@ -48,6 +30,8 @@
     }
     return null;
   }
+  const virtualizerPipelineUtils = resolveModule('rendererRenderPipelineVirtualizer', './renderer-render-pipeline-virtualizer');
+  const { getTimelineEntryWeight } = virtualizerPipelineUtils;
 
   function createRenderPipeline(deps) {
     const thinkingPipelineUtils = resolveModule('rendererRenderPipelineThinkingUtils', './renderer-render-pipeline-thinking');
@@ -76,6 +60,8 @@
     const turnRowProjectorUtils = resolveModule('rendererTurnRowProjector', './renderer-turn-row-projector');
     const timelineVisibilityUtils = resolveModule('rendererTimelineVisibilityUtils', './renderer-timeline-visibility-utils');
     const paneVisibilityUtils = resolveModule('rendererPaneVisibilityUtils', './renderer-pane-visibility-utils');
+    const projectionStackUtils = resolveModule('rendererRenderPipelineProjectionStack', './renderer-render-pipeline-projection-stack');
+    const paneRuntimeUtils = resolveModule('rendererRenderPipelinePaneRuntime', './renderer-render-pipeline-pane-runtime');
     const { state } = deps;
     const { MESSAGE_STATUS, ACTIVITY_SCOPE } = deps.constants;
     const {
@@ -84,7 +70,7 @@
       chatThreadColumn, chatSpriteLayer, chatAssistantSprite,
       heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, chatInput,
       stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
-      jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton,
+      jumpToTopButton, jumpToBottomButton,
       composerModelSelectShell, composerEffortSelectShell,
       chatSurfaceEffects, chatSurfaceEffectLeft,
       chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel,
@@ -149,33 +135,19 @@
       ? (message, latestAssistantMessageId, options) => renderThinkingWidget(message, latestAssistantMessageId, { ...options, thinkingController })
       : renderThinkingWidget;
     const { uiRuntime, spriteRuntime } = deps.runtime;
-    // Split view W1-4a: the session THIS pane shows (renderer-pane-visibility-utils.js
-    // resolvePaneSessionId). A bag without an integer paneId is pane 0, as in
-    // createPaneRuntime; a blank layout makes pane 0 exactly currentSessionId.
-    const paneId = Number.isInteger(uiRuntime?.paneId) && uiRuntime.paneId >= 0 ? uiRuntime.paneId : 0;
-    const getPaneSessionId = typeof paneVisibilityUtils?.resolvePaneSessionId === 'function'
-      ? () => paneVisibilityUtils.resolvePaneSessionId(state, paneId)
-      : () => String(state.currentSessionId || '').trim();
-    // Transcript view (answers | thinking | everything) of the session THIS pane
-    // shows (renderer-transcript-view-utils.js). Threaded through render
-    // options because the row builders are shared single instances and two
-    // panes can show two views; absent-safe so a missing module renders
-    // 'thinking', today's behaviour.
-    const getPaneTranscriptView = () => {
-      const utils = globalThis.rendererTranscriptViewUtils;
-      return typeof utils?.resolveTranscriptView === 'function'
-        ? utils.resolveTranscriptView(state, getPaneSessionId())
-        : 'thinking';
-    };
-    // Split view W3-1: this pane renders selection chrome only while it owns the mode.
-    // (renderer-chat-selection-utils.js: state.ui.selectionModePaneId, null = off).
-    const isPaneSelecting = () => state.ui?.selectionModePaneId === paneId;
-    // Per-session message getters, read with getPaneSessionId(); a composition
-    // that injects only the current-session getters keeps working unchanged.
-    const getVisibleSessionMessages = typeof _getVisibleSessionMessages === 'function'
-      ? _getVisibleSessionMessages : () => (typeof getCurrentVisibleMessages === 'function' ? getCurrentVisibleMessages() : []);
-    const getSessionMessages = typeof _getSessionMessages === 'function'
-      ? _getSessionMessages : () => (typeof getCurrentSessionMessages === 'function' ? getCurrentSessionMessages() : []);
+    // Split view W1-4a: what THIS pane shows (session, transcript view, selection
+    // ownership, message getters) lives in renderer-render-pipeline-pane-runtime.js.
+    const {
+      paneId, getPaneSessionId, getPaneTranscriptView, isPaneSelecting, getVisibleSessionMessages, getSessionMessages,
+    } = paneRuntimeUtils.createPaneAccessors({
+      state,
+      uiRuntime,
+      paneVisibilityUtils,
+      getVisibleSessionMessages: _getVisibleSessionMessages,
+      getSessionMessages: _getSessionMessages,
+      getCurrentVisibleMessages,
+      getCurrentSessionMessages,
+    });
 
     // Recap models, thread-collapse state, and recap-expansion accessors moved
     // into renderer/chat/renderer-render-pipeline-thread-state.js. Late-bound callbacks let
@@ -297,6 +269,7 @@
         chatThreadColumn,
         chatSpriteLayer,
         chatAssistantSprite,
+        jumpToBottomButton,
       },
       controllers: { thinkingIndicator, thinkingController, getRuntimeSendController: deps.controllers.getRuntimeSendController },
       runtime: { spriteRuntime },
@@ -387,7 +360,6 @@
         composerEffortSelect,
         jumpToTopButton,
         jumpToBottomButton,
-        jumpToLastPromptButton,
         stopStreamButton,
         sendButton,
         composerModelSelectShell,
@@ -445,138 +417,33 @@
         renderComposerEnhancements,
         resolveChatSendLifecycle,
         syncStableChatSurfaceState,
-        getLatestUserMessageId,
         isSendPreflightPending,
         syncTurnElapsedClock,
       },
     }) || {};
 
-    // Projection-cache machinery, canonical-transcript building, tool-row
-    // projection telemetry, and row-model meta accessors moved into
-    // renderer/chat/renderer-render-pipeline-projection-cache.js (Stage C1).
-    const projectionCachePipeline = projectionCachePipelineUtils.createProjectionCachePipeline({
-      state,
-      dom: { chatTimeline },
-      runtime: { uiRuntime },
-      callbacks: {
-        getPaneSessionId,
-        appendClientLog,
-        getChatTimelineRowModelEnabled,
-        recordChatTimelineRolloutSignal,
-        buildInteractiveRecapModel,
-        resolveTurnArticleMessageId,
-        resolveVisibleMessageDomTarget,
-      },
-    });
+    // Projection cache (Stage C1), persisted-turn hydration (C2) and projection
+    // context (C3) moved into renderer/chat/renderer-render-pipeline-projection-stack.js.
     const {
-      buildCanonicalTranscriptMessages,
-      pruneToolRowProjectionSessionCaches,
-      logToolRowProjectionFallbackOnce,
-      logToolRowProjectionFailureOnce,
-      getProjectionContextCache,
-      finalizeProjectionContext,
-      getCurrentProjectionContext,
-      resolveVisibleTurnArticleTarget,
-      recordTurnArticleRolloutSignal,
-      clearProjectionContextCacheForSession,
-      rekeyProjectionContextCache,
-      getRowModelMeta,
-      countLegacyVisibleMessages,
-    } = projectionCachePipeline;
-
-    // Persisted-turn-event hydration, fingerprint computation, live-row
-    // projection state, and streaming-row resolvers moved into
-    // renderer/chat/renderer-render-pipeline-hydration.js (Stage C2).
-    const hydrationPipeline = hydrationPipelineUtils.createHydrationPipeline({
-      state,
-      dom: { chatTimeline },
-      controllers: { reducedMotionQuery },
-      callbacks: {
-        getPaneSessionId,
-        getPaneTranscriptView,
-        projectTurnTree,
-        projectTurnRows,
-        projectTurn,
-        buildMessageProjectionFingerprint,
-        computeTurnStructureHash,
-        computeTurnTailFingerprint,
-        buildTurnRowId,
-        buildTurnRowListMarkup,
-        recordTurnArticleRolloutSignal,
-        indexRowsByRenderMessageId: renderMessageIndexUtils?.indexRowsByRenderMessageId,
-      },
+      buildCanonicalTranscriptMessages, pruneToolRowProjectionSessionCaches, getCurrentProjectionContext,
+      resolveVisibleTurnArticleTarget, recordTurnArticleRolloutSignal,
+      clearProjectionContextCacheForSession, rekeyProjectionContextCache,
+      resolveProjectionStreamingRowTarget, resolveProjectionStreamingRowId, buildProjectionStreamingRowMarkup,
+      buildProjectionContext, resolveProjectedPrimaryRow, buildToolEntryInnerMarkup, resolveArticlePredictionCacheKey,
+      getMessageFromCollection, deriveActionTargetMessageId, getForcedOpenStreamingMessageId,
+      buildRecapExpansionSignature, invalidateProjectionStateForSession,
+    } = projectionStackUtils.createProjectionStack({
+      state, MESSAGE_STATUS, chatTimeline, uiRuntime, reducedMotionQuery,
+      projectionCachePipelineUtils, hydrationPipelineUtils, projectionContextPipelineUtils,
+      toolShellUtils, turnRowRenderer, renderMessageIndexUtils,
+      projectTurnTree, projectTurnRows, projectTurn,
+      getPaneSessionId, getPaneTranscriptView, appendClientLog, escapeHtml, renderToolCallBlock,
+      getChatTimelineRowModelEnabled, recordChatTimelineRolloutSignal, rollbackChatTimelineRowModel,
+      buildInteractiveRecapModel, isRecapExpandedForSession, resolveTurnArticleMessageId, resolveVisibleMessageDomTarget,
+      buildTurnRowId, buildTurnRowListMarkup,
+      buildMessageProjectionFingerprint, computeProjectionSignature, computeProjectionSignatureFromFingerprints,
+      computeTurnStructureHash, computeTurnTailFingerprint,
     });
-    const {
-      getPersistedTurnEventState,
-      buildHydratedTurnProjection,
-      buildHydratedProjectionDigest,
-      resolveThreadRootMessageId,
-      isLiveRowModelEnabledForSession,
-      isTurnStreamLive,
-      getLiveProjectionStateForSession,
-      overlayProjectedRows,
-      resolveProjectionStreamingRowTarget,
-      resolveProjectionStreamingRowId,
-      buildProjectionStreamingRowMarkup,
-      pruneConsumedLiveProjectionState,
-    } = hydrationPipeline;
-
-    // Projection-context builder, projected-row resolution, tool-entry
-    // markup, and recap-expansion signature computation moved into
-    // renderer/chat/renderer-render-pipeline-projection-context.js (Stage C3).
-    const projectionContextPipeline = projectionContextPipelineUtils.createProjectionContextPipeline({
-      state,
-      constants: { MESSAGE_STATUS },
-      callbacks: {
-        getPaneSessionId,
-        isTurnStreamLive,
-        getPaneTranscriptView,
-        escapeHtml,
-        renderToolCallBlock,
-        // Ht-E: the article path's wired trace-row builder, reused by the
-        // settled-tool partition on the non-coalescing fallback path.
-        buildProjectedToolCallRowMarkup: turnRowRenderer?.buildToolCallRowMarkup,
-        hasSpecializedToolShell: toolShellUtils?.hasSpecializedToolShell,
-        projectTurn,
-        projectTurnTree,
-        projectTurnRows,
-        computeProjectionSignature,
-        computeProjectionSignatureFromFingerprints,
-        computeTurnStructureHash,
-        computeTurnTailFingerprint,
-        getChatTimelineRowModelEnabled,
-        recordChatTimelineRolloutSignal,
-        rollbackChatTimelineRowModel,
-        getProjectionContextCache,
-        finalizeProjectionContext,
-        getRowModelMeta,
-        countLegacyVisibleMessages,
-        logToolRowProjectionFailureOnce,
-        logToolRowProjectionFallbackOnce,
-        getPersistedTurnEventState,
-        buildHydratedTurnProjection,
-        buildHydratedProjectionDigest,
-        isLiveRowModelEnabledForSession,
-        getLiveProjectionStateForSession,
-        overlayProjectedRows,
-        pruneConsumedLiveProjectionState,
-        resolveThreadRootMessageId,
-        buildInteractiveRecapModel,
-        isRecapExpandedForSession,
-        indexRowsByRenderMessageId: renderMessageIndexUtils?.indexRowsByRenderMessageId,
-      },
-    });
-    const {
-      buildProjectionContext,
-      resolveProjectedPrimaryRow,
-      buildToolEntryInnerMarkup,
-      resolveArticlePredictionCacheKey,
-      getMessageFromCollection,
-      deriveActionTargetMessageId,
-      getForcedOpenStreamingMessageId,
-      buildRecapExpansionSignature,
-      invalidateProjectionStateForSession,
-    } = projectionContextPipeline;
 
     // Article markup, prediction helpers, projected-turn-article rendering,
     // and the legacy fallback dispatcher (Cluster 10 + 11) moved into
@@ -665,81 +532,15 @@
       dispose: disposeThreadDomPipeline,
     } = threadDomPipeline;
 
-    // B5 — long-conversation timeline virtualization. The active-turn-root
-    // pin probe reads through this ref; render-effects writes it before
-    // each render via virtualizerFacade.setActiveTurnRoot.
-    const virtualizerActiveRootRef = { id: '' };
-    const virtualizer = timelineVirtualizerUtils
-      ? timelineVirtualizerUtils.createTimelineVirtualizer({
-        chatTimeline,
-        chatThreadScroll,
-        document: typeof document !== 'undefined' ? document : null,
-        window: typeof window !== 'undefined' ? window : null,
-        boundsEnabled: state.features?.featureFlags?.chat_long_thread_bounds !== false,
-        contentVisibilityEnabled: state.features?.featureFlags?.chat_render_content_visibility === true,
-        getActiveTurnRootMessageId: function readActiveTurnRoot() {
-          return virtualizerActiveRootRef.id || '';
-        },
-        onAfterMount: function onVirtualizedEntryMount(entryEl, containerEl) {
-          // Lazy-decoration re-trigger (mermaid re-observe, math re-typeset,
-          // follow-up buttons) lives on the render-effects sibling — this
-          // controller is at the file-size cap.
-          renderEffectsPipeline?.redecorateVirtualizedEntry?.(containerEl);
-        },
-        requestEntryMarkup: function requestVirtualizedEntryMarkup(entryEl) {
-          return renderEffectsPipeline?.buildVirtualizedEntryInnerHtml?.(entryEl) || '';
-        },
-        requestCanonicalRerender: function requestVirtualizerRecoveryRender() {
-          renderMessages({ forceFullRender: true, reason: 'virtualizer_recovery' });
-        },
-        captureReaderAnchor: function captureVirtualizerReaderAnchor() {
-          return scrollCoordinator?.captureReaderAnchor?.();
-        },
-        noteProgrammaticWrite: function noteVirtualizerProgrammaticWrite(reason) {
-          scrollCoordinator?.noteProgrammaticWrite?.(reason);
-        },
-        restoreReaderAnchor: function restoreVirtualizerReaderAnchor() {
-          return scrollCoordinator?.restoreReaderAnchor?.();
-        },
-        appendClientLog,
-        onStatsChange: function updateVirtualizerStats(nextStats) {
-          const longThreadBudgetStats = {
-            ...(state.ui?.longThreadBudgetStats || {}),
-            ...(uiRuntime.longThreadBudgetStats || {}),
-            ...(nextStats || {}),
-          };
-          uiRuntime.longThreadBudgetStats = longThreadBudgetStats;
-          if (state.ui && typeof state.ui === 'object') {
-            state.ui.longThreadBudgetStats = longThreadBudgetStats;
-          }
-        },
-      })
-      : null;
-
-    // Facade exposed to render-effects so it doesn't need to know
-    // whether the virtualizer module loaded. All three operations are
-    // safe no-ops when `virtualizer` is null.
-    const virtualizerFacade = {
-      setActiveTurnRoot(messageId) {
-        virtualizerActiveRootRef.id = String(messageId || '').trim();
-      },
-      rebuild() {
-        if (!virtualizer) return;
-        virtualizer.rebuild(getTimelineEntryWeight(getVisibleSessionMessages(getPaneSessionId())));
-        const longThreadBudgetStats = {
-          ...(state.ui?.longThreadBudgetStats || {}),
-          ...(uiRuntime.longThreadBudgetStats || {}),
-          ...(virtualizer._internals?.getBudgetStats?.() || {}),
-        };
-        uiRuntime.longThreadBudgetStats = longThreadBudgetStats;
-        if (state.ui && typeof state.ui === 'object') {
-          state.ui.longThreadBudgetStats = longThreadBudgetStats;
-        }
-      },
-      prepareForStructuralMorph() { virtualizer && virtualizer.prepareForStructuralMorph(); },
-      refreshScope(rootEl) { virtualizer && virtualizer.refreshScope(rootEl); },
-      getBudgetStats() { return virtualizer?._internals?.getBudgetStats?.() || null; },
-    };
+    // B5 long-conversation timeline virtualization (renderer-render-pipeline-virtualizer.js).
+    // The active-turn-root pin probe reads through the facade; render-effects
+    // writes it before each render via virtualizerFacade.setActiveTurnRoot.
+    // renderEffectsPipeline is declared later and read at call time only.
+    const { virtualizer, virtualizerFacade } = virtualizerPipelineUtils.createPipelineVirtualizer({
+      state, timelineVirtualizerUtils, chatTimeline, chatThreadScroll, uiRuntime, scrollCoordinator, appendClientLog,
+      renderMessages, getVisibleSessionMessages, getPaneSessionId,
+      getRenderEffectsPipeline: () => renderEffectsPipeline,
+    });
 
     // Aggregate teardown for the render-pipeline controller. The
     // sub-pipelines holding async resources are threadDomPipeline (its
@@ -881,30 +682,10 @@
         updateTokenDisplay,
       },
     });
-    const monitorDocument = chatTimeline?.ownerDocument || null;
-    const monitorWindow = monitorDocument?.defaultView || null;
-    // Split view W3-2: one monitor per pane, each showing its pane's session.
-    // In Chat the monitor is the artifact panel's `subagents` rail mode; the
-    // pane thread stage's own aside (pane 0's #subagentInspector, the
-    // template's for pane 1) hosts it only in the IDE dock. A trigger belongs
-    // to the pane whose root holds it (pane 0's when docked in the IDE), so the
-    // two monitors' document-level listeners never both handle one click.
-    const subagentInspector = chatThreadStage?.querySelector?.(':scope > [data-chat-node="subagentInspector"]') || null;
-    subagentMonitorController = paneId !== 0 && !subagentInspector ? null : globalThis.rendererSubagentMonitorController?.createSubagentMonitorController?.({
-      state,
-      documentRef: monitorDocument,
-      windowRef: monitorWindow,
-      inspector: subagentInspector,
-      idSuffix: paneId === 0 ? '' : `-pane${paneId}`,
-      getSessionId: getPaneSessionId,
-      ownsTrigger: (trigger) => {
-        const paneRoot = trigger?.closest?.('.chat-pane[data-pane-id]');
-        return (paneRoot ? Number(paneRoot.dataset.paneId) : 0) === paneId;
-      },
-      getMessages: () => getSessionMessages(getPaneSessionId()),
-      appendClientLog,
-    }) || null;
-    subagentMonitorController?.bind?.();
+    // Split view W3-2: one monitor per pane (renderer-render-pipeline-pane-runtime.js).
+    subagentMonitorController = paneRuntimeUtils.createPaneSubagentMonitor({
+      state, chatTimeline, chatThreadStage, paneId, getPaneSessionId, getSessionMessages, appendClientLog,
+    });
     if (typeof messageRendererPipeline?.renderMessages === 'function') {
       const renderTimelineMessages = messageRendererPipeline.renderMessages;
       renderMessagesImpl = function renderMessagesAndReconcileMonitor(options) {

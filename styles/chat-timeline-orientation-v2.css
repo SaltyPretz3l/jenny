@@ -4,53 +4,11 @@
  * Styled per the chat-timeline token contract (chat-timeline-tokens.css).
  */
 
-/* The former workbench row's transcript utilities now share the timeline's
-   first grid cell. They float in the upper-right gutter without reserving
-   height, so chat and artifact surfaces keep the same top edge. */
 /* Every pane's stage is a size container (the second pane's stage has no id):
    the reading measure resolves its cqi against the pane's own width. */
 .chat-thread-stage {
   container-type: inline-size;
   container-name: chatstage;
-}
-
-.chat-timeline-utility-cluster {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: start;
-  justify-self: end;
-  z-index: calc(var(--z-raised) + 1);
-  display: inline-flex;
-  /* Always a column: the cluster floats in the reading measure's end gutter,
-     which is one button wide well before the stage is narrow enough for the
-     container rule below to reserve it. A horizontal row of up to four
-     buttons ran over the first transcript line whenever the right panel was
-     open. The cluster is the stage's sibling, so it cannot be queried here. */
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  margin-block: var(--space-4) 0;
-  margin-inline-start: 0;
-  margin-inline-end: var(--space-4);
-  pointer-events: none;
-}
-
-.chat-view.chat-empty > .chat-pane[data-pane-id="0"] .chat-timeline-view-toggle,
-.chat-pane.chat-empty .chat-timeline-view-toggle,
-.chat-view.chat-empty .chat-timeline-wayfinder-host {
-  display: none;
-}
-
-/* Transcript view control (renderer-transcript-view-utils.js): one button,
-   three icons; the button's data-transcript-view picks the icon. */
-.chat-timeline-view-toggle svg {
-  display: none;
-}
-
-.chat-timeline-view-toggle[data-transcript-view="answers"] svg[data-view="answers"],
-.chat-timeline-view-toggle[data-transcript-view="thinking"] svg[data-view="thinking"],
-.chat-timeline-view-toggle[data-transcript-view="everything"] svg[data-view="everything"] {
-  display: block;
 }
 
 .chat-timeline-utility-button {
@@ -104,70 +62,6 @@
   stroke-linejoin: round;
 }
 
-.chat-timeline-wayfinder-host {
-  max-width: none;
-  pointer-events: auto;
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button {
-  appearance: none;
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
-  max-width: none;
-  padding: 0;
-  border: 0;
-  border-radius: var(--toprail-item-radius);
-  background: transparent;
-  color: var(--toprail-item-color);
-  box-shadow: none;
-  transition:
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button:hover:not(:disabled) {
-  border: 0;
-  background: var(--toprail-item-hover-bg);
-  color: var(--toprail-item-hover-color);
-  box-shadow: none;
-  transform: none;
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button:active:not(:disabled) {
-  transform: none;
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button:focus-visible {
-  outline: 2px solid var(--focus-outline);
-  outline-offset: 2px;
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-icon {
-  display: block;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  border-radius: 0;
-  background: transparent;
-  color: currentColor;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.chat-timeline-utility-cluster .chat-wayfinder-button[data-chat-wayfinder-state="prompt"] .chat-wayfinder-icon {
-  transform: rotate(180deg);
-}
-
-.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-copy {
-  display: none;
-}
-
 .chat-timeline-divider {
   display: grid;
   grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr);
@@ -201,8 +95,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-timeline-utility-button,
-  .chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button {
+  .chat-timeline-utility-button {
     transition: none;
   }
 }
@@ -210,10 +103,6 @@
 @media (max-width: 719px) {
   .chat-timeline-utility-cluster {
     margin-inline-end: var(--space-3);
-  }
-
-  .chat-timeline-utility-cluster .chat-timeline-view-toggle {
-    display: none;
   }
 }
 
@@ -231,4 +120,86 @@
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+}
+
+/* The one jump control: a circle centered on the thread stage's bottom edge,
+ * just above the composer row, shown only once the reader has scrolled up
+ * (data-jump-state: unread or latest). Its words are the hover tooltip.
+ * While Jenny works the rail's activity dot takes the
+ * arrow's place (renderer-sprite-morph.js builds it inside this button).
+ * data-visible drives the fade so the exit animates too; the renderer sets
+ * inert while it is hidden. */
+.chat-jump-latest {
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--space-4);
+  margin-inline: auto;
+  z-index: calc(var(--z-raised) + 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  --sprite-dot-scale: calc(0.8 * var(--tl-throbber-scale));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.chat-jump-latest[data-visible="false"] {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+.chat-jump-latest:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface-2));
+  color: var(--text-primary);
+}
+
+.chat-jump-latest:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* "> svg": the dot's own done check is an svg too and must stay untouched. */
+.chat-jump-latest > svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The rail's J-glyph rule: the arrow yields whenever the dot has a form to show. */
+.chat-jump-latest > .chat-sprite-dot:not([data-activity="rest"]) ~ svg {
+  opacity: 0;
+}
+
+.chat-view.chat-empty .chat-jump-latest {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-jump-latest,
+  .chat-jump-latest > svg {
+    transition: none;
+  }
 }

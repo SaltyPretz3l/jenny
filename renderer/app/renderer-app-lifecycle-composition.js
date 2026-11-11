@@ -84,157 +84,29 @@
     pushIncomingLog, resetLogsViewState, setActiveView, applyAppearancePreferences,
     isDefaultAppearancePreferences, buildSelectOptionMarkup, attachGlobalErrorBoundary, detachGlobalErrorBoundary,
   } = lifecycleController || {};
-  const chatTimelinePreferenceController = appLifecyclePreferenceUtils.createChatTimelinePreferenceController({
-    state,
-    storage: window.localStorage,
-    storageKeys: {
-      batch4: CHAT_TIMELINE_BATCH4_STORAGE_KEY,
-    },
-    callbacks: {
-      appendClientLog: (...a) => appendClientLog(...a),
-      clearProjectionContextCacheForSession: (...a) => clearProjectionContextCacheForSession(...a),
-      renderMessages: (...a) => renderMessages(...a),
-    },
+  // Boot preferences: chat-timeline rollout prefs, persisted chatUi/windowUi state, first feature flags.
+  const bootPreferences = await window.rendererAppBootPreferencesComposition.createBootPreferencesComposition({
+    __proto__: ctx, appendClientLog, loadAppearancePreferences,
   });
+  if (bootPreferences.disposed) return {};
   const {
-    getChatTimelineRowModelEnabled,
-    loadChatTimelineBatch4Preference,
-    recordChatTimelineRolloutSignal,
-    refreshDefaultChatTimelineBatch4Preference,
-    rollbackChatTimelineRowModel,
-    setChatTimelineRowModelEnabled,
-  } = chatTimelinePreferenceController;
-  // Both are best-effort preload-backed preferences with no dependency on each
-  // other, so issue the IPC round-trips concurrently rather than serially on
-  // boot. Overall app zoom is applied natively by the main process
-  // (webContents.setZoomFactor); the renderer only needs the value to seed the
-  // Settings select.
-  // Feature flags ride the same round trip (row 62), so the first render, the
-  // controller binds and math rendering see real flags instead of placeholders.
-  // Bounded: a slow features call must never hold boot; the post-bootstrap
-  // refresh still applies the flags when it lands.
-  const [persistedChatZoomState, persistedWindowUiState, prefetchedFeatureState] = await Promise.all([
-    (async () => { try { return await window.jennyShell?.chatUi?.getState?.(); } catch (_error) { return null; } })(),
-    (async () => { try { return await window.jennyShell?.windowUi?.getState?.(); } catch (_error) { return null; } })(),
-    (async () => {
-      try {
-        return await Promise.race([
-          window.jennyShell?.features?.getState?.(),
-          new Promise((resolve) => { setTimeout(() => resolve(null), 250); }),
-        ]);
-      } catch (_error) { return null; }
-    })(),
-  ]);
-  if (ctx.isDisposed?.() === true) return {};
-  const savedAppearancePreferences = loadAppearancePreferences(); // Restore saved preferences.
-  state.ui.appearance = normalizeAppearancePreferences(savedAppearancePreferences);
-  state.ui.chatZoomPercent = normalizeChatZoomPercent(
-    persistedChatZoomState?.zoomPercent ?? state.ui.chatZoomPercent ?? DEFAULT_CHAT_ZOOM_PERCENT
-  );
-  const chatUiNormalizers = window.rendererSettingsSupport || {};
-  state.use24HourTime = persistedChatZoomState?.use24HourTime === true;
-  state.transcriptViewDefault = globalThis.rendererTranscriptViewUtils?.normalizeTranscriptView?.(persistedChatZoomState?.transcriptViewDefault) || 'thinking';
-  globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
-  state.uiLanguage = chatUiNormalizers.normalizeUiLanguageTag?.(persistedChatZoomState?.uiLanguage) || state.uiLanguage || 'en';
-  state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
-  state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 0;
-  state.autoApproveStreakCap = chatUiNormalizers.normalizeAutoApproveStreakCap?.(persistedChatZoomState?.autoApproveStreakCap) ?? state.autoApproveStreakCap ?? 50;
-  state.digestQuietStart = chatUiNormalizers.normalizeDigestQuietStart?.(persistedChatZoomState?.digestQuietStart) ?? state.digestQuietStart ?? '22:00';
-  state.digestQuietEnd = chatUiNormalizers.normalizeDigestQuietEnd?.(persistedChatZoomState?.digestQuietEnd) ?? state.digestQuietEnd ?? '07:00';
-  // Fallback mirrors services/shell-config-zoom-state.js APP_ZOOM_DEFAULT.
-  state.ui.appZoomPercent = Number(
-    persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 110
-  ) || 110;
-  // Desktop notification preferences (windowUi.notifications), defaults filled when absent.
-  state.ui.notifications = window.rendererDesktopNotifications?.normalizeNotificationSettings?.(persistedWindowUiState?.notifications) || null;
-  // Dictation microphone (windowUi.dictation, row 84); '' is the system default.
-  state.ui.dictation = { deviceId: typeof persistedWindowUiState?.dictation?.deviceId === 'string' ? persistedWindowUiState.dictation.deviceId : '' };
-  state.ui.chatTimelineBatch4FastPathEnabled = loadChatTimelineBatch4Preference();
-  setChatTimelineRowModelEnabled(state.currentSessionId, getChatTimelineRowModelEnabled(state.currentSessionId), {
-    source: 'bootstrap',
+    getChatTimelineRowModelEnabled, recordChatTimelineRolloutSignal, refreshDefaultChatTimelineBatch4Preference,
+    rollbackChatTimelineRowModel, prefetchedFeatureState,
+  } = bootPreferences;
+  // Shell services (renderer-app-shell-services-composition.js); the names bound below it are read through accessors.
+  const shellServiceRegistry = window.rendererAppShellServicesComposition.createShellServicesComposition({
+    __proto__: ctx, appendClientLog, escapeHtml, setActiveView, getTurnViewModelsForActiveSession,
+    get activateWorkspaceSession() { return activateWorkspaceSession; },
+    get chatScrollCoordinator() { return chatScrollCoordinator; },
+    get dismissToast() { return dismissToast; },
+    get getCurrentMessageById() { return getCurrentMessageById; },
+    get getSessionMessages() { return getSessionMessages; },
+    get scrollMessageIntoView() { return scrollMessageIntoView; },
+    get shellArtifactBridge() { return shellArtifactBridge; },
+    get showShellErrorToast() { return showShellErrorToast; },
+    get showToastMessage() { return showToastMessage; },
+    get toErrorMessage() { return toErrorMessage; },
   });
-  applyAppearanceToDocument(document, state.ui.appearance);
-  applyChatZoomToDocument(document, state.ui.chatZoomPercent);
-  const shellServiceRegistry = (window.rendererShellServiceRegistryUtils || {}).createShellServiceRegistry?.({
-    state,
-    windowRef: window,
-    documentRef: document,
-    surfaceDom,
-    lazyDom,
-    constants: {
-      TOAST_SOURCE,
-      ACTIVITY_SCOPE,
-    },
-    modules: {
-      personalityEditorUtils,
-      proactiveUtils: window.rendererProactiveUtils || {},
-      skillsUtils: window.rendererSkillsUtils || {},
-      offlineUtils: window.rendererOfflineUtils || {},
-      memoryManagerUtils,
-      getIdeControllerUtils: () => window.rendererIdeController || {},
-      companionUtils: window.rendererCompanionUtils || {},
-      dashboardUtils: window.rendererDashboardUtils || {},
-      setupServiceUtils: window.rendererSetupService || {},
-      setupControllerUtils: window.rendererSetupController || {},
-      setupSceneFactories: {
-        acknowledgement: (window.rendererSetupSceneAcknowledgement || {}).createScene,
-        workspaceRoot: (window.rendererSetupSceneWorkspaceRoot || {}).createScene,
-        endpoint: (window.rendererSetupSceneEndpoint || {}).createScene,
-        personality: (window.rendererSetupScenePersonality || {}).createScene,
-        skills: (window.rendererSetupSceneSkills || {}).createScene,
-        help: (window.rendererSetupSceneHelp || {}).createScene,
-        factoryReset: (window.rendererSetupSceneFactoryReset || {}).createScene,
-        modelLibrary: (window.rendererSetupSceneModelLibrary || {}).createScene,
-        ollamaEngine: (window.rendererSetupSceneOllamaEngineGate || {}).createScene,
-        capabilities: (window.rendererSetupSceneCapabilities || {}).createScene,
-        setupHub: (window.rendererSetupSceneSetupHub || {}).createScene,
-      },
-      stepModalUtils: window.inventoryStepModal || {},
-    },
-    registerCleanup: registerRendererCleanup,
-    callbacks: {
-      escapeHtml,
-      appendClientLog: (...a) => appendClientLog(...a),
-      noteScrollProgrammaticWrite: (reason) => chatScrollCoordinator?.noteProgrammaticWrite?.(reason),
-      showToastMessage: (...a) => showToastMessage(...a),
-      showShellErrorToast: (...a) => showShellErrorToast(...a),
-      toErrorMessage: (...a) => toErrorMessage(...a),
-      renderAll: (...a) => renderAll(...a),
-      renderSettings: (...a) => renderSettings(...a),
-      renderComposerState: (...a) => renderComposerState(...a),
-      syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
-      loadSessions: (...a) => loadSessions(...a),
-      openSession: (...a) => openSession(...a),
-      scrollMessageIntoView: (...a) => scrollMessageIntoView(...a),
-      getCurrentMessageById: (...a) => getCurrentMessageById(...a),
-      setActiveView: (...a) => setActiveView(...a),
-      openSettingsSection: (...a) => openSettingsSection(...a),
-      getSettingsShellController: () => settingsShellController,
-      activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
-      handleCreateSessionWithWorkspace: (...a) => handleCreateSessionWithWorkspace(...a),
-      setSessionOrigin: (...a) => setSessionOrigin(...a),
-      setPendingOrigin: (...a) => setPendingOrigin(...a),
-      clearPendingOrigin: (...a) => clearPendingOrigin(...a),
-      dismissToast: (...a) => dismissToast(...a),
-      beginActivity,
-      resolveActivity,
-      failActivity,
-      getActivitySnapshot,
-      getMostRecentActivity,
-      isActivityBusy,
-      applyActivityAttributes,
-      buildPersonalityStatusTextModel,
-      resolvePreferredPersonalityTab,
-      // Declared later in this scope (function declarations hoist); the IDE
-      // changes panel reads the same turn view-models as the code-review rail.
-      getTurnViewModelsForActiveSession: (...a) => getTurnViewModelsForActiveSession(...a),
-      getSessionMessages: (sessionId) => getSessionMessages(sessionId),
-      getChangesUndoController: () => shellArtifactBridge?.getChangesUndoController?.() || null,
-      chatInput,
-      composerOfflineLabel,
-      homeView,
-    },
-  }) || {};
   const {
     initializeEagerServices, applyFeatureStatePayload, refreshFeatureState, refreshWorkspaceRootState,
     refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration,
@@ -298,122 +170,19 @@
     isSessionStreaming = noopFalse, hasPendingToolApprovalForSession = noopFalse,
     isSendBusy = noopFalse,
   } = composerStatusController || {};
-  /* toastController */
-  const toastController = toastControllerUtils.createToastController?.({
-    toastStore, toastActionHandlers,
-    constants: { TOAST_SOURCE }, dom: { toastViewport },
-  }) || null;
+  // Toasts, error center/intake, update dialog, backend status (renderer-app-notices-composition.js).
   const {
-    dismissToast = noop, renderToastViewport = noop,
-    showToastMessage = noopStr, showShellErrorToast: rawShowShellErrorToast = noopStr,
-    toErrorMessage = (e, f) => String(e?.message || e || f || ''),
-    showSessionActionError: rawShowSessionActionError = noopStr,
-    showComposerActionError: rawShowComposerActionError = noopStr,
-    installToastViewportListeners = null,
-  } = toastController || {};
-  /* Hover/focus hold the auto-dismiss countdowns, and Escape inside the stack
-   * dismisses the focused toast. */
-  if (typeof installToastViewportListeners === 'function') {
-    registerRendererCleanup(installToastViewportListeners());
-  }
-  /* errorIntakeController — EH-W8 flag-gated unified error intake. The three
-   * error toast wrappers become reportError adapters when error_intake_routing
-   * is on (live flag check per call, so Settings flips apply without restart);
-   * flag-off they pass straight through to the raw toast controller above.
-   * Generic showToastMessage callsites are untouched. */
-  /* EH-W11: bounded in-memory error center feeding the health-pill badge.
-   * Fully removable — with no store the pill renders as before. The render-
-   * time recorder global lets timeline error cards / failed-send chips feed
-   * history; it checks the flag per call so flag-off stays identical. */
-  const errorCenterStore = (window.rendererErrorCenterStore || {}).createErrorCenterStore?.() || null;
-  const recordRenderedError = (entry) => {
-    if (!errorCenterStore || state.features?.featureFlags?.error_intake_routing !== true) {
-      return false;
-    }
-    return errorCenterStore.record(entry);
-  };
-  window.rendererErrorCenterRecord = recordRenderedError;
-  registerRendererCleanup(() => {
-    if (window.rendererErrorCenterRecord === recordRenderedError) {
-      window.rendererErrorCenterRecord = null;
-    }
+    dismissToast, renderToastViewport, showToastMessage, showShellErrorToast, toErrorMessage, showSessionActionError,
+    showComposerActionError, reportError, reportErrorWhenActive, errorCenterStore, shellStatusController,
+    getRuntimePreferenceSnapshot, renderComposerStatusNotice, handleActivityChange, runRuntimePreferenceActivity,
+    persistRuntimePreferences, syncBackendNotice, retryBackendStart, _handleLifecycleProgress,
+    _handleLifecycleBackendStatus, beginModelSwitch, updateModelSwitch, failModelSwitch,
+  } = window.rendererAppNoticesComposition.createNoticesComposition({
+    __proto__: ctx, appendClientLog, clearComposerStatusNotice, getActiveSession, getCurrentRuntimePreferences,
+    getRendererElapsedMs, getRuntimePreferencesFromSession, patchSessionSummary, renderPersonalityEditorSafe,
+    runDeferredVisualStartup, setActiveView, setComposerStatusNotice, syncRuntimeDraftFromActiveSession,
+    get getVisibleSessionMessages() { return getVisibleSessionMessages; }, get renderSessions() { return renderSessions; },
   });
-  const errorIntakeController = (window.rendererErrorIntakeControllerUtils || {}).createErrorIntakeController?.({
-    isEnabled: () => state.features?.featureFlags?.error_intake_routing === true,
-    constants: { TOAST_SOURCE },
-    toast: {
-      showToastMessage,
-      showShellErrorToast: rawShowShellErrorToast,
-      showSessionActionError: rawShowSessionActionError,
-      showComposerActionError: rawShowComposerActionError,
-      toErrorMessage,
-    },
-    sinks: { errorCenter: errorCenterStore || undefined },
-  }) || null;
-  const {
-    reportError = (input) => ({ route: null, toastId: rawShowShellErrorToast(toErrorMessage(input, ''), {}) }),
-    reportErrorWhenActive = () => null,
-    showShellErrorToast = rawShowShellErrorToast,
-    showSessionActionError = rawShowSessionActionError,
-    showComposerActionError = rawShowComposerActionError,
-  } = errorIntakeController || {};
-  const updateDialogController = window.rendererUpdateDialogUtils?.createUpdateDialogController?.({
-    windowRef: window,
-    documentRef: document,
-    jennyShell: window.jennyShell,
-    renderMarkdown: window.markdownUtils?.renderMarkdown,
-    showToastMessage,
-    /* EH-W9: flag-gated intake route for update-action failures. */
-    reportError: (...a) => reportErrorWhenActive(...a),
-  }) || null;
-  if (updateDialogController) {
-    registerRendererCleanup(updateDialogController.bind());
-  }
-  /* activityPrefsController */
-  const shellStatusController = (window.rendererShellStatusControllerUtils || {}).createShellStatusController?.({
-    state,
-    constants: { ACTIVITY_SCOPE },
-    dom: surfaceDom.status,
-    callbacks: {
-      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
-      getActiveSession,
-      patchSessionSummary,
-      setSessionPreferences: (sessionId, preferences) =>
-        window.jennyShell.sessions.setPreferences(sessionId, preferences),
-      syncRuntimeDraftFromActiveSession,
-      beginActivity,
-      resolveActivity,
-      failActivity,
-      getActivitySnapshot,
-      getMostRecentActivity,
-      applyActivityAttributes,
-      setComposerStatusNotice,
-      clearComposerStatusNotice,
-      renderPersonalityEditor: (...a) => renderPersonalityEditorSafe(...a),
-      renderComposerState: (...a) => renderComposerState(...a),
-      renderSettings: (...a) => renderSettings(...a),
-      renderSessions: (...a) => renderSessions(...a), renderSessionComposer: (sessionId) => window.rendererAppPaneComposition?.getPaneComposition?.()?.renderSessionPane?.(sessionId, 'composer'),
-      getVisibleSessionMessages: (...a) => getVisibleSessionMessages(...a),
-      getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
-      appendClientLog: (...a) => appendClientLog(...a),
-      onStartupReady: () => runDeferredVisualStartup(),
-      onStartupRemoved: () => syncBackendNotice(), openLogs: () => setActiveView('logs'), openSettingsSection: (section) => openSettingsSection(section),
-      showToastMessage: (...a) => showToastMessage(...a), dismissToastsBySource: (source) => toastStore?.dismissBySource?.(source), toastSource: TOAST_SOURCE.backend,
-    },
-  }) || null;
-  const {
-    getRuntimePreferenceSnapshot = noopObj,
-    renderComposerStatusNotice = noop,
-    handleActivityChange = noop,
-    runRuntimePreferenceActivity = noopAsync,
-    persistRuntimePreferences = noopAsync,
-    syncBackendNotice = noop, retryBackendStart = noop,
-    handleLifecycleProgress: _handleLifecycleProgress = noop,
-    handleLifecycleBackendStatus: _handleLifecycleBackendStatus = noop,
-    beginModelSwitch = noop,
-    updateModelSwitch = noop,
-    failModelSwitch = noop,
-  } = shellStatusController || {};
   notifyStartupBootViewReadyRef = (shellStatusController || {}).notifyBootViewReady || noop; // bind late ref
   syncStartupBackendStatusRef = _handleLifecycleBackendStatus;
   /* transcriptRenderer */
@@ -476,30 +245,28 @@
     renderComposerInteractivePanel = noop, clearStalledTimer = noop,
   } = interactivePanelController || {};
   registerRendererCleanup(() => clearStalledTimer?.());
-  /* chat pane surface cluster (split view W0-1): the scroll coordinator, the viewport
-     controller and the renderless pin-to-top observer for ONE pane, constructed and wired
-     together in renderer/chat/renderer-chat-pane-surface-controllers.js because this file
+  /* chat pane surface cluster (split view W0-1): the scroll coordinator and the viewport
+     controller for ONE pane, constructed and wired together in renderer/chat/renderer-chat-pane-surface-controllers.js because this file
      sat at the 1015-line hard cap. paneId 0 is today's only chat surface; the seam is
-     inert until a later slice builds a second pane. Its dispose() runs pin -> viewport ->
+     inert until a later slice builds a second pane. Its dispose() runs viewport ->
      scroll, the order the cleanup registry (which pops LIFO) already tears them down in. */
   // Pane 0's own session, not the focused mirror (one pane: currentSessionId). Pane 1 overrides all three readers.
   const paneZeroSessionId = () => window.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0) ?? state.currentSessionId;
   const buildPaneSurface = (pane = {}) => (window.rendererChatPaneSurfaceControllers || {}).createChatPaneSurfaceControllers?.({
     state, paneId: pane.paneId || 0, windowRef: window, constants: { MESSAGE_STATUS }, followState: pane.followState, getSessionId: pane.getSessionId || paneZeroSessionId,
     dom: { chatView, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, chatThreadColumn, composerWrap, chatTimeline, chatThreadScroll, chatTimelineUtilityCluster: document.getElementById('chatTimelineUtilityCluster'), ...pane.dom },
-    factories: { scrollCoordinatorUtils: window.rendererChatScrollCoordinator || {}, viewportUtils, pinToTopUtils: window.rendererPinToTopUtils || {} },
+    factories: { scrollCoordinatorUtils: window.rendererChatScrollCoordinator || {}, viewportUtils },
     controllers: { thinkingController, reducedMotionQuery, ...pane.controllers },
     callbacks: {
       appendClientLog: (...a) => appendClientLog(...a), renderJumpControls: (...a) => renderComposerJumpControls?.(...a),
       isStreaming: () => isSessionStreaming?.(paneZeroSessionId()) === true,
       mergeReasoningEntries, deriveFollowLatestFromScroll, shouldAutoScrollThread, escapeSelectorValue: (...a) => escapeSelectorValue(...a), getCurrentSessionMessages: () => getSessionMessages(paneZeroSessionId()), buildInteractiveRecapViewModel: (...a) => buildInteractiveRecapViewModel(...a), renderMessages: (...a) => renderMessages(...a), updateAssistantSpritePosition: (...a) => updateAssistantSpritePosition(...a),
-      getWayfinderController: () => getChatWayfinderController?.(), ...pane.overrides,
+      ...pane.overrides,
     },
   }) || {};
   const paneSurface = buildPaneSurface();
   const chatScrollCoordinator = paneSurface.scrollCoordinator || null;
   const viewportController = paneSurface.viewport || null;
-  const pinToTopController = paneSurface.pinToTop || null;
   registerRendererCleanup(() => paneSurface?.dispose?.());
   const {
     composerLayoutRuntime, getReasoningEntries, mergeMessageReasoning, getScrollMetrics, getScrollBehavior,
@@ -594,7 +361,7 @@
     rekeySessionArtifacts = noopStr,
     pruneSessionArtifacts = noop,
     resetArtifactsState = noop,
-    openArtifactTarget = noopAsync, jumpToArtifactSource = noop,
+    openArtifactTarget = noopAsync,
     openCodeReviewTarget = noopAsync, openFilePreviewTarget = noopAsync,
     renderArtifactReviewPanelSafe = noop,
     syncArtifactReviewLayout = noop,
@@ -602,33 +369,18 @@
   } = shellArtifactBridge;
   window.rendererChatWorkspaceDetail?.configure?.({ openActivity: () => contextPanelController?.openActivity?.(), openInGit: async () => { setActiveView('ide'); return openIdeGitViewSafe(); } }); // session rail rows (row 59 cp2)
   /* contextPanelController */
-  const contextPanelUtils = window.rendererContextPanelUtils || {};
+  const contextPanelUtils = window.rendererChatActivity || {};
   const contextPanelController = (typeof contextPanelUtils.createContextPanelController === 'function'
     ? contextPanelUtils.createContextPanelController : null)?.({
     state,
-    dom: { chatContextPanel, contextSessionLogs, contextPanelToggle },
+    dom: { chatContextPanel },
     callbacks: {
-      escapeHtml,
       setActiveView: (...a) => setActiveView(...a),
       updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a),
-      openArtifactTarget: (...a) => openArtifactTarget(...a),
-      jumpToArtifactSource: (...a) => jumpToArtifactSource(...a),
-      selectArtifact: (...a) => selectArtifact(...a),
-      getArtifactsForSession: (...a) => getArtifactsForSession(...a),
       closeArtifact: () => shellArtifactBridge.collapseSidePanel?.(),
       openActivityOutput: async (output) => {setActiveView('ide');await openIdeTestOutputSafe(output);},
       sidePanel: shellArtifactBridge.sidePanel || null, // split view W3-2: the panel owner (renderer-shell-artifact-bridge.js)
-      getScrollCoordinators,
-      getLogEntries: (sessionId = state.currentSessionId) => {
-        const sid = String(sessionId || '').trim();
-        if (!sid) return (state.logs || []).slice(-(10));
-        const sessionLogs = (state.logs || []).filter(
-          (e) => !e.session_id || e.session_id === sid
-        );
-        return sessionLogs.slice(-(10));
-      },
     },
-    constants: { MAX_CONTEXT_LOGS: 10 },
   }) || null;
   const sessionManager = sessionUtils.createSessionManager?.({
     state,
@@ -653,12 +405,12 @@
         ctx.transcriptViewController?.rekeySession?.(sourceSessionId, targetSessionId);
         // Enqueue before acceptance can refresh summaries/restore the workspace.
         // The workspace owns focus: promotion must not activate a background tab.
-        // A first send's optimistic chat never held a tab: give the promoted
-        // chat one while it is still the chat on screen.
+        // A first send's optimistic chat never held a tab: give the promoted chat one
+        // per the open-in-new-tab preference (default: the active tab's place) while on screen.
         workspaceStateController?.rekeySession(sourceSessionId, targetSessionId)
           .then((workspace) => (!workspace?.openSessionIds?.includes(targetSessionId)
             && String(state.currentSessionId || '').trim() === targetSessionId
-            ? workspaceStateController.openSession(targetSessionId) : workspace))
+            ? globalThis.sessionOpenPrefUtils?.openSessionPerPreference(workspaceStateController, targetSessionId) : workspace))
           .then(() => renderWorkspaceChrome())
           .catch((error) => appendClientLog('WARN', 'workspace.session_rekey_failed', {
             message: String(error?.message || error),
@@ -687,69 +439,8 @@
     getCurrentSessionMessages = noopArr, getCurrentVisibleMessages = noopArr, estimateTokens = () => 0,
     upsertSessionSummary = noopNull, removeSessionState = noop, rekeySessionState = noopStr,
   } = sessionManager || {};
-  /* sidebarController */
-  const sidebarController = sidebarControllerUtils.createSidebarController?.({
-    state,
-    dom: { chatView, attachmentTray, attachmentNotice },
-    callbacks: { escapeHtml },
-  }) || null;
-  const {
-    updateTokenDisplay = noop, renderAttachmentTray = noop,
-  } = sidebarController || {};
-  let chatsPanelController = null;
-  /* topNavShellController (top navigation shell dispatcher) */
-  topNavShellController = (window.rendererTopNavShell || {}).createTopNavShellController?.({
-    state,
-    constants: { SIDEBAR_STORAGE_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_MAIN_STAGE_MIN_WIDTH },
-    // Resolve rail nodes directly because they are not part of the app.js DOM bindings.
-    dom: { workspace, viewPanel: sidebar, sidebarResizer, searchInput, topRail: document.getElementById('topRail'), topRailTabs: document.getElementById('topRailTabs'), topRailIndicator: document.getElementById('topRailIndicator'), artifactSplitViewToggle: document.getElementById('artifactSplitViewToggle') },
-    callbacks: {
-      setActiveView: (...a) => setActiveView(...a),
-      escapeHtml,
-      appendClientLog: (...a) => appendClientLog(...a),
-      updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a),
-      // A live sidebar drag re-fits an open artifact panel every frame (its
-      // overlay switch lands mid-drag) without the full chat re-render.
-      onLayoutChanged: (change) => {
-        if (change?.live) {
-          if (isArtifactReviewVisible()) syncArtifactReviewLayout();
-          return;
-        }
-        syncArtifactReviewLayout({ refreshChatChrome: true });
-      },
-      // Chats-strip plumbing (W11): open rides the workspace activation path
-      // (late-bound below); New Chat reuses the panel button's full pipeline.
-      getSessionMonogram,
-      openSession: (...a) => activateWorkspaceSession(...a),
-      newChat: () => document.getElementById('newChatButton')?.click?.(),
-      prepareChatsPanelForExpansion: () => chatsPanelController?.prepareForStripExpansion?.(),
-    },
-  }) || null;
-  _applySidebarLayout = (...a) => topNavShellController?.applyViewChrome?.(...a);
-  topNavShellController?.bind?.();
-  window.rendererTopNavShellController = topNavShellController;
-  registerRendererCleanup(() => {
-    topNavShellController?.dispose?.();
-    if (window.rendererTopNavShellController === topNavShellController) {
-      window.rendererTopNavShellController = null;
-    }
-  });
   // Shared collapse entry point for the rail, Settings, and command palette.
   function setSidebarCollapsed(collapsed) { topNavShellController?.setActivePanelCollapsed(Boolean(collapsed)); }
-  chatsPanelController = (window.rendererChatsPanel || {}).createChatsPanelController?.({
-    state, documentRef: document, windowRef: window,
-    dom: { conversationGroups, conversationCount, searchInput,
-      scopeSlot: document.getElementById('chatsScopeSlot'), projectRow: document.getElementById('chatsProjectRow'),
-      status: document.getElementById('chatsPanelStatus') },
-    inventory: { actionButton: window.inventoryActionButton, segmentedControl: window.inventorySegmentedControl },
-    callbacks: { newChat: () => document.getElementById('newChatButton')?.click?.(),
-      appendClientLog: (...a) => appendClientLog(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
-      showToastMessage: (...a) => showToastMessage(...a),
-      afterRenderSessions: (...a) => { renderWorkspaceSidebarBadges(...a); topNavShellController?.syncChatsStrip?.(); } },
-  }) || null;
-  const { renderSessions = noop,
-    setRovingSession: setRovingChatSession = noop, toggleScope: toggleChatsScope = noop } = chatsPanelController || {};
-  registerRendererCleanup(() => chatsPanelController?.dispose?.());
   function resetSidebarWidth() { topNavShellController?.resetActivePanelWidth?.(); }
   function finishSidebarResize(event) {
     if (sidebarRuntime.resizePointerId !== event.pointerId) return;
@@ -778,86 +469,20 @@
     if (event.key === 'ArrowRight') { event.preventDefault(); topNavShellController.setActivePanelWidth(panelState.width + SIDEBAR_KEYBOARD_STEP); return; }
     if (event.key === 'Home') { event.preventDefault(); topNavShellController.resetActivePanelWidth(); }
   }
-  /* lifecycleController continued (late-bound) */
-  attachGlobalErrorBoundary();
-  registerRendererCleanup(() => detachGlobalErrorBoundary());
-  const multiStreamController = (window.rendererMultiStreamUtils || {}).createMultiStreamController?.({
-    getState: () => state,
-    appendClientLog: (...a) => appendClientLog(...a),
-  }) || null;
-  window.rendererMultiStreamController = multiStreamController;
-  registerRendererCleanup(() => {
-    multiStreamController?.dispose?.();
-    if (window.rendererMultiStreamController === multiStreamController) {
-      window.rendererMultiStreamController = null;
-    }
-  });
-  const _wsUtils = window.rendererWorkspaceSessionUtils || {};
-  const workspaceSessionCoordinator = _wsUtils.createWorkspaceSessionCoordinator?.({
-    state, windowRef: window,
-    constants: { TOAST_SOURCE },
-    dom: { workspaceRailShell },
-    callbacks: {
-      openSession: (...a) => openSession(...a),
-      renderAll: (...a) => renderAll(...a),
-      renderSessions: (...a) => renderSessions(...a),
-      renderSettings: (...a) => renderSettings(...a),
-      renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
-      syncChatsStrip: () => topNavShellController?.syncChatsStrip?.(),
-      patchChatsStripRuntime: () => topNavShellController?.patchChatsStripRuntime?.(),
-      showToastMessage: (...a) => showToastMessage(...a),
-      showSessionActionError: (...a) => showSessionActionError(...a),
-      patchSessionSummary: (...a) => patchSessionSummary(...a),
-      getOpenSessionsInNewTab: () => (globalThis.sessionOpenPrefUtils?.getOpenSessionsInNewTab?.() === true),
-      isChatsPanelCollapsed: () => topNavShellController?.isActivePanelCollapsed?.() === true,
-      expandChatsPanel: () => setSidebarCollapsed(false),
-      onWorkspaceRestored: () => window.rendererAppPaneComposition?.getPaneComposition?.()?.hydrateOnce?.(),
-    },
-    controllers: {
-      getMultiStreamController: () => multiStreamController,
-      getWorkspaceStateController: () => workspaceStateController,
-      getWorkspaceChromeController: () => workspaceChromeController,
-      getChatsPanelController: () => chatsPanelController,
-    },
-  }) || {};
+  // Sidebar, top navigation, Chats panel, workspace tabs (renderer-app-navigation-composition.js).
   const {
-    isWorkspaceSessionBusy = () => false,
-    getSessionSummary = () => null,
-    applyWorkspaceSnapshot = (s) => s,
-    syncWorkspaceFromStore = async () => state.workspace,
-    activateWorkspaceSession = async (sid, opts) => { await openSession(sid, opts); return state.workspace; },
-    closeWorkspaceSession: closeWorkspaceSessionBase = async () => false,
-    reorderWorkspaceSession = async () => {},
-    closeOtherWorkspaceSessions: closeOtherWorkspaceSessionsBase = async () => {},
-    closeWorkspaceSessionsToRight: closeWorkspaceSessionsToRightBase = async () => {},
-    closeAllWorkspaceSessions: closeAllWorkspaceSessionsBase = async () => {},
-    renderWorkspaceSidebarBadges = noop,
-    handleLinkedSessionPopover = noop,
-    renderWorkspaceChrome = noop,
-    handleWorkspaceShortcut = noop,
-  } = workspaceSessionCoordinator;
-  // Split view: a tab close another pane still shows closes that pane (the store already blanked it).
-  const withPaneTabRule = (fn) => async (...args) => { const next = await fn(...args); ctx.paneLayoutController?.closePanesWithoutTab?.(state.workspace?.openSessionIds); return next; };
-  const closeWorkspaceSession = withPaneTabRule(closeWorkspaceSessionBase);
-  const [closeOtherWorkspaceSessions, closeWorkspaceSessionsToRight, closeAllWorkspaceSessions] = [closeOtherWorkspaceSessionsBase, closeWorkspaceSessionsToRightBase, closeAllWorkspaceSessionsBase].map(withPaneTabRule);
-  workspaceStateController = workspaceStateUtils.createWorkspaceStateController?.({ jennyShell: window.jennyShell, isSessionBusy: isWorkspaceSessionBusy, onStateChanged: applyWorkspaceSnapshot, onPersistenceError: (failure) => appendClientLog('WARN', 'workspace.state_persist_failed', failure) }) || null;
-  workspaceChromeController = workspaceChromeUtils.createWorkspaceChromeController?.({
-    containerEl: workspaceRailShell,
-    getSessionSummary,
-    isSessionBusy: isWorkspaceSessionBusy,
-    onSessionActivated: (sessionId) => activateWorkspaceSession(sessionId),
-    onSessionClosed: (sessionId) => closeWorkspaceSession(sessionId),
-    onLinkSessionsRequested: (sessionId, anchor) => handleLinkedSessionPopover(sessionId, anchor),
-    // Tab rename rides the sidebar's rename path (unchanged-title check, sessions.renamed log).
-    onRenameSession: (sessionId, title) => lifecycleController?.handleRenameSession?.(sessionId, title),
-    onRenameFailed: (...a) => showSessionActionError(...a),
-    onNewSessionRequested: () => handleCreateSessionWithWorkspace(),
-    onSessionReordered: (sessionId, newIndex) => reorderWorkspaceSession(sessionId, newIndex),
-    onCloseOtherSessions: (keepId) => closeOtherWorkspaceSessions(keepId),
-    onCloseSessionsToRight: (anchorId) => closeWorkspaceSessionsToRight(anchorId),
-    onCloseAllSessions: () => closeAllWorkspaceSessions(),
-    onOpenBeside: (sessionId) => ctx.paneLayoutController?.openBeside?.(sessionId), isSessionInPane: (sessionId) => ctx.paneLayoutController?.isSessionInPane?.(sessionId) === true,
-  }) || null;
+    updateTokenDisplay, renderAttachmentTray, renderSessions, setRovingChatSession, toggleChatsScope,
+    multiStreamController, syncWorkspaceFromStore, applyWorkspaceSnapshot, activateWorkspaceSession,
+    handleLinkedSessionPopover, renderWorkspaceChrome, handleWorkspaceShortcut,
+  } = window.rendererAppNavigationComposition.createNavigationComposition({
+    __proto__: ctx, appendClientLog, escapeHtml, getSessionMonogram, isArtifactReviewVisible, setActiveView,
+    syncArtifactReviewLayout, updateComposerSafeOffset, getProjectSwitcher, showToastMessage, attachGlobalErrorBoundary,
+    detachGlobalErrorBoundary, lifecycleController, patchSessionSummary, showSessionActionError, setSidebarCollapsed,
+    get topNavShellController() { return topNavShellController; },
+    set topNavShellController(value) { topNavShellController = value; },
+    get _applySidebarLayout() { return _applySidebarLayout; },
+    set _applySidebarLayout(value) { _applySidebarLayout = value; },
+  });
     result = {
       lifecycleController, escapeHtml, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences,
       patchSessionSummary, buildModelOptionMarkup, adjustChatZoomPercent, applyChatZoomPercent, resetChatZoomPercent,
@@ -887,7 +512,7 @@
       chatScrollCoordinator, composerLayoutRuntime, mergeMessageReasoning, getScrollMetrics, setFollowLatest, syncThreadScrollState,
       updateComposerSafeOffset, scrollThreadToTop, scrollThreadToBottom, scrollMessageIntoView, viewportReveal, getCurrentMessageById,
       isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, isContextCompactionExpanded, toggleContextCompactionDetails, showCopyFeedback, syncThinkingBlockNode, scheduleMessageViewportSync,
-      disposeViewportController, chatWayfinderController, pinToTopController, shellArtifactBridge, getArtifactsForSession, selectArtifact,
+      disposeViewportController, chatWayfinderController, shellArtifactBridge, getArtifactsForSession, selectArtifact,
       invalidateSessionArtifacts, pruneSessionArtifacts, resetArtifactsState, isArtifactReviewVisible, renderArtifactReviewPanelSafe,
       openArtifactTarget, openCodeReviewTarget, openFilePreviewTarget, contextPanelController, getSessionMessages, setSessionMessages, getSessionTurnEventState,
       setSessionTurnEventState, getCurrentSessionMessages, getVisibleSessionMessages, getCurrentVisibleMessages, createNormalizedMessage, resolveSessionId,

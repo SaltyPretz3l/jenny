@@ -148,6 +148,17 @@
       lazy: true,
     },
     {
+      // Team (row 123, slice 1g-1): host a team or join one. Shown only while the
+      // `team` flag is on: the nav item renders hidden and the flag state shows it
+      // (renderer-settings-nav-utils.js `syncFeatureFlaggedSettings`).
+      id: 'team',
+      group: 'work',
+      label: jt('settings.sections.team.title', 'Team'),
+      featureFlag: 'team',
+      keywords: [jt('settings.sections.team.keywords.invite', 'invite'), jt('settings.sections.team.keywords.host', 'host'),
+        jt('settings.sections.team.keywords.server', 'server'), jt('settings.sections.team.keywords.members', 'members')],
+    },
+    {
       id: 'usage',
       group: 'work',
       label: jt('settings.sections.usage.title', 'Usage'),
@@ -220,6 +231,8 @@
       // (it has been merged into its `mergedInto` host as a subsection).
       hidden: Boolean(definition.hidden),
       mergedInto: definition.mergedInto ? String(definition.mergedInto) : '',
+      // A feature flag key: the nav item and card show only while that flag is on.
+      featureFlag: definition.featureFlag ? String(definition.featureFlag) : '',
       default: Boolean(definition.default),
       order: normalizeOrder(definition.order, index),
       // Extra search terms for renderer-settings-search.js (a folded-in

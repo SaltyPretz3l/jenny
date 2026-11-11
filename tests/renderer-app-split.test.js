@@ -18,6 +18,18 @@ function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
 }
 
+// The controller composition and the with(ctx) sections it hands its ctx to: the
+// self-wrapper guards below cover the wiring wherever it lives.
+const CONTROLLER_COMPOSITION_SOURCES = [
+  'renderer/app/renderer-app-controller-composition.js',
+  'renderer/app/renderer-app-settings-composition.js',
+  'renderer/app/renderer-app-chat-shell-composition.js',
+];
+
+function readControllerCompositionSources() {
+  return CONTROLLER_COMPOSITION_SOURCES.map(readRepoFile).join('\n');
+}
+
 // Extract the keys of the ctx object literal renderer/app.js passes to
 // createControllerComposition({...}) via a balanced-brace walk. Shared by the
 // with(ctx) guard tests below. Returns a Set of shorthand/explicit key names,
@@ -155,7 +167,7 @@ test('the chat pane surface cluster loads before the lifecycle composition', () 
 // how the reasoning-phase expand toggle (setReasoningPhaseExpandedPreference)
 // silently broke when the AR2 app.js split dropped it from the ctx hand-off.
 test('reasoning-phase expansion callbacks the composition forwards are present in the ctx hand-off', () => {
-  const compositionSource = readRepoFile('renderer/app/renderer-app-controller-composition.js');
+  const compositionSource = readControllerCompositionSources();
   const appSource = readRepoFile('renderer/app.js');
 
   const ctxKeys = extractControllerCompositionCtxKeys(appSource);
@@ -190,7 +202,7 @@ test('reasoning-phase expansion callbacks the composition forwards are present i
 // showCopyFeedback were dropped from the ctx hand-off. The hardcoded guard above
 // missed them; this one checks every self-wrapper generically.
 test('every controller-composition with(ctx) self-wrapper resolves to a ctx key or a local declaration', () => {
-  const compositionSource = readRepoFile('renderer/app/renderer-app-controller-composition.js');
+  const compositionSource = readControllerCompositionSources();
   const appSource = readRepoFile('renderer/app.js');
 
   // 1) ctx keys app.js hands to createControllerComposition({...}) (balanced braces).

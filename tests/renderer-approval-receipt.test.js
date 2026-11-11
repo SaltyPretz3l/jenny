@@ -33,6 +33,7 @@ test('deriveApprovalReceipt names the decision from the call record', () => {
   });
   assert.deepEqual(deriveApprovalReceipt(approved('once')), { decision: 'allowed', scope: 'once' });
   assert.deepEqual(deriveApprovalReceipt(approved('always')), { decision: 'allowed', scope: 'always' });
+  assert.deepEqual(deriveApprovalReceipt(approved('full_auto')), { decision: 'allowed', scope: 'full_auto' });
   assert.deepEqual(deriveApprovalReceipt(approved('')), { decision: 'allowed' }, 'a chat saved before scopes were recorded');
   assert.deepEqual(deriveApprovalReceipt({ tool_name: 'run_command', state: 'denied' }), { decision: 'denied' });
   // The reader's answer outranks the call's own outcome (Astra, 2026-10-05).
@@ -71,6 +72,9 @@ test('a resolved approval renders one receipt line with no actions', () => {
 
   const always = receiptDom({ decision: 'allowed', approvalScope: 'always', commandText: 'git status' });
   assert.equal(always.querySelector('.tool-approval-receipt-label').textContent, 'Always allowed');
+
+  const fullAuto = receiptDom({ decision: 'allowed', approvalScope: 'full_auto', commandText: 'rm old.csv' });
+  assert.equal(fullAuto.querySelector('.tool-approval-receipt-label').textContent, 'Ran in Full auto');
 
   const denied = receiptDom({ decision: 'denied', commandText: '<b>git push</b>' });
   assert.equal(denied.querySelector('.tool-approval-receipt-label').textContent, 'Denied');

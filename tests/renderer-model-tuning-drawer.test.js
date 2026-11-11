@@ -234,7 +234,9 @@ test('ratio-changed save includes ratio without unchanged context length', async
   await controller.open('gemma3:latest');
   const host = dom.window.document.getElementById('modelTuningDrawer');
   const ratio = host.querySelector('#modelTuningRatio');
-  ratio.value = '0.7';
+  // Summarize at is a percentage field over the stored ratio.
+  assert.equal(ratio.value, '80');
+  ratio.value = '70';
   ratio.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   host.querySelector('[data-action="save-model-tuning"]').click();
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -317,10 +319,17 @@ test('drawer renders grouped bounded controls and tracks dirty fields without mo
   const host = dom.window.document.getElementById('modelTuningDrawer');
   assert.deepEqual(
     Array.from(host.querySelectorAll('.model-tuning-section-title'), (node) => node.textContent),
-    ['Context and memory', 'Sampling', 'Repetition and length']
+    ['Memory', 'Replies']
   );
   assert.equal(host.querySelector('#modelTuningDrawerTitle').textContent, 'Tune Gemma 3');
-  assert.match(host.querySelector('.model-tuning-drawer-subtitle').textContent, /gemma3:latest · Ollama · applies after the runtime confirms/);
+  // One-line title: the full name is its tooltip. No Engine section, so one line names the engine.
+  assert.equal(host.querySelector('#modelTuningDrawerTitle').getAttribute('data-tooltip'), 'Gemma 3');
+  assert.equal(host.querySelector('.model-tuning-drawer-subtitle').textContent, 'Runs on Ollama.');
+  // Temperature and Maximum output stay visible; the rest fold under Advanced sampling (closed: nothing set).
+  const fold = host.querySelector('[data-model-tuning-fold]');
+  assert.equal(fold.open, false);
+  assert.deepEqual(Array.from(fold.querySelectorAll('[data-model-tuning-row]'), (row) => row.dataset.modelTuningRow),
+    ['topP', 'topK', 'minP', 'repetitionPenalty', 'presencePenalty']);
 
   const expectedBounds = {
     temperature: ['0.2', '1.8', '0.01'],
@@ -337,16 +346,17 @@ test('drawer renders grouped bounded controls and tracks dirty fields without mo
     const input = host.querySelector(`[data-model-tuning-field="${field}"]`);
     assert.deepEqual([input.min, input.max, input.step], expected);
   });
-  assert.equal(host.querySelector('#modelTuningRatio').min, '0.1');
-  assert.equal(host.querySelector('#modelTuningRatio').max, '0.99');
-  assert.equal(host.querySelector('#modelTuningRatio').step, '0.01');
-  assert.equal(
-    host.querySelector('[data-model-tuning-row="temperature"] .model-tuning-row-range').textContent,
-    'range 0.2–1.8'
-  );
+  assert.equal(host.querySelector('#modelTuningRatio').min, '10');
+  assert.equal(host.querySelector('#modelTuningRatio').max, '99');
+  assert.equal(host.querySelector('#modelTuningRatio').step, '1');
+  // Each row explains itself; the label's tooltip carries the hydrated bounds.
+  const temperatureRow = host.querySelector('[data-model-tuning-row="temperature"]');
+  assert.match(temperatureRow.querySelector('.model-tuning-row-desc').textContent, /focused and repeatable/);
+  assert.match(temperatureRow.querySelector('.model-tuning-row-label').getAttribute('data-tooltip'), /Range 0\.2–1\.8\.$/);
+  assert.equal(temperatureRow.querySelector('.model-tuning-row-range'), null);
 
   const applyButton = host.querySelector('[data-action="save-model-tuning"]');
-  assert.equal(applyButton.textContent, 'Apply 0 changes');
+  assert.equal(applyButton.textContent, 'No changes');
   assert.equal(applyButton.disabled, true);
   const temperature = host.querySelector('[data-model-tuning-field="temperature"]');
   temperature.focus();
@@ -355,10 +365,9 @@ test('drawer renders grouped bounded controls and tracks dirty fields without mo
   temperature.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   assert.equal(applyButton.textContent, 'Apply 1 change');
   assert.equal(applyButton.disabled, false);
-  assert.equal(
-    host.querySelector('[data-model-tuning-row="temperature"] .model-tuning-row-range').dataset.dirty,
-    'true'
-  );
+  assert.equal(temperatureRow.querySelector('[data-model-tuning-changed]').hidden, false);
+  assert.equal(host.querySelector('[data-model-tuning-row="topP"] [data-model-tuning-changed]').hidden, true);
+  assert.equal(host.querySelector('[data-action="discard-model-tuning"]').hidden, false);
   assert.equal(dom.window.document.activeElement, focused);
   controller.dispose();
 });

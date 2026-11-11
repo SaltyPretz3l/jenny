@@ -39,7 +39,7 @@ function readImportedCssSurface(rootDir, importPrefix) {
     .join('\n');
 }
 
-test('renderer syncs chat viewport variables across resize, activation, and context-panel toggles', async (t) => {
+test('renderer syncs chat viewport variables across resize and activation', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const root = doc.documentElement;
@@ -47,7 +47,6 @@ test('renderer syncs chat viewport variables across resize, activation, and cont
   const heroStage = doc.getElementById('heroStage');
   const chatThreadStage = doc.getElementById('chatThreadStage');
   const composerWrap = doc.getElementById('composerWrap');
-  const contextPanelToggle = doc.getElementById('contextPanelToggle');
   const input = doc.getElementById('chatInput');
   const sendButton = doc.getElementById('sendButton');
 
@@ -87,8 +86,6 @@ test('renderer syncs chat viewport variables across resize, activation, and cont
   assert.equal(chatView.style.getPropertyValue('--empty-hero-stage-bottom'), '40px');
 
   composerGap = 24;
-  contextPanelToggle.click();
-  await waitForUi(window, 40);
   window.dispatchEvent(new window.Event('resize'));
   await waitForUi(window, 40);
 
@@ -375,21 +372,14 @@ test('renderer places transcript utilities in the height-free chat overlay', asy
   const sendButton = doc.getElementById('sendButton');
   const jumpTools = doc.querySelector('.composer-jump-tools');
   const composerMeta = doc.querySelector('.composer-meta');
-  const wayfinderHost = doc.getElementById('composerWayfinderHost');
-  const assertComposerWayfinderOwnsNavigation = (message) => {
-    assert.equal(jumpTools.classList.contains('hidden'), true, message);
-    assert.equal(wayfinderHost.hidden, false, 'wayfinder host should be visible in the timeline utility cluster');
-    assert.equal(wayfinderHost.querySelector('.chat-wayfinder-button')?.dataset.chatWayfinderState, 'prompt');
-    assert.equal(wayfinderHost.querySelector('.chat-wayfinder-icon')?.tagName.toLowerCase(), 'svg', 'wayfinder should render the shared line-icon SVG');
-    assert.equal(doc.getElementById('chatUnreadOrientationHost'), null, 'the legacy timeline overlay host was removed outright by scroll-W4b');
-  };
+  const jumpLatest = doc.getElementById('jumpToBottomButton');
 
   await waitForUi(window, 40);
   assert.equal(doc.getElementById('composerTokenLabel'), null, 'composer token label should be removed from the UI');
-  assert.equal(wayfinderHost.parentElement, doc.getElementById('chatTimelineUtilityCluster'), 'wayfinder should mount in the height-free timeline utility cluster');
   assert.equal(doc.getElementById('timelineCollapseExpandToggle'), null, 'the bulk collapse/expand toggle retired with transcript views');
-  assert.equal(doc.querySelector('[data-transcript-view-toggle]')?.parentElement, wayfinderHost.parentElement, 'the transcript view control and wayfinder should share the overlay cluster');
-  assert.equal(doc.getElementById('artifactSplitViewToggle').parentElement, wayfinderHost.parentElement, 'artifact toggle should share the chat-only overlay cluster');
+  const utilityCluster = doc.getElementById('chatTimelineUtilityCluster');
+  assert.equal(doc.querySelector('[data-transcript-view-toggle]')?.parentElement, utilityCluster, 'the transcript view control should sit in the overlay cluster');
+  assert.equal(doc.getElementById('artifactSplitViewToggle').parentElement, utilityCluster, 'artifact toggle should share the chat-only overlay cluster');
   for (const obsoleteId of ['workbenchHeader', 'workbenchSessionTitle', 'workbenchModeLabel', 'workbenchModelLabel']) {
     assert.equal(doc.getElementById(obsoleteId), null, `${obsoleteId} should be absent`);
   }
@@ -402,13 +392,22 @@ test('renderer places transcript utilities in the height-free chat overlay', asy
   sendButton.click();
   await waitForUi(window, 40);
 
-  assertComposerWayfinderOwnsNavigation('wayfinder row should appear when the prompt wayfinder is active');
+  assert.equal(jumpLatest.dataset.visible, 'false', 'at the live end the jump control stays out of the way');
+  assert.equal(jumpLatest.hasAttribute('inert'), true);
+  assert.equal(jumpTools.classList.contains('hidden'), true);
+  assert.equal(jumpLatest.parentElement, doc.getElementById('chatThreadStage'), 'the jump control floats on the stage, outside the cluster');
+  assert.equal(doc.getElementById('chatUnreadOrientationHost'), null, 'the legacy timeline overlay host was removed outright by scroll-W4b');
 
   state.ui.followLatest = false;
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await waitForUi(window, 20);
 
-  assertComposerWayfinderOwnsNavigation('wayfinder row should stay visible when the thread moves away from latest');
+  assert.equal(jumpLatest.dataset.visible, 'true', 'scrolling up brings the control in');
+  assert.equal(jumpLatest.dataset.jumpState, 'latest');
+  assert.equal(jumpLatest.getAttribute('data-tooltip'), 'Return to latest');
+  assert.equal(jumpLatest.querySelector('svg')?.tagName.toLowerCase(), 'svg', 'the control keeps the shared line-icon SVG');
+  assert.equal(jumpLatest.hasAttribute('inert'), false, 'the visible control is in the focus order');
+  assert.equal(jumpTools.classList.contains('hidden'), false);
 });
 
 test('composer rail (D3): meta row gone, model pill + popover host the selects, jump cluster floats outside the composer', async (t) => {
@@ -510,35 +509,23 @@ test('composer tools chip owns web search: popover switch persists tools.web and
   assert.equal(doc.getElementById('composerToolsChip').getAttribute('aria-label'), 'Tools for this chat: 2 of 3 on');
 });
 
-test('context log disclosure stays collapsed by default and does not persist a separate preference', async (t) => {
+test('the context panel is the Activity host only: no log disclosure, no toggle, collapsed whatever was stored', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
-  const state = window.__rendererState;
+  const panel = doc.getElementById('chatContextPanel');
   const input = doc.getElementById('chatInput');
   const sendButton = doc.getElementById('sendButton');
-  const logDisclosure = doc.getElementById('contextLogDisclosure');
-  const logFeed = doc.getElementById('contextSessionLogs');
 
   input.value = 'Collect context logs';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
   await waitForUi(window, 60);
 
-  assert.ok(logDisclosure, 'expected a context log disclosure button');
-  // The Activity header is the disclosure: always shown, collapsed by default.
-  assert.equal(logDisclosure.classList.contains('hidden'), false);
-  assert.equal(logDisclosure.getAttribute('aria-expanded'), 'false');
-  assert.equal(logFeed.hidden, true);
-
-  const persistedBefore = window.localStorage.getItem('jenny.contextPanel.v1');
-  logDisclosure.click();
-  await waitForUi(window, 20);
-  assert.equal(logDisclosure.getAttribute('aria-expanded'), 'true');
-  assert.equal(logFeed.hidden, false);
-
-  assert.equal(window.localStorage.getItem('jenny.contextPanel.v1'), persistedBefore, 'log disclosure should not persist a new panel preference');
-
-  state.ui.followLatest = true;
+  for (const id of ['contextLogDisclosure', 'contextSessionLogs', 'contextLogSection', 'contextArtifactSection', 'contextPanelToggle', 'contextPanelOpenToggle']) {
+    assert.equal(doc.getElementById(id), null, `${id} is gone`);
+  }
+  assert.ok(panel.querySelector('.context-panel-scroll'), 'the panel keeps its scroll host');
+  assert.equal(panel.classList.contains('collapsed'), true, 'collapsed unless Activity is open');
 });
 
 // Pre-land review (M5): every reveal consumer fails closed when the shared

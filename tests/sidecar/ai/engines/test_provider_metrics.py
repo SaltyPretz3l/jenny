@@ -142,7 +142,21 @@ def test_ollama_terminal_uses_ns_and_never_claims_cached_or_total_prompt():
     assert sample.time_to_first_generated_token_ms == 125
 
 
-@pytest.mark.parametrize("provider", ["llama-server", "ollama", "other"])
+@pytest.mark.parametrize("provider", ["ninfer", "llama-server"])
+def test_live_providers_move_through_prefill_and_decode(provider):
+    metrics = ProviderMetrics(provider_kind=provider, live=True)
+    events = metrics.start_events()
+    events += metrics.feed({"prompt_progress": {"total": 18, "cache": 0, "processed": 8}})
+    events += metrics.feed(
+        {"choices": [{"delta": {"content": "x"}}], "timings": {"predicted_n": 1, "predicted_ms": 4}}
+    )
+    phases = [event.performance.phase for event in events]
+    assert phases[0] == "waiting"
+    assert "prefill" in phases
+    assert phases[-1] == "decode"
+
+
+@pytest.mark.parametrize("provider", ["ollama", "other"])
 def test_other_providers_have_no_live_phases(provider):
     metrics = ProviderMetrics(provider_kind=provider, live=True)
     events = metrics.start_events()

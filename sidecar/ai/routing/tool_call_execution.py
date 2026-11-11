@@ -3,38 +3,43 @@
 This module owns the request-contract checks that must run immediately before
 tool dispatch and the single in-order execution path shared by live turns and
 approval resumes.  Tool calls are never reordered or executed concurrently.
+The pre-dispatch filter lives in ``tool_call_prefilter`` and the settlement of
+admitted-but-unrun calls in ``tool_call_settlement``; both are re-exported here.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
 from sidecar.ai.error_codes import (
-    CMP_MODE_TOOL_BLOCKED,
-    CMP_TOOL_APPROVAL_WINDOW_DROPPED,
-    CMP_TOOL_COERCED_ARGS_REJECTED,
-    CMP_TOOL_DISABLED,
     CMP_TOOL_OUTSIDE_WORKSPACE,
     CMP_TOOL_PAUSED_UNATTENDED,
-    CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.routing import loop_event_emit, route_policy_runtime
 from sidecar.ai.routing import router as _router
 from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
 from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
+from sidecar.ai.routing.tool_call_prefilter import (
+    _blocked_outcome,
+    _preparation_blocked,
+    pre_filter_tool_calls,
+    preparation_refusal,
+)
+from sidecar.ai.routing.tool_call_settlement import (
+    settle_after_turn_boundary,
+    settle_app_refused_call,
+    settle_dropped_tool_calls,
+)
 from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
-from sidecar.ai.tools import read_only_command_grant as _read_only
 from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools.failure_taxonomy import classify as _classify_failure
 from sidecar.ai.tools.failure_taxonomy import failure_log_level
-from sidecar.ai.tools.plan_artifact_policy import is_plan_artifact_write_eligible
 from sidecar.ai.tools.policy import tool_policy_call_key
 from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.runtime import tool_execution_support as _tool_support
@@ -62,36 +67,6 @@ OUTSIDE_ROOT_HINT = (
 def _sentence(text: str) -> str:
     text = text.strip()
     return text if not text or text.endswith((".", "!", "?")) else f"{text}."
-
-
-def _remaining_deferred_names(
-    kernel: Any,
-    tool_resolution_context: Any | None,
-) -> frozenset[str]:
-    resolver = getattr(kernel, "_remaining_deferred_names", None)
-    if not callable(resolver):
-        return frozenset()
-    names = resolver(tool_resolution_context)
-    if isinstance(names, frozenset):
-        return names
-    if isinstance(names, (set, list, tuple)):
-        return frozenset(str(name) for name in names if name)
-    return frozenset()
-
-
-def _is_deferred_tool_call(
-    kernel: Any,
-    call: Any,
-    tool_resolution_context: Any | None,
-    *,
-    remaining_hidden_names: frozenset[str],
-) -> bool:
-    if call.tool_id in remaining_hidden_names:
-        return True
-    checker = getattr(kernel, "_is_direct_deferred_tool_call", None)
-    if not callable(checker):
-        return False
-    return bool(checker(call, tool_resolution_context))
 
 
 def _outside_root_hint(error_code: str, request_context: Any | None) -> str:
@@ -131,75 +106,6 @@ def should_pause_for_live_prompt(
     return descriptor is not None and effective_side_effecting(descriptor, call.arguments) is True
 
 
-# Placeholder markers invented by ``schema_examples.schema_placeholder_value``
-# when it has nothing real to show: ``<string>`` for an unconstrained string and
-# ``<value>`` for a type-less schema.  Only these two are matched.  The
-# generator's other candidates ("value", "x", runs of "0"/"a") are ordinary
-# strings a model could legitimately send, so they are deliberately NOT markers.
-_PLACEHOLDER_ARGUMENT_MARKERS = frozenset({"<string>", "<value>"})
-
-
-def _contains_placeholder_marker(value: object) -> bool:
-    """True when ``value`` (or anything nested inside it) is a marker literal."""
-    if isinstance(value, str):
-        return value in _PLACEHOLDER_ARGUMENT_MARKERS
-    if isinstance(value, dict):
-        return any(_contains_placeholder_marker(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_contains_placeholder_marker(item) for item in value)
-    return False
-
-
-def _placeholder_arguments_reason(call: Any, descriptor: Any | None) -> str | None:
-    """Classify a call whose arguments are the tool-prompt example, not real data.
-
-    The tool-use nudge and the schema repair hints both show the model a worked
-    example built by ``schema_examples``; a small local model can copy it back
-    verbatim as a real, structurally valid tool call.  Left alone that call
-    creates a pre-mutation auto-checkpoint and then executes, so it is settled
-    here, before dispatch.
-
-    Two signals, in order of specificity:
-
-    * ``schema_example_echo`` -- the arguments are byte-identical to the
-      example this process would have generated for the tool's own schema.
-      Applies to every tool, read-only ones included.
-    * ``placeholder_literal`` -- any argument value is a marker literal.
-      Applies ONLY to side-effecting tools and to calls with no descriptor at
-      all, because a marker literal is a perfectly ordinary value to send a
-      read-only search tool: ``grep_search {"pattern": "<string>", "path":
-      "Info.plist"}`` is a real search over a plist/XML/Obj-C tree, and a
-      blanket rule would leave it unexecutable with no escape.  The incident
-      call was side-effecting, which is where the damage lives.
-
-    The echo rule additionally requires the generated example to contain a
-    marker.  A bare equality test is unsafe: several real tools have examples
-    built entirely from their schema's ``enum``/``default``/``minItems``
-    values, which is exactly what a legitimate call looks like -- measured on
-    the live catalog, ``home {"action": "calendar_list"}``,
-    ``knowledge_exec {"op": "ls"}``, ``workspace_present {"view": "preview"}``
-    and ``todo_write {"todos": []}`` would all have been rejected, and for
-    an enum-only tool the model could never escape the rejection.
-
-    Returns the reason tag, or ``None`` when the call carries real arguments.
-    ``descriptor`` may be ``None`` (no request contract and no MCP descriptor);
-    the tool is then treated as unknown, so the literal rule applies.
-    """
-    arguments = dict(call.arguments or {})
-    if not arguments:
-        return None
-    input_schema = getattr(descriptor, "input_schema", None) if descriptor is not None else None
-    if isinstance(input_schema, dict):
-        example = _tools_schema_examples.minimal_valid_arguments(input_schema)
-        if example and arguments == example and _contains_placeholder_marker(example):
-            return "schema_example_echo"
-    if descriptor is not None and not effective_side_effecting(descriptor, call.arguments):
-        return None
-    if any(_contains_placeholder_marker(value) for value in arguments.values()):
-        return "placeholder_literal"
-    return None
-
-
 def _failure_review_metadata(error: object) -> dict[str, object]:
     """Row 34: only the review keys of a failure's user-only result metadata."""
     carried = getattr(error, "result_metadata", None)
@@ -210,290 +116,6 @@ def _failure_review_metadata(error: object) -> dict[str, object]:
         for key in _tool_contracts.TOOL_FAILURE_RESULT_METADATA_KEYS
         if key in carried
     }
-
-
-def _blocked_outcome(
-    call: Any,
-    *,
-    output: str,
-    error_code: str,
-    metadata: dict[str, object],
-) -> Any:
-    return _router.ToolExecutionOutcome(
-        tool_name=call.tool_id,
-        output=output,
-        success=False,
-        tool_input={str(key): value for key, value in call.arguments.items()},
-        error_code=error_code,
-        metadata=metadata,
-        call_id=call.call_id,
-    )
-
-
-def _record_filtered_outcome(  # noqa: PLR0913
-    *,
-    kernel: Any,
-    runtime: Any,
-    result: Any,
-    request_id: str,
-    call: Any,
-    outcome_index: int,
-    tool_result: Any,
-    outcomes: list[Any],
-    working_messages: list[dict[str, object]],
-    iteration_calls: list[Any],
-    streamed_event_types: set[str],
-) -> None:
-    outcomes.append(tool_result)
-    call_id = loop_event_emit.emit_tool_executing(
-        runtime,
-        call,
-        request_id,
-        outcome_index,
-    )
-    loop_event_emit.emit_tool_result(runtime, tool_result, call_id)
-    if runtime.streaming:
-        streamed_event_types.update(("tool.executing", "tool.result"))
-    working_messages.append(kernel._assistant_tool_call_message(result, call))
-    working_messages.append(kernel._tool_result_message(call, tool_result))
-    iteration_calls.append(call)
-
-
-def preparation_refusal(request_context: Any, tool_id: str) -> str | None:
-    """The request's deny-by-default reason for a handoff preparation turn, or None."""
-    refusal = getattr(request_context, "preparation_refusal", None)
-    return refusal(tool_id) if callable(refusal) else None
-
-
-def _preparation_blocked(call: Any, request_context: Any) -> Any | None:
-    """Deny-by-default outcome of a handoff preparation turn, or None."""
-    reason = preparation_refusal(request_context, call.tool_id)
-    if reason is None:
-        return None
-    return _blocked_outcome(
-        call,
-        output=_tool_assembly.blocked_tool_message(call.tool_id, reason),
-        error_code=_tool_assembly.blocked_tool_error_code(reason),
-        metadata=_tool_assembly.blocked_tool_metadata(reason),
-    )
-
-
-def pre_filter_tool_calls(  # noqa: PLR0913
-    tool_calls: tuple[Any, ...] | list[Any],
-    *,
-    kernel: Any,
-    runtime: Any,
-    result: Any,
-    request_id: str,
-    tool_resolution_context: Any | None,
-    outcomes: list[Any],
-    working_messages: list[dict[str, object]],
-    iteration_calls: list[Any],
-    streamed_event_types: set[str],
-    outcome_index: int,
-    tool_contract: Any | None = None,
-    plan_mode: bool = False,
-    read_only: bool = False,
-    request_disabled_tools: frozenset[str] = frozenset(),
-    session_id: str | None = None,
-) -> tuple[list[tuple[Any, int]], int]:
-    """Settle calls blocked before dispatch and return executable calls in order.
-
-    An assembled request ``tool_contract`` entry is authoritative when supplied.
-    When the contract has no entry, fall back to the MCP client descriptor.
-    """
-    remaining: list[tuple[Any, int]] = []
-    remaining_hidden_names = _remaining_deferred_names(kernel, tool_resolution_context)
-    for call in tool_calls:
-        kernel._assert_valid_tool_call(call)
-        outcome_index += 1
-        entry, descriptor = (
-            contract_entry_for_call(kernel, tool_contract, call.tool_id)
-            if tool_contract is not None
-            else (None, None)
-        )
-
-        tool_result = _preparation_blocked(call, getattr(runtime, "request_context", None))
-        if (
-            tool_result is None
-            and entry is not None
-            and not entry.available
-            and call.tool_id != TOOL_SEARCH_TOOL_NAME
-        ):
-            if entry.reason == TOOL_NOT_EXPOSED_REASON and entry.deferred:
-                tool_result = kernel._build_deferred_outcome(call)
-            else:
-                tool_result = _blocked_outcome(
-                    call,
-                    output=_tool_assembly.blocked_tool_message(call.tool_id, entry.reason),
-                    error_code=_tool_assembly.blocked_tool_error_code(entry.reason),
-                    metadata=_tool_assembly.blocked_tool_metadata(entry.reason),
-                )
-
-        if descriptor is None and (read_only or call.coerced):
-            descriptor = kernel._mcp_client.tool_descriptor(call.tool_id)
-
-        if (
-            tool_result is None
-            and read_only
-            and descriptor is not None
-            and effective_side_effecting(descriptor, call.arguments)
-            and not is_plan_artifact_write_eligible(
-                descriptor,
-                call.tool_id,
-                call.arguments,
-                plan_mode=plan_mode,
-                read_only=read_only,
-            )
-            and not _read_only.is_allowed_verdict(
-                ro := _read_only.read_only_command_verdict(kernel, call, descriptor, runtime)
-            )
-        ):
-            log_event(
-                logger,
-                logging.WARNING,
-                component="ai.router",
-                event="ai.router.read_only_tool_call_rejected",
-                message=(
-                    "Rejected side-effecting tool call during a read-only "
-                    f"request: {call.tool_id}"
-                ),
-                status="failure",
-                data={"tool": call.tool_id, "code": CMP_MODE_TOOL_BLOCKED},
-                request_id=request_id,
-                session_id=session_id,
-            )
-            tool_result = _blocked_outcome(
-                call,
-                output=_read_only.read_only_command_refusal(ro) or (
-                    f"Tool '{call.tool_id}' is unavailable because this request "
-                    "is read-only."
-                ),
-                error_code=CMP_MODE_TOOL_BLOCKED,
-                metadata={"read_only_blocked": True},
-            )
-
-        if (
-            tool_result is None
-            and entry is None
-            and tool_contract is None
-            and call.tool_id in request_disabled_tools
-        ):
-            log_event(
-                logger,
-                logging.WARNING,
-                component="ai.router",
-                event="ai.router.request_disabled_tool_call_rejected",
-                message=f"Rejected model tool call disabled by request preferences: {call.tool_id}",
-                status="failure",
-                data={"tool": call.tool_id, "code": CMP_TOOL_DISABLED},
-                request_id=request_id,
-                session_id=session_id,
-            )
-            tool_result = _blocked_outcome(
-                call,
-                output=f"Tool '{call.tool_id}' is disabled for this request by tool preferences.",
-                error_code=CMP_TOOL_DISABLED,
-                metadata={"request_preference_disabled": True},
-            )
-
-        if (
-            tool_result is None
-            and entry is None
-            and tool_contract is None
-            and call.tool_id != TOOL_SEARCH_TOOL_NAME
-            and _is_deferred_tool_call(
-                kernel,
-                call,
-                tool_resolution_context,
-                remaining_hidden_names=remaining_hidden_names,
-            )
-        ):
-            tool_result = kernel._build_deferred_outcome(call)
-
-        if (
-            tool_result is None
-            and call.coerced
-            and descriptor is not None
-            and effective_side_effecting(descriptor, call.arguments)
-        ):
-            log_event(
-                logger,
-                logging.WARNING,
-                component="ai.router",
-                event="ai.router.coerced_args_rejected",
-                message=f"Rejected side-effecting tool '{call.tool_id}' with coerced arguments",
-                status="failure",
-                data={"tool": call.tool_id, "code": CMP_TOOL_COERCED_ARGS_REJECTED},
-                request_id=request_id,
-                session_id=session_id,
-            )
-            tool_result = _blocked_outcome(
-                call,
-                output=(
-                    f"Tool '{call.tool_id}' rejected: provider emitted malformed arguments "
-                    "for a side-effecting tool."
-                ),
-                error_code=CMP_TOOL_COERCED_ARGS_REJECTED,
-                metadata={
-                    "coerced_arguments_rejected": True,
-                    "reason": "malformed_side_effecting_arguments",
-                },
-            )
-
-        if tool_result is None:
-            placeholder_reason = _placeholder_arguments_reason(call, descriptor)
-            if placeholder_reason is not None:
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    component="ai.router",
-                    event="ai.router.placeholder_tool_call_rejected",
-                    message=(
-                        "Rejected tool call whose arguments are the schema example "
-                        f"placeholders: {call.tool_id}"
-                    ),
-                    status="failure",
-                    data={
-                        "tool": call.tool_id,
-                        "reason": placeholder_reason,
-                        "code": CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
-                    },
-                    request_id=request_id,
-                    session_id=session_id,
-                )
-                tool_result = _blocked_outcome(
-                    call,
-                    output=(
-                        f"Tool '{call.tool_id}' was not executed: the arguments are the "
-                        "schema example placeholders, not real values. Supply real "
-                        "arguments, or if no tool is needed, answer the user directly."
-                    ),
-                    error_code=CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
-                    metadata={
-                        "placeholder_arguments_rejected": True,
-                        "reason": placeholder_reason,
-                    },
-                )
-
-        if tool_result is None:
-            remaining.append((call, outcome_index))
-            continue
-
-        _record_filtered_outcome(
-            kernel=kernel,
-            runtime=runtime,
-            result=result,
-            request_id=request_id,
-            call=call,
-            outcome_index=outcome_index,
-            tool_result=tool_result,
-            outcomes=outcomes,
-            working_messages=working_messages,
-            iteration_calls=iteration_calls,
-            streamed_event_types=streamed_event_types,
-        )
-    return remaining, outcome_index
 
 
 def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
@@ -741,172 +363,6 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
     return None
 
 
-APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE = (
-    "Tool '{tool_id}' was not executed: it was not part of the approved "
-    "execution window for this turn. Re-request it if it is still needed."
-)
-# Names the call the batch paused on, so a model that sees only this row does
-# not read the drop as a refusal of the tool itself (dogfood TR-009).
-APPROVAL_WINDOW_DROPPED_AFTER_OUTPUT_TEMPLATE = (
-    "Tool '{tool_id}' was not executed: this batch paused for approval of "
-    "'{approved_tool}', and the approved execution window held only that call "
-    "plus read-only calls that need no approval. Nothing from this call "
-    "happened. Re-issue it now if it is still needed."
-)
-# One line on the last dropped row, so the model re-issues the whole remainder
-# in one go instead of rediscovering it a call at a time (Pocket Wild dogfood).
-APPROVAL_WINDOW_BATCH_SUMMARY_TEMPLATE = (
-    "\nBatch status: approved window {ran} (see their results); "
-    "not run, re-issue these: {dropped}."
-)
-
-
-def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome recorder.
-    *,
-    kernel: Any,
-    runtime: Any,
-    result: Any,
-    request_id: str,
-    session_id: str | None,
-    dropped_calls: Sequence[Any],
-    outcomes: list[Any],
-    working_messages: list[dict[str, Any]],
-    iteration_calls: list[Any],
-    streamed_event_types: set[str],
-    approved_tool_id: str = "",
-    window_calls: Sequence[Any] = (),
-) -> int:
-    """Give every admitted-but-unexecuted tool call an explicit terminal outcome.
-
-    Approval resume executes only the approved window; the remaining calls in
-    the frozen plan were still reserved against the turn tool budget. Settling
-    them here keeps budget accounting consistent (every reserved call has a
-    terminal row) instead of silently discarding them. With ``window_calls``
-    the last row also lists what ran and everything to re-issue.
-    """
-
-    if not dropped_calls:
-        return 0
-
-    template = (
-        APPROVAL_WINDOW_DROPPED_AFTER_OUTPUT_TEMPLATE
-        if approved_tool_id
-        else APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE
-    )
-    def _names(calls: Sequence[Any]) -> str:
-        return ", ".join(str(getattr(call, "tool_id", "") or "") for call in calls) or "nothing"
-
-    summary = (
-        APPROVAL_WINDOW_BATCH_SUMMARY_TEMPLATE.format(
-            ran=_names(window_calls), dropped=_names(dropped_calls)
-        )
-        if window_calls
-        else ""
-    )
-    outcome_index = len(outcomes)
-    for position, call in enumerate(dropped_calls, start=1):
-        outcome_index += 1
-        _record_filtered_outcome(
-            kernel=kernel,
-            runtime=runtime,
-            result=result,
-            request_id=request_id,
-            call=call,
-            outcome_index=outcome_index,
-            tool_result=_blocked_outcome(
-                call,
-                output=template.format(
-                    tool_id=str(getattr(call, "tool_id", "") or ""),
-                    approved_tool=approved_tool_id,
-                ) + (summary if position == len(dropped_calls) else ""),
-                error_code=CMP_TOOL_APPROVAL_WINDOW_DROPPED,
-                metadata={"approval_window_dropped": True},
-            ),
-            outcomes=outcomes,
-            working_messages=working_messages,
-            iteration_calls=iteration_calls,
-            streamed_event_types=streamed_event_types,
-        )
-    log_event(
-        logger,
-        logging.WARNING,
-        component="ai.router",
-        event="ai.router.approval_window_calls_dropped",
-        message="Settled reserved tool calls that fell outside the approved window.",
-        status="blocked",
-        data={
-            "dropped_count": len(dropped_calls),
-            "code": CMP_TOOL_APPROVAL_WINDOW_DROPPED,
-            "tools": [str(getattr(call, "tool_id", "") or "") for call in dropped_calls],
-        },
-        request_id=request_id,
-        session_id=session_id,
-    )
-    return len(dropped_calls)
-
-
-def settle_after_turn_boundary(  # noqa: PLR0913 -- mirrors the dropped-call settler.
-    *,
-    kernel: Any,
-    runtime: Any,
-    result: Any,
-    request_id: str,
-    session_id: str | None,
-    boundary: _router.TurnBoundary,
-    unstarted_calls: Sequence[tuple[Any, int]],
-    outcomes: list[Any],
-    working_messages: list[dict[str, Any]],
-    iteration_calls: list[Any],
-    streamed_event_types: set[str],
-) -> int:
-    """Give every call after an end-of-turn boundary an honest not-executed result.
-
-    The batch's remaining calls were admitted but must not run: the turn ends at
-    the boundary. Each gets a ``tool.executing`` + ``tool.result`` pair (so no
-    row is orphaned) and a failed outcome the model never sees (no generation
-    follows). Reuses CMP-TOOL-0042 (never dispatched).
-    """
-    for call, outcome_index in unstarted_calls:
-        _record_filtered_outcome(
-            kernel=kernel,
-            runtime=runtime,
-            result=result,
-            request_id=request_id,
-            call=call,
-            outcome_index=outcome_index,
-            tool_result=_blocked_outcome(
-                call,
-                output=boundary.not_executed_output(str(getattr(call, "tool_id", "") or "")),
-                error_code=CMP_TOOL_APPROVAL_WINDOW_DROPPED,
-                metadata={
-                    "turn_boundary_not_executed": True,
-                    "reason": boundary.completion_reason,
-                },
-            ),
-            outcomes=outcomes,
-            working_messages=working_messages,
-            iteration_calls=iteration_calls,
-            streamed_event_types=streamed_event_types,
-        )
-    if unstarted_calls:
-        log_event(
-            logger,
-            logging.INFO,
-            component="ai.router",
-            event="ai.router.turn_boundary_calls_settled",
-            message="Settled the unstarted calls of a batch that ended the turn.",
-            status="blocked",
-            data={
-                "settled_count": len(unstarted_calls),
-                "reason": boundary.completion_reason,
-                "code": CMP_TOOL_APPROVAL_WINDOW_DROPPED,
-            },
-            request_id=request_id,
-            session_id=session_id,
-        )
-    return len(unstarted_calls)
-
-
 def prevalidate_call_arguments(
     *,
     kernel: Any,
@@ -946,11 +402,14 @@ def prevalidate_call_arguments(
             ),
         )
     except _tool_contracts.ToolExecutionFailure as error:
-        repair_hints = _tools_schema_examples.tool_schema_repair_hints(descriptor.input_schema)
+        repair_hints = _tools_schema_examples.tool_schema_repair_hints(
+            _tool_assembly.model_facing_parameters(descriptor)
+        )
         return {
             "message": (
                 f"Tool '{call.tool_id}' rejected malformed arguments: "
-                f"{_sentence(error.message)}{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
+                f"{_sentence(_tool_contracts.validation_detail(error.message))}"
+                f"{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
             ),
             "metadata": {
                 "validation_error": error.message,
@@ -998,6 +457,7 @@ def _launcher_refusal(descriptor: Any, arguments: Any) -> dict[str, Any] | None:
 
 __all__ = [
     "execute_tool_calls_sequentially", "pre_filter_tool_calls", "preparation_refusal",
-    "prevalidate_call_arguments", "settle_after_turn_boundary", "settle_dropped_tool_calls",
+    "prevalidate_call_arguments", "settle_after_turn_boundary", "settle_app_refused_call",
+    "settle_dropped_tool_calls",
     "should_pause_for_live_prompt",
 ]

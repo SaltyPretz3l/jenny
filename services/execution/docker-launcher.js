@@ -8,10 +8,15 @@ const { findOnPath } = require('../backend/executable-on-path');
 const OWNER = 'com.jenny.command.owner';
 const VERSION = 'com.jenny.command.version';
 const VERSION_VALUE = '1';
+const MIRROR = 'com.jenny.command.mirror';
+const MIRROR_ID = /^[a-f0-9]{16}$/u;
+const OUTBOX_TARGET = '/run/jenny-sync/outbox';
 const ID = /^[a-f0-9]{64}$/u;
 const IMAGE = /^sha256:[a-f0-9]{64}$/u;
 const RELAY = "import sys; sys.path.insert(0, '/app'); from server.worker.relay import main; main()";
-const SUPERVISOR = "import sys; sys.path.insert(0, '/app'); from server.worker.supervisor import main; main()";
+// One container per run, removed once the successor incarnation reports: no readiness delay is
+// needed to keep Docker's restart backoff down (the hosted long-lived worker keeps its 10 s).
+const SUPERVISOR = "import sys; sys.path.insert(0, '/app'); from server.worker.supervisor import main; main(ready_delay=0.0)";
 function environment(env) {
   const result = {};
   for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP',
@@ -131,6 +136,43 @@ class DockerLauncher {
       || volume?.Labels?.[VERSION] !== VERSION_VALUE || volume?.Driver !== 'local'
       || (volume.Options && Object.keys(volume.Options).length)) throw sandboxError('docker_volume_identity_invalid');
   }
+  // Row 106: one persistent mirror volume per synced workspace, labelled like the control volume.
+  mirrorVolumeName(mirrorId) {
+    if (!MIRROR_ID.test(mirrorId)) throw sandboxError('docker_mirror_identity_invalid');
+    return 'jenny-mirror-' + this.ownerId + '-' + mirrorId;
+  }
+  async ensureMirrorVolume(mirrorId) {
+    const name = this.mirrorVolumeName(mirrorId);
+    const found = (await this._run(['volume', 'ls', '--filter', 'name=^' + name + '$', '--format', '{{.Name}}'])).toString().trim();
+    const created = !found;
+    if (created) {
+      await this._run(['volume', 'create', '--label', OWNER + '=' + this.ownerId, '--label', VERSION + '=' + VERSION_VALUE,
+        '--label', MIRROR + '=' + mirrorId, name]);
+    }
+    const volume = JSON.parse((await this._run(['volume', 'inspect', name])).toString())[0];
+    if (volume?.Name !== name || volume?.Labels?.[OWNER] !== this.ownerId || volume?.Labels?.[VERSION] !== VERSION_VALUE
+      || volume?.Labels?.[MIRROR] !== mirrorId || volume?.Driver !== 'local'
+      || (volume.Options && Object.keys(volume.Options).length)) throw sandboxError('docker_volume_identity_invalid');
+    return { name, created };
+  }
+  async listMirrorVolumes() {
+    const out = await this._run(['volume', 'ls', '--filter', 'label=' + OWNER + '=' + this.ownerId,
+      '--filter', 'label=' + MIRROR, '--format', '{{.Name}}']);
+    const prefix = 'jenny-mirror-' + this.ownerId + '-';
+    const names = out.toString().trim().split(/\r?\n/u).filter(Boolean);
+    if (names.length > 64 || names.some((name) => !name.startsWith(prefix) || !MIRROR_ID.test(name.slice(prefix.length)))) {
+      throw sandboxError('docker_owned_resource_limit');
+    }
+    return names.map((name) => name.slice(prefix.length));
+  }
+  async removeMirrorVolume(mirrorId) {
+    const name = this.mirrorVolumeName(mirrorId);
+    const found = (await this._run(['volume', 'ls', '--filter', 'name=^' + name + '$', '--format', '{{.Name}}'])).toString().trim();
+    if (!found) return;
+    const volume = JSON.parse((await this._run(['volume', 'inspect', name])).toString())[0];
+    if (volume?.Labels?.[OWNER] !== this.ownerId || volume?.Labels?.[MIRROR] !== mirrorId) throw sandboxError('docker_volume_identity_invalid');
+    await this._run(['volume', 'rm', name]);
+  }
   async listOwned() {
     const out = await this._run(['container', 'ls', '-a', '--no-trunc', '--filter', 'label=' + OWNER + '=' + this.ownerId,
       '--format', '{{.ID}}']);
@@ -146,7 +188,9 @@ class DockerLauncher {
       || !value?.Name?.startsWith('/jenny-command-' + this.ownerId + '-')) throw sandboxError('docker_container_identity_invalid');
     return value;
   }
-  async verify(id, { imageId, snapshotDirectory } = {}) {
+  // `mirror` ({volume, outboxDirectory}) selects the synced layout; its absence is the copy layout.
+  // Both are exact: destinations, types, read-only flags, volume names and bind sources.
+  async verify(id, { imageId, snapshotDirectory, mirror = null } = {}) {
     const value = await this.inspect(id);
     const host = value.HostConfig || {};
     const mounts = value.Mounts || [];
@@ -160,18 +204,31 @@ class DockerLauncher {
       || !(host.SecurityOpt || []).includes('no-new-privileges:true')
       || (host.SecurityOpt || []).some((value) => value.includes('unconfined'))
       || (host.Devices || []).length || Object.keys(host.PortBindings || {}).length
-      || mounts.filter((mount) => mount.Type !== 'tmpfs').length !== 2) throw sandboxError('docker_security_contract_invalid');
+      || mounts.filter((mount) => mount.Type !== 'tmpfs').length !== (mirror ? 4 : 2)) throw sandboxError('docker_security_contract_invalid');
     const inputs = mounts.find((mount) => mount.Destination === '/inputs');
     const control = mounts.find((mount) => mount.Destination === '/run/jenny-worker');
     if (!inputs || inputs.Type !== 'bind' || inputs.RW || !control || control.Type !== 'volume'
       || control.Name !== this.volumeName || !control.RW) throw sandboxError('docker_mount_contract_invalid');
     if (snapshotDirectory && !validBindSource(inputs.Source, snapshotDirectory, this.platform)) throw sandboxError('docker_mount_contract_invalid');
+    const workspace = mounts.find((mount) => mount.Destination === '/workspace');
+    const outbox = mounts.find((mount) => mount.Destination === OUTBOX_TARGET);
+    if (mirror) {
+      if (!workspace || workspace.Type !== 'volume' || workspace.Name !== mirror.volume || !workspace.RW
+        || !outbox || outbox.Type !== 'bind' || !outbox.RW
+        || !validBindSource(outbox.Source, mirror.outboxDirectory, this.platform)) throw sandboxError('docker_mount_contract_invalid');
+    } else if ((workspace && workspace.Type !== 'tmpfs') || outbox) throw sandboxError('docker_mount_contract_invalid');
     return value;
   }
-  async create({ imageId, snapshotDirectory }) {
-    if (!IMAGE.test(imageId) || !path.isAbsolute(snapshotDirectory) || /[\0\r\n,]/u.test(snapshotDirectory)) {
+  async create({ imageId, snapshotDirectory, mirror = null }) {
+    const unsafe = (value) => typeof value !== 'string' || !path.isAbsolute(value) || /[\0\r\n,]/u.test(value);
+    if (!IMAGE.test(imageId) || unsafe(snapshotDirectory)
+      || (mirror && (unsafe(mirror.outboxDirectory) || mirror.volume !== this.mirrorVolumeName(mirror.mirrorId)))) {
       throw sandboxError('docker_create_arguments_invalid');
     }
+    const workspace = mirror
+      ? ['--mount', 'type=volume,source=' + mirror.volume + ',target=/workspace',
+        '--mount', 'type=bind,source=' + mirror.outboxDirectory + ',target=' + OUTBOX_TARGET]
+      : ['--tmpfs', '/workspace:size=536870912,nr_inodes=16384,mode=0700,uid=10001,gid=10001,nosuid,nodev'];
     const name = 'jenny-command-' + this.ownerId + '-' + randomUUID();
     const args = ['container', 'create', '--name', name, '--platform', 'linux/amd64',
       '--label', OWNER + '=' + this.ownerId, '--label', VERSION + '=' + VERSION_VALUE,
@@ -181,14 +238,14 @@ class DockerLauncher {
       '--pids-limit', '128', '--stop-timeout', '10',
       '--mount', 'type=volume,source=' + this.volumeName + ',target=/run/jenny-worker',
       '--mount', 'type=bind,source=' + snapshotDirectory + ',target=/inputs,readonly',
-      '--tmpfs', '/workspace:size=536870912,nr_inodes=16384,mode=0700,uid=10001,gid=10001,nosuid,nodev',
+      ...workspace,
       '--tmpfs', '/tmp:size=67108864,nr_inodes=4096,mode=1777,nosuid,nodev',
       '--log-driver', 'local', '--log-opt', 'max-size=1m', '--log-opt', 'max-file=2',
       '--entrypoint', 'python3', imageId, '-I', '-c', SUPERVISOR];
     const id = (await this._run(args)).toString().trim();
     if (!ID.test(id)) throw sandboxError('docker_container_identity_invalid');
     try {
-      await this.verify(id, { imageId, snapshotDirectory });
+      await this.verify(id, { imageId, snapshotDirectory, mirror });
       await this._run(['container', 'start', id]);
       return id;
     } catch (error) {
@@ -221,4 +278,4 @@ class DockerLauncher {
     return { cleanupConfirmed: true };
   }
 }
-module.exports = { DockerLauncher, localEndpoint, validBindSource, OWNER, VERSION, ID, IMAGE };
+module.exports = { DockerLauncher, localEndpoint, validBindSource, OWNER, VERSION, MIRROR, OUTBOX_TARGET, ID, IMAGE };

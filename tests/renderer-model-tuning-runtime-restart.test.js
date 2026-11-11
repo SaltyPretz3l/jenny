@@ -195,7 +195,7 @@ test('a build Apply while serving restarts llama-server exactly once, confirming
   assert.deepEqual(quiet.calls.restart, [[]], 'the renderer never names a binary: restart() takes no spec');
   assert.equal(quiet.calls.confirm.length, 0);
   assert.equal(statusText(host), RESTARTED_BUILD);
-  assert.equal(button(host, 'save-model-tuning').textContent, 'Apply 0 changes');
+  assert.equal(button(host, 'save-model-tuning').textContent, 'No changes');
 
   const one = createHarness(t, { picks: [FORK_PICK], streaming: ['session-1'], confirm: true });
   host = await openServed(one);
@@ -334,7 +334,7 @@ test('a restart owed by a failed follow-up survives close and reopen, and runs o
   assert.equal(statusText(host), 'Finish the current reply first, then Apply again.');
   h.controller.close();
   host = await openServed(h);
-  assert.equal(applyLabel(host), 'Apply 0 changes', 'the build is saved: the restart is owed, not a draft change');
+  assert.equal(applyLabel(host), 'No changes', 'the build is saved: the restart is owed, not a draft change');
   setField(host, '#modelTuningTemperature', '0.4');
   await apply(host);
   assert.deepEqual(h.calls.order, ['engine', 'tuning', 'tuning', 'restart']);
@@ -455,7 +455,7 @@ test('an Apply whose drawer closes or re-opens mid-write still restarts the serv
   await flush();
   assert.deepEqual(midFollowUp.calls.order, ['engine', 'tuning', 'restart']);
   host = await openServed(midFollowUp);
-  assert.equal(applyLabel(host), 'Apply 0 changes');
+  assert.equal(applyLabel(host), 'No changes');
   setField(host, '#modelTuningTemperature', '0.5');
   await apply(host);
   assert.equal(midFollowUp.calls.restart.length, 1, 'nothing is owed after the detached restart');

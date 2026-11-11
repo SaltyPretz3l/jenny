@@ -2,8 +2,8 @@
 
 /* services/chat-messaging-agent.js - the agent-authored half of addressed session messaging (row 59
  * checkpoint 5b-2): what the `session_message` model tool calls.
- *   listAgentTargets  destinations covered by a live directional grant, plus the immediate parent a linked
- *                     chat reports to (reporting-only unless a grant also covers it);
+ *   listAgentTargets  destinations covered by a live directional grant, the immediate parent a linked chat
+ *                     reports to (reporting-only unless a grant also covers it), and the Jenny chat;
  *   agentPrepare      an immutable `prepared` agent_message operation, idempotent by (incarnation, turn,
  *                     tool call), at most 8 new sends per source turn, 16 KiB body;
  *   agentSend         ONE mutation that re-reads the source and the authorization, spends a grant or
@@ -50,6 +50,7 @@ function createAgentOps({
   mail, getSessionSummary = () => null, getProjectName = () => null, isContinuable = () => true, now = () => new Date(),
   createId, notify = () => {}, storeFailure, runDelivery, projectOperation, projectInboxPage = () => [], track = () => {},
   isRuleLive = () => false, // row 87: the Jenny chat's allow rule is still live (fail closed)
+  getPrimarySessionId = () => null,
 }) {
   const continuable = (sessionId) => {
     const summary = getSessionSummary(sessionId);
@@ -109,13 +110,18 @@ function createAgentOps({
       });
       if (grantTarget(best, id)) entries.set(id, best);
     }
+    const addIfOpen = (id) => {
+      const summary = getSessionSummary(id);
+      if (!entries.has(id) && summary && !summary.archived_at && continuable(id)) entries.set(id, null);
+    };
     const parentId = getSessionSummary(sourceSessionId)?.spawned_from?.parent_session_id;
-    if (parentId && read.mail.reporting_enabled === true && !entries.has(parentId)) {
-      const summary = getSessionSummary(parentId);
-      if (summary && !summary.archived_at && continuable(parentId)) entries.set(parentId, null);
-    }
+    if (parentId && read.mail.reporting_enabled === true) addIfOpen(parentId);
+    // Owner decision 2026-11-08: any chat can write to the Jenny chat. Without a grant each send still takes the card.
+    let primaryId = null;
+    try { primaryId = getPrimarySessionId() || null; } catch { primaryId = null; }
+    if (primaryId && primaryId !== sourceSessionId) addIfOpen(primaryId);
     const targets = [...entries].map(([id, grant]) => ({
-      ...destinationView(id), free_form_allowed: grant !== null, grant: modelGrant(grant),
+      ...destinationView(id), free_form_allowed: grant !== null || id === primaryId, grant: modelGrant(grant),
     })).sort((a, b) => (a.title === b.title ? (a.session_id < b.session_id ? -1 : 1) : (a.title < b.title ? -1 : 1)));
     return succeed({ targets });
   }

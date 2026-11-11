@@ -200,19 +200,25 @@
       // diff:// or preview:// id) and never show dirty/stale decorations -
       // they are read-only views.
       const isDiff = isReviewTab(tab);
+      // Follow Jenny (row 121): Jenny's unsaved draft of a file. It reads as that file, marked
+      // "draft", with a breathing dot while the text is still arriving.
+      const isDraft = isDiff && tab.draft === true;
       const isTransientPreview = tab.kind === 'file' && tab.transientPreview === true;
       // Only real file tabs pin (review surfaces are session-scoped); the caller
       // already passes a normalized boolean.
       const isPinned = pinned && !isDiff;
       const fullName = tabDisplayName(tab);
-      const parts = isDiff ? diffParts(tab) : { name: fullName, suffix };
+      const parts = isDraft ? { name: fullName, suffix: jt('ide.tabs.draftSuffix', 'draft') }
+        : isDiff ? diffParts(tab) : { name: fullName, suffix };
       const name = parts.name;
       const dir = parts.suffix || '';
       // Screen-reader label: a diff surface reads only "(diff view)"; a file tab
       // joins its state suffixes (stale takes precedence over dirty) so a pinned
       // unsaved tab reads "(unsaved changes, pinned)".
       let ariaLabel = name;
-      if (isDiff) {
+      if (isDraft) {
+        ariaLabel = jt('ide.tabs.draftLabel', '{name} (draft, not saved)', { name: fullName });
+      } else if (isDiff) {
         ariaLabel = jt('ide.tabs.diffView', '{name} (diff view)', { name: fullName });
       } else {
         // The folder suffix leads, so two same-named tabs also read apart.
@@ -232,7 +238,7 @@
           ariaLabel = `${name} (${states.join(', ')})`;
         }
       }
-      const icon = isDiff
+      const icon = isDiff && !isDraft
         ? `<span class="ide-tab-glyph" aria-hidden="true">${glyphSvg('diff', 14)}</span>`
         : fileIcon(name);
       const labelButton = actionButton({
@@ -243,7 +249,8 @@
         // Every tab drives its group's editor stage (role="tabpanel").
         ariaControls,
         tabIndex: active ? 0 : -1,
-        title: isDiff ? fullName : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: tab.path }) : tab.path,
+        title: isDraft ? jt('ide.tabs.draftTitle', "Jenny's draft of {path}. Not saved.", { path: tab.filePath || fullName })
+          : isDiff ? fullName : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: tab.path }) : tab.path,
         dataset: { 'ide-tab-path': tab.path },
         trustedHtml: icon
           + `<span class="ide-tab-name">${escapeHtml(name)}</span>`
@@ -261,7 +268,7 @@
         dataset: { 'ide-tab-close': tab.path },
         trustedHtml: glyphSvg('x', 12),
       });
-      const hasMark = !isDiff && (dirty || stale);
+      const hasMark = isDraft ? tab.live === true : !isDiff && (dirty || stale);
       const slot = '<span class="ide-tab-slot">'
         + (hasMark ? '<span class="ide-tab-mark" aria-hidden="true"></span>' : '')
         + (isPinned ? `<span class="ide-tab-pin" aria-hidden="true">${glyphSvg('pin', 12)}</span>` : '')
@@ -271,7 +278,8 @@
       const flags = `${active ? ' ide-tab--active' : ''}${dirty && !isDiff ? ' ide-tab--dirty' : ''}`
         + `${stale && !isDiff ? ' ide-tab--stale' : ''}${isDiff ? ' ide-tab--diff' : ''}`
         + `${isPinned ? ' ide-tab--pinned' : ''}${isTransientPreview ? ' ide-tab--preview' : ''}`
-        + `${dir ? ' ide-tab--has-dir' : ''}${gitStatus ? ` ide-tab--git-${gitStatus}` : ''}`;
+        + `${dir ? ' ide-tab--has-dir' : ''}${gitStatus ? ` ide-tab--git-${gitStatus}` : ''}`
+        + `${isDraft ? ` ide-tab--draft${tab.live === true ? ' ide-tab--draft-live' : ''}` : ''}`;
       // draggable: HTML5 DnD reorder handled by the tab-strip events module.
       return `<div class="ide-tab${flags}" data-ide-tab="${escapeHtml(tab.path)}" draggable="true">${labelButton}${slot}</div>`;
     }

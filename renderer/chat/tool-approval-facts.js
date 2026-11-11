@@ -1,8 +1,5 @@
-/* renderer/chat/tool-approval-facts.js derives the approval card's app-derived
- * facts, the stated-purpose bound and the verbatim command preview from a tool
- * call's input. Facts are never inferred from free command/code text. Loaded
- * before tool-call-utils.js, which binds it at factory time and re-exports it
- * so consumers keep calling toolCallUtils.getApprovalFacts and related APIs. */
+/* The approval card's app-derived facts, purpose bound and command preview, from
+ * a tool call's input; never inferred from command text. tool-call-utils.js re-exports it. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -13,6 +10,11 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // A bidi override must not reorder a command someone approves from a preview.
+  function showInvisible(text) {
+    return String(text).replace(/(?![\t\n]|\r\n)[\p{Cc}\p{Cf}]/gu, (c) => `\u27E8U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}\u27E9`);
+  }
+
   // Names for the effects a payload can declare -- not an ordering.
   // getApprovalFacts returns each tool's facts most consequential first.
   const APPROVAL_FACT_KINDS = Object.freeze({
@@ -123,20 +125,17 @@
     }
 
     /**
-     * The exact payload the user is being asked to allow, for the approval
-     * card's command preview. Shell/code tools show their verbatim command or
-     * code (the risk lives there); path tools show the target; everything else
-     * falls back to the full input as pretty JSON so nothing is hidden.
-     * Returns '' when there is nothing meaningful to preview.
+     * The payload being allowed: a command or code, a path tool's target,
+     * else the input as pretty JSON. '' when there is nothing to preview.
      */
     function getApprovalCommandPreview(toolName, input) {
       const args = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
       if (!args) return '';
       switch (normalizeToolKind(toolName)) {
         case 'Bash':
-          return normalizeString(args.command);
+          return showInvisible(normalizeString(args.command));
         case 'python_execute':
-          return normalizeString(args.code);
+          return showInvisible(normalizeString(args.code));
         case 'Read':
         case 'Write':
         case 'Edit':
@@ -147,15 +146,14 @@
         case 'web_search':
           return normalizeString(args.query);
         case 'run_temp_script':
-          return normalizeString(args.script);
+          return showInvisible(normalizeString(args.script));
         case 'Move':
         case 'move_file':
           return (Array.isArray(args.moves) ? args.moves : [args])
             .filter((move) => move && typeof move === 'object')
             .map((move) => normalizeString(move.source) + ' -> ' + normalizeString(move.destination))
             .filter((pair) => pair !== ' -> ').join('\n');
-        // Both spellings: TOOL_KIND_ALIASES does not rewrite the manifest names,
-        // so matching only the alias sent every glob/grep approval to the dump.
+        // Both spellings: TOOL_KIND_ALIASES leaves the manifest names alone.
         case 'Glob':
         case 'glob_files':
         case 'Grep':
@@ -192,5 +190,6 @@
   return {
     APPROVAL_FACT_KINDS,
     createToolApprovalFacts,
+    showInvisible,
   };
 });

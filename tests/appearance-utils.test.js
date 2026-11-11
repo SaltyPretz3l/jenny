@@ -15,7 +15,10 @@ const {
   getTypographyPresets,
   getFontScalePresets,
   loadAppearancePreferences,
+  migrateStoredAppearancePreferences,
   normalizeAppearancePreferences,
+  resolvePaletteBootColors,
+  resolvePaletteScheme,
   detectActiveThemeBundle,
   resolveThemeBundle,
   saveAppearancePreferences,
@@ -61,8 +64,8 @@ test('appearance presets expose the expected curated options', () => {
     'obsidian',
     'darkroom',
     'slate',
+    'chalk',
     'paper',
-    'signal',
     'woolly',
     'lexicon',
     'rocko',
@@ -120,7 +123,7 @@ test('light appearance palettes are exactly those whose CSS declares color-schem
       if (id === 'midnight') return false;
       return /color-scheme:\s*light/.test(readStyleFile(`palette-${id}.css`));
     });
-  assert.deepEqual(lightPaletteIds, ['paper', 'woolly', 'jenny-day']);
+  assert.deepEqual(lightPaletteIds, ['chalk', 'paper', 'woolly', 'jenny-day']);
 });
 
 test('theme bundles expose the curated default and lexicon bundle mappings', () => {
@@ -129,11 +132,24 @@ test('theme bundles expose the curated default and lexicon bundle mappings', () 
     'pewter',
     'obsidian',
     'slate',
+    'chalk',
     'lexicon',
     'rocko',
     'jenny-day',
     'jenny-night',
   ]);
+  assert.deepEqual(resolveThemeBundle('chalk'), {
+    id: 'chalk',
+    label: 'Chalk',
+    description: 'Blank-space reading surface in daylight: flat light canvas, no ambient background effect, deep slate-blue accents.',
+    preferences: {
+      paletteId: 'chalk',
+      typographyId: 'system',
+      surfaceEffectId: 'none',
+      composerHoloId: 'on',
+      ...DEFAULT_TAIL,
+    },
+  });
   assert.deepEqual(resolveThemeBundle('lexicon'), {
     id: 'lexicon',
     label: 'Lexicon',
@@ -307,7 +323,7 @@ test('v1 appearance storage migrates once to v2 and drops retired preferences', 
 });
 
 test('failed v1 migration retains legacy storage while returning bounded normalized state', () => {
-  const legacyRaw = JSON.stringify({ paletteId: 'signal', motionId: 'expressive' });
+  const legacyRaw = JSON.stringify({ paletteId: 'pewter', motionId: 'expressive' });
   const storage = {
     getItem: (key) => key === LEGACY_STORAGE_KEY ? legacyRaw : null,
     setItem() { throw new Error('quota exceeded'); },
@@ -315,7 +331,7 @@ test('failed v1 migration retains legacy storage while returning bounded normali
   };
 
   const migrated = loadAppearancePreferences(storage);
-  assert.equal(migrated.paletteId, 'signal');
+  assert.equal(migrated.paletteId, 'pewter');
   assert.equal(Object.hasOwn(migrated, 'motionId'), false);
 });
 
@@ -358,13 +374,13 @@ test('saveAppearancePreferences stores normalized preferences and round-trips th
   const storage = createStorage();
 
   const saved = saveAppearancePreferences(storage, {
-    paletteId: 'signal',
+    paletteId: 'pewter',
     typographyId: 'technical',
     composerHoloId: 'on',
   });
 
   assert.deepEqual(saved, {
-    paletteId: 'signal',
+    paletteId: 'pewter',
     typographyId: 'technical',
     surfaceEffectId: 'none',
     composerHoloId: 'on',
@@ -381,9 +397,9 @@ test('saveAppearancePreferences keeps the committed v2 value when legacy cleanup
     removeItem() { throw new Error('storage cleanup blocked'); },
   };
 
-  const saved = saveAppearancePreferences(storage, { paletteId: 'signal' });
+  const saved = saveAppearancePreferences(storage, { paletteId: 'pewter' });
 
-  assert.equal(saved.paletteId, 'signal');
+  assert.equal(saved.paletteId, 'pewter');
   assert.deepEqual(JSON.parse(values.get(STORAGE_KEY)), { ...saved, typeScaleVersion: TYPE_SCALE_VERSION });
   assert.deepEqual(loadAppearancePreferences(storage), saved);
 });
@@ -421,6 +437,7 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
   });
   assert.deepEqual(root.dataset, {
     palette: 'paper',
+    scheme: 'light',
     typography: 'editorial',
     motion: 'standard',
     surfaceEffect: 'none',
@@ -443,6 +460,43 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
   assert.equal(removedStyle.has('--thread-rail-opacity'), true);
   assert.equal(removedStyle.has('--thread-node-gap'), true);
   assert.equal(appliedStyle.get('--thread-holo-scale'), '0.42');
+});
+
+test('every palette preset declares the scheme its sheet declares, and applying stamps data-scheme', () => {
+  for (const preset of getPalettePresets()) {
+    assert.ok(preset.scheme === 'light' || preset.scheme === 'dark', `${preset.id} declares light or dark`);
+    // midnight has no palette-*.css; its baseline lives in foundation.css (color-scheme: dark).
+    const sheet = preset.id === 'midnight' ? readStyleFile('foundation.css') : readStyleFile(`palette-${preset.id}.css`);
+    const match = /color-scheme:\s*(light|dark)/.exec(sheet);
+    assert.ok(match, `${preset.id} sheet declares a color-scheme`);
+    assert.equal(preset.scheme, match[1], `${preset.id} scheme matches its sheet`);
+    assert.equal(resolvePaletteScheme(preset.id), preset.scheme);
+  }
+  assert.equal(resolvePaletteScheme('midnight'), 'dark');
+  assert.equal(resolvePaletteScheme('no-such-palette'), 'dark', 'an unknown id falls back to the dark baseline');
+
+  const root = { dataset: {}, style: { setProperty() {}, removeProperty() {} } };
+  applyAppearanceToDocument(root, { paletteId: 'chalk' });
+  assert.equal(root.dataset.scheme, 'light');
+  applyAppearanceToDocument(root, { paletteId: 'paper' });
+  assert.equal(root.dataset.scheme, 'light');
+  applyAppearanceToDocument(root, { paletteId: 'obsidian' });
+  assert.equal(root.dataset.scheme, 'dark');
+});
+
+test('the retired signal palette id loads as obsidian everywhere a palette id is normalised', () => {
+  assert.equal(getPalettePresets().some((preset) => preset.id === 'signal'), false);
+  assert.equal(normalizeAppearancePreferences({ paletteId: 'signal' }).paletteId, 'obsidian');
+  assert.equal(normalizeAppearancePreferences({ paletteId: ' Signal ' }).paletteId, 'obsidian');
+  assert.equal(loadAppearancePreferences(createStorage(JSON.stringify({ paletteId: 'signal' }))).paletteId, 'obsidian');
+  assert.equal(migrateStoredAppearancePreferences({ paletteId: 'signal' }).paletteId, 'obsidian');
+  assert.equal(saveAppearancePreferences(createStorage(), { paletteId: 'signal' }).paletteId, 'obsidian');
+  assert.deepEqual(resolvePaletteBootColors('signal'), resolvePaletteBootColors('obsidian'));
+  assert.notEqual(resolvePaletteBootColors('signal'), null);
+  assert.equal(resolvePaletteScheme('signal'), 'dark');
+  const root = { dataset: {}, style: { setProperty() {}, removeProperty() {} } };
+  applyAppearanceToDocument(root, { paletteId: 'signal' });
+  assert.equal(root.dataset.palette, 'obsidian');
 });
 
 test('applying appearance never writes the retired sprite holo attribute or variables', () => {
@@ -538,11 +592,6 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
     /--mat-live-border:\s*color-mix\(in srgb,\s*var\(--mat-live-accent\)\s*10%,\s*var\(--border-subtle\)\s*\);/,
     'midnight foundation should tint the live border from the live accent semantic'
   );
-  assert.match(
-    foundationCss,
-    /--artifact-surface-focus-ring:\s*[^;]+;/,
-    'foundation should expose the shared artifact focus ring token'
-  );
   // --mermaid-node-label-* retired from foundation (Artifact WS1): Mermaid
   // node colors are formula-derived from the palette accent in
   // renderer-mermaid-theme-utils.js; the tokens remain optional overrides
@@ -621,11 +670,6 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
       paletteCss,
       /--widget-composer-signal-border:\s*[^;]+;/,
       `${paletteFile} should expose the shared composer signal border token`
-    );
-    assert.match(
-      paletteCss,
-      /--artifact-surface-focus-ring:\s*[^;]+;/,
-      `${paletteFile} should expose the shared artifact focus ring token`
     );
     // --mermaid-node-label-* retired from the per-palette mandatory set
     // (Artifact WS1): node colors are formula-derived from the palette

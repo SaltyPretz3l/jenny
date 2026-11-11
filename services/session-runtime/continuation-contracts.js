@@ -387,7 +387,7 @@ function normalizeContinuation(value) {
     || (decision.execution_started && decision.call_id !== pendingCall.call_id)
     || (decision.kind === 'user_questions' && pendingCall.tool_id !== 'ask_user')
     || (!predecessor && priorCount !== 0) || wait.kind !== 'explicit_pause')) fail('invalid_decision_position');
-  if (resource && (!effects.length || effects.some(ref => position.ordered_call_ids.includes(ref.call_id))
+  if (resource && (effects.some(ref => position.ordered_call_ids.includes(ref.call_id))
     || (!predecessor && priorCount !== 0) || wait.kind !== 'resource')) fail('invalid_resource_progress');
   const eligibility = normalizeEligibility(body.eligibility, allRefs.length - priorCount, decision || ((mixed || resource) ? { execution_started: false } : null));
   if (spawns) validateDependencyPosition(childRefs, identity, position, pendingCall);

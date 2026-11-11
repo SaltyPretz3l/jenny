@@ -54,6 +54,7 @@
       auto: jt('composer.runMode.autoToast', 'Run mode: Auto — tools run without asking'),
       plan: jt('composer.runMode.planToast', 'Run mode: Plan — read-only planning'),
       propose: jt('composer.runMode.proposeToast', 'Run mode: Propose — Jenny suggests changes for you to review'),
+      full_auto: jt('composer.runMode.fullAutoToast', 'Run mode: Full auto — Jenny acts without asking'),
     });
     let runModeControlRegistered = false;
     const autoRunConfirmedProjects = new Set();
@@ -237,6 +238,10 @@
         return;
       }
       const current = currentRunMode(sessionId);
+      const fullAuto = fullAutoStatus(sessionId);
+      const row = (mode, checked) => ({ label: copy[mode].label, description: copy[mode].hint, iconHtml: copy[mode].icon, checked, value: mode,
+        danger: mode === 'full_auto',
+        action: () => (checked ? false : setRunMode(mode, { source: 'click', ...target })) });
       chip.setAttribute('aria-expanded', 'true');
       menu.show({
         anchorEl: chip,
@@ -247,14 +252,10 @@
         restoreFocusTo: chip,
         focusChecked: true,
         onHide: () => chip.setAttribute('aria-expanded', 'false'),
-        items: composerState.RUN_MODE_ORDER.map((mode) => ({
-          label: copy[mode].label,
-          description: copy[mode].hint,
-          iconHtml: copy[mode].icon,
-          checked: mode === current,
-          value: mode,
-          action: () => (mode === current ? false : setRunMode(mode, { source: 'click', ...target })),
-        })),
+        items: [
+          ...composerState.RUN_MODE_ORDER.map((mode) => row(mode, mode === current && fullAuto !== 'armed')),
+          ...(fullAuto ? [{ separator: true }, row('full_auto', fullAuto === 'armed')] : []),
+        ],
       });
     }
 
@@ -332,6 +333,7 @@
     // Asked on the first Auto SEND in each project, never while switching
     // modes (owner, dogfood FG-003); the acknowledgement persists per project.
     async function confirmAutoRun(sessionId = '') {
+      if (fullAutoStatus(sessionId) === 'armed') return true; // already accepted the stronger warning
       const projectId = autoRunProjectId(sessionId);
       if (autoRunConfirmedProjects.has(projectId)) return Promise.resolve(true);
       try {
@@ -397,7 +399,7 @@
     // A plain `true` when nothing needs asking keeps the send synchronous (its
     // queued-context stash is atomic); a Promise only while the dialog is due.
     function confirmAutoSend(sessionId = '') {
-      if (currentRunMode(sessionId) !== 'auto' || autoRunConfirmedProjects.has(autoRunProjectId(sessionId))) return true;
+      if (currentRunMode(sessionId) !== 'auto' || autoRunConfirmedProjects.has(autoRunProjectId(sessionId)) || fullAutoStatus(sessionId) === 'armed') return true;
       return confirmAutoRun(sessionId);
     }
 
@@ -415,15 +417,7 @@
         const persisted = currentRunMode(sessionId);
         if (persisted !== next) return false;
         maybeShowPlanModeModelHint(persisted === 'plan', sessionId);
-        const toastCopy = RUN_MODE_TOAST_COPY[persisted];
-        const announcer = document.getElementById('composerModeChipsAnnouncer');
-        if (announcer) announcer.textContent = toastCopy;
-        showToastMessage?.(toastCopy, {
-          title: jt('composer.runMode.title', 'Run mode'),
-          tone: 'info',
-          source: TOAST_SOURCE.composerAction,
-          dedupeKey: `${TOAST_SOURCE.composerAction}:run-mode:${source}`,
-        });
+        announceRunMode(persisted, source);
         globalThis.rendererHealthPillController?.refreshRunModeFacet?.();
         return true;
       }).catch((error) => {
@@ -437,9 +431,10 @@
     // `sessionId` (a pane's rail) targets that session; omitted, the active one.
     function setRunMode(mode, { source = 'control', sessionId = '', chip = null } = {}) {
       if (!isRunModeAvailable(chip)) return false;
+      if (mode === 'full_auto') return requestFullAuto({ source, sessionId, chip });
       const previousRunMode = currentRunMode(sessionId);
       const next = composerState.normalizeRunMode(mode);
-      if (next === previousRunMode) return Promise.resolve(false);
+      if (next === previousRunMode) return fullAutoStatus(sessionId) === 'armed' && next === 'auto' ? turnOffFullAuto() : Promise.resolve(false);
       runModeActivityGate.bump();
       const activityToken = runModeActivityGate.capture();
       // Switching modes never asks: the first Auto send in each project does
@@ -452,6 +447,49 @@
         if (choice === 'cancel' || !runModeActivityGate.isCurrent(activityToken)) return false;
         return persistRunMode(next, source, activityToken, sessionId);
       });
+    }
+
+    // Row 111: Full auto is an armed state over Auto, owned by the main process. Only this path, behind the
+    // warning, ever turns it on. Leaving Auto disarms it there.
+    const primaryStore = () => globalThis.rendererPrimaryChatStore?.peekDefaultPrimaryChatStore?.() || null;
+    function fullAutoStatus(sessionId) {
+      const id = String(sessionId || state?.currentSessionId || '').trim();
+      return primaryStore()?.fullAutoFor?.(id) || '';
+    }
+    // With two panes each chip shows its own pane's chat; with one, the active chat ('').
+    function chipSessionId(chip) {
+      if (!Array.isArray(state?.panes?.panes) || state.panes.panes.length < 2) return '';
+      const paneId = Number(chip?.closest?.('.chat-pane')?.getAttribute('data-pane-id')) || 0;
+      return globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, paneId) || '';
+    }
+    function syncFullAutoChips() {
+      const apply = globalThis.rendererComposerV2Render?.applyRunModeChip;
+      if (typeof apply !== 'function') return;
+      for (const chip of document.querySelectorAll('[data-inv-chip="composer-run-mode"]')) apply(chip, currentRunMode(chipSessionId(chip)));
+    }
+    function announceRunMode(mode, dedupeSuffix) {
+      const message = RUN_MODE_TOAST_COPY[mode];
+      const announcer = document.getElementById('composerModeChipsAnnouncer');
+      if (announcer) announcer.textContent = message;
+      showToastMessage?.(message, { title: jt('composer.runMode.title', 'Run mode'), tone: 'info',
+        source: TOAST_SOURCE.composerAction, dedupeKey: `${TOAST_SOURCE.composerAction}:run-mode:${dedupeSuffix}` });
+    }
+    async function turnOffFullAuto() {
+      const answer = await primaryStore()?.disarmFullAuto?.();
+      if (answer?.armed !== false) return false;
+      announceRunMode('auto', 'full-auto');
+      return true;
+    }
+    async function requestFullAuto({ source, sessionId, chip }) {
+      if (fullAutoStatus(sessionId) !== 'offered' || !await globalThis.rendererComposerV2Render?.warnFullAuto?.()) return false;
+      if (fullAutoStatus(sessionId) !== 'offered') return false; // the chat in front changed while the warning was up
+      if (currentRunMode(sessionId) !== 'auto') await setRunMode('auto', { source, sessionId, chip });
+      if (currentRunMode(sessionId) !== 'auto') return false;
+      const answer = await primaryStore().armFullAuto();
+      if (answer?.armed === true) { announceRunMode('full_auto', 'full-auto'); return true; }
+      appendClientLog?.('WARN', 'run_mode.full_auto_refused', { reason: String(answer?.reason || 'unavailable') });
+      showComposerActionError(new Error(RUN_MODE_TOAST_COPY[currentRunMode(sessionId)]), jt('composer.runMode.fullAutoFailed', 'Could not turn on Full auto'));
+      return false;
     }
 
     let leaveProposeDialog = null;
@@ -518,6 +556,8 @@
       confirmAutoRun,
       confirmAutoSend,
       currentRunMode,
+      fullAutoStatusForChip: (chip) => fullAutoStatus(chipSessionId(chip)),
+      syncFullAutoChips,
     };
 
     function dispose() {

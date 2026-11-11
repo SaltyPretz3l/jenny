@@ -38,7 +38,7 @@ function buildFakeThemeEnv({ vars = {}, probeColor = '' } = {}) {
   }
   const probes = [];
   const documentRef = {
-    documentElement: { dataset: { palette: 'signal' } },
+    documentElement: { dataset: { palette: 'obsidian' } },
     body: {
       appendChild() {},
     },
@@ -213,7 +213,7 @@ test('theme bridge defines and applies jenny when Monaco is ready', (t) => {
   assert.equal(data.colors['minimap.background'], '#071019');
   assert.deepEqual(monaco.calls.setTheme, ['jenny']);
   assert.equal(logs.at(-1).event, 'ide.theme_applied');
-  assert.equal(logs.at(-1).details.palette, 'signal');
+  assert.equal(logs.at(-1).details.palette, 'obsidian');
 
   // The observer watches :root data-palette only.
   assert.equal(env.observers.length, 1);

@@ -79,7 +79,7 @@ function createManagedChatStreamRuntime({
   normalizedAttachments,
   transcriptPrompt,
   userMessageId,
-  skillInvocation = null, imagePromptPin = undefined, applicationTurn = '',
+  skillInvocation = null, imagePromptPin = undefined, author = null, applicationTurn = '',
   reuseExistingUserMessage = false,
   failureRetry,
   exchangeTitle = '',
@@ -399,7 +399,7 @@ function createManagedChatStreamRuntime({
       messageId: userMessageId,
       content: transcriptPrompt,
       attachments: normalizedAttachments,
-      skill_invocation: skillInvocation, image_prompt_pin: imagePromptPin || null, ...(applicationTurn ? { application_turn: applicationTurn } : {}),
+      skill_invocation: skillInvocation, image_prompt_pin: imagePromptPin || null, author, ...(applicationTurn ? { application_turn: applicationTurn } : {}),
       model,
     };
     const persistEditedTurn = () => service.sessionStore.truncateAfterMessage(

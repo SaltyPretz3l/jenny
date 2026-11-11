@@ -28,7 +28,7 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _release_workflow_yaml(*, build_preload: bool) -> str:
+def _release_workflow_yaml(*, build_preload: bool, build_bridge: bool = True) -> str:
     """A minimal two-step release job, optionally missing the preload build.
 
     ``build_preload=False`` reproduces the shipped-at-the-time defect: the job
@@ -38,6 +38,11 @@ def _release_workflow_yaml(*, build_preload: bool) -> str:
     preload_step = (
         "      - name: Build sandboxed preload bundle\n        run: npm run build:preload\n"
         if build_preload
+        else ""
+    )
+    bridge_step = (
+        "      - name: Build team bridge\n        run: python scripts/packaging/build_team_bridge.py\n"
+        if build_bridge
         else ""
     )
     return (
@@ -59,16 +64,19 @@ def _release_workflow_yaml(*, build_preload: bool) -> str:
         "      - name: Install Node dependencies\n"
         "        run: npm ci\n"
         f"{preload_step}"
+        f"{bridge_step}"
         "      - name: Build & publish installer\n"
         "        run: npm exec -- electron-builder --win --publish never\n"
     )
 
 
-def _write_release_workflows(root: Path, *, build_preload: bool = True) -> None:
+def _write_release_workflows(
+    root: Path, *, build_preload: bool = True, build_bridge: bool = True
+) -> None:
     for name in ("release.yml", "ci-linux-package.yml"):
         _write(
             root / ".github" / "workflows" / name,
-            _release_workflow_yaml(build_preload=build_preload),
+            _release_workflow_yaml(build_preload=build_preload, build_bridge=build_bridge),
         )
 
 
@@ -81,10 +89,12 @@ def _write_release_policy_fixture(root: Path, *, package_version: str = "0.1.0")
             f'  "version": "{package_version}",\n'
             '  "scripts": {\n'
             '    "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",\n'
-            '    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
-            '    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
-            '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",\n'
-            '    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
+            '    "build:launcher": "python scripts/packaging/build_native_launcher.py",\n'
+            '    "build:team-bridge": "python scripts/packaging/build_team_bridge.py",\n'
+            '    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
+            '    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
+            '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",\n'
+            '    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
             '    "release:smoke": "python scripts/packaging/smoke_packaged_flow.py"\n'
             "  },\n"
             '  "dependencies": {"electron-updater": "^6.6.2"}\n'
@@ -381,3 +391,73 @@ def test_release_workflow_preload_must_precede_electron_builder(tmp_path) -> Non
     violations = module.validate_release_version_policy(tmp_path)
 
     assert any("release.yml" in v and "electron-builder" in v for v in violations)
+
+
+def test_release_workflow_missing_team_bridge_build_is_rejected(tmp_path) -> None:
+    """Every job that packages the app builds jenny-team-bridge first."""
+    module = _load_script_module("scripts/checks/check_release_version_policy.py")
+    _write_release_policy_fixture(tmp_path)
+    _write_release_workflows(tmp_path, build_bridge=False)
+
+    violations = module.validate_release_version_policy(tmp_path)
+
+    offenders = [v for v in violations if "team bridge" in v]
+    assert len(offenders) == len(module.RELEASE_WORKFLOWS), violations
+    assert all("build_team_bridge.py" in violation for violation in offenders)
+
+
+def test_release_workflow_team_bridge_build_must_precede_packaging(tmp_path) -> None:
+    module = _load_script_module("scripts/checks/check_release_version_policy.py")
+    _write_release_policy_fixture(tmp_path)
+    _write(
+        tmp_path / ".github" / "workflows" / "release.yml",
+        (
+            "name: Release\n"
+            "on:\n"
+            "  push:\n"
+            '    tags: ["v*"]\n'
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: windows-latest\n"
+            "    steps:\n"
+            "      - name: Build sandboxed preload bundle\n"
+            "        run: npm run build:preload\n"
+            "      - name: Build & publish installer\n"
+            "        run: npm exec -- electron-builder --win --publish always\n"
+            "      - name: Build team bridge\n"
+            "        run: python scripts/packaging/build_team_bridge.py\n"
+        ),
+    )
+
+    violations = module.validate_release_version_policy(tmp_path)
+
+    assert any("release.yml" in v and "team bridge" in v for v in violations)
+
+
+def test_release_workflow_accepts_embedded_team_bridge_npm_script(tmp_path) -> None:
+    """``npm run release:windows`` already embeds the bridge build."""
+    module = _load_script_module("scripts/checks/check_release_version_policy.py")
+    _write_release_policy_fixture(tmp_path)
+    for name in ("release.yml", "ci-linux-package.yml"):
+        _write(
+            tmp_path / ".github" / "workflows" / name,
+            (
+                "name: Release\n"
+                "on:\n"
+                "  push:\n"
+                '    tags: ["v*"]\n'
+                "concurrency:\n  group: release-${{ github.ref }}\n  cancel-in-progress: false\n"
+                "jobs:\n"
+                "  prepare:\n"
+                "    if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'\n"
+                "    steps:\n"
+                "      - run: python scripts/packaging/release_assets.py prepare --tag v0.1.0\n"
+                "  build:\n"
+                "    runs-on: windows-latest\n"
+                "    steps:\n"
+                "      - name: Build & publish\n"
+                "        run: npm run release:windows\n"
+            ),
+        )
+
+    assert module.validate_release_version_policy(tmp_path) == []

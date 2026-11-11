@@ -123,6 +123,18 @@ test('push sends {session_id, request_id, rows} through the client and records t
   assert.ok(env.logs.every((entry) => !JSON.stringify(entry.details).includes('hello')), 'no body in diagnostics');
 });
 
+test('a sent push marks the live turn as a mail turn with the pushed rows; a refused one does not', async (t) => {
+  const env = await setup(t);
+  const noted = [];
+  env.service.chatMessages.noteMailTurn = (turnId, rows) => noted.push([turnId, rows.map((row) => row.session_message.message_id)]);
+  env.sidecarClient.sendResult = false;
+  assert.equal(pushMidTurnMail(env.service, { sessionId: env.id, messageIds: ids(1) }).ok, false);
+  assert.deepEqual(noted, []);
+  env.sidecarClient.sendResult = true;
+  assert.equal(pushMidTurnMail(env.service, { sessionId: env.id, messageIds: ids(1, 2) }).ok, true);
+  assert.deepEqual(noted, [['turn_1', ids(1, 2)]]);
+});
+
 test('a send failure releases the reservation and refuses transport_unavailable', async (t) => {
   const env = await setup(t);
   env.sidecarClient.sendResult = false;

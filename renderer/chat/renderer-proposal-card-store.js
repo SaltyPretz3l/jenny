@@ -34,6 +34,11 @@
     return (shell && shell.sessionProposals) || null;
   }
 
+  function defaultSandboxBridge() {
+    const shell = globalThis.window ? globalThis.window.jennyShell : globalThis.jennyShell;
+    return (shell && shell.commandSandbox) || null;
+  }
+
   function fallbackUuid() {
     const hex = () => Math.floor(Math.random() * 16).toString(16);
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => (c === 'x' ? hex() : ((Math.random() * 4 | 8)).toString(16)));
@@ -71,6 +76,7 @@
   function createProposalCardStore(options) {
     const o = options || {};
     const getBridge = typeof o.getBridge === 'function' ? o.getBridge : defaultBridge;
+    const getSandboxBridge = typeof o.getSandboxBridge === 'function' ? o.getSandboxBridge : defaultSandboxBridge;
     const now = typeof o.now === 'function' ? o.now : () => Date.now();
     const setTimer = typeof o.setTimeout === 'function' ? o.setTimeout : (fn, ms) => setTimeout(fn, ms);
     const clearTimer = typeof o.clearTimeout === 'function' ? o.clearTimeout : (handle) => clearTimeout(handle);
@@ -89,6 +95,7 @@
     const optionsOpen = new Set(); // entry keys whose Options popover is open
     let unsubscribe = null;
     let subscribedBridge = null;
+    let sandboxUnsubscribe = null;
     let disposed = false;
 
     function touch(sessionId, proposalId) {
@@ -361,7 +368,27 @@
       }, REFETCH_COALESCE_MS));
     }
 
+    // A command card projected while the sandbox was not ready withholds Run; nothing re-projects it
+    // when the sandbox recovers, so a sandbox state change re-reads exactly those cards. Only a mode
+    // switch (row 106) re-reads every sandbox-backed card: busy/ready flips on each run do not.
+    let sandboxMode = null;
+    function handleSandboxChanged(state) {
+      if (disposed) return;
+      const mode = isObject(state) && typeof state.mode === 'string' ? state.mode : sandboxMode;
+      const modeChanged = sandboxMode !== null && mode !== sandboxMode;
+      sandboxMode = mode;
+      for (const entry of entries.values()) {
+        const proposal = entry.proposal;
+        if (proposal?.actions?.run?.reason === 'sandbox_not_ready'
+          || (modeChanged && proposal?.kind === 'command' && proposal?.display?.backend === 'docker')) void fetchEntry(entry);
+      }
+    }
+
     function ensureSubscribed(bridge) {
+      if (sandboxUnsubscribe === null) {
+        const sandbox = getSandboxBridge();
+        sandboxUnsubscribe = (sandbox && typeof sandbox.onChanged === 'function' && sandbox.onChanged(handleSandboxChanged)) || false;
+      }
       if (subscribedBridge === bridge || !bridge || typeof bridge.onChanged !== 'function') return;
       if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
       subscribedBridge = bridge;
@@ -493,6 +520,8 @@
       refetchTimers.clear();
       if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
       unsubscribe = null;
+      if (typeof sandboxUnsubscribe === 'function') { try { sandboxUnsubscribe(); } catch (_error) { /* best effort */ } }
+      sandboxUnsubscribe = null;
       listeners.clear();
       entries.clear();
       groups.clear();

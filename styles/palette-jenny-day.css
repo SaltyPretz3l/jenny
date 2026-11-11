@@ -20,14 +20,13 @@
   /* ── Text ── deep teal-near-black ink (comic-panel readability) ── */
   --text-primary: #0a2329;
   --text-secondary: #3a5860;
-  --text-muted: #50636a; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-muted: #495c63; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
   --text-decorative: #6c8690;
   --text-bright: #0a2329;
   --text-accent-soft: #1f4a52;
   --text-danger-soft: #b53d34;
   --text-success-soft: #1e6b44;
   --text-danger-emphasis: #b53d34;
-  --status-gradient-end: #d2a82c;
 
   /* ── Accents — Jenny body teal leads; cyan pop, pigtail amber, Brad red as accents ── */
   --accent: #4fa9b0;
@@ -47,13 +46,26 @@
   --atlas-lang-data: #8a5a1c;
   --atlas-lang-other: #6b7480;
 
+  /* ── Editor colours ── dark teal-leaning inks for the icy ground ── */
+  --syntax-keyword: #0b6b78;
+  --syntax-string: #7a5200;
+  --syntax-comment: #587480;
+  --syntax-number: #a8352c;
+  --syntax-function: #245f9c;
+  --syntax-type: #1e6b44;
+  --syntax-variable: #3a5860;
+  --syntax-constant: #6a4fa8;
+
+  /* ── Status dots ── re-toned so the smallest stroke keeps 3:1 on the light ground ── */
+  --sprite-dot-active: #2c8790;
+  --sprite-dot-warn: #9b7611;
+  --sprite-dot-error: #b53d34;
+  --sprite-dot-ok: rgba(32, 133, 76, 0.92);
+  --sprite-dot-muted: #6c7f85;
+
   /* ── Holo palette — show-true four-pop wheel ── */
   --holo-periwinkle: #4fa9b0;
   --holo-lavender: #5fc6cd;
-  --holo-pink: #c8453c;
-  --holo-cyan: #5fc6cd;
-
-  /* ── Doodle field — deep teal strokes on icy panel ── */
 
   /* ── Atomic burst — Jenny teal lead, pigtail amber, Brad red sparkles ── */
   /* MLAATR daytime palette: Jenny sky blue, sunshine gold, bubblegum coral. */
@@ -139,18 +151,9 @@
   --surface-input-background-strong: rgba(238, 246, 248, 0.94);
   --surface-toolbar-background: rgba(236, 244, 246, 0.86);
 
-  --surface-prompt-chip-background: rgba(248, 252, 253, 0.84);
-  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.96);
-  --surface-prompt-chip-border: rgba(10, 35, 41, 0.18);
-  --surface-prompt-chip-border-hover: rgba(79, 169, 176, 0.40);
-
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(248, 252, 253, 0.96), rgba(220, 230, 234, 0.96)),
     radial-gradient(circle at top left, rgba(79, 169, 176, 0.08), transparent 48%);
-
-  --surface-notice-background:
-    linear-gradient(180deg, rgba(248, 232, 196, 0.92), rgba(238, 218, 168, 0.94)),
-    rgba(244, 224, 184, 0.86);
 
   --surface-composer-inner:
     linear-gradient(180deg, rgba(248, 252, 253, 0.96), rgba(228, 238, 240, 0.96)),
@@ -158,38 +161,24 @@
   --surface-composer-signal-background: rgba(214, 226, 230, 0.86);
   --surface-composer-mode-background: rgba(214, 226, 230, 0.82);
 
-  --surface-user-bubble-background:
-    linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
-
   --surface-auth-overlay: rgba(208, 220, 224, 0.78);
-  --surface-auth-card: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
 
   --surface-popover-background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
   --surface-popover-row: rgba(216, 228, 232, 0.88);
   --surface-popover-row-hover: rgba(196, 212, 218, 0.94);
 
-  --surface-dev-row-background: rgba(220, 234, 238, 0.94);
-  --surface-dev-row-border: rgba(31, 74, 82, 0.18);
-
   /* ── Material hierarchy ── */
   --mat-chrome-bg: linear-gradient(90deg, rgba(228, 238, 240, 0.98), rgba(208, 222, 226, 0.98));
-  --mat-chrome-border: rgba(10, 35, 41, 0.10);
-  --mat-chrome-text: var(--text-secondary);
-  --mat-chrome-accent: var(--text-primary);
   --mat-work-bg:
     radial-gradient(circle at 18% 12%, rgba(79, 169, 176, 0.10), rgba(220, 230, 234, 0) 30%),
     radial-gradient(circle at 84% 16%, rgba(210, 168, 44, 0.06), rgba(220, 230, 234, 0) 28%),
     #e2eced;
-  --mat-work-border: var(--border-default);
   --mat-work-text: var(--text-primary);
-  --mat-work-accent: var(--text-secondary);
   --mat-live-bg: var(--surface-sidebar-background);
   --mat-live-accent: var(--accent-cyan);
   --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
-  --mat-live-text: var(--text-primary);
   --mat-ephemeral-bg: var(--surface-popover-background);
   --mat-ephemeral-border: var(--border-default);
-  --mat-ephemeral-text: var(--text-primary);
   --mat-ephemeral-shadow:
     0 6px 24px rgba(10, 35, 41, 0.16),
     0 2px 6px rgba(10, 35, 41, 0.10);
@@ -206,8 +195,6 @@
   --widget-button-danger-bg: rgba(200, 69, 60, 0.12);
   --widget-button-danger-border: rgba(200, 69, 60, 0.28);
   --widget-button-danger-color: #a8352c;
-  --widget-button-session-bg: linear-gradient(180deg, #e8b73c, #d2a82c);
-  --widget-button-session-color: #2a1d00;
   --widget-close-hover-bg: #b53d34;
   --widget-hero-avatar-bg: linear-gradient(180deg, #5fc6cd, #4fa9b0);
 
@@ -215,30 +202,17 @@
   --widget-item-active-bg: linear-gradient(180deg, rgba(79, 169, 176, 0.14), rgba(79, 169, 176, 0.04));
   --widget-item-active-border: rgba(79, 169, 176, 0.28);
   --widget-badge-bg: rgba(10, 35, 41, 0.05);
-  --widget-badge-border: rgba(10, 35, 41, 0.12);
-  --widget-badge-color: #3a5860;
-  --widget-badge-secondary-color: #5a737b;
-  --widget-action-color: #3a5860;
   --widget-action-bg: rgba(10, 35, 41, 0.04);
-  --widget-action-border: rgba(10, 35, 41, 0.16);
   --widget-action-hover-bg: rgba(79, 169, 176, 0.12);
   --widget-action-hover-border: rgba(79, 169, 176, 0.36);
   --widget-action-hover-color: #0a2329;
-  --widget-action-delete-hover-bg: rgba(200, 69, 60, 0.12);
-  --widget-action-delete-hover-border: rgba(200, 69, 60, 0.28);
-  --widget-action-delete-hover-color: #a8352c;
   --widget-scrollbar-color: rgba(10, 35, 41, 0.28);
-  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(79, 169, 176, 0.18), rgba(31, 74, 82, 0.22));
-  --widget-collapsed-item-color: #ffffff;
-  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(95, 198, 205, 0.94), rgba(79, 169, 176, 0.92));
 
   /* Chat & copy */
-  --widget-chat-meta-color: #6c8690;
   --widget-chat-meta-error-color: #a8352c;
   --widget-copy-chip-bg: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(228, 238, 240, 0.98));
   --widget-copy-chip-border: rgba(10, 35, 41, 0.20);
   --widget-copy-chip-color: #0a2329;
-
 
   /* Rail J glyph */
   --widget-sprite-color: rgba(10, 35, 41, 0.92);
@@ -253,11 +227,7 @@
     linear-gradient(180deg, rgba(248, 252, 253, 0.94), rgba(220, 232, 234, 0.96)),
     radial-gradient(circle at left center, rgba(79, 169, 176, 0.08), transparent 55%);
   --widget-tool-border: rgba(10, 35, 41, 0.20);
-  --widget-tool-pending-border: rgba(210, 168, 44, 0.40);
-  --widget-tool-running-border: rgba(95, 198, 205, 0.38);
-  --widget-tool-error-border: rgba(200, 69, 60, 0.30);
   --widget-tool-color: #0a2329;
-  --widget-tool-name-color: #062029;
   --widget-tool-success-color: rgba(34, 140, 80, 0.92);
   --widget-tool-error-color: rgba(168, 53, 44, 0.9);
   --widget-tool-denied-color: rgba(108, 134, 144, 0.7);
@@ -271,9 +241,8 @@
   --widget-deny-border: rgba(10, 35, 41, 0.20);
   --widget-deny-color: rgba(10, 35, 41, 0.84);
 
-
   /* Composer — send pops Jenny-cyan */
-  --widget-placeholder-color: #6c8690;
+  --widget-placeholder-color: #516b75;
   --widget-placeholder-focus-color: #3a5860;
   --widget-composer-mode-active-bg: rgba(79, 169, 176, 0.18);
   --widget-send-bg: linear-gradient(180deg, #5fc6cd, #4fa9b0);
@@ -286,16 +255,13 @@
   --widget-select-hover-color: #0a2329;
   --widget-select-option-bg: #ecf2f4;
   --widget-select-option-color: #0a2329;
-  --widget-composer-meta-color: #6c8690;
+  --widget-composer-meta-color: #516b75;
   --widget-composer-scrollbar-color: rgba(10, 35, 41, 0.36);
   --widget-token-pill-bg: rgba(214, 226, 230, 0.7);
   --widget-token-pill-color: #3a5860;
-  --widget-jump-color: rgba(58, 88, 96, 0.84);
-  --widget-jump-hover-color: #0a2329;
 
   /* Interactive mode — teal active */
   --widget-interactive-card-border: rgba(10, 35, 41, 0.22);
-  --widget-interactive-pending-border: rgba(79, 169, 176, 0.34);
   --widget-interactive-intro-color: rgba(10, 35, 41, 0.92);
   --widget-interactive-option-bg: rgba(248, 252, 253, 0.42);
   --widget-interactive-option-border: rgba(10, 35, 41, 0.18);
@@ -322,14 +288,6 @@
   --settings-shell-panel-bg: var(--surface-card-background);
   --settings-shell-field-bg: var(--surface-input-background);
 
-  /* Personality */
-  --widget-personality-preview-color: rgba(10, 35, 41, 0.86);
-
-  /* Mermaid */
-
-  /* Artifact focus */
-  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
-
   /* Activity states */
   --widget-activity-pending-glow: rgba(79, 169, 176, 0.10);
   --widget-activity-pending-border: rgba(79, 169, 176, 0.50);
@@ -347,8 +305,6 @@
   --widget-attachment-clear-color: #6c8690;
 
   /* Popover badge & stop */
-  --widget-popover-badge-active-bg: rgba(210, 168, 44, 0.20);
-  --widget-popover-badge-active-color: #8a6210;
   --widget-stop-bg: rgba(200, 69, 60, 0.14);
   --widget-stop-color: #a8352c;
 

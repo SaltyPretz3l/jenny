@@ -59,6 +59,7 @@ from sidecar.runtime.request_dispatch_compact import process_compact_method
 from sidecar.runtime.request_dispatch_harness import process_harness_method
 from sidecar.runtime.request_dispatch_mcp import process_mcp_method
 from sidecar.runtime.request_dispatch_memory import process_memory_method
+from sidecar.runtime.request_dispatch_session_title import process_session_title_method
 from sidecar.runtime.request_dispatch_suggestions import process_suggestions_method
 from sidecar.runtime.rpc import (
     error_response,
@@ -642,6 +643,11 @@ def process_message(
             response_reader_factory=response_reader_factory)
         if commit_outcome is not None:
             return commit_outcome
+
+        title_outcome = process_session_title_method(*inference_args, write_message=write_message,
+            response_reader_factory=response_reader_factory)
+        if title_outcome is not None:
+            return title_outcome
 
         compact_outcome = process_compact_method(*inference_args, write_message=write_message,
             response_reader_factory=response_reader_factory)

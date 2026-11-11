@@ -20,7 +20,7 @@ _PROCESS_BACKED_BUILTINS = frozenset({
 })
 _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "jenny_status", "worktree_list", "worktree_create", "worktree_select", "worktree_delete",
-    "automation_list", "automation_read", "workspace_present", "preview_test",
+    "automation_list", "workspace_present", "preview_test",
     "home", "task_board", "project_notes", "verify", "image_generate", "run_command",
     "propose_git_action", "propose_command", "propose_session",
     "session_message", "conversations_recent", "conversation_open", "conversations_search",
@@ -28,7 +28,7 @@ _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "settings_get", "settings_change", "chat_organize", "chat_configure",
     "project_create", "projects_list", "app_view",
     "session_export", "terminal_read", "terminal_run",
-    "schedule_list", "schedule_change", "away_digest",
+    "schedule_list", "schedule_change", "away_digest", "browser",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",

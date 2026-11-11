@@ -410,6 +410,7 @@ module.exports = {
   cQuotePath,
   createUntrackedCheckpointSupport,
   directoriesByDepth,
+  inspectEntry,
   planUntrackedCapture,
   treePathIsSafe,
 };

@@ -6,9 +6,11 @@ const path = require('node:path');
 
 const { requireBoundedInteger } = require('./resource-limits');
 const { createBrowserAccessPolicy, PRIVATE_HTTPS, LOCALHOST_HTTP } = require('./browser-access-policy');
+const { isCleanText } = require('./team/member-schema');
 
 const SETUP_PENDING_FILE = '.setup-pending.json';
-const HOST_CONFIG_SCHEMA_VERSION = 2;
+const HOST_CONFIG_SCHEMA_VERSION = 3;
+const TEAM_MAX_CONCURRENT_REQUESTS = 64;
 const HOST_EXECUTION_POLICY_VERSION = 2;
 const MAX_CONFIG_BYTES = 128 * 1024;
 const DEFAULT_RUNTIME_HOME = path.join(os.tmpdir(), 'jenny-host-runtime');
@@ -49,6 +51,9 @@ const TOP_LEVEL_FIELDS = new Set([
   'browser_access_mode',
   'execution',
 ]);
+const TEAM_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS, 'team']);
+const TEAM_FIELDS = new Set(['name', 'key_source', 'direct_port']);
+const TEAM_KEY_SOURCES = new Set(['parent_channel', 'secret_file']);
 const LEGACY_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS].filter((field) => (
   field !== 'browser_access_mode' && field !== 'execution'
 )));
@@ -227,15 +232,44 @@ function normalizeModelEndpoint(value) {
   return Object.freeze({ engine, model, apiUrl });
 }
 
-function normalizeResourceLimits(value) {
-  if (value === undefined) return { ...DEFAULT_RESOURCE_LIMITS };
+// The schema 3 `team` block: a closed record of three required fields.
+function normalizeTeam(value) {
+  assertClosed(value, TEAM_FIELDS, 'team_block_invalid');
+  if ([...TEAM_FIELDS].some((field) => !Object.hasOwn(value, field))) throw invalid('team_block_invalid');
+  if (!isCleanText(value.name)) throw invalid('team_name_invalid');
+  if (!TEAM_KEY_SOURCES.has(value.key_source)) throw invalid('team_key_source_invalid');
+  const port = value.direct_port;
+  if (port !== null && !(Number.isSafeInteger(port) && port >= 1 && port <= 65535)) {
+    throw invalid('team_direct_port_invalid');
+  }
+  return Object.freeze({ name: value.name, keySource: value.key_source, directPort: port });
+}
+
+// A team host is loopback-only with no command execution and no workspace.
+function assertTeamHostSource(source) {
+  if (source.listen_host !== '127.0.0.1') throw invalid('team_listen_host_loopback_required');
+  if (source.execution !== undefined && source.execution !== null) throw invalid('team_execution_forbidden');
+  if (source.workspace_root !== null) throw invalid('team_workspace_forbidden');
+}
+
+function normalizeResourceLimits(value, team = false) {
+  const defaults = team
+    ? { ...DEFAULT_RESOURCE_LIMITS, maxConcurrentRequests: TEAM_MAX_CONCURRENT_REQUESTS }
+    : { ...DEFAULT_RESOURCE_LIMITS };
+  if (value === undefined) return defaults;
   assertClosed(value, RESOURCE_FIELDS, 'resource_limits_invalid');
-  const result = { ...DEFAULT_RESOURCE_LIMITS };
+  const result = defaults;
   for (const [field, spec] of Object.entries(RESOURCE_LIMITS)) {
     if (value[field] === undefined) continue;
     result[spec.output] = boundedInteger(value[field], spec.max);
   }
   return result;
+}
+
+// Schema 1 has the legacy fields, schema 2 the current ones, schema 3 and above also `team`.
+function topLevelFields(schemaVersion) {
+  if (schemaVersion === 1) return LEGACY_TOP_LEVEL_FIELDS;
+  return schemaVersion >= 3 ? TEAM_TOP_LEVEL_FIELDS : TOP_LEVEL_FIELDS;
 }
 
 function readConfig(filePath) {
@@ -249,7 +283,7 @@ function readConfig(filePath) {
   try { source = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (_error) {
     throw invalid('config_json_invalid');
   }
-  assertClosed(source, TOP_LEVEL_FIELDS, 'config_unknown_field');
+  assertClosed(source, topLevelFields(source?.schema_version), 'config_unknown_field');
   return source;
 }
 
@@ -263,30 +297,33 @@ function loadHostConfig(filePath, { allowPendingSetup = false } = {}) {
 
 function normalizeHostConfig(source) {
   const schemaVersion = source?.schema_version;
-  assertClosed(source, schemaVersion === 1 ? LEGACY_TOP_LEVEL_FIELDS : TOP_LEVEL_FIELDS, 'config_unknown_field');
-  if (schemaVersion !== 1 && schemaVersion !== HOST_CONFIG_SCHEMA_VERSION) {
+  assertClosed(source, topLevelFields(schemaVersion), 'config_unknown_field');
+  if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== HOST_CONFIG_SCHEMA_VERSION) {
     throw invalid(schemaVersion > HOST_CONFIG_SCHEMA_VERSION
       ? 'config_schema_future' : 'config_schema_unsupported');
   }
   if (source.host_mode !== 'server') throw invalid('server_host_mode_required');
+  const team = source.team === undefined ? null : normalizeTeam(source.team);
+  if (team) assertTeamHostSource(source);
   const declaredPolicyVersion = source.host_execution_policy_version;
   if (schemaVersion === 1 && declaredPolicyVersion !== 1) {
     throw invalid(declaredPolicyVersion > 1 ? 'host_execution_policy_future' : 'host_execution_policy_unsupported');
   }
-  if (schemaVersion === HOST_CONFIG_SCHEMA_VERSION
+  if (schemaVersion >= 2
     && (!Number.isInteger(declaredPolicyVersion) || declaredPolicyVersion < 1 || declaredPolicyVersion > HOST_EXECUTION_POLICY_VERSION)) {
     throw invalid(declaredPolicyVersion > HOST_EXECUTION_POLICY_VERSION
       ? 'host_execution_policy_future' : 'host_execution_policy_unsupported');
   }
-  const browserAccessMode = schemaVersion === 1 ? PRIVATE_HTTPS : source.browser_access_mode;
-  if (schemaVersion === HOST_CONFIG_SCHEMA_VERSION
+  // A team host serves no browser, so neither browser field is read.
+  const browserAccessMode = team ? null : schemaVersion === 1 ? PRIVATE_HTTPS : source.browser_access_mode;
+  if (!team && schemaVersion >= 2
     && ![PRIVATE_HTTPS, LOCALHOST_HTTP].includes(browserAccessMode)) {
     throw invalid('browser_access_mode_invalid');
   }
   const listenHost = normalizeString(source.listen_host, 'listen_host', { max: 64 });
   if (!LISTEN_HOSTS.has(listenHost)) throw invalid('listen_host_invalid');
-  const port = boundedInteger(source.port, 65535);
-  const canonicalOrigin = normalizeBrowserOrigin(source.canonical_origin, browserAccessMode, port);
+  const port = team && source.port === 0 ? 0 : boundedInteger(source.port, 65535);
+  const canonicalOrigin = team ? null : normalizeBrowserOrigin(source.canonical_origin, browserAccessMode, port);
   const userDataPath = normalizePath(source.user_data_path, 'user_data_path');
   const secretsDir = normalizePath(source.secrets_dir, 'secrets_dir');
   const workspaceRoot = source.workspace_root === null
@@ -340,9 +377,12 @@ function normalizeHostConfig(source) {
     memoryPath,
     logPath,
     runtimeHome,
-    modelEndpoint: normalizeModelEndpoint(source.model_endpoint),
-    resourceLimits: Object.freeze(normalizeResourceLimits(source.resource_limits)),
+    // Owner decision E19: a team host has no model until Phase 4, so its config may leave the
+    // endpoint out (absent, not null). Every other host still requires one.
+    modelEndpoint: team && !Object.hasOwn(source, 'model_endpoint') ? null : normalizeModelEndpoint(source.model_endpoint),
+    resourceLimits: Object.freeze(normalizeResourceLimits(source.resource_limits, team !== null)),
     ...(pythonExecutable ? { pythonExecutable } : {}),
+    ...(team ? { team } : {}),
   });
 }
 

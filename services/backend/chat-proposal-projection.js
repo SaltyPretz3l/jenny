@@ -82,6 +82,15 @@ function legacyActions(record, state, ctx) {
   } else {
     // Offline lockdown withholds run_command from model turns, so it withholds Run too (Copy stays).
     actions.run = restoredGate(record, choiceAvailability(state, { ...gate, lockdown: ctx.lockdown === true }, ctx.commandRunSupported === true));
+    // A sandbox Run while the sandbox is not ready can only fail: Copy only, and say why.
+    if (actions.run.available && record.binding.command.backend === 'docker' && ctx.commandSandboxReady === false) {
+      actions.run = availability(false, 'sandbox_not_ready');
+    }
+    // Row 106: a card proposed for the other sandbox mode keeps Copy only until the mode matches again.
+    if (actions.run.available && record.binding.command.backend === 'docker' && ctx.commandSandboxWorkspace
+      && (record.binding.command.workspace || 'copy') !== ctx.commandSandboxWorkspace) {
+      actions.run = availability(false, 'sandbox_mode_changed');
+    }
   }
   actions.dismiss = state === 'pending' ? availability(true) : availability(false, state);
   actions.cancel = availability(R.isGitLive(record) || R.isCommandLive(record), 'not_applicable');
@@ -91,7 +100,8 @@ function legacyActions(record, state, ctx) {
   return actions;
 }
 
-// ctx: {now, runMode:'agent'|'plan', readOnly:bool, lockdown:bool, commandRunSupported:bool,
+// ctx: {now, runMode:'agent'|'plan', readOnly:bool, lockdown:bool, commandRunSupported:bool, commandSandboxReady:bool,
+// commandSandboxWorkspace:'copy'|'synced'|undefined,
 // sessionRuntimeSupported:bool (default true), sessionHandoffSupported:bool, child: the derived live view of a
 // New session's child chat (./chat-proposal-child-view) or null}.
 function projectProposal(record, ctx = {}) {

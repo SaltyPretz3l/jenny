@@ -45,22 +45,42 @@ class JobTests(unittest.TestCase):
             with self.subTest(root=root), patch("server.worker.job.subprocess.Popen") as popen:
                 popen.side_effect = OSError("no child")
                 run_command("true", "nested", input_root=root, timeout_seconds=1, popen=popen)
-                self.assertEqual(popen.call_args.args[0][-5:-1],
+                self.assertEqual(popen.call_args.args[0][-6:-2],
                                  ["true", "nested", root, "/workspace"])
+                self.assertEqual(popen.call_args.args[0][-1], "copy")
 
-    def test_job_entry_snapshots_input_root_and_uses_project_cwd(self):
-        argv = ["helper", "true", "nested", "projects/a", "/workspace", "9"]
+    def _job_entry(self, mode):
+        argv = ["helper", "true", "nested", "projects/a", "/workspace", "9", mode]
         self.assertEqual(job.JOB_ARG_COUNT, len(argv))
         with patch.object(os.sys, "argv", argv), patch.object(job, "resource") as resource_mock, \
              patch.object(job, "_verify_job_identity", return_value=True), \
              patch.object(job, "snapshot_inputs") as snapshot, \
              patch.object(os, "chdir") as chdir, patch.object(os, "set_inheritable"), \
              patch.object(os, "write"), patch.object(os, "close"), patch.object(os, "open"), \
-             patch.object(os, "execve"), patch.object(os, "_exit", side_effect=RuntimeError):
-            job.job_entry()
-            snapshot.assert_called_once_with("/inputs", "/workspace", subpath="projects/a")
-            chdir.assert_called_once_with(os.path.abspath("/workspace/nested"))
-            self.assertTrue(resource_mock.setrlimit.called)
+             patch.object(os, "execve") as execve, \
+             patch.object(os, "_exit", side_effect=RuntimeError):
+            try:
+                job.job_entry()
+            except RuntimeError:
+                pass
+            return snapshot, chdir, resource_mock, execve
+
+    def test_job_entry_snapshots_input_root_and_uses_project_cwd(self):
+        snapshot, chdir, resource_mock, _ = self._job_entry("copy")
+        snapshot.assert_called_once_with("/inputs", "/workspace", subpath="projects/a")
+        chdir.assert_called_once_with(os.path.abspath("/workspace/nested"))
+        self.assertTrue(resource_mock.setrlimit.called)
+
+    def test_synced_job_entry_uses_the_persistent_mirror_without_copying(self):
+        snapshot, chdir, _, execve = self._job_entry("synced")
+        snapshot.assert_not_called()
+        chdir.assert_called_once_with(os.path.abspath("/workspace/nested"))
+        self.assertTrue(execve.called)
+
+    def test_unknown_job_mode_never_execs(self):
+        snapshot, _, _, execve = self._job_entry("live")
+        snapshot.assert_not_called()
+        execve.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -418,3 +418,162 @@ test('HTML frames, Mermaid frames and controls share one observer and dispose in
   await settleStaging();
   assert.ok(disconnectCount > 0);
 });
+
+/* ── live preview: restore, link-blocked, scroll, navigation ── */
+
+const { initHtmlArtifactFrame } = require('../renderer/frames/html-artifact-frame-init.js');
+
+function initCall(doc) {
+  const marker = `(${initHtmlArtifactFrame.toString()})`;
+  const start = doc.indexOf(marker);
+  assert.ok(start >= 0, 'inlined init not found');
+  return doc.slice(start + marker.length, doc.indexOf(';</script>', start));
+}
+
+test('document bytes are unchanged when no restore scroll is given', () => {
+  const expected = `(${initHtmlArtifactFrame.toString()})("req-b");`;
+  for (const documentOptions of [undefined, {}, { restoreScrollY: 0 }, { restoreScrollY: -3 }, { restoreScrollY: Number.NaN }, { restoreScrollY: '40' }]) {
+    const doc = buildHtmlArtifactDocument('<p>x</p>', 'req-b', documentOptions);
+    assert.ok(doc.includes(`<script>${expected}</script>`), JSON.stringify(documentOptions));
+  }
+});
+
+test('restoreScrollY is floored, clamped and emitted as the init options argument', () => {
+  assert.equal(initCall(buildHtmlArtifactDocument('<p>x</p>', 'req-r', { restoreScrollY: 340.9 })),
+    '("req-r", {"restoreScrollY":340})');
+  assert.equal(initCall(buildHtmlArtifactDocument('<p>x</p>', 'req-r', { restoreScrollY: 1e12 })),
+    '("req-r", {"restoreScrollY":10000000})');
+});
+
+test('createHtmlArtifactFrame passes restoreScrollY into the staged document', async (t) => {
+  const { host } = makeHost(t);
+  const stub = makeStageStub();
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', { stageDocument: stub.stageDocument, restoreScrollY: 250 });
+  t.after(() => handle.dispose());
+  await settleStaging();
+  assert.ok(stub.staged[0].includes('{"restoreScrollY":250}'));
+});
+
+test('link-blocked messages call onLinkBlocked with no arguments; bad source or id is ignored', (t) => {
+  const { dom, host } = makeHost(t);
+  const calls = [];
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', {
+    timeoutMs: 5000,
+    stageDocument: makeStageStub().stageDocument,
+    onLinkBlocked: (...args) => calls.push(args),
+  });
+  t.after(() => handle.dispose());
+  const iframe = host.querySelector('iframe');
+  frameMessage(dom, iframe, { type: 'link-blocked', requestId: handle.requestId, href: 'https://evil' });
+  frameMessage(dom, iframe, { type: 'link-blocked', requestId: 'someone-else' });
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: { type: 'link-blocked', requestId: handle.requestId },
+    source: dom.window,
+  }));
+  assert.deepEqual(calls, [[]]);
+});
+
+test('link-blocked and scroll never tear the frame down or count as failure', (t) => {
+  const { dom, host } = makeHost(t);
+  const failures = [];
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', {
+    timeoutMs: 5000,
+    stageDocument: makeStageStub().stageDocument,
+    onFailure: (payload) => failures.push(payload),
+  });
+  t.after(() => handle.dispose());
+  const iframe = host.querySelector('iframe');
+  frameMessage(dom, iframe, { type: 'link-blocked', requestId: handle.requestId });
+  frameMessage(dom, iframe, { type: 'scroll', requestId: handle.requestId, y: 10 });
+  assert.equal(failures.length, 0);
+  assert.ok(host.querySelector('iframe'));
+});
+
+test('scroll messages are sanitised: coerced, floored, clamped, non-finite ignored', (t) => {
+  const { dom, host } = makeHost(t);
+  const ys = [];
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', {
+    timeoutMs: 5000,
+    stageDocument: makeStageStub().stageDocument,
+    onScroll: (y) => ys.push(y),
+  });
+  t.after(() => handle.dispose());
+  const iframe = host.querySelector('iframe');
+  for (const y of [42.9, '120', -50, 1e15, Number.NaN, Infinity, 'abc', null, undefined, {}]) {
+    frameMessage(dom, iframe, { type: 'scroll', requestId: handle.requestId, y });
+  }
+  assert.deepEqual(ys, [42, 120, 0, 10_000_000, 0]);
+});
+
+function makeNavFrame(t, extra = {}) {
+  const { dom, host } = makeHost(t);
+  const away = [];
+  const failures = [];
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', {
+    timeoutMs: 40,
+    stageDocument: makeStageStub().stageDocument,
+    onNavigatedAway: () => away.push(true),
+    onFailure: (payload) => failures.push(payload),
+    ...extra,
+  });
+  t.after(() => handle.dispose());
+  const iframe = host.querySelector('iframe');
+  const load = () => iframe.dispatchEvent(new dom.window.Event('load'));
+  return { dom, host, iframe, handle, away, failures, load };
+}
+
+test('onNavigatedAway ignores the initial blank load and the first staged load, fires once on the next', async (t) => {
+  const { iframe, away, failures, load } = makeNavFrame(t);
+  load(); // initial about:blank load, before src is assigned
+  await settleStaging();
+  assert.ok(iframe.getAttribute('src'), 'src should be assigned by now');
+  load(); // the staged document
+  assert.equal(away.length, 0);
+  load(); // the frame left its document
+  load();
+  assert.equal(away.length, 1, 'must fire exactly once');
+  assert.ok(iframe.isConnected, 'the frame is not torn down; its owner disposes it');
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(failures.length, 0, 'navigating away must stop the boot timeout from failing');
+});
+
+test('after navigating away a late error message cannot fire onFailure', async (t) => {
+  const { dom, iframe, handle, away, failures, load } = makeNavFrame(t, { timeoutMs: 5000 });
+  await settleStaging();
+  load();
+  load();
+  assert.equal(away.length, 1);
+  frameMessage(dom, iframe, { type: 'error', requestId: handle.requestId, ok: false, error: 'late' });
+  assert.equal(failures.length, 0);
+});
+
+test('without onNavigatedAway no load listener is registered', async (t) => {
+  const { dom, host } = makeHost(t);
+  const realCreate = dom.window.document.createElement.bind(dom.window.document);
+  const listened = [];
+  dom.window.document.createElement = (tag) => {
+    const el = realCreate(tag);
+    if (tag === 'iframe') {
+      const realAdd = el.addEventListener.bind(el);
+      el.addEventListener = (type, ...rest) => { listened.push(type); return realAdd(type, ...rest); };
+    }
+    return el;
+  };
+  const handle = createHtmlArtifactFrame(host, '<p>x</p>', {
+    timeoutMs: 5000,
+    stageDocument: makeStageStub().stageDocument,
+  });
+  t.after(() => handle.dispose());
+  await settleStaging();
+  assert.ok(!listened.includes('load'), `unexpected listeners: ${listened.join(',')}`);
+});
+
+test('dispose removes the load listener', async (t) => {
+  const { dom, iframe, handle, away, load } = makeNavFrame(t, { timeoutMs: 5000 });
+  await settleStaging();
+  handle.dispose();
+  iframe.dispatchEvent(new dom.window.Event('load'));
+  iframe.dispatchEvent(new dom.window.Event('load'));
+  assert.equal(away.length, 0);
+  assert.equal(typeof load, 'function');
+});

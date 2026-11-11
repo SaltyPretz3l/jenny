@@ -485,3 +485,8 @@ test('directory-target tools expose their path argument, never the pattern, and 
   assert.deepEqual(getToolPathTarget('read_file', { path: 'a.js' }), { path: 'a.js', kind: '', appendChip: false });
   assert.deepEqual(getToolPathTarget('glob_files', { pattern: '*.js' }), { path: '', kind: '', appendChip: false });
 });
+
+test('a command preview shows hidden characters as markers instead of honoring them', () => {
+  assert.equal(getApprovalCommandPreview('run_command', { command: 'echo a\u202Etxt.exe' }), 'echo a\u27E8U+202E\u27E9txt.exe');
+  assert.equal(getApprovalCommandPreview('run_command', { command: 'echo a\n  b' }), 'echo a\n  b');
+});

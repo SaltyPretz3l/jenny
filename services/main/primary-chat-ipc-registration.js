@@ -33,6 +33,9 @@ const METHODS = Object.freeze({
   'primaryChat.forgetPreview': 'forgetPreview',
   'primaryChat.undoSettingChange': 'undoSettingChange',
   'primaryChat.undoChatChange': 'undoChatChange',
+  'primaryChat.getFullAuto': 'getFullAuto',
+  'primaryChat.armFullAuto': 'armFullAuto',
+  'primaryChat.disarmFullAuto': 'disarmFullAuto',
 });
 
 const APP_VIEW_METHODS = Object.freeze({ 'appView.reportOutcome': 'recordOutcome', 'appView.reportLayout': 'reportLayout' });
@@ -59,6 +62,13 @@ function validateReset(raw) {
   if (!checked.ok || typeof deleteChecks !== 'boolean') return { ok: false, reason: 'invalid_request' };
   return { ok: true, value: { ...checked.value, delete_scheduled_checks: deleteChecks } };
 }
+
+// Full auto: a refusal other than `disabled` is a normal outcome (`no_primary`, `not_auto`), not a failure class the
+// contract has a code for, so it rides the success envelope as `{armed:false, reason}` and the renderer words it.
+const armFullAuto = async (backend) => {
+  const answer = await backend?.primaryFullAuto?.arm?.();
+  return answer && answer.ok === false && answer.reason !== 'disabled' ? { ...answer, ok: true } : answer;
+};
 
 const control = (method) => (backend, value) => backend?.primaryChatControls?.[method]?.(value);
 
@@ -88,6 +98,10 @@ const OPERATIONS = Object.freeze({
     validate: contract.validateEmptyRequest,
     call: (backend, _value, loadReset) => loadReset()?.forgetPreview?.(backend),
   },
+  // Full auto: the in-memory armed state over the Jenny chat's Auto mode (services/primary-full-auto.js).
+  getFullAuto: { validate: contract.validateEmptyRequest, call: async (backend) => { const state = await backend?.primaryFullAuto?.getState?.(); return state && { ok: true, ...state }; } },
+  armFullAuto: { validate: contract.validateEmptyRequest, call: armFullAuto },
+  disarmFullAuto: { validate: contract.validateEmptyRequest, call: (backend) => backend?.primaryFullAuto?.disarm?.('user') },
 });
 
 function envelope(answer) {

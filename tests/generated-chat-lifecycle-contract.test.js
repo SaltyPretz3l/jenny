@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 
 const contract = require('../services/backend/generated-chat-lifecycle-contract');
-const { assertChatStartIpcPayload } = require('../services/auxiliary-ipc-handlers');
+const { assertChatStartIpcPayload } = require('../services/main/ipc-registration/chat-ipc');
 
 test('generated identifiers are string-only, grammatical, and UTF-8 bounded', () => {
   assert.deepEqual(contract.normalizeIdentifier(' turn_1 '), {

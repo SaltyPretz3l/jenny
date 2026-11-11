@@ -141,7 +141,7 @@ test('a durable Send shows the skill pill from Send and clears the accepted chip
   assert.equal(composerState.getPendingSkillInvocation(harness.state), null);
 });
 
-test('empty attach remainder does not start a stream and a queued start keeps the chip', async (t) => {
+test('a bare skill goes on to the send path and a queued start keeps an armed chip', async (t) => {
   const harness = createControllerHarness([]);
   t.after(() => harness.restore());
   const registry = createSlashCommandRegistry({ state: harness.state });
@@ -150,8 +150,11 @@ test('empty attach remainder does not start a stream and a queued start keeps th
   t.after(() => slash.dispose());
 
   harness.chatInput.value = '/humanize';
-  const empty = await slash.dispatch('/humanize', {});
-  assert.equal(empty.handled, true);
+  const bare = await slash.dispatch('/humanize', {});
+  assert.equal(bare.handled, false);
+  assert.equal(bare.prompt, '/humanize');
+  assert.equal(composerState.getPendingSkillInvocation(harness.state), null);
+  await slash.dispatch('/humanize tighten this', {});
   assert.equal(harness.calls.startStream.length, 0);
 
   harness.multiStreamController.registerStream('session-1', 'stream-active');

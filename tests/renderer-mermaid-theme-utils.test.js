@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const themeUtils = require('../renderer/features/renderer-mermaid-theme-utils');
-const { getPalettePresets } = require('../renderer/shared/appearance-utils');
+const { getPalettePresets, resolvePaletteScheme } = require('../renderer/shared/appearance-utils');
 
 function installDomGlobals(dom, t) {
   const previousWindow = global.window;
@@ -21,6 +21,7 @@ function installDomGlobals(dom, t) {
 
 function installPaletteTokens(dom, paletteId, tokenMap) {
   dom.window.document.documentElement.dataset.palette = paletteId;
+  dom.window.document.documentElement.dataset.scheme = resolvePaletteScheme(paletteId);
   const style = dom.window.document.createElement('style');
   style.textContent = ':root {' + Object.entries(tokenMap).map(([token, value]) => `${token}: ${value};`).join(' ') + '}';
   dom.window.document.head.appendChild(style);
@@ -155,18 +156,18 @@ const PALETTE_FIXTURES = [
     },
   },
   {
-    paletteId: 'signal',
-    mode: 'dark',
+    paletteId: 'chalk',
+    mode: 'light',
     tokens: {
-      '--bg-surface': '#0f1926',
-      '--surface-input-background': 'rgba(7, 17, 28, 0.92)',
-      '--bg-panel': '#101b29',
-      '--surface-input-background-strong': 'rgba(5, 12, 20, 0.88)',
-      '--text-primary': '#f4fbff',
-      '--accent': '#29c0ff',
-      '--accent-cyan': '#12d9ff',
-      '--border-default': 'rgba(65, 196, 255, 0.16)',
-      color: '#f4fbff',
+      '--bg-surface': '#ffffff',
+      '--surface-input-background': '#f8fafb',
+      '--bg-panel': '#e8ecf0',
+      '--surface-input-background-strong': '#eef1f4',
+      '--text-primary': '#15181c',
+      '--accent': '#1f6fa8',
+      '--accent-cyan': '#0e7490',
+      '--border-default': 'rgba(21, 24, 28, 0.12)',
+      color: '#15181c',
     },
   },
   {
@@ -251,28 +252,20 @@ test('PALETTE_FIXTURES covers every palette the app actually registers', () => {
   );
 });
 
-test('getMermaidPaletteMode: light set is exactly {paper, woolly, jenny-day}; other registered palettes are dark', () => {
-  for (const paletteId of ['paper', 'woolly', 'jenny-day']) {
+test('getMermaidPaletteMode: follows the data-scheme the registry stamps; every registered palette agrees with its preset', () => {
+  for (const preset of getPalettePresets()) {
     assert.equal(
-      themeUtils.getMermaidPaletteMode({ dataset: { palette: paletteId } }, {}),
-      'light',
-      `${paletteId} should classify light without needing a computed colorScheme`
+      themeUtils.getMermaidPaletteMode({ dataset: { palette: preset.id, scheme: preset.scheme } }, {}),
+      preset.scheme,
+      `${preset.id} should classify as its declared scheme without needing a computed colorScheme`
     );
   }
-  // signal declares color-scheme: dark — it must classify dark both with the
-  // computed value present and with the vacuous jsdom computed style.
-  assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { palette: 'signal' } }, { colorScheme: 'dark' }), 'dark');
-  assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { palette: 'signal' } }, {}), 'dark');
-  for (const paletteId of ['midnight', 'pewter', 'obsidian', 'darkroom', 'lexicon', 'rocko', 'jenny-night']) {
-    assert.equal(
-      themeUtils.getMermaidPaletteMode({ dataset: { palette: paletteId } }, { colorScheme: 'dark' }),
-      'dark',
-      `${paletteId} should classify dark`
-    );
-  }
+  // The stamp wins over a stale computed value in either direction.
+  assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { scheme: 'light' } }, { colorScheme: 'dark' }), 'light');
+  assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { scheme: 'dark' } }, { colorScheme: 'light' }), 'dark');
 });
 
-test('getMermaidPaletteMode: unknown palettes fall back to the computed colorScheme, defaulting dark', () => {
+test('getMermaidPaletteMode: an unstamped root falls back to the computed colorScheme, defaulting dark', () => {
   assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { palette: 'some-future-palette' } }, { colorScheme: 'light' }), 'light');
   assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { palette: 'some-future-palette' } }, { colorScheme: 'dark' }), 'dark');
   assert.equal(themeUtils.getMermaidPaletteMode({ dataset: { palette: 'some-future-palette' } }, { colorScheme: 'light dark' }), 'dark');

@@ -448,7 +448,7 @@
       : null;
     patchStatus(targets, status, announceCtx,
       entry?.eventType === 'tool_result' || payload.type === 'tool_result' ? payload : null);
-    if (summary) {
+    if (summary && toolName !== 'browser') { // this summary can name the site
       setTextIfPresent(targets.root, '.tool-call-summary', summary);
     }
     if (durationLabel) {

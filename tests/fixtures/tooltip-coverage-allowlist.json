@@ -1,5 +1,7 @@
 {
-  "static": [],
+  "static": [
+    "index.html#jumpToBottomButton"
+  ],
   "source": [
     "renderer/chat/renderer-artifact-card-utils.js|\"' + escapeHtml(action.ariaLabel) + '\"|0",
     "renderer/chat/renderer-subagent-monitor-view.js||0",

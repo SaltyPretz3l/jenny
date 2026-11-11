@@ -16,11 +16,18 @@
       || (typeof require === 'function' ? require('./renderer-viewport-tail-cushion-utils') : null) || {};
   }
 
+  // Row 131: after a chat opens, the bottom stays pinned (instantly, never by
+  // the streaming glide) while late height changes settle.
+  const LANDING_HOLD_IDLE_MS = 400;
+  const LANDING_HOLD_MAX_MS = 2000;
+
   function createViewportSchedulingUtils(deps) {
     const { state, readerAwayPauseReason } = deps;
     // The pane's own follow intent; default is the single-pane state.ui.followLatest.
     const followState = deps.followState || { get: () => state.ui.followLatest };
     const { chatTimeline, chatThreadScroll, composerWrap } = deps.dom || {};
+    const ResizeObserverRef = deps.ResizeObserverRef
+      || (typeof ResizeObserver === 'function' ? ResizeObserver : null);
     const {
       thinkingController,
       reducedMotionQuery,
@@ -53,6 +60,10 @@
     let pendingViewportSync = null;
     let postLayoutViewportSyncTimer = 0;
     let pendingPostLayoutViewportSync = null;
+    // Session whose viewport last synced (null before the first sync) and the
+    // one landing hold of this pane: { sessionId, observer, idleTimer, maxTimer, timelineHeight }.
+    let lastSyncedSessionId = null;
+    let landingHold = null;
     const transientViewportFrames = new Set();
     const transientViewportTimers = new Set();
     // HB-038: a shrink at the end of a followed live reply leaves blank room
@@ -141,6 +152,87 @@
       return handle;
     }
 
+    function startHoldTimer(callback, delayMs) {
+      if (typeof window?.setTimeout !== 'function') return 0;
+      const handle = window.setTimeout(callback, delayMs);
+      if (handle && typeof handle === 'object' && typeof handle.unref === 'function') handle.unref();
+      return handle;
+    }
+
+    function endLandingHold() {
+      const hold = landingHold;
+      if (!hold) return;
+      landingHold = null;
+      if (hold.idleTimer) window.clearTimeout(hold.idleTimer);
+      if (hold.maxTimer) window.clearTimeout(hold.maxTimer);
+      try { hold.observer?.disconnect?.(); } catch (_error) { /* observer already gone */ }
+    }
+
+    function armLandingHoldIdleTimer() {
+      if (!landingHold) return;
+      if (landingHold.idleTimer) window.clearTimeout(landingHold.idleTimer);
+      landingHold.idleTimer = startHoldTimer(endLandingHold, LANDING_HOLD_IDLE_MS);
+    }
+
+    // The hold stays live only for a latched reader on the same chat with no
+    // streamed reply; anything else releases it.
+    function isLandingHoldLive() {
+      if (!landingHold) return false;
+      if (isDisposed() || followState.get() === false
+        || String(getSessionId() || '') !== landingHold.sessionId
+        || getScrollCoordinator()?.isStreaming?.() === true) {
+        endLandingHold();
+        return false;
+      }
+      return true;
+    }
+
+    function repinForLandingHold() {
+      if (!isLandingHoldLive() || !chatThreadScroll) return false;
+      const metrics = getScrollMetrics();
+      const maximum = Math.max(0, (Number(metrics.scrollHeight) || 0) - (Number(metrics.clientHeight) || 0));
+      if ((Number(metrics.scrollTop) || 0) < maximum - 1) snapThreadToBottom({ behavior: 'auto' });
+      return true;
+    }
+
+    function readHoldTimelineHeight(entries) {
+      const entry = Array.isArray(entries) ? entries[entries.length - 1] : null;
+      const observed = Number(entry?.contentRect?.height);
+      if (Number.isFinite(observed)) return observed;
+      try { return Number(chatTimeline?.getBoundingClientRect?.().height) || 0; } catch (_error) { return 0; }
+    }
+
+    function handleLandingHoldResize(entries) {
+      if (!landingHold) return;
+      const height = readHoldTimelineHeight(entries);
+      if (height === landingHold.timelineHeight) return;
+      landingHold.timelineHeight = height;
+      if (!isLandingHoldLive()) return;
+      armLandingHoldIdleTimer();
+      repinForLandingHold();
+    }
+
+    function beginLandingHold() {
+      endLandingHold();
+      landingHold = {
+        sessionId: String(getSessionId() || ''),
+        observer: null,
+        idleTimer: 0,
+        maxTimer: 0,
+        timelineHeight: readHoldTimelineHeight(null),
+      };
+      if (ResizeObserverRef && chatTimeline) {
+        try {
+          landingHold.observer = new ResizeObserverRef(handleLandingHoldResize);
+          landingHold.observer.observe(chatTimeline);
+        } catch (_error) {
+          landingHold.observer = null;
+        }
+      }
+      armLandingHoldIdleTimer();
+      landingHold.maxTimer = startHoldTimer(endLandingHold, LANDING_HOLD_MAX_MS);
+    }
+
     function scheduleMessageViewportSync(messages, options = {}) {
       if (isDisposed()) return;
       pendingViewportSync = {
@@ -174,14 +266,22 @@
           if (followState.get() === false) {
             getScrollCoordinator()?.restoreReaderAnchor?.();
           }
-          if (nextOptions.forceBottom) tailCushion?.drop('force_bottom');
+          // The first sync for a session (or after boot) lands on the latest
+          // message in one step; the streaming glide is for streamed growth.
+          const sessionId = String(getSessionId() || '');
+          const sessionChanged = sessionId !== lastSyncedSessionId;
+          lastSyncedSessionId = sessionId;
+          const landing = sessionChanged && followState.get() !== false && Boolean(chatThreadScroll);
+          if (sessionChanged && !landing) endLandingHold();
+          const forceBottom = Boolean(nextOptions.forceBottom) || landing;
+          if (forceBottom) tailCushion?.drop('force_bottom');
           else tailCushion?.noteViewportSync();
           if (shouldAutoScrollThread({
-            forceBottom: nextOptions.forceBottom,
+            forceBottom,
             followLatest: followState.get(),
             thinkingAutoScroll: thinkingController.shouldAutoScroll(),
           })) {
-            const pendingApprovalInView = !nextOptions.forceBottom
+            const pendingApprovalInView = !forceBottom
               && hasPendingApprovalGapInViewport(chatThreadScroll);
                 if (chatThreadScroll && !pendingApprovalInView) {
                   // Releasing the approval brake must not double as a jump. The
@@ -190,12 +290,13 @@
                   // prompt appeared -- so it used to take them straight to
                   // scrollHeight - clientHeight. Spend the release on holding
                   // position; the next streaming sync follows normally.
-                  if (approvalHoldReleasePending && !nextOptions.forceBottom) {
+                  if (approvalHoldReleasePending && !forceBottom) {
                     approvalHoldReleasePending = false;
-                  } else if (nextOptions.forceBottom || reducedMotionQuery.matches) {
+                  } else if (forceBottom || reducedMotionQuery.matches) {
                     approvalHoldReleasePending = false;
                     snapThreadToBottom({ behavior: 'auto' });
-                  } else {
+                    if (landing) beginLandingHold();
+                  } else if (!repinForLandingHold()) {
                     startLiveStreamingFollow();
                   }
                 } else if (pendingApprovalInView) {
@@ -264,6 +365,7 @@
     }
 
     function disposeViewportScheduling() {
+      endLandingHold();
       tailCushion?.dispose();
       cancelViewportFrame(viewportSyncFrameHandle);
       viewportSyncFrameHandle = 0;
@@ -285,6 +387,7 @@
       scheduleMessageViewportSync,
       schedulePostLayoutViewportSync,
       disposeViewportScheduling,
+      noteReaderIntent() { tailCushion?.noteReaderIntent(); endLandingHold(); },
       tailCushion,
     };
   }

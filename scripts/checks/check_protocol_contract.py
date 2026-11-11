@@ -31,6 +31,7 @@ REQUIRED_CONSTANTS = {
     "WORKSPACE_TEST_CANCEL_METHOD": "workspace_test.cancel",
     "WORKSPACE_TEST_CLEANUP_METHOD": "workspace_test.cleanup",
     "WORKSPACE_TEST_CLOSE_METHOD": "workspace_test.close",
+    "ROUTE_TOKEN_HEADER": "X-Jenny-Route-Token",
 }
 
 

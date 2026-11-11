@@ -61,7 +61,6 @@ def _decide(engine: _ToolLoopEngine, runtime: LoopRuntime):
     return _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(), _edit_file_descriptor())),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=1,
         extra_snapshot_tools=("edit_file",),
     ).build_chat_decision(
@@ -181,6 +180,62 @@ def test_text_call_on_a_tools_leg_is_recovered_and_dispatched(caplog) -> None:
         if record.__dict__.get("event") == "ai.router.text_tool_call_recovered"
     ]
     assert record.__dict__["data"] == {"tools": ["grep_search"], "shape": "qwen_xml"}
+
+
+# Trimmed from the 2026-11-03 primary-chat leak: the command sandbox's allowlist had not
+# registered sessions_list, so it was in neither the request nor the turn contract.
+_UNOFFERED_LEAK = (
+    "Let me find the most recent jenny session.\n\n<tool_call>\n<function=sessions_list>\n"
+    "<parameter=scope>\nrecent\n</parameter>\n</function>\n</tool_call>"
+)
+
+
+def test_text_call_to_a_jenny_tool_this_turn_lacks_is_answered_not_left_as_markup(monkeypatch) -> None:
+    from sidecar.ai.tools import text_tool_calls
+
+    # The sandbox allowlist drops the tool before the contract is built: simulate that contract.
+    monkeypatch.setattr(text_tool_calls, "contract_tool_names", lambda _contract: ("grep_search",))
+    mcp_client = _StubMCPClient((_grep_search_descriptor(),))
+    runtime = LoopRuntime(
+        emit=lambda _event: None, request_id="req_text_call_unoffered", max_iterations=4
+    )
+
+    decision, engine = _decide_text_call(
+        [
+            _ToolPlan(result=GenerationResult(content=_UNOFFERED_LEAK, finish_reason="stop")),
+            _ToolPlan(
+                result=GenerationResult(content="I can't list chats right now.", finish_reason="stop")
+            ),
+        ],
+        runtime,
+        mcp_client,
+    )
+
+    assert mcp_client.executions == [], "an unoffered tool never executes"
+    assert engine.call_count == 2, "the model reads why instead of the turn ending on the markup"
+    assert decision.response_text.endswith("I can't list chats right now.")
+    _assert_no_markup(decision.response_text)
+    tool_rows = [m for m in engine.requests[1]["messages"] if m.get("role") == "tool"]
+    assert len(tool_rows) == 1
+    assert "sessions_list" in tool_rows[0]["content"]
+    assert "error_class: unavailable" in tool_rows[0]["content"]
+
+
+def test_text_call_to_a_name_jenny_never_ships_is_still_left_alone() -> None:
+    mcp_client = _StubMCPClient((_grep_search_descriptor(),))
+    runtime = LoopRuntime(
+        emit=lambda _event: None, request_id="req_text_call_foreign", max_iterations=4
+    )
+    foreign = _UNOFFERED_LEAK.replace("sessions_list", "web_browse_everything")
+
+    _decision, engine = _decide_text_call(
+        [_ToolPlan(result=GenerationResult(content=foreign, finish_reason="stop"))],
+        runtime,
+        mcp_client,
+    )
+
+    assert engine.call_count == 1
+    assert mcp_client.executions == []
 
 
 def test_truncated_text_call_is_not_recovered() -> None:

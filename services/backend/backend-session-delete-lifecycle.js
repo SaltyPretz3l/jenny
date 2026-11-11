@@ -24,6 +24,13 @@ async function purgeChatMemories(service, sessionId) {
   }
 }
 
+// Row 114: never fails the delete; a page left behind would still close on its idle timer.
+async function closeBrowserPage(service, sessionId) {
+  try {
+    await service.toolExecutor?.browserUse?.closeSession?.(sessionId);
+  } catch (_error) { /* the chat is already gone */ }
+}
+
 async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
   const normalizedSessionId = String(sessionId || '').trim();
   const onlyIfIdle = options?.onlyIfIdle === true;
@@ -113,6 +120,7 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
       await purgeChatMemories(service, normalizedSessionId);
       // Row 58 W4: the derived conversation index; not awaited, never fails the delete.
       void purgeConversationIndex(service, normalizedSessionId);
+      void closeBrowserPage(service, normalizedSessionId);
     }
     return committed.result;
   } catch (error) {

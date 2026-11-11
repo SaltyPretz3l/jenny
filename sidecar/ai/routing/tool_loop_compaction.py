@@ -8,7 +8,12 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
-from sidecar.ai.context.compaction import MICRO_FIRST_CODE, compact_context, compaction_policy
+from sidecar.ai.context.compaction import (
+    MICRO_FIRST_CODE,
+    compact_context,
+    compaction_policy,
+    trim_browser_outlines,
+)
 from sidecar.ai.context.compaction_diagnostics import compaction_window_shape
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
 from sidecar.ai.context.token_budget import (
@@ -165,6 +170,30 @@ def _measured_context(loop: Any, tokens_now: int, num_tools: int) -> tuple[int, 
     return (total, threshold) if threshold > 0 else None
 
 
+def _browser_outline_budget_chars(tracker: Any, num_tools: int) -> int:
+    """Live browser outlines may hold ~30% of the compaction threshold before older ones stub."""
+    budget = getattr(tracker, "budget", None)
+    if budget is None:
+        return 40_000
+    return max(12_000, int(budget.auto_compact_threshold(num_tools) * 0.30 * 3.5))
+
+
+def _trim_browser_outlines(loop: Any, tracker: Any, num_tools: int) -> None:
+    """Batch-stub old browser outlines; a failure here never breaks the loop."""
+    try:
+        policy = compaction_policy(getattr(loop.kernel._config, "feature_flags", None))
+        stubbed = trim_browser_outlines(
+            loop.working_messages,
+            budget_chars=_browser_outline_budget_chars(tracker, num_tools),
+            recall_hint=bool(policy and policy.recall_hint),
+        )
+        if stubbed:
+            # Rows changed in place, so the provider measurement's prefix estimate is stale.
+            loop.request_measurement = None
+    except Exception:  # noqa: BLE001 - outline trimming must never break the tool loop
+        logger.warning("Browser outline trimming failed; continuing.", exc_info=True)
+
+
 def compact_tool_loop_context(
     loop: Any,
     *,
@@ -173,6 +202,7 @@ def compact_tool_loop_context(
 ) -> int:
     """Compact an expanded tool-loop history and return its current token count."""
     tracker = loop.budget_tracker
+    _trim_browser_outlines(loop, tracker, num_tools)
     preview_tokens = loop.runtime._preview_context_tokens(loop.working_messages)
     budget = getattr(tracker, "budget", None)
     backend = getattr(tracker, "backend", None)

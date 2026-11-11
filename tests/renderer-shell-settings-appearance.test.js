@@ -49,7 +49,7 @@ test('renderer shell applies saved appearance preferences on boot', async (t) =>
   assert.equal(root.dataset.timelineStyle, undefined);
 });
 
-test('logs view inherits palette and typography changes across light and signal themes', async (t) => {
+test('logs view inherits palette and typography changes across light and dark themes', async (t) => {
   const paperApp = await loadRendererTestApp(t, {
     appearance: {
       paletteId: 'paper',
@@ -57,42 +57,42 @@ test('logs view inherits palette and typography changes across light and signal 
       motionId: 'calm',
     },
   });
-  const signalApp = await loadRendererTestApp(t, {
+  const darkApp = await loadRendererTestApp(t, {
     appearance: {
-      paletteId: 'signal',
+      paletteId: 'darkroom',
       typographyId: 'technical',
       motionId: 'expressive',
     },
   });
 
   const paperWindow = paperApp.window;
-  const signalWindow = signalApp.window;
+  const darkWindow = darkApp.window;
   const paperDoc = paperWindow.document;
-  const signalDoc = signalWindow.document;
+  const darkDoc = darkWindow.document;
 
   paperDoc.getElementById('logsTopRailTab').click();
-  signalDoc.getElementById('logsTopRailTab').click();
+  darkDoc.getElementById('logsTopRailTab').click();
   await waitForUi(paperWindow, 30);
-  await waitForUi(signalWindow, 30);
+  await waitForUi(darkWindow, 30);
 
   assert.equal(paperDoc.documentElement.dataset.palette, 'paper');
-  assert.equal(signalDoc.documentElement.dataset.palette, 'signal');
+  assert.equal(darkDoc.documentElement.dataset.palette, 'darkroom');
   assert.equal(paperDoc.documentElement.dataset.typography, 'editorial');
-  assert.equal(signalDoc.documentElement.dataset.typography, 'technical');
+  assert.equal(darkDoc.documentElement.dataset.typography, 'technical');
   assert.ok(paperDoc.querySelector('.diagnostics-header'));
-  assert.ok(signalDoc.querySelector('.diagnostics-header'));
+  assert.ok(darkDoc.querySelector('.diagnostics-header'));
   assert.ok(paperDoc.querySelector('.diagnostics-toolbar'));
-  assert.ok(signalDoc.querySelector('.diagnostics-toolbar'));
+  assert.ok(darkDoc.querySelector('.diagnostics-toolbar'));
   assert.ok(paperDoc.getElementById('logResultsLabel'));
-  assert.ok(signalDoc.getElementById('logResultsLabel'));
+  assert.ok(darkDoc.getElementById('logResultsLabel'));
   assert.match(paperDoc.querySelector('.diagnostics-header h2')?.textContent || '', /Diagnostics/i);
-  assert.match(signalDoc.querySelector('.diagnostics-header h2')?.textContent || '', /Diagnostics/i);
+  assert.match(darkDoc.querySelector('.diagnostics-header h2')?.textContent || '', /Diagnostics/i);
 });
 
 test('settings shell omits the masthead and the retired appearance preview strip', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     appearance: {
-      paletteId: 'signal',
+      paletteId: 'darkroom',
       typographyId: 'technical',
     },
   });
@@ -106,7 +106,7 @@ test('settings shell omits the masthead and the retired appearance preview strip
   assert.equal(chipRow, null);
   // Owner, 2026-10-03: the whole app previews a theme live; the strip is gone.
   assert.equal(appearanceProof, null);
-  assert.equal(window.document.documentElement.dataset.palette, 'signal');
+  assert.equal(window.document.documentElement.dataset.palette, 'darkroom');
 });
 
 test('appearance controls update shell appearance without persisting session runtime preferences', async (t) => {
@@ -117,7 +117,7 @@ test('appearance controls update shell appearance without persisting session run
   const holoList = window.document.getElementById('appearanceHoloList');
   const root = window.document.documentElement;
 
-  paletteSelect.value = 'signal';
+  paletteSelect.value = 'darkroom';
   paletteSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   typographySelect.value = 'technical';
   typographySelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -128,7 +128,7 @@ test('appearance controls update shell appearance without persisting session run
   // The Appearance store serializes its writes; each settles before the next.
   await waitForUi(window, 20);
 
-  assert.equal(root.dataset.palette, 'signal');
+  assert.equal(root.dataset.palette, 'darkroom');
   assert.equal(root.dataset.typography, 'technical');
   assert.equal(root.dataset.motion, 'standard');
   assert.equal(root.dataset.composerHolo, 'off');
@@ -136,7 +136,7 @@ test('appearance controls update shell appearance without persisting session run
   assert.equal(root.dataset.threadStyle, 'subtle');
   assert.deepEqual(shell.__state.setPreferenceCalls, []);
   assert.deepEqual(JSON.parse(window.localStorage.getItem('jenny.appearance.v2')), {
-    paletteId: 'signal',
+    paletteId: 'darkroom',
     typographyId: 'technical',
     surfaceEffectId: 'none',
     composerHoloId: 'off',
@@ -317,7 +317,7 @@ test('appearance bundle selector applies Lexicon and falls back to Custom after 
     typeScaleVersion: 3,
   });
 
-  paletteSelect.value = 'signal';
+  paletteSelect.value = 'darkroom';
   paletteSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 30);
 
@@ -391,7 +391,7 @@ test('UIUX-028(d): switching theme bundles preserves a Large text size instead o
 test('appearance reset restores the default shell appearance', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     appearance: {
-      paletteId: 'signal',
+      paletteId: 'darkroom',
       typographyId: 'technical',
       motionId: 'expressive',
       threadStyleId: 'bold-graph',

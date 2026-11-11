@@ -414,7 +414,9 @@ test('every Monaco create site opts in to the mono token and unregisters on disp
   const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 
   const artifactSource = read('renderer/features/renderer-monaco-editor-utils.js');
-  const ideSource = read('renderer/features/renderer-ide-editor-host.js');
+  // The IDE host's create sites live in the host and its diff-pane and group-editor siblings.
+  const ideSource = ['renderer-ide-editor-host', 'renderer-ide-editor-host-diff-pane', 'renderer-ide-editor-host-group-editors']
+    .map((name) => read(`renderer/features/${name}.js`)).join('\n');
 
   const createCalls = [
     ...artifactSource.matchAll(/editor\.create(?:DiffEditor)?\(/g),

@@ -19,6 +19,7 @@
     appZoomPercent: jt('settings.appearance.appZoomUpdateFailed', 'App Zoom Update Failed'),
     'featureFlags.text_spellcheck': jt('settings.editor.spellCheckUpdateFailed', 'Spell Check Update Failed'),
     'featureFlags.primary_digests': jt('settings.jennyChat.digestsUpdateFailed', 'Digest Setting Update Failed'),
+    'featureFlags.change_pictures': jt('settings.changePictures.updateFailed', 'Picture Setting Update Failed'),
     digestQuietStart: jt('settings.jennyChat.quietHoursUpdateFailed', 'Quiet Hours Update Failed'),
     digestQuietEnd: jt('settings.jennyChat.quietHoursUpdateFailed', 'Quiet Hours Update Failed'),
     'webSearch.provider': jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'),

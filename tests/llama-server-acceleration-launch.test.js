@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const {
+  readEmbeddedMtpLayers,
   resolveLaunchAcceleration,
   shouldRetryWithoutAcceleration,
 } = require('../services/main/llama-server-acceleration-launch');
@@ -475,4 +476,28 @@ test('controller does not retry readiness_aborted failures and records startup f
   const failedMark = harness.audits.find((entry) => entry.event === 'llama-server-failed');
   assert.ok(failedMark);
   assert.equal(failedMark.fields.message, 'readiness_aborted');
+});
+
+test('readEmbeddedMtpLayers reads the architecture-scoped nextn count from the model header', () => {
+  const header = (kv) => () => ({ architecture: 'qwen35', kv });
+  assert.equal(readEmbeddedMtpLayers('m.gguf', { readHeader: header({ 'qwen35.nextn_predict_layers': 1 }) }), 1);
+  assert.equal(readEmbeddedMtpLayers('m.gguf', { readHeader: header({}) }), 0, 'no key: no head');
+  assert.equal(readEmbeddedMtpLayers('m.gguf', { readHeader: header({ 'qwen35.nextn_predict_layers': 'x' }) }), 0);
+  assert.equal(readEmbeddedMtpLayers('m.gguf', { readHeader: () => { throw new Error('truncated'); } }), null);
+  assert.equal(readEmbeddedMtpLayers('', { readHeader: header({}) }), null);
+});
+
+test('resolveLaunchAcceleration hands the resolver the embedded head count from the model header', () => {
+  const fakes = createResolutionFakes();
+  const reads = [];
+  resolveLaunchAcceleration({
+    featureFlags: { llama_server_acceleration: true },
+    profile: { modelTag: 'qwen3.8-27b-x', extraArgs: [] },
+    shellAcceleration: { mode: 'mtp' },
+    binaryPath: BINARY,
+    ...fakes.impls,
+    readEmbeddedMtpLayersImpl: (modelPath) => { reads.push(modelPath); return 1; },
+  });
+  assert.deepEqual(reads, [path.join('G:', 'models', 'resolved', 'model.gguf')]);
+  assert.equal(fakes.calls.resolver[0].embeddedMtpLayers, 1);
 });

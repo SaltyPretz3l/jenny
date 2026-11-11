@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  STORE_SCHEMA_VERSION,
   migrateStorePayload,
   repairSessionForV22,
 } = require('../services/backend/session-store-migrations');
@@ -46,7 +47,7 @@ test('v21 to v22 initializes failure retry reasoning snapshots without touching 
     sessions: { s1: { id: 's1', messages, turn_events: turnEvents } },
   });
 
-  assert.equal(result.schema_version, 26);
+  assert.equal(result.schema_version, STORE_SCHEMA_VERSION);
   assert.deepEqual(result.sessions.s1.failure_retry_reasoning_snapshots, {});
   assert.deepEqual(result.sessions.s1.messages, messages);
   assert.deepEqual(result.sessions.s1.turn_events, turnEvents);

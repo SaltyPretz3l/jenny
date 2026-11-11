@@ -10,9 +10,9 @@ and approval gating behave exactly as they do with a live model.
 
 Engine type: ``replay``. The script is selected via
 ``RuntimeConfig.replay_script_path`` (JSON, see ``DEFAULT_SCRIPT`` for the
-shape) and falls back to a built-in scenario that streams reasoning, calls
-``mermaid_generate`` when that tool is offered, and follows up after the tool
-result. Which script entry plays is derived statelessly from the message
+shape) and falls back to a built-in scenario that streams reasoning and a reply
+holding a fenced mermaid block, which the chat draws as a chart. Which script
+entry plays is derived statelessly from the message
 history (count of user/tool messages), so replays stay deterministic across
 multi-turn sessions and tool-loop continuations without request-local state
 leaking across turns.
@@ -44,8 +44,8 @@ _REASONING_CHUNK_CHARS = 24
 _DEFAULT_MERMAID_SOURCE = (
     "flowchart TD\n"
     "  A[Agent sends prompt] --> B[Replay engine streams]\n"
-    "  B --> C{Tool loop}\n"
-    "  C -->|mermaid_generate| D[Inline chart]\n"
+    "  B --> C[Fenced mermaid block]\n"
+    "  C --> D[Inline chart]\n"
     "  D --> E[Timeline settles]"
 )
 
@@ -54,27 +54,14 @@ DEFAULT_SCRIPT: Dict[str, Any] = {
     "calls": [
         {
             "reasoning": (
-                "Planning this turn: stream a short reply first, call the "
-                "mermaid tool to exercise the combined tool card, then "
-                "summarize once the result lands."
+                "Planning this turn: stream a short reply with a fenced "
+                "mermaid block so the chat draws the chart."
             ),
-            "text": "Sure - let me sketch that flow as a quick chart.",
-            "tool_calls": [
-                {
-                    "tool_id": "mermaid_generate",
-                    "arguments": {
-                        "prompt": _DEFAULT_MERMAID_SOURCE,
-                        "diagram_type": "flowchart",
-                        "title": "Replay smoke flow",
-                    },
-                }
-            ],
-        },
-        {
             "text": (
-                "Here's the chart. This deterministic replay turn exercised "
-                "streaming deltas, the tool loop, and the settled timeline "
-                "without any model inference."
+                "Sure - here is a quick sketch of that flow.\n\n"
+                f"```mermaid\n{_DEFAULT_MERMAID_SOURCE}\n```\n\n"
+                "This deterministic replay turn exercised streaming deltas "
+                "and the settled timeline without any model inference."
             ),
         },
     ],

@@ -206,9 +206,9 @@ test('Tune while Ollama\'s tags are unreadable leaves Ollama unknown and keeps t
     });
     t.after(() => drawer.dispose());
     await drawer.open(OWNER_TAG, null, options);
-    return dom.window.document.querySelector('.model-tuning-engine .model-tuning-section-hint').textContent;
+    return dom.window.document.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent;
   };
-  assert.equal(await hint(whileDown), "Ollama or Jenny's own llama-server. llama-server can speed up verified models with multi-token prediction.");
+  assert.equal(await hint(whileDown), "Ollama, or Jenny's own llama-server.");
   assert.equal(await hint(whileUp), "Ollama doesn't have this model, so it runs on Jenny's own llama-server.");
 });
 

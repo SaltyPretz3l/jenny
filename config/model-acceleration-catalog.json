@@ -30,8 +30,8 @@
       "mtpShape": "separate",
       "drafterPattern": "mtp-*.gguf",
       "ngram": true,
-      "vramHeadroomMb": 2048,
-      "evidence": "unsloth Qwen3.8-27B-GGUF ships mtp-Qwen3.8-27B-Q4_0.gguf; on an RTX 5090 (llama.cpp b11513, --spec-type draft-mtp -md) UD-Q6_K drafted at 94% acceptance, 132 tok/s (2026-10-14 gate). A GGUF with an embedded head and no drafter file falls back to ngram"
+      "vramHeadroomMb": 3072,
+      "evidence": "unsloth Qwen3.8-27B-GGUF ships mtp-Qwen3.8-27B-Q4_0.gguf; on an RTX 5090 (llama.cpp b11513, --spec-type draft-mtp -md) UD-Q6_K drafted at 94% acceptance, 132 tok/s (2026-10-14 gate). With no drafter file, a GGUF whose header declares qwen35.nextn_predict_layers drafts with its embedded head; that draft context measured ~2.4 GB at 194K (KV f16, compute, MTP layer), hence 3072 headroom (2026-11-04)"
     },
     {
       "family": "qwen36",

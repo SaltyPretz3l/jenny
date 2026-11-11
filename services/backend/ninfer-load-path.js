@@ -1,7 +1,7 @@
 'use strict';
 
 // Load-path helpers for the managed NInfer runtime (row 54), kept out of
-// backend-runtime.js so loadModel/unloadModel grow by branches, not bodies.
+// backend-model-load.js (loadModel) and backend-runtime.js (unloadModel) so they grow by branches, not bodies.
 
 const { AI_ERROR_CODES } = require('./error-codes');
 const { managedModelKey } = require('../shell-config-engines');

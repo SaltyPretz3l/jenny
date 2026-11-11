@@ -30,7 +30,7 @@ async function fixture(t, { enabled = false, root = null, getBackend = () => nul
     state: { toolsWorkspaceRoot: workspace, commandSandbox: { enabled } },
     getState() { return this.state; },
     updateCommandSandbox(patch) {
-      this.state = { ...this.state, commandSandbox: { enabled: patch.enabled } };
+      this.state = { ...this.state, commandSandbox: { ...this.state.commandSandbox, ...patch } };
       this.emit('changed');
     },
     setWorkspaceRoot(value) {
@@ -55,6 +55,9 @@ function fakeLauncher({ detectError = null, cleanupError = null } = {}) {
     async listOwned() { calls.push(['listOwned']); return []; },
     async build() { calls.push(['build']); return 'sha256:' + 'a'.repeat(64); },
     async ensureVolume() { calls.push(['ensureVolume']); },
+    async ensureMirrorVolume(mirrorId) { calls.push(['ensureMirrorVolume', mirrorId]); return { name: 'jenny-mirror-' + mirrorId, created: false }; },
+    async listMirrorVolumes() { calls.push(['listMirrorVolumes']); return []; },
+    async removeMirrorVolume(mirrorId) { calls.push(['removeMirrorVolume', mirrorId]); },
     async create() { calls.push(['create']); return 'c'.repeat(64); },
     async stopAndRemove(id) {
       calls.push(['stopAndRemove', id]);

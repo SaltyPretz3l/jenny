@@ -78,7 +78,7 @@ def _turn(plans: list[_ToolPlan], **options: Any) -> tuple[Any, list[Any], Any]:
     """Use the existing router/engine harness through build_chat_decision."""
     engine = _ToolLoopEngine(plans)
     router = _build_router(
-        engine=engine, tools_mermaid_enabled=True,
+        engine=engine,
         max_tools_per_turn=options.get("tool_limit", 64),
         mcp_client=_StubMCPClient((
             _mermaid_descriptor(), _descriptor("read_file", side_effecting=False),

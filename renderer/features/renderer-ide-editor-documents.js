@@ -187,6 +187,66 @@
       return doc;
     }
 
+    // Follow Jenny (row 121): a read-only text document that is never a file. It is keyed by a
+    // diff:// tab id, has no model URI (so Problems and the watcher never see it) and is never
+    // dirty. Its text is "\n"-only so a character offset means the same here and in the caller.
+    function openDraft({ id, languagePath = '', text = '', lineNumbers = null, monacoApi = null } = {}) {
+      const normalizedId = String(id || '');
+      const value = String(text ?? '');
+      let doc = getDoc(normalizedId);
+      if (!doc) {
+        doc = {
+          kind: 'file', draft: true, model: null, viewState: null, savedAltVersionId: 0, buffer: value, savedBuffer: value,
+          mtimeMs: 0, eol: 'lf', dirty: false, largeFile: false, languageOverride: null, indent: null,
+        };
+        docs.set(normalizedId, doc);
+      }
+      if (doc.draft !== true) return null;
+      doc.lineNumbers = typeof lineNumbers === 'function' ? lineNumbers : null;
+      if (monacoApi && !doc.model) {
+        doc.model = monacoApi.editor.createModel(value, languageForPath(languagePath));
+        const lf = monacoApi.editor.EndOfLineSequence?.LF;
+        if (lf != null) doc.model.setEOL?.(lf);
+        doc.buffer = null;
+        doc.savedBuffer = null;
+        doc.savedAltVersionId = doc.model.getAlternativeVersionId();
+      } else if (monacoApi && languagePath) { // a draft named after its text began
+        monacoApi.editor.setModelLanguage?.(doc.model, languageForPath(languagePath));
+      }
+      return doc;
+    }
+
+    // Replaces a draft's text. `splice` ({ start, end, text } against the current text) keeps
+    // the write to the changed characters, so an arriving file grows without a re-tokenize.
+    function writeDraft(id, text, splice = null) {
+      const doc = getDoc(id);
+      if (!doc || doc.draft !== true) return false;
+      const value = String(text ?? '');
+      if (!doc.model) {
+        doc.buffer = value;
+        doc.savedBuffer = value;
+        return true;
+      }
+      runApplying(() => {
+        const model = doc.model;
+        const fits = splice && typeof model.applyEdits === 'function' && typeof model.getPositionAt === 'function'
+          && model.getValueLength() - (splice.end - splice.start) + splice.text.length === value.length;
+        if (fits) {
+          const from = model.getPositionAt(splice.start);
+          const to = model.getPositionAt(splice.end);
+          model.applyEdits([{
+            range: { startLineNumber: from.lineNumber, startColumn: from.column, endLineNumber: to.lineNumber, endColumn: to.column },
+            text: splice.text,
+            forceMoveMarkers: true,
+          }]);
+        } else if (model.getValue() !== value) {
+          model.setValue(value);
+        }
+        doc.savedAltVersionId = model.getAlternativeVersionId();
+      });
+      return true;
+    }
+
     function getEol(path) {
       return getDoc(path)?.eol || 'lf';
     }
@@ -239,6 +299,7 @@
       if (!doc) {
         return '';
       }
+      if (doc.draft === true) return 'draft'; // never a file to save, search, blame or restore
       return doc.kind === 'diff' || doc.kind === 'image' || doc.kind === 'document'
         ? doc.kind
         : 'file';
@@ -369,6 +430,7 @@
       languageForPath,
       markSaved,
       openDiff,
+      openDraft,
       openFile,
       setEol,
       setIndent,
@@ -376,6 +438,7 @@
       syncDirty,
       syncIndent,
       withEol,
+      writeDraft,
     };
   }
 

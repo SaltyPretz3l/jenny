@@ -458,4 +458,8 @@ function runImageGeneration(options = {}) {
   });
 }
 
-module.exports = { assertOutputParent, parseSdCliProgressLine, classifyPhaseLine, createLineSplitter, runImageGeneration };
+module.exports = {
+  assertOutputParent, parseSdCliProgressLine, classifyPhaseLine, createLineSplitter, runImageGeneration,
+  // Shared with the ComfyUI process owner (row 127).
+  isInside, sanitizeLine,
+};

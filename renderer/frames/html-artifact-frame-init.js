@@ -34,9 +34,15 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  function initHtmlArtifactFrame(requestId) {
+  function initHtmlArtifactFrame(requestId, options) {
     var settled = false;
     var resizeObserver = null;
+    var restoreY = options && typeof options.restoreScrollY === 'number' && options.restoreScrollY > 0
+      ? options.restoreScrollY : 0;
+    var restoredAt = 0;
+    var userScrolled = false;
+    var scrollTimer = 0;
+    var latestY = 0;
 
     function postToParent(payload) {
       try {
@@ -70,18 +76,40 @@
       }
     }
 
+    function currentY() {
+      return Math.round(window.scrollY || window.pageYOffset || 0);
+    }
+
+    function flushScroll() {
+      scrollTimer = 0;
+      postToParent({ type: 'scroll', requestId: requestId, y: latestY });
+    }
+
     function settleRendered() {
       if (settled) {
         return;
       }
       settled = true;
       observeHeight();
+      if (restoreY) {
+        window.scrollTo(0, restoreY);
+        restoredAt = currentY();
+      }
       postToParent({
         type: 'rendered',
         requestId: requestId,
         ok: true,
         height: measureHeight(),
       });
+      window.addEventListener('scroll', function () {
+        latestY = currentY();
+        if (restoreY && latestY !== restoredAt) {
+          userScrolled = true;
+        }
+        if (!scrollTimer) {
+          scrollTimer = setTimeout(flushScroll, 120);
+        }
+      }, { passive: true });
     }
 
     function settleError(message) {
@@ -104,7 +132,29 @@
       var reason = event && event.reason;
       settleError((reason && reason.message) || 'Artifact promise rejection.');
     });
+    document.addEventListener('click', function (event) {
+      if (event.defaultPrevented) {
+        return;
+      }
+      var target = event.target;
+      var link = target && typeof target.closest === 'function' ? target.closest('a,area') : null;
+      var href = link && (link.getAttribute('href') || link.getAttribute('xlink:href'));
+      if (!href || /^\s*(?:#|javascript:)/i.test(href)) {
+        return;
+      }
+      event.preventDefault();
+      postToParent({ type: 'link-blocked', requestId: requestId });
+    });
+    if (restoreY) {
+      window.addEventListener('load', function () {
+        if (!userScrolled) {
+          window.scrollTo(0, restoreY);
+        }
+      });
+    }
     window.addEventListener('beforeunload', function () {
+      clearTimeout(scrollTimer);
+      scrollTimer = 0;
       if (resizeObserver) {
         resizeObserver.disconnect();
         resizeObserver = null;

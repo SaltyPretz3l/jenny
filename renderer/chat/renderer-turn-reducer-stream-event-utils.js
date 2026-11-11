@@ -56,6 +56,15 @@
       throw new Error('renderer-turn-reducer-stream-event-utils: required deps missing');
     }
 
+    function approvalPresentations(payload) {
+      const copies = {};
+      for (const key of toolCallUtils.APPROVAL_PRESENTATION_KEYS || []) {
+        const value = payload && payload[key];
+        if (value && typeof value === 'object' && !Array.isArray(value)) copies[key] = deepCloneJsonValue(value);
+      }
+      return copies;
+    }
+
     function buildTurnEventFromStreamPayload(payload, context) {
       const settings = context && typeof context === 'object' ? context : {};
       const turnId = normalizeId(settings.turn_id)
@@ -317,18 +326,7 @@
               : {}),
             ...(String(payload && payload.reason || '').trim() ? { reason: String(payload.reason).trim() } : {}),
             ...(payload && (payload.oneOffOnly === true || payload.one_off_only === true) ? { one_off_only: true } : {}),
-            // A message to another chat is approved against its full body (cp5b-2), never the clipped input.
-            ...(payload && payload.session_message_approval && typeof payload.session_message_approval === 'object' && !Array.isArray(payload.session_message_approval)
-              ? { session_message_approval: deepCloneJsonValue(payload.session_message_approval) } : {}),
-            // A stop names its target from the app's directory (row 69 Q11), never from the input.
-            ...(payload && payload.session_stop_approval && typeof payload.session_stop_approval === 'object' && !Array.isArray(payload.session_stop_approval)
-              ? { session_stop_approval: deepCloneJsonValue(payload.session_stop_approval) } : {}),
-            // A settings change shows the app's own reading of it (row 88), never the model's input.
-            ...(payload && payload.settings_change_approval && typeof payload.settings_change_approval === 'object' && !Array.isArray(payload.settings_change_approval)
-              ? { settings_change_approval: deepCloneJsonValue(payload.settings_change_approval) } : {}),
-            // A scheduled-check change likewise (row 85).
-            ...(payload && payload.schedule_change_approval && typeof payload.schedule_change_approval === 'object' && !Array.isArray(payload.schedule_change_approval)
-              ? { schedule_change_approval: deepCloneJsonValue(payload.schedule_change_approval) } : {}),
+            ...approvalPresentations(payload),
             // The approval can beat its tool_use event to the reducer; carrying
             // the tool name, summary and input here lets the gap row name the
             // tool and quote the command in that race instead of rendering

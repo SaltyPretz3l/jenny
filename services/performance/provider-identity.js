@@ -4,10 +4,11 @@ const { isReadOnlyPerformanceTelemetry } = require('../shell-config-performance'
 /* services/performance/provider-identity.js - Electron decides which provider
  * serves a request; the sidecar only carries the label (row 59 checkpoint 6).
  *
- * `live_capable` is true only for the managed NInfer whose runtime label names
- * v0.9.1: the one build whose `timings_per_token` / `return_progress` options are
- * pinned. A user-run server, another managed server or an unknown version never
- * receives those options. Also builds the additive `chat.send`
+ * `live_capable` is true for the managed NInfer whose runtime label names v0.9.1
+ * (the one NInfer build whose `timings_per_token` / `return_progress` options are
+ * pinned) and for Jenny's own ready llama-server (2026-11-04). A user-run server,
+ * a reused foreign llama-server or an unknown NInfer version never receives
+ * those options. Also builds the additive `chat.send`
  * `inference_performance` field (omitted when the protocol is not negotiated).
  */
 
@@ -29,7 +30,13 @@ function resolveProviderIdentity({ service, apiUrl, ninferManager, engineType } 
       const manager = ninferManager || owner.manager;
       return { provider_kind: 'ninfer', live_capable: runtimeIsLiveCapable(manager?.getStatus?.() || owner.status) };
     }
-    if (owner?.kind === 'llama-server') return { provider_kind: 'llama-server', live_capable: false };
+    if (owner?.kind === 'llama-server') {
+      // Jenny's own server streams cumulative `timings` per token and
+      // `prompt_progress` (bundled b10749 checked 2026-11-04); a foreign server
+      // reused on the port is an unknown build.
+      const status = owner.manager?.getStatus?.() || owner.status;
+      return { provider_kind: 'llama-server', live_capable: status?.state === 'ready' && status?.reused !== true };
+    }
   } catch (_error) { /* an unreadable manager is an unknown provider */ }
   return { provider_kind: 'other', live_capable: false };
 }

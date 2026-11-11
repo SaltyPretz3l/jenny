@@ -149,7 +149,7 @@ test('palette pin restore deletes dataset.palette when no value existed before o
 
   gallery.open();
   const paletteSelect = getGroupByLabel(env.document, 'Palette').querySelector('select');
-  paletteSelect.value = 'signal';
+  paletteSelect.value = 'pewter';
   fire(paletteSelect, 'change');
   gallery.close();
 
@@ -164,7 +164,7 @@ test('palette options fall back to the 12 hardcoded ids when appearanceUtils is 
   gallery.open();
   const values = Array.from(getGroupByLabel(env.document, 'Palette').querySelector('select').options).map((o) => o.value);
   assert.deepEqual(values, [
-    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'paper', 'signal',
+    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'paper',
     'woolly', 'lexicon', 'rocko', 'jenny-day', 'jenny-night',
   ]);
 });

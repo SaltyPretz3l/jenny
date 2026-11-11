@@ -281,6 +281,9 @@ class ApprovalPlan:
     always_on_rendered: str | None = None
     change_set_id: str = ""
     quota_state_json: bytes | None = None
+    # Set on resume only (excluded from ``approval_plan_hash``): the app refused the approved call
+    # before any card, so it never runs and this text is its result.
+    app_refusal: str = ""
 
     def frozen_input_for_call(self, call_id: str) -> FrozenExecutionInputs | None:
         normalized = str(call_id or "").strip()

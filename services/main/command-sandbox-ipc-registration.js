@@ -16,6 +16,7 @@ function registerCommandSandboxIpc(ipcMain, { service, authorization }) {
       return service.getState();
     }),
     'commandSandbox.setEnabled': (_event, payload) => safe(() => service.setEnabled(payload)),
+    'commandSandbox.setMode': (_event, payload) => safe(() => service.setMode(payload)),
     'commandSandbox.retry': (_event, payload) => safe(() => {
       if (payload !== undefined) throw new Error('unexpected_payload');
       return service.retry();

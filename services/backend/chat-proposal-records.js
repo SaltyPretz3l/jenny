@@ -8,6 +8,7 @@ const { PROPOSAL_ERROR_CODES: SHARED_PROPOSAL_ERROR_CODES } = require('./error-c
 // ./chat-proposal-projection; both require this module, so it loads them lazily.
 
 const crypto = require('crypto');
+const { COMMAND_SANDBOX_MODES } = require('../shell-config-command-sandbox');
 
 const PROPOSAL_LIMITS = Object.freeze({
   summary_chars: 4096,
@@ -143,6 +144,16 @@ function validRelativePath(value, { allowDot = false } = {}) {
   return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
+// A model writes the same relative path as `./src`, `src/` or `src\app.js`; read all of them as `src`
+// and `src/app.js` before the strict check. Stored records are validated strictly, without this.
+function cleanRelativeSpelling(value) {
+  if (typeof value !== 'string') return value;
+  let text = value.replace(/\\/g, '/');
+  while (text.startsWith('./')) text = text.slice(2);
+  if (text === '') return value === '' ? value : '.';
+  return text.length > 1 ? text.replace(/\/+$/, '') || text : text;
+}
+
 function checkKeys(args, allowed) {
   if (!isPlainObject(args)) return fail('invalid_args');
   for (const key of Object.keys(args)) if (!allowed.includes(key)) return fail('unknown_key');
@@ -155,8 +166,9 @@ function normalizeGitProposalInput(args) {
   if (bad) return bad;
   if (!validText(args.summary, PROPOSAL_LIMITS.summary_chars)) return fail('field_summary');
   if (!validText(args.question, PROPOSAL_LIMITS.question_chars)) return fail('field_question');
-  const { paths } = args;
-  if (!Array.isArray(paths) || paths.length < 1 || paths.length > PROPOSAL_LIMITS.paths_max) return fail('field_paths');
+  const given = args.paths;
+  if (!Array.isArray(given) || given.length < 1 || given.length > PROPOSAL_LIMITS.paths_max) return fail('field_paths');
+  const paths = given.map(cleanRelativeSpelling);
   if (!paths.every((entry) => validRelativePath(entry))) return fail('field_paths');
   if (new Set(paths).size !== paths.length) return fail('field_paths');
   return {
@@ -175,13 +187,15 @@ function normalizeCommandProposalInput(args, { shell, backend } = {}) {
     || Buffer.byteLength(command, 'utf8') > PROPOSAL_LIMITS.command_bytes) return fail('field_command');
   if (shell === 'cmd.exe' && /[\r\n]/.test(command)) return fail('multiline_cmd_exe');
   if (INVISIBLE_RE.test(command)) return fail('invisible_characters');
-  if (!validRelativePath(args.cwd, { allowDot: true })) return fail('field_cwd');
+  const cwd = cleanRelativeSpelling(args.cwd);
+  if (!validRelativePath(cwd, { allowDot: true })) return fail('field_cwd');
   if (!validText(args.purpose, PROPOSAL_LIMITS.purpose_chars)) return fail('field_purpose');
   let timeout = PROPOSAL_LIMITS.timeout_default;
   if (Object.hasOwn(args, 'timeout_seconds')) {
-    if (!isInt(args.timeout_seconds, PROPOSAL_LIMITS.timeout_min, PROPOSAL_LIMITS.timeout_max)) return fail('field_timeout_seconds');
-    if (backend === 'docker' && args.timeout_seconds > PROPOSAL_LIMITS.docker_timeout_max) return fail('timeout_sandbox_limit');
-    timeout = args.timeout_seconds;
+    // A number outside the supported range is clamped into it; only a non-number is an error.
+    if (typeof args.timeout_seconds !== 'number' || !Number.isFinite(args.timeout_seconds)) return fail('field_timeout_seconds');
+    const ceiling = backend === 'docker' ? PROPOSAL_LIMITS.docker_timeout_max : PROPOSAL_LIMITS.timeout_max;
+    timeout = Math.min(ceiling, Math.max(PROPOSAL_LIMITS.timeout_min, Math.round(args.timeout_seconds)));
   }
   let codes = [0];
   if (Object.hasOwn(args, 'expected_exit_codes')) {
@@ -207,7 +221,7 @@ function normalizeCommandProposalInput(args, { shell, backend } = {}) {
   return {
     ok: true,
     value: {
-      schema_version: 1, command, cwd: args.cwd, purpose: args.purpose,
+      schema_version: 1, command, cwd, purpose: args.purpose,
       timeout_seconds: timeout, expected_exit_codes: codes, preconditions,
     },
   };
@@ -271,7 +285,8 @@ function validBinding(binding, kind) {
   }
   return git === null && isPlainObject(command) && ['native', 'docker'].includes(command.backend)
     && ['cmd.exe', '/bin/sh'].includes(command.shell) && validRelativePath(command.cwd, { allowDot: true })
-    && isHex64(command.command_sha256);
+    && isHex64(command.command_sha256)
+    && (command.workspace === undefined || (command.backend === 'docker' && COMMAND_SANDBOX_MODES.includes(command.workspace)));
 }
 
 function validDecision(decision, kind) {

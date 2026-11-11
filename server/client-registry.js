@@ -3,13 +3,16 @@
 const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { requireBoundedInteger } = require('./resource-limits');
 
+// Hard maximum for `capacity`. Single-owner hosts keep the default of 32; a team host passes 64.
+const MAX_CLIENT_CAPACITY = 64;
+
 // A client ID is public routing metadata. The independently issued token is
 // authority, bound to a login session and kept only in that tab's memory.
 class ClientRegistry {
   constructor({ now = Date.now, capacity = 32, perDeviceCapacity = Math.min(8, capacity),
     ttlMs = 30 * 60_000, registrationGraceMs = Math.min(10_000, ttlMs) } = {}) {
     this.now = now;
-    this.capacity = requireBoundedInteger(capacity, 32);
+    this.capacity = requireBoundedInteger(capacity, MAX_CLIENT_CAPACITY);
     this.perDeviceCapacity = requireBoundedInteger(perDeviceCapacity, this.capacity);
     this.ttlMs = requireBoundedInteger(ttlMs, 30 * 60_000);
     this.registrationGraceMs = requireBoundedInteger(registrationGraceMs, this.ttlMs);
@@ -93,4 +96,4 @@ class ClientRegistry {
   }
 }
 
-module.exports = { ClientRegistry };
+module.exports = { ClientRegistry, MAX_CLIENT_CAPACITY };

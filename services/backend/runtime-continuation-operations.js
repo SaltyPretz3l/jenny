@@ -155,7 +155,9 @@ function createRuntimeContinuationOperationHandler({ context, sessionId, traceId
       copy = JSON.parse(json);
       fingerprint = createHash('sha256').update(stableJson(copy)).digest('hex');
       if (assertCurrent() !== true) return Promise.resolve(reject(id, 'runtime_continuation_attempt_unavailable'));
-    } catch (_error) { return Promise.resolve(reject(id, 'runtime_continuation_request_invalid')); }
+    } catch (error) { // A mid-reply run-mode change is the user's own action: name it so the retry card shows.
+      return Promise.resolve(reject(id, error?.code === 'run_mode_changed' ? 'run_mode_changed' : 'runtime_continuation_request_invalid'));
+    }
     if (copy.phase === 'pause_probe' && !pending) {
       if (typeof getCurrentWork !== 'function') return Promise.resolve(reject(id, 'runtime_pause_probe_unavailable'));
       if (!pauseRequested()) return Promise.resolve({ schema_version: 1, operation_id: id, status: 'continue' });

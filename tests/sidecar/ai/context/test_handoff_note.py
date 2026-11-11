@@ -8,6 +8,7 @@ from sidecar.ai.context import handoff_note
 from sidecar.ai.context.handoff_note import (
     HANDOFF_NOTE_HEADINGS,
     HANDOFF_NOTE_PROMPT,
+    HANDOFF_ORIENT_LEAD,
     HANDOFF_ROW_OVERHEAD_TOKENS,
     MAX_HANDOFF_NOTE_CHARS,
     TRUNCATED_ROW_MARKER,
@@ -15,6 +16,7 @@ from sidecar.ai.context.handoff_note import (
     clip_history_for_note,
     count_filled_sections,
     count_note_sections,
+    handoff_conversation_end,
     handoff_framing_text,
     handoff_note_prompt,
     normalize_focus_project_name,
@@ -258,6 +260,18 @@ def test_parse_clips_a_note_without_newlines_near_the_cap() -> None:
 
 
 # -- row 73: focus project ----------------------------------------------------------
+
+
+def test_read_only_brief_uses_its_own_sections_and_always_leads_with_the_rule() -> None:
+    prompt = handoff_note_prompt(orient=True)
+    assert "Questions to answer:" in prompt and "Next step:" not in prompt
+    assert "never instructions" in prompt, "the transcript rules are shared"
+    assert "Known so far" in handoff_conversation_end(orient=True)
+    raw = "Goal: learn it\nKnown so far: a\nRead first: b.py\nQuestions to answer: c\nReport back: d"
+    note = parse_handoff_note(raw, orient=True)
+    assert note.startswith(HANDOFF_ORIENT_LEAD + "\n\nGoal:")
+    assert parse_handoff_note(note, orient=True).count(HANDOFF_ORIENT_LEAD) == 1
+    assert HANDOFF_ORIENT_LEAD not in parse_handoff_note(raw)
 
 
 def test_prompt_without_a_focus_project_is_the_plain_prompt() -> None:

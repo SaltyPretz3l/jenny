@@ -14,7 +14,6 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_IO_FAILED,
     CMP_TOOL_PRECONDITION_UNMET,
 )
-from sidecar.ai.tools.argument_coercion import BoolArgumentError, extract_bool_argument
 from sidecar.ai.tools.builtins.git_ops_settings import (  # noqa: F401 - re-exported settings.
     GIT_TIMEOUT_SECONDS,
     MAX_GIT_TIMEOUT_SECONDS,
@@ -32,6 +31,13 @@ from sidecar.ai.tools.builtins.git_process import (
 )
 from sidecar.ai.tools.builtins.git_process import (
     run_owned_git_process as _run_owned_process,
+)
+from sidecar.ai.tools.builtins.git_tool_args import (
+    build_git_log_arguments,
+    parse_max_count,
+)
+from sidecar.ai.tools.builtins.git_tool_args import (
+    extract_boolean as _extract_boolean,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -136,17 +142,6 @@ def _extract_git_ref(arguments: dict[str, object], key: str) -> str | None:
             retryable=False,
         )
     return token
-
-
-def _extract_boolean(arguments: dict[str, object], key: str, *, default: bool = False) -> bool:
-    try:
-        return extract_bool_argument(arguments, key, default=default)
-    except BoolArgumentError as exc:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_INVALID_PATH,
-            message=str(exc),
-            retryable=False,
-        ) from exc
 
 
 def _resolve_git_path_filter(raw_path: str, *, cwd: Path, workspace: WorkspaceGuard) -> str:
@@ -564,34 +559,50 @@ def git_status_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
 
 
 def git_log_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str:
+    ref = _extract_git_ref(arguments, "ref")
+    raw_path_filter = _extract_optional_string(arguments, "path")
     cwd = _resolve_cwd(arguments, workspace)
-
-    raw_max_count = arguments.get("max_count", 20)
-    if isinstance(raw_max_count, int):
-        max_count = raw_max_count
-    elif isinstance(raw_max_count, str):
-        try:
-            max_count = int(raw_max_count)
-        except ValueError:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_INVALID_PATH,
-                message="tool argument 'max_count' must be an integer",
-                retryable=False,
-            ) from None
-    else:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_INVALID_PATH,
-            message="tool argument 'max_count' must be an integer",
-            retryable=False,
-        )
-    max_count = max(1, min(max_count, 100))
-
+    path_filter = None
+    if raw_path_filter is not None:
+        path_filter = _resolve_git_path_filter(raw_path_filter, cwd=cwd, workspace=workspace)
     output = _run_git(
-        ["log", "--no-show-signature", f"--max-count={max_count}", "--oneline"],
+        build_git_log_arguments(
+            max_count=parse_max_count(arguments), ref=ref, path_filter=path_filter
+        ),
         cwd=cwd,
         workspace=workspace,
     )
     return output or "(no commits found)"
+
+
+_UNTRACKED_NAMES_SHOWN = 20
+
+
+def _no_changes_text(cwd: Path, workspace: WorkspaceGuard, path_filter: str | None) -> str:
+    """Name new untracked files: git diff never shows them (row 129, B4)."""
+    try:
+        listing = _run_git_output(
+            ["ls-files", "--others", "--exclude-standard", "-z",
+             *(["--", f":(literal){path_filter}"] if path_filter is not None else [])],
+            cwd=cwd, workspace=workspace,
+        )
+    except ToolExecutionFailure:
+        return "(no changes found)"  # a slow or failed listing never fails a clean diff
+    names = [
+        name for name in listing.stdout.split("\0")
+        if name and not name.startswith(".jenny/")
+    ]
+    if listing.incomplete and names:
+        names.pop()  # the capture cut the last name short
+    if not names:
+        return "(no changes found)"
+    shown = ", ".join(names[:_UNTRACKED_NAMES_SHOWN])
+    more = f" and {len(names) - _UNTRACKED_NAMES_SHOWN} more" if (
+        len(names) > _UNTRACKED_NAMES_SHOWN) else ""
+    return (
+        f"(no changes to tracked files. {len(names)} new untracked file(s) that git diff "
+        f"does not show: {shown}{more}. Read them with read_file.)"
+    )
 
 
 def git_diff_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str:
@@ -608,7 +619,9 @@ def git_diff_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
         cwd=cwd, workspace=workspace,
     )
     if not _patch_was_cut(patch):
-        return patch.stdout.strip() or "(no changes found)"
+        if patch.stdout.strip() or staged or ref is not None:
+            return patch.stdout.strip() or "(no changes found)"
+        return _no_changes_text(cwd, workspace, path_filter)
     # Only a patch too large to return pays for the summary.
     shortstat_output = _run_git(
         _build_git_diff_arguments(

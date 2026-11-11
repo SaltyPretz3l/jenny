@@ -7,9 +7,22 @@ const { buildPersistedToolInputSnapshot, redactPathLikeText } = require('./tool-
 const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 
 function fail(code) { throw Object.assign(new Error(code), { code }); }
-function contextForBody(body) {
-  return { decision: body.decision, sessionId: body.session_id, turnId: body.turn_id,
-    streamId: body.stream_id, pendingCalls: body.tool_batch.calls };
+// A resource wait saves no decision, but its first pending call may already have
+// been answered. These events only let that call's card stay in the proven prefix;
+// they are evidence the card happened and never authorize the call.
+function approvedPendingDecision({ events, pendingCalls, streamId }) {
+  const call = pendingCalls[0];
+  if (!call) return null;
+  const id = `${streamId}:approval:resolved:${call.call_id}`;
+  const resolved = (events || []).filter(event => event.event_id === id);
+  if (resolved.length !== 1 || resolved[0].kind !== 'approval_resolved' || resolved[0].payload?.approved !== true
+    || resolved[0].payload.approval_state !== 'approved' || resolved[0].payload.tool_name !== call.tool_id) return null;
+  return { kind: 'approval', call_id: call.call_id, approved: true };
+}
+function contextForBody(body, events = []) {
+  const pendingCalls = body.tool_batch.calls;
+  return { decision: body.decision || approvedPendingDecision({ events, pendingCalls, streamId: body.stream_id }),
+    sessionId: body.session_id, turnId: body.turn_id, streamId: body.stream_id, pendingCalls };
 }
 function decisionProjection(event, context) {
   let call = context.pendingCalls.find(item => item.call_id === context.decision?.call_id);
@@ -75,6 +88,9 @@ function allowedPendingDecisionEvent(event, context) {
   if (event.kind === 'tool_use' && event.payload.canonical_event_type === 'tool_call_requested'
     && stableJson(event.payload.tool_input) === stableJson(call.arguments)) return true;
   if (event.tool_call_id !== decision.call_id) return false;
+  if (decision.kind === 'approval' && decision.approved === true && event.kind === 'approval_resolved') {
+    return event.event_id === `${streamId}:approval:resolved:${decision.call_id}` && event.payload.approved === true;
+  }
   if (decision.kind === 'approval') return event.kind === 'approval_requested'
     && event.event_id === `${streamId}:approval:requested:${decision.call_id}`
     && event.payload.approval_state === 'pending';
@@ -113,7 +129,7 @@ const EFFECTFUL_TOOL_STATUSES = new Set([
   'canceled', 'denied', 'interrupted', 'approval_pending',
 ]);
 function validateNoPendingBatchEffects(session, body) {
-  const decisionContext = contextForBody(body);
+  const decisionContext = contextForBody(body, session.turn_events || []);
   const callIds = new Set(body.tool_batch.calls.map(call => call.call_id));
   for (const message of session.messages || []) {
     if (String(message?.turn_id || '') !== body.turn_id || !messageBelongsToStream(message, body)) continue;
@@ -134,7 +150,7 @@ function validateNoPendingBatchEffects(session, body) {
       || !callIds.has(String(event?.tool_call_id || ''))) continue;
     const kind = String(event?.kind || '').toLowerCase();
     const canonicalType = String(event?.payload?.canonical_event_type || '').toLowerCase();
-    if (body.decision && allowedPendingDecisionEvent(event, decisionContext)) continue;
+    if (decisionContext.decision && allowedPendingDecisionEvent(event, decisionContext)) continue;
     if (EFFECTFUL_TOOL_EVENT_KINDS.has(kind)
       || canonicalType.startsWith('tool_execution_')
       || canonicalType.startsWith('tool_approval_')) {
@@ -143,4 +159,4 @@ function validateNoPendingBatchEffects(session, body) {
   }
 }
 
-module.exports = { contextForBody, decisionProjection, allowedPendingDecisionEvent, validateDecisionMaterial, validateNoPendingBatchEffects };
+module.exports = { approvedPendingDecision, contextForBody, decisionProjection, allowedPendingDecisionEvent, validateDecisionMaterial, validateNoPendingBatchEffects };

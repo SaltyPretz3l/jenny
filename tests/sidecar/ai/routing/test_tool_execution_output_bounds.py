@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -30,10 +31,16 @@ def test_harness_router_keeps_edges_and_priority_keys(keep_edges, as_json):
     assert output.startswith("FIRST\n")
     assert output.endswith("\nLAST") is keep_edges
     if keep_edges:
-        marker = "\n...[middle truncated by router]\n"
-        head, tail = output.split(marker)
+        match = re.search(
+            r"\n\.\.\.\[(\d+) characters omitted from the middle; ask for a smaller range, "
+            r"a filter or fewer results to see them\]\n",
+            output,
+        )
+        assert match is not None
+        head, tail = output[: match.start()], output[match.end() :]
         budget = len(head) + len(tail)
         assert len(head) == int(budget * 0.7)
+        assert int(match.group(1)) == len(text) - budget
 
 
 def test_oversized_json_result_remains_valid_and_preserves_terminal_metadata() -> None:

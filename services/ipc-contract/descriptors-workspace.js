@@ -1,0 +1,132 @@
+/**
+ * The workspace and IDE: root transitions, files, recovery, Git, IDE state
+ * and hot-exit backups, terminals, run tasks, the file map, activity and the
+ * test runner.
+ *
+ * Composed into JENNY_SHELL_BRIDGE_DESCRIPTORS by services/ipc-contract.js;
+ * the key order here is the bridge's key order.
+ */
+
+const { invokeMethod, subscribeMethod } = require('./bridge-methods');
+
+module.exports = Object.freeze({
+  'workspaceRoot.getState': invokeMethod('workspace-root:get-state'),
+  'workspaceRoot.captureContext': invokeMethod('workspace-root:capture-context'),
+  'workspaceRoot.prepareChoose': invokeMethod('workspace-root:prepare-choose'),
+  'workspaceRoot.prepareClear': invokeMethod('workspace-root:prepare-clear'),
+  'workspaceRoot.prepareProject': invokeMethod('workspace-root:prepare-project'),
+  'workspaceRoot.commit': invokeMethod('workspace-root:commit'),
+  'workspaceRoot.cancel': invokeMethod('workspace-root:cancel'),
+  'workspaceRoot.onExternalTransitionRequested': subscribeMethod('workspace-root:external-transition-requested'),
+  'workspaceRoot.respondExternalTransition': invokeMethod('workspace-root:respond-external-transition'),
+  'workspaceFs.getRootState': invokeMethod('workspace-fs:get-root-state'),
+  'workspaceFs.readFile': invokeMethod('workspace-fs:read-file'),
+  'workspaceFs.stat': invokeMethod('workspace-fs:stat'),
+  'workspaceFs.writeFile': invokeMethod('workspace-fs:write-file'),
+  'workspaceFs.readText': invokeMethod('workspace-fs:read-text'),
+  'workspaceFs.readImage': invokeMethod('workspace-fs:read-image'),
+  'workspaceFs.readProjectText': invokeMethod('workspace-fs:read-project-text'),
+  'workspaceFs.readProjectImage': invokeMethod('workspace-fs:read-project-image'),
+  'workspaceFs.readDocument': invokeMethod('workspace-fs:read-document'),
+  'workspaceFs.writeText': invokeMethod('workspace-fs:write-text'),
+  'workspaceFs.writeDocument': invokeMethod('workspace-fs:write-document'),
+  'workspaceFs.listDirectory': invokeMethod('workspace-fs:list-directory'),
+  'workspaceFs.listAllFiles': invokeMethod('workspace-fs:list-all-files'),
+  'workspaceFs.createFile': invokeMethod('workspace-fs:create-file'),
+  'workspaceFs.createDirectory': invokeMethod('workspace-fs:create-directory'),
+  'workspaceFs.rename': invokeMethod('workspace-fs:rename'),
+  'workspaceFs.copyEntry': invokeMethod('workspace-fs:copy-entry'),
+  'workspaceFs.previewImport': invokeMethod('workspace-fs:preview-import'),
+  'workspaceFs.importExternal': invokeMethod('workspace-fs:import-external'),
+  'workspaceFs.cancelImport': invokeMethod('workspace-fs:cancel-import'),
+  'workspaceFs.delete': invokeMethod('workspace-fs:delete'),
+  'workspaceFs.searchInFiles': invokeMethod('workspace-fs:search-in-files'),
+  'workspaceFs.revealInFolder': invokeMethod('workspace-fs:reveal-in-folder'),
+  'workspaceFs.openInDefaultApp': invokeMethod('workspace-fs:open-in-default-app'),
+  'workspaceFs.readPreChange': invokeMethod('workspace-fs:read-pre-change'),
+  'workspaceFs.watchStart': invokeMethod('workspace-fs:watch-start'),
+  'workspaceFs.watchStop': invokeMethod('workspace-fs:watch-stop'),
+  'workspaceFs.onChange': subscribeMethod('workspace-fs:changed'),
+  'workspaceFs.onImportProgress': subscribeMethod('workspace-fs:import-progress'),
+  'workspaceFs.onGitMetaChange': subscribeMethod('workspace-fs:git-meta-changed'),
+  // WIDE-028: typed watcher lifecycle ({phase:'watching'|'stopped'|'degraded',
+  // reason, context}) so a silent native watcher death can't strand the
+  // renderer's watch latch (no other main->renderer signal existed).
+  'workspaceFs.onWatchLifecycle': subscribeMethod('workspace-fs:watch-lifecycle'),
+  // User-initiated WO-25 workspace recovery; never model-invocable.
+  'workspaceRecovery.listChangeSets': invokeMethod('workspace-recovery:list-change-sets'),
+  'workspaceRecovery.preflightUndo': invokeMethod('workspace-recovery:preflight-undo'),
+  'workspaceRecovery.undoChangeSet': invokeMethod('workspace-recovery:undo-change-set'),
+  // Re-arms an undone change set after the Changes view's Redo restored its bytes.
+  'workspaceRecovery.reapplyChangeSet': invokeMethod('workspace-recovery:reapply-change-set'),
+  'workspaceRecovery.restoreTrashEntry': invokeMethod('workspace-recovery:restore-trash-entry'),
+  'workspaceRecovery.abandonRestore': invokeMethod('workspace-recovery:abandon-restore'),
+  // Row 34 S5 Changes view: per-file checkpoint restore (worktree only) and
+  // the in-memory undo/redo safety copies. User-initiated only.
+  'workspaceRecovery.preflightCheckpointFiles': invokeMethod('workspace-recovery:preflight-checkpoint-files'),
+  'workspaceRecovery.restoreCheckpointFiles': invokeMethod('workspace-recovery:restore-checkpoint-files'),
+  'workspaceRecovery.preflightSafetyCopy': invokeMethod('workspace-recovery:preflight-safety-copy'),
+  'workspaceRecovery.restoreSafetyCopy': invokeMethod('workspace-recovery:restore-safety-copy'),
+  'workspaceGit.getStatus': invokeMethod('workspace-git:get-status'),
+  'workspaceGit.getDiff': invokeMethod('workspace-git:get-diff'),
+  'workspaceGit.getCommitDiff': invokeMethod('workspace-git:get-commit-diff'),
+  'workspaceGit.getFileAtHead': invokeMethod('workspace-git:get-file-at-head'),
+  'workspaceGit.getLog': invokeMethod('workspace-git:get-log'),
+  'workspaceGit.getBranches': invokeMethod('workspace-git:get-branches'),
+  'workspaceGit.blameRange': invokeMethod('workspace-git:blame-range'),
+  // Row 82 X1: read-only check-ignore for explorer dimming.
+  'workspaceGit.checkIgnored': invokeMethod('workspace-git:check-ignored'),
+  'workspaceGit.stage': invokeMethod('workspace-git:stage'),
+  'workspaceGit.unstage': invokeMethod('workspace-git:unstage'),
+  'workspaceGit.commit': invokeMethod('workspace-git:commit'),
+  'workspaceGit.discardFile': invokeMethod('workspace-git:discard-file'),
+  'workspaceGit.checkout': invokeMethod('workspace-git:checkout'),
+  'workspaceGit.stash': invokeMethod('workspace-git:stash'),
+  'workspaceGit.undoLastCommit': invokeMethod('workspace-git:undo-last-commit'),
+  'workspaceGit.resolveDelete': invokeMethod('workspace-git:resolve-delete'),
+  // Row 82 P4 (G1/G2): index/commit reads, stash list, branch -d, apply --cached.
+  'workspaceGit.getFileAtIndex': invokeMethod('workspace-git:get-file-at-index'),
+  'workspaceGit.getFileAtCommit': invokeMethod('workspace-git:get-file-at-commit'),
+  'workspaceGit.getCommitFiles': invokeMethod('workspace-git:get-commit-files'),
+  'workspaceGit.listStashes': invokeMethod('workspace-git:list-stashes'),
+  'workspaceGit.getLastCommitMessage': invokeMethod('workspace-git:get-last-commit-message'),
+  'workspaceGit.deleteBranch': invokeMethod('workspace-git:delete-branch'),
+  'workspaceGit.applyPatch': invokeMethod('workspace-git:apply-patch'),
+  // Row 82 cleanup G2/G3: whole-file blame (read) and Discard All as one write.
+  'workspaceGit.blameFile': invokeMethod('workspace-git:blame-file'),
+  'workspaceGit.discardFiles': invokeMethod('workspace-git:discard-files'),
+  'workspaceIde.getState': invokeMethod('workspace-ide:get-state'),
+  'workspaceIde.updateSettings': invokeMethod('workspace-ide:update-settings'),
+  'workspaceIde.updateState': invokeMethod('workspace-ide:update-state'),
+  'workspaceIde.onPreferencesChanged': subscribeMethod('workspace-ide:preferences-changed'), // row 88 D6
+  // Row 82 E3 hot exit backups
+  'workspaceBackup.write': invokeMethod('workspace-backup:write'),
+  'workspaceBackup.remove': invokeMethod('workspace-backup:remove'),
+  'workspaceBackup.list': invokeMethod('workspace-backup:list'),
+  'workspaceBackup.read': invokeMethod('workspace-backup:read'),
+  'workspacePty.spawn': invokeMethod('workspace-pty:spawn'),
+  'workspacePty.listProfiles': invokeMethod('workspace-pty:list-profiles'),
+  'workspacePty.write': invokeMethod('workspace-pty:write'),
+  'workspacePty.resize': invokeMethod('workspace-pty:resize'),
+  'workspacePty.kill': invokeMethod('workspace-pty:kill'),
+  'workspacePty.onData': subscribeMethod('workspace-pty:data'),
+  'workspacePty.onExit': subscribeMethod('workspace-pty:exit'),
+  // UIUX-014: main-owned run-task identity/exit (see workspace-run-task-service.js).
+  'workspaceRunTask.start': invokeMethod('workspace-run-task:start'),
+  'workspaceRunTask.kill': invokeMethod('workspace-run-task:kill'),
+  'workspaceRunTask.onData': subscribeMethod('workspace-run-task:data'),
+  'workspaceRunTask.onExit': subscribeMethod('workspace-run-task:exit'),
+  'workspaceFileMap.getGraph': invokeMethod('workspace-file-map:get-graph'),
+  'workspaceFileMap.refresh': invokeMethod('workspace-file-map:refresh'),
+  'activity.getSnapshot': invokeMethod('activity:get-snapshot'),
+  'activity.getDetail': invokeMethod('activity:get-detail'),
+  'activity.subscribe': invokeMethod('activity:subscribe'),
+  'activity.onChanged': subscribeMethod('activity:changed'),
+  'workspaceTestRunner.abortRun': invokeMethod('workspace-test-runner:abort-run'),
+  'workspaceTestRunner.getRunOutput': invokeMethod('workspace-test-runner:get-run-output'),
+  'workspaceTestRunner.run': invokeMethod('workspace-test-runner:run'),
+  'workspaceTestRunner.abort': invokeMethod('workspace-test-runner:abort'),
+  'workspaceTestRunner.saveConfigs': invokeMethod('workspace-test-runner:save-configs'),
+  'workspaceTestRunner.getState': invokeMethod('workspace-test-runner:get-state'),
+  'workspaceTestRunner.onStateChanged': subscribeMethod('workspace-test-runner:state-changed'),
+});

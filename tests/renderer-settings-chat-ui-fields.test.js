@@ -82,7 +82,8 @@ test('streak cap normalizer defaults, clamps, and preserves off', () => {
 test('renderer bootstrap, hydration, and settings composition thread the streak cap', () => {
   const root = path.join(__dirname, '..', 'renderer');
   const bootstrap = fs.readFileSync(path.join(root, 'shell', 'renderer-bootstrap-utils.js'), 'utf8');
-  const lifecycle = fs.readFileSync(path.join(root, 'app', 'renderer-app-lifecycle-composition.js'), 'utf8');
+  // The persisted chatUi state seeds `state` in the lifecycle composition's boot-preferences section.
+  const lifecycle = fs.readFileSync(path.join(root, 'app', 'renderer-app-boot-preferences-composition.js'), 'utf8');
   const settings = fs.readFileSync(path.join(root, 'shell', 'renderer-settings-utils.js'), 'utf8');
   assert.match(bootstrap, /autoApproveStreakCap:\s*50/);
   assert.match(bootstrap, /normalizeAutoApproveStreakCap\(config\?\.autoApproveStreakCap\)/);

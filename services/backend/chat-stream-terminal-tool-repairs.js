@@ -54,7 +54,9 @@ function buildInterruptedToolResult(repair, identity, timestamp) {
   const toolName = normalizeId(toolCall.tool_name || toolCall.toolName);
   const summary = normalizeId(toolCall.summary);
   const status = repairStatus(repair);
-  const output = status === 'cancelled' ? TOOL_STOPPED_OUTPUT : TOOL_INTERRUPTED_OUTPUT;
+  const detail = normalizeId(repair?.stoppedDetail);
+  const stopped = detail ? `${TOOL_STOPPED_OUTPUT} ${detail}` : TOOL_STOPPED_OUTPUT;
+  const output = status === 'cancelled' ? stopped : TOOL_INTERRUPTED_OUTPUT;
   return {
     id: buildToolResultMessageId(identity.streamId, callId),
     role: 'tool',

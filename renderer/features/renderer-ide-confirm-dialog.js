@@ -129,6 +129,7 @@
           }
           settled = true;
           doc.removeEventListener('click', onClick, true);
+          doc.removeEventListener('keydown', onKey, true);
           try { inst.close(); } catch (_error) { /* best-effort */ }
           resolve(result);
         }
@@ -146,7 +147,24 @@
             finish(action);
           }
         }
+        // `accept` only: a key answers, arrows walk the answers.
+        function onKey(event) {
+          // Ctrl+2 is a view shortcut elsewhere and a held key is not a decision.
+          if (!config.keys || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+          if (Object.hasOwn(config.keys, event.key)) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.repeat) finish(config.keys[event.key]);
+          } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            const rows = [...doc.querySelectorAll('[data-ide-confirm-action]')];
+            if (!rows.length) return;
+            event.preventDefault();
+            const step = event.key === 'ArrowDown' ? 1 : rows.length - 1;
+            rows[(rows.indexOf(doc.activeElement) + step) % rows.length].focus();
+          }
+        }
         doc.addEventListener('click', onClick, true);
+        doc.addEventListener('keydown', onKey, true);
         inst.open({
           title: config.title,
           titleId: config.titleId,
@@ -154,6 +172,12 @@
           closeLabel: config.closeLabel,
           onClose: () => finish(onDismiss),
         });
+        if (config.focusAction) {
+          // The overlay may take focus next tick; the safe answer must end up holding it.
+          const focusSafeAnswer = () => doc.querySelector(`[data-ide-confirm-action="${config.focusAction}"]`)?.focus();
+          focusSafeAnswer();
+          setTimeout(focusSafeAnswer, 0);
+        }
       });
     }
 
@@ -199,6 +223,41 @@
         actions: ['confirm', 'cancel'],
         onDismiss: 'cancel',
       }).then((result) => result === 'confirm');
+    }
+
+    // Accept step for a choice that removes a safeguard: the two answers are the
+    // buttons, "no" holds focus, keys 1 and 2 answer. Resolves true only on "yes";
+    // Any other outcome resolves false.
+    function accept(payload) {
+      const config = payload || {};
+      if (!actionButton) {
+        return Promise.resolve(false);
+      }
+      const answer = (action, label, detail, key, danger) => actionButton({
+        plain: true,
+        className: 'inv-context-menu-item' + (danger ? ' inv-context-menu-item--danger' : ''),
+        title: String(label),
+        dataset: { 'ide-confirm-action': action },
+        trustedHtml: `<span class="inv-context-menu-text"><span>${escapeHtml(String(label))}</span>`
+          + `<span class="inv-context-menu-description">${escapeHtml(String(detail))}</span></span>`
+          + `<span class="inv-context-menu-shortcut" aria-hidden="true">${key}</span>`,
+      });
+      const points = (Array.isArray(config.points) ? config.points : [])
+        .map((point) => `<li>${escapeHtml(String(point))}</li>`).join('');
+      return runActionDialog({
+        title: String(config.title || ''),
+        titleId: 'ideConfirmAcceptTitle',
+        bodyHtml: `<p class="ide-confirm-message">${escapeHtml(String(config.message || ''))}</p>`
+          + `<ul class="ide-confirm-list ide-confirm-points">${points}</ul>`
+          + `<p class="ide-confirm-footnote">${escapeHtml(String(config.footnote || ''))}</p>`
+          + `<div class="ide-confirm-answers">${answer('no', config.noLabel, config.noDetail, '1', false)}`
+          + `${answer('yes', config.yesLabel, config.yesDetail, '2', true)}</div>`,
+        closeLabel: String(config.noLabel || ''),
+        actions: ['no', 'yes'],
+        keys: { 1: 'no', 2: 'yes' },
+        focusAction: 'no',
+        onDismiss: 'no',
+      }).then((result) => result === 'yes');
     }
 
     // Three-choice guard for switching branches with a dirty working tree.
@@ -263,7 +322,7 @@
       }
     }
 
-    return { choose, confirm, confirmClose, confirmBranchSwitch, dispose };
+    return { accept, choose, confirm, confirmClose, confirmBranchSwitch, dispose };
   }
 
   return { createIdeConfirmDialog };

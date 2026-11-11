@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 
 const { createRig, paneRoot, kickerOf, resolveChatPaneDom, CHAT_PANE_NODE_NAMES, getPaneComposition, paneModel } = require('./helpers/pane-composition-rig');
 
-test('mount: the clone sits right after the divider, resolves its 20 nodes through the seam and builds runtime -> surface -> pipeline -> shell', (t) => {
+test('mount: the clone sits right after the divider, resolves its 19 nodes through the seam and builds runtime -> surface -> pipeline -> shell', (t) => {
   const rig = createRig(t);
   rig.layoutController.openBeside('b');
   const root = paneRoot(rig.chatView, 1);
@@ -26,7 +26,7 @@ test('mount: the clone sits right after the divider, resolves its 20 nodes throu
   assert.equal(root.id, '', 'the clone carries no id');
   assert.ok(rig.resolved.includes(root), 'resolvePane is handed the pane ELEMENT');
   const paneDom = resolveChatPaneDom(rig.doc, root);
-  assert.equal(CHAT_PANE_NODE_NAMES.filter((name) => paneDom[name]).length, 21, 'exactly the 20 template nodes (W3-2 adds the subagent inspector) and the attach button mount inserts (W2-2b) resolve');
+  assert.equal(CHAT_PANE_NODE_NAMES.filter((name) => paneDom[name]).length, 20, 'exactly the 19 template nodes (W3-2 adds the subagent inspector; row 115 removes the wayfinder host) and the attach button mount inserts (W2-2b) resolve');
   assert.equal(paneDom.composerAttachShortcut.closest('.composer-toolbar-left'), root.querySelector('.composer-toolbar-left'), 'the attach button sits in the left toolbar');
   assert.equal(rig.chatView.dataset.paneCount, '2');
   assert.equal(divider.classList.contains('hidden'), false, 'the divider shows');

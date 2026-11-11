@@ -8,6 +8,7 @@ stream path, with the session's inference admission and the auxiliary worker's
 cancel handle) and replies with the note. Nothing is persisted, no
 notification is emitted, and the note never enters the transcript.
 
+An optional ``intent: "orient"`` asks for the read-only brief instead of the continue note.
 An optional ``focus_project: {"name": str}`` (row 73, a handoff from the primary
 Jenny chat) scopes the note to that one project; a malformed one is invalid params.
 
@@ -78,6 +79,7 @@ class _HandoffRequestContext:
     request_id: str
     inference_admission: Any | None
     focus_project: str | None = None
+    orient: bool = False
 
 
 class _HandoffFailure(Exception):
@@ -238,6 +240,7 @@ def process_handoff_method(  # noqa: PLR0911, PLR0913 -- uniform dispatch hook c
                 response_reader_factory=response_reader_factory,
             ),
             focus_project=focus_project,
+            orient=safe_params.get("intent") == "orient",
         )
     )
 
@@ -258,6 +261,7 @@ def _process_handoff_request(context: _HandoffRequestContext) -> ProcessOutcome:
             "session_id": context.session_id,
             "message_count": len(messages),
             "focus_project": context.focus_project is not None,
+            "orient": context.orient,
         },
         request_id=context.request_id,
     )
@@ -309,7 +313,7 @@ def _generate_note(
     config = stack.config
     feature_flags = getattr(config, "feature_flags", None) or {}
     cancel_handle = bound_auxiliary_cancel_handle()
-    prompt = handoff_note_prompt(context.focus_project)
+    prompt = handoff_note_prompt(context.focus_project, orient=context.orient)
     try:
         _messages, budget, tracker = apply_budget_check(
             messages, config, stack.engine, num_tools=0
@@ -333,7 +337,11 @@ def _generate_note(
         room = max(
             0,
             budget.effective_context(0)
-            - int(count_tokens(handoff_framing_text(prompt, context.focus_project)))
+            - int(
+                count_tokens(
+                    handoff_framing_text(prompt, context.focus_project, orient=context.orient)
+                )
+            )
             - max_tokens,
         )
         kept, truncated = clip_history_for_note(
@@ -359,7 +367,9 @@ def _generate_note(
             purpose="handoff_note",
         )
         raw = generate_fn(
-            build_handoff_note_messages(kept, prompt=prompt, focus_project=context.focus_project)
+            build_handoff_note_messages(
+                kept, prompt=prompt, focus_project=context.focus_project, orient=context.orient
+            )
         )
     except (_HandoffFailure, InferenceAdmissionError):
         raise
@@ -369,7 +379,7 @@ def _generate_note(
         context.logger.exception("handoff.generate_note generation failed")
         raise _HandoffFailure("generation_failed", str(error)) from error
     try:
-        note = parse_handoff_note(str(raw or ""))
+        note = parse_handoff_note(str(raw or ""), orient=context.orient)
     except ValueError as error:
         raise _HandoffFailure("note_invalid", str(error)) from error
     return note, len(kept), truncated

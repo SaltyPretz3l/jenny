@@ -17,6 +17,7 @@ const {
   buildBackgroundTasksSection,
 } = require('../services/chat-workspace-summary-sections');
 const { CHATWS_ERROR_CODES } = require('../services/backend/error-codes');
+const { ChatWorkspaceService } = require('../services/chat-workspace-service');
 const {
   OTHER,
   ROOT,
@@ -26,6 +27,7 @@ const {
   fakeChanges,
   fakeStore,
   fakeViewStore,
+  makeClock,
   makeService,
   req,
 } = require('./helpers/chat-workspace-fixtures');
@@ -482,4 +484,114 @@ test('getChangeDiff forwards only the session workspace root and maps refusals w
 
   const rootless = makeService({ captureAuthority: () => authorityOf({ root_path: null, root_id: null }) });
   assert.equal((await rootless.service.getChangeDiff(req({ path: 'a.txt' }))).reason, 'no_workspace');
+});
+
+// Whole-branch scope (chat session bar slice 5): routing, validation and a cache apart from the working tree.
+function fakeBranchCompare(overrides = {}) {
+  const calls = { list: [], diff: [] };
+  return {
+    calls,
+    async listBranchChanges(args) {
+      calls.list.push(args);
+      return overrides.list ? overrides.list(args, calls.list.length) : {
+        state: 'available', reason: null, sampled_at: '2026-10-15T12:00:00.000Z',
+        data: { workspace_id: 'root_a', scope: 'branch', base_ref: 'main', merge_base: 'abc123456', commit_count: 2, files: [], file_count: 0 },
+      };
+    },
+    async getBranchChangeDiff(args) {
+      calls.diff.push(args);
+      return overrides.diff ? overrides.diff(args) : { ok: true, path: args.path, change: 'added', binary: false, truncated: false, diff: 'b' };
+    },
+  };
+}
+
+function makeBranchService(branchCompare, options = {}) {
+  const clock = makeClock();
+  const changes = fakeChanges();
+  const logs = [];
+  const service = new ChatWorkspaceService({
+    viewStore: fakeViewStore(),
+    getStore: () => fakeStore(),
+    captureAuthority: () => authorityOf(),
+    resolveGitService: () => ({ marker: 'git' }),
+    getWorktreeEntries: () => options.entries || [],
+    changeSummary: changes,
+    branchCompare,
+    log: (level, event, details) => logs.push([level, event, details]),
+    now: clock.now,
+    notifierOptions: { intervalMs: 0 },
+  });
+  return { service, changes, logs, clock };
+}
+
+test('scope is optional and closed on listChanges and getChangeDiff, and getSummary still takes none', async () => {
+  const { service, changes } = makeBranchService(fakeBranchCompare());
+  for (const scope of ['everything', '', null, undefined, 1, 'Branch']) {
+    assert.equal((await service.listChanges(req({ scope }))).reason, 'invalid_request', String(scope));
+    assert.equal((await service.getChangeDiff(req({ path: 'a.txt', scope }))).reason, 'invalid_request', String(scope));
+  }
+  assert.equal((await service.getSummary(req({ scope: 'branch' }))).reason, 'invalid_request');
+  assert.equal((await service.listChanges(req({ scope: 'working_tree' }))).data.scope, 'working_tree');
+  assert.equal((await service.listChanges(req())).data.scope, 'working_tree');
+  assert.equal(changes.calls.list, 1); // both working-tree asks shared one read
+});
+
+test('branch scope reads through the branch compare with its own cache; the scopes never serve each other', async () => {
+  const entries = [{ id: 'wt_1', worktree_path: ROOT, base_ref: 'develop' }];
+  const compare = fakeBranchCompare();
+  const { service, changes, clock } = makeBranchService(compare, { entries });
+  const branch = await service.listChanges(req({ scope: 'branch' }));
+  assert.deepEqual([branch.ok, branch.state, branch.data.scope, branch.data.base_ref], [true, 'available', 'branch', 'main']);
+  assert.equal(compare.calls.list.length, 1);
+  const { registryBase, root, workspaceId } = compare.calls.list[0];
+  assert.deepEqual([registryBase, root, workspaceId, changes.calls.list], ['develop', ROOT, 'root_a', 0]);
+
+  assert.equal((await service.listChanges(req())).data.scope, 'working_tree');
+  await service.listChanges(req({ scope: 'branch' }));
+  await service.listChanges(req());
+  assert.deepEqual([compare.calls.list.length, changes.calls.list], [1, 1]); // fresh window serves each from its own cache
+
+  // An invalidation clears both scopes.
+  service.handleWorkspaceChange({ context: { rootId: 'root_a' } });
+  await service.listChanges(req({ scope: 'branch' }));
+  await service.listChanges(req());
+  assert.deepEqual([compare.calls.list.length, changes.calls.list], [2, 2]);
+  clock.advance(5000);
+  await service.listChanges(req({ scope: 'branch' }));
+  assert.equal(compare.calls.list.length, 3);
+});
+
+test('branch scope is single-flight and reports not_applicable states with null data', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const compare = fakeBranchCompare({ list: async () => {
+    await gate;
+    return { state: 'not_applicable', reason: 'on_base_branch', sampled_at: '2026-10-15T12:00:00.000Z', data: null };
+  } });
+  const { service } = makeBranchService(compare);
+  const first = service.listChanges(req({ scope: 'branch' }));
+  const second = service.listChanges(req({ scope: 'branch' }));
+  await Promise.resolve();
+  release();
+  const [one, two] = await Promise.all([first, second]);
+  assert.equal(compare.calls.list.length, 1);
+  assert.deepEqual([one, two].map((r) => [r.ok, r.state, r.reason, r.data]), Array(2).fill([true, 'not_applicable', 'on_base_branch', null]));
+  const gone = makeBranchService(fakeBranchCompare({ list: () => { throw new Error('boom at C:\\secret'); } }));
+  const failed = await gone.service.listChanges(req({ scope: 'branch' }));
+  assert.deepEqual([failed.state, failed.reason, failed.data], ['unavailable', 'git_failed', null]);
+});
+
+test('branch getChangeDiff routes to the branch compare and logs refusals without the path', async () => {
+  const compare = fakeBranchCompare({ diff: ({ path: p }) => (
+    p === 'zzz-secret' ? { ok: false, reason: 'path_not_changed' } : { ok: true, path: p, change: 'added', binary: false, truncated: false, diff: 'b' }
+  ) });
+  const { service, changes, logs } = makeBranchService(compare, { entries: [{ worktree_path: ROOT, base_ref: 'develop' }] });
+  const ok = await service.getChangeDiff(req({ path: 'f.txt', scope: 'branch' }));
+  assert.deepEqual(ok, { schema_version: 1, ok: true, path: 'f.txt', change: 'added', binary: false, truncated: false, diff: 'b' });
+  assert.deepEqual(compare.calls.diff[0], { gitService: { marker: 'git' }, root: ROOT, path: 'f.txt', registryBase: 'develop' });
+  const refused = await service.getChangeDiff(req({ path: 'zzz-secret', scope: 'branch' }));
+  assert.deepEqual([refused.ok, refused.reason, refused.error_code], [false, 'path_not_changed', CHATWS_ERROR_CODES.PATH_REFUSED]);
+  assert.deepEqual([JSON.stringify(logs).includes('zzz-secret'), logs.length, changes.calls.diff.length], [false, 1, 0]);
+  await service.getChangeDiff(req({ path: 'f.txt', scope: 'working_tree' }));
+  assert.equal(changes.calls.diff.length, 1);
 });

@@ -63,6 +63,11 @@
           rowListRowsReused: 0,
           rowListRowsRebuilt: 0,
           rowListMorphReasons: Object.create(null),
+          // Timeline scroll smoothing (row 131): upward snaps of a followed
+          // reader, counted per reply. Same reason cap as the histograms above.
+          scrollSnaps: 0,
+          scrollSnapMaxPx: 0,
+          scrollSnapReasons: Object.create(null),
         };
         byStreamId.set(streamId, entry);
         if (byStreamId.size > MAX_TRACKED_STREAMS) {
@@ -213,6 +218,25 @@
       }
     }
 
+    // One upward snap of a followed reader, reported by the scroll coordinator.
+    // `reason` is the frame's attributed write reason. Observation only: never
+    // creates an entry, never a paint event. Ignored without a live stream.
+    function noteScrollSnapForSession(sessionId, { px, reason } = {}) {
+      const streamId = streamIdBySessionId.get(normalizeId(sessionId));
+      const entry = streamId ? byStreamId.get(streamId) : null;
+      if (!entry) return;
+      entry.scrollSnaps += 1;
+      const distance = Math.abs(Number(px));
+      if (Number.isFinite(distance)) {
+        entry.scrollSnapMaxPx = Math.max(entry.scrollSnapMaxPx, Math.round(distance));
+      }
+      const name = normalizeId(reason).slice(0, MAX_REASONING_FALLBACK_REASON_LENGTH);
+      if (name && (entry.scrollSnapReasons[name]
+          || Object.keys(entry.scrollSnapReasons).length < MAX_REASONING_FALLBACK_REASONS)) {
+        entry.scrollSnapReasons[name] = (entry.scrollSnapReasons[name] || 0) + 1;
+      }
+    }
+
     function take(streamId) {
       const normalizedStreamId = normalizeId(streamId);
       const entry = byStreamId.get(normalizedStreamId);
@@ -258,6 +282,9 @@
         row_list_rows_reused: entry.rowListRowsReused,
         row_list_rows_rebuilt: entry.rowListRowsRebuilt,
         row_list_morph_reasons: Object.assign(Object.create(null), entry.rowListMorphReasons),
+        scroll_snaps: entry.scrollSnaps,
+        scroll_snap_max_px: entry.scrollSnapMaxPx,
+        scroll_snap_reasons: { ...entry.scrollSnapReasons },
       };
     }
 
@@ -301,6 +328,7 @@
       noteMailbox,
       noteReasoningBodyRender,
       noteRowListMorph,
+      noteScrollSnapForSession,
       take,
       reportTerminal,
     });

@@ -19,6 +19,10 @@ MAX_PIDS = 128
 SUPERVISOR_CAPS = 0xC0
 JOB_UID = 10001
 WORKSPACE_MODE = 0o700
+SYNC_GID = 10002
+SYNC_PARENT = "/run/jenny-sync"
+OUTBOX = "/run/jenny-sync/outbox"
+SYNC_PARENT_MODE = 0o750
 # Exact Docker-managed targets, observed on the supported Engine/Desktop runtime.
 # An unexpected nested bind must not inherit trust from /proc, /sys or /dev.
 KERNEL_MOUNTS = {
@@ -91,13 +95,27 @@ def _size(value: str) -> int:
     return int(match[1]) * {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[match[2].lower()]
 
 
-def validate_mounts(mounts: dict[str, Mount]) -> None:
+def validate_mounts(mounts: dict[str, Mount]) -> str:
+    """Validate the exact layout and return its mode, derived from the mounts alone.
+
+    copy: /workspace is a bounded tmpfs and there is no outbox. synced (row 106): /workspace is a
+    writable Docker volume (the persistent mirror) and the outbox bind sits under the sync-only
+    directory the job UID cannot traverse. There is no flag that selects a mode.
+    """
+    mode = "synced" if OUTBOX in mounts else "copy"
     for target in ("/", "/inputs"):
         _require(target in mounts and "ro" in mounts[target][0], "readonly_mount_required")
-    for target, byte_limit, inode_limit in (
-        ("/workspace", 512 * 1024**2, 16384),
-        ("/tmp", 64 * 1024**2, 4096),
-    ):
+    bounded = [("/tmp", 64 * 1024**2, 4096)]
+    if mode == "copy":
+        bounded.insert(0, ("/workspace", 512 * 1024**2, 16384))
+    else:
+        for target in ("/workspace", OUTBOX):
+            _require(
+                target in mounts and "rw" in mounts[target][0] and mounts[target][1] != "tmpfs",
+                "synced_mount_required",
+            )
+        _require(SYNC_PARENT not in mounts, "unexpected_mount")
+    for target, byte_limit, inode_limit in bounded:
         _require(target in mounts, "tmpfs_required")
         options, filesystem, super_options, _root, _source = mounts[target]
         _require(
@@ -122,6 +140,7 @@ def validate_mounts(mounts: dict[str, Mount]) -> None:
             "/workspace",
             "/tmp",
             "/run/jenny-worker",
+            *((OUTBOX,) if mode == "synced" else ()),
             "/etc/hosts",
             "/etc/hostname",
             "/etc/resolv.conf",
@@ -137,6 +156,7 @@ def validate_mounts(mounts: dict[str, Mount]) -> None:
                 and mounts[target][4] == KERNEL_SOURCES.get(target, filesystem),
                 "kernel_mount_invalid",
             )
+    return mode
 
 
 def validate_cgroups(read=_read) -> None:
@@ -159,7 +179,7 @@ def validate_cgroups(read=_read) -> None:
     )
 
 
-def validate_runtime() -> None:
+def validate_runtime() -> str:
     _require(os.name == "posix" and os.getpid() == 1, "worker_pid_one_required")
     _require(
         os.getresuid() == (0, 0, 0) and os.getresgid() == (10003, 10003, 10003),
@@ -177,17 +197,28 @@ def validate_runtime() -> None:
     for name in ("CapInh", "CapAmb"):
         _require(int(fields.get(name, "0"), 16) == 0, "supervisor_capabilities_invalid")
     _require({name for _, name in socket.if_nameindex()} == {"lo"}, "offline_network_required")
-    validate_mounts(parse_mounts(_read("/proc/self/mountinfo", 256 * 1024)))
+    mode = validate_mounts(parse_mounts(_read("/proc/self/mountinfo", 256 * 1024)))
     validate_cgroups()
-    for target in ("/workspace",):
-        info = Path(target).lstat()
+    info = Path("/workspace").lstat()
+    # The job UID owns the persistent mirror and may change its mode bits; it cannot change the
+    # owner, and the mirror helper restores the mode. A fresh tmpfs must match exactly.
+    _require(
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == JOB_UID
+        and info.st_gid == JOB_UID
+        and (mode == "synced" or stat.S_IMODE(info.st_mode) == WORKSPACE_MODE),
+        "workspace_permissions_invalid",
+    )
+    if mode == "synced":
+        parent = Path(SYNC_PARENT).lstat()
         _require(
-            stat.S_ISDIR(info.st_mode)
-            and info.st_uid == JOB_UID
-            and info.st_gid == JOB_UID
-            and stat.S_IMODE(info.st_mode) == WORKSPACE_MODE,
-            "workspace_permissions_invalid",
+            stat.S_ISDIR(parent.st_mode)
+            and parent.st_uid == 0
+            and parent.st_gid == SYNC_GID
+            and stat.S_IMODE(parent.st_mode) == SYNC_PARENT_MODE,
+            "sync_directory_invalid",
         )
 
     # Host staging ownership differs on Docker Desktop; its mount is read-only.
     _require(stat.S_ISDIR(Path("/inputs").lstat().st_mode), "inputs_directory_required")
+    return mode

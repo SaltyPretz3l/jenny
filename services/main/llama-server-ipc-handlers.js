@@ -14,6 +14,7 @@ const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { t } = require('../i18n-main');
 const { filterDiffusionGgufs, pairProjector, splitGgufFiles } = require('../llama-server-gguf-files');
 const { readGgufArchitecture } = require('../gguf-header');
+const { createGgufImportService } = require('../llama-server-gguf-import');
 const { isLocalAbsolutePath, isManagedModelPath, managedModelKey } = require('../shell-config-engines');
 const { normalizeSpec } = require('./llama-server-manager');
 const { validateRuntimeExecutable } = require('./llama-server-runtime');
@@ -50,11 +51,16 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   authorization = null,
   platform = process.platform,
   validateRuntimeExecutableImpl = validateRuntimeExecutable,
+  // The bundled llama-server a newly added model would launch with.
+  resolveBundledRuntime = () => '',
 } = {}) {
   if (typeof getManager !== 'function') {
     return [];
   }
   const logEvent = typeof log === 'function' ? log : () => {};
+  const ggufImport = createGgufImportService({
+    fsImpl, platform, userDataPath, repoRoot, getLibraryRoots, resolveBundledRuntime, log: logEvent,
+  });
   const reasonFor = (error) => String((error && error.message) || error);
   // One log line per call; never the key, never a status blob.
   const finish = (action, result) => {
@@ -67,6 +73,16 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     };
     logEvent(result.ok ? 'INFO' : 'WARN', `llama.server.ipc_${action}`, details);
     return result;
+  };
+  // A call that never throws across the bridge; a quiet one (a progress poll)
+  // logs only failures.
+  const guarded = async (action, call, { quiet = false } = {}) => {
+    try {
+      const result = await call();
+      return quiet && result.ok ? result : finish(action, result);
+    } catch (error) {
+      return finish(action, { ok: false, reason: reasonFor(error) });
+    }
   };
 
   const manage = (action, call) => async (_event, payload) => {
@@ -476,6 +492,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
           return finish('choose_gguf', { ok: false, reason: 'not_gguf' });
         }
         const dir = path.dirname(selected);
+        ggufImport.recordModelPick(selected);
         return finish('choose_gguf', {
           ok: true,
           picked: true,
@@ -497,15 +514,20 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
           return finish('choose_library_folder', { ok: true, picked: false, path: '' });
         }
         const selected = String(picked.filePaths?.[0] || '');
-        return refuseNetworkPick('choose_library_folder', selected) || finish('choose_library_folder', {
-          ok: true,
-          picked: true,
-          path: selected,
-        });
+        const refused = refuseNetworkPick('choose_library_folder', selected);
+        if (refused) return refused;
+        ggufImport.recordFolderPick(selected);
+        return finish('choose_library_folder', { ok: true, picked: true, path: selected });
       } catch (error) {
         return finish('choose_library_folder', { ok: false, reason: reasonFor(error) });
       }
     },
+    // Row 107 Move and add: main moves only files and into folders its own
+    // pickers returned (see llama-server-gguf-import.js).
+    'llamaServer.planGgufImport': async (_event, payload) => guarded('plan_gguf_import', () => ggufImport.plan(payload?.path)),
+    'llamaServer.importGguf': async (_event, payload) => guarded('import_gguf', () => ggufImport.start(payload || {})),
+    'llamaServer.ggufImportStatus': async () => guarded('gguf_import_status', () => ggufImport.status(), { quiet: true }),
+    'llamaServer.cancelGgufImport': async () => guarded('cancel_gguf_import', () => ggufImport.cancel()),
   }, authorization || {});
   return Object.assign(channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.chooseRuntime': chooseRuntime,

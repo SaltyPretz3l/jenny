@@ -27,6 +27,7 @@ MAX_DELEGATE_TOTAL_BYTES = 32_000
 MAX_DELEGATE_EVIDENCE_ITEMS = 3
 MAX_DELEGATE_EVIDENCE_FIELD_CHARS = 300
 MAX_DELEGATE_OUTPUT_CHARS = 8_000
+MAX_DELEGATE_ERROR_CHARS = 300
 MAX_DELEGATE_LABEL_CHARS = 60
 MAX_DELEGATE_PROMPT_CHARS = 2_000
 MAX_DELEGATE_ROUTE_CHARS = 160
@@ -38,6 +39,7 @@ CANONICAL_DELEGATE_EXAMPLE_JSON = json.dumps(
 )
 
 _TOP_LEVEL_ALIASES = frozenset({"tasks", "task", "prompt"})
+_FAILED_STATUSES = frozenset({"failed", "cancelled"})
 _SUPPORTED_EVIDENCE_TOOLS = frozenset({"read_file", "grep_search", "git_status"})
 _GREP_LINE_RE = re.compile(r"^(?P<path>.+?):(?P<line>[1-9][0-9]*):(?P<quote>.*)$")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -215,6 +217,9 @@ def build_compact_delegate_settlement(
         ),
         "results": results,
     }
+    summary = _failure_summary(results)
+    if summary:
+        report["summary"] = summary
     bounded, output = _bound_compact_report(report)
     return CompactDelegateSettlement(
         report=bounded,
@@ -402,12 +407,48 @@ def _compact_result(report: dict[str, Any]) -> dict[str, Any]:
             evidence.append(record)
         if len(evidence) >= MAX_DELEGATE_EVIDENCE_ITEMS:
             break
-    return {
+    item: dict[str, Any] = {
         "ordinal": max(1, int(report.get("ordinal") or 1)),
         "status": status,
         "answer": answer,
         "evidence": evidence,
     }
+    error = _result_error(report, status)
+    if error:
+        item["error"] = error
+    if status in _FAILED_STATUSES:
+        # The model reads `answer` as findings; a failure is reported in `error` only.
+        item["answer"] = ""
+    return item
+
+
+def _result_error(report: dict[str, Any], status: str) -> str:
+    """Bounded error text for a failed or cancelled helper, or a partial one's reason."""
+    if status == "completed":
+        return ""
+    raw = report.get("error")
+    text = _safe_text(
+        raw.get("message") if isinstance(raw, dict) else raw, max_chars=MAX_DELEGATE_ERROR_CHARS
+    )
+    if not text and status in _FAILED_STATUSES:
+        # Never the report's summary: that can be answer text from before the failure.
+        text = f"The helper {status} before it produced an answer."
+    return text
+
+
+def _failure_summary(results: list[dict[str, Any]]) -> str:
+    """One line saying how many helpers finished and how many failed; empty if none failed."""
+    failed = [item for item in results if item["status"] in _FAILED_STATUSES]
+    if not failed:
+        return ""
+    total, finished = len(results), len(results) - len(failed)
+    if finished:
+        which = "its error" if len(failed) == 1 else "their errors"
+        return f"{finished} of {total} investigations finished; {len(failed)} failed (see {which})."
+    first = _truncate_with_ellipsis(failed[0].get("error"), 200)
+    if total == 1:
+        return f"The investigation failed: {first}"
+    return f"None of the {total} investigations finished; the first failed: {first}"
 
 
 def _normalize_evidence_record(raw_record: object) -> dict[str, Any] | None:

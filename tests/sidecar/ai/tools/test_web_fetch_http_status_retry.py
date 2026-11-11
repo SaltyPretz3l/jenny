@@ -35,5 +35,8 @@ def test_fetch_url_http_errors_carry_the_status_transience(
         fetch_url_tool({"url": "https://example.com/page"}, None)
 
     assert excinfo.value.code == "CMP-WEB-0004"
-    assert excinfo.value.message == f"HTTP error {status}"
+    assert str(status) in excinfo.value.message
+    assert excinfo.value.failure_class == {
+        401: "denied", 403: "denied", 404: "not_found", 410: "not_found",
+    }.get(status, "")
     assert excinfo.value.retryable is retryable

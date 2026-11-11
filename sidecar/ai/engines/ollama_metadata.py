@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any
 
+from sidecar.ai.config import read_environment_value
 from sidecar.ai.engines.model_name import (
     THINKING_MODEL_PREFIXES,
     VISION_MODEL_PREFIXES,
@@ -207,6 +208,15 @@ def detect_thinking(name: str, info: dict[str, Any] | None) -> tuple[bool, str]:
     return False, "unsupported"
 
 
+# Argument descriptions go to Ollama by default (row 129): a small model needs them to
+# fill arguments it cannot guess from a name. "0" restores the stripped schemas.
+ARGUMENT_DESCRIPTIONS_FLAG = "JENNY_ENABLE_OLLAMA_ARG_DESCRIPTIONS"
+
+
+def argument_descriptions_enabled() -> bool:
+    return read_environment_value(ARGUMENT_DESCRIPTIONS_FLAG, "1") != "0"
+
+
 def compact_parameters(schema: dict[str, Any]) -> dict[str, Any]:
     props = schema.get("properties")
     if not isinstance(props, dict):
@@ -256,6 +266,7 @@ def build_tools_payload_cached(
     engine: Any,
     tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    compact = not argument_descriptions_enabled()
     key = tuple(
         json.dumps(
             {
@@ -272,7 +283,7 @@ def build_tools_payload_cached(
         )
         for tool in tools
         if str(tool.get("name", "")).strip()
-    )
+    ) + ("compact" if compact else "described",)
     cached_state = getattr(engine, "_cached_tools_state", None)
     if (
         isinstance(cached_state, tuple)
@@ -280,7 +291,7 @@ def build_tools_payload_cached(
         and key == cached_state[0]
     ):
         return cached_state[1]
-    payload = build_tools_payload(tools)
+    payload = build_tools_payload(tools, compact=compact)
     # One reference publication prevents readers from ever observing a key
     # from one contract paired with the payload from another concurrent turn.
     engine._cached_tools_state = (key, payload)

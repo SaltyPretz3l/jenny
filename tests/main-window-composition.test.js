@@ -200,6 +200,20 @@ test('constructs exactly one BrowserWindow with the hardened option shape', () =
   assert.equal(opts.webPreferences.sandbox, true);
 });
 
+test('the window opens in the saved palette, and a new profile in the fresh default', () => {
+  const appearanceUtils = require('../renderer/shared/appearance-utils');
+  const backgroundFor = (getPortableAppearance) => {
+    const { deps, FakeBrowserWindow } = makeDeps({ getPortableAppearance });
+    createMainWindowWithDeps(deps);
+    return FakeBrowserWindow.created[0].options.backgroundColor;
+  };
+  assert.equal(backgroundFor(() => ({ paletteId: 'paper' })), appearanceUtils.resolvePaletteBootColors('paper').bg);
+  const fresh = appearanceUtils.resolvePaletteBootColors(appearanceUtils.getDefaultAppearancePreferences().paletteId).bg;
+  assert.equal(backgroundFor(() => null), fresh);
+  assert.equal(backgroundFor(() => { throw new Error('unreadable'); }), fresh);
+  assert.equal(backgroundFor(() => ({ paletteId: 'retired-palette' })), '#0b0d14');
+});
+
 test('forwards an explicit development icon to BrowserWindow', () => {
   const windowIconPath = path.join(process.cwd(), 'build', 'icon.ico');
   const { deps, FakeBrowserWindow } = makeDeps({ windowIconPath });

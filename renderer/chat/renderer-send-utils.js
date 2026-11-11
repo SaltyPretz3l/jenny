@@ -58,15 +58,12 @@
   const _promptSlashCommands = globalThis.rendererMcpPromptSlashCommands || (canRequire ? require('./renderer-mcp-prompt-slash-commands') : null);
   const _asyncFenceUtils = need(globalThis.rendererAsyncFence
     || (canRequire ? require('../shared/async-fence') : null), ['createDisposalFence'], 'rendererAsyncFence');
-
-  // Paths and display names of accepted attachments (active-file dedupe input).
-  function attachmentRefs(list) {
-    const entries = Array.isArray(list) ? list : [];
-    return {
-      paths: entries.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean),
-      names: entries.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean),
-    };
-  }
+  const {
+    attachmentRefs, buildStartPayload, createBusySendQueue, createOptimisticSendRenderer,
+  } = need(globalThis.rendererSendAssembly
+    || (canRequire ? require('./renderer-send-assembly') : null), ['createBusySendQueue'], 'renderer-send-assembly');
+  const { createSendRetryStop } = need(globalThis.rendererSendRetryStop
+    || (canRequire ? require('./renderer-send-retry-stop') : null), ['createSendRetryStop'], 'renderer-send-retry-stop');
 
   const FOLLOW_UP_ACTION_BUSY_REASON = jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
   const FOLLOW_UP_AUTH_BLOCKED_REASON = jt('chat.send.signInBeforeTrying', 'Sign in before trying that.');
@@ -302,6 +299,14 @@
         summarizeDurableFailurePreview,
       },
     });
+    const {
+      getFailedPayloadRetryAvailability, retryFailedPayload, dismissFailedPayload, handleStopActiveStream,
+    } = createSendRetryStop({
+      sendReceipts, multiStreamController, isSessionBusy, showComposerActionError, startPromptSend,
+      getCurrentSessionId, getSessionMessages, setSessionMessages, renderMessages, appendClientLog,
+      getQueuedSend, restoreQueuedSendDraft, getDispatcher: () => dispatchQueuedSendForSession,
+      publishCancelImpulse, busyReason: FOLLOW_UP_ACTION_BUSY_REASON,
+    });
     const durableModule = globalThis.rendererDurableSend || (typeof require === 'function' ? require('./renderer-durable-send') : null);
     const durableSend = durableModule.createController({ state, sessionContext,
       shell: { ...window.jennyShell, activeFileContext: window.rendererIdeActiveFileContext }, receipts: sendReceipts,
@@ -320,6 +325,18 @@
       getSkillsState: skillsBridge?.getState ? (scope) => skillsBridge.getState(scope) : null,
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
+    });
+    const queueBusySend = createBusySendQueue({
+      state, chatInput, sendOutbox, sendSlashDispatch, stashQueuedSendForSession, canQueueForSession,
+      consumePromptBlock: (block) => deps.promptCommands?.consume(block), appendClientLog, setComposerStatusNotice,
+      renderComposerState, syncComposerInputHeight, syncComposerVisualState,
+    });
+    const renderOptimisticSend = createOptimisticSendRenderer({
+      state, sessionContext, getCurrentSessionId, patchSessionSummary, upsertSessionSummary,
+      attachPendingOriginToSession, setSessionMessages, getSessionMessages, optimisticAppend,
+      onUserSendStarted, renderMessages, renderSessions, renderHeader, renderComposerState,
+      appendClientLog, clipSessionTitle, buildOptimisticAttachmentMetadata,
+      INTERACTIVE_SEQUENCE_IDLE, INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
     });
     const backendStartQueue = _sendOutboxDispatch.createBackendStartQueue({ state, shell: window.jennyShell, isDisposed: () => disposalFence.isDisposed(), getDispatch: () => dispatchQueuedSendForSession }); // row 62: Send while the engine starts
     function startPromptSend(prompt, options = {}) {
@@ -444,91 +461,13 @@
       if (queueUntilBackendReady || (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive())))) {
         // An edit replaces a message in place and a drained outbox entry is
         // already queued: neither may become a new queued message.
-        if (isEditRegenerate) {
-          appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_busy_edit' });
-          return { rejected: true, reason: 'session_busy', sessionId: requestedSessionId };
-        }
-        if (isOutboxDispatch) return null;
-        if (
-          (queueUntilBackendReady || canQueueForSession(requestedSessionId))
-          && (normalizedPrompt || attachmentBudget.accepted.length)
-        ) {
-          // Legacy outbox capture and draft consumption must precede any await:
-          // terminal dispatch may run while mention contents are still resolving.
-          // Backfill only the same queued entry, deduping against resolved mentions.
-          // A prompt that did not come from the composer (preserveComposerDraft)
-          // takes none of its @-mentions and leaves its draft alone.
-          const queuedRefs = attachmentRefs(attachmentBudget.accepted);
-          const queuedMentionPaths = preserveComposerDraft ? [] : window.rendererIdeMentionAutocomplete?.collectMentionPaths?.(chatInput) || [];
-          const queuedMentionContentsPromise = Promise.resolve(
-            preserveComposerDraft ? [] : window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []
-          );
-          // Initially dedupe only attachments; failed mention reads must not
-          // discard the active-file snapshot from both context sources.
-          const queuedActiveFileContext = window.rendererIdeActiveFileContext?.readActiveFileContextForTurn?.({
-            mentionedPaths: [],
-            attachedPaths: queuedRefs.paths,
-            attachedNames: queuedRefs.names,
-          }) || null;
-          const queuedEntry = stashQueuedSendForSession(requestedSessionId, {
-            prompt: String(prompt || ''),
-            attachments: attachmentBudget.accepted,
-            runtimePreferences,
-            createdAt: Date.now(),
-            status: 'capturing_context',
-            sourceRevision: Number(state.composerSessionState?.get?.(requestedSessionId)?.generation || 0),
-            targetSessionIncarnation: String(
-              requestedSession?.session_incarnation || requestedSession?.sessionIncarnation || ''
-            ),
-            meta: {
-              mentionContentsSnapshot: [],
-              activeFileContextSnapshot: queuedActiveFileContext, skillInvocation, imageEditSnapshot: imageEditDraft, promptBlock,
-              ...(imagePromptPin ? { imagePromptPin } : {}),
-            },
-          });
-          if (!queuedEntry) {
-      setComposerStatusNotice(jt('chat.send.outboxFull', 'The send outbox is full. Cancel or send an existing item first.'), {
-              owner: 'send:outbox_full', tone: 'warning',
-            });
-            renderComposerState();
-            return null;
-          }
-          if (queuedActiveFileContext?.path) {
-            window.rendererIdeActiveFileContext?.markTurnAccepted?.(queuedActiveFileContext.path);
-          }
-          // Capture the stored entry by reference so the async backfill below can
-          // target it by object IDENTITY — robust against a dispatch, clear, or a
-          // newer queued send (which all replace/remove the Map entry), where a
-          // createdAt timestamp could collide at ms resolution.
-          deps.promptCommands?.consume(promptBlock); // the queued entry carries it now
-          if (!preserveComposerDraft) {
-            chatInput.value = '';
-            sessionQueue.clearQueuedAttachments(state, requestedSessionId);
-            syncComposerInputHeight();
-            syncComposerVisualState();
-          }
-          renderComposerState();
-          appendClientLog('INFO', 'chat.queue_created', {
-            sessionId: requestedSessionId, ...(queueUntilBackendReady ? { reason: 'backend_starting' } : {}),
-            attachmentCount: attachmentBudget.accepted.length,
-            mentionCount: queuedMentionPaths.length,
-          });
-          // Backfill the resolved @-mention contents once the (time-boxed) reads
-          // settle, and apply the resolved-mention dedupe to the active-file slice.
-          sendOutbox.settleContextCapture(queuedEntry, queuedMentionContentsPromise.then((contents) => {
-            const capturedContents = Array.isArray(contents) ? contents : [];
-            const norm = (path) => String(path || '').trim().replace(/\\/g, '/');
-            const activePath = queuedActiveFileContext?.path ? norm(queuedActiveFileContext.path) : '';
-            const activeFileContextSnapshot = activePath && capturedContents.some((entry) => norm(entry?.path) === activePath)
-              ? null
-              : queuedActiveFileContext;
-            return { mentionContentsSnapshot: capturedContents, activeFileContextSnapshot };
-          }));
-          const queuedResult = { queued: true, sessionId: requestedSessionId };
-          sendSlashDispatch.clearAcceptedImagePrompt(queuedResult, imagePromptPin, requestedSessionId, settings);
-          return queuedResult;
-        }
-        return null;
+        // Legacy outbox capture and draft consumption must precede any await:
+        // terminal dispatch may run while mention contents are still resolving.
+        return queueBusySend({
+          isEditRegenerate, isOutboxDispatch, queueUntilBackendReady, normalizedPrompt, attachmentBudget,
+          requestedSessionId, requestedSession, preserveComposerDraft, prompt, runtimePreferences,
+          skillInvocation, imageEditDraft, promptBlock, imagePromptPin, settings, sessionQueue,
+        });
       }
       if (attachmentBudget.skipped.length) {
         showToastMessage(
@@ -598,6 +537,7 @@
         failedPayloadId: retryPayloadId,
       });
       if (!sendReceipt) return null; deps.promptCommands?.consume(promptBlock); // the receipt's Retry payload carries it; a restored draft does not
+      if (!requestedSessionBusy && !isOutboxDispatch && requestedSessionId === previousSessionId) { try { thinkingController.resumeAutoScroll(); setFollowLatest(true); } catch (_e) { /* cosmetic */ } }
       if (durableEligible) {
         const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
           effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
@@ -614,8 +554,6 @@
       let sendNavigationToken = null;
       try {
         if (!preserveComposerDraft) syncComposerInputHeight();
-        thinkingController.resumeAutoScroll();
-        setFollowLatest(true);
         // Send-stay-in-dock (ide_chat_dock): only force the view back to Chat when
         // NO live chat surface is showing — a send typed into the open Workspace
         // dock must not yank the user out of the IDE (falls back flag-off).
@@ -634,76 +572,11 @@
           optimisticCreated: createdOptimisticSession,
         });
         setChatSendLifecycle(optimisticSessionId, 'preflight');
-        const sequenceState = interactiveGuardrailFallback ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED : INTERACTIVE_SEQUENCE_IDLE;
-        if (pendingBatchSnapshot) {
-          patchSessionSummary(createdOptimisticSession ? optimisticSessionId : getCurrentSessionId(), {
-            pending_question_batch: null,
-            interactive_sequence_state: sequenceState,
-            interactive_round_count: pendingBatchSnapshot.round_index,
-          });
-        }
-        if (createdOptimisticSession) {
-          const timestamp = new Date().toISOString();
-          upsertSessionSummary({
-            id: optimisticSessionId,
-            title: clipSessionTitle(optimisticTitleSource),
-            session_type: 'chat',
-            created_at: timestamp,
-            updated_at: timestamp,
-            message_count: visiblePrompt || acceptedAttachments.length ? 1 : 0,
-            last_message_preview: String(visiblePrompt || '').slice(0, 160),
-            last_model_used: '',
-            preferred_model: runtimePreferences.preferredModel,
-            reasoning_effort: runtimePreferences.reasoningEffort,
-            conversation_mode: 'chat',
-            pending_question_batch: null,
-            interactive_sequence_state: sequenceState,
-            interactive_round_count: pendingBatchSnapshot?.round_index || 0,
-            run_mode: runModeProjection.runMode,
-            plan_mode: runModeProjection.planMode,
-            context_preferences: {
-              history_scope: runtimePreferences.contextPreferences.historyScope,
-              include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
-              include_memory: runtimePreferences.contextPreferences.includeMemory !== false, memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
-            },
-            optimistic_local: true,
-            local_draft: false,
-          }, { prepend: true });
-          sessionContext.setSessionId(optimisticSessionId);
-          attachPendingOriginToSession(optimisticSessionId);
-          setSessionMessages(optimisticSessionId, getSessionMessages(optimisticSessionId), `session_${optimisticSessionId}`);
-        }
-        state.ui.animateNextChatActivation = shouldAnimateActivation;
-        if (visiblePrompt || acceptedAttachments.length) {
-          operationState.optimisticUserMessageId = isEditRegenerate
-            ? editedMessageId
-            : `user_local_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
-          if (!isEditRegenerate) {
-            optimisticAppend(optimisticSessionId, 'user', visiblePrompt, {
-              id: operationState.optimisticUserMessageId,
-              attachments: buildOptimisticAttachmentMetadata(acceptedAttachments),
-              ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
-              ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}),
-            });
-          }
-          onUserSendStarted({
-            sessionId: optimisticSessionId,
-            prompt: visiblePrompt,
-            attachmentCount: acceptedAttachments.length,
-          });
-        }
-        renderMessages();
-        renderSessions();
-        renderHeader();
-        renderComposerState();
-        const optimisticRenderedAtMs = Date.now();
-        const localRenderLatencyMs = Math.max(
-          optimisticRenderedAtMs - Number(preflightState?.startedAt || optimisticRenderedAtMs),
-          0
-        );
-        appendClientLog('INFO', 'chat.send_optimistic_rendered', {
-          sessionId: optimisticSessionId,
-          localRenderLatencyMs,
+        const { optimisticRenderedAtMs, localRenderLatencyMs } = renderOptimisticSend({
+          interactiveGuardrailFallback, pendingBatchSnapshot, createdOptimisticSession, optimisticSessionId,
+          optimisticTitleSource, visiblePrompt, acceptedAttachments, runtimePreferences, runModeProjection,
+          shouldAnimateActivation, isEditRegenerate, editedMessageId, skillInvocation, imagePromptPin,
+          operationState, preflightState,
         });
         startOptimisticSendIndicator();
         sendNavigationToken = navigationIntent.beginOperation('chat.send');
@@ -734,35 +607,14 @@
           activeFileContext,
           mentionContents,
         }) || sendReceipt;
-        const startPayload = {
-          sessionId: targetSessionId,
-          prompt: effectivePrompt,
-          visiblePrompt,
-          // CTL-001 anchor reuse: an edit-resend re-anchors the edited durable
-          // user message instead of persisting a second copy of the prompt.
-          ...(editedMessageId
-            ? { editedMessageId, ...(settings.failureRetry === true ? { failureRetry: true } : {}) }
-            : {}),
-          traceId,
-          preferredModel: runtimePreferences.preferredModel,
-          reasoningEffort: runtimePreferences.reasoningEffort,
-          attachments: acceptedAttachments,
-          contextPreferences: runtimePreferences.contextPreferences,
-          activeFileContext,
-          mentionContents,
-          interactiveResponse: normalizedInteractiveResponse,
+        const startPayload = buildStartPayload({
+          targetSessionId, effectivePrompt, visiblePrompt, editedMessageId,
+          failureRetry: settings.failureRetry === true, traceId, runtimePreferences, acceptedAttachments,
+          activeFileContext, mentionContents, normalizedInteractiveResponse,
           interactiveRoundCount: getActiveSession()?.interactive_round_count || 0,
-          planMode: runModeProjection.planMode,
-          toolPreferences,
-          approvalMode,
-          clientTiming: {
-            send_started_at_ms: Number(preflightState?.startedAt || 0),
-            optimistic_rendered_at_ms: optimisticRenderedAtMs,
-            local_render_latency_ms: localRenderLatencyMs,
-          },
-          ...(skillInvocation?.id ? { skillInvocation: { id: skillInvocation.id } } : {}),
-          ...(imagePromptPin ? { imagePromptPin } : {}),
-        };
+          runModeProjection, toolPreferences, approvalMode, preflightState, optimisticRenderedAtMs,
+          localRenderLatencyMs, skillInvocation, imagePromptPin,
+        });
         const chatBridge = window.jennyShell?.chat;
         const startOperation = isEditRegenerate
           ? chatBridge?.editAndRegenerate
@@ -818,67 +670,6 @@
       }
     }
 
-    function getFailedPayloadRetryAvailability(payloadId) {
-      const availability = sendReceipts.getRetryAvailability(payloadId);
-      if (!availability.available) return availability;
-      const payload = sendReceipts.getFailedPayload(payloadId);
-      if (!payload || !payload.sessionId) {
-      return { available: false, reason: jt('chat.send.failedPayloadNoDestination', 'The original failed payload has no destination chat.') };
-      }
-      return availability;
-    }
-
-    function dismissFailureMarkerForPayload(sessionId, payloadId) {
-      const normalizedPayloadId = String(payloadId || '').trim();
-      if (!normalizedPayloadId) return false;
-      const messages = getSessionMessages(sessionId);
-      let changed = false;
-      const next = (Array.isArray(messages) ? messages : []).map((message) => {
-        if (String(message?.send_failure?.payload_id || '').trim() !== normalizedPayloadId
-          || message.send_failure.dismissed === true) return message;
-        changed = true;
-        return { ...message, send_failure: { ...message.send_failure, dismissed: true } };
-      });
-      if (changed) setSessionMessages(sessionId, next, `session_${sessionId}`);
-      return changed;
-    }
-
-    async function retryFailedPayload(payloadId) {
-      const availability = getFailedPayloadRetryAvailability(payloadId);
-      if (!availability.available) return null;
-      const payload = sendReceipts.getFailedPayload(payloadId);
-      if (isSessionBusy(payload.sessionId)) {
-        showComposerActionError(new Error(FOLLOW_UP_ACTION_BUSY_REASON), jt('chat.send.retryUnavailableTitle', 'Retry Unavailable'));
-        return null;
-      }
-      const result = await startPromptSend(payload.prompt, {
-        visiblePrompt: payload.visiblePrompt,
-        sessionIdOverride: payload.sessionId,
-        runtimePreferencesSnapshot: payload.runtimePreferences,
-        replayImageAttachments: payload.attachments,
-        preserveComposerDraft: true,
-        preserveCurrentSessionOnDispatch: getCurrentSessionId() !== payload.sessionId,
-        restoreDraftOnStartStreamReject: false,
-        mentionContentsSnapshot: payload.mentionContents || [],
-        activeFileContextSnapshot: payload.activeFileContext || null,
-        interactiveResponse: payload.interactiveResponse || null,
-        skillInvocation: payload.skillInvocation || null,
-        imagePromptPin: payload.imagePromptPin || null,
-        failedPayloadId: payload.id,
-      });
-      const retryDidNotStart = !result || result.rejected === true
-        || result.queued === true || result.failed === true;
-      if (!retryDidNotStart && String(result.streamId || '').trim()
-        && dismissFailureMarkerForPayload(payload.sessionId, payload.id)) {
-        renderMessages();
-      }
-      return result;
-    }
-
-    function dismissFailedPayload(payloadId) {
-      return sendReceipts.dismissFailedPayload(payloadId);
-    }
-
     function dispose() {
       if (!disposalFence.dispose()) return;
       sendSlashDispatch.dispose(); backendStartQueue.dispose();
@@ -888,52 +679,6 @@
       // refuses every later enqueue) or drop its failed-send Retry payloads.
       sendReceipts.dispose({ retainFailedPayloads: !ownsSharedSendState });
       if (ownsSharedSendState) sendOutbox.dispose?.();
-    }
-
-    async function handleStopActiveStream(sessionIdInput) { // session-scoped callers (lockdown) share the Stop hold protocol
-      const activeSessionId = (typeof sessionIdInput === 'string' && sessionIdInput.trim()) || getCurrentSessionId();
-      const activeStreamId = String(
-        multiStreamController?.getActiveStreamIdForCancel(activeSessionId) || ''
-      ).trim();
-      if (!activeStreamId) {
-        return null;
-      }
-      appendClientLog('INFO', 'chat.cancel_requested', { streamId: activeStreamId, sessionId: activeSessionId });
-      // Hold the drain BEFORE the round-trip: a cancelled terminal that lands
-      // first must restore the queued entry to the composer, not send it.
-      const queuedAtStop = getQueuedSend(activeSessionId) || null;
-      if (queuedAtStop) dispatchQueuedSendForSession.holdNextDispatch(activeSessionId, activeStreamId);
-      let cancelResult;
-      try {
-        cancelResult = await window.jennyShell.chat.cancelStream(activeStreamId);
-      } catch (error) {
-        // A failed cancel leaves the stream running: its terminal must drain
-        // the queued entry normally, not restore it as if Stop had worked.
-        dispatchQueuedSendForSession.releaseHold(activeSessionId, activeStreamId);
-        throw error;
-      }
-      // CTL-009: a refused cancel (stream already finished/unknown by the time
-      // this round-trip landed) is a no-op — don't report the success shape
-      // that drives UI state for a cancellation that never happened. The
-      // stream had ended, so its terminal drain runs as normal (hold released).
-      // Refusal shape owned by isCancelStreamRefused.
-      if (multiStreamController.isCancelStreamRefused(cancelResult)) {
-        appendClientLog('WARN', 'chat.cancel_refused', { streamId: activeStreamId, sessionId: activeSessionId });
-        dispatchQueuedSendForSession.releaseHold(activeSessionId, activeStreamId);
-        return null;
-      }
-      // The terminal may already have restored the head entry itself;
-      // restoring whatever is queued NOW would act on the next entry and park
-      // it as needs_review. Only the entry queued when Stop was pressed is ours.
-      const queuedAfterCancel = getQueuedSend(activeSessionId) || null;
-      if (queuedAtStop && queuedAfterCancel?.id === queuedAtStop.id && getCurrentSessionId() === activeSessionId) {
-        dispatchQueuedSendForSession.releaseHold(activeSessionId, activeStreamId);
-        restoreQueuedSendDraft(activeSessionId);
-      }
-      // No stream payload exists at the cancel site — omit timeStamp so the
-      // manager stamps the impulse with its own monotonic clock.
-      publishCancelImpulse({ sessionId: activeSessionId, streamId: activeStreamId });
-      return { streamId: activeStreamId, sessionId: activeSessionId };
     }
 
     const dispatchQueuedSendForSession = _sendOutboxDispatch.createQueuedSendDispatcher({

@@ -21,6 +21,7 @@ from sidecar.ai.routing.tool_restored_inputs import RestoredToolInputs
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.runtime.approval_input_bundle import decode_approval_inputs
+from sidecar.runtime.chat_continuation_batch import asks_fresh_consent, terminal_loop_result
 from sidecar.runtime.chat_continuation_batch import attention as _attention
 from sidecar.runtime.chat_continuation_batch import (
     preflight_pending_batch as _preflight_pending_batch,
@@ -184,6 +185,7 @@ class HydratedBeforeToolDispatchResume:
     _frozen_input_sha256: str
     _canonical_events_body: bytes | None
     _approval_inputs_body: bytes | None
+    _approved_call_id: str
 
     @classmethod
     def from_artifacts(  # noqa: PLR0913
@@ -200,6 +202,7 @@ class HydratedBeforeToolDispatchResume:
         allow_dependency: bool = False,
         canonical_events_bytes: bytes | None = None,
         approval_inputs_bytes: bytes | None = None,
+        approved_call: Mapping[str, Any] | None = None,
     ) -> HydratedBeforeToolDispatchResume:
         if (
             not isinstance(checkpoint_body, bytes)
@@ -271,6 +274,15 @@ class HydratedBeforeToolDispatchResume:
             decode_decision_outcomes(canonical_events_bytes, checkpoint)
         elif canonical_events_bytes is not None:
             _fail("unexpected_decision_canonical_events")
+        # App-held, request-local consent: exact identity only, and never part of an artifact.
+        if approved_call is not None and (
+            checkpoint["kind"] != "before_tool_dispatch"
+            or "completed_effect_refs" not in checkpoint
+            or not isinstance(approved_call, Mapping)
+            or dict(approved_call) != {key: pending[key] for key in (
+                "call_id", "tool_id", "effective_args_sha256")}
+        ):
+            _fail("invalid_approved_call")
         instance = object.__new__(cls)
         object.__setattr__(instance, "_checkpoint_body", checkpoint_body)
         object.__setattr__(instance, "_checkpoint_sha256", checkpoint_sha256)
@@ -280,7 +292,12 @@ class HydratedBeforeToolDispatchResume:
         object.__setattr__(instance, "_frozen_input_sha256", frozen_input_sha256)
         object.__setattr__(instance, "_canonical_events_body", canonical_events_bytes)
         object.__setattr__(instance, "_approval_inputs_body", approval_inputs_bytes)
+        object.__setattr__(instance, "_approved_call_id",
+                           pending["call_id"] if approved_call is not None else "")
         return instance
+
+    def approved_call_id(self) -> str:
+        return self._approved_call_id
 
     def checkpoint(self) -> dict[str, Any]:
         return decode_continuation_checkpoint(self._checkpoint_body)
@@ -444,24 +461,6 @@ def _finish_pending_batch(
     return None
 
 
-def _terminal_loop_result(decision: Any, outcomes: list[Any]) -> _tool_loop.ToolLoopResult:
-    return _tool_loop.ToolLoopResult(
-        thinking_text=decision.thinking_text,
-        thinking_kind=decision.thinking_kind,
-        persist_thinking=decision.persist_thinking,
-        response_text=decision.response_text,
-        approval_request=decision.approval_request,
-        approval_plan=decision.approval_plan,
-        outcomes=[*outcomes, *decision.tool_results],
-        usage_totals=decision.usage,
-        streamed_event_types=set(decision.streamed_event_types),
-        completion_source=decision.completion_source,
-        terminal_error_code=decision.terminal_error_code,
-        terminal_subcode=decision.terminal_subcode,
-        terminal_error_retryable=decision.terminal_error_retryable,
-    )
-
-
 def resume_before_tool_dispatch(  # noqa: PLR0913
     *,
     hydrated: HydratedBeforeToolDispatchResume,
@@ -533,13 +532,12 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
             initial_outcomes=hydrated.completed_outcomes(),
         )
         result = GenerationResult(content="", tool_calls=hydrated.tool_calls())
-        approvals: list[Any] | None = ([] if checkpoint["kind"] == "before_decision_wait"
-                     and checkpoint["decision"]["kind"] == "approval" else None)
+        approvals: list[Any] | None = [] if asks_fresh_consent(checkpoint) else None
         remaining, audit_metadata, scan_mode = (
             _preflight_pending_batch(run, result) if approvals is None
             else _preflight_pending_batch(run, result, approvals=approvals)
         )
-        if approvals is not None:
+        if approvals and (approvals[0] is not None or checkpoint["kind"] == "before_decision_wait"):
             restored = build_restored_approval_result(run, hydrated=hydrated, checkpoint=checkpoint,
                                                      result=result, approval=approvals[0])
             return run._finish(restored, reason="continuation_approval_wait")
@@ -574,7 +572,7 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
         working_messages[:] = budget_result.working_messages
         run.budget_tracker = budget_result.budget_tracker
         if budget_result.terminal_decision is not None:
-            terminal = _terminal_loop_result(budget_result.terminal_decision, run.outcomes)
+            terminal = terminal_loop_result(budget_result.terminal_decision, run.outcomes)
             return run._finish(terminal, reason="continuation_context_budget_terminal")
         if runtime.streaming:
             # Close pre-approval commentary before the next generation restarts at token 1.

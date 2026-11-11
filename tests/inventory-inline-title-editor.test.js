@@ -114,3 +114,19 @@ test('a second editor cannot start while one is active, and settle fires only on
   assert.deepEqual(calls.commits, ['Once Only']);
   assert.equal(calls.cancels, 0);
 });
+
+test('a Space typed in the editor never reaches the row as a keyup, so a row that is a button is not clicked', () => {
+  const { window, titleEl, rowEl } = buildRow();
+  startEdit(titleEl);
+  const input = rowEl.querySelector('.inv-inline-title-editor');
+  let rowKeyups = 0;
+  rowEl.addEventListener('keyup', () => { rowKeyups += 1; });
+  const space = new window.KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true });
+  input.dispatchEvent(space);
+  const letter = new window.KeyboardEvent('keyup', { key: 'a', bubbles: true, cancelable: true });
+  input.dispatchEvent(letter);
+  assert.equal(rowKeyups, 0);
+  assert.equal(space.defaultPrevented, true);
+  assert.equal(letter.defaultPrevented, false);
+  assert.ok(rowEl.querySelector('.inv-inline-title-editor'), 'the editor stays open');
+});

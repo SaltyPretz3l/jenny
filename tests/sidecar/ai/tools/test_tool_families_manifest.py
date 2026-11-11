@@ -43,7 +43,7 @@ def test_known_families_are_manifest_families_plus_documented_extras() -> None:
     manifest_families = set(_manifest_families())
     assert manifest_families <= KNOWN_TOOL_FAMILIES
     retired_only = set(RETIRED_TOOL_FAMILY_NAMES) - manifest_families
-    assert retired_only == {"browser", "rich_files"}
+    assert retired_only == {"browser", "diagram", "rich_files"}
     assert KNOWN_TOOL_FAMILIES - manifest_families == {"other"} | retired_only
 
 

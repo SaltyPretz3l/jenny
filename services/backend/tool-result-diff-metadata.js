@@ -588,4 +588,6 @@ module.exports = {
   normalizeScriptedChangeReview,
   normalizeToolResultDiffsMetadata,
   normalizeToolResultDiffMetadata,
+  // The caps the synced-workspace review producer must stay within (row 106).
+  MAX_DIFFS, MAX_DIFF_ID_SEGMENT_CHARS, WORKSPACE_ID_PATTERN,
 };

@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from scripts.checks.repo_venv import ensure_repo_venv  # noqa: E402
 
 if __name__ == "__main__":
-    ensure_repo_venv()  # a bare `python` may be a system interpreter without psutil
+    ensure_repo_venv()  # a bare `python` may be a system interpreter without the gate's deps
 
 from scripts.checks.bounded_process import run_bounded  # noqa: E402
 
@@ -33,6 +33,7 @@ MAX_PARALLEL_CHECKS = 6
 
 CHECKS = [
     "check_boundary.py",
+    "check_team_transport_boundary.py",
     "check_no_port_bundle_runtime_imports.py",
     "check_backend_seam_boundary.py",
     "check_file_size.py",

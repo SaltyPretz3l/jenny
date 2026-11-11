@@ -41,7 +41,7 @@ test('titlebarLoad persists through save and load', () => {
 
 test('an older stored record without the field loads losslessly with the read-out off', () => {
   const older = {
-    paletteId: 'signal',
+    paletteId: 'pewter',
     typographyId: 'editorial',
     surfaceEffectId: 'circuit-trace',
     composerHoloId: 'off',
@@ -57,7 +57,7 @@ test('an older stored record without the field loads losslessly with the read-ou
 });
 
 test('theme bundles never touch the title-bar read-out choice', () => {
-  const picked = appearance.pickThemeBundleAxes({ titlebarLoad: true, paletteId: 'signal' });
+  const picked = appearance.pickThemeBundleAxes({ titlebarLoad: true, paletteId: 'pewter' });
   assert.equal(Object.prototype.hasOwnProperty.call(picked, 'titlebarLoad'), false);
 });
 

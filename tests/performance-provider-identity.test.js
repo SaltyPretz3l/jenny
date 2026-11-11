@@ -1,8 +1,9 @@
 'use strict';
 
 /* Provider identity and the chat.send field (row 59 checkpoint 6): live metrics
- * are requested only from the managed NInfer that names v0.9.1, only with the
- * counter on, and only over a negotiated protocol. */
+ * are requested only from the managed NInfer that names v0.9.1 or Jenny's own
+ * ready llama-server, only with the counter on, and only over a negotiated
+ * protocol. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,10 +58,19 @@ test('an explicit ninferManager argument is the version source', () => {
   assert.equal(resolveProviderIdentity({ service, apiUrl: 'http://127.0.0.1:8034', ninferManager: other }).live_capable, true);
 });
 
-test('llama-server, Ollama, user-run and unknown endpoints are never live-capable', () => {
+test('Jenny\'s own ready llama-server is live-capable; a reused or not-ready one is not', () => {
+  const serviceFor = ({ llamaManager }) => ({ options: { getLlamaServerManager: () => llamaManager } });
+  const apiUrl = 'http://127.0.0.1:8080';
+  assert.deepEqual(resolveProviderIdentity({ service: serviceFor(managers()), apiUrl }), { provider_kind: 'llama-server', live_capable: true });
+  for (const llama of [{ reused: true }, { state: 'starting' }, { state: 'stopped' }, { state: 'error' }]) {
+    assert.deepEqual(resolveProviderIdentity({ service: serviceFor(managers({ llama })), apiUrl }),
+      { provider_kind: 'llama-server', live_capable: false }, JSON.stringify(llama));
+  }
+});
+
+test('Ollama, user-run and unknown endpoints are never live-capable', () => {
   const { ninferManager, llamaManager } = managers();
   const service = { options: { getNinferManager: () => ninferManager, getLlamaServerManager: () => llamaManager } };
-  assert.deepEqual(resolveProviderIdentity({ service, apiUrl: 'http://127.0.0.1:8080' }), { provider_kind: 'llama-server', live_capable: false });
   assert.deepEqual(resolveProviderIdentity({ service, apiUrl: 'http://127.0.0.1:11434', engineType: 'ollama' }), { provider_kind: 'ollama', live_capable: false });
   assert.deepEqual(resolveProviderIdentity({ service, engineType: 'ollama' }), { provider_kind: 'ollama', live_capable: false });
   assert.deepEqual(resolveProviderIdentity({ service, apiUrl: 'http://127.0.0.1:9999' }), { provider_kind: 'other', live_capable: false });
@@ -72,7 +82,7 @@ test('llama-server, Ollama, user-run and unknown endpoints are never live-capabl
   assert.deepEqual(resolveProviderIdentity({ service: throwing, apiUrl: 'http://127.0.0.1:8034' }), { provider_kind: 'other', live_capable: false });
 });
 
-test('the chat.send field is live only for counter on plus a live-capable NInfer, and marks the request', async () => {
+test('the chat.send field is live only for counter on plus a live-capable provider, and marks the request', async () => {
   const marks = [];
   const intake = { markRequest: (sessionId, mark) => marks.push([sessionId, mark]) };
   const apiUrl = 'http://127.0.0.1:8034';
@@ -91,6 +101,10 @@ test('the chat.send field is live only for counter on plus a live-capable NInfer
 
   const llama = await serviceWith({ ...managers(), intake });
   assert.deepEqual(inferencePerformanceRequestField(llama, { ...args, apiUrl: 'http://127.0.0.1:8080' }),
+    { inference_performance: { live: true, provider_kind: 'llama-server' } });
+  assert.deepEqual(marks.at(-1)[1], { live_requested: true, live_capable: true, request_id: 'stream_1' });
+  const reused = await serviceWith({ ...managers({ llama: { reused: true } }), intake });
+  assert.deepEqual(inferencePerformanceRequestField(reused, { ...args, apiUrl: 'http://127.0.0.1:8080' }),
     { inference_performance: { live: false, provider_kind: 'llama-server' } });
   assert.deepEqual(inferencePerformanceRequestField(llama, { ...args, engineType: 'ollama', apiUrl: '' }),
     { inference_performance: { live: false, provider_kind: 'ollama' } });

@@ -317,13 +317,18 @@ def nudge_applies(loop: Any) -> bool:
     wording is conditional on work remaining, so an explanation-only prompt
     during an unfinished build gets one ignorable row at worst.
     """
-    if getattr(loop, "plan_mode", False) or getattr(loop, "read_only", False):
-        return False
     context = getattr(loop, "request_context", None)
     if not (
         getattr(context, "approved_plan", None)
         or getattr(context, "plan_approved_in_turn", False)
     ):
+        return False
+    return write_tools_available(loop)
+
+
+def write_tools_available(loop: Any) -> bool:
+    """Write tools offered outside Plan Mode and read-only, with or without a plan."""
+    if getattr(loop, "plan_mode", False) or getattr(loop, "read_only", False):
         return False
     available = set(getattr(getattr(loop, "tool_contract", None), "available_names", ()))
     return bool(available & {"write_file", "edit_file"})

@@ -177,7 +177,7 @@ test('model preserves legacy exports, safely normalizes metadata, and translates
   assert.equal(model.TOOL_CATEGORY_CONFIG_KEYS.Bash, 'bash');
   assert.equal(model.TOOL_CATEGORY_SESSION_KEYS.file_tools, 'files');
   assert.ok(Object.isFrozen(model.SURFACE_FAMILY_UI));
-  assert.deepEqual(model.SURFACE_FAMILY_UI.map((family) => family.id), ['files', 'terminal', 'git', 'python', 'code', 'checks', 'artifacts', 'images', 'web', 'knowledge', 'home', 'helpers']);
+  assert.deepEqual(model.SURFACE_FAMILY_UI.map((family) => family.id), ['files', 'terminal', 'git', 'python', 'code', 'checks', 'artifacts', 'images', 'web', 'browser_use', 'knowledge', 'home', 'helpers']);
   assert.equal(model.normalizeToolEntry({ name: 'read_file', connectionId: {}, lockdownAvailable: 'yes' }).connectionId, '');
   assert.equal(model.normalizeToolEntry('read_file').lockdownAvailable, false);
   const prior = global.jennyI18n;
@@ -221,4 +221,95 @@ test('RED regression: legacy Files off keeps Artifacts off and unlisted connecti
     mcp__late__search: { source_kind: 'mcp', server_name: 'late' } });
   assert.ok(resolved.disabled_tools.includes('create_artifact'));
   assert.ok(resolved.disabled_tools.includes('mcp__late__search'));
+});
+
+test('the Browser row starts off, stays off under any setting, and only a real choice turns it on', async () => {
+  const controller = setup({}, [entry('files'), entry('browser_use', 'browser')]);
+  controller.hydrateFromToolSettings({ bash: true });
+  const browserRow = () => controller.getViewModel().sections.flatMap((section) => section.families).find((row) => row.id === 'browser_use');
+  assert.equal(browserRow().on, false);
+  assert.equal(browserRow().state, 'off');
+  assert.deepEqual(controller.getToggleStates(), { families: {}, connections: {} }, 'the resolver owns the default');
+  await controller.setToggle('browser_use', true);
+  assert.equal(browserRow().on, true);
+  assert.deepEqual(controller.getToggleStates().families, { browser_use: true });
+});
+
+test('a default-off row left alone is not counted as something this chat turned off', async () => {
+  const controller = setup({}, [entry('files'), entry('terminal'), entry('browser_use', 'browser')]);
+  assert.deepEqual(countRows(controller.getViewModel()), { on: 2, off: 0, total: 3 });
+  await controller.setToggle('browser_use', true);
+  await controller.setToggle('browser_use', false);
+  assert.deepEqual(countRows(controller.getViewModel()), { on: 2, off: 1, total: 3 }, 'switched off by hand it counts');
+});
+
+function browserSetup({ persist = async () => {}, remember = async () => {}, remembered = false, state } = {}) {
+  const writes = [];
+  const controller = setup({ state, persistSessionToolPreference: persist,
+    readBrowserDefault: () => remembered,
+    persistBrowserDefault: (enabled) => { writes.push(enabled); return remember(enabled); } },
+  [entry('files'), entry('browser_use', 'browser_navigate')]);
+  return { controller, writes };
+}
+const browserRow = (controller) => controller.getViewModel().sections.flatMap((section) => section.families).find((row) => row.id === 'browser_use');
+
+test('the Browser row remembers on, off and reset, after the chat write lands', async () => {
+  const { controller, writes } = browserSetup();
+  assert.equal(await controller.setToggle('browser_use', true), true);
+  assert.deepEqual(writes, [true]);
+  assert.equal(await controller.setToggle('browser_use', false), true);
+  assert.deepEqual(writes, [true, false]);
+  await controller.setToggle('browser_use', true);
+  assert.equal(await controller.resetToDefaults(), true);
+  assert.deepEqual(writes, [true, false, true, false]);
+});
+
+test('other rows and a refused chat write never touch the remembered choice', async () => {
+  const quiet = browserSetup();
+  await quiet.controller.setToggle('files', false);
+  assert.deepEqual(quiet.writes, []);
+  const refused = browserSetup({ persist: async () => { throw new Error('rejected'); } });
+  assert.equal(await refused.controller.setToggle('browser_use', true), false);
+  assert.deepEqual(refused.writes, []);
+});
+
+test('a failed remember write does not fail the chat toggle', async () => {
+  const { controller, writes } = browserSetup({ remember: async () => { throw new Error('disk full'); } });
+  assert.equal(await controller.setToggle('browser_use', true), true);
+  assert.deepEqual(writes, [true]);
+  assert.equal(browserRow(controller).on, true);
+});
+
+test('offline lockdown refuses the row before it can remember anything', async () => {
+  const state = { currentSessionId: 'a', features: { featureFlags: { session_offline_lockdown: true } }, sessions: [{ id: 'a', lockdown: true }] };
+  const writes = [];
+  const controller = setup({ state, persistSessionToolPreference: async () => {}, persistBrowserDefault: (enabled) => writes.push(enabled) },
+    [entry('browser_use', 'browser_navigate', { lockdownAvailable: false })]);
+  assert.equal(await controller.setToggle('browser_use', true), false);
+  assert.deepEqual(writes, []);
+});
+
+test('a chat with no saved record yet shows and sends the remembered choice', async () => {
+  const draft = browserSetup({ remembered: true, state: { currentSessionId: '' } });
+  await new Promise(setImmediate);
+  assert.equal(browserRow(draft.controller).on, true);
+  assert.equal(browserRow(draft.controller).overridden, false, 'nothing to reset on the row');
+  assert.deepEqual(draft.controller.getToggleStates().families, { browser_use: true });
+  assert.equal(draft.controller.getViewModel().hasOverrides, false);
+  for (const flag of ['local_draft', 'optimistic_local']) {
+    const local = browserSetup({ remembered: true, state: { currentSessionId: 'd', sessions: [{ id: 'd', [flag]: true }] } });
+    await new Promise(setImmediate);
+    assert.deepEqual(local.controller.getToggleStates().families, { browser_use: true }, flag);
+  }
+});
+
+test('a saved chat follows only its own switches, and a remembered off adds nothing', async () => {
+  const saved = browserSetup({ remembered: true, state: { currentSessionId: 'a', sessions: [{ id: 'a' }] } });
+  await new Promise(setImmediate);
+  assert.equal(browserRow(saved.controller).on, false);
+  assert.deepEqual(saved.controller.getToggleStates().families, {});
+  const off = browserSetup({ remembered: false, state: { currentSessionId: '' } });
+  await new Promise(setImmediate);
+  assert.equal(browserRow(off.controller).on, false);
+  assert.deepEqual(off.controller.getToggleStates().families, {});
 });

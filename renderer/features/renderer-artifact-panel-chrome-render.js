@@ -78,7 +78,7 @@
     var title = input?.title || titleForArtifact(artifact);
     var glyph = artifact
       ? '<span class="artifact-panel-kind-glyph" aria-hidden="true">' + kindGlyphHtml(input?.kind) + '</span>'
-      : '';
+      : (input?.glyphHtml ? '<span class="artifact-panel-kind-glyph" aria-hidden="true">' + input.glyphHtml + '</span>' : '');
     var titleContent = titleTextHtml(title);
     var switchLabel = jt('artifacts.review.switchArtifact', '{title}, switch artifact', { title: title });
     var titleNode = input?.artifactCount >= 2

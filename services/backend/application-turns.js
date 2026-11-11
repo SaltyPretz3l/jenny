@@ -17,6 +17,12 @@ const REQUEST_APPLICATION_TURNS = new Set([
   APPLICATION_TURN_WAKE, APPLICATION_TURN_AUTO_RESUME, APPLICATION_TURN_SCHEDULED_CHECK, APPLICATION_TURN_DIGEST,
 ]);
 
+// Nobody is at the keyboard for these, so a tool that is off until a chat turns it on stays off (row 114). An auto-resume
+// is left out: it finishes a turn the user started, and its history already holds those tool calls. A wake is offered
+// the browser when the chat's switch is on, but only to close its page (browser-tool.js enforces that at the call).
+const UNATTENDED_APPLICATION_TURNS = new Set([APPLICATION_TURN_WAKE, APPLICATION_TURN_SCHEDULED_CHECK, APPLICATION_TURN_DIGEST]);
+const isUnattendedApplicationTurn = (value) => UNATTENDED_APPLICATION_TURNS.has(value);
+
 // Row 86: a digest request's tool preferences narrowed to DIGEST_TURN_TOOLS minus anything already disabled.
 function narrowDigestToolPreferences(preferences) {
   const source = preferences && typeof preferences === 'object' ? preferences : {};
@@ -48,6 +54,7 @@ module.exports = {
   APPLICATION_TURN_SCHEDULED_CHECK,
   APPLICATION_TURN_WAKE,
   applicationTurnEventFields,
+  isUnattendedApplicationTurn,
   narrowDigestToolPreferences,
   normalizeRequestApplicationTurn,
 };

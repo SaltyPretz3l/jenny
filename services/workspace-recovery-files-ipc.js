@@ -13,6 +13,11 @@
  * owning service's realpath containment again before any IO; results carry
  * relative paths, enums and fixed messages only - never file bytes, absolute
  * paths, git stderr or a private recovery location.
+ *
+ * Row 106: a synced-workspace restore point (refs/jenny/sandbox/...) lives in
+ * the chat's project root, not the IDE root. Its requests carry the chat's
+ * `sessionId` and go to `sandboxCheckpoints` (workspace-git-sandbox-checkpoint),
+ * which resolves that session's root; turn-checkpoint requests are unchanged.
  */
 
 const { isPlainObject } = require('./value-utils');
@@ -20,6 +25,7 @@ const { normalizeWorkspaceRelPath } = require('./workspace-ide-path-guard');
 const { WORKSPACE_FS_ERROR_CODES } = require('./workspace-ide-errors');
 const { WORKSPACE_GIT_ERROR_CODES } = require('./workspace-git-errors');
 const { checkpointRefIsSafe } = require('./workspace-git-checkpoint');
+const { SANDBOX_NAMESPACE } = require('./workspace-git-checkpoint-refs');
 const { HASH_KINDS, MAX_FILES: MAX_PATHS } = require('./workspace-git-checkpoint-files');
 const {
   WorkspaceRecoverySafetyCopyStore,
@@ -29,6 +35,7 @@ const {
 
 const MAX_PATH_LENGTH = 4096;
 const MAX_REF_LENGTH = 255;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AFTER_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 const REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -89,8 +96,23 @@ function normalizePreflightFiles(value) {
   return files;
 }
 
-function normalizeRef(value) {
-  return typeof value === 'string' && value.length <= MAX_REF_LENGTH && checkpointRefIsSafe(value) ? value : '';
+function normalizeRef(value, isSafe = checkpointRefIsSafe) {
+  return typeof value === 'string' && value.length <= MAX_REF_LENGTH && isSafe(value) ? value : '';
+}
+
+// Which checkpoint owner a request goes to: a sandbox ref needs the chat's
+// session id (and only a sandbox ref may carry one), else the request is
+// shaped exactly as before. Returns { route } or { early } (a refusal).
+function checkpointRoute(payload, keys, invalidMessage, { failure, hasOnlyKeys }) {
+  const sandbox = typeof payload?.ref === 'string' && payload.ref.startsWith(`${SANDBOX_NAMESPACE.prefix}/`);
+  if (!hasOnlyKeys(payload, sandbox ? [...keys, 'sessionId'] : keys)) return { early: failure('payload_invalid', invalidMessage) };
+  const isSafe = sandbox ? SANDBOX_NAMESPACE.refIsSafe : checkpointRefIsSafe;
+  const ref = normalizeRef(payload.ref, isSafe);
+  if (!ref) return { early: failure('ref_invalid', 'The checkpoint reference was invalid.') };
+  if (sandbox && !(typeof payload.sessionId === 'string' && SESSION_ID_PATTERN.test(payload.sessionId))) {
+    return { early: failure('session_invalid', 'The chat for this checkpoint was not named.') };
+  }
+  return { route: { ref, isSafe, sandbox, extra: sandbox ? { sessionId: payload.sessionId } : {} } };
 }
 
 function safeReason(value, fallback) {
@@ -159,6 +181,7 @@ function createWorkspaceRecoveryFileHandlers({
   gitService = null,
   ideService = null,
   safetyCopies = null,
+  sandboxCheckpoints = null,
 }) {
   const store = safetyCopies || new WorkspaceRecoverySafetyCopyStore();
   // A token restores once at a time: a second request waits for no one, it fails.
@@ -169,10 +192,10 @@ function createWorkspaceRecoveryFileHandlers({
   const maxBytes = store.limits.maxFileBytes;
   const unavailable = (what) => failure('recovery_unavailable', `${what} is unavailable right now.`);
 
-  async function callGit(method, options, label) {
-    if (typeof gitService?.[method] !== 'function') return { early: unavailable(label) };
+  async function callGit(method, options, label, owner = gitService) {
+    if (typeof owner?.[method] !== 'function') return { early: unavailable(label) };
     try {
-      return { result: await gitService[method](options) };
+      return { result: await owner[method](options) };
     } catch (error) {
       const reason = GIT_THROWN_REASONS.get(error?.code) || 'checkpoint_failed';
       return { early: failure(reason, `${label} could not run.`) };
@@ -209,12 +232,13 @@ function createWorkspaceRecoveryFileHandlers({
   }
 
   async function preflightCheckpointFiles(payload) {
-    if (!hasOnlyKeys(payload, ['ref', 'files'])) return failure('payload_invalid', 'The checkpoint preflight request was invalid.');
-    const ref = normalizeRef(payload.ref);
+    const routed = checkpointRoute(payload, ['ref', 'files'], 'The checkpoint preflight request was invalid.', { failure, hasOnlyKeys });
+    if (routed.early) return routed.early;
+    const { ref, sandbox, extra } = routed.route;
     const files = normalizePreflightFiles(payload.files);
-    if (!ref) return failure('ref_invalid', 'The checkpoint reference was invalid.');
     if (!files) return failure('files_invalid', 'The checkpoint file list was invalid.');
-    const called = await callGit('preflightCheckpointFiles', { ref, files }, 'Checkpoint preflight');
+    const owner = sandbox ? sandboxCheckpoints : gitService;
+    const called = await callGit('preflightCheckpointFiles', { ref, files, ...extra }, 'Checkpoint preflight', owner);
     if (called.early) return called.early;
     const { result } = called;
     if (result?.ok !== true) return failure(safeReason(result?.reason, 'checkpoint_failed'), 'The checkpoint could not be checked.');
@@ -223,21 +247,22 @@ function createWorkspaceRecoveryFileHandlers({
   }
 
   async function restoreCheckpointFiles(payload) {
-    if (!hasOnlyKeys(payload, ['ref', 'paths', 'removePaths'])) return failure('payload_invalid', 'The checkpoint restore request was invalid.');
-    const ref = normalizeRef(payload.ref);
+    const routed = checkpointRoute(payload, ['ref', 'paths', 'removePaths'], 'The checkpoint restore request was invalid.', { failure, hasOnlyKeys });
+    if (routed.early) return routed.early;
+    const { ref, isSafe, sandbox, extra } = routed.route;
     const paths = normalizePathList(payload.paths, { min: 0 });
     const removePaths = payload.removePaths === undefined ? [] : normalizePathList(payload.removePaths, { min: 0 });
-    if (!ref) return failure('ref_invalid', 'The checkpoint reference was invalid.');
     if (!paths || !removePaths || !(paths.length + removePaths.length)
       || paths.length + removePaths.length > MAX_PATHS || removePaths.some((item) => paths.includes(item))) {
       return failure('paths_invalid', 'The restore path list was invalid.');
     }
-    const called = await callGit('restoreCheckpointFiles', { ref, paths, removePaths }, 'Checkpoint restore');
+    const owner = sandbox ? sandboxCheckpoints : gitService;
+    const called = await callGit('restoreCheckpointFiles', { ref, paths, removePaths, ...extra }, 'Checkpoint restore', owner);
     if (called.early) return called.early;
     const { result } = called;
     if (result?.ok === true && result.found === false) return failure('checkpoint_not_found', 'That checkpoint no longer exists.');
     const outcome = {
-      rollbackRef: normalizeRef(result?.rollbackRef) || null,
+      rollbackRef: normalizeRef(result?.rollbackRef, isSafe) || null,
       restored: sanitizePathList(result?.restored),
       removed: sanitizePathList(result?.removed),
       failed: sanitizeFailedList(result?.failed),

@@ -472,3 +472,51 @@ test('hosted runtime is composed by default and force-deny preserves inspection 
     await hosted?.dispose(); removeTempUserDataPath(userDataPath);
   }
 });
+
+test('E19: a null model endpoint without the explicit option is still model_endpoint_required', () => {
+  const userDataPath = makeTempUserDataPath();
+  try {
+    for (const extra of [{}, { modelOptional: false }, { modelOptional: 'yes' }, { modelOptional: 1 }]) {
+      assert.throws(() => createHostedBackend({ hostMode: 'server', credentialService: createCredentialService(),
+        userDataPath, modelEndpoint: null, ...extra }),
+      (error) => error.code === 'CMP-HOST-0001' && error.reason === 'model_endpoint_required', JSON.stringify(extra));
+    }
+  } finally { removeTempUserDataPath(userDataPath); }
+});
+
+test('E19: with modelOptional a null endpoint composes a backend that can never spawn a sidecar', async (t) => {
+  const userDataPath = makeTempUserDataPath();
+  t.mock.method(os, 'homedir', () => path.join(userDataPath, 'home'));
+  const injected = new SidecarHarness();
+  const ollamaManager = new EngineManagerHarness('ollama');
+  const vllmManager = new EngineManagerHarness('vllm');
+  const hosted = createHostedBackend({ hostMode: 'server', credentialService: createCredentialService(), userDataPath,
+    workspaceRoot: null, modelEndpoint: null, modelOptional: true, sidecarManager: injected, ollamaManager, vllmManager });
+  try {
+    const manager = hosted.backend.sidecarManager;
+    assert.notEqual(manager, injected, 'no injected or real sidecar manager is used without a model');
+    assert.equal(manager.process, null);
+    await assert.rejects(() => manager.start(), /no model/i);
+    await assert.rejects(() => manager.retryStart(), /no model/i);
+    // A chat's preflight tries one reconnect and answers the existing unavailable failure, at once.
+    await assert.rejects(() => ensureManagedSidecarReadyForChat(hosted.backend, {}), /unavailable after reconnect/);
+    assert.equal(manager.process, null);
+    const stopped = await hosted.stop();
+    assert.equal(stopped.exitConfirmed, true, 'a never-started backend stops with a confirmed exit');
+    await hosted.dispose();
+    assert.deepEqual(injected.calls, []);
+    assert.deepEqual(ollamaManager.calls, []);
+    assert.deepEqual(vllmManager.calls, []);
+  } finally { await hosted.dispose(); removeTempUserDataPath(userDataPath); }
+});
+
+test('E19: modelOptional with a real endpoint composes exactly as before', () => {
+  const userDataPath = makeTempUserDataPath();
+  const injected = new SidecarHarness();
+  const hosted = createHostedBackend({ hostMode: 'server', credentialService: createCredentialService(), userDataPath,
+    workspaceRoot: null, modelOptional: true, sidecarManager: injected,
+    modelEndpoint: { engine: 'openai-compatible', model: 'm', apiUrl: 'http://127.0.0.1:8000/v1' } });
+  try {
+    assert.equal(hosted.backend.sidecarManager, injected);
+  } finally { void hosted.dispose(); removeTempUserDataPath(userDataPath); }
+});

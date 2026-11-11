@@ -688,7 +688,7 @@ test('replaceActiveSession on an already-open session just activates it (no dupl
   assert.equal(result.activeSessionId, 'a');
 });
 
-test('replaceActiveSession falls back to a new tab when the active tab is busy', async () => {
+test('replaceActiveSession replaces a busy active tab: only an explicit new tab grows the rail', async () => {
   const bridge = createWorkspaceShell();
   const controller = createWorkspaceStateController({
     jennyShell: bridge.shell,
@@ -699,8 +699,8 @@ test('replaceActiveSession falls back to a new tab when the active tab is busy',
   await controller.openSession('b'); // ['a','b'] active b (busy)
 
   const result = await controller.replaceActiveSession('c');
-  // b is busy → must not be discarded; c opens as a new tab after b.
-  assert.deepEqual(result.openSessionIds, ['a', 'b', 'c']);
+  // b is busy but its stream is per session: it leaves the rail, c takes its slot.
+  assert.deepEqual(result.openSessionIds, ['a', 'c']);
   assert.equal(result.activeSessionId, 'c');
 });
 

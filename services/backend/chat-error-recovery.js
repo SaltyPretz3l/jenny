@@ -265,7 +265,8 @@ function classifyAssistantError(errorPayload, {
   // with the refusal reason in error_message.
   if (code === 'RUN_MODE_CHANGED'
     || (String(payload.error_type || '') === 'InferenceAdmissionRefused'
-      && String(payload.error_message || '').trim() === 'run_mode_changed')) {
+      && String(payload.error_message || '').trim() === 'run_mode_changed')
+    || String(payload.message || '').trim() === 'Continuation checkpoint failed: run_mode_changed') {
     return 'run_mode_changed';
   }
   if (subcode === 'thinking_budget') {

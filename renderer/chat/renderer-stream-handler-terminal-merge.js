@@ -232,12 +232,10 @@
       return anchorIndex === -1 ? -1 : anchorIndex + 1;
     }
 
-    // F18 (gate A4): a paused leg gets no terminal of its own, so its blank
-    // live shell stays 'streaming' after the resumed stream of the same turn
-    // settles and releases it. Preserved, that dead shell joins the turn (the
-    // hydrated fold now keeps the paused leg's events) and blanks the footer.
-    // Only a shell whose reasoning hydration already holds is blank; one with
-    // unsaved reasoning or tool steps keeps its local content.
+    // F18 (gate A4): a paused leg gets no terminal of its own, so its live shell
+    // stays 'streaming' after the resumed stream settles and releases it. Kept,
+    // it lands below the answer. A shell with prose goes, as on any reload;
+    // otherwise unsaved reasoning or tool steps keep it.
     function buildReleasedLegShellCheck(list, hydratedMessages, options) {
       const terminalStreamId = normalizeId(options.streamId);
       const pendingStreams = options.pendingStreams;
@@ -256,9 +254,8 @@
           && terminalTurnIds.has(normalizeId(message?.turn_id))
           && String(message?.role || '') === 'assistant'
           && String(message?.status || '') === 'streaming'
-          && !String(message?.content || '').trim()
           && !(message?.tool_steps?.length || message?.visible_segments?.length)
-          && (message?.reasoning?.entries || []).every((entry) => hydratedEntryIds.has(normalizeId(entry?.id))));
+          && (String(message?.content || '').trim() || (message?.reasoning?.entries || []).every((entry) => hydratedEntryIds.has(normalizeId(entry?.id)))));
       };
     }
 

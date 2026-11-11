@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 
-const { parseArgs, probe } = require('../../server/healthcheck');
+const { checkTeam, parseArgs, probe } = require('../../server/healthcheck');
 
 test('healthcheck CLI accepts only an absolute config and optional readiness probe', () => {
   assert.deepEqual(parseArgs(['--config', '/etc/jenny/host.json']), {
@@ -56,4 +56,29 @@ test('healthcheck rejects a non-200 server response', async () => {
   };
   await assert.rejects(probe({ listenHost: '127.0.0.1', port: 8080,
     canonicalOrigin: 'https://jenny.test' }, '/readyz', { requestImpl }), /host_unhealthy/);
+});
+
+test('healthcheck keeps the single-owner probe path for a config without a team block', async () => {
+  const paths = [];
+  const requestImpl = (options, callback) => {
+    paths.push(options.path);
+    const request = new EventEmitter();
+    request.setTimeout = () => {};
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.resume = () => {};
+      callback(response);
+      response.emit('end');
+    };
+    return request;
+  };
+  await probe({ listenHost: '127.0.0.1', port: 8080, canonicalOrigin: 'https://jenny.test' }, '/healthz', { requestImpl });
+  assert.deepEqual(paths, ['/healthz']);
+});
+
+test('healthcheck team variant rejects with host_unhealthy when no live marker exists', async () => {
+  const missing = require('node:path').join(require('node:os').tmpdir(), 'jenny-no-such-team-profile');
+  await assert.rejects(checkTeam({ userDataPath: missing, team: {} }, { isProcessAlive: () => true }),
+    (error) => error.message === 'host_unhealthy');
 });

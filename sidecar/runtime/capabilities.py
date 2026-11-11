@@ -53,7 +53,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.6.1"
+SERVER_VERSION = "1.7.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})

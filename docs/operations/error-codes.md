@@ -63,6 +63,27 @@ to bounded public reasons; secrets and backend exceptions remain private.
 
 ---
 
+## TEAM - `CMP-TEAM-NNNN` (6 codes)
+
+The desktop team member client (`services/team/`, row 123 slice 1f-1) and the team host it
+runs (`services/team/host/`, slice 1f-2). A failure
+the team host answered keeps the host's own `CMP-HOST` code and reason; these
+codes are the client's own. Reasons are bounded words; no key, invite string,
+display name or address is ever part of one. Settings > Team (slice 1g-1) shows them: each code has
+its row in the renderer error table, and the page gives every reason it can receive its own sentence
+(`renderer/shell/renderer-settings-team-strings.js`).
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `TEAM_ERROR_CODES.CONNECTION_FAILED` | `CMP-TEAM-0001` | The team host could not be reached, refused the connection, or a call got no answer | Conditional | runtime_error | The team server could not be reached | `services/team/connection-manager.js` |
+| `TEAM_ERROR_CODES.VERSION_MISMATCH` | `CMP-TEAM-0002` | The hello handshake refused this Jenny's protocol version | No | denied | This Jenny and the team server run versions that do not fit. Update the older one | `services/team/connection-manager.js` |
+| `TEAM_ERROR_CODES.INVITE_MALFORMED` | `CMP-TEAM-0003` | The invite text is not a well-formed team invite | No | denied | That invite code is not valid. Check that you pasted all of it | `services/team/join-flow.js` |
+| `TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE` | `CMP-TEAM-0004` | The secure store is not ready, unavailable or on `basic_text`, or the device key is missing or unreadable | Conditional | denied | Jenny cannot use this PC’s secure storage right now | `services/team/device-key-store.js` |
+| `TEAM_ERROR_CODES.HOST_STOPPED` | `CMP-TEAM-0005` | The team connection was stopped (the app is quitting or the team was removed) while a call was made | No | cancelled | The connection to that team was closed | `services/team/team-service.js` |
+| `TEAM_ERROR_CODES.HOST_UNAVAILABLE` | `CMP-TEAM-0006` | The team host this Jenny runs cannot start here (platform, engine), failed (its own reason, such as `team_host_key_mismatch`), exited, or did not stop in time | Conditional | runtime_error | The team server on this PC could not be started | `services/team/host/host-supervisor.js` |
+
+---
+
 ## CLI - `CMP-CLI-NNNN` (10 codes)
 
 Jenny CLI host failures (`services/cli-host/`). The CLI composes the desktop
@@ -164,11 +185,11 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_BACKGROUND_NOT_FOUND` | `CMP-TOOL-0016` | Background shell handle not found | No | `runtime_error` | "Background task not found." | [sidecar/ai/tools/builtins/shell.py:343](../../sidecar/ai/tools/builtins/shell.py#L343) |
 | `CMP_TOOL_READ_SNAPSHOT_REQUIRED` | `CMP-TOOL-0018` | Edit needs prior Read snapshot | No | `runtime_error` | "Read the file before editing it." | [sidecar/ai/tools/builtins/file_state.py:213](../../sidecar/ai/tools/builtins/file_state.py#L213) |
 | `CMP_TOOL_STALE_READ_SNAPSHOT` | `CMP-TOOL-0019` | Edit's read snapshot is stale | Yes | `runtime_error` | "File changed since last read; re-read and retry." | [sidecar/ai/tools/builtins/file_state.py:222](../../sidecar/ai/tools/builtins/file_state.py#L222) |
-| `CMP_TOOL_MERMAID_VALIDATION` | `CMP-TOOL-0020` | Mermaid diagram failed validation | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:99](../../sidecar/ai/tools/builtins/mermaid.py#L99) |
-| `CMP_TOOL_MERMAID_UNSUPPORTED_TYPE` | `CMP-TOOL-0021` | Unsupported mermaid diagram type | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:145](../../sidecar/ai/tools/builtins/mermaid.py#L145) |
-| `CMP_TOOL_MERMAID_FORMAT` | `CMP-TOOL-0022` | Mermaid output format invalid | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:332](../../sidecar/ai/tools/builtins/mermaid.py#L332) |
-| `CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE` | `CMP-TOOL-0023` | Mermaid render too large | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:338](../../sidecar/ai/tools/builtins/mermaid.py#L338) |
-| `CMP_TOOL_MERMAID_INTERNAL` | `CMP-TOOL-0024` | Mermaid internal renderer error | Conditional | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:446](../../sidecar/ai/tools/builtins/mermaid.py#L446) |
+| `CMP_TOOL_MERMAID_VALIDATION` | `CMP-TOOL-0020` | Mermaid diagram failed validation | No | `runtime_error` | internal-only | retired with `mermaid_generate` (removed 2026-11-10; a fenced mermaid block draws the chart); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_MERMAID_UNSUPPORTED_TYPE` | `CMP-TOOL-0021` | Unsupported mermaid diagram type | No | `runtime_error` | internal-only | retired with `mermaid_generate` (removed 2026-11-10; a fenced mermaid block draws the chart); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_MERMAID_FORMAT` | `CMP-TOOL-0022` | Mermaid output format invalid | No | `runtime_error` | internal-only | retired with `mermaid_generate` (removed 2026-11-10; a fenced mermaid block draws the chart); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE` | `CMP-TOOL-0023` | Mermaid render too large | No | `runtime_error` | internal-only | retired with `mermaid_generate` (removed 2026-11-10; a fenced mermaid block draws the chart); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_MERMAID_INTERNAL` | `CMP-TOOL-0024` | Mermaid internal renderer error | Conditional | `runtime_error` | internal-only | retired with `mermaid_generate` (removed 2026-11-10; a fenced mermaid block draws the chart); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_APPLY_PATCH_PARSE_FAILED` | `CMP-TOOL-0025` | apply_patch envelope/section grammar invalid | No | `runtime_error` | "Patch could not be parsed: {detail}." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_APPLY_PATCH_PREIMAGE_MISMATCH` | `CMP-TOOL-0026` | Hunk preimage did not match file contents | No | `runtime_error` | "Patch preimage did not match file contents." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK` | `CMP-TOOL-0027` | apply_patch rolled back partially; some files left in uncertain state | No | `runtime_error` | "Patch failed; some files could not be restored." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |

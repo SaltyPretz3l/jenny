@@ -1,0 +1,183 @@
+/* Settings > Team (row 123, slice 1g-1; built to the owner-approved mockup).
+ * Lists of people, devices and invites are plain rows divided by hairlines: no
+ * side bars, no cards inside the card. Hierarchy comes from spacing, weight and
+ * alignment. Every colour, size and duration is a token from foundation.css. */
+
+.team-set .team-set-group + .team-set-group,
+.team-set .settings-page-status + .team-set-group,
+.team-set .team-set-note + .team-set-group {
+  margin-top: var(--space-12);
+}
+
+.team-set .team-set-status {
+  margin-bottom: var(--space-8);
+}
+
+.team-set .team-set-status .btn {
+  margin-inline-start: auto;
+}
+
+.team-set-count {
+  margin-inline-start: var(--space-4);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.team-set-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-set-list--follow {
+  margin-top: var(--space-6);
+}
+
+.team-set-person {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-8);
+  padding: var(--space-5) 0;
+  border-top: 1px solid var(--line);
+}
+
+.team-set-person:first-child {
+  border-top: 0;
+}
+
+.team-set-person__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  min-width: 0;
+}
+
+.team-set-person__name {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.team-set-person__fact {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.team-set-person__acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+.team-set-person__hint,
+.team-set-row-wide {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.team-set-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.team-set-inline > .inv-text-field {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.team-set-after {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+/* The one code on screen: monospace, selectable in one click, with its note under it. */
+.team-set-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+.team-set-code code {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: var(--space-3) var(--space-5);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+
+.team-set-code__note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.team-set-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.7;
+}
+
+.team-set-log time {
+  margin-inline-end: var(--space-5);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The inline confirm under a row: a hairline, one sentence, the action and Cancel. */
+.team-set-confirm {
+  grid-column: 1 / -1;
+  margin-top: var(--space-4);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+.team-set-confirm p {
+  max-width: 640px;
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
+.team-set .team-set-note {
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 720px) {
+  .team-set-person {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-set-person__acts {
+    justify-content: flex-start;
+  }
+
+  .team-set .team-set-status .btn {
+    margin-inline-start: 0;
+  }
+}

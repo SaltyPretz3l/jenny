@@ -1,0 +1,22 @@
+/* ── Session bar: the More button and what it absorbs (row 115, slice 2a) ──
+   Imported right after chat-session-bar.css, which fixes the cluster's `order` slots:
+   More takes the reserved 70. Activity (its feature flag is off by default) keeps its node, count and
+   state sync, but leaves the bar: the More menu's Activity row clicks it. While the bar is compact
+   (renderer-transcript-view-utils.js sets data-session-bar-compact below 560px of room) Tasks and Notes
+   leave the bar too and the same menu lists them. The IDE dock keeps its floating column. */
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .chat-timeline-more-button {
+  order: 70;
+}
+
+.chat-timeline-utility-cluster > .chat-timeline-more-button svg {
+  stroke-width: 2.4; /* round caps on zero-length strokes: the width is the dot */
+}
+
+.chat-timeline-utility-cluster > .chat-timeline-utility-button.activity-open-button {
+  display: none;
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-session-bar-compact] > :is(#chatTimelineTasksToggle, #chatTimelineNotesToggle) {
+  display: none;
+}

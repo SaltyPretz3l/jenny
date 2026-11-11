@@ -18,6 +18,7 @@ const FIXTURE = `<!doctype html><html><body>
     <div data-chat-node="attachmentTray" data-composer-v2="on"></div>
   </div>
   <div class="chat-pane" id="one" data-pane-id="1">
+    <div class="chat-thread-stage"></div>
     <div class="composer">
       <div class="composer-toolbar-left"></div>
       <div class="composer-toolbar-right"></div>
@@ -54,7 +55,7 @@ function makeRig(t, overrides = {}) {
     root: overrides.root || {},
     doc,
     jt: (key, fallback, params) => (params ? String(fallback).replace('{count}', params.count) : fallback),
-    actionButton: (opts) => `<button class="${opts.className}" aria-label="${opts.ariaLabel}"${opts.dataset ? ` data-chat-node="${opts.dataset['chat-node']}"` : ''}></button>`,
+    actionButton: (opts) => `<button class="${opts.className}" aria-label="${opts.ariaLabel}"${opts.dataset ? ` data-chat-node="${opts.dataset['chat-node']}"` : ''}>${opts.trustedHtml || ''}</button>`,
     call: (name, ...args) => {
       calls.push([name, ...args]);
       return typeof callTable[name] === 'function' ? callTable[name](...args) : undefined;
@@ -99,7 +100,12 @@ test('buildComposerNodes inserts the mic/Stop/Send/Attach, the notice hosts, the
   assert.equal(rig.pane.dom.stopStreamButton, rig.pane.stopButton);
   assert.equal(rig.pane.dom.composerAttachShortcut, rig.pane.attachButton);
   assert.equal(rig.pane.dom.heroStack, rig.rootEl.querySelector('.hero-stack'));
-  assert.equal(rig.pane.dom.jumpToBottomButton, null);
+  assert.equal(rig.pane.dom.jumpToBottomButton.classList.contains('chat-jump-latest'), true);
+  assert.equal(rig.pane.dom.jumpToBottomButton.dataset.jumpLatestOnly, 'true', 'pane 1 has no wayfinder');
+  assert.equal(rig.pane.dom.jumpToBottomButton.dataset.visible, 'false');
+  assert.equal(rig.pane.dom.jumpToBottomButton.hasAttribute('inert'), true);
+  assert.equal(rig.pane.dom.jumpToBottomButton.firstElementChild.tagName.toLowerCase(), 'svg', 'the arrow is a direct child: the stylesheet scopes it with >');
+  assert.equal(rig.pane.dom.jumpToTopButton, null);
   assert.equal(rig.pane.dom.chatInput, paneDom.chatInput);
 });
 

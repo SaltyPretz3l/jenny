@@ -2,146 +2,39 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const { createContextPanelController } = require('../renderer/features/renderer-context-panel-utils.js');
-
-test('dispose cancels the delayed composer layout update after a panel toggle', () => {
-  const dom = new JSDOM('<button id="toggle"></button><aside id="panel"></aside>');
-  const documentRef = dom.window.document;
-  const originalSetTimeout = global.setTimeout;
-  const originalClearTimeout = global.clearTimeout;
-  const timers = new Map();
-  let nextTimerId = 0;
-  let updates = 0;
-  global.setTimeout = (callback) => {
-    nextTimerId += 1;
-    timers.set(nextTimerId, callback);
-    return nextTimerId;
-  };
-  global.clearTimeout = (timerId) => timers.delete(timerId);
-
-  try {
-    const controller = createContextPanelController({
-      state: { ui: { activeView: 'chat' } },
-      dom: {
-        chatContextPanel: documentRef.getElementById('panel'),
-        contextPanelToggle: documentRef.getElementById('toggle'),
-      },
-      callbacks: {
-        updateComposerSafeOffset() { updates += 1; },
-        escapeHtml: String,
-      },
-      constants: {},
-    });
-    controller.bind();
-    documentRef.getElementById('toggle').click();
-    assert.equal(updates, 1);
-
-    controller.dispose();
-    for (const callback of timers.values()) callback();
-
-    assert.equal(updates, 1);
-    assert.equal(timers.size, 0);
-  } finally {
-    global.setTimeout = originalSetTimeout;
-    global.clearTimeout = originalClearTimeout;
-  }
-});
-
-function bindWithStoredPreference(stored) {
-  const dom = new JSDOM('<button id="toggle"></button><aside id="panel"></aside>');
-  const documentRef = dom.window.document;
-  const originalLocalStorage = globalThis.localStorage;
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: () => (stored === undefined ? null : JSON.stringify(stored)),
-      setItem() {},
-    },
-  });
-  try {
-    const controller = createContextPanelController({
-      state: { ui: { activeView: 'chat' } },
-      dom: {
-        chatContextPanel: documentRef.getElementById('panel'),
-        contextPanelToggle: documentRef.getElementById('toggle'),
-      },
-      callbacks: { updateComposerSafeOffset() {}, escapeHtml: String },
-      constants: {},
-    });
-    controller.bind();
-    const collapsed = documentRef.getElementById('panel').classList.contains('collapsed');
-    controller.dispose();
-    return collapsed;
-  } finally {
-    if (originalLocalStorage === undefined) {
-      delete globalThis.localStorage;
-    } else {
-      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalLocalStorage });
-    }
-  }
-}
-
-test('the context panel starts collapsed unless the user explicitly expanded it', () => {
-  assert.equal(bindWithStoredPreference(undefined), true, 'fresh profile collapses');
-  assert.equal(bindWithStoredPreference({}), true, 'stored prefs without the key collapse');
-  assert.equal(bindWithStoredPreference({ collapsed: true }), true);
-  assert.equal(bindWithStoredPreference({ collapsed: false }), false, 'an explicit expand is honored');
-});
-
-// Row 59 checkpoint 2: the context panel dropped its Artifacts list (the session rail's Outputs row opens
-// the artifact review panel). It keeps the toggle, the Diagnostic log and Activity.
+const { createContextPanelController } = require('../renderer/features/renderer-chat-activity.js');
 const orbitCard = require('../renderer/inventory/orbit-card.js');
 
-const RAIL_MARKUP = '<aside id="panel">'
-  + '<section id="contextArtifactSection"><div class="context-section-header">'
-  + '<button id="contextPanelToggle" type="button"></button></div></section>'
-  + '<section class="logs-collapsed" id="contextLogSection">'
-  + '<button id="contextLogDisclosure" type="button" aria-expanded="false"><span id="contextLogCount">0</span></button>'
-  + '<div id="contextSessionLogs" hidden></div></section></aside>';
+// Row 115 slice 2a: the context panel is Activity's host and nothing else. No bar button opens it,
+// it lists no log, and it is collapsed unless Activity is open.
 
-function mountRail(t, { logs = [], sidePanel = null, activity = null } = {}) {
-  const jsdom = new JSDOM(`<!doctype html><body>${RAIL_MARKUP}</body>`);
-  const doc = jsdom.window.document;
-  const ctx = { logs };
-  const calls = { views: [], artifactReads: 0, ownerLines: [] };
-  const state = { ui: { activeView: 'chat' }, currentSessionId: 's1', artifacts: {} };
-  const originalI18n = globalThis.jennyI18n;
-  const originalActivity = globalThis.rendererChatActivity;
-  globalThis.jennyI18n = { tag: () => 'en' };
-  if (activity) globalThis.rendererChatActivity = activity;
-  const callbacks = {
-    escapeHtml: orbitCard.escapeHtml,
-    updateComposerSafeOffset() {},
-    setActiveView: view => calls.views.push(view),
-    getArtifactsForSession: () => { calls.artifactReads += 1; return [{ id: 'a1', title: 'Plan' }]; },
-    getLogEntries: () => ctx.logs,
-    openArtifactTarget: () => Promise.resolve(),
-    sidePanel: sidePanel ? { ...sidePanel, syncOwnerLine: (panel, mode) => calls.ownerLines.push(mode), getSessionId: () => 's1' } : null,
-  };
+// With the real Activity host, so a stored destination or collapsed flag really is read.
+function bindWithStoredPreference(stored) {
+  const dom = new JSDOM('<div id="chatPane0"><div data-chat-node="chatTimelineUtilityCluster"></div></div><aside id="panel"></aside>', { url: 'http://localhost/' });
+  if (stored !== undefined) dom.window.localStorage.setItem('jenny.contextPanel.v1', JSON.stringify(stored));
+  const documentRef = dom.window.document;
   const controller = createContextPanelController({
-    state,
-    dom: {
-      chatContextPanel: doc.getElementById('panel'),
-      contextSessionLogs: doc.getElementById('contextSessionLogs'),
-      contextPanelToggle: doc.getElementById('contextPanelToggle'),
-      // A stale composition may still hand these over: the panel ignores them.
-      contextArtifactList: doc.getElementById('contextArtifactList'),
-      contextArtifactExpand: doc.getElementById('contextArtifactExpand'),
-    },
-    callbacks,
-    constants: {},
+    state: { ui: { activeView: 'chat' } },
+    dom: { chatContextPanel: documentRef.getElementById('panel') },
+    callbacks: { updateComposerSafeOffset() {} },
   });
   controller.bind();
   controller.renderContextPanel();
-  t.after(() => {
-    controller.dispose();
-    if (originalI18n === undefined) delete globalThis.jennyI18n;
-    else globalThis.jennyI18n = originalI18n;
-    if (originalActivity === undefined) delete globalThis.rendererChatActivity;
-    else globalThis.rendererChatActivity = originalActivity;
-  });
-  return { doc, window: jsdom.window, controller, ctx, calls, state };
+  const result = {
+    collapsed: documentRef.getElementById('panel').classList.contains('collapsed'),
+    barButtons: documentRef.querySelectorAll('[data-chat-node="chatTimelineUtilityCluster"] > :not([hidden])').length,
+  };
+  controller.dispose();
+  return result;
 }
+
+test('the context panel is collapsed whatever an older version stored, and adds no button to the bar', () => {
+  for (const stored of [undefined, {}, { collapsed: true }, { collapsed: false }, { collapsed: false, destination: 'context' }]) {
+    const { collapsed, barButtons } = bindWithStoredPreference(stored);
+    assert.equal(collapsed, true, `collapsed for ${JSON.stringify(stored)}: a stored expand would leave an empty column with no way to close it`);
+    assert.equal(barButtons, 0, 'the bar gets no context panel toggle');
+  }
+});
 
 test('orbitCard renders tone, tooltip and a leading escaped status span', () => {
   const html = orbitCard({ id: 'a"1', title: '<b>T</b>', meta: 'x<y', tooltip: 'say "hi"', tone: 'muted', status: '<Failed>', statusTone: 'danger' });
@@ -163,66 +56,50 @@ test('orbitCard renders tone, tooltip and a leading escaped status span', () => 
     + '<span class="orbit-card-body"><span class="orbit-card-title" dir="auto">T</span><span class="orbit-card-meta">M</span></span></button>');
 });
 
-test('the panel no longer lists artifacts: nothing is read, rendered or listened to', (t) => {
+const RAIL_MARKUP = '<aside id="panel"><div class="context-panel-scroll"></div></aside>';
+
+function mountRail(t, { sidePanel = null, activity = null, setActiveView = true } = {}) {
+  const jsdom = new JSDOM(`<!doctype html><body>${RAIL_MARKUP}</body>`);
+  const doc = jsdom.window.document;
+  const calls = { views: [], ownerLines: [] };
+  const state = { ui: { activeView: 'chat' }, currentSessionId: 's1' };
+  const callbacks = {
+    updateComposerSafeOffset() {},
+    sidePanel: sidePanel ? { ...sidePanel, syncOwnerLine: (panel, mode) => calls.ownerLines.push(mode), getSessionId: () => 's1' } : null,
+  };
+  if (setActiveView) callbacks.setActiveView = view => calls.views.push(view);
+  const controller = createContextPanelController({ state, dom: { chatContextPanel: doc.getElementById('panel') }, callbacks, createActivity: activity ? activity.createChatActivity : () => null });
+  controller.bind();
+  controller.renderContextPanel();
+  t.after(() => controller.dispose());
+  return { doc, window: jsdom.window, controller, calls, state };
+}
+
+test('the panel shows no log feed and no disclosure: Diagnostics owns the log', (t) => {
   const rail = mountRail(t);
+  rail.state.logs = [{ ts: Date.now(), event: 'chat.send' }];
   rail.controller.renderContextPanel();
-  rail.controller.renderContextPanel();
-  assert.equal(rail.calls.artifactReads, 0, 'the artifact source is never read');
-  assert.equal(rail.doc.querySelector('.context-artifact-item'), null);
-  assert.equal(rail.doc.querySelector('.orbit-card'), null);
-  assert.doesNotMatch(rail.doc.getElementById('panel').textContent, /Files, images, and tool results/);
+  assert.equal(rail.doc.querySelector('.context-log-line, .context-log-feed, .context-section-disclosure'), null);
+  assert.equal(rail.doc.getElementById('panel').textContent.trim(), '', 'an empty host until Activity mounts into it');
 });
 
-test('the toggle outlives the Artifacts list and still collapses and expands the panel', (t) => {
-  const rail = mountRail(t);
-  const panel = rail.doc.getElementById('panel');
-  const toggle = rail.doc.getElementById('contextPanelToggle');
-  assert.equal(panel.classList.contains('collapsed'), true, 'collapsed by default');
-  toggle.click();
-  assert.equal(panel.classList.contains('collapsed'), false);
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-  toggle.click();
-  assert.equal(panel.classList.contains('collapsed'), true);
+test('collapseForOwnerClose closes Activity and reports whether anything was open', (t) => {
+  let open = true;
+  const fakeActivity = { createChatActivity: () => ({
+    render() {}, bind() {}, dispose() {}, isOpen: () => open,
+    close() { const was = open; open = false; return was; }, open() { open = true; return true; },
+  }) };
+  const rail = mountRail(t, { activity: fakeActivity });
+  assert.equal(rail.controller.collapseForOwnerClose(), true);
+  assert.equal(rail.controller.collapseForOwnerClose(), false, 'nothing left to close');
 });
 
-test('the Activity disclosure toggles the feed and stays visible with zero entries', (t) => {
-  const rail = mountRail(t, { logs: [] });
-  const disclosure = rail.doc.getElementById('contextLogDisclosure');
-  const feed = rail.doc.getElementById('contextSessionLogs');
-  const section = rail.doc.getElementById('contextLogSection');
-  assert.equal(disclosure.classList.contains('hidden'), false);
-  assert.equal(disclosure.disabled, false);
-  assert.equal(disclosure.getAttribute('aria-expanded'), 'false');
-  assert.equal(feed.hidden, true);
-  assert.equal(section.classList.contains('logs-collapsed'), true);
-  assert.equal(rail.doc.getElementById('contextLogCount').textContent, '0');
-
-  disclosure.click();
-  assert.equal(disclosure.getAttribute('aria-expanded'), 'true');
-  assert.equal(feed.hidden, false);
-  assert.equal(section.classList.contains('logs-collapsed'), false);
-  assert.equal(feed.querySelector('p.context-empty-state').textContent, 'Nothing logged yet.');
-
-  rail.ctx.logs = [{ ts: Date.now(), event: 'chat.send' }];
-  rail.controller.renderContextPanel();
-  assert.equal(feed.querySelectorAll('.context-log-line').length, 1);
-  assert.equal(rail.doc.getElementById('contextLogCount').textContent, '1');
-
-  rail.ctx.logs = [];
-  rail.controller.renderContextPanel();
-  assert.equal(disclosure.getAttribute('aria-expanded'), 'true', 'emptying the feed keeps the user\'s expanded state');
-  assert.equal(feed.hidden, false);
-
-  disclosure.click();
-  assert.equal(disclosure.getAttribute('aria-expanded'), 'false');
-  assert.equal(feed.hidden, true);
-  assert.equal(section.classList.contains('logs-collapsed'), true);
-});
-
-test('Activity-enabled context replaces log disclosure with diagnostic navigation',t=>{
- const rail=mountRail(t,{logs:[{event:'test'}]});rail.state.features={featureFlags:{activity_monitor:true}};
- rail.controller.renderContextPanel();const button=rail.doc.getElementById('contextLogDisclosure');
- assert.equal(button.hasAttribute('aria-expanded'),false);button.click();assert.deepEqual(rail.calls.views,['logs']);assert.equal(rail.doc.getElementById('contextSessionLogs').hidden,true);
+test('dispose disposes Activity', (t) => {
+  let disposed = 0;
+  const fakeActivity = { createChatActivity: () => ({ render() {}, bind() {}, dispose() { disposed += 1; }, isOpen: () => false, open: () => true }) };
+  const rail = mountRail(t, { activity: fakeActivity });
+  rail.controller.dispose();
+  assert.equal(disposed, 1);
 });
 
 test('the owner line is synced as "context" normally and as "activity" while Activity is open', (t) => {
@@ -238,6 +115,7 @@ test('the owner line is synced as "context" normally and as "activity" while Act
   assert.equal(rail.calls.ownerLines.at(-1), 'context');
   assert.equal(rail.controller.openActivity(), true);
   assert.equal(rail.calls.ownerLines.at(-1), 'activity', 'Activity names its owner in one-pane view too');
+  assert.deepEqual(rail.calls.views, [], 'an Activity that opened does not leave the chat');
   rail.controller.renderContextPanel();
   assert.equal(rail.calls.ownerLines.at(-1), 'activity');
   open = false;
@@ -245,10 +123,17 @@ test('the owner line is synced as "context" normally and as "activity" while Act
   assert.equal(rail.calls.ownerLines.at(-1), 'context');
 });
 
-test('opening Activity that does not open syncs nothing extra', (t) => {
+test('View activity with Activity unavailable (its flag is off) goes to Diagnostics, syncing nothing extra', (t) => {
   const fakeActivity = { createChatActivity: () => ({ render() {}, bind() {}, dispose() {}, isOpen: () => false, open: () => false }) };
   const rail = mountRail(t, { sidePanel: { claim: () => false }, activity: fakeActivity });
   const before = rail.calls.ownerLines.length;
-  assert.equal(rail.controller.openActivity(), false);
+  assert.equal(rail.controller.openActivity(), true, 'the session rail row still opens something');
+  assert.deepEqual(rail.calls.views, ['logs']);
   assert.equal(rail.calls.ownerLines.length, before);
+});
+
+test('without a view switcher an unavailable Activity reports that nothing opened', (t) => {
+  const fakeActivity = { createChatActivity: () => ({ render() {}, bind() {}, dispose() {}, isOpen: () => false, open: () => false }) };
+  const rail = mountRail(t, { activity: fakeActivity, setActiveView: false });
+  assert.equal(rail.controller.openActivity(), false);
 });

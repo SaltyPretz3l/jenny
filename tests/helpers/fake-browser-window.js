@@ -65,6 +65,7 @@ function createFakeBrowserWindowFactory({
       executedScriptArgs: [],
       inputEvents: [],
       insertedText: [],
+      insertedCss: [],
       browserSession,
       emit(eventName, ...args) {
         const handlers = listeners.get(eventName) || [];
@@ -116,6 +117,9 @@ function createFakeBrowserWindowFactory({
         },
         async insertText(text) {
           window.insertedText.push(text);
+        },
+        async insertCSS(css, cssOptions) {
+          window.insertedCss.push({ css, options: cssOptions });
         },
       },
       isDestroyed() {

@@ -54,6 +54,24 @@
   padding: var(--space-4) 0 var(--space-2);
 }
 
+/* The panel opens from the chip's start edge, so a narrow composer (a narrow
+   window beside the Chats sidebar, a split pane, the IDE dock) pushed it past
+   the window's end edge. Below the threshold it spans the composer instead.
+   The composer is already the positioned box the panel then anchors to. */
+.composer {
+  container-type: inline-size;
+  container-name: composer;
+}
+
+@container composer (max-width: 480px) {
+  :is(#composerToolToggleSlot, .composer-toggle-slot) { position: static; }
+
+  .composer-chat-panel {
+    inset-inline: 0;
+    width: auto;
+  }
+}
+
 .composer-chat-panel-head {
   display: flex;
   justify-content: space-between;
@@ -111,7 +129,9 @@
 }
 
 .composer-chat-list {
-  max-height: min(56vh, 440px);
+  /* The 500px is the header, the panel's own rows and a tall composer: a short
+     window shrinks the list so the panel's title stays below the app header. */
+  max-height: min(56vh, 440px, max(200px, calc(100vh - 500px)));
   overflow-y: auto;
 }
 

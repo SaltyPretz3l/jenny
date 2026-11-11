@@ -27,11 +27,16 @@ _LOGGER = logging.getLogger(__name__)
 _APPROVAL_REQUEST_IDS = itertools.count(1_000_000)
 _APPROVAL_CORRELATION_MAX_CHARS = 160
 _EDITED_PLAN_MAX_BYTES = 16 * 1024
+_APPROVAL_FEEDBACK_MAX_CHARS = 800  # Same bound as services/backend/sidecar-client.js.
 # Mirrors PLAN_DECISIONS in services/tools/builtin/exit-plan-mode-tool.js.
 PLAN_DECISIONS = frozenset({"approved", "approved_auto", "accepted", "rejected"})
 # Pre-plan-document decision spellings still accepted from older frames.
 _LEGACY_DENY_DECISIONS = frozenset({"deny", "denied"})
 _LEGACY_DECISIONS = frozenset({"approve", "allow", "allowed"}) | _LEGACY_DENY_DECISIONS
+# Electron refused the call before any card (a port or a user's deny rule). Nobody was asked,
+# so the turn goes on and the model reads the reason as the tool's answer. Status stays
+# "denied": it never approves.
+APP_REFUSED_DECISION = "app_refused"
 _ResponseReader = Callable[[float], dict[str, Any]]
 
 
@@ -109,6 +114,23 @@ def _runtime_pause_resolution(result: dict[str, Any]) -> ApprovalResolution:
     return resolution
 
 
+def _app_refusal_resolution(result: dict[str, Any]) -> ApprovalResolution | None:
+    """The well-formed app refusal, else None (a malformed one is an ordinary denial)."""
+    raw_refusal = result.get("feedback")
+    refusal = (
+        raw_refusal.strip()[:_APPROVAL_FEEDBACK_MAX_CHARS] if isinstance(raw_refusal, str) else ""
+    )
+    if (
+        result.get("decision") != APP_REFUSED_DECISION
+        or not refusal
+        or result.get("approved") is True
+    ):
+        return None
+    return ApprovalResolution(
+        approved=False, status="denied", decision=APP_REFUSED_DECISION, feedback=refusal
+    )
+
+
 def approval_resolution_from_response(
     response: dict[str, Any], expected_id: int
 ) -> ApprovalResolution:
@@ -118,6 +140,8 @@ def approval_resolution_from_response(
         resolution = ApprovalResolution(approved=False, status="mismatch")
     elif isinstance(result, dict) and "runtime_decision_pause" in result:
         resolution = _runtime_pause_resolution(result)
+    elif isinstance(result, dict):
+        resolution = _app_refusal_resolution(result)
     if resolution is not None:
         return resolution
     if isinstance(result, dict):
@@ -130,7 +154,7 @@ def approval_resolution_from_response(
             raw_feedback = result.get("feedback")
             if raw_feedback is not None and not isinstance(raw_feedback, str):
                 return ApprovalResolution(approved=False, status="malformed")
-            feedback = str(raw_feedback or "").strip()[:800]
+            feedback = str(raw_feedback or "").strip()[:_APPROVAL_FEEDBACK_MAX_CHARS]
             edited_plan, _oversized = _bounded_edited_plan(result.get("edited_plan"))
             return ApprovalResolution(
                 approved=True,

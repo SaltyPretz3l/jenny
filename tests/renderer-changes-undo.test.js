@@ -198,6 +198,36 @@ test('script files: restored from the checkpoint, new files stay unless "Delete 
   assert.deepEqual(f.undo.getUndoStates('session-1').t3.files, { 'settings.py': 'undone', 'tests/test_pricing.py': 'undone', 'data/export.csv': 'kept' });
 });
 
+test('a synced-workspace restore point names its chat on every checkpoint request; turn checkpoints do not', async () => {
+  const SANDBOX_REF = 'refs/jenny/sandbox/session-1/1';
+  const SANDBOX_ROLLBACK = 'refs/jenny/sandbox/rollback-session-1/1';
+  const turn = {
+    turnId: 't9', timeMs: 5000, changeSetIds: [],
+    files: [scriptFile('app.py', { restorePoint: { kind: 'git_checkpoint', ref: SANDBOX_REF, createdAt: '2026-11-03T14:40:00Z' } })],
+  };
+  let undone = false;
+  const f = setup({
+    preflightCheckpointFiles: () => ({ ok: true, files: [
+      { path: 'app.py', inCheckpoint: 'tracked', exists: true, kind: 'file', size: 9, mtimeMs: 1, matchesCheckpoint: undone, matchesAfter: !undone },
+    ] }),
+    restoreCheckpointFiles: (payload) => {
+      undone = payload.ref === SANDBOX_REF;
+      return { ok: true, rollbackRef: undone ? SANDBOX_ROLLBACK : 'refs/jenny/sandbox/rollback-rollback-session-1/1', restored: ['app.py'], removed: [], failed: [] };
+    },
+  });
+  await f.undo.openUndo(turn, {});
+  f.primary().click();
+  await settle();
+  await settle();
+  const preflights = f.callsOf('preflightCheckpointFiles');
+  assert.ok(preflights.length >= 2);
+  assert.ok(preflights.every((payload) => payload.ref === SANDBOX_REF && payload.sessionId === 'session-1'));
+  assert.deepEqual(f.callsOf('restoreCheckpointFiles'), [{ ref: SANDBOX_REF, paths: ['app.py'], sessionId: 'session-1' }]);
+  await f.undo.redo(turn, {});
+  assert.deepEqual(f.callsOf('restoreCheckpointFiles').at(-1), { ref: SANDBOX_ROLLBACK, paths: ['app.py'], sessionId: 'session-1' });
+  assert.ok(f.callsOf('preflightCheckpointFiles').every((payload) => payload.sessionId === 'session-1'));
+});
+
 test('a turn where nothing can go back has no Undo', () => {
   const f = setup({});
   const turn = { turnId: 't4', changeSetIds: [], files: [scriptFile('fixtures/a.json', { restorePoint: { kind: 'none', reason: 'not_git' } })] };

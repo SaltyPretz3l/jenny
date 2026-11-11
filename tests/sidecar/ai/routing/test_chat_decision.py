@@ -127,7 +127,7 @@ from sidecar.ai.context.compaction import (  # noqa: E402
 from sidecar.ai.context.token_budget import CharEstimationBackend, TokenBudget  # noqa: E402
 from sidecar.ai.engines.vision_input import VisionImage  # noqa: E402
 from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET  # noqa: E402
-from sidecar.ai.routing import chat_decision as _chat_decision  # noqa: E402
+from sidecar.ai.routing import chat_decision_preflight as _chat_decision_preflight  # noqa: E402
 from sidecar.ai.routing.loop_events import ContextCompactedEvent  # noqa: E402
 from sidecar.ai.routing.router import ChatRouter  # noqa: E402
 from sidecar.ai.routing.vision_turn import vision_token_surcharge  # noqa: E402
@@ -355,7 +355,7 @@ def test_preflight_budget_estimate_includes_exact_vision_surcharge(
         _engine=object(),
         _context_builder=SimpleNamespace(build_context_pressure_advisory=lambda _status: ""),
     )
-    context = _chat_decision._BudgetPreflightContext(
+    context = _chat_decision_preflight._BudgetPreflightContext(
         kernel=kernel,
         feature_flags={FEATURE_TOKEN_BUDGET: True},
         tool_payload=[],
@@ -370,21 +370,21 @@ def test_preflight_budget_estimate_includes_exact_vision_surcharge(
         input_complete=True,
     )
     monkeypatch.setattr(
-        _chat_decision,
+        _chat_decision_preflight,
         "apply_budget_check",
         lambda messages, *_args, **_kwargs: (messages, budget, tracker),
     )
-    monkeypatch.setattr(_chat_decision, "estimate_messages_tokens", lambda *_args: 100)
+    monkeypatch.setattr(_chat_decision_preflight, "estimate_messages_tokens", lambda *_args: 100)
 
     def _check_budget(estimate: int, *_args: object, **_kwargs: object) -> object:
         captured_estimates.append(estimate)
         status.tokens_used = estimate
         return status
 
-    monkeypatch.setattr(_chat_decision, "check_budget", _check_budget)
-    monkeypatch.setattr(_chat_decision, "_emit_preflight_context_usage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_chat_decision_preflight, "check_budget", _check_budget)
+    monkeypatch.setattr(_chat_decision_preflight, "_emit_preflight_context_usage", lambda *_args, **_kwargs: None)
 
-    _chat_decision._prepare_context_budget(
+    _chat_decision_preflight._prepare_context_budget(
         context,
         working_messages=[{"role": "user", "content": "describe the image"}],
         runtime_system_messages=[],
@@ -412,8 +412,8 @@ def test_context_compaction_budgets_against_the_vision_surcharged_window(
         seen_windows.append(int(budget_arg.context_window))
         raise _Stop()
 
-    monkeypatch.setattr(_chat_decision, "compact_context", _compact_context)
-    monkeypatch.setattr(_chat_decision, "resolve_compaction_prompt", lambda _config: "compact")
+    monkeypatch.setattr(_chat_decision_preflight, "compact_context", _compact_context)
+    monkeypatch.setattr(_chat_decision_preflight, "resolve_compaction_prompt", lambda _config: "compact")
     kernel = SimpleNamespace(
         _config=SimpleNamespace(tools_enabled=False, max_tokens=256, resolved_user_max_output_tokens=None),
         _engine=SimpleNamespace(get_model_max_output_tokens=lambda: 256),
@@ -421,7 +421,7 @@ def test_context_compaction_budgets_against_the_vision_surcharged_window(
         _compaction_breakers=SimpleNamespace(for_key=lambda _key: None),
         _build_compaction_generate_fn=lambda **_kwargs: None,
     )
-    context = _chat_decision._BudgetPreflightContext(
+    context = _chat_decision_preflight._BudgetPreflightContext(
         kernel=kernel,
         feature_flags={FEATURE_TOKEN_BUDGET: True},
         tool_payload=[],
@@ -439,9 +439,9 @@ def test_context_compaction_budgets_against_the_vision_surcharged_window(
 
     def _run(with_surcharge: int) -> None:
         with pytest.raises(_Stop):
-            _chat_decision._run_context_compaction(
+            _chat_decision_preflight._run_context_compaction(
                 context,
-                _chat_decision._CompactionInput(
+                _chat_decision_preflight._CompactionInput(
                     working_messages=[{"role": "user", "content": "describe the image"}],
                     runtime_system_messages=[],
                     budget=budget,
@@ -481,7 +481,7 @@ def test_preflight_compaction_event_reports_summary_source_omissions(
         _compaction_breakers=SimpleNamespace(for_key=lambda _key: CompactionCircuitBreaker()),
         _build_compaction_generate_fn=lambda **_kwargs: (lambda _messages: _CANNED_SUMMARY),
     )
-    context = _chat_decision._BudgetPreflightContext(
+    context = _chat_decision_preflight._BudgetPreflightContext(
         kernel=kernel,
         feature_flags={FEATURE_TOKEN_BUDGET: True},
         tool_payload=[],
@@ -495,12 +495,12 @@ def test_preflight_compaction_event_reports_summary_source_omissions(
         reasoning_effort=None,
         input_complete=True,
     )
-    monkeypatch.setattr(_chat_decision, "resolve_compaction_prompt", lambda _config: "compact")
-    monkeypatch.setattr(_chat_decision, "_emit_preflight_context_usage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_chat_decision_preflight, "resolve_compaction_prompt", lambda _config: "compact")
+    monkeypatch.setattr(_chat_decision_preflight, "_emit_preflight_context_usage", lambda *_args, **_kwargs: None)
 
-    _chat_decision._run_context_compaction(
+    _chat_decision_preflight._run_context_compaction(
         context,
-        _chat_decision._CompactionInput(
+        _chat_decision_preflight._CompactionInput(
             working_messages=history,
             runtime_system_messages=[],
             budget=TokenBudget(context_window=8_000, max_output_tokens=512),

@@ -336,10 +336,10 @@ test('file diff dispatcher materializes lazy bodies and routes open-in-editor by
   fileDiffBindings.disposeFileDiffBindings();
 });
 
-test('the transcript view control mounts in the pane cluster, opens a radio menu and switches the pane session', (t) => {
+test('the More button mounts in the pane cluster, opens a menu with the views and switches the pane session', (t) => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
     + '<div class="chat-pane">'
-    + '<div data-chat-node="chatTimelineUtilityCluster"><button data-chat-node="artifactSplitViewToggle">split</button><div class="composer-wayfinder-host"></div></div>'
+    + '<div data-chat-node="chatTimelineUtilityCluster"><button data-chat-node="artifactSplitViewToggle">split</button></div>'
     + '<div id="chatTimeline"></div>'
     + '</div>'
     + '</body></html>');
@@ -382,14 +382,14 @@ test('the transcript view control mounts in the pane cluster, opens a radio menu
   const cluster = doc.querySelector('[data-chat-node="chatTimelineUtilityCluster"]');
   const button = cluster.querySelector('[data-transcript-view-toggle]');
   assert.ok(button, 'the control is built into the pane cluster');
-  assert.deepEqual([button.previousElementSibling?.getAttribute('data-chat-node'), button.nextElementSibling?.hasAttribute('data-chat-width-toggle')], ['artifactSplitViewToggle', true], 'it sits after the split toggle; the row 92 Wide toggle follows it');
+  assert.equal(button.previousElementSibling?.getAttribute('data-chat-node'), 'artifactSplitViewToggle', 'it sits after the split toggle');
+  assert.equal(cluster.querySelector('[data-chat-width-toggle]'), null, 'Wide is a row of the More menu, not a second bar button');
   assert.equal(button.tagName, 'BUTTON');
-  assert.ok(button.classList.contains('chat-timeline-utility-button') && button.classList.contains('chat-timeline-view-toggle'));
+  assert.ok(button.classList.contains('chat-timeline-utility-button') && button.classList.contains('chat-timeline-more-button'));
   assert.equal(button.getAttribute('aria-haspopup'), 'menu');
-  assert.equal(button.dataset.transcriptView, 'thinking', 'the icon follows the pane session view');
-  assert.match(button.getAttribute('aria-label'), /Thinking/);
-  assert.equal(button.querySelectorAll('svg[data-view]').length, 3, 'all three icons ship; the stylesheet shows one');
-  assert.ok(registered.some(([target, name]) => target === chatTimeline && name === 'transcript-view-rendered'), 'the pane timeline notice is the sync signal');
+  assert.equal(button.getAttribute('aria-label'), 'More');
+  assert.equal(button.querySelectorAll('svg').length, 1, 'one glyph whatever the view');
+  assert.equal(registered.filter(([target]) => target === button).length, 1, 'one click listener, registered through the bind');
 
   button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
   assert.equal(button.getAttribute('aria-expanded'), 'true');
@@ -403,10 +403,9 @@ test('the transcript view control mounts in the pane cluster, opens a radio menu
   assert.deepEqual(setViewCalls, [['sess_pane', 'everything', { source: 'control' }]], "the pane's session, not the focused one");
   assert.equal(doc.querySelector('.inv-context-menu'), null, 'the menu closed');
   assert.equal(button.getAttribute('aria-expanded'), 'false');
-  assert.equal(button.dataset.transcriptView, 'thinking', 'the icon waits for the render notice');
-  chatTimeline.dispatchEvent(new window.CustomEvent('transcript-view-rendered', { detail: { view: 'everything', previousView: 'thinking' } }));
-  assert.equal(button.dataset.transcriptView, 'everything');
-  assert.match(button.getAttribute('aria-label'), /Everything/);
+  button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.deepEqual([...doc.querySelectorAll('.inv-context-menu [role="menuitemradio"]')].map((item) => item.getAttribute('aria-checked')), ['false', 'false', 'true'], 'a reopened menu checks the pane session view');
+  doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 
   // Number keys pick inside the open menu.
   button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));

@@ -25,12 +25,17 @@ test('desktop policy acknowledgement requires exact version and current process'
 test('lifecycle IPC authenticates sender and exposes no command channel', async () => {
  const handlers = new Map(); let changes = 0;
  registerCommandSandboxIpc({ handle: (channel, handler) => handlers.set(channel, handler) }, {
-  service: { getState: () => ({ state: 'disabled' }), setEnabled: () => { changes++; return { state: 'ready' }; }, retry: () => ({ state: 'ready' }) },
+  service: { getState: () => ({ state: 'disabled' }), setEnabled: () => { changes++; return { state: 'ready' }; }, retry: () => ({ state: 'ready' }),
+   setMode: (patch) => { if (patch?.mode !== 'copy') throw Object.assign(new Error(), { reason: 'sandbox_settings_invalid' }); changes++; return { mode: 'copy' }; } },
   authorization: { authorize: event => event.trusted === true },
  });
- assert.equal(handlers.size, 3);
+ assert.equal(handlers.size, 4);
  const change = handlers.get('command-sandbox:set-enabled');
  assert.equal((await change({}, { enabled: true })).authorized, false); assert.equal(changes, 0);
  assert.equal((await change({ trusted: true }, { enabled: true })).ok, true); assert.equal(changes, 1);
  assert.equal((await handlers.get('command-sandbox:retry')({ trusted: true }, { command: 'bad' })).ok, false);
+ const setMode = handlers.get('command-sandbox:set-mode');
+ assert.equal((await setMode({}, { mode: 'copy' })).authorized, false); assert.equal(changes, 1);
+ assert.deepEqual(await setMode({ trusted: true }, { mode: 'copy' }), { mode: 'copy', ok: true }); assert.equal(changes, 2);
+ assert.equal((await setMode({ trusted: true }, { mode: 'live' })).reason, 'sandbox_settings_invalid');
 });

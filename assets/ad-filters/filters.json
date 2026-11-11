@@ -1,0 +1,17 @@
+{
+  "engine": "2.20.3",
+  "lists": [
+    {
+      "name": "EasyList",
+      "url": "https://easylist.to/easylist/easylist.txt",
+      "version": "202611091918",
+      "license": "GPL-3.0 OR CC-BY-SA-3.0 (https://easylist.to/pages/licence.html)"
+    },
+    {
+      "name": "EasyPrivacy",
+      "url": "https://easylist.to/easylist/easyprivacy.txt",
+      "version": "202611091907",
+      "license": "GPL-3.0 OR CC-BY-SA-3.0 (https://easylist.to/pages/licence.html)"
+    }
+  ]
+}

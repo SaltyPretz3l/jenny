@@ -61,7 +61,6 @@ def _run(rows: list[dict[str, Any]]) -> tuple[_ToolLoopEngine, list[Any]]:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     events: list[Any] = []
     with bind_pending_mail(pending):

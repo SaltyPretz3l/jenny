@@ -11,7 +11,9 @@ const { HOST_ERROR_CODES } = require('../backend/error-codes');
 class ExecutionBroker {
   constructor({ userDataPath, request, readReceiptImpl,
     writeReceiptImpl, wait = delay, now = Date.now, cleanupTimeoutMs = 45_000,
-    logger = () => {} }) {
+    logger = () => {}, workspace = 'disposable_copy' }) {
+    // Row 106: 'synced' for a desktop synced-workspace worker; the hosted bridge stays a disposable copy.
+    this.workspace = workspace === 'synced' ? 'synced' : 'disposable_copy';
     this.filePath = path.join(userDataPath, 'sandbox-admission.json');
     this.request = request;
     this.writeReceipt = writeReceiptImpl;
@@ -88,7 +90,7 @@ class ExecutionBroker {
   }
   status() {
     return { enabled: true, available: this.ready && !this.blocked && !this.closing,
-      busy: Boolean(this.active), workspace: 'disposable_copy', network: 'none' };
+      busy: Boolean(this.active), workspace: this.workspace, network: 'none' };
   }
   execute(input, { signal = null, sessionId = '', streamId = '', jobId = null, expectedIncarnation = null,
     beforeAdmission = null } = {}) {
@@ -137,7 +139,7 @@ class ExecutionBroker {
       this._persist(null);
       this._log('host.sandbox_settled', { job_id: pending.job_id, status: result.status });
       return { ...result, success: result.status === 'completed' && args.expectedExitCodes.includes(result.exit_code),
-        workspace: 'disposable_copy', cleanup_confirmed: true };
+        workspace: this.workspace, cleanup_confirmed: true };
     } catch (error) {
       if (this.receipt.pending) {
         this.blocked = true;

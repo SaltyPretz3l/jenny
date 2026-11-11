@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
-from sidecar.ai.routing import tool_execution
+from sidecar.ai.routing import tool_execution, tool_execution_admission
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_call_execution import (
@@ -131,7 +131,10 @@ def test_malformed_arguments_message(
         def reject_descriptor(*_args: Any) -> None:
             raise failure
 
-        monkeypatch.setattr(tool_execution, "validate_descriptor_arguments", reject_descriptor)
+        # execute_tool validates through the admission module, so the seam lives there.
+        monkeypatch.setattr(
+            tool_execution_admission, "validate_descriptor_arguments", reject_descriptor
+        )
         outcome = tool_execution.execute_tool(
             kernel, call, request_id="req-1", read_snapshot_cache={}
         )

@@ -8,7 +8,9 @@
       require('./renderer-render-pipeline-thread-state'),
       require('../shared/async-fence'),
       require('./renderer-enter-keydown-utils'),
-      require('./renderer-chat-ctrl-wheel-gate')
+      require('./renderer-chat-ctrl-wheel-gate'),
+      require('./renderer-chat-tool-row-toggles'),
+      require('./renderer-chat-shell-subscriptions')
     );
     return;
   }
@@ -20,7 +22,9 @@
     root.rendererRenderPipelineThreadStateUtils,
     root.rendererAsyncFence,
     root.rendererEnterKeydownUtils,
-    root.rendererChatCtrlWheelGate
+    root.rendererChatCtrlWheelGate,
+    root.rendererChatToolRowToggles,
+    root.rendererChatShellSubscriptions
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   transcriptBindingsFactory,
@@ -30,11 +34,11 @@
   threadStateUtils,
   asyncFence,
   enterKeydownUtils,
-  ctrlWheelGate
+  ctrlWheelGate,
+  toolRowToggles,
+  shellSubscriptionsFactory
 ) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const motionHeightUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionHeightUtils)
-    || (typeof require === 'function' ? require('../shared/motion-height-utils') : null) || {};
   // IME composition guard for Enter-to-send; the single definition lives in
   // renderer-enter-keydown-utils.js (shared with the ask_user question card).
   // Re-exported below so existing consumers keep importing it from here.
@@ -83,7 +87,6 @@
       stopStreamButton,
       sendButton,
       jumpToTopButton,
-      jumpToLastPromptButton,
       jumpToBottomButton,
       chatView,
       chatThreadScroll,
@@ -101,19 +104,9 @@
       handleActivityChange,
       renderAll,
       setToolCallExpansion = function noopSetToolCallExpansion() {},
-      renderLogs,
-      pushIncomingLog,
-      syncBackendActivityFromStatus,
       appendClientLog,
-      getRendererElapsedMs,
       loadSessions,
       refreshSnapshots,
-      refreshApprovedMemories, refreshComposerToolToggles = async () => {},
-      resetArtifactsState,
-      resetAttachmentQueue,
-      closeComposerPopover,
-      hideAssistantSprite,
-      setFollowLatest,
       setActiveView,
       syncComposerInputHeight,
       syncComposerVisualState,
@@ -124,7 +117,6 @@
       handleSend,
       showComposerActionError,
       handleJumpToTop,
-      handleJumpToLastPrompt,
       handleJumpToBottom,
       handleComposerPaste = function noopHandleComposerPaste() {
         return { accepted: true, sizeBytes: 0, warned: false };
@@ -154,7 +146,6 @@
       dismissToast,
       showShellErrorToast,
       showToastMessage,
-      reportError = null,
       toErrorMessage,
       beginActivity,
       resolveActivity,
@@ -165,9 +156,6 @@
       handleSaveProactiveSuggestionMessage,
       handleLaterProactiveSuggestionMessage,
       handleUseProactiveSuggestionMessage,
-      handleLifecycleProgress,
-      handleLifecycleBackendStatus,
-      clearChatSendLifecycle = () => false,
       beginModelSwitch,
       updateModelSwitch,
       failModelSwitch,
@@ -179,7 +167,7 @@
       handleCodeReviewAction = function noopHandleCodeReviewAction() { return Promise.resolve(); }, handleOpenChangeDiff = function noopHandleOpenChangeDiff() { return Promise.resolve(false); },
       handleComposerToggleChange,
       getCurrentSessionMessages, getSessionTurnEventState = function noopGetSessionTurnEventState() { return { turnEvents: [] }; },
-      getSessionMessages, setSessionMessages,
+      getSessionMessages, setSessionMessages, getCurrentVisibleMessages = () => [],
       scrollMessageIntoView, viewportReveal, focusEntryByMessageId,
       setComposerStatusNotice = function noopSetComposerStatusNotice() {},
       clearComposerStatusNotice = function noopClearComposerStatusNotice() {},
@@ -187,37 +175,17 @@
 
     const { thinkingController, toastActionHandlers, timelineVirtualizer, chatScrollCoordinator, messageEditController, messageBranchController, selectionController, bulkActionsController, unreadOrientationController } = deps.controllers;
 
-    // The optional Ollama tray-remediation module is resolved lazily across the browser/CommonJS seam.
-    function resolveOllamaTrayToastModule() {
-      const globalScope = typeof globalThis !== 'undefined' ? globalThis : null;
-      return (globalScope && globalScope.rendererOllamaTrayToast)
-        || (typeof require === 'function'
-          ? (() => {
-            try {
-              return require('../shell/renderer-ollama-tray-toast');
-            } catch (_error) {
-              return null;
-            }
-          })()
-          : null);
-    }
-
-    function forwardOllamaTrayConflictLogEntry(entry) {
-      const trayToastModule = resolveOllamaTrayToastModule();
-      if (!trayToastModule || typeof trayToastModule.handleOllamaTrayConflictLogEntry !== 'function') {
-        return;
-      }
-      const bridge = (typeof window !== 'undefined' && window.jennyShell && window.jennyShell.ollamaTray) || null;
-      const featureFlags = (state.features && state.features.featureFlags) || {};
-      trayToastModule.handleOllamaTrayConflictLogEntry(entry, {
-        showToast: showToastMessage,
-        bridge,
-        featureFlags,
-        navigate: (sectionId) => openSettingsSection(sectionId, { source: 'ollama_tray_remediation' }),
-        appendClientLog,
-        dismissToast,
-      });
-    }
+    // Pane 0's shell push subscriptions (logs, backend status, lifecycle,
+    // auth) and the signed-out reset: renderer-chat-shell-subscriptions.js.
+    const shellSubscriptions = shellSubscriptionsFactory.createChatShellSubscriptions({
+      state,
+      callbacks: deps.callbacks,
+      TOAST_SOURCE,
+      thinkingController,
+      backendRecoveryUtils,
+      asyncFence,
+      clearThreadBranchCollapseState,
+    });
 
     function resolveToolCallId(target) {
       const targetNode = target && typeof target.closest === 'function' ? target : null;
@@ -227,24 +195,9 @@
         : '';
     }
 
-    function recoverInflightSendsForUnusableBackend(payload) {
-      return backendRecoveryUtils.recoverInflightSendsForUnusableBackend({
-        payload,
-        state,
-        clearChatSendLifecycle,
-        getMultiStreamController: () => globalThis.rendererMultiStreamController || null,
-        appendClientLog,
-        showToastMessage,
-        reportError,
-        toastSource: TOAST_SOURCE.chatStream,
-      });
-    }
-
     const cleanupFns = [];
     let bindAbortController = null;
     let bound = false;
-    const transitionFence = asyncFence.createDisposalFence();
-    const transitionGate = asyncFence.createGenerationGate();
     // Captured from wireChatAccessibility so the command palette's "Keyboard
     // shortcuts" item can open the chat overlay outside the IDE view.
     let chatAccessibility = null;
@@ -255,168 +208,13 @@
       }
     }
 
-    function readCssDurationMs(variableName, fallbackMs) {
-      if (typeof document === 'undefined' || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
-        return fallbackMs;
-      }
-      const rawValue = window.getComputedStyle(document.documentElement).getPropertyValue(variableName).trim();
-      if (!rawValue) {
-        return fallbackMs;
-      }
-      if (rawValue.endsWith('ms')) {
-        const parsedMs = Number.parseFloat(rawValue);
-        return Number.isFinite(parsedMs) ? parsedMs : fallbackMs;
-      }
-      if (rawValue.endsWith('s')) {
-        const parsedSeconds = Number.parseFloat(rawValue);
-        return Number.isFinite(parsedSeconds) ? parsedSeconds * 1000 : fallbackMs;
-      }
-      return fallbackMs;
-    }
-
-    function prefersReducedMotion() {
-      return typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    }
-
-    function getToolDetailsTransitionMs() {
-      return prefersReducedMotion()
-        ? 0
-        : readCssDurationMs('--motion-duration-regular', 220);
-    }
-
-    const toolDetailsTimers = new WeakMap();
-
-    function clearToolDetailsTimer(detailsEl) {
-      if (!detailsEl) {
-        return;
-      }
-      const timerId = toolDetailsTimers.get(detailsEl);
-      if (!timerId) {
-        return;
-      }
-      window.clearTimeout(timerId);
-      toolDetailsTimers.delete(detailsEl);
-    }
-
-    function resolvePredictionLineHeight(element) {
-      if (!element || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
-        return 15 * 1.6;
-      }
-      const parsedLineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight);
-      return Number.isFinite(parsedLineHeight) && parsedLineHeight > 0
-        ? parsedLineHeight
-        : 15 * 1.6;
-    }
+    // The legacy .tool-call-header disclosure: renderer-chat-tool-row-toggles.js.
+    const { toggleToolDetails, getToolDetailsTransitionMs } = toolRowToggles.createToolDetailsToggle({
+      state, chatTimeline, renderAll, setToolCallExpansion,
+    });
 
     function isChatWheelBlocked(event) {
       return state.ui?.activeView !== 'chat' || isTargetInsideArtifactReview(event.target);
-    }
-
-    function toggleToolDetails(toolHeader, nextExpanded) {
-      if (!toolHeader) {
-        return;
-      }
-      const expanded = Boolean(nextExpanded);
-      const wasCollapsing = toolHeader.getAttribute('aria-expanded') !== 'true';
-      toolHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      const restoreFocus = document?.activeElement === toolHeader;
-      const rowKey = String(toolHeader.dataset?.toolRowKey || '').trim();
-      if (rowKey) setToolCallExpansion(rowKey, expanded);
-      if (rowKey && typeof chatTimeline?.dispatchEvent === 'function') {
-        const CustomEventCtor = document?.defaultView?.CustomEvent || globalThis.CustomEvent;
-        if (typeof CustomEventCtor === 'function') {
-          chatTimeline.dispatchEvent(new CustomEventCtor('tool-row-user-expansion', {
-            detail: { rowKey, expanded },
-          }));
-        }
-      }
-      const ownerBlock = toolHeader.closest?.('.tool-call-block') || null;
-      if (expanded && ownerBlock?.dataset?.toolDetailsMaterialized === 'false') {
-        renderAll({ forceFullRender: true });
-        const materializedHeader = Array.from(chatTimeline.querySelectorAll('.tool-call-header'))
-          .find((node) => node.dataset?.toolRowKey === rowKey);
-        const materialized = materializedHeader
-          ?.closest?.('.tool-call-block')?.dataset?.toolDetailsMaterialized === 'true';
-        if (materialized) {
-          toggleToolDetails(materializedHeader, true);
-        }
-        if (restoreFocus) materializedHeader?.focus?.({ preventScroll: true });
-        return;
-      }
-      const detailsId = toolHeader.getAttribute('aria-controls');
-      const detailsEl = ownerBlock?.querySelector?.('.tool-call-details') || (detailsId ? document.getElementById(detailsId) : null);
-      if (!detailsEl) {
-        return;
-      }
-      const transitioning = toolDetailsTimers.has(detailsEl);
-      clearToolDetailsTimer(detailsEl);
-      const transitionMs = getToolDetailsTransitionMs();
-      if (transitionMs === 0) {
-        detailsEl.hidden = !expanded;
-        detailsEl.classList.toggle('expanded', expanded);
-        detailsEl.style.maxHeight = expanded ? 'none' : '';
-        return;
-      }
-      let measuredHeight = Math.max(detailsEl.scrollHeight || 0, detailsEl.offsetHeight || 0);
-      const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
-      if (measuredHeight === 0 && expanded && _pretextUtils && _pretextUtils.isEnabled(state)) {
-        const textContent = String(detailsEl.textContent || '').trim();
-        if (textContent) {
-          const font = _pretextUtils.resolveFontString(detailsEl)
-            || _pretextUtils.resolveDefaultFontString('.chat-bubble');
-          const maxWidth = _pretextUtils.resolveElementWidth(detailsEl.parentElement) || 560;
-          const lineHeight = resolvePredictionLineHeight(detailsEl);
-          const cacheKey = 'tooldetail:' + (String(toolHeader.dataset.messageId || '').trim() || detailsId);
-          const prediction = _pretextUtils.predictTextHeight(
-            cacheKey,
-            textContent,
-            font,
-            maxWidth,
-            lineHeight
-          );
-          if (prediction && prediction.height > 0) {
-            measuredHeight = Math.ceil(prediction.height);
-          }
-        }
-      }
-
-      if (expanded) {
-        detailsEl.hidden = false;
-        motionHeightUtils.pinHeightForTransition(detailsEl, transitioning && wasCollapsing
-          ? motionHeightUtils.readCurrentMaxHeightPx(detailsEl, window) : 0);
-        detailsEl.classList.add('expanded');
-        requestAnimationFrame(() => {
-          if (toolHeader.getAttribute('aria-expanded') !== 'true') return;
-          detailsEl.style.maxHeight = `${Math.max(detailsEl.scrollHeight || measuredHeight || 0, 0)}px`;
-        });
-        const timerId = window.setTimeout(() => {
-          if (toolHeader.getAttribute('aria-expanded') === 'true') {
-            detailsEl.style.maxHeight = 'none';
-          }
-          toolDetailsTimers.delete(detailsEl);
-        }, transitionMs);
-        toolDetailsTimers.set(detailsEl, timerId);
-        return;
-      }
-
-      motionHeightUtils.pinHeightForTransition(detailsEl, transitioning
-        ? motionHeightUtils.readCurrentMaxHeightPx(detailsEl, window)
-        : Math.max(motionHeightUtils.resolveCollapseStartPx(detailsEl), measuredHeight));
-      requestAnimationFrame(() => {
-        if (toolHeader.getAttribute('aria-expanded') !== 'false') return;
-        detailsEl.classList.remove('expanded');
-        detailsEl.style.maxHeight = '0px';
-      });
-      const timerId = window.setTimeout(() => {
-        if (toolHeader.getAttribute('aria-expanded') !== 'true') {
-          detailsEl.hidden = true;
-          detailsEl.style.maxHeight = '';
-        }
-        toolDetailsTimers.delete(detailsEl);
-      }, transitionMs);
-      toolDetailsTimers.set(detailsEl, timerId);
     }
 
     function registerListener(target, eventName, handler, options) {
@@ -482,6 +280,10 @@
           resolveToolCallId,
           toggleToolDetails, getToolDetailsTransitionMs, selectionController, timelineVirtualizer,
           getSessionMessages, setSessionMessages,
+          promptJump: { // the More menu's Back to prompt, in this pane
+            targetId: () => globalThis.chatScrollUtils?.getLatestUserMessageId?.(getCurrentVisibleMessages()) || '',
+            jump: (id) => scrollMessageIntoView(id, { block: 'start', followLatest: false }),
+          },
         })
       : null;
     if (!transcriptBindings) {
@@ -534,8 +336,7 @@
         return;
       }
       bound = false;
-      transitionGate.bump();
-      transitionFence.dispose();
+      shellSubscriptions.dispose();
       if (documentLevel) globalThis.rendererContextMeterDetails?.dispose?.();
       if (documentLevel) window.rendererPlanUsageMeter?.dispose?.();
       chatAccessibility = null; transcriptBindings.dispose?.();
@@ -553,88 +354,6 @@
           // Best-effort teardown keeps renderer dispose idempotent.
         }
       }
-    }
-
-    function beginTransition() {
-      transitionGate.bump();
-      return transitionGate.capture();
-    }
-
-    function isCurrentTransition(token) {
-      return !transitionFence.isDisposed() && transitionGate.isCurrent(token);
-    }
-
-    function clearSignedOutRendererState() {
-      globalThis.rendererMultiStreamController?.dispose?.();
-      state.sessions = [];
-      state.currentSessionId = ''; deps.callbacks?.resetPanes?.(); // split view W1-4c: back to one blank pane
-      state.messagesBySession.clear();
-      state.turnEventsBySession?.clear?.();
-      state.sessionMessageAccessOrder?.clear?.();
-      state.pendingStreams.clear();
-      state.streamDeltaKindByStream?.clear?.();
-      state.streamThinkingStatusByStream.clear();
-      state.toolCallsByStream.clear();
-      state.pendingToolApprovals.clear();
-      state.queuedSendBySession?.clear?.();
-      state.turnClockBySession?.clear?.();
-      state.sendOutboxController?.clearAll?.();
-      state.sendOutboxBySession?.clear?.();
-      state.ui?.chatSendLifecycleBySession?.clear?.();
-      state.ui?.chatSendFailuresBySession?.clear?.();
-      const composerV2 = state.ui?.composerV2;
-      if (composerV2 && typeof composerV2 === 'object') {
-        composerV2.draftsBySession?.clear?.();
-        composerV2.lifecycleBySession?.clear?.();
-      }
-      state.activeStreamId = '';
-      state.activeStreamSessionId = '';
-      state.sendPreflight = null;
-      state.runtimeDraft = {
-        preferredModel: '',
-        reasoningEffort: 'default',
-        runMode: state.defaultRunMode || 'ask',
-        planMode: false,
-        contextPreferences: {
-          historyScope: 'session',
-          includePersonality: true,
-          includeMemory: true, memoryOptOut: false,
-        },
-      };
-      state.memoryManager.memories = [];
-      state.memoryManager.loading = false;
-      state.memoryManager.loaded = false;
-      state.memoryManager.unavailable = false;
-      state.memoryManager.status = jt('chat.events.signInToLoadMemories', 'Sign in to load approved memories.');
-      state.memoryManager.filter = 'all';
-      state.memoryManager.searchQuery = '';
-      state.memoryManager.draftsById.clear();
-      state.memoryManager.pendingActionById.clear();
-      state.sendReceiptController?.clearFailedPayloads?.();
-      globalThis.rendererComposerSessionStateController?.clearAll?.();
-      resetAttachmentQueue();
-      state.interactiveDraftsBySession.clear();
-      if (
-        state.ui?.interactiveRecapExpandedBySession
-        && typeof state.ui.interactiveRecapExpandedBySession.clear === 'function'
-      ) {
-        state.ui.interactiveRecapExpandedBySession.clear();
-      }
-      resetArtifactsState();
-      clearThreadBranchCollapseState(state);
-      closeComposerPopover();
-      thinkingController.prune([]);
-      thinkingController.resumeAutoScroll();
-      setFollowLatest(true);
-      hideAssistantSprite({ clearTarget: true });
-    }
-
-    function shouldStopAuthenticatedTransition(token) {
-      if (isCurrentTransition(token) && state.auth?.authenticated === true) return false;
-      if (!transitionFence.isDisposed() && state.auth?.authenticated !== true) {
-        clearSignedOutRendererState();
-      }
-      return true;
     }
 
     function bind() {
@@ -658,117 +377,7 @@
         // repaints only the title-bar read-out's text nodes per tick).
         addCleanup(window.rendererPlanUsageMeter?.install?.({ shell: window.jennyShell, state, onChange: renderAll }) || (() => {}));
 
-        let logRenderRafId = 0;
-        let logRenderPendingWhileHidden = false;
-        const requestRenderFrame = (cb) => (typeof window.requestAnimationFrame === 'function'
-          ? window.requestAnimationFrame(cb)
-          : window.setTimeout(() => cb(), 16));
-        const cancelRenderFrame = (id) => {
-          if (typeof window.cancelAnimationFrame === 'function') { window.cancelAnimationFrame(id); }
-          else { window.clearTimeout(id); }
-        };
-        /* Coalesce a burst of appends into a single rAF-aligned render, and skip
-           rendering entirely while the window is hidden -- flush once it returns. */
-        function scheduleLogRender() {
-          if (typeof document !== 'undefined' && document.hidden) {
-            logRenderPendingWhileHidden = true;
-            return;
-          }
-          if (logRenderRafId) { return; }
-          logRenderRafId = requestRenderFrame(() => {
-            logRenderRafId = 0;
-            renderLogs();
-          });
-        }
-        function flushPendingLogRenderOnVisible() {
-          if (logRenderPendingWhileHidden && !document.hidden) {
-            logRenderPendingWhileHidden = false;
-            if (state.ui.activeView === 'logs') { scheduleLogRender(); }
-          }
-        }
-        if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-          document.addEventListener('visibilitychange', flushPendingLogRenderOnVisible);
-          addCleanup(() => document.removeEventListener('visibilitychange', flushPendingLogRenderOnVisible));
-        }
-        addCleanup(() => {
-          if (logRenderRafId) {
-            cancelRenderFrame(logRenderRafId);
-            logRenderRafId = 0;
-          }
-        });
-        addCleanup(window.jennyShell.diagnostics.logs.onEntry((entry) => {
-          pushIncomingLog(entry);
-          forwardOllamaTrayConflictLogEntry(entry);
-          if (state.ui.activeView === 'logs') {
-            scheduleLogRender();
-          }
-        }));
-
-        addCleanup(window.jennyShell.backend.onStatus(async (payload) => {
-          const transitionToken = beginTransition();
-          state.backend = payload;
-          syncBackendActivityFromStatus(payload);
-          handleLifecycleBackendStatus(payload);
-          recoverInflightSendsForUnusableBackend(payload);
-          if (!payload || payload.phase !== 'ready') { state.backendReadyLoadHandled = false; } // #9: re-arm dedupe guard
-          if (payload && payload.phase === 'ready') {
-            appendClientLog('INFO', 'renderer.backend_ready', { elapsedMs: getRendererElapsedMs(), startupStage: payload.startupStage || '', startupMs: Number(payload.startupMs || 0) });
-            Promise.resolve(refreshComposerToolToggles()).catch(() => {}); // Tools row: built from the sidecar's tools_status, which exists only once ready (the boot read runs first) and changes on each re-init (root switch)
-            const authSnapshot = await window.jennyShell.auth.getState();
-            if (!isCurrentTransition(transitionToken)) return;
-            state.auth = authSnapshot;
-            if (state.auth.authenticated) {
-              // #9: only one of (this push listener, the bootstrap pull) loads per ready transition.
-              if (!state.backendReadyLoadHandled) {
-                state.backendReadyLoadHandled = true;
-                await loadSessions();
-                if (shouldStopAuthenticatedTransition(transitionToken)) return;
-                await refreshSnapshots();
-                if (shouldStopAuthenticatedTransition(transitionToken)) return;
-              }
-              try {
-                await refreshApprovedMemories({ force: true });
-              } catch (err) {
-                if (shouldStopAuthenticatedTransition(transitionToken)) return;
-                appendClientLog('WARN', 'chat.refresh_memories_failed', { message: String(err?.message || err) });
-                /* EH-W10: deduped warning toast when intake routing is on. */
-                reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
-              }
-              if (shouldStopAuthenticatedTransition(transitionToken)) return;
-            }
-          }
-          if (!isCurrentTransition(transitionToken)) return;
-          renderAll();
-        }));
-
-        if (window.jennyShell.lifecycle) {
-          addCleanup(window.jennyShell.lifecycle.onProgress((payload) => {
-            handleLifecycleProgress(payload);
-          }));
-        }
-
-        addCleanup(window.jennyShell.auth.onState(async (payload) => {
-          const transitionToken = beginTransition();
-          state.auth = payload;
-          if (payload.authenticated) {
-            await loadSessions();
-            if (shouldStopAuthenticatedTransition(transitionToken)) return;
-            await refreshSnapshots();
-            if (shouldStopAuthenticatedTransition(transitionToken)) return;
-            try {
-              await refreshApprovedMemories({ force: true });
-            } catch (err) {
-              if (shouldStopAuthenticatedTransition(transitionToken)) return;
-              appendClientLog('WARN', 'chat.auth_refresh_memories_failed', { message: String(err?.message || err) });
-              reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
-            }
-            if (shouldStopAuthenticatedTransition(transitionToken)) return;
-          } else {
-            clearSignedOutRendererState();
-          }
-          if (!isCurrentTransition(transitionToken)) return;
-          renderAll();
-        }));
+        shellSubscriptions.bind(addCleanup);
 
         registerListener(homeNavButton, 'click', () => {
           setActiveView('home');
@@ -797,15 +406,19 @@
         registerListener(jumpToTopButton, 'click', () => {
           handleJumpToTop();
         }, listenerOptions);
-
-        registerListener(jumpToLastPromptButton, 'click', () => {
-          handleJumpToLastPrompt();
-        }, listenerOptions);
-
-        registerListener(jumpToBottomButton, 'click', () => {
-          handleJumpToBottom();
-        }, listenerOptions);
       }
+
+      // One bottom-edge control per pane. Pane 0's also runs the wayfinder's first-unread pick when it names
+      // this session; every other press is the plain jump to the live end ("Latest").
+      registerListener(jumpToBottomButton, 'click', globalThis.rendererChatWayfinderUtils.createJumpClickHandler({
+        getModel: () => (documentLevel ? state.ui?.chatWayfinder : null),
+        getSessionId: () => sessionContext.getSessionId(),
+        getHandlers: () => ({
+          unreadController: unreadOrientationController,
+          onError: (error) => appendClientLog?.('WARN', 'chat.wayfinder_action_failed', { message: String(error?.message || error).slice(0, 160) }),
+        }),
+        jumpToLatest: () => handleJumpToBottom(),
+      }), listenerOptions);
 
       registerListener(chatInput, 'keydown', (event) => {
         if (globalThis.rendererPlanModeShortcut?.handleRunModeCycleShortcut?.(event, document)) return;

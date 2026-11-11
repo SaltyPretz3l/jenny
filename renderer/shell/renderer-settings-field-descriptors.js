@@ -300,6 +300,10 @@
   def({ id: 'webSearchSearxngUrlField', sectionId: 'tools', kind: 'text', default: '', adapterId: 'features', key: 'webSearch.searxngUrl',
     copy: { label: jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL'), description: jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no setup.') } });
   bool('commandSandboxEnabled', 'tools', 'commandSandbox', 'enabled', false, { copy: { label: jt('settings.commandSandbox.rowLabel', 'Run commands in a sandbox'), description: jt('settings.commandSandbox.rowHelp', 'A disposable copy with no network. Needs Docker.') } });
+  // Row 106: the main process owns the default (fresh profiles synced, older enabled ones copy), so no Modified/Revert.
+  def({ id: 'commandSandboxMode', sectionId: 'tools', kind: 'enum', default: 'synced', noMeta: true, adapterId: 'commandSandboxMode', key: 'mode',
+    options: [{ value: 'copy', label: jt('settings.commandSandbox.modeCopy', 'Isolated copy') }, { value: 'synced', label: jt('settings.commandSandbox.modeSynced', 'Synced workspace') }],
+    copy: { label: jt('settings.commandSandbox.modeLabel', 'Where commands run'), description: jt('settings.commandSandbox.modeHelp', 'Run commands on a throwaway copy, or let them change your files after a restore point.') } });
 
   // Models
   bool('modelStartupLoadToggle', 'models', 'engines', 'startupModelLoad', true);
@@ -338,6 +342,12 @@
   bool('performanceShowCounterToggle', 'appearance', 'performance', 'show_counter', false);
   bool('performanceGpuWarningsToggle', 'appearance', 'performance', 'gpu_warnings_enabled', true);
   bool('appearanceSpellcheckToggle', 'appearance', 'features', 'featureFlags.text_spellcheck', true);
+  // Row 122: before and after pictures of the pages a turn changed (a Chat layout row).
+  bool('changePicturesToggle', 'appearance', 'features', 'featureFlags.change_pictures', true, { copy: {
+    label: jt('settings.changePictures.label', 'Show before and after pictures of page changes'),
+    description: jt('settings.changePictures.description', 'When a turn changes a web page, Jenny takes a picture of the page before and after and shows both in the chat and in Changes. Off takes no pictures and shows none.'),
+    keywords: [jt('settings.changePictures.keywords.beforeAfter', 'before and after'), jt('settings.changePictures.keywords.pictures', 'pictures'), jt('settings.changePictures.keywords.screenshot', 'screenshot'), jt('settings.changePictures.keywords.compare', 'compare')],
+  } });
   def({ id: 'appearanceAppZoomSelect', sectionId: 'appearance', kind: 'enum', default: 110, adapterId: 'windowUi', key: 'appZoomPercent', options: 'source:appZoomPresets' });
   def({ id: 'uiLanguageSelect', sectionId: 'appearance', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages' });
   def({ id: 'use24HourTime', sectionId: 'appearance', kind: 'boolean', default: false, controlId: 'use24HourTimeToggle', adapterId: 'chatUi', key: 'use24HourTime', copy: 'field-copy:use24HourTimeToggle' });

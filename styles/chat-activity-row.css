@@ -210,3 +210,57 @@
 @media (prefers-reduced-motion: reduce) {
   .turn-activity-row[data-turn-activity-kind="prefill"] > .status-dot { transition: none; }
 }
+
+/* Follow Jenny (row 121): four fixed lines of the file under the writing row.
+   No box and no border; the height never changes, so the transcript never shifts. */
+.turn-activity-tail {
+  box-sizing: content-box;
+  height: calc(4 * 1.5em);
+  margin: 0;
+  padding-block: 2px var(--space-2);
+  padding-inline: calc(var(--space-3) + var(--tl-activity-dot-size) + var(--space-3)) var(--space-3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-meta);
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text-muted);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+}
+/* A new line grows in at the bottom, so the lines above slide up one step instead of
+   jumping; a fifth line is kept above the four and is clipped as it slides out. */
+.turn-activity-tail > span {
+  display: block;
+  flex: none;
+  height: 1.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+  animation: turn-activity-tail-line var(--motion-duration-fast) var(--motion-ease-emphasis);
+}
+.turn-activity-tail > span:last-child { color: var(--text-secondary); }
+@keyframes turn-activity-tail-line { from { height: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .turn-activity-tail > span { transition: none; animation: none; }
+}
+
+.turn-activity-watch {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--tl-font-meta);
+  white-space: nowrap;
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* The elapsed time keeps the row's auto margin; two would strand it mid-row. */
+.turn-activity-elapsed + .turn-activity-watch { margin-inline-start: 0; }
+.turn-activity-watch:hover,
+.turn-activity-watch:focus-visible { color: var(--text-primary); }

@@ -67,9 +67,19 @@ _CHECKPOINT_DRAFT_NUDGE = (
     "Your reasoning above already drafts code. Do not re-derive it: write it to disk "
     "now with write_file/edit_file in pieces of at most ~150 lines, then continue."
 )
+# Outside an approved plan the turn may be Q&A that quotes code, so the hint is
+# conditional (2026-11-03 Rust session: four checkpoints of a drafted file in
+# reasoning, under the generic nudge, before the first write).
+_CHECKPOINT_DRAFT_HINT = (
+    "If the user asked you to create or change files, your reasoning above already drafts "
+    "that code: do not re-derive it, write it to disk now with write_file/edit_file in "
+    "pieces of at most ~150 lines. Otherwise give your answer now."
+)
 _CODE_FENCE = "```"
 _MIN_DRAFT_DEF_LINES = 2
-_DEF_OR_CLASS_LINE_RE = re.compile(r"^\s*(?:def|class)\s+\w+", re.MULTILINE)
+_DEF_OR_CLASS_LINE_RE = re.compile(
+    r"^\s*(?:def|class|(?:pub(?:\(\w+\))?\s+)?fn|function|func)\s+\w+", re.MULTILINE
+)
 _TRUNCATED_TOOL_CALL_NOTE = (
     "Your last tool call was cut off at the output-token limit before its arguments "
     "finished, so it did not run and nothing was written. Do not resend it whole; "
@@ -208,6 +218,7 @@ def build_checkpoint_messages(  # noqa: PLR0913 - explicit checkpoint inputs.
     tool_call_truncated: bool = False,
     tool_call_rejected_reason: str = "",
     allow_write_draft: bool = False,
+    write_tools_available: bool = False,
 ) -> list[dict[str, object]]:
     """Build the bounded reasoning carry and decisive continuation nudge.
 
@@ -221,8 +232,8 @@ def build_checkpoint_messages(  # noqa: PLR0913 - explicit checkpoint inputs.
     nudge = _CHECKPOINT_NUDGE
     if text.strip():
         carry = text[-carry_chars:]
-        if allow_write_draft and _carries_code_draft(carry):
-            nudge = _CHECKPOINT_DRAFT_NUDGE
+        if (allow_write_draft or write_tools_available) and _carries_code_draft(carry):
+            nudge = _CHECKPOINT_DRAFT_NUDGE if allow_write_draft else _CHECKPOINT_DRAFT_HINT
         if len(text) > carry_chars:
             prefix = CHECKPOINT_ELISION_NOTE
             if callable(summarize):
@@ -320,7 +331,7 @@ def checkpoint_stalled(loop: Any, previous_carry: str | None, carry: str, result
         return False
     if previous_carry is not None or not getattr(loop, "tool_payload", None):
         return True
-    from sidecar.ai.routing.tool_loop_recovery import _tool_cap_spent
+    from sidecar.ai.routing.tool_loop_wind_down import _tool_cap_spent
 
     return _tool_cap_spent(loop)
 
@@ -421,7 +432,7 @@ def thinking_budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) 
     """
     reasoning_text = str(getattr(result, "thinking_text", "") or "").strip()
     import sidecar.ai.routing.tool_loop as _tl_hub
-    from sidecar.ai.routing.tool_loop_recovery import (
+    from sidecar.ai.routing.tool_loop_wind_down import (
         WindDownSpec,
         wind_down_response,
     )

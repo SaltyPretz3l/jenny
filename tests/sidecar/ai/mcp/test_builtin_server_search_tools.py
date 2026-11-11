@@ -231,7 +231,7 @@ def test_tools_call_rejects_malformed_grep_arguments(tmp_path) -> None:
         WorkspaceGuard(str(workspace_root)),
         {
             "name": "grep_search",
-            "arguments": {"pattern": "needle", "ignore_case": "false"},
+            "arguments": {"pattern": "needle", "ignore_case": "sometimes"},
         },
     )
 

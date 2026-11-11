@@ -497,3 +497,72 @@ test('row 100 P2: a chat queued behind a work lease says what it waits on; an un
     ordinary.waiting_for.command, ordinary.waiting_for.pid], ['chat', null, null, null, null], 'nor its command');
   assert.equal((await directory.digest({ callerSessionId: 'P', sessionId: 'A2' })).session.waiting_for.title, 'Chat B1');
 });
+
+// ---------- title search and paging reach every visible chat ----------
+
+function manyChats(count, extra = () => ({})) {
+  // chat n is the n-th most recently active: n=0 newest
+  return [chat('P', { session_role: 'primary', updated_at: '2020-01-01T00:00:00.000Z' }), ...Array.from({ length: count }, (_, n) => chat(`c${n}`, {
+    title: `Topic ${n}`, updated_at: new Date(Date.UTC(2026, 9, 20) - n * 60000).toISOString(), ...extra(n),
+  }))];
+}
+
+test('list: a title only the 200th newest chat has is found, with an exact total', () => {
+  const sessions = manyChats(220, (n) => (n === 199 ? { title: 'Needle in a haystack' } : {}));
+  const { directory } = fixture({ sessions });
+  const found = directory.list({ callerSessionId: 'P', scope: 'all', query: '  NEEDLE ', limit: 10 });
+  assert.deepEqual(found.rows.map((entry) => entry.session_id), ['c199']);
+  assert.equal(found.total, 1);
+  assert.equal(found.truncated, false);
+  const topics = directory.list({ callerSessionId: 'P', scope: 'all', query: 'topic', limit: 10 });
+  assert.equal(topics.total, 219, 'the matching count is exact beyond the row cap');
+  assert.equal(topics.rows.length, 10);
+  assert.equal(topics.truncated, true);
+});
+
+test('list: offset pages through the sorted visible chats after the scope rule', () => {
+  const { directory } = fixture({ sessions: manyChats(80) });
+  const page = directory.list({ callerSessionId: 'P', scope: 'all', offset: 60, limit: 10 });
+  assert.deepEqual(page.rows.map((entry) => entry.session_id), Array.from({ length: 10 }, (_, n) => `c${60 + n}`));
+  assert.equal(page.total, 80);
+  assert.equal(page.truncated, true);
+  const last = directory.list({ callerSessionId: 'P', scope: 'all', offset: 75, limit: 10 });
+  assert.equal(last.rows.length, 5);
+  assert.equal(last.truncated, false);
+  const beyond = directory.list({ callerSessionId: 'P', scope: 'all', offset: 500, limit: 10 });
+  assert.deepEqual([beyond.rows, beyond.total], [[], 80]);
+  assert.equal(directory.list({ callerSessionId: 'P', scope: 'all', offset: 'x', limit: 3 }).rows[0].session_id, 'c0');
+});
+
+test('list: query and totals cover only the chats the caller may see', () => {
+  const sessions = [...manyChats(5), chat('hidden', { project_id: 'project_b', title: 'Topic secret' }), chat('A1', { title: 'caller' })];
+  const { directory } = fixture({ sessions });
+  const ordinary = directory.list({ callerSessionId: 'A1', scope: 'all', query: 'topic' });
+  assert.equal(ordinary.total, 5);
+  assert.ok(!ordinary.rows.some((entry) => entry.session_id === 'hidden'));
+  assert.equal(directory.list({ callerSessionId: 'c0', scope: 'all', query: 'secret' }).total, 0);
+  assert.equal(directory.list({ callerSessionId: 'P', scope: 'all', query: 'secret' }).total, 1);
+});
+
+test('list: recent keeps its 20-chat window but reports the total as a lower bound', () => {
+  const { directory } = fixture({ sessions: manyChats(30) });
+  const recent = directory.list({ callerSessionId: 'P', limit: 10 });
+  assert.equal(recent.rows.length, 10);
+  assert.equal(recent.total, 20);
+  assert.equal(recent.total_at_least, true);
+  assert.equal(recent.truncated, true);
+  const all = directory.list({ callerSessionId: 'P', scope: 'all', limit: 10 });
+  assert.equal(all.total, 30);
+  assert.equal('total_at_least' in all, false);
+});
+
+test('list: active pages over the non-idle chats only', () => {
+  const sessions = manyChats(30);
+  const work = {};
+  for (let n = 0; n < 30; n += 2) work[`c${n}`] = [workRow(`c${n}`, 'running')];
+  const { directory } = fixture({ sessions, work });
+  const page = directory.list({ callerSessionId: 'P', scope: 'active', offset: 5, limit: 5 });
+  assert.deepEqual(page.rows.map((entry) => entry.session_id), ['c10', 'c12', 'c14', 'c16', 'c18']);
+  assert.equal(page.total, 15);
+  assert.equal(page.truncated, true);
+});

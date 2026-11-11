@@ -156,6 +156,7 @@
   !insertmacro RemoveJennyProfileChild "background-memory"
   !insertmacro RemoveJennyProfileChild "blob_storage"
   !insertmacro RemoveJennyProfileChild "Cache"
+  !insertmacro RemoveJennyProfileChild "change-pictures"
   !insertmacro RemoveJennyProfileChild "Code Cache"
   !insertmacro RemoveJennyProfileChild "compile-cache"
   !insertmacro RemoveJennyProfileChild "Cookies"

@@ -136,6 +136,17 @@ def test_waiting_and_rejected_resource_admission_return_no_lease(
     assert len(sent) == 1
 
 
+def test_a_rejection_reason_reaches_the_model_as_a_sentence() -> None:
+    from sidecar.runtime.tool_resource_admission import _failure
+
+    known = _failure("tool_resource_own_cleanup_unconfirmed")
+    assert "tool_resource_own_cleanup_unconfirmed" in known.message
+    assert "answer from what you have" in known.message
+    assert _failure("project_authority_stale").message.startswith("This call did not start")
+    assert _failure("something_new").message == "Tool resource admission failed: something_new"
+    assert "repeat it unchanged" in _failure("busy", waiting=True).message
+
+
 def test_opted_wait_raises_typed_deferral_without_wire_self_enable() -> None:
     sent: list[dict[str, Any]] = []
 

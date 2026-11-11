@@ -168,8 +168,8 @@ def test_available_tools_excludes_config_disabled_tool() -> None:
     kernel = _make_kernel(
         descriptors=[
             MCPToolDescriptor(
-                name="mermaid_generate",
-                description="Generate Mermaid diagram",
+                name="python_execute",
+                description="Execute Python code",
                 input_schema={"type": "object"},
                 side_effecting=False,
                 server_name="tools",
@@ -179,12 +179,11 @@ def test_available_tools_excludes_config_disabled_tool() -> None:
             engine_type="mock",
             model="mock-v1",
             tools_workspace_root="C:/workspace",
-            tools_mermaid_enabled=False,
         ),
     )
 
     names = kernel.available_tools
-    assert "mermaid_generate" not in names
+    assert "python_execute" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +568,7 @@ def test_tool_schema_repair_hints_none_schema_returns_dict() -> None:
     """None input yields empty required keys and minimal arguments."""
     hints = tool_schema_repair_hints(None)
 
-    assert hints == {"required_keys": [], "minimal_valid_arguments": {}}, (
+    assert hints == {"required_keys": [], "minimal_valid_arguments": {}, "allowed_keys": []}, (
         f"Expected empty-hint shape for a None schema, got {hints!r}"
     )
 

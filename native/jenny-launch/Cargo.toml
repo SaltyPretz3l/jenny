@@ -1,0 +1,38 @@
+[package]
+name = "jenny-launch"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Native owned-process bootstrap child for the Jenny sidecar"
+license = "MIT"
+publish = false
+
+[lib]
+name = "jenny_launch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jenny-launch"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3

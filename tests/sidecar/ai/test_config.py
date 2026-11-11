@@ -578,7 +578,8 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
     assert config.tools_lsp_enabled is True
     assert config.tools_lsp_command_typescript == "typescript-language-server"
     assert config.tools_lsp_command_python == "pyright-langserver"
-    assert config.tools_mermaid_enabled is True
+    # The retired mermaid flag in the payload above is ignored, not parsed.
+    assert not hasattr(config, "tools_mermaid_enabled")
     assert config.electron_tool_bridge_enabled is True
     assert config.tools_subagents_enabled is True
     assert config.tools_mcp_resources_enabled is True
@@ -603,8 +604,6 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_lsp_enabled is False
     assert config.tools_lsp_command_typescript is None
     assert config.tools_lsp_command_python is None
-    # Mermaid is default-on so "create a visual" requests have a fast diagram tool.
-    assert config.tools_mermaid_enabled is True
     assert config.electron_tool_bridge_enabled is False
     assert config.tools_subagents_enabled is True
     assert config.tools_mcp_resources_enabled is False

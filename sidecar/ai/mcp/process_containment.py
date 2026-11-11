@@ -38,6 +38,8 @@ _ENV_PASSTHROUGH_KEYS = (
     "JENNY_ENABLE_PDF_OCR_RAPID",
     # Kill switch for the shell tools' workspace_changed probe (TR-015).
     "JENNY_ENABLE_SHELL_CHANGE_EVIDENCE",
+    # Kill switch for the native owned-process launcher; the builtin server resolves it.
+    "JENNY_ENABLE_NATIVE_LAUNCHER",
     "JENNY_PDF_OCR_SITE_DIR",
     "JENNY_SIDECAR_MEDIA_SITE_DIR",
     "JENNY_SIDECAR_PDF_ADDON_DIR",

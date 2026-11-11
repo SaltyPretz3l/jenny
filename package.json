@@ -1,6 +1,6 @@
 {
   "name": "jenny",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "private": true,
   "license": "MIT",
   "author": "Jenny Project",
@@ -43,10 +43,12 @@
     "build:preload": "node scripts/build/build-preload.js",
     "build:preload:force": "node scripts/build/build-preload.js --force",
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
-    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",
-    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",
-    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",
-    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",
+    "build:launcher": "python scripts/packaging/build_native_launcher.py",
+    "build:team-bridge": "python scripts/packaging/build_team_bridge.py",
+    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",
+    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",
+    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",
+    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",
     "release:smoke": "python scripts/packaging/smoke_packaged_flow.py",
     "sbom:sidecar": "python scripts/packaging/emit_sbom.py",
     "check:python-runtime-bundle": "python scripts/checks/check_python_runtime_bundle.py",
@@ -68,6 +70,7 @@
     "npm": ">=10.0.0"
   },
   "dependencies": {
+    "@ghostery/adblocker": "2.20.3",
     "@lydell/node-pty": "^1.2.0-beta.12",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",

@@ -177,6 +177,17 @@
       liveFollowRuntime.releasedSessionId = '';
     }
 
+    // Reader re-latched: spend the gesture, re-baseline (2026-11-03).
+    function relatchFollowAtBottom(currentScrollTop) {
+      clearReaderRelease();
+      liveFollowRuntime.readerIntentPending = false;
+      liveFollowRuntime.lastUserIntentAt = 0;
+      if (liveFollowRuntime.active) return;
+      liveFollowRuntime.lastProgrammaticScrollTop = Math.max(0, Number(currentScrollTop) || 0);
+      liveFollowRuntime.baselineRetained = true;
+      liveFollowRuntime.baselineSessionId = String(getSessionId() || '');
+    }
+
     function scheduleLiveStreamingFollowFrame() {
       if (liveFollowRuntime.frameHandle || !liveFollowRuntime.active) {
         return;
@@ -240,6 +251,17 @@
         && currentScrollTop < (liveFollowRuntime.lastProgrammaticScrollTop || 0) - LIVE_FOLLOW_MIN_STEP_PX
       ) {
         scheduleLiveStreamingFollowFrame();
+        return;
+      }
+      // Clamped a screen up with no reader input (HB-006): snap back.
+      const clientHeight = Number(chatThreadScroll.clientHeight) || 0;
+      if (
+        !liveFollowRuntime.readerIntentPending
+        && clientHeight > 0
+        && currentScrollTop < (liveFollowRuntime.lastProgrammaticScrollTop || 0) - clientHeight
+      ) {
+        writeFollowScrollTop(targetScrollTop);
+        settleLiveStreamingFollow();
         return;
       }
       liveFollowRuntime.targetScrollTop = targetScrollTop;
@@ -339,6 +361,7 @@
       isReaderAwayFromFollow,
       isReaderReleaseHeld,
       clearReaderRelease,
+      relatchFollowAtBottom,
       releaseFollowForUserScrollAway,
       getLiveFollowTargetScrollTop,
       cancelLiveStreamingFollow,

@@ -4,244 +4,157 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const starfieldUtils = require('../renderer/shell/renderer-startup-starfield.js');
+const starter = require('../renderer/shell/renderer-startup-starfield.js');
+const workerSky = require('../renderer/shell/renderer-startup-starfield-worker.js');
 
 const WORDMARK_RECT = { left: 540, top: 330, width: 200, height: 40 };
+const VIEWPORT = { width: 1600, height: 930, dpr: 1, wordmark: WORDMARK_RECT };
 
 function createStubContext() {
-  const calls = { arc: 0, fill: 0, clearRect: 0, fillStyleWrites: 0, lastArc: null };
+  const calls = { arc: 0, fill: 0, clearRect: 0, fillStyleWrites: 0, fillRect: 0, lastArc: null, cleared: null };
   return {
     calls,
     setTransform() {},
-    clearRect() { calls.clearRect += 1; },
+    clearRect(...args) { calls.clearRect += 1; calls.cleared = args; },
     beginPath() {},
     arc(...args) { calls.arc += 1; calls.lastArc = args; },
     fill() { calls.fill += 1; },
+    fillRect() { calls.fillRect += 1; },
+    save() {},
+    restore() {},
+    translate() {},
+    createRadialGradient() { return { addColorStop() {} }; },
     set fillStyle(_value) { calls.fillStyleWrites += 1; },
     get fillStyle() { return ''; },
     globalAlpha: 1,
   };
 }
 
-function createSky(t, options = {}) {
+function createSky(options = {}) {
+  const context = createStubContext();
+  const canvas = { width: 0, height: 0, getContext: () => context };
+  const sky = workerSky.createSky({ canvas, viewport: options.viewport || VIEWPORT, density: options.density, random: options.random });
+  return { sky, context, canvas };
+}
+
+function createWorkerScope() {
+  const frames = new Map();
+  let nextFrame = 1;
+  const posted = [];
+  const scope = {
+    requestAnimationFrame(callback) { const id = nextFrame++; frames.set(id, callback); return id; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+    postMessage(message) { posted.push(message); },
+  };
+  workerSky.attachToWorker(scope);
+  const context = createStubContext();
+  const canvas = { width: 0, height: 0, getContext: () => context };
+  let clock = 0;
+  return {
+    scope, frames, posted, context, canvas,
+    send(data) { scope.onmessage({ data }); },
+    init(extra = {}) { scope.onmessage({ data: { type: 'init', canvas, viewport: VIEWPORT, ...extra } }); },
+    flush(stepMs = 16) {
+      clock += stepMs;
+      const pending = Array.from(frames.values());
+      frames.clear();
+      pending.forEach((callback) => callback(clock));
+    },
+  };
+}
+
+class FakeWorker {
+  constructor(url) { this.url = url; this.posts = []; this.transfers = []; this.terminated = 0; }
+  postMessage(message, transfer) { this.posts.push(message); this.transfers.push(transfer); }
+  terminate() { this.terminated += 1; }
+  ofType(type) { return this.posts.filter((message) => message.type === type); }
+}
+
+function createHandle(t, options = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="startupOverlay">'
     + '<canvas id="startupOverlaySky"></canvas><div class="startup-overlay-wordmark">Jenny</div></div></body></html>', { pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const win = dom.window;
-  Object.defineProperty(win, 'innerWidth', { configurable: true, value: options.innerWidth || 1600 });
-  Object.defineProperty(win, 'innerHeight', { configurable: true, value: options.innerHeight || 930 });
-  const frames = new Map();
-  let nextFrame = 1;
-  win.requestAnimationFrame = (callback) => { const id = nextFrame++; frames.set(id, callback); return id; };
-  win.cancelAnimationFrame = (id) => { frames.delete(id); };
-  const context = createStubContext();
   const canvas = win.document.getElementById('startupOverlaySky');
-  canvas.getContext = () => context;
+  const offscreen = { offscreen: true };
+  if (options.transferable !== false) { canvas.transferControlToOffscreen = () => offscreen; }
   const wordmark = win.document.querySelector('.startup-overlay-wordmark');
-  wordmark.getBoundingClientRect = () => ({ ...WORDMARK_RECT, right: WORDMARK_RECT.left + WORDMARK_RECT.width, bottom: WORDMARK_RECT.top + WORDMARK_RECT.height });
+  wordmark.getBoundingClientRect = () => WORDMARK_RECT;
   const curtain = win.document.getElementById('startupOverlay');
-  const sky = starfieldUtils.createStartupStarfield({
-    canvas,
-    wordmark,
-    curtain,
-    window: win,
+  curtain.style.setProperty('--startup-text', '#111111');
+  curtain.style.setProperty('--startup-cyan', '#86c3e4');
+  curtain.style.setProperty('--startup-accent', '#222222');
+  const worker = new FakeWorker('');
+  const handle = starter.createStartupStarfield({
+    canvas, wordmark, curtain, window: win,
     reducedMotion: options.reducedMotion === true,
-    density: options.density,
-    random: options.random,
+    createWorker: options.createWorker || (() => worker),
+    now: () => 1234,
   });
-  t.after(() => sky && sky.dispose());
-  let clock = 0;
-  function flush(stepMs = 16) {
-    clock += stepMs;
-    const pending = Array.from(frames.values());
-    frames.clear();
-    pending.forEach((callback) => callback(clock));
-  }
-  return { dom, win, sky, frames, flush, context, curtain, wordmark };
+  t.after(() => handle && handle.dispose());
+  const setVisibility = (value) => {
+    Object.defineProperty(win.document, 'visibilityState', { configurable: true, get: () => value });
+    win.document.dispatchEvent(new win.Event('visibilitychange'));
+  };
+  return { win, canvas, offscreen, worker, handle, setVisibility };
 }
 
-test('star count keeps stars per area constant, within the light and max bounds', (t) => {
-  assert.equal(createSky(t, { innerWidth: 1600, innerHeight: 930 }).sky.getStarCount(), 220, 'the reference window gets the full sky');
-  assert.equal(createSky(t, { innerWidth: 1280, innerHeight: 720 }).sky.getStarCount(), 136);
-  assert.equal(createSky(t, { innerWidth: 800, innerHeight: 600 }).sky.getStarCount(), 120, 'a small window keeps the light floor');
-  assert.equal(createSky(t, { innerWidth: 3840, innerHeight: 2160 }).sky.getStarCount(), 440, 'a 4K window is capped');
-  assert.equal(createSky(t, { innerWidth: 3840, innerHeight: 2160, density: 'light' }).sky.getStarCount(), 120);
-  assert.equal(starfieldUtils.resolveStarCount(undefined, 1600, 930), starfieldUtils.STAR_COUNT_FULL);
+test('star count keeps stars per area constant, within the light and max bounds', () => {
+  const count = (width, height, density) => createSky({ viewport: { width, height, dpr: 1 }, density }).sky.getStars().length;
+  assert.equal(count(1600, 930), 220, 'the reference window gets the full sky');
+  assert.equal(count(1280, 720), 136);
+  assert.equal(count(800, 600), 120, 'a small window keeps the light floor');
+  assert.equal(count(3840, 2160), 440, 'a 4K window is capped');
+  assert.equal(count(3840, 2160, 'light'), 120);
+  assert.equal(workerSky.resolveStarCount(undefined, 1600, 930), workerSky.STAR_COUNT_FULL);
 });
 
-test('the disc and the stars scale with the window, live on resize', (t) => {
-  // Every star identical: reach ~1 at theta ~0, so x - centre is the disc's outer
-  // edge: the 70px inner edge plus the 640px span times the window scale.
-  const { sky, win, context } = createSky(t, {
-    innerWidth: 1600, innerHeight: 930, density: 4, reducedMotion: true, random: () => 0.999,
-  });
+test('the page and the worker agree on when the stars have arrived', () => {
+  assert.equal(starter.SKY_GRACE_MS, workerSky.SKY_GRACE_MS);
+  assert.equal(starter.SKY_FADE_MS, workerSky.SKY_FADE_MS);
+});
+
+test('the stars wait out the grace period, then arrive', () => {
+  assert.equal(workerSky.skyVisibility(0), 0);
+  assert.equal(workerSky.skyVisibility(workerSky.SKY_GRACE_MS), 0, 'a fast launch sees no half-formed stars');
+  assert.ok(workerSky.skyVisibility(workerSky.SKY_GRACE_MS + 300) > 0);
+  assert.equal(workerSky.skyVisibility(workerSky.SKY_GRACE_MS + workerSky.SKY_FADE_MS), 1);
+});
+
+test('the disc and the stars scale with the viewport, without changing the count', () => {
+  const { sky, context } = createSky({ density: 4, random: () => 0.999 });
   const centreX = WORDMARK_RECT.left + WORDMARK_RECT.width / 2;
-  sky.start();
+  sky.drawStill();
   const [referenceX, , referenceSize] = context.calls.lastArc;
   assert.ok(Math.abs(referenceX - centreX - 710) < 5, `reference outer edge ${referenceX - centreX} ~ 710px`);
-  Object.defineProperty(win, 'innerWidth', { configurable: true, value: 3200 });
-  Object.defineProperty(win, 'innerHeight', { configurable: true, value: 1860 });
-  win.dispatchEvent(new win.Event('resize'));
+  sky.setViewport({ width: 3200, height: 1860, dpr: 1, wordmark: WORDMARK_RECT });
+  sky.drawStill();
   const [wideX, , wideSize] = context.calls.lastArc;
   assert.ok(Math.abs(wideX - centreX - 1350) < 5, `doubled window outer edge ${wideX - centreX} ~ 1350px`);
   assert.ok(Math.abs(wideSize / referenceSize - 1.5) < 1e-9, 'star size scales, capped at 1.5x');
-  assert.equal(sky.getStarCount(), 4, 'a resize rescales the disc, not the count');
+  assert.equal(sky.getStars().length, 4);
 });
 
-test('collapse gives every star a destination inside the wordmark rect and lands on onDone', (t) => {
-  const { sky, flush, frames, curtain } = createSky(t);
-  sky.start();
-  flush();
-  flush();
-  let done = 0;
-  assert.equal(sky.collapse({ onDone() { done += 1; } }), true);
+test('collapse gives every star a destination inside the wordmark rect', () => {
+  const { sky } = createSky();
+  sky.drawFrame(800, 16);
+  sky.beginCollapse({ durationMs: 500, wordmark: WORDMARK_RECT }, 800);
+  assert.equal(sky.getCollapseDuration(), 500);
   for (const star of sky.getStars()) {
     assert.ok(star.tx >= WORDMARK_RECT.left && star.tx <= WORDMARK_RECT.left + WORDMARK_RECT.width, `tx ${star.tx} inside the wordmark`);
     assert.ok(star.ty >= WORDMARK_RECT.top && star.ty <= WORDMARK_RECT.top + WORDMARK_RECT.height, `ty ${star.ty} inside the wordmark`);
   }
-  for (let i = 0; i < 60 && frames.size > 0; i += 1) { flush(16); }
-  assert.equal(done, 1, 'onDone fires once when the stars land');
-  assert.equal(frames.size, 0, 'the loop stops after the collapse');
-  assert.equal(curtain.style.opacity, '0', 'the curtain has faded under the last stars');
 });
 
-test('resize during collapse lands at once and cancels further frames', (t) => {
-  const { sky, flush, frames, win, context, curtain, wordmark } = createSky(t);
-  let rect = { ...WORDMARK_RECT };
-  wordmark.getBoundingClientRect = () => rect;
-  sky.start();
-  flush();
-  let done = 0;
-  sky.collapse({ onDone() { done += 1; } });
-  flush();
-  flush();
-  assert.equal(done, 0, 'the collapse is still in progress');
-  const pending = Array.from(frames.values());
-  assert.equal(pending.length, 1);
-  const clearsBefore = context.calls.clearRect;
-  let clearedViewport;
-  const clearRect = context.clearRect;
-  context.clearRect = (...args) => { clearedViewport = args; clearRect(); };
-  rect = { left: 300, top: 220, width: 200, height: 40 };
-  Object.defineProperty(win, 'innerWidth', { configurable: true, value: 800 });
-  Object.defineProperty(win, 'innerHeight', { configurable: true, value: 480 });
-  win.dispatchEvent(new win.Event('resize'));
-  assert.equal(done, 1, 'resize lands the collapse and calls onDone once');
-  assert.equal(frames.size, 0, 'resize cancels the pending collapse frame');
-  assert.equal(context.calls.clearRect, clearsBefore + 1, 'resize draws one final frame');
-  assert.deepEqual(clearedViewport, [0, 0, 800, 480], 'the final frame uses the new viewport');
-  assert.equal(wordmark.style.opacity, '0', 'the wordmark reaches the final collapse state');
-  assert.equal(curtain.style.opacity, '0', 'the curtain reaches the final collapse state');
-  pending.forEach((callback) => callback(100));
-  assert.equal(context.calls.clearRect, clearsBefore + 1, 'a captured callback draws nothing after landing');
-  assert.equal(frames.size, 0);
-  win.dispatchEvent(new win.Event('resize'));
-  assert.equal(done, 1, 'a second resize does not call onDone again');
-  sky.dispose();
-  const clearsAfterDispose = context.calls.clearRect;
-  win.dispatchEvent(new win.Event('resize'));
-  assert.equal(context.calls.clearRect, clearsAfterDispose, 'resize after disposal draws nothing');
-  assert.equal(done, 1);
-});
-
-test('resize without a collapse keeps the swirl scheduling frames', (t) => {
-  const { sky, flush, frames, win, context } = createSky(t);
-  sky.start();
-  flush();
-  const clearsBefore = context.calls.clearRect;
-  win.dispatchEvent(new win.Event('resize'));
-  assert.equal(context.calls.clearRect, clearsBefore, 'a running swirl waits for its next frame');
-  assert.equal(frames.size, 1, 'resize preserves the pending swirl frame');
-  flush();
-  assert.equal(context.calls.clearRect, clearsBefore + 1);
-  assert.equal(frames.size, 1, 'the swirl keeps scheduling after resize');
-});
-
-test('dispose cancels the live frame and schedules nothing afterwards', (t) => {
-  const { sky, flush, frames } = createSky(t);
-  sky.start();
-  assert.equal(frames.size, 1);
-  flush();
-  assert.equal(frames.size, 1, 'the loop reschedules while the curtain is up');
-  sky.dispose();
-  assert.equal(frames.size, 0, 'dispose cancels the pending frame');
-  flush();
-  assert.equal(frames.size, 0);
-});
-
-test('a hidden window pauses the loop and a visible one resumes it', (t) => {
-  const { sky, frames, dom } = createSky(t);
-  sky.start();
-  assert.equal(frames.size, 1);
-  Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, get: () => 'hidden' });
-  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
-  assert.equal(sky.isPaused(), true);
-  assert.equal(frames.size, 0, 'no frame is scheduled while hidden');
-  Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, get: () => 'visible' });
-  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
-  assert.equal(sky.isPaused(), false);
-  assert.equal(frames.size, 1);
-});
-
-// A-3: the fatal dialog holds the sky; a window coming back into view must not
-// restart it behind the dialog, and a hidden window stays paused on resume().
-test('a caller pause holds across visibility changes until the caller resumes', (t) => {
-  const { sky, frames, dom } = createSky(t);
-  const setVisibility = (value) => {
-    Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, get: () => value });
-    dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
-  };
-  sky.start();
-  sky.pause();
-  assert.equal(frames.size, 0);
-  setVisibility('hidden');
-  setVisibility('visible');
-  assert.equal(sky.isPaused(), true, 'visibility does not lift a caller pause');
-  assert.equal(frames.size, 0);
-  setVisibility('hidden');
-  sky.resume();
-  assert.equal(frames.size, 0, 'a hidden window stays paused after the caller resumes');
-  setVisibility('visible');
-  assert.equal(sky.isPaused(), false);
-  assert.equal(frames.size, 1);
-});
-
-// A-2: a sky retired mid-swirl (kill switch landing after mount) leaves the
-// plain curtain: no frozen stars, the wordmark back at full strength.
-test('dispose clears the canvas and hands the wordmark back to its stylesheet', (t) => {
-  const { sky, flush, context, wordmark } = createSky(t);
-  sky.start();
-  flush(16);
-  assert.notEqual(wordmark.style.opacity, '', 'the swirl drives the wordmark fade-in');
-  const clearsBefore = context.calls.clearRect;
-  sky.dispose();
-  assert.equal(context.calls.clearRect, clearsBefore + 1, 'the last frame is wiped');
-  assert.equal(wordmark.style.opacity, '');
-  assert.equal(wordmark.style.textShadow, '');
-});
-
-test('reduced motion paints the stars once and never starts a loop', (t) => {
-  const { sky, frames, context } = createSky(t, { reducedMotion: true });
-  sky.start();
-  assert.equal(frames.size, 0);
-  assert.equal(context.calls.arc, 220, 'every star is painted once, still');
-  assert.equal(sky.isAnimated(), false);
-  let done = 0;
-  assert.equal(sky.collapse({ onDone() { done += 1; } }), false);
-  assert.equal(done, 1, 'a still sky hands straight back to the plain dismissal');
-});
-
-test('a frame makes no Array.prototype.push calls and exactly three fill-style writes', (t) => {
-  const { sky, flush, context } = createSky(t);
-  sky.start();
-  flush();
-  sky.drawFrameForTest(800); // past the fade-in, so the wordmark is settled
+test('a frame makes no Array.prototype.push calls and exactly three star fill-style writes', () => {
+  const { sky, context } = createSky();
+  sky.drawFrame(800, 16);
   const originalPush = Array.prototype.push;
   let pushes = 0;
   Array.prototype.push = function countingPush(...items) { pushes += 1; return originalPush.apply(this, items); };
   const fillWritesBefore = context.calls.fillStyleWrites;
   try {
-    sky.drawFrameForTest(900);
+    sky.drawFrame(900, 16);
   } finally {
     Array.prototype.push = originalPush;
   }
@@ -249,40 +162,211 @@ test('a frame makes no Array.prototype.push calls and exactly three fill-style w
   assert.equal(context.calls.fillStyleWrites - fillWritesBefore, 3, 'one fillStyle per colour group');
 });
 
-test('measured (log only): one draw at 220 stars under the 2D stub (real-canvas number is an owner-run gate)', (t) => {
-  const { sky, flush } = createSky(t);
-  sky.start();
-  flush();
-  const samples = [];
-  for (let i = 0; i < 200; i += 1) {
-    const started = performance.now();
-    sky.drawFrameForTest(400 + i * 16);
-    samples.push(performance.now() - started);
-  }
-  samples.sort((a, b) => a - b);
-  const median = samples[Math.floor(samples.length / 2)];
-  // Logged for the test record only (spec budget 0.5 ms under the stub): a
-  // wall-clock assertion flakes on a loaded runner; the push/fill-style test above
-  // is the deterministic gate.
-  console.log(`startup starfield stub draw @220 stars: median ${median.toFixed(4)} ms, p95 ${samples[Math.floor(samples.length * 0.95)].toFixed(4)} ms`);
-  assert.ok(Number.isFinite(median));
+test('the flare is drawn on the canvas during a collapse and never while swirling', () => {
+  const { sky, context } = createSky();
+  sky.drawFrame(1200, 16);
+  assert.equal(context.calls.fillRect, 0, 'no flare while the sky turns');
+  sky.beginCollapse({ durationMs: 500, wordmark: WORDMARK_RECT }, 1200);
+  sky.advanceCollapse(200);
+  sky.drawFrame(1216, 0);
+  assert.equal(context.calls.fillRect, 1, 'the flare rises behind the name');
 });
 
-test('a requested collapse duration lands sooner than the default collapse', (t) => {
-  function framesToLand(durationMs) {
-    const { sky, flush, frames } = createSky(t);
-    sky.start();
-    flush();
-    let done = 0;
-    sky.collapse({ onDone() { done += 1; }, ...(durationMs ? { durationMs } : {}) });
-    let count = 0;
-    while (frames.size > 0 && count < 200) { flush(16); count += 1; }
-    assert.equal(done, 1);
-    return count;
+test('the worker loop runs until the collapse lands, then stops', () => {
+  const w = createWorkerScope();
+  w.init();
+  assert.equal(w.frames.size, 1, 'the sky turns from init');
+  w.flush();
+  assert.deepEqual(w.posted[0], { type: 'first-frame' });
+  assert.equal(w.posted.filter((message) => message.type === 'first-frame').length, 1);
+  w.flush();
+  w.send({ type: 'collapse', durationMs: 100, wordmark: WORDMARK_RECT });
+  for (let i = 0; i < 40 && w.frames.size > 0; i += 1) { w.flush(16); }
+  assert.equal(w.frames.size, 0, 'the loop stops when the stars land');
+  const framesDrawn = w.context.calls.clearRect;
+  w.flush(16);
+  assert.equal(w.context.calls.clearRect, framesDrawn);
+});
+
+test('a resize redraws in the same task so the cleared canvas never reaches the screen', () => {
+  const w = createWorkerScope();
+  w.init();
+  w.flush();
+  const before = w.context.calls.clearRect;
+  w.send({ type: 'resize', viewport: { width: 800, height: 480, dpr: 1, wordmark: WORDMARK_RECT } });
+  assert.equal(w.context.calls.clearRect, before + 1);
+  assert.deepEqual(w.context.calls.cleared, [0, 0, 800, 480]);
+  assert.equal(w.frames.size, 1, 'the swirl keeps its pending frame');
+});
+
+test('pause cancels the live frame and resume restarts it without a time jump', () => {
+  const w = createWorkerScope();
+  w.init();
+  w.flush();
+  w.send({ type: 'pause' });
+  assert.equal(w.frames.size, 0);
+  w.send({ type: 'resume' });
+  assert.equal(w.frames.size, 1);
+  w.flush(5000);
+  w.send({ type: 'report' });
+  const report = w.posted.find((message) => message.type === 'frames');
+  assert.equal(report.maxGapMs, 0, 'the paused stretch is not reported as a dropped frame');
+});
+
+test('the frame report records the worst gap and frames over budget', () => {
+  const w = createWorkerScope();
+  w.init();
+  w.flush(16);
+  w.flush(16);
+  w.flush(50);
+  w.send({ type: 'report' });
+  const report = w.posted.find((message) => message.type === 'frames');
+  assert.equal(report.maxGapMs, 50);
+  assert.equal(report.overBudget, 1);
+});
+
+test('a still sky paints once and never starts a loop', () => {
+  const w = createWorkerScope();
+  w.init({ still: true });
+  assert.equal(w.frames.size, 0);
+  assert.equal(w.context.calls.arc, 220, 'every star is painted once, still');
+  w.send({ type: 'collapse', durationMs: 100 });
+  assert.equal(w.frames.size, 0);
+});
+
+test('a launch that beat the stars dissolves quietly', () => {
+  const exit = starter.resolveStartupExit({ skyElapsedMs: starter.QUIET_SKY_MS - 1 });
+  assert.equal(exit.kind, 'quiet');
+  assert.equal(exit.durationMs, starter.QUIET_DISSOLVE_MS);
+  assert.equal(exit.curtainDelayMs, 0);
+  assert.equal(exit.curtainFadeMs, starter.QUIET_DISSOLVE_MS);
+});
+
+test('the collapse lasts as long as the sky has earned, within its range', () => {
+  const early = starter.resolveStartupExit({ skyElapsedMs: starter.QUIET_SKY_MS });
+  const later = starter.resolveStartupExit({ skyElapsedMs: 700 });
+  const settled = starter.resolveStartupExit({ skyElapsedMs: 5000 });
+  assert.equal(early.kind, 'earned');
+  assert.ok(early.durationMs > 300 && early.durationMs < later.durationMs, `${early.durationMs} < ${later.durationMs}`);
+  assert.equal(settled.durationMs, 720);
+  assert.equal(settled.curtainDelayMs + settled.curtainFadeMs, settled.durationMs);
+  assert.equal(settled.curtainDelayMs, Math.round(720 * 0.4));
+  assert.equal(settled.nameDelayMs, Math.round(720 * 0.72));
+});
+
+test('the first-ever launch keeps the full collapse whatever the elapsed time', () => {
+  const exit = starter.resolveStartupExit({ firstLaunch: true, skyElapsedMs: 0 });
+  assert.equal(exit.kind, 'full');
+  assert.equal(exit.durationMs, starter.COLLAPSE_MS);
+  assert.equal(exit.curtainDelayMs, Math.round(750 * 0.5));
+  assert.equal(exit.nameDelayMs, Math.round(750 * 0.8));
+});
+
+test('the handle hands the canvas to the worker with the curtain colours', (t) => {
+  const { worker, offscreen, handle } = createHandle(t);
+  const [init] = worker.ofType('init');
+  assert.equal(init.canvas, offscreen);
+  assert.deepEqual(worker.transfers[0], [offscreen]);
+  assert.deepEqual(init.colors, ['#111111', '#86c3e4', '#222222']);
+  assert.equal(init.flareRgb, '134, 195, 228');
+  assert.equal(init.still, false);
+  assert.equal(handle.startedAt, 1234);
+  assert.equal(handle.isAnimated(), true);
+});
+
+test('collapse measures the wordmark at the moment it is asked', (t) => {
+  const { worker, handle } = createHandle(t);
+  handle.collapse({ durationMs: 500 });
+  const [collapse] = worker.ofType('collapse');
+  assert.equal(collapse.durationMs, 500);
+  assert.deepEqual(collapse.wordmark, WORDMARK_RECT);
+});
+
+test('no transferable canvas or no worker leaves the curtain plain', (t) => {
+  assert.equal(createHandle(t, { transferable: false }).handle, null);
+  assert.equal(createHandle(t, { createWorker: () => null }).handle, null);
+  assert.equal(createHandle(t, { createWorker: () => { throw new Error('blocked'); } }).handle, null);
+});
+
+test('a worker failure hides the sky and falls back to the plain exit', (t) => {
+  const { worker, handle, canvas } = createHandle(t);
+  worker.onerror(new Error('load failed'));
+  assert.equal(handle.isAnimated(), false);
+  assert.equal(canvas.style.display, 'none');
+  assert.equal(worker.terminated, 1);
+});
+
+test('a hidden window pauses the sky and a visible one resumes it', (t) => {
+  const { worker, handle, setVisibility } = createHandle(t);
+  setVisibility('hidden');
+  assert.equal(handle.isPaused(), true);
+  assert.equal(worker.ofType('pause').length, 1);
+  setVisibility('visible');
+  assert.equal(handle.isPaused(), false);
+  assert.equal(worker.ofType('resume').length, 1);
+});
+
+// A-3: the fatal dialog holds the sky; a window coming back into view must not
+// restart it behind the dialog, and a hidden window stays paused on resume().
+test('a caller pause holds across visibility changes until the caller resumes', (t) => {
+  const { handle, worker, setVisibility } = createHandle(t);
+  handle.pause();
+  setVisibility('hidden');
+  setVisibility('visible');
+  assert.equal(handle.isPaused(), true, 'visibility does not lift a caller pause');
+  assert.equal(worker.ofType('resume').length, 0);
+  setVisibility('hidden');
+  handle.resume();
+  assert.equal(handle.isPaused(), true, 'a hidden window stays paused after the caller resumes');
+  setVisibility('visible');
+  assert.equal(handle.isPaused(), false);
+});
+
+test('dispose terminates the worker, hides the canvas and stops posting', (t) => {
+  const { worker, handle, canvas, win } = createHandle(t);
+  handle.dispose();
+  assert.equal(worker.terminated, 1);
+  assert.equal(canvas.style.display, 'none');
+  assert.equal(handle.isAnimated(), false);
+  const posts = worker.posts.length;
+  win.dispatchEvent(new win.Event('resize'));
+  handle.collapse({ durationMs: 100 });
+  assert.equal(worker.posts.length, posts, 'nothing is sent after disposal');
+  handle.dispose();
+  assert.equal(worker.terminated, 1, 'dispose is idempotent');
+});
+
+test('reduced motion asks for a still sky and reports not animated', (t) => {
+  const { worker, handle } = createHandle(t, { reducedMotion: true });
+  assert.equal(worker.ofType('init')[0].still, true);
+  assert.equal(handle.isAnimated(), false, 'the controller then uses its plain fade');
+});
+
+test('the early sky starts from its own tag, and not when the animation is off', (t) => {
+  const previous = { document: globalThis.document, Worker: globalThis.Worker };
+  t.after(() => {
+    globalThis.document = previous.document;
+    globalThis.Worker = previous.Worker;
+  });
+  function bootWith(setup) {
+    const dom = new JSDOM('<!doctype html><html><body><div id="startupOverlay"><canvas id="startupOverlaySky"></canvas></div></body></html>', { pretendToBeVisual: true });
+    t.after(() => dom.window.close());
+    const created = [];
+    dom.window.Worker = class extends FakeWorker { constructor(url) { super(url); created.push(this); } };
+    dom.window.document.getElementById('startupOverlaySky').transferControlToOffscreen = () => ({});
+    setup(dom.window.document.documentElement);
+    globalThis.document = dom.window.document;
+    const sky = starter.startEarlySky();
+    t.after(() => sky && sky.dispose());
+    return { sky, created };
   }
-  const quick = framesToLand(starfieldUtils.QUICK_COLLAPSE_MS);
-  const full = framesToLand(0);
-  assert.equal(starfieldUtils.QUICK_COLLAPSE_MS, 250);
-  assert.ok(quick <= Math.ceil(250 / 16) + 1, `quick collapse lands in ~250 ms (${quick} frames)`);
-  assert.ok(full >= Math.floor(750 / 16), `default collapse keeps ~750 ms (${full} frames)`);
+  const on = bootWith(() => {});
+  assert.equal(on.created.length, 1);
+  assert.match(on.created[0].url, /renderer-startup-starfield-worker\.js$/);
+  assert.equal(starter.getEarlySky(), on.sky);
+  const off = bootWith((root) => { root.dataset.startupAnimation = 'off'; });
+  assert.equal(off.sky, null);
+  assert.equal(off.created.length, 0);
+  const flagged = bootWith((root) => { root.dataset.startupAnimationFlag = 'off'; });
+  assert.equal(flagged.created.length, 0);
 });

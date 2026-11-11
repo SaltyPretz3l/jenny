@@ -68,6 +68,39 @@ function sessionMessageApprovalFields(params) {
   } };
 }
 
+const BROWSER_APPROVAL_KINDS = new Set(['navigate', 'click', 'submit']);
+const BROWSER_APPROVAL_REASONS = new Set(['new_site', 'risky_words', 'form_post']);
+const BROWSER_APPROVAL_HOST_CHARS = 300;
+const BROWSER_APPROVAL_LABEL_CHARS = 200;
+const BROWSER_APPROVAL_URL_CHARS = 512;
+
+// Row 114: what the browser tool asks about, validated before it reaches a card. `{}` for any other tool
+// or any malformed ask, which the approval path then refuses.
+function browserApprovalFields(params) {
+  if (params?.tool_name !== 'browser') return {};
+  const value = params.messageFields?.browser_approval;
+  const boundedText = (text, max) => typeof text === 'string' && text.length <= max;
+  if (value?.schema_version !== 1 || !BROWSER_APPROVAL_KINDS.has(value.kind) || !BROWSER_APPROVAL_REASONS.has(value.reason)
+    || !boundedText(value.host, BROWSER_APPROVAL_HOST_CHARS) || !boundedText(value.label, BROWSER_APPROVAL_LABEL_CHARS)
+    || !boundedText(value.url, BROWSER_APPROVAL_URL_CHARS)) return {};
+  return { browser_approval: {
+    schema_version: 1, kind: value.kind, reason: value.reason, host: value.host, label: value.label, url: value.url,
+  } };
+}
+
+// What a finished tool call stores and emits as its output. The browser's page text reaches the model
+// during the turn only; history, exports and memory search keep the one-line step summary.
+const BROWSER_STEP_FALLBACK = 'Browser step finished.';
+const BROWSER_STEP_FAILED = 'Browser step failed.';
+function savedToolOutput(toolName, output, metadata) {
+  if (toolName !== 'browser') return String(output || '');
+  const summary = metadata && typeof metadata === 'object' ? metadata.step_summary : '';
+  if (typeof summary === 'string' && summary.trim()) return summary;
+  // A failed call carries its failure class; "finished" misreported it (row 129, B12).
+  const failed = Boolean(metadata && typeof metadata === 'object' && metadata.failure_class);
+  return failed ? BROWSER_STEP_FAILED : BROWSER_STEP_FALLBACK;
+}
+
 function buildScopedApprovalId({ sessionId, streamId, callId } = {}) {
   return [
     'approval',
@@ -501,6 +534,8 @@ function opensNewToolRow(event, startedCallIds, seenToolCalls) {
 module.exports = {
   opensNewToolRow,
   sessionMessageApprovalFields,
+  browserApprovalFields,
+  savedToolOutput,
   containsTraversal,
   normalizeDurationMs,
   toolResultExitCode,

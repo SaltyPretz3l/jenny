@@ -84,7 +84,7 @@
     function recordFor(sessionId, turn) {
       const key = keyFor(sessionId, turn.turnId);
       if (!records.has(key)) {
-        records.set(key, { status: 'applied', at: 0, files: {}, swap: null, busy: false, timeMs: turn.timeMs ?? null });
+        records.set(key, { status: 'applied', at: 0, files: {}, swap: null, busy: false, timeMs: turn.timeMs ?? null, sessionId });
       }
       return records.get(key);
     }
@@ -95,8 +95,9 @@
       requestRender();
     }
 
-    // One recovery request at a time; a missing API or a throw is a failure.
-    function call(method, payload) {
+    // One recovery request at a time; a missing API or a throw is a failure. A sandbox restore point names its chat (row 106).
+    function call(method, payload, sessionId) {
+      if (sessionId !== undefined && payload && String(payload.ref || '').startsWith('refs/jenny/sandbox/')) payload = { ...payload, sessionId };
       const run = chain.then(async () => {
         const api = getApi();
         if (disposed || !api || typeof api[method] !== 'function') return { ok: false, reason: 'recovery_unavailable' };
@@ -185,7 +186,7 @@
     /* ── Undo ── */
 
     // Finished sets and files of a stopped Undo are not offered again.
-    async function prepareUndo(turn, history, partial) {
+    async function prepareUndo(turn, history, partial, sessionId) {
       ensureJournalListing();
       if (listing) await listing;
       const journal = [];
@@ -198,7 +199,7 @@
       if (partial) turn = { ...turn, files: list(turn.files).filter((item) => partial.files[item.path] !== 'undone') };
       const checkpoints = {};
       for (const request of undoPlan.checkpointPreflights(turn)) {
-        const result = await call('preflightCheckpointFiles', request);
+        const result = await call('preflightCheckpointFiles', request, sessionId);
         if (!result.ok && result.reason !== 'checkpoint_not_found') return { ok: false, reason: result.reason };
         checkpoints[request.ref] = result;
       }
@@ -218,7 +219,7 @@
       setBusy(record, 'checking');
       let prepared;
       try {
-        prepared = await prepareUndo(turn, options.history, record.partial);
+        prepared = await prepareUndo(turn, options.history, record.partial, record.sessionId);
       } finally {
         setBusy(record, false);
       }
@@ -273,13 +274,13 @@
         }
         // Checkpoints wait for a stopped journal undo.
         for (const planned of stopped ? [] : undoPlan.checkpointRestores(plan, choices)) {
-          const fresh = await call('preflightCheckpointFiles', { ref: planned.ref, files: [...planned.paths, ...planned.removePaths].map((path) => ({ path })) });
+          const fresh = await call('preflightCheckpointFiles', { ref: planned.ref, files: [...planned.paths, ...planned.removePaths].map((path) => ({ path })) }, record.sessionId);
           const request = undoPlan.recheckRestore(plan, planned, fresh);
           if (request.paths.length + request.removePaths.length < planned.paths.length + planned.removePaths.length) failed = true;
           if (!request.paths.length && !request.removePaths.length) continue;
           const payload = { ref: request.ref, paths: request.paths };
           if (request.removePaths.length) payload.removePaths = request.removePaths;
-          const result = await call('restoreCheckpointFiles', payload);
+          const result = await call('restoreCheckpointFiles', payload, record.sessionId);
           if (!result.ok) failed = true;
           outcome.checkpoint.push({ request, result });
         }
@@ -328,11 +329,11 @@
 
     /* ── Redo, and Undo again after a Redo ── */
 
-    async function verifySwapNow(swap) {
+    async function verifySwapNow(swap, sessionId) {
       const journalChecks = [];
       for (const entry of list(swap.journal)) journalChecks.push(await call('preflightSafetyCopy', { token: entry.token }));
       const checkpointChecks = [];
-      for (const request of undoPlan.swapCheckpointPreflights(swap)) checkpointChecks.push(await call('preflightCheckpointFiles', request));
+      for (const request of undoPlan.swapCheckpointPreflights(swap)) checkpointChecks.push(await call('preflightCheckpointFiles', request, sessionId));
       return {
         rows: undoPlan.verifySwap(swap, journalChecks, checkpointChecks),
         complete: [...journalChecks, ...checkpointChecks].every((check) => check && check.ok === true),
@@ -351,7 +352,7 @@
       setBusy(record, 'checking');
       let checked;
       try {
-        checked = await verifySwapNow(record.swap);
+        checked = await verifySwapNow(record.swap, record.sessionId);
       } finally {
         setBusy(record, false);
       }
@@ -392,7 +393,7 @@
       let requests;
       try {
         if (options.recheck) {
-          const fresh = await verifySwapNow(record.swap);
+          const fresh = await verifySwapNow(record.swap, record.sessionId);
           if (!fresh.complete) {
             toastCheckFailed();
             return;
@@ -416,7 +417,7 @@
           for (const request of requests.checkpoint) {
             const payload = { ref: request.ref, paths: request.paths };
             if (request.removePaths.length) payload.removePaths = request.removePaths;
-            outcome.checkpoint.push(await call('restoreCheckpointFiles', payload));
+            outcome.checkpoint.push(await call('restoreCheckpointFiles', payload, record.sessionId));
           }
         };
         if (requests.checkpointFirst) {

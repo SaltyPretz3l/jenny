@@ -23,7 +23,8 @@ FILE_LIMIT = 64 * 1024 * 1024
 FD_LIMIT = 256
 DEFAULT_UID = 10001
 DEFAULT_GID = 10001
-JOB_ARG_COUNT = 6
+JOB_ARG_COUNT = 7
+MODES = ("copy", "synced")
 DRAIN_SECONDS = 0.1
 READY_MARKER_LIMIT = 16
 
@@ -123,10 +124,12 @@ def _verify_job_identity(uid: int, gid: int) -> bool:
 
 
 def job_entry() -> None:
-    """Run as the fixed job UID, snapshot inputs, then exec the shell."""
+    """Run as the fixed job UID, snapshot inputs (copy mode), then exec the shell."""
     if len(os.sys.argv) != JOB_ARG_COUNT:
         os._exit(126)
-    command, cwd, input_root, workspace, ready_fd_text = os.sys.argv[1:]
+    command, cwd, input_root, workspace, ready_fd_text, mode = os.sys.argv[1:]
+    if mode not in MODES:
+        os._exit(126)
     try:
         ready_fd = int(ready_fd_text)
     except ValueError:
@@ -140,7 +143,9 @@ def job_entry() -> None:
             raise OSError
         resource.setrlimit(resource.RLIMIT_FSIZE, (FILE_LIMIT, FILE_LIMIT))
         resource.setrlimit(resource.RLIMIT_NOFILE, (FD_LIMIT, FD_LIMIT))
-        snapshot_inputs("/inputs", workspace, subpath=input_root)
+        # A synced workspace was populated by the mirror pre-step and persists across runs.
+        if mode == "copy":
+            snapshot_inputs("/inputs", workspace, subpath=input_root)
         base = os.path.abspath(workspace)
         requested = os.path.abspath(os.path.join(base, cwd))
         if os.path.commonpath((base, requested)) != base:
@@ -171,10 +176,13 @@ def run_command(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded selector sta
     gid: int = DEFAULT_GID,
     output_limit: int = OUTPUT_LIMIT,
     popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+    mode: str = "copy",
 ) -> JobResult:
     """Capture one foreground command; PID1 exit owns all descendant cleanup."""
     if os.name != "posix":
         return JobResult("failed", None, "", "", False, "linux_required")
+    if mode not in MODES:
+        return JobResult("failed", None, "", "", False, "start_failed")
     ready_r, ready_w = os.pipe()
     started = time.monotonic()
     try:
@@ -189,6 +197,7 @@ def run_command(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded selector sta
                 input_root,
                 workspace_root,
                 str(ready_w),
+                mode,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

@@ -20,6 +20,7 @@
 :root {
   /* --- Type scale: aliases of the role tokens in foundation.css --- */
   --tl-font-prose: var(--font-size-prose);
+  --tl-font-body: var(--font-size-body); /* plan and approval body copy */
   --tl-font-detail: var(--font-size-footnote); /* expanded machinery panels */
   --tl-font-ui: var(--font-size-footnote);
   --tl-font-meta: var(--font-size-caption);

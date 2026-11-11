@@ -28,6 +28,7 @@ const { createRestoreOps } = require('./chat-messaging-restore');
 const { createReportOps } = require('./chat-messaging-reports');
 const { createProjector, sortedInbox, sortedOutbox } = require('./chat-messaging-projection');
 const { listRecipients } = require('./chat-messaging-recipients');
+const { createMailTurns } = require('./chat-messaging-mail-turns');
 
 const { fail, succeed } = contract;
 const MAX_TRACKED_OPERATIONS = 2048;
@@ -63,6 +64,7 @@ class ChatMessagingService {
     clearTimer = (handle) => clearTimeout(handle),
     notifierOptions = {}, wake = null, // row 70: the wake ops (./chat-messaging-wake), composed by the wiring
     isRuleLive = () => false, // row 87: a Jenny-chat allow rule is still live (accept and delivery re-checks)
+    getPrimarySessionId = () => null, // the Jenny chat, listed as a target for every other chat
   } = {}) {
     if (!mailStore || typeof mailStore.read !== 'function' || typeof mailStore.mutate !== 'function') {
       throw new TypeError('ChatMessagingService requires a session mail store.');
@@ -117,7 +119,7 @@ class ChatMessagingService {
     };
     this._grants = createGrantOps({ ...shared, settlePending: (sourceId, operationId) => this._delivery.deliver(sourceId, operationId) });
     this._agent = createAgentOps({
-      ...shared, isRuleLive,
+      ...shared, isRuleLive, getPrimarySessionId,
       getProjectName,
       runDelivery: (sourceId, operationId, created) => this._runDelivery(sourceId, operationId, created, created),
       projectOperation: (op) => this._project.projectOperation(op),
@@ -430,9 +432,9 @@ class ChatMessagingService {
   onTurnSettled(sessionId) { return this._wake?.onTurnSettled(sessionId); } // row 70: that chat's turn ended
   resumeWake(sessionId) { return this._wake?.resumeDestination?.(sessionId) ?? null; } // row 76: the person's Resume
   wakeDepth(turnId) { return this._wake?.depthForTurn?.(turnId) ?? 0; } noteWakeTurn(turnId, depth) { this._wake?.noteWakeTurn?.(turnId, depth); } // row 76: a wake turn mints no standing grant; row 85: a fired check is one
-  // Row 87: a turn that admitted queued mail from another chat (bounded, newest 256); its allow rules stay unspent.
-  noteMailTurn(turnId) { if (typeof turnId !== 'string' || !turnId) return; const set = (this._mailTurns ||= new Set()); set.delete(turnId); set.add(turnId); if (set.size > 256) set.delete(set.values().next().value); }
-  mailTurn(turnId) { return typeof turnId === 'string' && Boolean(this._mailTurns?.has(turnId)); }
+  noteMailTurn(turnId, rows) { (this._mailTurns ||= createMailTurns({ getSessionSummary: (id) => this._getSessionSummary?.(id) })).note(turnId, rows); } // row 87 / row 76
+  mailTurn(turnId) { return Boolean(this._mailTurns?.has(turnId)); }
+  ownChildReportTurn(turnId) { return this._mailTurns?.ownChildReports(turnId) === true; }
   // Settles a turn's report reservation into one pending outbox report and delivers it.
   convertReport(raw) { return this._reports.convertReport(raw); }
 

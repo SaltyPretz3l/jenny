@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import grep_search as grep_module
+from sidecar.ai.tools.builtins.grep_search_worker import ScanOutcome
 from sidecar.ai.tools.builtins.regex_safety import MAX_PATTERN_CHARS, compile_safe_pattern
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -53,24 +54,39 @@ def test_grep_and_glob_share_one_matcher() -> None:
     assert grep_module.matches_relative_glob is grep_search_file.matches_relative_glob
 
 
+def _override_outcomes(
+    monkeypatch: pytest.MonkeyPatch, override: Callable[[Path], ScanOutcome | None]
+) -> None:
+    """Replace chosen files' worker answers; every other file is really scanned."""
+    original = grep_module._scan_text_batches
+
+    def scan(worker: object, paths: list[Path], compiled: object, **kwargs: object):
+        outcomes = original(worker, paths, compiled, **kwargs)  # type: ignore[arg-type]
+        for path, outcome in zip(paths, outcomes, strict=True):
+            yield override(path) or outcome
+
+    monkeypatch.setattr(grep_module, "_scan_text_batches", scan)
+
+
+def _read_failure(message: str) -> ScanOutcome:
+    return ScanOutcome(
+        "error",
+        error=ToolExecutionFailure(code=CMP_TOOL_IO_FAILED, message=message, retryable=True),
+    )
+
+
 def test_unreadable_file_is_skipped_without_echoing_its_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write(tmp_path / "a.txt")
     _write(tmp_path / "b.txt")
     denied = tmp_path / "b.txt"
-    original = grep_module.is_binary_file
-
-    def inspect(path: Path) -> bool:
-        if path.name == "b.txt":
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_IO_FAILED,
-                message=f"failed to inspect file: [Errno 13] Permission denied: '{denied}'",
-                retryable=True,
-            )
-        return original(path)
-
-    monkeypatch.setattr(grep_module, "is_binary_file", inspect)
+    _override_outcomes(
+        monkeypatch,
+        lambda path: _read_failure(
+            f"grep worker failed: [Errno 13] Permission denied: '{denied}'"
+        ) if path.name == "b.txt" else None,
+    )
 
     result = grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))
 
@@ -88,18 +104,12 @@ def test_worker_side_read_failure_is_skipped_per_file(
 ) -> None:
     _write(tmp_path / "a.txt")
     _write(tmp_path / "b.txt")
-    original = grep_module._search_file_with_timeout
-
-    def search(path: Path, *args: object, **kwargs: object) -> object:
-        if path.name == "a.txt":
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_IO_FAILED,
-                message=f"grep worker failed: [Errno 13] Permission denied: '{path}'",
-                retryable=True,
-            )
-        return original(path, *args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(grep_module, "_search_file_with_timeout", search)
+    _override_outcomes(
+        monkeypatch,
+        lambda path: _read_failure(
+            f"grep worker failed: [Errno 13] Permission denied: '{path}'"
+        ) if path.name == "a.txt" else None,
+    )
 
     result = grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))
 
@@ -115,13 +125,7 @@ def test_a_run_of_unreadable_files_aborts_as_systemic(
 ) -> None:
     for index in range(grep_module.MAX_CONSECUTIVE_UNREADABLE_FILES + 5):
         _write(tmp_path / f"f{index:02d}.txt")
-
-    def inspect(path: Path) -> bool:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED, message=f"failed to inspect file: {path}", retryable=True
-        )
-
-    monkeypatch.setattr(grep_module, "is_binary_file", inspect)
+    _override_outcomes(monkeypatch, lambda path: _read_failure(f"failed to inspect file: {path}"))
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
         grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))
@@ -138,12 +142,13 @@ def test_a_worker_failure_still_aborts_the_search(
 ) -> None:
     _write(tmp_path / "a.txt")
 
-    def search(*_args: object, **_kwargs: object) -> object:
+    def scan(*_args: object, **_kwargs: object) -> Iterator[ScanOutcome]:
         raise grep_module._WorkerUnavailable(
             code=CMP_TOOL_IO_FAILED, message="grep worker failed to start", retryable=True
         )
+        yield ScanOutcome("binary")  # pragma: no cover - makes this a generator
 
-    monkeypatch.setattr(grep_module, "_search_file_with_timeout", search)
+    monkeypatch.setattr(grep_module, "_scan_text_batches", scan)
 
     with pytest.raises(ToolExecutionFailure, match="failed to start"):
         grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))

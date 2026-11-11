@@ -65,40 +65,27 @@ function useCapturedTimers(t) {
   };
 }
 
-/* A jsdom curtain whose sky canvas has a stub 2D context and manual frames. */
+/* A jsdom curtain whose sky worker is a recording stub. */
 function createSkyCurtain(t, options = {}) {
   const dom = createCurtainDom(options.extraBody || '', { sky: true, url: options.url, runScripts: options.runScripts });
   t.after(() => dom.window.close());
   const win = dom.window;
   Object.defineProperty(win, 'innerWidth', { configurable: true, value: 1280 });
   Object.defineProperty(win, 'innerHeight', { configurable: true, value: 720 });
-  const frames = new Map();
-  let nextFrame = 1;
-  win.requestAnimationFrame = (callback) => { const id = nextFrame++; frames.set(id, callback); return id; };
-  win.cancelAnimationFrame = (id) => { frames.delete(id); };
-  const contextCalls = { getContext: 0, arc: 0 };
-  win.HTMLCanvasElement.prototype.getContext = function getContext() {
-    contextCalls.getContext += 1;
-    return {
-      setTransform() {}, clearRect() {}, beginPath() {}, fill() {},
-      arc() { contextCalls.arc += 1; },
-      fillStyle: '', globalAlpha: 1,
-    };
+  win.HTMLCanvasElement.prototype.transferControlToOffscreen = () => ({});
+  const workers = [];
+  win.Worker = class FakeWorker {
+    constructor() { this.posts = []; this.terminated = 0; workers.push(this); }
+    postMessage(message) { this.posts.push(message); }
+    terminate() { this.terminated += 1; }
   };
   const previousStarfield = global.rendererStartupStarfield;
   global.rendererStartupStarfield = require('../renderer/shell/renderer-startup-starfield.js');
   t.after(() => { global.rendererStartupStarfield = previousStarfield; });
-  let clock = 0;
   return {
     dom,
-    frames,
-    contextCalls,
-    flush(stepMs = 16) {
-      clock += stepMs;
-      const pending = Array.from(frames.values());
-      frames.clear();
-      pending.forEach((callback) => callback(clock));
-    },
+    workers,
+    posted(type) { return workers.flatMap((worker) => worker.posts).filter((message) => message.type === type); },
   };
 }
 
@@ -141,7 +128,7 @@ test('with the animation on, dismissal waits for 900 ms after mount, then the st
   }, { now: () => now });
   t.after(() => controller.dispose());
   const overlay = sky.dom.window.document.getElementById('startupOverlay');
-  assert.equal(sky.frames.size, 1, 'the sky starts turning at mount');
+  assert.equal(sky.posted('init').length, 1, 'the sky starts turning at mount');
 
   now = 100;
   controller.notifyBootViewReady('chat');
@@ -152,11 +139,13 @@ test('with the animation on, dismissal waits for 900 ms after mount, then the st
   now = 900;
   hold[0].callback();
   assert.equal(overlay.classList.contains('hidden'), true);
-  assert.equal(overlay.style.opacity, '1', 'the stars drive the fade, not the class');
-  for (let i = 0; i < 80 && sky.frames.size > 0; i += 1) { sky.flush(16); }
-  assert.equal(overlay.style.opacity, '0');
-  assert.equal(overlay.parentNode, null, 'the curtain leaves the DOM when the stars land');
+  assert.equal(overlay.style.opacity, '', 'the fade is CSS, never written frame by frame');
+  assert.equal(sky.posted('collapse')[0].durationMs, 750);
+  assert.equal(overlay.getAttribute('data-exit'), 'collapse');
+  overlay.dispatchEvent(new sky.dom.window.Event('transitionend'));
+  assert.equal(overlay.parentNode, null, 'the curtain leaves the DOM when its fade ends');
   assert.equal(removed.length, 1);
+  assert.equal(sky.workers[0].terminated, 1, 'the worker goes with it');
 });
 
 test('with the animation off, the curtain paints no stars and dismisses at once', (t) => {
@@ -165,7 +154,7 @@ test('with the animation off, the curtain paints no stars and dismisses at once'
   sky.dom.window.document.documentElement.dataset.startupAnimation = 'off';
   const controller = createController(sky.dom.window.document, {}, { now: () => 100 });
   t.after(() => controller.dispose());
-  assert.equal(sky.contextCalls.getContext, 0, 'off paints no stars at all');
+  assert.equal(sky.workers.length, 0, 'off starts no sky at all');
   controller.notifyBootViewReady('chat');
   controller.notifyShellHydrated();
   assert.equal(sky.dom.window.document.getElementById('startupOverlay').classList.contains('hidden'), true);
@@ -181,7 +170,7 @@ test('the startup_animation kill switch stamped before first paint mounts no sky
   win.eval(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'theme-bootstrap.js'), 'utf8'));
   const controller = createController(win.document, {}, { now: () => 100 });
   t.after(() => controller.dispose());
-  assert.equal(sky.contextCalls.getContext, 0, 'the kill switch paints no stars at all');
+  assert.equal(sky.workers.length, 0, 'the kill switch starts no sky at all');
   controller.notifyBootViewReady('chat');
   controller.notifyShellHydrated();
   assert.equal(win.document.getElementById('startupOverlay').classList.contains('hidden'), true);
@@ -193,10 +182,10 @@ test('a startup_animation:false flag landing after mount retires the swirl', (t)
   const state = lifecycleState();
   const controller = createController(sky.dom.window.document, {}, { now: () => 100, state });
   t.after(() => controller.dispose());
-  assert.equal(sky.frames.size, 1, 'flags are not known at mount: the sky turns');
+  assert.equal(sky.workers.length, 1, 'flags are not known at mount: the sky turns');
   state.features = { featureFlags: { startup_animation: false } };
   timers.live(250).forEach((entry) => entry.callback());
-  assert.equal(sky.frames.size, 0, 'the next line tick stops the swirl');
+  assert.equal(sky.workers[0].terminated, 1, 'the next line tick stops the swirl');
   controller.notifyBootViewReady('chat');
   controller.notifyShellHydrated();
   assert.equal(sky.dom.window.document.getElementById('startupOverlay').classList.contains('hidden'), true, 'no hold once the sky is gone');
@@ -208,13 +197,11 @@ test('the fatal dialog pauses the sky and recovery resumes it', (t) => {
   const sky = createSkyCurtain(t);
   const controller = createController(sky.dom.window.document, {}, { now: () => 100 });
   t.after(() => controller.dispose());
-  assert.equal(sky.frames.size, 1);
+  assert.equal(sky.posted('pause').length, 0);
   controller.handleBackendStatus({ phase: 'failed', detail: 'CMP-SIDECAR-0007 spawn failed' });
-  assert.equal(sky.frames.size, 0, 'no frame behind the dialog');
-  sky.flush(16);
-  assert.equal(sky.frames.size, 0);
+  assert.equal(sky.posted('pause').length, 1, 'no frame behind the dialog');
   controller.handleBackendStatus({ phase: 'sidecar_spawned' });
-  assert.equal(sky.frames.size, 1, 'the sky turns again once the engine recovers');
+  assert.equal(sky.posted('resume').length, 1, 'the sky turns again once the engine recovers');
 });
 
 test('reduced motion paints the stars once, still, and dismisses at once', (t) => {
@@ -225,8 +212,7 @@ test('reduced motion paints the stars once, still, and dismisses at once', (t) =
   const sky = createSkyCurtain(t);
   const controller = createController(sky.dom.window.document, {}, { now: () => 100 });
   t.after(() => controller.dispose());
-  assert.ok(sky.contextCalls.arc > 0, 'stars are painted');
-  assert.equal(sky.frames.size, 0, 'no animation loop under reduced motion');
+  assert.equal(sky.posted('init')[0].still, true, 'stars are painted once, still');
   controller.notifyBootViewReady('chat');
   controller.notifyShellHydrated();
   assert.equal(sky.dom.window.document.getElementById('startupOverlay').classList.contains('hidden'), true);

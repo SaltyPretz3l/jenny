@@ -246,7 +246,7 @@ test('a tool row help line is the base help plus the add-on and runtime notes th
 test('Tools rows show the copy their descriptors hold; a tool the renderer does not know shows the manifest copy', () => {
   // Fresh modules under a translator that numbers every tool string it hands out, so a
   // second copy of the same catalog string would read differently from the descriptor's.
-  const paths = ['../renderer/shell/renderer-settings-field-descriptors.js', '../renderer/shell/renderer-settings-field-copy.js', '../renderer/shell/renderer-settings-support.js'].map((p) => require.resolve(p));
+  const paths = ['../renderer/shell/renderer-settings-field-descriptors.js', '../renderer/shell/renderer-settings-field-copy.js', '../renderer/shell/renderer-settings-tool-config.js', '../renderer/shell/renderer-settings-support.js'].map((p) => require.resolve(p));
   const cached = paths.map((p) => require.cache[p]);
   const saved = globalThis.jennyI18n;
   let calls = 0;
@@ -259,7 +259,7 @@ test('Tools rows show the copy their descriptors hold; a tool the renderer does 
     globalThis.jennyI18n = saved;
     paths.forEach((p, i) => { if (cached[i]) require.cache[p] = cached[i]; else delete require.cache[p]; });
   }
-  const [descriptors, , support] = fresh;
+  const [descriptors, , , support] = fresh;
   const markup = support.buildToolConfigFieldListMarkup({ fields: support.DEFAULT_TOOL_CONFIG_FIELDS.concat([{ key: 'futureTool', label: 'Future tool', helpText: 'From the manifest.' }]), toggleSwitch });
   const doc = new JSDOM(markup).window.document;
   for (const field of support.DEFAULT_TOOL_CONFIG_FIELDS) {

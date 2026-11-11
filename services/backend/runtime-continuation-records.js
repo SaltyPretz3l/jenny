@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 const { isDeepStrictEqual, TextDecoder } = require('node:util');
 const { isContinuationEvent, isContinuationTextProjection } = require('../session-runtime/continuation-events');
 const { normalizeDecision, normalizeMutationRef } = require('../session-runtime/continuation-contracts');
-const { contextForBody, decisionProjection, validateDecisionMaterial, validateNoPendingBatchEffects } = require('./runtime-continuation-effects');
+const { approvedPendingDecision, contextForBody, decisionProjection, validateDecisionMaterial, validateNoPendingBatchEffects } = require('./runtime-continuation-effects');
 const { normalizeCompactionSnapshot } = require('./session-compaction-snapshot');
 
 const RUNTIME_CONTINUATION_SCHEMA_VERSION = 1;
@@ -294,7 +294,7 @@ function validateCanonicalSelection(session, body, checkpointId,
   { allowUnselectedForeignEvents = false } = {}) {
   validateHistorySelection(session, body.history_selector);
   validateNoPendingBatchEffects(session, body);
-  const decisionContext = { ...contextForBody(body), events: session.turn_events || [] };
+  const decisionContext = { ...contextForBody(body, session.turn_events || []), events: session.turn_events || [] };
   const lineage = selectorLineage(session, body, checkpointId);
   const inheritedMessages = new Set(lineage.earlier
     .flatMap(entry => entry.body.message_selector.ordered_message_ids));
@@ -486,7 +486,7 @@ function prepareRuntimeContinuation({ session, epochs, proposal, work, now = () 
     && messageBelongsToStream(message, selectionBody)
   )).sort((a, b) => Number(a.event_seq) - Number(b.event_seq));
   const decision = proposal.decision ? normalizeDecision(proposal.decision) : null;
-  const decisionContext = { decision, sessionId: session.id, turnId: work.turn_id, streamId: attempt.stream_id, pendingCalls: calls, events: session.turn_events || [] };
+  const decisionContext = { decision: decision || approvedPendingDecision({ events: session.turn_events, pendingCalls: calls, streamId: attempt.stream_id }), sessionId: session.id, turnId: work.turn_id, streamId: attempt.stream_id, pendingCalls: calls, events: session.turn_events || [] };
   const attemptEvents = (session.turn_events || []).filter(event => (
     event?.turn_id === work.turn_id && (isContinuationEvent(event)
       || decisionProjection(event, decisionContext) || inheritedEventIds.has(event.event_id))

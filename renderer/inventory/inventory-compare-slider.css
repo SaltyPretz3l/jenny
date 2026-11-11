@@ -1,0 +1,112 @@
+/* renderer/inventory/inventory-compare-slider.css
+   Before/after compare slider. The After picture is clipped from the handle to
+   the far edge: --pos 100% shows only Before, --pos 0% shows only After.
+   --pos is measured from the inline start, so the picture mirrors under RTL. */
+
+.inv-compare {
+  min-width: 0;
+}
+
+.inv-compare-stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+
+/* An inline aspect-ratio on the stage (set from the picture size) wins over this. */
+.inv-compare[data-vp="phone"] .inv-compare-stage {
+  aspect-ratio: 390 / 844;
+  max-inline-size: 230px;
+  margin-inline: auto;
+}
+
+.inv-compare-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  pointer-events: none;
+}
+
+.inv-compare-img--after {
+  clip-path: inset(0 0 0 var(--pos));
+}
+
+.inv-compare:dir(rtl) .inv-compare-img--after {
+  clip-path: inset(0 var(--pos) 0 0);
+}
+
+/* A light line with a surface-coloured halo reads on both light and dark pictures. */
+.inv-compare-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--pos);
+  width: 2px;
+  margin-inline-start: -1px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--bg-surface);
+  outline: 0;
+}
+
+.inv-compare-grip {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  width: 24px;
+  height: 24px;
+  margin-block-start: -12px;
+  margin-inline-start: -12px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 22px;
+  text-align: center;
+}
+
+.inv-compare-handle:focus-visible .inv-compare-grip {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.inv-compare-caps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-block-start: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.inv-compare-grow {
+  flex: 1 1 auto;
+}
+
+.inv-compare-snap {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.inv-compare-snap[aria-pressed="true"] {
+  color: var(--text-primary);
+}
+
+.inv-compare-snap:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}

@@ -18,7 +18,7 @@ function fail(reason) { throw Object.assign(new Error(reason), { code: RUNTIME_E
 // its actor: only the paired worker's post-cleanup reply can reach settlePause.
 function createManagedContinuationBoundary({ context, checkpointStore, conversationStore,
   getCurrentWork, assertCurrent, assertSettlementCurrent = assertCurrent, assertProtocol,
-  gateway, collector, historySelector, traceId = null, signal = null, dependencyRuntime = null, onPublicationFailure = null } = {}) {
+  gateway, collector, historySelector, traceId = null, signal = null, dependencyRuntime = null, onPublicationFailure = null, approvedCallGrants = null } = {}) {
   const captured = normalizeContinuationContext(context);
   const sessionId = collector?.sessionId;
   if (typeof checkpointStore?.validate !== 'function' || typeof gateway?.snapshot !== 'function'
@@ -76,6 +76,10 @@ function createManagedContinuationBoundary({ context, checkpointStore, conversat
         ? [{ type: 'dependency', work_id: params.frozen_input.visible_tool_arguments.child_work_id }]
         : ['pause_probe', 'decision_checkpoint'].includes(params.phase) ? null
         : gateway.tools?.getWaitResources?.(result.operation_id) || null;
+      if (params.phase === 'resource_checkpoint') approvedCallGrants?.park({
+        streamId: captured.source_attempt.stream_id, call: params.tool_calls[0],
+        visibleInput: params.frozen_input.visible_tool_arguments,
+        effectiveArgsSha256: params.frozen_input.effective_args_fingerprint, checkpointId: published.checkpoint_id });
     }
     return result;
   }

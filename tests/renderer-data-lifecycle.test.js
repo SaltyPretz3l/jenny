@@ -65,7 +65,7 @@ test('Settings archive and restore surfaces expose privacy and workspace choices
   assert.match(renderer, /delete context\.element\.dataset\.workspaceReviewId/);
   assert.match(renderer, /function isCurrentModal/);
   assert.match(renderer, /finally \{/);
-  assert.match(renderer, /beforeunload/);
+  assert.match(renderer, /pagehide/);
   assert.doesNotMatch(renderer, /\u00c2\u00b7/);
   assert.match(renderer, /if \(!modal && candidate/);
 });

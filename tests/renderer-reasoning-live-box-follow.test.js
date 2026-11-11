@@ -149,6 +149,26 @@ test('live box: the chase steps by the damped alpha and settles within 1 px', (t
   assert.equal(body.scrollTop, 1250);
 });
 
+test('live box: the chase speed is continuous across the 96 px lag threshold', (t) => {
+  const stepFor = (lag) => {
+    const h = withCleanup(t, setup());
+    const [body] = h.bodies;
+    h.follow.sync(h.timeline);
+    h.runFrames();
+    const before = body.scrollTop;
+    h.stubs[0].scrollHeight = 1000 + lag;
+    h.follow.sync(h.timeline);
+    h.flushFrame(10000);
+    return body.scrollTop - before;
+  };
+  // A hard switch stepped 4.8 px at 96 and 13.5 px at 101: a lurch-then-stall.
+  const below = stepFor(96);
+  const above = stepFor(101);
+  assert.ok(Math.abs(above - below) < 1.5, `step jumped from ${below} to ${above}`);
+  // Two lag spans out it is the full catch-up rate (16/120 of the lag).
+  assert.ok(Math.abs(stepFor(192) - 192 * (16 / 120)) < 1e-9);
+});
+
 test('live box: reduced motion snaps instead of chasing', (t) => {
   const h = withCleanup(t, setup({ reduced: true }));
   const [body] = h.bodies;

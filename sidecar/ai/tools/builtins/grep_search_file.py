@@ -19,7 +19,6 @@ from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins.file_state import open_regular_file
 from sidecar.ai.tools.builtins.filesystem import (
     SEARCH_IGNORE_DIRS,
-    is_binary_file,  # noqa: F401 - re-exported for grep_search.
     workspace_relative_path,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure

@@ -131,7 +131,8 @@ WIRING_CAPS = {
     # Desktop command sandbox adds one independent execution-policy owner at
     # these configuration/dispatch composition seams (DESKTOP_COMMAND_SANDBOX.md).
     # Exact caps preserve explicit security imports rather than hiding them in facades.
-    (ROOT / "sidecar/ai/config.py").resolve(): 7,
+    # Row 104 S6 (2026-11-03): engine/tool section parsing moved to config_sections (7 -> 6).
+    (ROOT / "sidecar/ai/config.py").resolve(): 6,
     # Combined hosted worker and desktop sandbox integration adds two canonical
     # policy owners (6 -> 8): hosted direct-dispatch fencing and desktop approval
     # routing. Independently reviewed; retain both visible security dependencies.
@@ -176,11 +177,17 @@ WIRING_CAPS = {
     # to its namespaced contract entry (29 -> 30). Explicit security edge.
     # Row 102 (2026-11-01): the approval gate and dispatch consult the read-only
     # command grant owner, read_only_command_grant (30 -> 31). Explicit security edge.
-    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 31,
+    # Row 104 S6 (2026-11-03): admission/outcome helpers moved to tool_execution_admission
+    # and tool_execution_outcomes (31 -> 30); the security edges above stay in this file.
+    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 30,
     # Row 102 (2026-11-01): leaves the concrete baseline below (15 -> 16): the
     # read-only dispatch check lets a read-only command through and names the
     # refusal for any other run_command (read_only_command_grant). Security edge.
     (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 16,
+    # Row 105 W2-G (2026-11-03): the pre-dispatch filter moved out of tool_call_execution
+    # (whose cap stays 16) with its read-only security edges (read_only_command_grant,
+    # plan_artifact_policy, tool_actions, tool_resolution, assembly). Security edges.
+    (ROOT / "sidecar/ai/routing/tool_call_prefilter.py").resolve(): 9,
     # Row 60 W2: microcompaction and the compaction policy moved out to
     # compaction_micro (compaction.py 597 -> ~520 lines), one new edge (6 -> 7).
     (ROOT / "sidecar/ai/context/compaction.py").resolve(): 7,
@@ -198,7 +205,8 @@ CONCRETE_EDGE_BASELINE = {
     (ROOT / "sidecar/ai/mcp/builtin_request_scope.py").resolve(): 9,
     # Row 66 (2026-10-20): turn start resolves the count-source ladder
     # (context_count) and publishes its scale to the engine (15 -> 16).
-    (ROOT / "sidecar/ai/routing/chat_decision.py").resolve(): 16,
+    # Row 105 W2-G (2026-11-03): the budget preflight moved to chat_decision_preflight (16 -> 14).
+    (ROOT / "sidecar/ai/routing/chat_decision.py").resolve(): 14,
     (ROOT / "sidecar/ai/routing/generation_runtime.py").resolve(): 15,
     (ROOT / "sidecar/ai/routing/generation_runtime_stream.py").resolve(): 12,
     (ROOT / "sidecar/ai/routing/route_policy_runtime.py").resolve(): 12,
@@ -212,8 +220,9 @@ CONCRETE_EDGE_BASELINE = {
     # the bare-MCP-name and live-prompt descriptor lookups) and
     # failure_taxonomy.classify with the failure's own retryable flag (C7-D), the
     # one place a failure becomes an outcome (13 -> 15). Row 102 moved it to
-    # WIRING_CAPS (16).
-    (ROOT / "sidecar/ai/routing/tool_loop_calls.py").resolve(): 13,
+    # WIRING_CAPS (16). Row 105 W2-G (2026-11-03): the cycle-state helpers moved to
+    # tool_loop_call_state (13 -> 10).
+    (ROOT / "sidecar/ai/routing/tool_loop_calls.py").resolve(): 10,
     (ROOT / "sidecar/ai/routing/tool_loop_finalize.py").resolve(): 8,
     (ROOT / "sidecar/ai/routing/tool_loop_recovery.py").resolve(): 7,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 9,

@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createViewportControllerHarness } = require('./helpers/renderer-viewport-utils-helpers.js');
+const { spendOpenLanding } = require('./helpers/renderer-viewport-open-landing-helpers.js');
 const { createViewportLiveFollowUtils } = require('../renderer/shell/renderer-viewport-live-follow-utils.js');
 
 function freezeClock(t, startMs = 1_000_000) {
@@ -152,6 +153,7 @@ test('viewport controller: a 24-48 px scroll-away stays released until the reade
     },
   });
   try {
+    spendOpenLanding(harness);
     harness.state.ui.followLatest = true;
     harness.setThinkingAutoScroll(true);
     harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
@@ -173,6 +175,95 @@ test('viewport controller: a 24-48 px scroll-away stays released until the reade
     harness.setScrollMetrics({ scrollTop: 640 });
     harness.controller.syncThreadScrollState();
     assert.equal(harness.state.ui.followLatest, true, 'scrolling back to the bottom re-latches follow');
+  } finally {
+    harness.restore();
+  }
+});
+
+// 2026-11-03 Rust session: the reader scrolled back down mid-turn, follow re-latched,
+// and the next tool card (>24 px) dropped it again because the reader's gesture was
+// still pending, so the re-latch never held while tool output streamed.
+test('viewport controller: a re-latch at the bottom survives the next tall streamed chunk', (t) => {
+  freezeClock(t);
+  const harness = createViewportControllerHarness({
+    deferAnimationFrame: true,
+    autoScrollThread: true,
+    deriveFollowLatestFromScroll(metrics) {
+      const gap = (Number(metrics.scrollHeight) || 0)
+        - ((Number(metrics.scrollTop) || 0) + (Number(metrics.clientHeight) || 0));
+      return gap <= 48;
+    },
+  });
+  try {
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+
+    harness.setScrollMetrics({ scrollTop: 300 });
+    harness.controller.syncThreadScrollState();
+    assert.equal(harness.state.ui.followLatest, false, 'the scroll-away releases follow');
+
+    harness.setScrollMetrics({ scrollTop: 600 });
+    harness.controller.syncThreadScrollState({
+      scrollTop: 600, scrollHeight: 1000, clientHeight: 400, userInitiated: true, direction: 'down',
+    });
+    assert.equal(harness.state.ui.followLatest, true, 'the reader returning to the bottom re-latches');
+
+    harness.setScrollMetrics({ scrollHeight: 1300 }); // a tool card lands
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.state.ui.followLatest, true, 'the next chunk must not read as a scroll-away');
+    assert.ok(harness.chatThreadScroll.scrollTop > 600, 'follow moves toward the new bottom');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('a structural clamp to the top while following snaps back instead of gliding', () => {
+  const scrollContainer = scroller({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+  const { frames, liveFollow, state } = createLiveFollow(scrollContainer);
+
+  liveFollow.startLiveStreamingFollow();
+  assert.equal(liveFollow.liveFollowRuntime.active, false, 'an at-bottom follow settles immediately');
+
+  scrollContainer.scrollTop = 0; // a whole-timeline rewrite clamped scrollTop for one layout
+  scrollContainer.scrollHeight = 1100;
+  liveFollow.startLiveStreamingFollow();
+
+  assert.equal(state.ui.followLatest, true);
+  assert.equal(scrollContainer.scrollTop, 700, 'one write puts the viewport back at the bottom');
+  assert.equal(frames.length, 0, 'no glide frames are scheduled');
+});
+
+test('viewport controller: a render-driven flip near the bottom keeps a stale reader intent (no relatch)', (t) => {
+  freezeClock(t);
+  const harness = createViewportControllerHarness({
+    deferAnimationFrame: true,
+    autoScrollThread: true,
+    deriveFollowLatestFromScroll(metrics) {
+      const gap = (Number(metrics.scrollHeight) || 0)
+        - ((Number(metrics.scrollTop) || 0) + (Number(metrics.clientHeight) || 0));
+      return gap <= 48;
+    },
+  });
+  try {
+    spendOpenLanding(harness);
+    harness.state.ui.followLatest = false;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 570, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.noteScrollInputIntent();
+    harness.controller.syncThreadScrollState({
+      scrollTop: 570, scrollHeight: 1000, clientHeight: 400, userInitiated: false, direction: 'none',
+    });
+    assert.equal(harness.state.ui.followLatest, true, 'a programmatic near-bottom sync still sets follow');
+
+    harness.setScrollMetrics({ scrollHeight: 1300 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.state.ui.followLatest, false, 'the reader who never came back down is released again');
+    assert.equal(harness.chatThreadScroll.scrollTop, 570, 'and is not glided to the bottom');
   } finally {
     harness.restore();
   }

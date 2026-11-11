@@ -283,6 +283,29 @@ test('awaiting_decision reads the proposal title from the child records', (t) =>
   assert.equal(prepareTerminalReport(ctx, { kind: 'complete', mutation, rendererPayload: {} }).body, 'Waiting for a decision: Commit the billing export');
 });
 
+test('a chat that reported back gives up its browser page, but not one that was stopped or is waiting', (t) => {
+  const env = setup(t);
+  admitReportReservation(env.service, { sessionId: CHILD, turnId: 'turn_1' });
+  env.service.chatMessages.convertReport = async () => ({ ok: true });
+  const closed = [];
+  env.service.toolExecutor = { browserUse: { closeFinished: (sessionId) => { closed.push(sessionId); return true; } } };
+  const { ctx, mutation } = settleCtx(env);
+  const report = prepareTerminalReport(ctx, { kind: 'complete', mutation, rendererPayload: {} });
+  const durable = { handled: true, result: { durableTerminal: true } };
+  finishTerminalReport(ctx, report, { handled: true, result: { durableTerminal: false } });
+  assert.deepEqual(closed, [], 'nothing was reported yet');
+  for (const outcome of ['cancelled', 'awaiting_decision']) finishTerminalReport(ctx, { ...report, outcome }, durable);
+  finishTerminalReport({ ...ctx, resumableStop: 'tool_budget' }, report, durable);
+  assert.deepEqual(closed, [], 'those turns carry on, and so does one that hit a limit and may be resumed');
+  for (const outcome of ['completed', 'failed']) finishTerminalReport(ctx, { ...report, outcome }, durable);
+  assert.deepEqual(closed, [CHILD, CHILD]);
+  env.service.toolExecutor.browserUse.closeFinished = () => { throw new Error('browser down'); };
+  assert.doesNotThrow(() => finishTerminalReport(ctx, report, durable));
+  env.service.toolExecutor = null;
+  finishTerminalReport(ctx, report, durable);
+  assert.deepEqual(closed, [CHILD, CHILD], 'a host with no browser reports as before');
+});
+
 test('finish converts only after a durable terminal, fire-and-forget, logging failures by id', async (t) => {
   const env = setup(t);
   admitReportReservation(env.service, { sessionId: CHILD, turnId: 'turn_1' });

@@ -30,7 +30,8 @@ def test_list_dir_retains_only_alphabetically_smallest_bounded_candidates(
         "[D] aardvark",
         "[F] alpha.txt  9B",
         "[F] beta.txt  8B",
-        "...[directory listing truncated]",
+        "...[directory listing truncated: showed 3 of 6 entries, 3 left out. List a subfolder "
+        "or use glob_files with a pattern to see the rest.]",
     ]
     assert output.metadata["truncated"] is True
     assert output.metadata["totals_known"] is True
@@ -96,7 +97,6 @@ def test_list_dir_isolates_per_entry_is_dir_failures(
         "",
         "[F] alpha.txt  1B",
         "[F] zeta.txt  1B",
-        "...[directory listing truncated]",
         "...[1 entries could not be inspected and were skipped]",
     ]
     # returned_count must reflect what was actually emitted (2), not the 3 raw
@@ -227,3 +227,42 @@ def test_list_dir_applies_its_output_budget_before_router_truncation(
     assert result.metadata["returned_count"] == len(
         [line for line in result.output.splitlines() if line.startswith("[F]")]
     )
+
+
+def test_list_dir_truncation_marker_counts_listed_and_left_out_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for index in range(10):
+        (tmp_path / f"file-{index}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(listing_module, "MAX_LIST_ENTRIES", 4)
+
+    result = list_dir_tool({"path": "."}, _guard(tmp_path))
+
+    marker = result.output.splitlines()[-1]
+    assert marker.startswith("...[directory listing truncated: showed 4 of 10 entries")
+    assert "6 left out" in marker
+    assert "List a subfolder" in marker and "glob_files" in marker
+
+
+def test_list_dir_marker_counts_entries_dropped_by_the_character_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for index in range(8):
+        (tmp_path / f"long-file-{index}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(listing_module, "MAX_LIST_OUTPUT_CHARS", 45)
+
+    result = list_dir_tool({"path": "."}, _guard(tmp_path))
+
+    shown = result.metadata["returned_count"]
+    assert f"showed {shown} of 8 entries" in result.output
+    assert f"{8 - shown} left out" in result.output
+
+
+def test_list_dir_default_output_budget_keeps_a_big_listing_small(tmp_path: Path) -> None:
+    for index in range(400):
+        (tmp_path / f"{'n' * 60}-{index:03d}.txt").write_text("x", encoding="utf-8")
+
+    result = list_dir_tool({"path": "."}, _guard(tmp_path))
+
+    assert len(result.output) < 9_000
+    assert "left out" in result.output.splitlines()[-1]

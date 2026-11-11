@@ -16,7 +16,7 @@
  * rates. No I/O, no timers: the caller passes the clock.
  */
 
-const { TERMINAL_PHASES, normalizeObservation } = require('./performance-contract');
+const { LIVE_PROVIDER_KINDS, TERMINAL_PHASES, normalizeObservation } = require('./performance-contract');
 
 const MAX_RETAINED = 16;
 const WINDOW_MS = 2000;
@@ -129,7 +129,7 @@ function createAttemptMetrics({ now = Date.now, live = true } = {}) {
   function projectRate(rate, group, nowMs) {
     if (poisoned[group]) return metric(null, 'unavailable');
     if (!rate) {
-      const liveCapable = live && latest?.provider_kind === 'ninfer' && latest?.source === 'provider';
+      const liveCapable = live && LIVE_PROVIDER_KINDS.has(latest?.provider_kind) && latest?.source === 'provider';
       return liveCapable && !terminal ? metric(null, 'warming') : metric(null, 'unavailable');
     }
     if (rate.state === 'not_applicable') return metric(null, 'not_applicable', rate.sampled_at);

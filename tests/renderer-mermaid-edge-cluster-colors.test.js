@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
+const { resolvePaletteScheme } = require('../renderer/shared/appearance-utils');
 
 /* Sibling of renderer-mermaid-utils.test.js (split out to stay under the
  * repo's 1015-line file-size cap): the renderMermaidDirect integration case
@@ -33,6 +34,7 @@ function installDomGlobals(dom, t) {
 
 function installPaletteTokens(dom, paletteId, tokenMap) {
   dom.window.document.documentElement.dataset.palette = paletteId;
+  dom.window.document.documentElement.dataset.scheme = resolvePaletteScheme(paletteId);
   const style = dom.window.document.createElement('style');
   style.textContent = ':root {' + Object.entries(tokenMap).map(([token, value]) => `${token}: ${value};`).join(' ') + '}';
   dom.window.document.head.appendChild(style);

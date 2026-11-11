@@ -16,7 +16,13 @@ __all__ = [
 
 
 def compaction_reply_text(result: Any, feature_flags: Any) -> str:
-    """A compaction reply's text, carrying the provider finish reason (row 60)."""
-    return compaction_reply(
-        result.content or "", getattr(result, "finish_reason", None), feature_flags
-    )
+    """A compaction reply's text, carrying the provider finish reason (row 60).
+
+    A stalled stream ends with the watchdog's synthetic text and finish reason
+    ``timeout``. That is not a summary to parse: raising keeps it from earning
+    a re-ask, which would repeat the whole slow prefill.
+    """
+    finish_reason = getattr(result, "finish_reason", None)
+    if finish_reason == "timeout":
+        raise TimeoutError("Compaction summary call timed out")
+    return compaction_reply(result.content or "", finish_reason, feature_flags)

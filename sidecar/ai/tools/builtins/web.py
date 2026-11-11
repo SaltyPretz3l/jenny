@@ -21,7 +21,6 @@ from sidecar.ai.error_codes import (
     CMP_WEB_INVALID_URL,
     CMP_WEB_RATE_LIMITED,
     CMP_WEB_REDIRECT_BLOCKED,
-    CMP_WEB_SSRF_BLOCKED,
 )
 from sidecar.ai.tools.builtins.web_ddg import (
     WebSearchProvider,
@@ -50,6 +49,7 @@ from sidecar.ai.tools.builtins.web_http import (
     ValidatedUrl,
     WebRateLimiter,
     _remaining_seconds,
+    fetch_failures,
     read_url_response,
     validate_public_url,
 )
@@ -60,10 +60,12 @@ logger = logging.getLogger(__name__)
 
 _MAX_QUERY_LENGTH = 2000
 _MAX_FETCH_CONTENT_CHARS = 20_000
-# The cached body is cut to this many characters before sanitizing: the
-# sanitizer's regex passes are the dominant cost of a fetch, and everything past
-# the cap is dropped anyway (headroom covers text the sanitizer shrinks).
-_FETCH_SANITIZE_INPUT_CHARS = 4 * _MAX_FETCH_CONTENT_CHARS
+# One result returns at most _MAX_FETCH_CONTENT_CHARS; the cache keeps this much of a long
+# page so `offset` can read the rest. The body is cut to the sanitize input size before
+# sanitizing: the sanitizer's regex passes dominate a fetch and the rest is dropped anyway.
+_FETCH_CACHED_CONTENT_CHARS = 5 * _MAX_FETCH_CONTENT_CHARS
+_FETCH_SANITIZE_INPUT_CHARS = 2 * _FETCH_CACHED_CONTENT_CHARS
+_FETCH_NOTE_RESERVE = 300  # room for the paging note when trimming a result to the budget
 # Managed tool-loop response cap (see
 # `sidecar/ai/routing/harness_helpers.MAX_RESPONSE_CHARS`). Keep the full
 # serialized `fetch_url` JSON payload inside this budget so the downstream
@@ -294,10 +296,10 @@ def _build_cached_fetch_entry(validated: ValidatedUrl, result: UrlReadResult) ->
         content_format = "markdown"
 
     # sanitize_tool_output strips control characters itself; cut first so its
-    # passes never run over a ~1 MB body that is about to be capped at 20k.
+    # passes never run over a ~1 MB body that is about to be capped.
     body = sanitize_tool_output(
         body[:_FETCH_SANITIZE_INPUT_CHARS],
-        max_chars=_MAX_FETCH_CONTENT_CHARS,
+        max_chars=_FETCH_CACHED_CONTENT_CHARS,
         tool_name="fetch_url",
     )
     payload_size = len(body.encode("utf-8")) + len(result.final_url.encode("utf-8"))
@@ -422,10 +424,6 @@ def _search_failure(query: str, provider: str, error: str, error_code: str) -> T
     )
 
 
-# HTTP answers worth the MCP reconnect-and-replay; other 4xx (403/404/410) do not change on a retry.
-_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
-_HTTP_SERVER_ERROR_MIN = 500
-
 
 def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _CachedFetchEntry:
     """Validate *url*, fetch it and cache the result (the cache-miss path)."""
@@ -434,11 +432,7 @@ def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _Cach
             url, allow_private=_allow_private_addresses, deadline=deadline
         )
     except PermissionError as exc:
-        raise ToolExecutionFailure(
-            code=CMP_WEB_SSRF_BLOCKED,
-            message=str(exc),
-            retryable=False,
-        ) from exc
+        raise fetch_failures().blocked_address_failure(exc) from exc
     except HostResolutionError as exc:
         # DNS failed for a well-formed URL: a transient network condition, not a
         # malformed argument, so the model may retry. Must stay ahead of the
@@ -456,7 +450,9 @@ def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _Cach
         ) from exc
     except TimeoutError as exc:
         raise ToolExecutionFailure(
-            code=CMP_WEB_FETCH_FAILED, message="Failed to fetch URL.", retryable=True
+            code=CMP_WEB_FETCH_FAILED,
+            message="The address did not resolve within the time limit.",
+            retryable=True,
         ) from exc
 
     try:
@@ -467,11 +463,7 @@ def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _Cach
     # the first-hop check above — never a retryable fetch failure. These two arms
     # must stay ahead of the RedirectBlockedError arm they subclass.
     except RedirectPolicyBlockedError as exc:
-        raise ToolExecutionFailure(
-            code=CMP_WEB_SSRF_BLOCKED,
-            message=str(exc),
-            retryable=False,
-        ) from exc
+        raise fetch_failures().blocked_address_failure(exc) from exc
     except RedirectTargetInvalidError as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_INVALID_URL,
@@ -485,20 +477,38 @@ def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _Cach
             retryable=False,
         ) from exc
     except urllib.error.HTTPError as exc:
-        raise ToolExecutionFailure(
-            code=CMP_WEB_FETCH_FAILED,
-            message=f"HTTP error {exc.code}",
-            retryable=exc.code >= _HTTP_SERVER_ERROR_MIN or exc.code in _TRANSIENT_HTTP_STATUSES,
-        ) from exc
+        raise fetch_failures().http_status_failure(exc.code) from exc
     except ToolExecutionFailure:
         raise
+    except TimeoutError as exc:
+        raise ToolExecutionFailure(
+            code=CMP_WEB_FETCH_FAILED,
+            message="The site did not answer within the time limit.",
+            retryable=True,
+        ) from exc
     except Exception as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_FETCH_FAILED,
-            message="Failed to fetch URL.",
+            message=fetch_failures().fetch_failure_reason(exc),
             retryable=True,
         ) from exc
     return entry
+
+
+def _fetch_paging(entry: _CachedFetchEntry, offset: int, shown: int) -> dict[str, object]:
+    """Where a result sits in the cached page, and the offset to read on from."""
+    total, end = len(entry.content), offset + shown
+    cut = entry.truncated or total >= _FETCH_CACHED_CONTENT_CHARS
+    size = f"{'at least ' if cut else ''}{total} characters"
+    if offset > 0 and offset >= total:
+        return {"total_chars": total,
+                "note": f"offset {offset} is past the end: the page has {size}."}
+    if end < total:
+        return {"total_chars": total, "next_offset": end, "note": (
+            f"The page has {size}; this shows {offset}-{end}. Call fetch_url again with the "
+            f"same url and offset={end} to read on.")}
+    return {"total_chars": total, "note": f"The page is longer than the {total} characters "
+            "that can be read."} if cut else {}
 
 
 def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandlerResult:
@@ -518,6 +528,7 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
     deadline = time.monotonic() + timeout_s
     requested = _coerce_int_argument(arguments, "max_chars", _MAX_FETCH_CONTENT_CHARS)
     max_chars = _safe_fetch_content_limit(requested)
+    offset = max(0, _coerce_int_argument(arguments, "offset", 0))
 
     cached_entry = _fetch_cache.get(_fetch_cache_key(url))
     if cached_entry is not None:
@@ -529,8 +540,12 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
         cache_hit = False
 
     # The entry was sanitized when it was built; only clip it to this call's cap.
-    content = truncate_text(entry.content, max_chars)
-    truncated = entry.truncated or len(content) < len(entry.content)
+    window = entry.content[offset:]
+    content = truncate_text(window, max_chars)
+    capped = len(entry.content) >= _FETCH_CACHED_CONTENT_CHARS
+    truncated = entry.truncated or capped or len(content) < len(window)
+    # truncate_text ends a cut result with " [truncated]", which is not page text.
+    shown = len(content) if window.startswith(content) else max(0, len(content) - 12)
     host = urllib.parse.urlparse(entry.final_url).netloc
     citations = [
         {
@@ -564,15 +579,19 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
         ],
         "citations": citations,
         "missing_source_metadata": False,
+        **_fetch_paging(entry, offset, shown),
     }
     serialized = json.dumps(payload, ensure_ascii=False)
-    if len(serialized) > _FETCH_RESPONSE_SERIALIZATION_BUDGET:
-        overage = len(serialized) - _FETCH_RESPONSE_SERIALIZATION_BUDGET
-        new_content_len = max(0, len(content) - overage - _FETCH_RESPONSE_TRIM_HEADROOM)
-        trimmed_content = content[:new_content_len]
-        payload["content"] = trimmed_content
+    while len(serialized) > _FETCH_RESPONSE_SERIALIZATION_BUDGET and payload["content"]:
+        # Escapes make a character cost more than one serialized character: cut by cost.
+        text = str(payload["content"])
+        per_char = max(1.0, (len(json.dumps(text, ensure_ascii=False)) - 2) / len(text))
+        excess = len(serialized) - _FETCH_RESPONSE_SERIALIZATION_BUDGET
+        excess += _FETCH_RESPONSE_TRIM_HEADROOM + (0 if "note" in payload else _FETCH_NOTE_RESERVE)
+        text = text[: max(0, len(text) - int(excess / per_char) - 1)]
+        payload["content"] = text
         payload["truncated"] = True
-        sources = cast(list[dict[str, Any]], payload["sources"])
-        sources[0]["snippet"] = trimmed_content[:280]
+        payload.update(_fetch_paging(entry, offset, min(len(text), shown)))
+        cast(list[dict[str, Any]], payload["sources"])[0]["snippet"] = text[:280]
         serialized = json.dumps(payload, ensure_ascii=False)
     return ToolHandlerResult(output=serialized, success=True)

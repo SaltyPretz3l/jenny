@@ -9,6 +9,8 @@ const { ERROR_CODES, hostFailure } = require('./api-contract');
 const { DEFAULT_RESOURCE_LIMITS } = require('./config');
 const { requireBoundedInteger } = require('./resource-limits');
 const { SUPPORTED_TAGS } = require('../renderer/shared/i18n-utils');
+const { singleOwnerActor } = require('./team/authorize');
+const { createSingleOwnerGuard } = require('./team/route-guard');
 
 const RESPONSE_WRITE_TIMEOUT_MS = 60_000;
 
@@ -116,6 +118,36 @@ function readStaticAssets(staticRoot) {
     }
   }
   return assets;
+}
+
+// Attaches an authorized client's event stream; a client's newer stream replaces its older one.
+// `streams` is the caller's map of open streams by client id, which the caller closes on stop.
+// `identity` (optional, from the caller) is the subscription's member identity; see EventStream.
+function openEventStream({
+  request, response, requestId, deviceId, clientId, clientToken, authorized, clients, events, streams, identity,
+}) {
+  const detachClient = clients.attach(clientId, clientToken, deviceId);
+  if (!detachClient) { failure(response, 'forbidden', 'client_required', requestId); return; }
+  const previous = streams.get(clientId);
+  if (previous) { previous.unsubscribe(); previous.response.destroy(); }
+  const resume = /^([A-Za-z0-9_-]{1,128}):(\d{1,16})$/.exec(request.headers['last-event-id'] || '');
+  const unsubscribe = events.subscribe({ response, deviceId, authorized, identity,
+    bootEpoch: resume?.[1], cursor: resume ? Number(resume[2]) : -1,
+    onAdmit: () => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no' });
+      response.flushHeaders();
+    },
+    onReject: (kind) => failure(response, kind, 'events_admission_failed', requestId),
+  });
+  if (!unsubscribe) { detachClient(); return; }
+  const entry = { response, unsubscribe, detachClient };
+  streams.set(clientId, entry);
+  response.once('close', () => {
+    unsubscribe();
+    detachClient();
+    if (streams.get(clientId) === entry) streams.delete(clientId);
+  });
 }
 
 function retainResponseAdmission(response, release, writeTimeoutMs) {
@@ -269,32 +301,14 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
       const authorized = () => isAuthenticated() && clients.authorize(clientId, clientToken, deviceId);
       if (!authorized()) { failure(response, 'forbidden', 'client_required', requestId); return; }
       if (route === 'GET /api/v1/events') {
-        const detachClient = clients.attach(clientId, clientToken, deviceId);
-        if (!detachClient) { failure(response, 'forbidden', 'client_required', requestId); return; }
-        const previous = streams.get(clientId);
-        if (previous) { previous.unsubscribe(); previous.response.destroy(); }
-        const resume = /^([A-Za-z0-9_-]{1,128}):(\d{1,16})$/.exec(request.headers['last-event-id'] || '');
-        const unsubscribe = events.subscribe({ response, deviceId, authorized,
-          bootEpoch: resume?.[1], cursor: resume ? Number(resume[2]) : -1,
-          onAdmit: () => {
-            response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive',
-              'X-Accel-Buffering': 'no' });
-            response.flushHeaders();
-          },
-          onReject: (kind) => failure(response, kind, 'events_admission_failed', requestId),
-        });
-        if (!unsubscribe) { detachClient(); return; }
-        const entry = { response, unsubscribe, detachClient };
-        streams.set(clientId, entry);
-        response.once('close', () => {
-          unsubscribe();
-          detachClient();
-          if (streams.get(clientId) === entry) streams.delete(clientId);
-        });
+        openEventStream({ request, response, requestId, deviceId, clientId, clientToken, authorized,
+          clients, events, streams });
         return;
       }
+      // Hosted mode has one owner: the constant actor goes through the same guard a team host uses.
       if (assetRoutes && await assetRoutes({ request, response, pathname: url.pathname,
-        deviceId, clientId, authorized, security, requestId })) return;
+        deviceId, clientId, authorized, security, requestId, actor: singleOwnerActor(deviceId),
+        guard: createSingleOwnerGuard(deviceId, requestId) })) return;
       json(response, 404, hostFailure('invalid', 'route_not_found', requestId));
     } catch (error) {
       log('WARN', 'host.request_rejected', requestId);
@@ -326,4 +340,7 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
   return { server, close };
 }
 
-module.exports = { createHttpServer, readJson, json, requireBodyless, sendHostFailure };
+module.exports = {
+  createHttpServer, readJson, json, requireBodyless, sendHostFailure,
+  headers, retainResponseAdmission, failure, openEventStream, STATUS_BY_CODE,
+};

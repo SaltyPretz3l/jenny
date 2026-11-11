@@ -32,6 +32,12 @@
   }
   var escapeHtml = actionButton.escapeHtml;
 
+  // Row 127: lazy. Only Node may require it (the renderer's is Monaco's AMD loader).
+  function comfy() {
+    return globalThis.modelLibraryImageEngineComfyui
+      || (typeof module === 'object' && module.exports ? require('./model-library-image-engine-comfyui') : null);
+  }
+
   function megabytes(bytes) {
     var value = Number(bytes);
     return Number.isFinite(value) && value > 0 ? Math.round(value / 1048576) : 0;
@@ -40,11 +46,6 @@
   function gigabytes(bytes) {
     var value = Number(bytes);
     return Number.isFinite(value) && value > 0 ? (value / 1073741824).toFixed(1) : '0.0';
-  }
-
-  function quantOf(name) {
-    var match = /(Q\d[A-Z0-9_]*|IQ\d[A-Z0-9_]*|BF16|F16|F32|FP8)/i.exec(String(name || ''));
-    return match ? match[1].toUpperCase() : '';
   }
 
   function installFailureMessage(reason) {
@@ -111,6 +112,9 @@
     var pending = false;
     var confirmRemove = false;
     var confirmClear = false; // "Clear anyway" asks inline first
+    var comfyPicks = {}; // recipe id -> slot -> the file name picked among several matches
+    var comfyChecking = false; // the folder choose/check is the action in flight
+    var comfyLoading = false;
     var clearing = false; // and its clear is the action in flight
     var note = '';
     var generation = 0;
@@ -145,23 +149,6 @@
       return store && typeof store.default_id === 'string' ? store.default_id : null;
     }
 
-    function setLabel(set) {
-      if (set.label) return set.label;
-      var diffusion = set.files && set.files.diffusion ? set.files.diffusion.name : '';
-      var quant = quantOf(diffusion);
-      return quant ? familyLabel(set.family) + ' · ' + quant : familyLabel(set.family);
-    }
-
-    function setSizeBytes(set) {
-      var files = set.files || {};
-      var total = 0;
-      REQUIRED_SLOTS.concat(OPTIONAL_SLOTS).forEach(function (slot) {
-        var entry = files[slot];
-        total += entry && Number.isFinite(Number(entry.size_bytes)) ? Number(entry.size_bytes) : 0;
-      });
-      return total;
-    }
-
     // A retained lease a clean-up attempt in this run could not prove ended;
     // only then is the record offered for an unproven clear.
     function cleanupStuck() {
@@ -182,7 +169,7 @@
       if (!cleanupStuck() || (pending && clearing)) return '';
       var record = engine.handoff.cleanup.record || {};
       var text = confirmClear
-        ? jt('models.library.imageEngine.clearConfirm', 'Clear without proof? Chat resumes now. A stray sd-cli helper would keep its GPU memory until it exits.')
+        ? jt('models.library.imageEngine.clearConfirm', 'Clear without proof? Chat resumes now. A stray image helper would keep its GPU memory until it exits.')
         : Number(record.unresolved) > 0 && Number(record.started_at) > 0
           ? jt('models.library.imageEngine.stuckHelpers', 'Jenny could not check {count} helper processes from {time}.', { count: Number(record.unresolved), time: clockTime(Number(record.started_at)) })
           : jt('models.library.imageEngine.stuckUnknown', 'Jenny could not confirm the last render ended.');
@@ -215,10 +202,10 @@
       if (status === 'error') return { tone: 'danger', message: jt('models.library.imageEngine.notInstalledReason', 'Not installed · {reason}', { reason: installFailureMessage(engine.last_error) }) };
       if (cleanupStuck()) {
         if (pending && clearing) return { tone: 'pending', spinner: true, message: jt('models.library.imageEngine.clearing', 'Clearing the render record…') };
-        return { tone: 'danger', message: jt('models.library.imageEngine.renderStuck', 'Installed · the last render may still be running. Chat models stay paused.') };
+        return { tone: 'danger', message: jt('models.library.imageEngine.renderStuck', 'The last render may still be running. Chat models stay paused.') };
       }
       if (engine.handoff && engine.handoff.retained) {
-        return { tone: 'warning', message: jt('models.library.imageEngine.cleanupPending', 'Installed · the last image did not finish cleanly. Chat models stay paused until it is cleaned up.') };
+        return { tone: 'warning', message: jt('models.library.imageEngine.cleanupPending', 'The last image did not finish cleanly. Chat models stay paused until it is cleaned up.') };
       }
       if (status === 'custom') {
         return { tone: 'success', message: jt('models.library.imageEngine.custom', 'Using your own sd-cli.exe · {path}', { path: engine.custom_executable || '' }) };
@@ -302,8 +289,7 @@
       var status = engine ? engine.status : 'not_installed';
       if (status !== 'installed' && status !== 'custom') return '';
       var rootPath = scan && scan.root ? scan.root : '';
-      var html = '<span class="model-library-image-engine-subtitle">' + escapeHtml(jt('models.library.imageEngine.models', 'Image models')) + '</span>'
-        + '<div class="model-library-image-engine-folder">'
+      var html = '<div class="model-library-image-engine-folder">'
         + (rootPath ? '<code class="model-library-folders-path">' + escapeHtml(rootPath) + '</code>'
           : '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.noFolder', 'Choose the folder that holds your diffusion model, text encoder and VAE.')) + '</span>')
         + button('choose-folder', jt('models.library.imageEngine.chooseFolder', 'Choose folder…'))
@@ -322,7 +308,6 @@
           + '</div>'
           + (scan.truncated ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.truncated', 'The folder has more files than Jenny lists. Move the model files nearer the top.')) + '</span>' : '');
       }
-      html += setsMarkup();
       return html;
     }
 
@@ -330,33 +315,13 @@
       return Boolean(picks.diffusion && picks.text_encoder && picks.vae && (detectedFamily() || picks.family));
     }
 
-    function setsMarkup() {
-      var list = sets();
-      if (!list.length) {
-        return '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.noSets', 'No sets yet · a set is one diffusion model, its text encoder and its VAE.')) + '</span>';
-      }
-      var current = defaultId();
-      return '<div class="model-library-image-engine-sets">' + list.map(function (set) {
-        var isDefault = set.id === current;
-        return '<div class="model-library-image-engine-set" data-image-engine-set="' + escapeHtml(set.id) + '">'
-          + '<div class="model-library-image-engine-set-text">'
-          + '<span class="model-library-image-engine-set-name">' + escapeHtml(setLabel(set)) + '</span>'
-          + '<span class="model-library-image-engine-set-meta">' + escapeHtml(jt('models.library.imageEngine.gigabytes', '{size} GB', { size: gigabytes(setSizeBytes(set)) }))
-          + (isDefault ? ' · <span class="model-library-image-engine-default">' + escapeHtml(jt('models.library.imageEngine.default', 'Default')) + '</span>' : '')
-          + '</span></div>'
-          + (isDefault ? '<span></span>' : button('make-default', jt('models.library.imageEngine.makeDefault', 'Make default'), 'ghost', { dataset: { 'image-engine-action': 'make-default', 'image-engine-set': set.id } }))
-          + button('remove-set', jt('common.remove', 'Remove'), 'ghost', { dataset: { 'image-engine-action': 'remove-set', 'image-engine-set': set.id } })
-          + '</div>';
-      }).join('') + '</div>'
-        + '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.defaultNote', 'Jenny uses the default set when you ask for an image.')) + '</span>';
-    }
-
     function markup() {
       var status = statusModel();
       var notInstalled = !engine || engine.status === 'not_installed' || engine.status === 'error';
       return '<div class="model-library-image-engine">'
         + '<span class="model-library-folders-title">' + escapeHtml(jt('models.library.imageEngine.title', 'Image engine')) + '</span>'
-        + '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.help', 'Lets Jenny draw images in chat from diffusion models you already have. The engine is stable-diffusion.cpp, a small open-source program. The models and their licences are yours.')) + '</span>'
+        + '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.help', 'Lets Jenny draw images in chat from models you already have, with stable-diffusion.cpp or your own ComfyUI. The models and their licences are yours.')) + '</span>'
+        + '<span class="model-library-image-engine-subtitle">' + escapeHtml(jt('models.library.imageEngine.sdcppTitle', 'stable-diffusion.cpp')) + '</span>'
         + statusRow({ tone: status.tone, spinner: status.spinner === true, progress: status.progress || null, compact: true,
           label: jt('models.library.imageEngine.statusLabel', 'Status'), message: status.message, className: 'model-library-image-engine-status' })
         + (confirmRemove ? '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.removeConfirm', 'Remove the image engine? Saved model sets stay.')) + '</span>' : '')
@@ -364,11 +329,13 @@
         + '<div class="model-library-image-engine-actions">' + engineActions() + '</div>'
         + (engine && engine.status === 'installing'
           ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.workingNote', 'Then: verify fingerprint → unpack → ready. Chats keep working meanwhile.')) + '</span>' : '')
-        + modelsMarkup()
-        + '<span class="model-library-image-engine-note" aria-live="polite">' + escapeHtml(note) + '</span>'
         + (notInstalled
-          ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.sourceNote', 'Downloads from github.com, checked against a fingerprint built into this version of Jenny. Nothing is sent anywhere.')) + '</span>'
-          : '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.pathNote', 'Folders on this computer or a mapped drive letter. Network paths (\\\\server\\share) are not supported.')) + '</span>')
+          ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.sourceNote', 'Downloads from github.com, checked against a fingerprint built into this version of Jenny. Nothing is sent anywhere.')) + '</span>' : '')
+        + modelsMarkup()
+        + (comfy() ? comfy().blockMarkup({ comfyui: engine && engine.comfyui, sets: sets(), picks: comfyPicks, pending: pending, checking: pending && comfyChecking, button: button }) : '')
+        + (engine && comfy() ? comfy().setsMarkup({ sets: sets(), defaultId: defaultId(), recipes: engine.recipes, familyLabel: familyLabel, button: button }) : '')
+        + '<span class="model-library-image-engine-note" aria-live="polite">' + escapeHtml(note) + '</span>'
+        + '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.pathNote', 'Folders on this computer or a mapped drive letter. Network paths (\\\\server\\share) are not supported.')) + '</span>'
         + '</div>';
     }
 
@@ -392,9 +359,17 @@
         candidate = target.querySelector(parts[2] ? selector + '[data-image-engine-set="' + parts[2] + '"]' : selector)
           || target.querySelector(selector) || target.querySelector('[data-image-engine-action]:not([disabled])');
       } else if (parts[0] === 'slot') {
-        candidate = target.querySelector('[data-image-engine-slot="' + parts[1] + '"]');
+        candidate = target.querySelector('[data-image-engine-slot="' + key.slice(5) + '"]'); // a ComfyUI slot key holds colons
       }
       if (candidate && typeof candidate.focus === 'function') candidate.focus();
+    }
+
+    function loadComfy() {
+      var loader = globalThis.scriptLoaderUtils;
+      if (comfy() || comfyLoading || !loader) return;
+      comfyLoading = true;
+      loader.ensureScript({ src: 'renderer/shell/model-library/model-library-image-engine-comfyui.js', isReady: comfy })
+        .then(function (ok) { comfyLoading = false; if (ok) render(); });
     }
 
     function render() {
@@ -402,6 +377,7 @@
       var target = host();
       if (!target) return;
       if (!isEnabled()) { target.innerHTML = ''; return; }
+      loadComfy();
       var active = documentRef && documentRef.activeElement;
       var key = active && target.contains(active) ? focusKeyOf(active) : '';
       // A control that disables itself while an action runs still loses focus;
@@ -494,6 +470,14 @@
       });
     }
 
+    function saveComfySet(recipeId) {
+      var payload = comfy() && comfy().savePayload(engine && engine.comfyui, comfyPicks, recipeId);
+      if (!payload) return;
+      void invoke('saveComfySet', payload, function (result) {
+        note = result.ok === false ? comfy().saveFailureMessage(result.reason) : jt('models.library.imageEngine.saved', 'Saved.');
+      });
+    }
+
     function onClick(event) {
       var target = event && event.target && typeof event.target.closest === 'function'
         ? event.target.closest('[data-image-engine-action]') : null;
@@ -502,6 +486,7 @@
       var setId = target.getAttribute('data-image-engine-set') || '';
       event.preventDefault();
       clearing = action === 'force-clear';
+      comfyChecking = action === 'choose-comfy-folder' || action === 'check-comfy-folder';
       switch (action) {
         case 'install': void invoke('install', { confirmed: true }, function (result) {
           if (result.ok === false && result.reason !== 'install_in_progress' && result.reason !== 'cancelled') {
@@ -531,6 +516,11 @@
         case 'choose-folder': void invoke('chooseModelFolder', undefined, applyScan); break;
         case 'rescan': if (scan) void invoke('scanModels', { root: scan.root }, applyScan); break;
         case 'save-set': void saveSet(); break;
+        case 'choose-comfy-folder':
+        case 'check-comfy-folder': void invoke(action === 'check-comfy-folder' ? 'checkComfyFolder' : 'chooseComfyFolder', undefined, function (result) {
+          note = result.ok === false ? comfy().chooseFailureMessage(result.reason) : '';
+        }); break;
+        case 'add-comfy-set': saveComfySet(setId); break;
         case 'make-default': if (ID_RE.test(setId)) void invoke('setDefaultModelSet', { id: setId }); break;
         case 'remove-set': if (ID_RE.test(setId)) void invoke('removeModelSet', { id: setId }); break;
         default: break;
@@ -541,6 +531,12 @@
       var target = event && event.target;
       var slot = target && typeof target.getAttribute === 'function' ? target.getAttribute('data-image-engine-slot') : '';
       if (!slot || !host() || !host().contains(target)) return;
+      var comfySlot = comfy() && comfy().parseSlot(slot);
+      if (comfySlot) {
+        comfyPicks[comfySlot.recipe] = Object.assign({}, comfyPicks[comfySlot.recipe], { [comfySlot.slot]: String(target.value || '') });
+        render();
+        return;
+      }
       picks[slot] = String(target.value || '');
       // A different diffusion file may carry a different family.
       if (slot === 'diffusion') picks.family = '';
@@ -596,5 +592,5 @@
     return { bind: bind, render: render, refresh: refresh, dispose: dispose, getPicks: function () { return Object.assign({}, picks); } };
   }
 
-  return { createModelLibraryImageEngineController: createModelLibraryImageEngineController, quantOf: quantOf };
+  return { createModelLibraryImageEngineController: createModelLibraryImageEngineController, quantOf: function (name) { return comfy() ? comfy().quantOf(name) : ''; } };
 });

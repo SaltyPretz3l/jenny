@@ -165,6 +165,16 @@ test('an inference admission refused for a run-mode change classifies as run_mod
   }), 'run_mode_changed');
 });
 
+// The flip can also land on the continuation checkpoint (owner gate 2026-11-07): the same calm retry card.
+test('a continuation checkpoint refused for a run-mode change classifies as run_mode_changed', () => {
+  const payload = { code: 'CMP-TOOL-0008', category: 'rpc', retryable: false,
+    message: 'Continuation checkpoint failed: run_mode_changed' };
+  assert.equal(classifyAssistantError(payload), 'run_mode_changed');
+  assert.deepEqual(buildAssistantErrorRecoveryMetadata(payload).recovery_actions.map((action) => action.id), ['retry_turn']);
+  assert.notEqual(classifyAssistantError({ ...payload, message: 'Continuation checkpoint failed: runtime_continuation_request_invalid' }),
+    'run_mode_changed');
+});
+
 // Dogfood TR-012: a turn interrupted because Jenny closed names that cause
 // instead of reading like a user Stop; it stays in the calm cancelled class.
 test('a turn cancelled by app shutdown gets its own copy in the cancelled class', () => {

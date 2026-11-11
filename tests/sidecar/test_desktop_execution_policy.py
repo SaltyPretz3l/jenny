@@ -83,7 +83,6 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "grep_search",
         "list_dir",
         "create_artifact",
-        "mermaid_generate",
         "report_findings",
         "ask_user",
         "suggest_next_step",
@@ -92,6 +91,9 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "propose_session",
         "complete_session_handoff",
         "run_command",
+        "sessions_list",
+        "session_status",
+        "session_transcript",
     }
     assert DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES == frozenset(allowed)
 
@@ -103,10 +105,21 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "propose_session",
         "complete_session_handoff",
         "run_command",
+        "sessions_list",
+        "session_status",
+        "session_transcript",
     }
     for name in allowed - electron_owned:
         assert desktop_tool_decision(name, config)[0] is True
-    for name in ("python_execute", "run_temp_script", "monitor", "git_status", "lsp", "session_message"):
+    for name in (
+        "python_execute",
+        "run_temp_script",
+        "monitor",
+        "git_status",
+        "lsp",
+        "session_message",
+        "session_stop",
+    ):
         assert desktop_tool_decision(name, config)[0] is False
     assert desktop_tool_decision(
         SimpleNamespace(
@@ -169,7 +182,6 @@ def test_sandbox_registry_and_builtin_mcp_never_register_local_command(tmp_path:
         {
             "desktop_execution_policy_version": 1,
             "tools_shell_enabled": True,
-            "tools_mermaid_enabled": True,
         },
         workspace_root_present=True,
     )
@@ -256,6 +268,23 @@ def test_sandbox_catalog_describes_only_disposable_linux_foreground_commands() -
     assert "run_in_background" not in command.input_schema["properties"]
     assert command.input_schema["additionalProperties"] is False
     assert command.input_schema["properties"]["timeout_seconds"]["maximum"] == 120
+
+
+def test_synced_workspace_changes_only_the_run_command_description() -> None:
+    synced = parse_runtime_config({**_sandbox_config(), "desktop_command_workspace": "synced"})
+    assert synced.desktop_command_workspace == "synced"
+    assert synced.desktop_execution_policy_version == DESKTOP_EXECUTION_POLICY_VERSION
+    descriptors = build_tool_catalog(
+        config=synced, runtime_descriptors=_electron_bridge_runtime_descriptors(synced)
+    )
+    command = next(item for item in descriptors if item.name == "run_command")
+    assert "copied back" in command.description
+    assert "discarded" not in command.description
+    assert command.input_schema["properties"]["timeout_seconds"]["maximum"] == 120
+    # Without the enforced policy, or with any other value, the key reads copy.
+    assert parse_runtime_config({"desktop_command_workspace": "synced"}).desktop_command_workspace == "copy"
+    other = parse_runtime_config({**_sandbox_config(), "desktop_command_workspace": "live"})
+    assert other.desktop_command_workspace == "copy"
 
 
 def test_sandbox_disables_repository_resume_git_subprocesses() -> None:

@@ -76,6 +76,14 @@ from sidecar.runtime.diagnostics import log_event
 if TYPE_CHECKING:
     from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 
+# Diagrams are drawn from a fenced block in the reply, not from a tool. Always
+# in the prompt, with or without tools, so the model never reaches for one.
+DIAGRAM_REPLY_GUIDANCE = (
+    "## Diagrams\n"
+    "To show a diagram, put Mermaid code in a fenced code block tagged mermaid "
+    "in your reply; the chat draws it as a chart."
+)
+
 def request_workspace_root_kwargs(config: Any, execution_context: Any | None) -> dict[str, Any]:
     """Prompt-build kwargs carrying the request authority's root.
 
@@ -228,6 +236,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         prompt_blocks.extend(bootstrap_blocks)
         if current_date_block:
             prompt_blocks.append(current_date_block)
+        prompt_blocks.append(DIAGRAM_REPLY_GUIDANCE)
         executable_tools_block = self._render_executable_tools(
             tool_statuses, native_tool_schemas=native_tool_schemas
         )
@@ -293,6 +302,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         ]
         if current_date_block:
             static_blocks.append(current_date_block)
+        static_blocks.append(DIAGRAM_REPLY_GUIDANCE)
         for block in static_blocks:
             if block:
                 sections.append(CacheSection(name="static", content=block, cacheable=True))

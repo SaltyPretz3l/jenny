@@ -361,7 +361,6 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
             "create_artifact",
             "todo_write",
             "todo_read",
-            "mermaid_generate",
             "operation_status",
         }
         and normalized_session_id
@@ -369,9 +368,6 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
         effective_tool_arguments["_jenny_session_id"] = normalized_session_id
         if "_jenny_session_id" not in visible_tool_arguments:
             injected_arg_keys.append("_jenny_session_id")
-    if call.tool_id == "mermaid_generate":
-        effective_tool_arguments["_jenny_read_only"] = bool(read_only)
-        injected_arg_keys.append("_jenny_read_only")
     live_suggestions = live_suggestion_arguments(call.tool_id, request_context, request_outcomes)
     effective_tool_arguments.update(live_suggestions)
     injected_arg_keys.extend(live_suggestions)
@@ -397,8 +393,6 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
             execution_context, "root_revision", None
         )
     execution_context_payload.update(attribution)
-    if call.tool_id == "mermaid_generate":
-        execution_context_payload["read_only"] = bool(read_only)
     if plan_artifact_write:
         execution_context_payload["plan_artifact_write"] = True
     if "expected_read_snapshot" in effective_tool_arguments:

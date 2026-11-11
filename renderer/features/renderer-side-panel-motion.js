@@ -33,6 +33,9 @@
  * the latest output keeps following (the coordinator models that: it holds no
  * anchor then and its restore is a no-op).
  *
+ * `side-panel-measuring` is dispatched once on #chatView during open()'s measuring step, right after the end
+ * state is applied and before it is measured; it changes nothing for a caller that is not listening.
+ *
  * Nothing animates when `animate` is not wanted by the caller, with reduced
  * motion, or with a zero-duration motion token: the end state is applied at
  * once, still as one reflow with anchor capture and restore. A re-toggle
@@ -59,6 +62,10 @@
   // Each pane's composer toolbar fit (renderer-pane-composer-rail.js, same literal) settles on this
   // event synchronously: its compact flag hides the avatar rail and so changes the measure.
   const FIT_FLUSH_EVENT = 'jenny:composer-fit-flush';
+  // Dispatched once on #chatView by open(), in the measuring step, after the end state is applied and before it
+  // is measured. A listener that must react to the panel's final layout (the Session rail leaving a pane the
+  // panel narrows) does so here, so its change rides this motion instead of following it.
+  const MEASURING_EVENT = 'side-panel-measuring';
 
   // One motion at a time per host: starting one cancels the other panel's.
   const activeByHost = new WeakMap();
@@ -104,6 +111,10 @@
       if (typeof EventCtor !== 'function' || !panes.length) return;
       for (const pane of panes) pane.dispatchEvent?.(new EventCtor(FIT_FLUSH_EVENT));
       forceLayout();
+    }
+    function announceMeasuring() {
+      const EventCtor = chatView?.ownerDocument?.defaultView?.Event;
+      if (typeof EventCtor === 'function') chatView.dispatchEvent?.(new EventCtor(MEASURING_EVENT));
     }
     function setPhase(phase) {
       if (chatView?.dataset) chatView.dataset[MOTION_ATTRIBUTE] = phase;
@@ -202,6 +213,7 @@
       captureAnchors();
       setPhase('measuring');
       applyEnd();
+      announceMeasuring();
       settleLayout();
       const measures = measureVisiblePanes();
       setContentWidth(panel);

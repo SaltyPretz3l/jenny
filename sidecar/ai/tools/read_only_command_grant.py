@@ -15,6 +15,7 @@ gates, Electron owns the consent posture (flag, user rules, stored policies).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME
@@ -26,6 +27,13 @@ from sidecar.ai.tools.policy import (
     POLICY_DECISION_AUTO,
 )
 from sidecar.protocol import RUNTIME_OPERATION_READ_ONLY_COMMAND_GRANT as READ_ONLY_COMMAND_GRANT
+
+# What command_proposal_request refuses: characters that render invisibly or reorder displayed
+# text. A command carrying one always reaches the card, which shows them as visible markers.
+_DISGUISING_CHARS_RE = re.compile(
+    "[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u180e"
+    "\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]"
+)
 
 READ_ONLY_COMMAND_REFUSAL = (
     "Only read-only commands run in this mode (such as git log, git diff, rg, dir or ls "
@@ -47,8 +55,13 @@ def is_read_only_command(config: Any, descriptor: Any, classification: Any) -> b
     """Whether this call qualifies; ``classification`` is the root-scoped shell verdict."""
     return (
         getattr(classification, "verdict", None) is CommandVerdict.ALLOWED
+        and not _is_disguised(classification)
         and is_candidate(config, descriptor)
     )
+
+
+def _is_disguised(classification: Any) -> bool:
+    return bool(_DISGUISING_CHARS_RE.search(str(getattr(classification, "raw_command", "") or "")))
 
 
 def candidate_classification(
@@ -73,7 +86,10 @@ def read_only_command_verdict(
 ) -> CommandVerdict | None:
     """:func:`candidate_classification`'s verdict for the runtime's request root."""
     context = getattr(getattr(runtime, "request_context", None), "execution_context", None)
-    return getattr(candidate_classification(kernel, call, descriptor, context), "verdict", None)
+    classification = candidate_classification(kernel, call, descriptor, context)
+    if _is_disguised(classification):
+        return CommandVerdict.NEEDS_APPROVAL
+    return getattr(classification, "verdict", None)
 
 
 def is_allowed_verdict(verdict: CommandVerdict | None) -> bool:

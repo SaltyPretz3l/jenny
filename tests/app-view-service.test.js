@@ -88,9 +88,9 @@ test('state answers the last layout, reduced to ids and booleans', () => {
   const { service } = harness();
   assert.equal(service.state({ session_id: PRIMARY }).reason, 'unavailable');
   service.reportLayout({ active_view: 'chat', current_session_id: 'sess_a', split_session_ids: ['sess_a', 'sess_b', 'sess_c', 'bad id'],
-    sidebar_collapsed: true, preview_open: 'yes', title: 'secret' });
+    sidebar_collapsed: true, preview_open: 'yes', terminal_open: true, title: 'secret' });
   assert.deepEqual(service.state({ session_id: PRIMARY }), { ok: true, layout: { active_view: 'chat', current_session_id: 'sess_a',
-    split_session_ids: ['sess_a', 'sess_b'], sidebar_collapsed: true, chat_panel_open: false, preview_open: false } });
+    split_session_ids: ['sess_a', 'sess_b'], sidebar_collapsed: true, chat_panel_open: false, preview_open: false, terminal_open: true } });
   service.reportLayout({ active_view: 'somewhere' });
   assert.equal(service.state({ session_id: PRIMARY }).layout.active_view, 'other');
   assert.equal(service.state({ session_id: 'sess_other' }).reason, 'not_allowed');

@@ -43,6 +43,12 @@
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
       hint: jt('composer.runMode.proposeHint', 'Jenny suggests exact changes for you to review. Nothing in your files changes until you accept.'),
     }),
+    // Row 111: a display mode over Auto, Jenny chat only; never a stored run mode and never in the Shift+Tab cycle.
+    full_auto: Object.freeze({
+      label: jt('composer.runMode.fullAuto', 'Full auto'),
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.95a1 1 0 0 0 .67.01 13 13 0 0 0 4.17-2.4"/><path d="M9.3 3.6 12 2.5a1 1 0 0 1 .7 0C14.9 3.4 17.5 5 19 5a1 1 0 0 1 1 1v7a9 9 0 0 1-.34 2.5"/></svg>',
+      hint: jt('composer.runMode.fullAutoHint', 'Nothing asks first, until you restart Jenny. Your deny rules still apply.'),
+    }),
   });
 
   function escapeCssString(value) {
@@ -124,7 +130,7 @@
 
   const normalizeRunMode = composerState.normalizeRunMode;
   // Every run-mode class derives from the canonical order, so a new mode cannot leave a stale class behind.
-  const RUN_MODE_CLASSES = Object.freeze(composerState.RUN_MODE_ORDER.map((m) => `composer-run-mode-${m}`));
+  const RUN_MODE_CLASSES = Object.freeze([...composerState.RUN_MODE_ORDER, 'full_auto'].map((m) => `composer-run-mode-${m}`));
 
   // Gate C13 (2026-09-26): an unchanged apply (every focus move) writes nothing.
   const appliedRunModeChips = new WeakMap();
@@ -138,26 +144,35 @@
 
   // Plain inventory action buttons (the raw-primitive policy); '' without the
   // primitive, and every segment sync below then no-ops.
+  function runModeSegmentMarkup(option, mode, disabled) {
+    const escapeHtml = inventoryActionButton.escapeHtml;
+    const copy = MODE_CHIP_COPY[option];
+    const active = option === mode;
+    return inventoryActionButton({
+      plain: true,
+      className: `composer-run-mode-segment composer-run-mode-segment--${option}${active ? ' is-active' : ''}`,
+      dataset: { 'run-mode-option': option },
+      ariaPressed: active,
+      title: copy.hint,
+      disabled: disabled === true,
+      trustedHtml: '<span class="composer-run-mode-segment-icon" aria-hidden="true">' + copy.icon + '</span>'
+        + '<span class="composer-run-mode-segment-label">' + escapeHtml(copy.label) + '</span>',
+    });
+  }
+
   function runModeSegmentsMarkup(mode, disabled) {
     if (typeof inventoryActionButton !== 'function') return '';
-    const escapeHtml = inventoryActionButton.escapeHtml;
     const groupLabel = jt('composer.settingsSummary.rowRunMode', 'Run mode');
-    return '<div class="composer-run-mode-segments" role="group" aria-label="' + escapeHtml(groupLabel) + '">'
-      + RUN_MODE_SEGMENT_ORDER.map((option) => {
-        const copy = MODE_CHIP_COPY[option];
-        const active = option === mode;
-        return inventoryActionButton({
-          plain: true,
-          className: `composer-run-mode-segment composer-run-mode-segment--${option}${active ? ' is-active' : ''}`,
-          dataset: { 'run-mode-option': option },
-          ariaPressed: active,
-          title: copy.hint,
-          disabled: disabled === true,
-          trustedHtml: '<span class="composer-run-mode-segment-icon" aria-hidden="true">' + copy.icon + '</span>'
-            + '<span class="composer-run-mode-segment-label">' + escapeHtml(copy.label) + '</span>',
-        });
-      }).join('')
+    return '<div class="composer-run-mode-segments" role="group" aria-label="' + inventoryActionButton.escapeHtml(groupLabel) + '">'
+      + RUN_MODE_SEGMENT_ORDER.map((option) => runModeSegmentMarkup(option, mode, disabled)).join('')
       + '</div>';
+  }
+
+  // Row 111: this segment exists only while the chat offers Full auto, so every other chat keeps the plain four.
+  function syncFullAutoSegment(segments, mode, offered) {
+    const existing = segments.querySelector('[data-run-mode-option="full_auto"]');
+    if (offered && !existing) segments.insertAdjacentHTML('beforeend', runModeSegmentMarkup('full_auto', mode, false));
+    else if (!offered && existing) existing.remove();
   }
 
   // The segments group beside a run-mode chip: accepts the slot, the chip, or
@@ -170,8 +185,9 @@
     return slot.querySelector('.composer-run-mode-segments');
   }
 
-  function syncRunModeSegmentsPressed(segments, mode) {
+  function syncRunModeSegmentsPressed(segments, mode, fullAutoOffered) {
     if (!segments) return;
+    syncFullAutoSegment(segments, mode, fullAutoOffered);
     for (const button of segments.querySelectorAll('[data-run-mode-option]')) {
       const active = button.getAttribute('data-run-mode-option') === mode;
       const pressed = active ? 'true' : 'false';
@@ -196,10 +212,13 @@
 
   function applyRunModeChip(chip, runMode) {
     if (!chip) return false;
-    const mode = normalizeRunMode(runMode);
+    const storedMode = normalizeRunMode(runMode);
+    // '' on every chat but the Jenny chat (renderer-chat-event-settings-bindings.js owns the read).
+    const fullAuto = globalThis.rendererRunModeControl?.fullAutoStatusForChip?.(chip) || '';
+    const mode = fullAuto === 'armed' && storedMode === 'auto' ? 'full_auto' : storedMode;
     const nextMode = typeof composerState?.nextRunMode === 'function'
-      ? composerState.nextRunMode(mode)
-      : ({ ask: 'auto', auto: 'plan', plan: 'propose', propose: 'ask' })[mode];
+      ? composerState.nextRunMode(storedMode)
+      : ({ ask: 'auto', auto: 'plan', plan: 'propose', propose: 'ask' })[storedMode];
     const copy = MODE_CHIP_COPY[mode];
     const nextCopy = MODE_CHIP_COPY[nextMode];
     // The mode's hint sentence rides the chip: its tooltip and the end of its label.
@@ -210,12 +229,12 @@
     const disabled = chip.disabled === true;
     // The segments (their node and the chip's disabled state) ride the key, so
     // a segments mount or a disabled flip still writes; an unchanged apply not.
-    const key = [mode, ariaLabel, title, disabled ? 'disabled' : ''].join('\u0000');
+    const key = [mode, fullAuto, ariaLabel, title, disabled ? 'disabled' : ''].join('\u0000');
     const applied = appliedRunModeChips.get(chip);
     const modeClass = `composer-run-mode-${mode}`;
     if (applied && applied.key === key && applied.segments === segments
         && RUN_MODE_CLASSES.every((c) => chip.classList.contains(c) === (c === modeClass))) return true;
-    syncRunModeSegmentsPressed(segments, mode);
+    syncRunModeSegmentsPressed(segments, mode, Boolean(fullAuto));
     if (segments) syncRunModeSegmentsDisabled(segments, disabled);
     chip.classList.remove(...RUN_MODE_CLASSES, 'inv-chip--on');
     chip.classList.add(modeClass);
@@ -782,6 +801,28 @@
     };
   }
 
+  // Row 111: the accept step in front of Full auto. Resolves true only on the explicit yes.
+  let fullAutoDialog = null;
+  function warnFullAuto() {
+    const factory = globalThis.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+    const helpOverlayFactory = globalThis.inventoryHelpOverlay?.createHelpOverlay;
+    if (typeof factory !== 'function' || typeof helpOverlayFactory !== 'function') return Promise.resolve(false);
+    fullAutoDialog = fullAutoDialog || factory({ document, actionButton: inventoryActionButton, helpOverlayFactory, hostId: 'composerFullAutoOverlay' });
+    return Promise.resolve(fullAutoDialog.accept({
+      title: jt('runMode.fullAuto.title', 'Turn on Full auto?'),
+      message: jt('runMode.fullAuto.message', 'Jenny will act in this chat without asking you first, until you turn this off or restart Jenny.'),
+      points: [
+        jt('runMode.fullAuto.pointCommands', 'Python, file deletes, commands that overwrite files and terminal commands run with no card.'),
+        jt('runMode.fullAuto.pointApp', 'Changes to settings, schedules and projects apply with no card.'),
+        jt('runMode.fullAuto.pointOtherChats', 'Reports and messages from other chats can start this work, so text another chat wrote could make Jenny do any of it.'),
+        jt('runMode.fullAuto.pointReach', 'Python and shell commands can reach files and the network outside this project.'),
+      ],
+      footnote: jt('runMode.fullAuto.stillRefused', 'Still refused: your own deny rules, and blocked commands when the command sandbox is off. Scheduled checks keep asking.'),
+      noLabel: jt('runMode.fullAuto.no', 'No, leave it off'), noDetail: jt('runMode.fullAuto.noDetail', 'Nothing changes.'),
+      yesLabel: jt('runMode.fullAuto.yes', 'Yes, I accept the risk'), yesDetail: jt('runMode.fullAuto.yesDetail', 'Full auto stays on until you restart Jenny.'),
+    })).catch(() => false);
+  }
+
   return {
     createComposerModeChipsRenderer,
     createRunModeSwitcherRenderer,
@@ -794,6 +835,8 @@
     syncComposerLoadingLine,
     syncComposerLoadingLines,
     mountInventoryButton,
+    applyRunModeChip,
+    warnFullAuto,
     syncRunModeChip,
     syncRunModeSegmentsDisabled,
     BLOCKED_SEND_REASONS,

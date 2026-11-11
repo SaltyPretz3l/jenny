@@ -402,3 +402,133 @@ test('stop() during an in-flight reconcile drops the pending rerun', async (t) =
   assert.equal(ctx.readCalls.length, 1, 'no second disk read starts after stop()');
   assert.equal(ctx.opened.length, 1, 'no rerun apply starts after stop()');
 });
+
+// Live Preview hooks: onExternalDocumentReloaded + isWatching/onWatchStateChange.
+function makeReloadWatch({ dirty = false, applyOk = true, kind = 'file' } = {}) {
+  let listener = null;
+  let lifecycle = null;
+  const reloaded = [];
+  const states = [];
+  const ide = ideState.createIdeUiState();
+  const api = {
+    watchStart: async () => {}, watchStop: async () => {},
+    onChange: (fn) => { listener = fn; return () => {}; },
+    onWatchLifecycle: (fn) => { lifecycle = fn; return () => {}; },
+  };
+  const watch = createIdeWatchController({
+    getIde: () => ide,
+    getWorkspaceFsApi: () => api,
+    editorHost: {
+      hasDocument: () => true,
+      isDirty: () => dirty,
+      getDocumentKind: () => kind,
+      openDocument: async (payload) => (applyOk ? (payload.onApplied?.(), {}) : null),
+      openImageDocument: () => ({}),
+      activateDocument: () => {},
+    },
+    fileOperations: {
+      acceptsWatcherPayload: () => true,
+      resolvePath: (path) => path,
+      captureReload: (path) => ({ path, pathKey: path }),
+      readForReload: async (snapshot) => ({ stale: false, payload: { path: snapshot.path, content: 'x' } }),
+      readImageForReload: async (snapshot) => ({ stale: false, payload: { path: snapshot.path } }),
+      canCommitReload: () => true,
+      commitReload: () => true,
+    },
+    ideStateUtils: ideState,
+    renderTabs: () => {},
+    onExternalDocumentReloaded: (path) => reloaded.push(path),
+    onWatchStateChange: () => states.push(watch.isWatching()),
+  });
+  return {
+    watch, reloaded, states,
+    emit: (relPath) => listener({ changes: [{ relPath, kind: 'changed' }] }),
+    lifecycle: (payload) => lifecycle(payload),
+  };
+}
+
+test('onExternalDocumentReloaded fires after an applied clean text reload', async () => {
+  const ctx = makeReloadWatch();
+  ctx.watch.start();
+  await tick();
+  ctx.emit('a.md');
+  await tick(); await tick();
+  assert.deepEqual(ctx.reloaded, ['a.md']);
+  ctx.watch.stop();
+});
+
+test('onExternalDocumentReloaded does not fire for dirty buffers, failed applies or images', async () => {
+  for (const options of [{ dirty: true }, { applyOk: false }, { kind: 'image' }]) {
+    const ctx = makeReloadWatch(options);
+    ctx.watch.start();
+    await tick();
+    ctx.emit('a.md');
+    await tick(); await tick();
+    assert.deepEqual(ctx.reloaded, [], JSON.stringify(options));
+    ctx.watch.stop();
+  }
+});
+
+test('isWatching follows the lifecycle and onWatchStateChange fires only on a change', async () => {
+  const ctx = makeReloadWatch();
+  assert.equal(ctx.watch.isWatching(), false);
+  ctx.watch.start();
+  await tick();
+  ctx.lifecycle({ phase: 'watching' });
+  ctx.lifecycle({ phase: 'watching' });
+  assert.equal(ctx.watch.isWatching(), true);
+  assert.deepEqual(ctx.states, [true], 'a repeated phase is not a change');
+
+  ctx.lifecycle({ phase: 'stopped', reason: 'restarting' });
+  assert.equal(ctx.watch.isWatching(), true, 'a root-switch restart keeps the cue');
+  ctx.lifecycle({ phase: 'stopped', reason: 'closed' });
+  assert.equal(ctx.watch.isWatching(), false);
+  ctx.lifecycle({ phase: 'watching' });
+  ctx.lifecycle({ phase: 'degraded', reason: 'died' });
+  assert.equal(ctx.watch.isWatching(), false);
+  assert.deepEqual(ctx.states, [true, false, true, false]);
+
+  ctx.lifecycle({ phase: 'watching' });
+  ctx.watch.stop();
+  assert.equal(ctx.watch.isWatching(), false, 'stop() clears it');
+  assert.deepEqual(ctx.states, [true, false, true, false, true, false]);
+});
+
+test('a disk reload of the active tab keeps the stage surface (activation runs without a stage reset)', async () => {
+  const calls = [];
+  let listener = null;
+  const ide = ideState.createIdeUiState();
+  ide.activeTabPath = 'a.html';
+  const watch = createIdeWatchController({
+    getIde: () => ide,
+    getWorkspaceFsApi: () => ({
+      watchStart: async () => {}, watchStop: async () => {},
+      onChange: (fn) => { listener = fn; return () => {}; },
+      onWatchLifecycle: () => () => {},
+    }),
+    editorHost: {
+      hasDocument: () => true,
+      isDirty: () => false,
+      getDocumentKind: () => 'file',
+      openDocument: async (payload) => (payload.onApplied?.(), {}),
+      activateDocument: () => calls.push('activate'),
+    },
+    fileOperations: {
+      acceptsWatcherPayload: () => true,
+      resolvePath: (path) => path,
+      captureReload: (path) => ({ path, pathKey: path }),
+      readForReload: async (snapshot) => ({ stale: false, payload: { path: snapshot.path, content: 'x' } }),
+      canCommitReload: () => true,
+      commitReload: () => true,
+    },
+    ideStateUtils: ideState,
+    renderTabs: () => {},
+    runWithoutStageReset: (fn) => { calls.push('suppress-start'); const result = fn(); calls.push('suppress-end'); return result; },
+  });
+  watch.start();
+  await tick();
+  listener({ changes: [{ relPath: 'a.html', kind: 'changed' }] });
+  await tick(); await tick();
+  assert.deepEqual(calls, ['suppress-start', 'activate', 'suppress-end']);
+  watch.stop();
+});

@@ -5,6 +5,7 @@ const {
   createThinkingViewportHarness,
   createViewportControllerHarness,
 } = require('./helpers/renderer-viewport-utils-helpers.js');
+const { spendOpenLanding } = require('./helpers/renderer-viewport-open-landing-helpers.js');
 const { deriveFollowLatestFromScroll } = require('../renderer/chat/chat-scroll-utils.js');
 const {
   createViewportLiveFollowUtils,
@@ -543,6 +544,7 @@ test('viewport controller subtly follows streaming growth instead of jumping to 
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
 
   try {
+    spendOpenLanding(harness);
     harness.state.ui.followLatest = true;
     harness.setThinkingAutoScroll(true);
     harness.setScrollMetrics({ scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
@@ -564,6 +566,7 @@ test('viewport controller retargets the live follow animation as streaming conte
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
 
   try {
+    spendOpenLanding(harness);
     harness.state.ui.followLatest = true;
     harness.setThinkingAutoScroll(true);
     harness.setScrollMetrics({ scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
@@ -650,6 +653,7 @@ test('viewport controller keeps following streamed growth across post-render syn
   });
 
   try {
+    spendOpenLanding(harness);
     harness.state.ui.followLatest = true;
     harness.setThinkingAutoScroll(true);
     // User sits at the bottom (600 = 1000 - 400) when streaming begins.

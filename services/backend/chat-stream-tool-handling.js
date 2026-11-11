@@ -46,6 +46,7 @@ const {
   toolResultExitCode,
   makeNoteTurnEvent,
   peekToolLookupMessages,
+  savedToolOutput,
 } = require('./chat-stream-tool-payload-utils');
 const planDocuments = require('./plan-document-events');
 
@@ -385,6 +386,8 @@ function handleToolNotification(service, context, notification, options = {}) {
     );
     const summary = sanitizeToolSummary(toolSummaries.get(callId) || summarizeToolPayload(toolName, input));
     toolSummaries.set(callId, summary);
+    // Row 114: the browser's page text is never saved or emitted; every writer below uses this.
+    const savedOutput = savedToolOutput(toolName, params.output, params.metadata);
     const generatedArtifacts = mergeLocalGeneratedArtifactPaths(service, {
       streamId,
       callId,
@@ -474,7 +477,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       toolResult: {
         call_id: callId,
         tool_name: toolName,
-        output_text: String(params.output || ''),
+        output_text: savedOutput,
         summary,
         is_error: params.success === false,
         error_code: String(params.error_code || '').trim(),
@@ -509,7 +512,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       status: toolStatus,
       payload: {
         tool_name: toolName,
-        output_text: String(params.output || ''),
+        output_text: savedOutput,
         summary,
         is_error: params.success === false,
         error_code: String(params.error_code || '').trim(),
@@ -542,7 +545,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       ...(policyDecisionId ? { policyDecisionId } : {}),
       toolName,
       input: persistedInputSnapshot.input,
-      content: String(params.output || ''),
+      content: savedOutput,
       summary,
       isError: params.success === false,
       approvalState: 'auto',

@@ -6,6 +6,7 @@ const { API_VERSION } = require('./backend/sidecar-client');
 const { TOOL_ERROR_CODES } = require('./backend/error-codes');
 const { isPlainObject } = require('./value-utils');
 const { createWorkspaceRecoveryFileHandlers } = require('./workspace-recovery-files-ipc');
+const { createSandboxCheckpointRecovery, createSessionRootResolver } = require('./workspace-git-sandbox-checkpoint');
 
 const METHODS = Object.freeze({
   list: 'workspace.list_change_sets',
@@ -363,7 +364,9 @@ async function callRecoveryRpc(backendService, method, params) {
 
 // gitService / ideService / safetyCopies back the row 34 S5 file methods
 // (workspace-recovery-files-ipc.js); each is optional and a missing one makes
-// its methods fail closed with `recovery_unavailable`.
+// its methods fail closed with `recovery_unavailable`. Sandbox restore points
+// (row 106) restore in the chat's project root from backendService's project
+// authority; `sandboxTrashItem` is the recycle bin for files a command added.
 function registerWorkspaceRecoveryIpcHandlers({
   ipcMainLike,
   backendService,
@@ -371,7 +374,12 @@ function registerWorkspaceRecoveryIpcHandlers({
   gitService = null,
   ideService = null,
   safetyCopies = null,
+  sandboxTrashItem = null,
 }) {
+  const sandboxCheckpoints = createSandboxCheckpointRecovery({
+    resolveSessionRoot: createSessionRootResolver(() => backendService?.projectAuthority),
+    trashItem: typeof sandboxTrashItem === 'function' ? sandboxTrashItem : null,
+  });
   const files = createWorkspaceRecoveryFileHandlers({
     failure,
     hasOnlyKeys,
@@ -380,6 +388,7 @@ function registerWorkspaceRecoveryIpcHandlers({
     gitService,
     ideService,
     safetyCopies,
+    sandboxCheckpoints,
   });
   registerIpcInvokeHandlers(ipcMainLike, {
     'workspaceRecovery.listChangeSets': (_event, payload = {}) => (

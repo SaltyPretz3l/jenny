@@ -132,7 +132,7 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
     return ToolHandlerResult(
         output=(
             f"Deleted {relative} (moved to {trashed_relative}). "
-            "This is reversible — move it back from there to restore."
+            "The user can restore it from that folder; move_file cannot reach it."
         ),
         success=True,
         metadata={

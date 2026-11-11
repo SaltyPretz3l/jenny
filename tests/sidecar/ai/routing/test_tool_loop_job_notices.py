@@ -72,7 +72,6 @@ def _run(jobs: list[dict[str, Any]]) -> tuple[_ToolLoopEngine, list[Any]]:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     events: list[Any] = []
     with bind_pending_job_notices(pending):
@@ -150,6 +149,11 @@ def _fake_loop(outcomes: list[Any] | None = None, *, sub_agent: bool = False) ->
 
 def _outcome(tool_name: str, job_id: str, output: str) -> ToolExecutionOutcome:
     return ToolExecutionOutcome(tool_name=tool_name, output=output, success=True, tool_input={"job_id": job_id})
+
+
+def test_a_stopped_job_reads_as_stopped_by_the_user() -> None:
+    note = render_job_notice([_job("aaaaaaaaaaaa", exit_code=None, state="stopped")])
+    assert "- aaaaaaaaaaaa (`npm test`): stopped by the user\n" in note
 
 
 def test_already_read_jobs_are_acked_but_not_announced() -> None:

@@ -27,6 +27,7 @@ from sidecar.ai.routing.loop_events import (
     ToolResultEvent,
 )
 from sidecar.ai.routing.turn_event_contract import build_canonical_turn_event
+from sidecar.ai.tools.tool_families import saved_tool_output
 from sidecar.ai.tools.trusted_attachments import attachment_refs
 from sidecar.protocol import (
     CHAT_PHASE_COMPLETED_METHOD,
@@ -574,7 +575,7 @@ def _tool_result_turn_event_parts(event: ToolResultEvent) -> _TurnEventParts:
     payload: dict[str, Any] = {
         "tool_name": event.tool_name,
         "success": bool(event.success),
-        "tool_output_summary": event.content,
+        "tool_output_summary": saved_tool_output(event.tool_name, event.content, event.metadata),
         "content_type": event.content_type,
         "tool_input": dict(event.tool_input),
     }

@@ -7,25 +7,7 @@ const {
   restoreAuthState: _restoreAuthState,
   updateLocalProfile: _updateLocalProfile,
 } = require('./backend-auth');
-const {
-  resolveModel: _resolveModel,
-  cancelChatStream: _cancelChatStream,
-  compactContextNow: _compactContextNow,
-  approveToolCall: _approveToolCall,
-  denyToolCall: _denyToolCall,
-  handleChatStreamEnd: _handleChatStreamEnd,
-  hasPendingUserQuestions: _hasPendingUserQuestions,
-  answerUserQuestions: _answerUserQuestions,
-  declineUserQuestions: _declineUserQuestions,
-} = require('./backend-chat-stream');
-const { generateHandoffNote: _generateHandoffNote } = require('./backend-handoff');
-const {
-  startManagedSidecarChatStream: _startManagedSidecarChatStream,
-} = require('./managed-sidecar-chat');
-const { discardUnsavedReply: _discardUnsavedReply, retryUnsavedReply: _retryUnsavedReply } = require('./backend-terminal-repair-actions');
-const {
-  assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible, assertRegenerateAnchorAdmissible,
-} = require('./chat-turn-admission');
+const { handleChatStreamEnd: _handleChatStreamEnd } = require('./backend-chat-stream');
 const {
   buildManagedSidecarConfig: _buildManagedSidecarConfig,
   disposeSidecarClient: _disposeSidecarClient,
@@ -57,29 +39,6 @@ const {
   runPendingMigrations: _runPendingMigrations,
 } = require('./backend-session-migration-scheduler');
 const {
-  startLocalEngineChatStream: _startLocalEngineChatStream,
-} = require('./local-engine-requests');
-const {
-  acceptPendingMemory: _acceptPendingMemory,
-  bumpMemoryPolicyEpoch: _bumpMemoryPolicyEpoch,
-  clearMemorySuppressions: _clearMemorySuppressions,
-  memoryPolicyEpoch: _memoryPolicyEpoch,
-  purgeSessionMemories: _purgeSessionMemories,
-  trackMemoryOptOutChange: _trackMemoryOptOutChange,
-  undoApprovedMemoryChange: _undoApprovedMemoryChange,
-  undoMemoryOperation: _undoMemoryOperation,
-  archiveProjectMemories: _archiveProjectMemories,
-  getMemoryStatus: _getMemoryStatus,
-  saveMemoryForSession: _saveMemoryForSession,
-  listApprovedMemories: _listApprovedMemories,
-  listPendingMemories: _listPendingMemories,
-  updateApprovedMemory: _updateApprovedMemory,
-  deleteApprovedMemory: _deleteApprovedMemory,
-  deletePendingMemory: _deletePendingMemory,
-  recallApprovedMemories: _recallApprovedMemories,
-} = require('./backend-memory');
-const memorySettings = require('./backend-memory-settings');
-const {
   runBackgroundTask: _runBackgroundTask,
 } = require('./backend-background-tasks');
 const {
@@ -108,11 +67,10 @@ const {
 const {
   CANCEL_REASON_DISPOSE,
   CANCEL_REASON_SERVICE_STOP,
-  CANCEL_REASON_USER,
   createCancellationError,
-  normalizeCancelReason,
 } = require('./chat-stream-terminal-utils');
 const { isolateActiveStreamAbort } = require('./active-stream-shutdown-drain');
+const { createApprovedCallGrants } = require('./runtime-approved-call-grants');
 const { getOllamaModelBlob: _getOllamaModelBlob } = require('./backend-ollama-blob');
 const {
   refreshStatusSnapshot: _refreshStatusSnapshot,
@@ -125,31 +83,12 @@ const {
   getHardwareVramUsage: _getHardwareVramUsage,
   getResidentModels: _getResidentModels,
 } = require('./backend-runtime');
-const {
-  listSessions: _listSessions,
-  createSession: _createSession,
-  createLinkedChildSession: _createLinkedChildSession,
-  renameSession: _renameSession,
-  getSessionMessages: _getSessionMessages,
-  setSessionPreferences: _setSessionPreferences,
-  pauseSessionAutoRun: _pauseSessionAutoRun,
-  setSessionMeta: _setSessionMeta,
-  sweepEmptySessions: _sweepEmptySessions,
-  updateSessionMessage: _updateSessionMessage,
-  editUserMessageAndTruncate: _editUserMessageAndTruncate,
-} = require('./backend-sessions');
-const {
-  deleteSessionWithQuiescence: _deleteSessionWithQuiescence,
-} = require('./backend-session-delete-lifecycle');
-const {
-  PRIMARY_PROTECTED, ensurePrimarySession: _ensurePrimarySession, isPrimarySession,
-} = require('./primary-session');
+const { chatMethods } = require('./backend-service-chat-methods');
+const { memoryMethods } = require('./backend-service-memory-methods');
+const { sessionMethods } = require('./backend-service-session-methods');
 const {
   inferEngineTypeFromModel,
 } = require('./backend-service-utils');
-const {
-  getManagedActiveTurnState: _getManagedActiveTurnState,
-} = require('./backend-active-turn-state');
 const {
   getManagedReasoningSupportForModel: _getManagedReasoningSupportForModel,
 } = require('./backend-managed-reasoning');
@@ -240,6 +179,7 @@ class BackendService extends EventEmitter {
     this.accessToken = '';
     this.activeStreams = new Map();
     this.pendingToolApprovals = new Map();
+    this.approvedCallGrants = createApprovedCallGrants();
     this.pendingUserQuestions = new Map();
     this.on('chat-stream', (event) => _handleChatStreamEnd(this, event));
     this.enableInteractiveStreamDebug = Boolean(options.enableInteractiveStreamDebug);
@@ -575,196 +515,48 @@ class BackendService extends EventEmitter {
     return _getOllamaModelBlob(this, modelId);
   }
 
-  async listSessions() {
-    return _listSessions(this);
-  }
 
-  getSessionSummariesForScheduler() {
-    return this.sessionStore.listSessions();
-  }
 
-  getBackgroundRuntimeRoot() {
-    return path.join(this.options.userDataPath, 'background-memory');
-  }
 
-  async createSession({
-    title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
-    handoffFromSessionId,
-  } = {}) {
-    return _createSession(this, {
-      title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
-      handoffFromSessionId,
-    });
-  }
 
-  async renameSession(sessionId, title) {
-    return _renameSession(this, sessionId, title);
-  }
 
-  async deleteSession(sessionId, options) {
-    // Row 69: refuse the primary chat before the deletion lifecycle cancels its stream.
-    if (isPrimarySession(this.sessionStore, sessionId)) {
-      return { object: 'session', id: String(sessionId).trim(), deleted: false, reason: PRIMARY_PROTECTED };
-    }
-    return _deleteSessionWithQuiescence(this, sessionId, options);
-  }
 
-  // Row 69: the profile's one primary Jenny chat. Internal path only (the wiring runs it deferred after
-  // the window exists); never throws, and sessions.create can never mint a primary.
-  async ensurePrimarySession() {
-    return _ensurePrimarySession({
-      sessionStore: this.sessionStore,
-      createSession: (options) => _createSession(this, options),
-      featureFlags: this.featureFlags,
-      log: (level, event, details) => this._emitServiceLog(level, event, details),
-    });
-  }
 
-  // The session directory behind sessions_list (row 69), or null before the runtime composition
-  // wires a tool executor; profile-overview-block.js reads it for the primary chat's overview.
-  getSessionDirectory() {
-    return this.toolExecutor?.getSessionDirectoryService?.() || null;
-  }
 
-  async getSessionMessages(sessionId) {
-    return _getSessionMessages(this, sessionId);
-  }
 
-  async setSessionPreferences(sessionId, preferences = {}) {
-    return _trackMemoryOptOutChange(this, sessionId, () => _setSessionPreferences(this, sessionId, preferences));
-  }
 
-  pauseSessionAutoRun(sessionId, options = {}) {
-    return _pauseSessionAutoRun(this, sessionId, options);
-  }
 
-  async setSessionMeta(sessionId, meta = {}) {
-    return _setSessionMeta(this, sessionId, meta);
-  }
 
-  // Row 59 cp5a: the linked child of an accepted New session proposal (never reachable from sessions.create IPC).
-  createLinkedChildSession(spec = {}) {
-    return _createLinkedChildSession(this, spec);
-  }
 
-  async sweepEmptySessions(options = {}) {
-    return _sweepEmptySessions(this, options);
-  }
 
-  async updateSessionMessage(sessionId, messageId, patch = {}) {
-    return _updateSessionMessage(this, sessionId, messageId, patch);
-  }
 
-  async editUserMessageAndTruncate(sessionId, messageId, payload = {}) {
-    const normalizedSessionId = String(sessionId || '').trim();
-    const normalizedMessageId = String(messageId || '').trim();
-    if (!normalizedSessionId || !normalizedMessageId) return null;
-    return this.sessionTurnActors.runSessionMutation(
-      normalizedSessionId,
-      'sessions.edit_and_truncate',
-      () => null,
-      () => _editUserMessageAndTruncate(this, normalizedSessionId, normalizedMessageId, payload),
-      { requireIdle: true }
-    );
-  }
 
   async runBackgroundTask(task, params = {}) {
     return _runBackgroundTask(this, task, params);
   }
 
-  async getMemoryStatus() {
-    return _getMemoryStatus(this);
-  }
 
-  async saveMemoryForSession(sessionId, candidate) {
-    return _saveMemoryForSession(this, sessionId, candidate);
-  }
 
-  async listApprovedMemories() {
-    return _listApprovedMemories(this);
-  }
 
-  async listPendingMemories() {
-    return _listPendingMemories(this);
-  }
 
-  async updateApprovedMemory(memoryId, patch, projectId, options) {
-    return _updateApprovedMemory(this, memoryId, patch, projectId, options);
-  }
 
-  async deleteApprovedMemory(memoryId, projectId, options) {
-    return _deleteApprovedMemory(this, memoryId, projectId, options);
-  }
 
-  async deletePendingMemory(sessionId, contentFingerprint, projectId) {
-    return _deletePendingMemory(this, sessionId, contentFingerprint, projectId);
-  }
 
-  async acceptPendingMemory(sessionId, contentFingerprint, projectId) {
-    return _acceptPendingMemory(this, sessionId, contentFingerprint, projectId);
-  }
 
-  // Settings > Memory page (row 58 W4); each takes one `{ projectId, ... }` request.
-  async listArchivedMemories(request) {
-    return memorySettings.listArchivedMemories(this, request);
-  }
 
-  async restoreArchivedMemory(request) {
-    return memorySettings.restoreArchivedMemory(this, request);
-  }
 
-  async eraseMemory(request) {
-    return memorySettings.eraseMemory(this, request);
-  }
 
-  async clearForgottenMemories(request) {
-    return memorySettings.clearForgottenMemories(this, request);
-  }
 
-  async listMemoryOperations(request) {
-    return memorySettings.listMemoryOperations(this, request);
-  }
 
-  async setMemoryAlwaysOn(request) {
-    return memorySettings.setMemoryAlwaysOn(this, request);
-  }
 
-  async exportMemoriesMarkdown(request) {
-    return memorySettings.exportMemoriesMarkdown(this, request);
-  }
 
-  async undoApprovedMemoryChange(operationId, projectId) {
-    return _undoApprovedMemoryChange(this, operationId, projectId);
-  }
 
-  async undoMemoryOperation(sessionId, operationId) {
-    return _undoMemoryOperation(this, sessionId, operationId);
-  }
 
-  async archiveProjectMemories(projectId) {
-    return _archiveProjectMemories(this, projectId);
-  }
 
-  async purgeSessionMemories(sessionId) {
-    return _purgeSessionMemories(this, sessionId);
-  }
 
-  async clearMemorySuppressions(projectId = null) {
-    return _clearMemorySuppressions(this, projectId);
-  }
 
-  // Memory policy epoch (row 58 W1): in-process, monotonic, starts at 0.
-  memoryPolicyEpoch() {
-    return _memoryPolicyEpoch(this);
-  }
 
-  bumpMemoryPolicyEpoch(reason) {
-    return _bumpMemoryPolicyEpoch(this, reason);
-  }
 
-  async recallApprovedMemories(query, limit = 3, options = {}) {
-    return _recallApprovedMemories(this, query, limit, options);
-  }
 
   async inspectHarness(options = {}) {
     return _inspectHarness(this, options);
@@ -799,124 +591,19 @@ class BackendService extends EventEmitter {
     return this.phasePercentilesAggregator.reset();
   }
 
-  async _resolveModel(preferredModel = '', preferredEngineType = '', ownStreamId = '') {
-    return _resolveModel(this, preferredModel, preferredEngineType, ownStreamId);
-  }
 
-  async startChatStream(payload, options = {}) {
-    const {
-    sessionId,
-    prompt,
-    visiblePrompt,
-    traceId,
-    preferredModel,
-    reasoningEffort,
-    attachments,
-    interactiveResponse,
-    interactiveRoundCount,
-    planMode,
-    contextPreferences,
-    activeFileContext,
-    mentionContents,
-    toolPreferences,
-    approvalMode,
-    debugOptions,
-    clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
-    } = payload || {};
-    // Runtime admission owns routed GPU/provider checks when composed. Minimal
-    // embedded hosts retain the legacy entry check.
-    if (!this.sessionRuntime) assertChatTurnAdmissible(this, sessionId);
-    assertLinkedFirstTurnAdmissible(this, sessionId);
-    return _startLocalEngineChatStream(this, {
-      sessionId,
-      prompt,
-      visiblePrompt,
-      traceId,
-      preferredModel,
-      reasoningEffort,
-      attachments,
-      interactiveResponse,
-      interactiveRoundCount,
-      planMode,
-      contextPreferences,
-      activeFileContext,
-      mentionContents,
-      toolPreferences,
-      approvalMode,
-      debugOptions,
-      clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
-    }, options);
-  }
 
-  async editAndRegenerate(payload = {}) {
-    const sessionId = String(payload.sessionId || '').trim();
-    const editedMessageId = String(payload.editedMessageId || '').trim();
-    const failureRetry = payload.failureRetry === true;
-    if (!sessionId || !editedMessageId) {
-      throw new TypeError('Edit-and-regenerate requires sessionId and editedMessageId.');
-    }
-    assertRegenerateAnchorAdmissible(this, sessionId, editedMessageId);
-    return this.startChatStream({
-      ...payload,
-      sessionId,
-      editedMessageId,
-      // Normalized, not conditionally spread: `...payload` above carries the
-      // caller's raw value, so an absent spread would let a truthy non-boolean
-      // ride through unchanged. Every consumer tests `=== true`, but a field
-      // that only LOOKS boolean is how this codebase has repeatedly turned one
-      // state into another by accident.
-      failureRetry,
-    });
-  }
 
-  async retryUnsavedReply(payload = {}) {
-    return _retryUnsavedReply(this, payload);
-  }
 
-  async discardUnsavedReply(payload = {}) {
-    return _discardUnsavedReply(this, payload);
-  }
 
-  cancelChatStream(streamId, reason) {
-    const normalized = normalizeCancelReason(reason, CANCEL_REASON_USER);
-    return _cancelChatStream(this, streamId, normalized);
-  }
 
-  async getActiveTurnState(sessionId) {
-    return _getManagedActiveTurnState(this, sessionId);
-  }
 
-  // Manual/on-demand compaction (Settings "Compact now"). Passthrough of the
-  // sidecar's chat.compact result; see backend-chat-stream.js for the guard +
-  // message-mapping logic (kept there to stay under the file-size cap here).
-  async compactContextNow(sessionId) {
-    return _compactContextNow(this, sessionId);
-  }
 
-  // /handoff: an off-transcript handoff note from the same prepared history.
-  async generateHandoffNote(sessionId, options) {
-    return _generateHandoffNote(this, sessionId, options);
-  }
 
-  approveToolCall(callId, options = {}) {
-    return _approveToolCall(this, callId, options);
-  }
 
-  denyToolCall(callId) {
-    return _denyToolCall(this, callId);
-  }
 
-  hasPendingUserQuestions(questionRef) {
-    return _hasPendingUserQuestions(this, questionRef);
-  }
 
-  answerUserQuestions(questionRef, payload = {}) {
-    return _answerUserQuestions(this, questionRef, payload);
-  }
 
-  declineUserQuestions(questionRef) {
-    return _declineUserQuestions(this, questionRef);
-  }
 
   async _initializeManagedSidecar(options = {}) {
     return _initializeManagedSidecarWithTimeout(this, options);
@@ -942,8 +629,18 @@ class BackendService extends EventEmitter {
     return _refreshManagedConfig(this, reason, options);
   }
 
-  async _startManagedSidecarChatStream(opts) {
-    return _startManagedSidecarChatStream(this, opts);
+}
+
+// The chat, memory and session delegates live in backend-service-*-methods.js;
+// install them on the prototype so the class surface (and test stubs on it) is unchanged.
+for (const methods of [chatMethods, memoryMethods, sessionMethods]) {
+  for (const [name, method] of Object.entries(methods)) {
+    Object.defineProperty(BackendService.prototype, name, {
+      value: method,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
   }
 }
 

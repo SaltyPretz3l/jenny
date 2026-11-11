@@ -11,13 +11,15 @@ const { normalizeSpawnedFrom } = require('./session-coordination-records');
 const { buildSessionPreferencesPatch } = require('./session-preferences-patch');
 const { forkSessionWithArtifacts } = require('./session-branching');
 const { readForkSource } = require('./session-fork-source');
+const { inheritedToolCategoryOverrides } = require('./spawned-child-tool-switches');
 
 const CHILD_ID_RE = /^sess_[0-9]+_[0-9a-f]{12}$/;
 const INCARNATION_RE = /^inc_[0-9a-f]{32}$/;
 
 // The record fields the fork gets on top of the copied history: the reserved identity and proof, a
-// child's reporting switch, and the accepted preferences. Lockdown never drops below the source's.
-function childFields(spec, provenance, sourceLockdown) {
+// child's reporting switch, the accepted preferences and the spawning chat's tool switches. Lockdown
+// never drops below the source's.
+function childFields(spec, provenance, sourceLockdown, toolCategoryOverrides) {
   const preferences = spec.preferences || {};
   return {
     ...buildSessionPreferencesPatch({
@@ -25,6 +27,7 @@ function childFields(spec, provenance, sourceLockdown) {
       reasoning_effort: preferences.reasoning_effort,
       run_mode: preferences.run_mode,
       lockdown: spec.lockdown === true || sourceLockdown === true,
+      tool_category_overrides: toolCategoryOverrides,
     }),
     session_incarnation: spec.childIncarnation,
     spawned_from: provenance,
@@ -68,7 +71,8 @@ async function createLinkedForkSession(service, spec = {}) {
       branchSessionId: childSessionId,
       shadowStore: service.shadowStore,
       artifactService: service.artifactService,
-      sessionFields: childFields(spec, provenance, source.lockdown),
+      sessionFields: childFields(spec, provenance, source.lockdown,
+        inheritedToolCategoryOverrides(store, provenance.parent_session_id)),
     });
   } catch {
     summary = null;

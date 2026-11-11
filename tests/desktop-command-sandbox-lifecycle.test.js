@@ -298,7 +298,7 @@ test('duplicate requests are rejected and concurrent requests are never queued',
   const first = setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true, digest: 'a', validate() {} }));
   await new Promise((resolve) => setImmediate(resolve));
   await assert.rejects(setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'other', isLive: () => true }, async () => ({ approved: true })),
-    (error) => error.reason === 'sandbox_unavailable');
+    (error) => error.reason === 'sandbox_busy');
   gate.resolve();
   await first;
   await assert.rejects(setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true })),
@@ -422,4 +422,31 @@ test('project rebinding during approval prevents dispatch and confirms worker cl
  assert.equal(workers[0].transport.disposed, true);
  assert.equal(setup.launcher.calls.some(call => call[0] === 'stopAndRemove'), true);
  assert.equal(setup.service.state, 'ready');
+});
+
+test('a workspace the copy refuses fails that call only and leaves the sandbox ready', async t => {
+  const setup = await readyService(t);
+  const resources = runtimeResources(setup);
+  const workers = attachFakeWorker(setup.service);
+  // As createWorkspaceSnapshot does: it settles (confirmed cleanup) before the refusal propagates.
+  setup.service.snapshot = async ({ onSettled }) => {
+    onSettled?.({ cleanupConfirmed: true });
+    throw sandboxError('snapshot_limit');
+  };
+  await assert.rejects(setup.service.execute({ command: 'true' }, { sessionId: 'session', streamId: 'stream',
+    callId: 'call', projectAuthority: setup.authority, resourceClaim: resources.resourceClaim },
+  async () => { throw new Error('must not request approval'); }), /snapshot_limit/);
+  assert.equal(workers.length, 0);
+  // 2026-11-03: the refusal used to latch `unavailable`, so the next Run failed as sandbox_unavailable.
+  assert.equal(setup.service.getState().state, 'ready');
+  assert.equal(resources.broker.snapshot().lease_count, 0);
+  // A raw filesystem error while copying (a locked file) is per call too.
+  setup.service.snapshot = async ({ onSettled }) => {
+    onSettled?.({ cleanupConfirmed: true });
+    throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+  };
+  await assert.rejects(setup.service.execute({ command: 'true' }, { sessionId: 'session', streamId: 'stream-2',
+    callId: 'call-2', projectAuthority: setup.authority, resourceClaim: runtimeResources(setup).resourceClaim },
+  async () => { throw new Error('must not request approval'); }), /EBUSY/);
+  assert.equal(setup.service.getState().state, 'ready');
 });

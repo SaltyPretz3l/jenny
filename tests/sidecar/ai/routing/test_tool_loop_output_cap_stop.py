@@ -8,7 +8,8 @@ import pytest
 from sidecar.ai.routing.budget_stop_details import budget_stop_details, fallback_sentence
 from sidecar.ai.routing.loop_events import StreamResetEvent, ThinkingEvent, TokenDeltaEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
-from sidecar.ai.routing.tool_loop_recovery import _output_capped, budget_exhausted_wind_down
+from sidecar.ai.routing.tool_loop_recovery import budget_exhausted_wind_down
+from sidecar.ai.routing.tool_loop_wind_down import _output_capped
 from sidecar.ai.tools.models import GenerationResult
 
 _OUTPUT_CAP_FOOTER = (
@@ -58,7 +59,7 @@ def test_output_capped_context_stop_reports_output_limit(
         pytest.fail("context-budget stops must not regenerate")
 
     monkeypatch.setattr(
-        "sidecar.ai.routing.tool_loop_recovery.wind_down_response",
+        "sidecar.ai.routing.tool_loop_wind_down.wind_down_response",
         unexpected_regeneration,
     )
     events: list[object] = []
@@ -134,7 +135,7 @@ def test_context_stop_uses_cause_specific_fallback(
         pytest.fail("context-budget stops must not regenerate")
 
     monkeypatch.setattr(
-        "sidecar.ai.routing.tool_loop_recovery.wind_down_response",
+        "sidecar.ai.routing.tool_loop_wind_down.wind_down_response",
         unexpected_regeneration,
     )
     result = budget_exhausted_wind_down(

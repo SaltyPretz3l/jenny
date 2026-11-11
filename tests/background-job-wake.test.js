@@ -78,10 +78,45 @@ test('a job whose settled result the model already read does not wake', async ()
   assert.equal(state.submits.length, 0);
 });
 
-test('a job the person stopped never wakes', async () => {
-  const { ops, state } = harness();
-  assert.equal((await ops.onJobSettled(job({ stopRequested: true }))).outcome, 'not_needed');
+test('a job the person stopped never wakes; it is held for the next turn', async () => {
+  const { ops, state } = harness({ deliverMidTurn: () => ({ ok: false, reason: 'no_live_stream' }) });
+  assert.equal((await ops.onJobSettled(job({ stopRequested: true, state: 'failed' }))).outcome, 'held');
   assert.equal(state.submits.length, 0);
+  assert.equal(state.rechecks.length, 0);
+  await ops.onTurnSettled(CHAT);
+  assert.equal(state.submits.length, 0, 'a turn ending elsewhere still never wakes it');
+  assert.equal(ops.stats().stopped, 1);
+});
+
+test('a stop is told to the model as "stopped", at the next turn start, until it is acknowledged', async () => {
+  let live = false;
+  const { ops, state } = harness({ deliverMidTurn: () => (live ? { ok: true } : { ok: false, reason: 'no_live_stream' }) });
+  await ops.onJobSettled(job({ stopRequested: true, state: 'failed', exitCode: 1 }));
+  live = true;
+  assert.equal(ops.onTurnStarted(CHAT).outcome, 'delivered');
+  const sent = state.midTurn.at(-1).jobs[0];
+  assert.equal(sent.state, 'stopped');
+  assert.equal(sent.exitCode, null);
+  assert.equal(ops.stats().stopped, 1, 'unacknowledged: the next turn hears it again');
+  ops.noteResultRead(sent.jobId);
+  assert.equal(ops.stats().stopped, 0);
+  assert.equal(ops.onTurnStarted(CHAT).outcome, 'none');
+  assert.equal(state.submits.length, 0);
+});
+
+test('a stop during a live turn reaches that turn at once', async () => {
+  const { ops, state } = harness({ deliverMidTurn: () => ({ ok: true }) });
+  state.activeTurn = { turn_id: 'turn_live' };
+  assert.equal((await ops.onJobSettled(job({ stopRequested: true }))).outcome, 'delivered');
+  assert.equal(state.midTurn.length, 1);
+  assert.equal(state.submits.length, 0);
+});
+
+test('a stop whose result the model already read is not told again', async () => {
+  const { ops, state } = harness({ deliverMidTurn: () => ({ ok: true }) });
+  ops.noteResultRead('3869b0f37a73');
+  assert.equal((await ops.onJobSettled(job({ stopRequested: true }))).outcome, 'not_needed');
+  assert.equal(state.midTurn.length, 0);
 });
 
 test('a job that settles mid-turn waits for the settle and is skipped if the turn read it', async () => {

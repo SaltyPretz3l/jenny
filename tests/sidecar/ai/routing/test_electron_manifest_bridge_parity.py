@@ -22,6 +22,7 @@ import pytest
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.routing import tool_resolution
+from sidecar.ai.tools.tool_search import RUNTIME_CHILD_TOOLS_FLAG
 from sidecar.runtime.chat_models import ChatRequestContext
 
 _MANIFEST_PATH = (
@@ -35,6 +36,12 @@ _MANIFEST_PATH = (
 # literal on purpose -- the review beat `ask_user` skipped.
 REQUEST_OWNED_CHILD_TOOLS = frozenset({"session_spawn", "session_wait", "session_result"})
 
+
+@pytest.fixture(autouse=True)
+def _offer_runtime_child_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The child tools are off unless this switch is set (tool review, row 129).
+    monkeypatch.setenv(RUNTIME_CHILD_TOOLS_FLAG, "1")
+
 # Offered only in a trusted handoff preparation turn (never in an ordinary payload).
 PREPARATION_ONLY_TOOLS = frozenset({"complete_session_handoff"})
 
@@ -42,7 +49,9 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
     {
         "ask_user",
         "automation_list",
-        "automation_read",
+        # Added deliberately (row 114): the model-driven browser. Every action is side-effecting
+        # (policy auto; consent is asked inside the tool), so plan mode withholds it.
+        "browser",
         # Added deliberately (row 59 cp5a): a model-facing session proposal tool and
         # the preparation-only handoff completion. Both are record producers like
         # `propose_command`; the second is offered only with `handoff_preparation`.
@@ -158,6 +167,7 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_automations_enabled": True,
         "tools_workspace_present_enabled": True,
         "tools_preview_test_enabled": True,
+        "tools_browser_use_enabled": True,
         "tools_verify_enabled": True,
         "tools_image_generate_enabled": True,
         "tools_home_enabled": True,
@@ -257,9 +267,10 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
     ("config_flag", "gated_tools"),
     [
         ("tools_worktree_enabled", {"worktree_list", "worktree_create", "worktree_select", "worktree_delete"}),
-        ("tools_automations_enabled", {"automation_list", "automation_read"}),
+        ("tools_automations_enabled", {"automation_list"}),
         ("tools_workspace_present_enabled", {"workspace_present"}),
         ("tools_preview_test_enabled", {"preview_test"}),
+        ("tools_browser_use_enabled", {"browser"}),
         ("tools_verify_enabled", {"verify"}),
         ("tools_image_generate_enabled", {"image_generate"}),
         ("tools_home_enabled", {"home"}),
@@ -325,3 +336,13 @@ def test_child_tools_are_request_owned_without_global_config_mutation(tmp_path):
     assert REQUEST_OWNED_CHILD_TOOLS <= names
     assert REQUEST_OWNED_CHILD_TOOLS.isdisjoint(_payload_names(kernel, plan_mode=False))
     assert not hasattr(kernel._config, "runtime_children_enabled")
+
+
+def test_child_tools_are_not_offered_unless_the_switch_is_set(tmp_path, monkeypatch):
+    monkeypatch.delenv(RUNTIME_CHILD_TOOLS_FLAG, raising=False)
+    kernel = _kernel(str(tmp_path))
+    context = ChatRequestContext(request_id="request", trace_id=None, session_id="session",
+        mode="assist", approvals_pre_granted=False, workspace_root_present=True,
+        runtime_children_enabled=True)
+    names = {item["name"] for item in tool_resolution.build_tool_payload(kernel, None, request_context=context)}
+    assert REQUEST_OWNED_CHILD_TOOLS.isdisjoint(names)

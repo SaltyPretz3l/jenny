@@ -240,15 +240,18 @@ function paletteBackgrounds(name) {
   return colors;
 }
 
-test('every light palette overrides the sprite tones and meets 3:1 on its chat backgrounds', () => {
+test('every light palette sheet sets the sprite tones and meets 3:1 on its chat backgrounds', () => {
   const light = lightPalettes();
-  assert.deepEqual(light, ['jenny-day', 'paper', 'woolly'], 'the light palette set changed: review the overrides');
+  assert.deepEqual(light, ['chalk', 'jenny-day', 'paper', 'woolly'], 'the light palette set changed: review the sheets');
+  // The dot sheet itself carries no per-palette tones; the palette sheets do.
+  assert.equal(baseRules.some((rule) => rule.selectors.some((s) => s.includes('[data-palette'))), false,
+    'chat-sprite-dot.css holds no per-palette blocks');
   for (const name of light) {
-    const decls = declsFor(baseRules, `:root[data-palette="${name}"]`);
+    const decls = declsFor(parseSheet(read(`styles/palette-${name}.css`)).rules, `:root[data-palette="${name}"]`);
     const backgrounds = paletteBackgrounds(name);
     for (const tone of SPRITE_TONES) {
       const value = decls.get(`--sprite-dot-${tone}`);
-      assert.ok(value, `${name} overrides --sprite-dot-${tone}`);
+      assert.ok(value, `${name} sets --sprite-dot-${tone}`);
       for (const bg of backgrounds) {
         assert.ok(contrast(value, bg) >= 3, `${name} ${tone} vs ${bg}: ${contrast(value, bg).toFixed(2)}`);
       }
@@ -257,7 +260,8 @@ test('every light palette overrides the sprite tones and meets 3:1 on its chat b
   for (const name of fs.readdirSync(path.join(rootDir, 'styles'))
     .filter((f) => /^palette-.+\.css$/.test(f)).map((f) => f.replace(/^palette-|\.css$/g, ''))) {
     if (!light.includes(name)) {
-      assert.equal(declsFor(baseRules, `:root[data-palette="${name}"]`).size, 0, `${name} (dark) keeps the defaults`);
+      const decls = declsFor(parseSheet(read(`styles/palette-${name}.css`)).rules, `:root[data-palette="${name}"]`);
+      assert.equal([...decls.keys()].some((prop) => prop.startsWith('--sprite-dot-')), false, `${name} (dark) keeps the defaults`);
     }
   }
 });

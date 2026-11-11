@@ -6,7 +6,8 @@
  * renderer-ide-pty-terminal-xterm.js reads these custom properties from the terminal host's
  * computed style and hands them to xterm, so every value here is a literal hex colour (xterm
  * cannot parse var() or color-mix()). Dark palettes share the :root set and override a few
- * hues where the palette has its own character; the three light palettes share the light set.
+ * hues where the palette has its own character; every light-scheme palette
+ * (:root[data-scheme="light"], stamped from the registry) shares the light set.
  * xterm still lifts any foreground under 4.5:1 against the live background
  * (minimumContrastRatio), so these tokens set the hue, not the contrast floor. */
 
@@ -32,9 +33,7 @@
   --ide-terminal-find-match-active: #f29d4bb3;
 }
 
-:root[data-palette="jenny-day"],
-:root[data-palette="paper"],
-:root[data-palette="woolly"] {
+:root[data-scheme="light"] {
   --ide-terminal-ansi-black: #24292f;
   --ide-terminal-ansi-red: #c4312b;
   --ide-terminal-ansi-green: #2f7d32;
@@ -91,13 +90,6 @@
   --ide-terminal-ansi-green: #8fd18a;
   --ide-terminal-ansi-bright-yellow: #ffcf80;
   --ide-terminal-selection: #e8641a4d;
-}
-
-:root[data-palette="signal"] {
-  --ide-terminal-ansi-blue: #4aa8ff;
-  --ide-terminal-ansi-cyan: #29c0ff;
-  --ide-terminal-ansi-bright-cyan: #7ad8ff;
-  --ide-terminal-selection: #29c0ff4d;
 }
 
 :root[data-palette="obsidian"] {

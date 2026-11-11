@@ -34,8 +34,9 @@ function harness({ directory = null } = {}) {
 const { DIRECTORY_DATA_NOTE } = require('../services/tools/builtin/session-directory-tool-support');
 
 // Every ok answer carries the data note (other chats' text is data, not instructions); asserted here once.
+const { parseToolOutput } = require('./helpers/refusal-output');
 const output = (result) => {
-  const { note, ...value } = JSON.parse(result.content);
+  const { note, ...value } = parseToolOutput(result);
   assert.equal(note, value.ok === true ? DIRECTORY_DATA_NOTE : undefined);
   return value;
 };

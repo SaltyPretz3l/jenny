@@ -104,35 +104,57 @@ test('pending approval waiter drain isolates a throwing waiter and logs the fail
   assert.equal(logs[0][1], 'lifecycle.approval_waiter_drain_failed');
 });
 
-test('a user Stop plans its running tools as cancelled and repairs them as stopped (F3)', () => {
+function planEndOfTurnRepair(isUserStop, toolExecutor) {
   const { settleUnfinishedToolRows } = require('../services/backend/chat-stream-managed-runtime-failure');
   const {
     buildInterruptedToolRepairPlan, normalizeTerminalMutations,
   } = require('../services/backend/chat-stream-terminal-tool-repairs');
+  const ctx = {
+    latestToolContext: {},
+    unfinishedToolsSettled: false,
+    isUserStop: () => isUserStop,
+    service: {
+      sessionStore: { getSessionMessages: () => [toolUse()] },
+      terminalCoordinator: { settle() {} },
+      toolExecutor,
+    },
+    resolvedSessionId: 'session_1',
+    streamId: 'stream_1',
+    model: 'test-model',
+    diagnosticToolNamesByCallId: new Map(),
+    diagnosticToolEvents: [],
+    transcriptCollector: { noteToolStep() {} },
+  };
+  assert.equal(settleUnfinishedToolRows(ctx, 'terminal_cancelled'), 1);
+  const [repair] = ctx.unfinishedToolRepairs;
+  const identity = { streamId: 'stream_1', turnId: 'turn_1' };
+  const normalized = normalizeTerminalMutations([], [repair], identity, 'now');
+  assert.equal(normalized.ok, true);
+  return { repair, built: buildInterruptedToolRepairPlan(repair, identity, 'now'), persisted: normalized.repairTurnEvents[0] };
+}
+
+test('a Stop during a browser wait tells the model the step was waiting on the user', () => {
+  const asked = [];
+  const waited = { browserUse: { waitedOnUser: (sessionId, callId) => { asked.push([sessionId, callId]); return true; } } };
+  const stopped = planEndOfTurnRepair(true, waited);
+  assert.deepEqual(asked, [['session_1', 'call_1']]);
+  assert.match(stopped.built.resultMessage.content, /^Tool execution stopped by the user before it finished\. /);
+  assert.match(stopped.built.resultMessage.content, /waiting for the user to hand the browser back, so it may not have finished/);
+  assert.equal(stopped.persisted.payload.output_text, stopped.built.resultMessage.content);
+
+  const failed = planEndOfTurnRepair(false, waited);
+  assert.match(failed.built.resultMessage.content, /^System error: tool execution interrupted/, 'only a Stop gets the note');
+});
+
+test('a Stop on any other tool keeps the plain message', () => {
+  const notWaited = { browserUse: { waitedOnUser: () => false } };
+  assert.equal(planEndOfTurnRepair(true, notWaited).built.resultMessage.content, 'Tool execution stopped by the user before it finished.');
+  assert.equal(planEndOfTurnRepair(true, undefined).built.resultMessage.content, 'Tool execution stopped by the user before it finished.');
+});
+
+test('a user Stop plans its running tools as cancelled and repairs them as stopped (F3)', () => {
   const { statusForToolResult } = require('../renderer/chat/tool-call-utils');
-  function plan(isUserStop) {
-    const ctx = {
-      latestToolContext: {},
-      unfinishedToolsSettled: false,
-      isUserStop: () => isUserStop,
-      service: {
-        sessionStore: { getSessionMessages: () => [toolUse()] },
-        terminalCoordinator: { settle() {} },
-      },
-      resolvedSessionId: 'session_1',
-      streamId: 'stream_1',
-      model: 'test-model',
-      diagnosticToolNamesByCallId: new Map(),
-      diagnosticToolEvents: [],
-      transcriptCollector: { noteToolStep() {} },
-    };
-    assert.equal(settleUnfinishedToolRows(ctx, 'terminal_cancelled'), 1);
-    const [repair] = ctx.unfinishedToolRepairs;
-    const identity = { streamId: 'stream_1', turnId: 'turn_1' };
-    const normalized = normalizeTerminalMutations([], [repair], identity, 'now');
-    assert.equal(normalized.ok, true);
-    return { repair, built: buildInterruptedToolRepairPlan(repair, identity, 'now'), persisted: normalized.repairTurnEvents[0] };
-  }
+  const plan = (isUserStop) => planEndOfTurnRepair(isUserStop);
 
   const stopped = plan(true);
   assert.equal(stopped.repair.patch.tool_call.status, 'cancelled');

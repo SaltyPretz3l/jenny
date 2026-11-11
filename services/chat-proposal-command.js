@@ -6,6 +6,8 @@
  * ChatProposalService instance (`svc`) through that service's own record plumbing and a
  * `commandAdapter` of ports injected by the composition root:
  *   isSupported() -> boolean       the sidecar negotiated the command protocol
+ *   sandboxReady() -> boolean      optional; false withholds a Docker-backed Run (Copy stays)
+ *   sandboxWorkspace() -> 'copy'|'synced'  optional; a Docker card bound to the other mode keeps Copy only
  *   recheck(record) -> {ok} | {ok:false, cause_code}   binding recapture (D7)
  *   submit({idempotencyKey, sessionId, commandProposal}) -> runtime result envelope
  *   cancel(workId) -> {status}     aborts or discards the command work

@@ -11,13 +11,15 @@ the shared foundation tokens. There is no installable theme package.
 Jenny currently has eleven `styles/palette-*.css` files:
 
 ```text
-palette-darkroom.css  palette-jenny-day.css  palette-jenny-night.css  palette-lexicon.css
-palette-obsidian.css  palette-paper.css  palette-pewter.css  palette-rocko.css
-palette-signal.css  palette-slate.css  palette-woolly.css
+palette-chalk.css  palette-darkroom.css  palette-jenny-day.css  palette-jenny-night.css
+palette-lexicon.css  palette-obsidian.css  palette-paper.css  palette-pewter.css
+palette-rocko.css  palette-slate.css  palette-woolly.css
 ```
 
 `midnight` is the twelfth registered palette; its baseline lives in
 [`styles/foundation.css`](../styles/foundation.css), not `palette-midnight.css`.
+Chalk is the light twin of Slate. Signal was retired on 2026-11-09; a stored
+`signal` id loads as `obsidian`.
 
 1. **Create the palette stylesheet.**
 
@@ -31,25 +33,24 @@ palette-signal.css  palette-slate.css  palette-woolly.css
    ```
 
    Use `color-scheme: light` for a light palette. The safest template is
-   [`styles/palette-jenny-night.css`](../styles/palette-jenny-night.css): copy
-   it wholesale, change the selector, and retune every value. Jenny has no
-   test that enforces token parity across palette files. If you drop a custom
-   property, CSS silently inherits the foundation `:root` value. This commonly
-   leaves Midnight's blue-violet values in an otherwise custom palette.
+   [`styles/palette-jenny-night.css`](../styles/palette-jenny-night.css) for a
+   layered dark palette, [`styles/palette-slate.css`](../styles/palette-slate.css)
+   for a flat dark one and [`styles/palette-paper.css`](../styles/palette-paper.css)
+   for a light one: copy it wholesale, change the selector, and retune every
+   value. A palette sheet must be complete. If you drop a custom property, CSS
+   silently inherits the foundation `:root` value, which leaves Midnight's
+   blue-violet values in an otherwise custom palette, so
+   `tests/palette-token-parity.test.js` fails the build when a sheet omits a
+   token another sheet sets (see "Gates your change must pass").
 
-   Compare token names against the template before reviewing colors. From the
-   repository root in PowerShell:
+   A light sheet also sets the five `--sprite-dot-active`, `-warn`, `-error`,
+   `-ok` and `-muted` tokens (the timeline activity dot's status strokes), each
+   at 3:1 or better on its `--bg-base`; `styles/chat-sprite-dot.css` holds only
+   the dark-palette defaults.
 
-   ```powershell
-   $template = Select-String styles/palette-jenny-night.css -Pattern '^\s*(--[a-z0-9-]+):' |
-     ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
-   $candidate = Select-String styles/palette-<id>.css -Pattern '^\s*(--[a-z0-9-]+):' |
-     ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
-   Compare-Object $template $candidate
-   ```
-
-   Empty output means the token-name sets match. Review selectors and
-   reduced-motion/fallback blocks separately; this checks only declarations.
+   Run `tests/palette-token-parity.test.js` before reviewing colors: it names
+   every token the new sheet is missing. Review selectors and
+   reduced-motion/fallback blocks separately; the gate checks only declarations.
 
    Palettes never set font sizes. Every text size resolves through the role
    tokens in `styles/foundation.css` (`--font-size-caption` 12px,
@@ -66,8 +67,17 @@ palette-signal.css  palette-slate.css  palette-woolly.css
 
    Add an entry to `PALETTE_PRESETS` in
    [`renderer/shared/appearance-utils.js`](../renderer/shared/appearance-utils.js).
-   `normalizePresetId` accepts only keys present in that collection, so an
-   unregistered ID normalizes to the fallback palette.
+   `normalizePaletteId` accepts only keys present in that collection (plus the
+   retired ids in `PALETTE_ALIASES`), so an unregistered ID normalizes to the
+   fallback palette. Give the entry `scheme: 'light'` or `scheme: 'dark'`; it
+   must equal the `color-scheme` the sheet declares (a test pins this).
+   `applyAppearanceToDocument` writes it as `<html data-scheme>` beside
+   `data-palette`, and `resolvePaletteScheme(id)` returns it. Style anything
+   that depends on light or dark against `:root[data-scheme="light"]`, never a
+   hand-kept list of palette names: the shared light ANSI set in
+   `styles/ide-terminal-theme.css` and the Composer holo blend in
+   `styles/chat-composer.css` already do, and Mermaid reads the same stamp.
+   The boot-curtain colours table (`PALETTE_BOOT_COLORS`) needs a row too.
 
    The source has no `PALETTE_MOTION_DEFAULTS`; motion is applied as
    `data-motion="standard"`. Optionally add a `THEME_BUNDLES` entry to combine
@@ -107,9 +117,10 @@ palette-signal.css  palette-slate.css  palette-woolly.css
    Check the overlay after retuning those tokens. Explicit palette startup
    overrides would be a new contract requiring separate tests.
 
-5. **Optionally define syntax colors.**
+5. **Define syntax colors.**
 
-   A palette may set these eight variables:
+   Every palette sets these eight variables (the parity gate requires them in
+   each sheet and in `foundation.css`):
 
    ```text
    --syntax-keyword   --syntax-string    --syntax-comment  --syntax-number
@@ -136,10 +147,29 @@ palette-signal.css  palette-slate.css  palette-woolly.css
 Run focused tests from the repository root:
 
 ```powershell
+node scripts/run-node-tests-safe.js tests/palette-token-parity.test.js
+node scripts/run-node-tests-safe.js tests/palette-contrast-matrix.test.js
 node scripts/run-node-tests-safe.js tests/palette-muted-contrast.test.js
 node scripts/run-node-tests-safe.js tests/appearance-utils.test.js
 npm run check:policy
 ```
+
+[`tests/palette-token-parity.test.js`](../tests/palette-token-parity.test.js)
+requires every sheet to set every token any sheet sets, except the light-only
+tokens (`LIGHT_ONLY_TOKENS`, required of light sheets only) and the optional
+`--text-link` and `--text-active`. Every sheet and `foundation.css` must set
+the eight `--syntax-*` tokens, and no sheet may set a token nothing reads.
+
+[`tests/palette-contrast-matrix.test.js`](../tests/palette-contrast-matrix.test.js)
+(helpers in `tests/helpers/palette-css.js`) checks every palette and Midnight:
+`--text-secondary` and `--text-muted` reach 4.5:1 on the base, surface,
+surface-2, panel and sidebar backgrounds and secondary is never fainter than
+muted; the composer placeholder and meta colours reach 4.5:1 on every stop of
+the composer fill; button labels reach 4.5:1 (the send icon 3:1) on their
+fills; `--accent` reaches 3:1 on the five backgrounds unless the sheet sets
+literal `--text-link` and `--text-active` at 4.5:1; and the editor colours
+reach 4.5:1 on `--bg-base` (comments 3:1). Fix a sheet when it fails; do not
+edit the gate.
 
 [`tests/palette-muted-contrast.test.js`](../tests/palette-muted-contrast.test.js)
 discovers every `palette-*.css` file. It requires literal hexadecimal
@@ -152,9 +182,11 @@ the file defines: `--bg-base`, `--bg-surface`, `--bg-surface-2`, and
 the complete ordered palette ID list. Add your ID to that expected list as
 well as to `PALETTE_PRESETS`. A second assertion derives light palettes by
 filtering the registered IDs whose palette files contain
-`color-scheme: light`; it expects exactly `paper`, `woolly`, and `jenny-day`
-today. A new dark palette is excluded automatically by that filter and must
-not be added to the light-palette expectation. A new light palette must be.
+`color-scheme: light`; it expects exactly `chalk`, `paper`, `woolly`, and
+`jenny-day` today. A new dark palette is excluded automatically by that filter
+and must not be added to the light-palette expectation. A new light palette
+must be. A third test pins each preset's `scheme` to its sheet's
+`color-scheme` and the `data-scheme` stamp.
 
 `npm run check:policy` runs the repository policy suite, including documentation
 link and dangling-reference checks relevant to this guide.

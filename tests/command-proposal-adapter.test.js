@@ -497,6 +497,12 @@ test('the closed record validator mirrors the sidecar decoder', () => {
   assert.doesNotThrow(() => normalizeCommandProposal(proposal({ input: { timeout_seconds: 120 }, binding: { backend: 'docker', shell: '/bin/sh' } })));
   bad(proposal({ input: { timeout_seconds: 121 }, binding: { backend: 'docker', shell: '/bin/sh' } }));
   bad(proposal({ binding: { backend: 'docker', shell: 'cmd.exe' } }));
+  // Row 106: a Docker binding names its mode (missing reads copy); native bindings never do.
+  const docker = { backend: 'docker', shell: '/bin/sh' };
+  assert.equal(normalizeCommandProposal(proposal({ binding: docker })).command_binding.workspace, 'copy');
+  assert.equal(normalizeCommandProposal(proposal({ binding: { ...docker, workspace: 'synced' } })).command_binding.workspace, 'synced');
+  bad(proposal({ binding: { ...docker, workspace: 'live' } }));
+  bad(proposal({ binding: { workspace: 'copy' } }));
 });
 
 test('completion copy and outcome reading are closed', () => {
@@ -508,6 +514,14 @@ test('completion copy and outcome reading are closed', () => {
   assert.equal(completionLine({ status: 'cancelled' }), 'Command was cancelled.');
   assert.equal(completionLine({ status: 'interrupted_unknown' }), 'Command outcome unknown.');
   assert.equal(completionLine({ status: 'failed' }, { notStarted: true }), 'Command could not be started. Nothing ran.');
+  // A sandbox refusal before anything ran says why and what to do instead of "Command failed."
+  assert.match(completionLine({ status: 'failed', exit_code: null }, { sandboxReason: 'snapshot_limit' }), /too large for the command sandbox/);
+  assert.match(completionLine({ status: 'failed', exit_code: null }, { sandboxReason: 'sandbox_unavailable' }), /sandbox isn't ready/);
+  assert.match(completionLine({ status: 'failed', exit_code: null }, { sandboxReason: 'sandbox_policy_changed' }), /sandbox refused/);
+  assert.equal(completionLine({ status: 'failed', exit_code: 2 }, { sandboxReason: 'snapshot_limit' }), 'Command failed (exit 2).');
+  // A failure after admission (cleanup, an uncertain run) may have run the command: never "Nothing ran".
+  assert.equal(completionLine({ status: 'failed', exit_code: null, cleanup: 'uncertain' }, { sandboxReason: 'sandbox_unavailable' }), 'Command failed.');
+  assert.equal(completionLine({ status: 'failed', exit_code: null }, { sandboxReason: 'sandbox_cleanup_unconfirmed' }), 'Command failed.');
   assert.equal(readCommandOutcome(null), null);
   assert.equal(readCommandOutcome({ command_outcome: { schema_version: 2, status: 'succeeded' } }), null);
   assert.equal(readCommandOutcome({ command_outcome: { schema_version: 1, status: 'done' } }), null);

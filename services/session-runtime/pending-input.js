@@ -2,11 +2,20 @@
 
 const { stableJson, submissionHash, validateWorkRecord, MAX_PENDING_INPUT_BYTES } = require('./contracts');
 const { isoNow } = require('./store-control');
+const { normalizeMessageAuthor } = require('../backend/message-author');
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function editable(work) {
   return Boolean(work && ['pending', 'paused'].includes(work.status) && !work.attempt && !work.checkpoint_ref
     && !work.control_request && work.input?.schema_version === 1
     && ['immediate_chat', 'root_chat'].includes(work.input.kind));
+}
+// Team slice 3-5: nobody puts words in another member's mouth. A queued prompt
+// that carries an author may be rewritten only by that author; anyone else
+// (another member, the owner, a caller with no editor) can cancel it instead.
+// A prompt without an author is edited exactly as before.
+function assertPendingEditor(work, editor) {
+  const author = normalizeMessageAuthor(work?.input?.request?.author);
+  if (author && author.member_id !== normalizeMessageAuthor(editor)?.member_id) fail('pending_update_forbidden');
 }
 function withoutPrompt(input) {
   return { ...input, request: { ...input.request, prompt: null, visiblePrompt: null } };
@@ -52,11 +61,13 @@ function updatePendingInput(store, workId, { expectedRevision, prompt } = {}) {
   store._commit(checked.record);
   return { changed: true, record: checked.record };
 }
-async function updateRuntimePending(runtime, workId, { expectedRevision, prompt, beforeCommit } = {}) {
+async function updateRuntimePending(runtime, workId, { expectedRevision, prompt, beforeCommit, editor } = {}) {
   if (runtime.scheduler.closing) fail('runtime_closing');
   const source = runtime.store.get(workId);
   if (source?.revision !== expectedRevision) fail('revision_conflict');
   if (!editable(source)) fail('pending_update_state_conflict');
+  // The author is part of the immutable input, so the revision CAS below keeps this check valid.
+  assertPendingEditor(source, editor);
   const request = { ...source.input.request, prompt, visiblePrompt: prompt };
   const adapter = runtime.chatAdapter;
   const previous = adapter.contexts.get(workId);

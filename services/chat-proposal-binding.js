@@ -29,6 +29,11 @@ function commandSandboxEnabled(backendService) {
     || backendService?.configService?.getState?.()?.commandSandbox?.enabled === true;
 }
 
+// Row 106: where a Docker Run would execute; a stored binding without the key reads copy.
+function commandSandboxWorkspace(backendService) {
+  return backendService?.commandSandbox?.mode === 'synced' ? 'synced' : 'copy';
+}
+
 // Project-authority failures keep one shape: stale -> authority_changed, anything else unavailable.
 function authorityFailure(error) {
   const code = String(error?.reason || error?.code || '');
@@ -167,6 +172,7 @@ async function captureCommandProposalBinding({
         shell: shellForBackend(backend, platform),
         cwd: resolved.cwd,
         command_sha256: sha256Hex(Buffer.from(command, 'utf8')),
+        ...(backend === 'docker' ? { workspace: commandSandboxWorkspace(backendService) } : {}),
       },
     },
   };
@@ -258,6 +264,10 @@ async function recheckCommandBinding(record, {
   if (current.shell !== stored.command.shell) return { ok: false, cause_code: 'shell_changed' };
   if (current.cwd !== stored.command.cwd) return { ok: false, cause_code: 'cwd_changed' };
   if (current.command_sha256 !== stored.command.command_sha256) return { ok: false, cause_code: 'command_changed' };
+  // Not drift: switching the mode back makes the Run available again.
+  if (current.backend === 'docker' && current.workspace !== (stored.command.workspace || 'copy')) {
+    return { ok: false, cause_code: 'sandbox_mode_changed' };
+  }
   return { ok: true };
 }
 
@@ -265,6 +275,7 @@ module.exports = {
   captureCommonBinding,
   captureCommandProposalBinding,
   captureGitProposalBinding,
+  commandSandboxWorkspace,
   recheckCommandBinding,
   recheckGitBinding,
   shellForBackend,

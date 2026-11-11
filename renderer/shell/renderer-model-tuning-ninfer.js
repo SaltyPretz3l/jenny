@@ -119,59 +119,57 @@
       return jt('models.tuning.ninfer.startsOnUse', 'Starts when you press Use');
     }
 
+    // Rows in the drawer's grammar (ctx.rowHtml / ctx.sectionHtml from renderer-model-tuning-rows.js).
     function html(ctx) {
       var c = ctx || {};
-      if (!hint || typeof c.selectField !== 'function' || typeof c.toggleSwitch !== 'function' || typeof c.actionButton !== 'function') return '';
+      if (!hint || typeof c.selectField !== 'function' || typeof c.toggleSwitch !== 'function' || typeof c.actionButton !== 'function'
+        || typeof c.rowHtml !== 'function' || typeof c.sectionHtml !== 'function') return '';
       var disabled = pending || c.pending === true;
-      return '<section class="model-tuning-section model-tuning-engine" data-model-tuning-ninfer>'
-        + '<h4 class="model-tuning-section-title">NInfer</h4>'
-        + '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.tuning.ninfer.hint', 'Runs on the managed NInfer runtime. The context window, multi-token prediction and vision apply after NInfer restarts.')) + '</p>'
-        + '<div class="model-tuning-row" data-model-tuning-row="ninferContext">'
-        + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.tuning.contextWindow', 'Context window')) + '</span>'
-        + '<div class="model-tuning-row-control">'
-        + c.selectField({
-          id: 'modelTuningNinferContext', ariaLabel: jt('models.tuning.contextWindow', 'Context window'), value: String(draft.contextSize), disabled: disabled,
-          options: hint.contextWindows.map(function (tokens) {
-            var label = contextLabel(tokens) + ' ' + jt('models.tuning.ninfer.tokens', 'tokens');
-            if (hint.fp8KvWindows.indexOf(tokens) >= 0) label += jt('models.tuning.ninfer.fp8KvSuffix', ' · 8-bit cache');
-            return { value: String(tokens), label: label };
+      var row = function (o) { return c.rowHtml(Object.assign({ escapeHtml: escapeHtml }, o)); };
+      var mtpLabel = jt('models.library.tuning.mtpLabel', 'Multi-token prediction');
+      var visionLabel = jt('models.tuning.ninfer.visionLabel', 'Vision');
+      var body = '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.tuning.ninfer.hint', 'Runs on the managed NInfer runtime. The context window, multi-token prediction and vision apply after NInfer restarts.')) + '</p>'
+        + row({
+          key: 'ninferContext', label: jt('models.tuning.contextWindow', 'Context window'),
+          desc: jt('models.tuning.desc.contextLength', 'How much of the chat the model can see at once.'),
+          tip: jt('models.tuning.ninfer.tip.context', 'NInfer\'s own context window, in tokens. Larger remembers more but uses more VRAM; sizes marked 8-bit cache store it in half the memory.'),
+          controlHtml: c.selectField({
+            id: 'modelTuningNinferContext', ariaLabel: jt('models.tuning.contextWindow', 'Context window'), value: String(draft.contextSize), disabled: disabled,
+            options: hint.contextWindows.map(function (tokens) {
+              var label = contextLabel(tokens) + ' ' + jt('models.tuning.ninfer.tokens', 'tokens');
+              if (hint.fp8KvWindows.indexOf(tokens) >= 0) label += jt('models.tuning.ninfer.fp8KvSuffix', ' · 8-bit cache');
+              return { value: String(tokens), label: label };
+            }),
+            dataset: { 'model-tuning-ninfer-field': 'contextSize' },
           }),
-          dataset: { 'model-tuning-ninfer-field': 'contextSize' },
         })
-        + '</div>'
-        + '<span class="model-tuning-row-range" data-dirty="' + (draft.contextSize !== saved.contextSize ? 'true' : 'false') + '">' + escapeHtml(statusText()) + '</span>'
-        + '</div>'
-        + '<div class="model-tuning-row model-tuning-row--mtp" data-model-tuning-row="ninferMtp">'
-        + '<span class="model-tuning-row-label"></span>'
-        + '<div class="model-tuning-row-control">'
-        + c.toggleSwitch({
-          id: 'modelTuningNinferMtp', label: jt('models.library.tuning.mtpLabel', 'Multi-token prediction'),
-          checked: Boolean(draft.mtp && hint.supportsMtp), disabled: disabled || !hint.supportsMtp,
+        + row({
+          key: 'ninferMtp', label: mtpLabel, labelId: 'modelTuningLabelNinferMtp',
+          desc: jt('models.library.tuning.desc.mtp', 'Faster replies, same answers.'),
+          note: hint.supportsMtp ? jt('models.tuning.ninfer.mtpNote', 'Drafts 3 tokens per step; no separate file needed') : jt('models.library.tuning.mtpFamilyUnsupported', 'MTP not supported for this family'),
+          controlHtml: c.toggleSwitch({
+            id: 'modelTuningNinferMtp', label: mtpLabel, bare: true, labelledBy: 'modelTuningLabelNinferMtp',
+            checked: Boolean(draft.mtp && hint.supportsMtp), disabled: disabled || !hint.supportsMtp,
+          }),
         })
-        + '</div>'
-        + '<span class="model-tuning-row-range" data-dirty="' + (Boolean(draft.mtp) !== Boolean(saved.mtp) ? 'true' : 'false') + '">'
-        + escapeHtml(hint.supportsMtp ? jt('models.tuning.ninfer.mtpNote', 'Drafts 3 tokens per step; no separate file needed') : jt('models.library.tuning.mtpFamilyUnsupported', 'MTP not supported for this family'))
-        + '</span>'
-        + '</div>'
-        + '<div class="model-tuning-row" data-model-tuning-row="ninferVision">'
-        + '<span class="model-tuning-row-label"></span>'
-        + '<div class="model-tuning-row-control">'
-        + c.toggleSwitch({
-          id: 'modelTuningNinferVision', label: jt('models.tuning.ninfer.visionLabel', 'Vision'),
-          checked: draft.vision, disabled: disabled,
+        + row({
+          key: 'ninferVision', label: visionLabel, labelId: 'modelTuningLabelNinferVision',
+          desc: jt('models.tuning.ninfer.visionNote', 'Lets Qwen3.8 understand attached images. Applies after NInfer restarts.'),
+          controlHtml: c.toggleSwitch({
+            id: 'modelTuningNinferVision', label: visionLabel, bare: true, labelledBy: 'modelTuningLabelNinferVision',
+            checked: draft.vision, disabled: disabled,
+          }),
         })
-        + '</div>'
-        + '<span class="model-tuning-row-range" data-dirty="' + (draft.vision !== saved.vision ? 'true' : 'false') + '">'
-        + escapeHtml(jt('models.tuning.ninfer.visionNote', 'Lets Qwen3.8 understand attached images. Applies after NInfer restarts.'))
-        + '</span>'
-        + '</div>'
-        + '<div class="model-tuning-row" data-model-tuning-row="ninferApply">'
-        + '<span class="model-tuning-row-label"></span>'
-        + '<div class="model-tuning-row-control">'
+        + '<div class="model-tuning-section-actions" data-model-tuning-row="ninferApply">'
         + c.actionButton({ id: 'apply-ninfer-tuning', label: pending ? jt('models.tuning.applying', 'Applying…') : jt('models.tuning.ninfer.apply', 'Apply NInfer settings'), variant: 'secondary', size: 'sm', disabled: disabled || !dirty() })
-        + '</div>'
-        + '</div>'
-        + '</section>';
+        + '</div>';
+      return c.sectionHtml(escapeHtml, 'NInfer', statusText(), body, ' data-model-tuning-ninfer');
+    }
+
+    // Discard: the draft goes back to the saved settings.
+    function discard() {
+      draft = copyTuning(saved);
+      status = '';
     }
 
     function onChange(event) {
@@ -272,7 +270,7 @@
 
     return {
       open: open, close: close, active: active, html: html, onChange: onChange, onToggle: onToggle, apply: apply,
-      dirty: dirty, dirtyRows: dirtyRows, busy: function () { return pending; }, draft: function () { return copyTuning(draft); },
+      dirty: dirty, dirtyRows: dirtyRows, discard: discard, busy: function () { return pending; }, draft: function () { return copyTuning(draft); },
     };
   }
 

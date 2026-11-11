@@ -77,7 +77,7 @@ for (const [toolName, input] of [
     const approved = await waitForToolApproval(service, 'stream-1', 'sess_primary', 'req-1', {
       tool_name: toolName, tool_call_id: 'call-1', tool_input: input,
     }, new AbortController(), collector);
-    assert.equal(approved, false);
+    assert.deepEqual(approved, { approved: false, decision: 'app_refused', feedback: RULE_DENIED_MESSAGE });
     assert.equal(service.pendingToolApprovals.size, 0);
     assert.equal(emitted.some((event) => event.type === 'tool_approval_needed'), false, 'no card');
     const result = emitted.find((event) => event.type === 'tool_result');

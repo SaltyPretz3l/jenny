@@ -22,6 +22,15 @@ const DIFF_A = [
   '+    # extra',
 ].join('\n');
 
+const DIFF_B = [
+  'diff --git a/docs/branch.md b/docs/branch.md',
+  '--- a/docs/branch.md',
+  '+++ b/docs/branch.md',
+  '@@ -1,1 +1,2 @@',
+  ' # Branch',
+  '+branch-only line',
+].join('\n');
+
 function listing(files, extra = {}) {
   return {
     schema_version: 1, ok: true, state: 'available', reason: null, sampled_at: '2026-10-15T12:00:00Z',
@@ -31,6 +40,9 @@ function listing(files, extra = {}) {
     },
   };
 }
+
+// What the bridge answers a `scope: 'branch'` read when the chat has no branch comparison.
+const NO_BASE = { schema_version: 1, ok: true, state: 'not_applicable', reason: 'no_base', sampled_at: '2026-10-15T12:00:00Z', data: null };
 
 const FILES = [
   { path: 'sidecar/ai/trailing_row.py', orig_path: null, change: 'modified', binary: false, additions: 2, deletions: 1 },
@@ -42,18 +54,27 @@ const FILES = [
 function harness(options = {}) {
   const dom = new JSDOM('<!doctype html><body><div id="root"></div><button id="outside">x</button></body>');
   const { document } = dom.window;
-  const calls = { list: [], diff: [], workspace: [], git: 0, scope: [], logs: [] };
+  // `list` and `diff` hold the Working tree reads (no `scope`); the Whole branch reads go to `branch` and `branchDiff`.
+  const calls = { list: [], diff: [], branch: [], branchDiff: [], workspace: [], git: 0, scope: [], logs: [] };
   const pendingDiffs = new Map();
   let changedCallback = null;
   let unsubscribed = 0;
   const timers = [];
   const bridge = {
     listChanges: async (request) => {
+      if (request.scope === 'branch') {
+        calls.branch.push(request);
+        return options.branch ? options.branch(request) : NO_BASE;
+      }
       calls.list.push(request);
       if (options.listChanges) return options.listChanges(request);
       return listing(FILES);
     },
     getChangeDiff: (request) => {
+      if (request.scope === 'branch') {
+        calls.branchDiff.push(request);
+        return Promise.resolve(options.branchDiff ? options.branchDiff(request) : { schema_version: 1, ok: true, path: request.path, change: 'modified', binary: false, truncated: false, diff: DIFF_B });
+      }
       calls.diff.push(request);
       if (options.holdDiffs) return new Promise((resolve) => { pendingDiffs.set(request.path, [...(pendingDiffs.get(request.path) || []), resolve]); });
       if (options.getChangeDiff) return options.getChangeDiff(request);
@@ -94,7 +115,10 @@ test('checking, then the rows: first file open, the rest closed, with the scope 
     assert.equal(h.row(path).getAttribute('data-expanded'), 'false', `${path} starts closed`);
   }
   assert.match(h.root.querySelector('.changes-scope-branch').textContent, /main → working tree/);
-  assert.match(h.root.querySelector('[data-changes-summary]').textContent, /4 files · \+12 −3 · includes changes this chat didn’t make/);
+  // The summary line sits under the scope row: what the page shows, then the file and line counts.
+  assert.equal(h.root.querySelector('.changes-wt-summary-text').textContent, 'Uncommitted in this folder');
+  assert.equal(h.root.querySelector('.changes-wt-summary-counts').textContent, '4 files +12 −3');
+  assert.equal(h.root.querySelector('.changes-wt-scope [data-changes-summary]') !== null, true, 'under the scope row, not in the scrolling list');
   // The switch names both pages and Working tree is the selected one.
   const checked = h.root.querySelector('.inv-segmented-option[aria-checked="true"]');
   assert.equal(checked.getAttribute('data-value'), 'working_tree');
@@ -230,9 +254,9 @@ test('empty, not-a-repository and unavailable states reuse the rail words and ne
 test('unknown line counts are left out of the summary, not shown as zero', async () => {
   const h = harness({ listChanges: async () => listing(FILES.slice(0, 1), { additions: null, deletions: null }) });
   await flush();
-  const summary = h.root.querySelector('[data-changes-summary]').textContent;
-  assert.match(summary, /^1 file · includes changes/);
-  assert.doesNotMatch(summary, /\+0/);
+  const counts = h.root.querySelector('.changes-wt-summary-counts').textContent;
+  assert.equal(counts, '1 file');
+  assert.doesNotMatch(counts, /\+0/);
 });
 
 test('the page is read-only: no stage, commit or discard control anywhere; Open in Git only hands off', async () => {

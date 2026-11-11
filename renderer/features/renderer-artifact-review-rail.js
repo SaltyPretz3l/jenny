@@ -253,6 +253,7 @@
     }
     function applyArtifactReviewLayout(options, { stageWidth, width, visible, mode, overlay, maximized, overPane }) {
       workspace?.style?.setProperty('--artifact-review-width', `${width}px`);
+      artifactReviewPanel?.ownerDocument?.documentElement?.style?.setProperty('--artifact-review-width', `${width}px`); // toasts live outside the workspace
       artifactReviewPanel?.style?.setProperty('width', `${width}px`);
       artifactReviewPanel?.classList.toggle('hidden', !visible);
       // W1-5 narrow-stage fallback (studio removed): below the side-by-side
@@ -368,7 +369,7 @@
     // open does EXCEPT selecting an artifact. Callers (the file preview owner
     // today) hand it a mode; eligibility still requires the chat view, and
     // narrow stages get the overlay drawer via the layout sync.
-    function openArtifactRail(mode) {
+    function openArtifactRail(mode, options) {
       rememberReviewFocus();
       if (sidePanel) { sidePanel.claim(); lastRenderedSessionId = String(sidePanel.getSessionId() || '').trim(); } // a claim is not a session switch
       const sessionId = getActiveSessionIdForReview();
@@ -382,7 +383,7 @@
       }
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout({ animate: true });
-      focusReview();
+      if (options?.focus !== false) focusReview(); // an automatic open must not take the keyboard from the composer
       return prefs.mode;
     }
 
@@ -469,6 +470,11 @@
         if (hadSession && normalizeArtifactReviewMode(getArtifactReviewState().mode) === 'file_preview') {
           getArtifactReviewState().mode = 'artifact';
           if (typeof resetFilePreview === 'function') resetFilePreview();
+        }
+        // The browser panel shows one chat's page: leaving closes the column and the page waits off screen.
+        if (hadSession && normalizeArtifactReviewMode(getArtifactReviewState().mode) === 'browser') {
+          Object.assign(getArtifactReviewState(), { mode: 'artifact', enabled: false });
+          saveArtifactReviewPreferences();
         }
         // X-1: the artifact rail another chat left open does not undo this
         // chat's Close. An explicit reopen here clears the Close first, and

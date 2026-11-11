@@ -6,7 +6,7 @@ and the turn used to end on the leaked markup (2026-10-15 resume: grep_search
 was budget-filtered out). Recovered calls take the normal dispatch path: the
 turn cap, approvals, and the deferred-tool "call tool_search first" outcome
 all still apply. Legs with the tool cap spent stay with
-``tool_loop_recovery._drop_text_tool_calls``.
+``tool_loop_wind_down._drop_text_tool_calls``.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
-from sidecar.ai.routing.tool_loop_recovery import _tool_cap_spent
+from sidecar.ai.routing.tool_loop_wind_down import _tool_cap_spent
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 
@@ -57,7 +57,7 @@ def recover_text_tool_calls(loop: Any, result: Any) -> Any:
         or _tool_cap_spent(loop)
     ):
         return result
-    names = _tl_hub.text_tool_calls.contract_tool_names(loop.tool_contract)
+    names = _tl_hub.text_tool_calls.recognized_tool_names(loop.tool_contract)
     prose, calls = _tl_hub.text_tool_calls.strip_text_tool_calls(str(result.content or ""), names)
     if not calls or not all(call.complete for call in calls):
         return result

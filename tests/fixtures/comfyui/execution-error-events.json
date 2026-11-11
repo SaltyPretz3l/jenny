@@ -1,0 +1,270 @@
+{
+ "_comment": "P0 2026-11-10: a runtime failure (4-channel latent into the 24-channel VAE) giving execution_error; the traceback paths are rewritten.",
+ "events": [
+  {
+   "at_ms": 0,
+   "type": "status",
+   "data": {
+    "status": {
+     "exec_info": {
+      "queue_remaining": 0
+     }
+    },
+    "sid": "img_f9a8e72b8d1f"
+   }
+  },
+  {
+   "at_ms": 5,
+   "type": "status",
+   "data": {
+    "status": {
+     "exec_info": {
+      "queue_remaining": 1
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 6,
+   "type": "status",
+   "data": {
+    "status": {
+     "exec_info": {
+      "queue_remaining": 1
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 7,
+   "type": "execution_start",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "timestamp": 1794329492623
+   }
+  },
+  {
+   "at_ms": 8,
+   "type": "execution_cached",
+   "data": {
+    "nodes": [],
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "timestamp": 1794329492624
+   }
+  },
+  {
+   "at_ms": 9,
+   "type": "progress_state",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "nodes": {
+     "3": {
+      "value": 0,
+      "max": 1,
+      "state": "running",
+      "node_id": "3",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "3",
+      "parent_node_id": null,
+      "real_node_id": "3"
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 9,
+   "type": "executing",
+   "data": {
+    "node": "3",
+    "display_node": "3",
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777"
+   }
+  },
+  {
+   "at_ms": 196,
+   "type": "progress_state",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "nodes": {
+     "3": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "3",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "3",
+      "parent_node_id": null,
+      "real_node_id": "3"
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 197,
+   "type": "progress_state",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "nodes": {
+     "3": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "3",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "3",
+      "parent_node_id": null,
+      "real_node_id": "3"
+     },
+     "4": {
+      "value": 0,
+      "max": 1,
+      "state": "running",
+      "node_id": "4",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "4",
+      "parent_node_id": null,
+      "real_node_id": "4"
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 197,
+   "type": "executing",
+   "data": {
+    "node": "4",
+    "display_node": "4",
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777"
+   }
+  },
+  {
+   "at_ms": 197,
+   "type": "progress_state",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "nodes": {
+     "3": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "3",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "3",
+      "parent_node_id": null,
+      "real_node_id": "3"
+     },
+     "4": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "4",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "4",
+      "parent_node_id": null,
+      "real_node_id": "4"
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 197,
+   "type": "progress_state",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "nodes": {
+     "3": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "3",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "3",
+      "parent_node_id": null,
+      "real_node_id": "3"
+     },
+     "4": {
+      "value": 1,
+      "max": 1,
+      "state": "finished",
+      "node_id": "4",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "4",
+      "parent_node_id": null,
+      "real_node_id": "4"
+     },
+     "8": {
+      "value": 0,
+      "max": 1,
+      "state": "running",
+      "node_id": "8",
+      "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+      "display_node_id": "8",
+      "parent_node_id": null,
+      "real_node_id": "8"
+     }
+    }
+   }
+  },
+  {
+   "at_ms": 198,
+   "type": "executing",
+   "data": {
+    "node": "8",
+    "display_node": "8",
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777"
+   }
+  },
+  {
+   "at_ms": 209,
+   "type": "execution_error",
+   "data": {
+    "prompt_id": "50dc7a4b-af34-484a-af17-0d6001472777",
+    "node_id": "8",
+    "node_type": "VAEDecode",
+    "executed": [
+     "3",
+     "4"
+    ],
+    "exception_message": "tuple index out of range\n",
+    "exception_type": "IndexError",
+    "traceback": [
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\execution.py\", line 556, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\execution.py\", line 353, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\execution.py\", line 327, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\execution.py\", line 315, in process_inputs\n    result = f(**inputs)\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\nodes.py\", line 343, in decode\n    images = vae.decode(latent)\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\comfy\\sd.py\", line 1404, in decode\n    model_management.raise_non_oom(e)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\comfy\\model_management.py\", line 399, in raise_non_oom\n    raise e\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\comfy\\sd.py\", line 1369, in decode\n    memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)\n",
+     "  File \"C:\\ComfyUI_windows_portable\\ComfyUI\\comfy\\sd.py\", line 1126, in <lambda>\n    self.memory_used_decode = lambda shape, dtype: estimate_decode_memory(self.upscale_ratio[0](shape[2]), shape[3] * self.upscale_ratio[1], shape[4] * self.upscale_ratio[2], dtype)\n                                                                                                                                             ~~~~~^^^\n"
+    ],
+    "current_inputs": {
+     "samples": [
+      "{'samples': tensor([[[[0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.]],\n\n         [[0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.]],\n\n         [[0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.]],\n\n         [[0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.],\n          [0., 0., 0., 0., 0., 0., 0., 0.]]]]), 'downscale_ratio_spacial': 8}"
+     ],
+     "vae": [
+      "<comfy.sd.VAE object at 0x000001CBA4713E00>"
+     ]
+    },
+    "current_outputs": [
+     "3",
+     "9",
+     "8",
+     "4"
+    ],
+    "timestamp": 1794329492825
+   }
+  },
+  {
+   "at_ms": 209,
+   "type": "status",
+   "data": {
+    "status": {
+     "exec_info": {
+      "queue_remaining": 0
+     }
+    }
+   }
+  }
+ ]
+}

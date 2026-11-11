@@ -3,6 +3,10 @@
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 
 const LIMITS = Object.freeze({ title: 120, summary: 1200, steps: 20, step: 300, notes: 4000, verification: 1200 });
+// The usual cause is shape, not size: steps sent as one string or as objects (row 129, B10).
+const PLAN_SHAPE_HELP = 'The plan was not shown: send title as text and steps as a list of 1 to '
+  + `${LIMITS.steps} short text items, for example {"title": "Add search", "steps": ["Add the index", `
+  + '"Wire the box"]}.';
 // Every decision the plan card can send. Approval normalizers deny anything
 // outside this list: an unknown decision must never fall through to execute.
 const PLAN_DECISIONS = Object.freeze(['approved', 'approved_auto', 'accepted', 'rejected']);
@@ -82,7 +86,7 @@ module.exports = {
 
   async execute(input, context = {}) {
     const originalPlan = normalizePlan(input);
-    if (!originalPlan) return failure('The plan proposal is malformed or exceeds its size limits.');
+    if (!originalPlan) return failure(PLAN_SHAPE_HELP);
     const editedSource = context.planEditedPlan;
     const editedPlan = editedSource && typeof editedSource === 'object' && !Array.isArray(editedSource)
       ? normalizePlan({ ...originalPlan, title: editedSource.title, steps: editedSource.steps })

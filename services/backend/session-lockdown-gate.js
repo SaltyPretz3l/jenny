@@ -39,7 +39,6 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   worktree_select: NETWORK_NONE,
   worktree_delete: NETWORK_NONE,
   automation_list: NETWORK_NONE,
-  automation_read: NETWORK_NONE,
   workspace_present: NETWORK_NONE,
   preview_test: NETWORK_NONE,
   verify: NETWORK_POSSIBLE,
@@ -67,7 +66,6 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   todo_write: NETWORK_NONE,
   todo_read: NETWORK_NONE,
   connections_list: NETWORK_NONE,
-  mermaid_generate: NETWORK_NONE,
   report_findings: NETWORK_NONE,
   lsp: NETWORK_POSSIBLE,
   exit_plan_mode: NETWORK_NONE,
@@ -78,6 +76,7 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   propose_session: NETWORK_NONE,
   complete_session_handoff: NETWORK_NONE,
   session_message: NETWORK_POSSIBLE,
+  browser: NETWORK_POSSIBLE,
   // Session directory (row 69): local session index, runtime store and transcript reads only.
   sessions_list: NETWORK_NONE,
   session_status: NETWORK_NONE,
@@ -221,7 +220,7 @@ function resolveSessionLockdownRequest(service, session, { requestedEngine, requ
   const model = String(requestedModel || '').trim();
   // Every engine the loader could pick for this turn: the running one, the
   // catalog's provenance hint for the model, the configured engine pin, and the
-  // id-inferred fallback (backend-runtime.js normalizeModelLoadRequest /
+  // id-inferred fallback (backend-model-load.js normalizeModelLoadRequest /
   // loadModel). Admission is conservative; assertResolvedEngine() re-checks the
   // engine the resolver actually switched to before anything is dispatched.
   const candidates = (pinned

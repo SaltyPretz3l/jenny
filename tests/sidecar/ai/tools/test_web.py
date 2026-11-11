@@ -1332,8 +1332,8 @@ class TestFetchBodySanitizingBound:
 
         entry = web._build_cached_fetch_entry(ValidatedUrl(url="https://example.com"), result)
 
-        assert seen == [4 * web._MAX_FETCH_CONTENT_CHARS]
-        assert len(entry.content) == web._MAX_FETCH_CONTENT_CHARS
+        assert seen == [web._FETCH_SANITIZE_INPUT_CHARS]
+        assert len(entry.content) == web._FETCH_CACHED_CONTENT_CHARS
         assert entry.content.endswith("[truncated]")
 
     def test_control_characters_are_still_stripped(self) -> None:

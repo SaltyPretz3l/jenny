@@ -24,6 +24,7 @@ const { normalizeHandoffPreparation, normalizeSessionHandoff } = require('./sess
 const { normalizeRequestApplicationTurn } = require('./application-turns');
 const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
 const { normalizeImagePromptPin, storedImagePromptPin } = require('./image-prompt-pin');
+const { normalizeMessageAuthor } = require('./message-author');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
@@ -181,6 +182,7 @@ async function prepareLocalEngineChatRequest(service, {
   clientTiming,
   skillInvocation,
   imagePromptPin,
+  author,
   editedMessageId,
   failureRetry,
   proposalDecision,
@@ -214,6 +216,9 @@ async function prepareLocalEngineChatRequest(service, {
   const normalizedApplicationTurn = normalizeRequestApplicationTurn(applicationTurn);
   const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation, sessionKey);
   const normalizedImagePromptPin = resolveImagePromptPin(service, imagePromptPin, sessionKey, editedMessageId);
+  // Slice 3-5: this request is a durable work record that a resumed turn replays, so the author persists with it.
+  // Only the runtime submission sets `author`, from the host's trusted option; no caller may spread a renderer payload into it.
+  const normalizedAuthor = normalizeMessageAuthor(author);
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
       ? contextPreferences
@@ -267,6 +272,7 @@ async function prepareLocalEngineChatRequest(service, {
     clientTiming,
     skillInvocation: normalizedSkillInvocation,
     ...(normalizedImagePromptPin !== undefined ? { imagePromptPin: normalizedImagePromptPin } : {}),
+    ...(normalizedAuthor ? { author: normalizedAuthor } : {}),
     editedMessageId,
     failureRetry,
     ...(normalizedProposalDecision ? { proposalDecision: normalizedProposalDecision } : {}),

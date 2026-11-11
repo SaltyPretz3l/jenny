@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "recipes": {
+    "minimax_h3_image": {
+      "label": "MiniMax-H3-Image",
+      "min_comfyui_version": "0.45.0",
+      "files": {
+        "diffusion": { "folders": ["diffusion_models", "unet"], "prefixes": ["minimax_h3_image"], "extensions": [".safetensors"] },
+        "text_encoder": { "folders": ["text_encoders", "clip"], "prefixes": ["qwen3vl_32b_minimax_h3"], "extensions": [".safetensors"] },
+        "vae": { "folders": ["vae"], "prefixes": ["minimax_h3_image_vae"], "extensions": [".safetensors"] }
+      },
+      "graph": {
+        "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "", "weight_dtype": "default" } },
+        "2": { "class_type": "CLIPLoader", "inputs": { "clip_name": "", "type": "minimax", "device": "default" } },
+        "3": { "class_type": "VAELoader", "inputs": { "vae_name": "" } },
+        "5": { "class_type": "MiniMaxH3ImageConditioning", "inputs": { "clip": ["2", 0], "vae": ["3", 0], "prompt": "", "width": 2048, "height": 2048 } },
+        "6": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["5", 0] } },
+        "7": { "class_type": "KSampler", "inputs": { "model": ["1", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["5", 1], "seed": 0, "steps": 6, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1 } },
+        "8": { "class_type": "VAEDecode", "inputs": { "samples": ["7", 0], "vae": ["3", 0] } },
+        "9": { "class_type": "SaveImage", "inputs": { "images": ["8", 0], "filename_prefix": "jenny" } }
+      },
+      "slots": {
+        "diffusion": ["1", "unet_name"],
+        "text_encoder": ["2", "clip_name"],
+        "vae": ["3", "vae_name"],
+        "prompt": ["5", "prompt"],
+        "width": ["5", "width"],
+        "height": ["5", "height"],
+        "seed": ["7", "seed"]
+      },
+      "phase_nodes": { "sample": "7", "decode": "8", "output": "9" },
+      "locked": { "steps": 6, "cfg_scale": 1, "sampler": "euler", "scheduler": "simple", "negative_prompt": false },
+      "resolutions": ["2048x2048", "2304x1792", "1792x2304", "2688x1536", "1536x2688", "2496x1664", "1664x2496"],
+      "size_map": {
+        "1024x1024": "2048x2048",
+        "1344x1344": "2048x2048",
+        "1472x1120": "2304x1792",
+        "1120x1472": "1792x2304",
+        "1664x928": "2688x1536",
+        "928x1664": "1536x2688",
+        "1600x1056": "2496x1664",
+        "1056x1600": "1664x2496"
+      },
+      "min_total_vram_mb": 15000,
+      "free_vram_mb": 14000
+    }
+  },
+  "_comment": "Recipes run in the user's own ComfyUI (row 127). Each graph is ComfyUI's API format with core nodes only; slots name the [node, input] pairs Jenny fills, and everything else is locked. MiniMax-H3-Image is distilled for exactly 6 euler/simple steps at cfg 1 with the latent from its own conditioning node, tuned for about 2048x2048 pixels of area: every size here is a multiple of 32 within 4 MiP, and size_map turns each tool-schema pair into the size of the same shape. VRAM numbers from P0 on 2026-11-10 (ComfyUI v0.45.0, RTX 5090): 31.7 GB peak on a 32 GB card, 17.0 GB total with --reserve-vram 16.6, so a 16 GB card is the estimated floor. No model names, URLs or download links belong here beyond the file-name prefixes."
+}

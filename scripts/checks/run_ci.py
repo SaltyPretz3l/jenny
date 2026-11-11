@@ -33,7 +33,7 @@ from scripts.checks.repo_venv import ensure_repo_venv  # noqa: E402
 
 if __name__ == "__main__":
     # Every stage runs under sys.executable, so the gate itself must be the venv interpreter.
-    ensure_repo_venv(("psutil", "pytest", "xdist", "mypy", "ruff"))
+    ensure_repo_venv()
 
 # The Windows power-throttling (EcoQoS) keeper lives in its own module so the
 # safe Node runner can start the same keeper for a direct `npm test` run.

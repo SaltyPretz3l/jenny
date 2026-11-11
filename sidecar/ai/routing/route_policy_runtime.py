@@ -70,8 +70,8 @@ _BLOCK_MESSAGE = (
 # Row 88: a settings change applies only through the card the app builds for that call, so it asks
 # in Auto too and no AUTO rule skips it (the main-side port refuses a call that had no card).
 # Rows 94 P1 / 85 Q2 / 94 P2 / 94 P4: chat_configure, schedule_change, project_create,
-# session_export and terminal_run also ask in Auto (moved here from tool_execution.py, which sits
-# at its size ceiling).
+# session_export and terminal_run also ask in Auto (moved here from tool_execution.py, which keeps
+# the approval path itself).
 _ALWAYS_ASK_CARD_REASON = "App settings change only with your approval."
 _ALWAYS_ASK_CARD_REASONS = {
     "chat_configure": "A chat's model, effort or run mode changes only with your approval.",

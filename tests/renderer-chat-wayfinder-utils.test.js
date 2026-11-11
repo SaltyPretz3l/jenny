@@ -6,44 +6,12 @@ const assert = require('node:assert/strict');
 // than degrade to an empty stub that turns every assertion green.
 const wayfinderUtils = require('../renderer/chat/renderer-chat-wayfinder-utils');
 
-function createAffordance(calls) {
-  const listeners = new Map();
-  return {
-    state: null,
-    mount(host) {
-      calls.push(['mount', host && host.id ? host.id : 'host']);
-    },
-    unmount() {
-      calls.push(['unmount']);
-    },
-    setState(nextState) {
-      this.state = { ...nextState };
-      calls.push(['state', this.state.state, this.state.label, this.state.messageId || '']);
-    },
-    on(eventName, callback) {
-      listeners.set(eventName, callback);
-      return () => listeners.delete(eventName);
-    },
-    emit(eventName) {
-      const callback = listeners.get(eventName);
-      if (callback) {
-        callback();
-      }
-    },
-    dispose() {
-      calls.push(['dispose']);
-    },
-  };
-}
-
 function buildController(options = {}) {
   const calls = [];
-  const affordance = createAffordance(calls);
   const state = options.state || { currentSessionId: 's1', ui: { activeView: 'chat', followLatest: false } };
   const metrics = options.metrics || { scrollTop: 100, scrollHeight: 1000, clientHeight: 300 };
   const controller = wayfinderUtils.createChatWayfinderController({
     state,
-    host: { id: 'composerWayfinderHost' },
     getCurrentSessionId: () => state.currentSessionId,
     getCurrentSessionMessages: () => options.messages || [{ id: 'u1', role: 'user' }],
     getScrollMetrics: () => {
@@ -52,30 +20,23 @@ function buildController(options = {}) {
       }
       return metrics;
     },
-    scrollMessageIntoView(messageId, scrollOptions) {
-      calls.push(['scrollMessage', messageId, scrollOptions && scrollOptions.block]);
-      if (options.throwOnScroll) {
-        throw new Error('scroll failed');
-      }
-      return true;
-    },
-    handleJumpToBottom() {
-      calls.push(['jumpBottom']);
-      return true;
-    },
     appendClientLog(level, eventName) {
       calls.push(['log', level, eventName]);
     },
-    affordanceFactory: {
-      createChatWayfinderAffordance: () => affordance,
+    onChange(model) {
+      calls.push(['change', model.state, model.label, model.messageId || '']);
     },
   });
-  return { affordance, calls, controller, state };
+  // The model the bottom-edge jump control reads: published on state.ui, not owned by a DOM host.
+  const handlers = {
+    onError() { calls.push(['actionFailed']); },
+  };
+  return { calls, controller, handlers, state, model: () => state.ui.chatWayfinder };
 }
 
-test('conversation wayfinder prioritizes unread over prompt and latest', () => {
+test('conversation wayfinder prioritizes unread over latest', () => {
   assert.equal(typeof wayfinderUtils.createChatWayfinderController, 'function');
-  const { affordance, calls, controller } = buildController();
+  const { calls, controller, handlers, model } = buildController();
   const unreadController = {
     jumpToFirstUnread() {
       calls.push(['jumpUnread']);
@@ -84,13 +45,7 @@ test('conversation wayfinder prioritizes unread over prompt and latest', () => {
   };
 
   controller.bind();
-  controller.setUnreadController(unreadController);
-  controller.setPinState({
-    visible: true,
-    sessionId: 's1',
-    messageId: 'u1',
-    text: 'The user prompt that started this turn',
-  });
+  assert.equal(model().state, 'latest');
   controller.setUnreadState({
     visible: true,
     hasUnread: true,
@@ -98,55 +53,41 @@ test('conversation wayfinder prioritizes unread over prompt and latest', () => {
     messageId: 'a1',
   });
 
-  assert.equal(affordance.state.state, 'unread');
-  assert.equal(affordance.state.label, 'Jump to first unread');
+  assert.equal(model().state, 'unread');
+  assert.equal(model().label, 'Jump to first unread');
 
-  affordance.emit('activate');
+  wayfinderUtils.activateModel(model(), { ...handlers, unreadController });
   assert.ok(calls.some((entry) => entry[0] === 'jumpUnread'));
 
   controller.dispose();
 });
 
-test('conversation wayfinder falls back from unread to pinned prompt to latest', () => {
-  const { affordance, calls, controller } = buildController();
+test('the live end offers nothing; leaving it offers the way back', () => {
+  const metrics = { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 };
+  const { controller, model, state } = buildController({
+    metrics,
+    state: { currentSessionId: 's1', ui: { activeView: 'chat', followLatest: true } },
+  });
 
   controller.bind();
   controller.setUnreadState({ visible: false, hasUnread: false, sessionId: 's1' });
-  controller.setPinState({
-    visible: true,
-    sessionId: 's1',
-    messageId: 'u1',
-    text: 'Map the transcript flow',
-  });
+  assert.equal(model().visible, false);
 
-  assert.equal(affordance.state.state, 'prompt');
-  assert.equal(affordance.state.label, 'Back to prompt');
-
-  affordance.emit('activate');
-  assert.ok(calls.some((entry) => entry[0] === 'scrollMessage' && entry[1] === 'u1'));
-
-  controller.setPinState({ visible: false, sessionId: 's1' });
-  assert.equal(affordance.state.state, 'latest');
-  assert.equal(affordance.state.label, 'Return to latest');
-
-  affordance.emit('activate');
-  assert.ok(calls.some((entry) => entry[0] === 'jumpBottom'));
+  state.ui.followLatest = false;
+  metrics.scrollTop = 100;
+  controller.refresh();
+  assert.equal(model().state, 'latest');
+  assert.equal(model().label, 'Return to latest');
 
   controller.dispose();
 });
 
 test('conversation wayfinder hides near bottom and ignores stale session cues', () => {
-  const { affordance, controller } = buildController({
+  const { controller, model } = buildController({
     metrics: { scrollTop: 652, scrollHeight: 1000, clientHeight: 300 },
   });
 
   controller.bind();
-  controller.setPinState({
-    visible: true,
-    sessionId: 'other',
-    messageId: 'u-other',
-    text: 'Stale prompt',
-  });
   controller.setUnreadState({
     visible: true,
     hasUnread: true,
@@ -154,54 +95,50 @@ test('conversation wayfinder hides near bottom and ignores stale session cues', 
     messageId: 'a-other',
   });
 
-  assert.equal(affordance.state.visible, false);
-  assert.equal(affordance.state.state, 'hidden');
+  assert.equal(model().visible, false);
+  assert.equal(model().state, 'hidden');
+  assert.equal(wayfinderUtils.activateModel(model(), {}), false, 'a hidden model has nothing to run');
 
   controller.dispose();
 });
 
 test('conversation wayfinder leaves latest navigation to composer tools while following latest', () => {
-  const { affordance, controller, state } = buildController({
+  const { controller, model, state } = buildController({
     state: { currentSessionId: 's1', ui: { activeView: 'chat', followLatest: true } },
   });
 
   controller.bind();
 
-  assert.equal(affordance.state.visible, false);
-  assert.equal(affordance.state.state, 'hidden');
-  assert.equal(state.ui.chatWayfinderVisible, false);
+  assert.equal(model().visible, false);
+  assert.equal(model().state, 'hidden');
 
   state.ui.followLatest = false;
   controller.refresh();
 
-  assert.equal(affordance.state.visible, true);
-  assert.equal(affordance.state.state, 'latest');
+  assert.equal(model().visible, true);
+  assert.equal(model().state, 'latest');
 
   controller.dispose();
 });
 
-test('conversation wayfinder bounds action failures and disposes affordance', () => {
-  const { affordance, calls, controller } = buildController({ throwOnScroll: true });
+test('conversation wayfinder bounds action failures and clears its published model on dispose', () => {
+  const { calls, controller, handlers, model } = buildController({ metrics: { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 } });
+  const unreadController = { jumpToFirstUnread() { throw new Error('jump failed'); } };
 
   controller.bind();
-  controller.setPinState({
-    visible: true,
-    sessionId: 's1',
-    messageId: 'bad\nid',
-    text: 'Malformed id prompt',
-  });
+  controller.setUnreadState({ visible: true, hasUnread: true, sessionId: 's1', messageId: 'a1' });
 
   assert.doesNotThrow(() => {
-    affordance.emit('activate');
+    wayfinderUtils.activateModel(model(), { ...handlers, unreadController });
   });
-  assert.ok(calls.some((entry) => entry[0] === 'log' && entry[1] === 'WARN'));
+  assert.ok(calls.some((entry) => entry[0] === 'actionFailed'));
 
   controller.dispose();
-  assert.ok(calls.some((entry) => entry[0] === 'dispose'));
+  assert.equal(model().visible, false);
 });
 
-test('conversation wayfinder skips unchanged affordance writes on steady refresh', () => {
-  const { calls, controller } = buildController();
+test('conversation wayfinder reports changes once and skips steady refreshes', () => {
+  const { calls, controller } = buildController({ metrics: { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 } });
 
   controller.bind();
   calls.length = 0;
@@ -210,105 +147,89 @@ test('conversation wayfinder skips unchanged affordance writes on steady refresh
   controller.handleScroll();
 
   assert.deepEqual(calls, []);
+
+  controller.setUnreadState({ visible: true, hasUnread: true, sessionId: 's1', messageId: 'a1' });
+  assert.deepEqual(calls, [['change', 'unread', 'Jump to first unread', 'a1']]);
   controller.dispose();
 });
 
-test('conversation wayfinder prefers the composer host when resolving document hosts', () => {
-  const calls = [];
-  const affordance = createAffordance(calls);
+test('conversation wayfinder survives a failing change listener', () => {
   const state = { currentSessionId: 's1', ui: { activeView: 'chat', followLatest: false } };
-  const hosts = {
-    chatUnreadOrientationHost: { id: 'chatUnreadOrientationHost' },
-    composerWayfinderHost: { id: 'composerWayfinderHost' },
-  };
+  const logged = [];
   const controller = wayfinderUtils.createChatWayfinderController({
     state,
-    document: {
-      getElementById(id) {
-        calls.push(['hostLookup', id]);
-        return hosts[id] || null;
-      },
-    },
     getCurrentSessionId: () => state.currentSessionId,
     getCurrentSessionMessages: () => [{ id: 'u1', role: 'user' }],
-    getScrollMetrics: () => ({ scrollTop: 100, scrollHeight: 1000, clientHeight: 300 }),
-    affordanceFactory: {
-      createChatWayfinderAffordance: () => affordance,
-    },
-  });
-
-  controller.bind();
-
-  assert.ok(calls.some((entry) => entry[0] === 'mount' && entry[1] === 'composerWayfinderHost'));
-  assert.equal(calls.some((entry) => entry[0] === 'mount' && entry[1] === 'chatUnreadOrientationHost'), false);
-  controller.dispose();
-});
-
-test('conversation wayfinder keeps composer fallback available when affordance is missing', () => {
-  const state = { currentSessionId: 's1', ui: { activeView: 'chat' } };
-  const controller = wayfinderUtils.createChatWayfinderController({
-    state,
-    host: { id: 'composerWayfinderHost' },
-    getCurrentSessionId: () => state.currentSessionId,
-    getCurrentSessionMessages: () => [{ id: 'u1', role: 'user' }],
-    getScrollMetrics: () => ({ scrollTop: 100, scrollHeight: 1000, clientHeight: 300 }),
-  });
-
-  controller.bind();
-  controller.setPinState({
-    visible: true,
-    sessionId: 's1',
-    messageId: 'u1',
-    text: 'Pinned prompt',
-  });
-
-  assert.equal(state.ui.chatWayfinderVisible, false);
-  controller.dispose();
-});
-
-test('conversation wayfinder bounds affordance init failures and keeps composer fallback available', () => {
-  const calls = [];
-  const state = { currentSessionId: 's1', ui: { activeView: 'chat', followLatest: false } };
-  const controller = wayfinderUtils.createChatWayfinderController({
-    state,
-    host: { id: 'composerWayfinderHost' },
-    getCurrentSessionId: () => state.currentSessionId,
-    getCurrentSessionMessages: () => [{ id: 'u1', role: 'user' }],
-    getScrollMetrics: () => ({ scrollTop: 100, scrollHeight: 1000, clientHeight: 300 }),
-    appendClientLog(level, eventName) {
-      calls.push(['log', level, eventName]);
-    },
-    affordanceFactory: {
-      createChatWayfinderAffordance() {
-        throw new Error('factory boom');
-      },
-    },
+    getScrollMetrics: () => ({ scrollTop: 700, scrollHeight: 1000, clientHeight: 300 }),
+    appendClientLog(level, eventName) { logged.push(eventName); },
+    onChange() { throw new Error('listener boom'); },
   });
 
   assert.doesNotThrow(() => {
     controller.bind();
-    controller.setPinState({
-      visible: true,
-      sessionId: 's1',
-      messageId: 'u1',
-      text: 'Pinned prompt',
-    });
+    controller.setUnreadState({ visible: true, hasUnread: true, sessionId: 's1', messageId: 'a1' });
   });
-
-  assert.equal(state.ui.chatWayfinderVisible, false);
-  assert.ok(calls.some((entry) => entry[0] === 'log' && entry[2] === 'chat.wayfinder_affordance_failed'));
+  assert.equal(state.ui.chatWayfinder.state, 'unread');
+  assert.ok(logged.includes('chat.wayfinder_change_failed'));
   controller.dispose();
+});
+
+test('the jump click handler takes one press per guard window and honours the session', () => {
+  let time = 1000;
+  const jumps = [];
+  let model = { visible: true, state: 'unread', messageId: 'a1', sessionId: 's1' };
+  const click = wayfinderUtils.createJumpClickHandler({
+    now: () => time,
+    getModel: () => model,
+    getSessionId: () => 's1',
+    getHandlers: () => ({ unreadController: { jumpToFirstUnread: () => { jumps.push('unread'); return true; } } }),
+    jumpToLatest: () => { jumps.push('latest'); },
+  });
+  assert.equal(click(), true);
+  time += 349;
+  assert.equal(click(), false, 'inside the guard');
+  time += 1;
+  model = { visible: true, state: 'latest', sessionId: 's1' };
+  assert.equal(click(), true);
+  time += 400;
+  model = { visible: true, state: 'unread', messageId: 'a2', sessionId: 'other' };
+  click();
+  assert.deepEqual(jumps, ['unread', 'latest', 'latest']);
+});
+
+test('activateModel runs the jump a model names and nothing for a hidden one', () => {
+  const ran = [];
+  const handlers = {
+    unreadController: { jumpToFirstUnread: () => { ran.push('unread'); return true; } },
+  };
+  assert.equal(wayfinderUtils.activateModel({ visible: true, state: 'unread', messageId: 'a1' }, handlers), true);
+  assert.equal(wayfinderUtils.activateModel({ visible: true, state: 'latest' }, handlers), false, 'latest is the bottom control\'s own jump');
+  assert.equal(wayfinderUtils.activateModel({ visible: false, state: 'latest' }, handlers), false);
+  assert.equal(wayfinderUtils.activateModel(null, handlers), false);
+  assert.deepEqual(ran, ['unread']);
 });
 
 test('conversation wayfinder bounds scroll metric failures', () => {
-  const { affordance, calls, controller, state } = buildController({ throwOnMetrics: true });
+  const { calls, controller, model } = buildController({ throwOnMetrics: true });
 
   assert.doesNotThrow(() => {
     controller.bind();
   });
 
-  assert.equal(affordance.state.visible, false);
-  assert.equal(state.ui.chatWayfinderVisible, false);
+  assert.equal(model().visible, false);
   assert.ok(calls.some((entry) => entry[0] === 'log' && entry[2] === 'chat.wayfinder_metrics_failed'));
   controller.dispose();
+});
+
+test('a press whose unread jump finds nothing still goes to the latest message', () => {
+  const jumps = [];
+  const click = wayfinderUtils.createJumpClickHandler({
+    now: () => 1000,
+    getModel: () => ({ visible: true, state: 'unread', messageId: 'gone', sessionId: 's1' }),
+    getSessionId: () => 's1',
+    getHandlers: () => ({ unreadController: { jumpToFirstUnread: () => { jumps.push('unread'); return false; } } }),
+    jumpToLatest: () => { jumps.push('latest'); },
+  });
+  assert.equal(click(), true);
+  assert.deepEqual(jumps, ['unread', 'latest']);
 });

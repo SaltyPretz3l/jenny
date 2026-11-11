@@ -57,7 +57,7 @@ In the chats panel, Up and Down, Home and End move between rows, Enter or Space 
 
 Settings > Appearance controls the look.
 
-- Palette: Midnight (the dark default), Paper (light), Jenny XJ-9 Daytime and Night Patrol, Darkroom, Lexicon, Obsidian, Pewter, Retro Teal, Signal, Slate and Woolly World. A Theme bundle combines a palette, typography, a background effect and the composer effect in one choice.
+- Palette: Midnight (the dark default), Paper (light), Jenny XJ-9 Daytime and Night Patrol, Darkroom, Lexicon, Obsidian, Pewter, Retro Teal, Slate, Chalk (light) and Woolly World. A Theme bundle combines a palette, typography, a background effect and the composer effect in one choice.
 - Typography and Text size scale all text in Jenny. Overall app zoom scales the whole shell, and Ctrl+ plus and Ctrl+ minus zoom the window.
 - Chat width: Narrow or Standard. Open the artifact panel when an artifact arrives controls whether the side panel opens on its own.
 - Background effect behind Home and Chat: None, Reactive Grid, Atomic Burst, Circuit Trace, Context Weave or Playlist Scroll. Slate has no effect on purpose.

@@ -386,11 +386,9 @@
             return commitState();
           }
           const activeIdx = state.openSessionIds.indexOf(state.activeSessionId);
-          // No active slot, or the active tab is busy (streaming / pending
-          // approval) → never discard in-flight work; fall back to a new tab.
-          if (activeIdx < 0 || isSessionBusy(state.activeSessionId)) {
-            return openAsNewTab(id);
-          }
+          // Only an empty slot adds a tab. A busy chat may leave the rail: its
+          // stream is per session and Chats keeps showing its status.
+          if (activeIdx < 0) return openAsNewTab(id);
           // Replace in place: swap the active slot, drop the old session from MRU.
           const replacedId = state.activeSessionId;
           state.openSessionIds.splice(activeIdx, 1, id);

@@ -24,6 +24,32 @@ def _user(content: str) -> dict[str, Any]:
     return {"role": "user", "content": content}
 
 
+_TOOL_SCRIPT = {
+    "version": 1,
+    "calls": [
+        {
+            "reasoning": "Plan a short reply, then call the tool.",
+            "text": "Sure - let me check that.",
+            "tool_calls": [
+                {
+                    "tool_id": "mermaid_generate",
+                    "arguments": {"prompt": "flowchart TD\nA --> B", "diagram_type": "flowchart"},
+                }
+            ],
+        },
+        {"text": "Done. This deterministic replay turn exercised the tool loop."},
+    ],
+}
+
+
+def _tool_script_engine(tmp_path: Any) -> ReplayEngine:
+    script_path = tmp_path / "tool-script.json"
+    script_path.write_text(json.dumps(_TOOL_SCRIPT), encoding="utf-8")
+    engine = ReplayEngine(script_path=str(script_path), delay_ms=0)
+    engine.load_model("replay-default")
+    return engine
+
+
 def test_factory_selects_replay_engine() -> None:
     selection = create_engine(RuntimeConfig(engine_type="replay", model="replay-default"))
     assert selection.engine_type == "replay"
@@ -32,7 +58,7 @@ def test_factory_selects_replay_engine() -> None:
     assert selection.fallback_from is None
 
 
-def test_default_scenario_streams_reasoning_text_then_tool_call() -> None:
+def test_default_scenario_streams_reasoning_then_text_with_a_fenced_mermaid_block() -> None:
     engine = ReplayEngine(delay_ms=0)
     engine.load_model("replay-default")
 
@@ -52,17 +78,28 @@ def test_default_scenario_streams_reasoning_text_then_tool_call() -> None:
     assert len(text_chunks) > 1
     assert "".join(text_chunks).strip() == str(DEFAULT_SCRIPT["calls"][0]["text"])
 
+    assert "```mermaid\nflowchart TD\n" in result.content
+    assert result.finish_reason == "stop"
+    assert result.tool_calls == ()
+    assert result.usage is not None and result.usage.provider == "replay"
+
+
+def test_scripted_tool_call_is_emitted_when_the_tool_is_offered(tmp_path) -> None:
+    engine = _tool_script_engine(tmp_path)
+
+    _, result = _drain(
+        engine.stream_with_tools("p", [MERMAID_TOOL_SCHEMA], messages=[_user("go")])
+    )
+
     assert result.finish_reason == "tool_calls"
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].tool_id == "mermaid_generate"
     assert result.tool_calls[0].arguments["diagram_type"] == "flowchart"
     assert result.tool_calls[0].call_id
-    assert result.usage is not None and result.usage.provider == "replay"
 
 
-def test_tool_call_ids_are_deterministic_across_replays() -> None:
-    engine = ReplayEngine(delay_ms=0)
-    engine.load_model("replay-default")
+def test_tool_call_ids_are_deterministic_across_replays(tmp_path) -> None:
+    engine = _tool_script_engine(tmp_path)
     messages = [_user("draw me a chart")]
     _, first = _drain(engine.stream_with_tools("p", [MERMAID_TOOL_SCHEMA], messages=messages))
     _, second = _drain(engine.stream_with_tools("p", [MERMAID_TOOL_SCHEMA], messages=messages))
@@ -102,9 +139,8 @@ def test_replay_script_strips_forged_plan_artifact_capability(tmp_path) -> None:
     assert "_jenny_plan_artifact_write" not in result.tool_calls[0].arguments
 
 
-def test_post_tool_invocation_plays_the_follow_up_call() -> None:
-    engine = ReplayEngine(delay_ms=0)
-    engine.load_model("replay-default")
+def test_post_tool_invocation_plays_the_follow_up_call(tmp_path) -> None:
+    engine = _tool_script_engine(tmp_path)
     messages = [
         _user("draw me a chart"),
         {"role": "assistant", "content": "Sure"},
@@ -116,9 +152,8 @@ def test_post_tool_invocation_plays_the_follow_up_call() -> None:
     assert "deterministic replay turn" in "".join(c for c in chunks if isinstance(c, str))
 
 
-def test_tool_call_is_skipped_when_tool_not_offered() -> None:
-    engine = ReplayEngine(delay_ms=0)
-    engine.load_model("replay-default")
+def test_tool_call_is_skipped_when_tool_not_offered(tmp_path) -> None:
+    engine = _tool_script_engine(tmp_path)
     _, result = _drain(engine.stream_with_tools("p", [], messages=[_user("hi")]))
     assert result.finish_reason == "stop"
     assert result.tool_calls == ()

@@ -25,6 +25,8 @@
   var DIAGNOSTIC_INTERVAL_MS = 5000;
   var TELEMETRY_INTERVAL_MS = 1000;
   var UNATTRIBUTED_JUMP_PX = 120;
+  // Row 131: an upward move this large under a followed reader is a snap.
+  var SCROLL_SNAP_MIN_PX = 8;
   var MAX_TELEMETRY_ROW_KINDS = 12;
   // HB-005: one live-follow writer runs at most once per display frame (60-144
   // per second); a sustained rate above this is a write feedback loop.
@@ -114,7 +116,6 @@
       : null;
 
     var viewportController = null;
-    var pinController = null;
     var unreadController = null;
     var wayfinderController = null;
     var timelineVirtualizer = null;
@@ -189,6 +190,20 @@
       if (lastTimestamp !== undefined && timestamp - lastTimestamp < TELEMETRY_INTERVAL_MS) return;
       lastTelemetryAtByEvent.set(eventName, timestamp);
       try { appendClientLog(level, eventName, details || {}); } catch (_error) { /* best-effort */ }
+    }
+
+    // Count one snap in the reply's client_timing. Best-effort: a telemetry
+    // failure must never break a scroll frame.
+    function noteScrollSnap(px, reason) {
+      try {
+        var metrics = options.streamClientMetrics
+          || (globalThis.rendererStreamClientMetricsModule
+            && typeof globalThis.rendererStreamClientMetricsModule.getShared === 'function'
+            ? globalThis.rendererStreamClientMetricsModule.getShared() : null);
+        if (metrics && typeof metrics.noteScrollSnapForSession === 'function') {
+          metrics.noteScrollSnapForSession(String(getSessionId() || ''), { px: px, reason: reason });
+        }
+      } catch (_error) { /* best-effort */ }
     }
 
     function readStreamingState() {
@@ -440,6 +455,12 @@
       var delta = snapshot.scrollTop - fromTop;
       var attributionReason = snapshot.programmaticReason || 'marker_absent';
       var pendingTelemetry = null;
+      // `tail_cushion:hold` moves the position with the content, so nothing
+      // the reader sees moves: not a snap.
+      if (delta <= -SCROLL_SNAP_MIN_PX && followLatestAtFrameStart && snapshot.userInitiated !== true
+        && attributionReason !== 'tail_cushion:hold') {
+        noteScrollSnap(Math.abs(delta), attributionReason);
+      }
       if (delta !== 0) {
         // Consumption-based lifetime (spec 1b item 1): the marker is cleared by
         // the frame that consumes it — i.e. the frame that observes the write's
@@ -496,7 +517,6 @@
 
       safeDispatch(viewportController, 'syncThreadScrollState', snapshot, 'viewport');
       safeDispatch(unreadController, 'handleScroll', snapshot, 'unread');
-      safeDispatch(pinController, 'handleScrollFrame', snapshot, 'pin');
       safeDispatch(wayfinderController, 'handleScroll', snapshot, 'wayfinder');
       try { renderJumpControls(snapshot); } catch (_error) {
         logRateLimited('chat.scroll_consumer_failed', { consumer: 'jump_controls' });
@@ -732,7 +752,6 @@
       contentMutationObserver = null;
       anchorRegistry?.dispose?.();
       viewportController = null;
-      pinController = null;
       unreadController = null;
       wayfinderController = null;
       timelineVirtualizer = null;
@@ -760,7 +779,6 @@
       },
       restoreReaderAnchor: restoreReaderAnchor,
       scheduleFrame: scheduleFrame,
-      setPinController: function setPinController(next) { if (!disposed) pinController = next || null; },
       setTimelineVirtualizer: function setTimelineVirtualizer(next) {
         if (disposed) return;
         timelineVirtualizer = next || null;
@@ -784,6 +802,7 @@
 
   return {
     FOLLOW_THRESHOLD: FOLLOW_THRESHOLD,
+    SCROLL_SNAP_MIN_PX: SCROLL_SNAP_MIN_PX,
     createChatScrollCoordinator: createChatScrollCoordinator,
   };
 });

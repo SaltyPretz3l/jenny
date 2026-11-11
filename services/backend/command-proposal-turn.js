@@ -69,10 +69,14 @@ function readCommandOutcome(result) {
 
 // Electron owns the visible completion copy; the sidecar's response_text is only
 // a fallback string and is never shown for a run that produced an outcome.
-function completionLine(outcome, { notStarted = false } = {}) {
+function completionLine(outcome, { notStarted = false, sandboxReason = '' } = {}) {
   const code = outcome?.exit_code;
   const known = Number.isSafeInteger(code);
   if (notStarted) return t('commandProposal.completion.notStarted', 'Command could not be started. Nothing ran.');
+  // The sandbox refused before anything ran: say why and what the user can do instead. Only for
+  // reasons raised before admission, so a run whose cleanup failed is never called "Nothing ran".
+  if (PRE_RUN_REFUSALS.has(sandboxReason) && outcome?.status === 'failed' && !known
+    && outcome.cleanup !== 'uncertain') return sandboxRefusalLine(sandboxReason);
   switch (outcome?.status) {
     case 'succeeded': return known
       ? t('commandProposal.completion.succeeded', 'Command finished (exit {code}).', { code })
@@ -84,6 +88,30 @@ function completionLine(outcome, { notStarted = false } = {}) {
     case 'cancelled': return t('commandProposal.completion.cancelled', 'Command was cancelled.');
     default: return t('commandProposal.completion.unknown', 'Command outcome unknown.');
   }
+}
+
+const PRE_RUN_REFUSALS = new Set(['snapshot_limit', 'snapshot_link_rejected', 'snapshot_special_file_rejected',
+  'snapshot_reparse_point', 'snapshot_directory_invalid', 'snapshot_profile_overlap', 'snapshot_changed',
+  'sandbox_unavailable', 'sandbox_busy', 'sandbox_read_only', 'sandbox_policy_unacknowledged',
+  'sandbox_policy_denied', 'sandbox_policy_changed']);
+
+function sandboxRefusalLine(reason) {
+  if (reason === 'snapshot_limit') {
+    return t('commandProposal.completion.sandboxTooLarge',
+      'Nothing ran: this workspace is too large for the command sandbox to copy. Copy the command into your own terminal, or turn the sandbox off in Settings.');
+  }
+  if (reason === 'sandbox_unavailable') {
+    return t('commandProposal.completion.sandboxNotReady',
+      "Nothing ran: the command sandbox isn't ready. Copy the command into your own terminal, or retry or turn off the sandbox in Settings.");
+  }
+  return t('commandProposal.completion.sandboxRefused',
+    'Nothing ran: the command sandbox refused the command. Copy it into your own terminal, or check the sandbox in Settings.');
+}
+
+// The bridge's last refusal, when it belongs to this Run's stream.
+function sandboxReasonFor(service, streamId) {
+  const last = service.lastSandboxFailure;
+  return last?.streamId === streamId ? String(last.reason || '') : '';
 }
 
 function eventIdentity(work, proposal) {
@@ -277,7 +305,8 @@ async function startCommandProposalTurn(service, { work, proposal, turnLease, ru
       // transcript turn whose line Electron authors; anything else settles as sidecar failure.
       const terminalResult = ['completed', 'denied', 'cancelled'].includes(result?.status)
         ? { ...result, status: 'completed', terminal_subcode: undefined,
-          response_text: completionLine(commandOutcome), completion_source: 'command_proposal' }
+          response_text: completionLine(commandOutcome, { sandboxReason: sandboxReasonFor(service, streamId) }),
+          completion_source: 'command_proposal' }
         : result;
       await require('../execution/execution-settlement').settleExecution(service, streamId);
       const settled = await runtime.settleTerminalResult(terminalResult);
@@ -317,7 +346,8 @@ async function startCommandProposalTurn(service, { work, proposal, turnLease, ru
       let lined = false;
       if (!userAbort && payload.terminal_subcode !== 'execution_uncertain' && !runtime.isVisibleCompletionEmitted()) {
         try {
-          lined = (await runtime.emitDeterministicCompletion(completionLine(commandOutcome, { notStarted: !requestSent }))) === true;
+          lined = (await runtime.emitDeterministicCompletion(completionLine(commandOutcome,
+            { notStarted: !requestSent, sandboxReason: sandboxReasonFor(service, streamId) }))) === true;
         } catch (_lineError) { lined = false; }
       }
       const terminal = lined ? null : resolveTerminalRouting({ status: payload.status,

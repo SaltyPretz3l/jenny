@@ -10,11 +10,25 @@ from typing import Any
 
 from sidecar.ai.tools import sanitization as tool_sanitization
 from sidecar.ai.tools.prompt_marker_guard import neutralize_prompt_markers
+from sidecar.ai.tools.secret_redaction import REDACTED
 
 LOGGER = logging.getLogger(__name__)
 BOOTSTRAP_SANITIZATION_LOG_EVENT = "ai.personality.sanitization.bootstrap_neutralized"
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 _NEWLINE_NORMALIZE_RE = re.compile(r"\r\n?")
+# User-written prose, unlike tool output: no model edits it back into source, so a
+# keyword's value is redacted without the code-shape test in secret_redaction.py.
+# The Settings preview applies these same rules (services/personality-workspace-compile.js)
+# and "Show exact text" has to match what is sent.
+_KEYWORD_SECRET_PATTERNS = (
+    re.compile(
+        r"(?i)(?<![A-Za-z0-9])"
+        r"(api[_-]?key|api-key|authorization|token|secret|password|passwd|dsn)"
+        r"(?:_[a-z0-9_]{1,48})?[\"']?\s*[:=]\s*(?:Bearer\s+)?[\"']?([^\s,;'\"{}]+)"
+    ),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b"),
+    re.compile(r"(?i)\b(?:signature|sig)\s*[:=]\s*([^\s,;'\"{}&]+)"),
+)
 
 
 def sanitize_bootstrap(text: object, *, source_name: str = "") -> str:
@@ -31,6 +45,8 @@ def sanitize_bootstrap(text: object, *, source_name: str = "") -> str:
         )
     normalized = neutralize_prompt_markers(normalized)
     normalized = tool_sanitization.redact_obvious_secrets(normalized)
+    for pattern in _KEYWORD_SECRET_PATTERNS:
+        normalized = pattern.sub(REDACTED, normalized)
     return normalized.strip()
 
 

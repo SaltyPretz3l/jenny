@@ -76,7 +76,8 @@
       if (!item) {
         return DEFAULT_SECTION;
       }
-      if (item.getAttribute('data-dev-only') === 'true' && (
+      // A dev-only or feature-flagged item that is hidden resolves to the default section.
+      if ((item.getAttribute('data-dev-only') === 'true' || item.hasAttribute('data-feature-flag')) && (
         item.hidden || item.classList.contains('hidden')
       )) {
         return DEFAULT_SECTION;
@@ -347,7 +348,9 @@
       + ' aria-controls="settingsContentPanel"'
       + (options && options.groupLabelId ? ' aria-describedby="' + escapeHtml(options.groupLabelId) + '"' : '')
       + ' tabindex="' + (isDefault ? '0' : '-1') + '"'
-      + ' data-settings-section="' + escapeHtml(section.id) + '">'
+      + ' data-settings-section="' + escapeHtml(section.id) + '"'
+      // Hidden until syncFeatureFlaggedSettings reads the flag as on (fail closed).
+      + (section.featureFlag ? ' data-feature-flag="' + escapeHtml(section.featureFlag) + '" hidden' : '') + '>'
       // Label span + fixed badge slot (empty at zero, so geometry never changes).
       + '<span class="settings-nav-item-label">' + escapeHtml(section.label) + '</span>'
       + '<span class="settings-nav-item-badge" data-tone=""></span></button>';
@@ -419,6 +422,7 @@
           return { label: group.label, options: group.sections.map(function (section) { return { value: section.id, label: section.label }; }) };
         }),
       }) + '</div>');
+      syncFeatureFlaggedSettings(doc, {});
       var existingSearch = header.querySelector('[data-settings-search]');
       if (existingSearch) {
         existingSearch.parentNode.removeChild(existingSearch);
@@ -430,7 +434,24 @@
     return true;
   }
 
+  /* Shows the nav item, its picker option and its card for each feature-flagged
+   * section whose flag is exactly true in `featureFlags`; hides them otherwise.
+   * Idempotent: the Settings render pass calls it with the current flag state. */
+  function syncFeatureFlaggedSettings(documentRef, featureFlags) {
+    var doc = documentRef || (typeof globalThis !== 'undefined' ? globalThis.document : null);
+    if (!doc || typeof doc.querySelectorAll !== 'function') return;
+    var flags = featureFlags && typeof featureFlags === 'object' ? featureFlags : {};
+    [].forEach.call(doc.querySelectorAll('[data-feature-flag]'), function (node) {
+      var on = flags[node.getAttribute('data-feature-flag')] === true;
+      if (node.hidden === on) node.hidden = !on;
+      var sectionId = node.classList.contains('settings-nav-item') ? node.getAttribute('data-settings-section') : '';
+      var option = sectionId ? doc.querySelector('#settingsNavPicker option[value="' + sectionId + '"]') : null;
+      if (option) { option.hidden = !on; option.disabled = !on; }
+    });
+  }
+
   return {
+    syncFeatureFlaggedSettings: syncFeatureFlaggedSettings,
     createSettingsNavController: createSettingsNavController,
     buildSettingsNavMarkup: buildSettingsNavMarkup,
     renderSettingsNav: renderSettingsNav,

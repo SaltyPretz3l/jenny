@@ -13,7 +13,13 @@ const { encodePreviewImage } = require('./preview-vision-image');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { classifyBrowserUrlWithRealpathSync } = require('./browser-url-policy');
+const {
+  classifyAllowedUrl,
+  clearWebContentsSecurity,
+  configureWebContentsSecurity,
+  resolvedFileRoots,
+} = require('./browser-session-security');
+const { installFileOverrides } = require('./browser-session-file-overrides');
 const {
   DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
   MAX_BROWSER_ACTION_TIMEOUT_MS,
@@ -44,6 +50,7 @@ const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
 const MAX_RETAINED_CONSOLE_MESSAGES = 50;
 const MAX_RETAINED_PAGE_ERRORS = 50;
 const MAX_BROWSER_SESSION_ID_LENGTH = 128;
+const HIDE_SCROLLBARS_CSS = '* { scrollbar-width: none !important; } ::-webkit-scrollbar { display: none !important; }';
 
 function _runDependencyProbe() {
   return { available: true, driver: 'electron', version: null };
@@ -189,6 +196,8 @@ class BrowserSessionService {
     bounds,
     allowedFileRoots,
     strictWorkspaceOnly = false,
+    fileOverrides = null,
+    hideScrollbars = false,
     abortSignal = null,
   } = {}) {
     _throwIfAborted(abortSignal);
@@ -231,22 +240,34 @@ class BrowserSessionService {
       operationTail: Promise.resolve(),
       closing: false,
     };
-    this._configureWebContentsSecurity(session);
+    configureWebContentsSecurity(session, this._securityDeps());
     this._attachWebContentsObservers(session);
     this._sessions.set(safeSessionId, session);
 
     try {
+      if (fileOverrides != null) {
+        // Earlier file versions are served only into a workspace-only session.
+        if (!session.strictWorkspaceOnly) throw new Error('File overrides require a strict browser session.');
+        const deps = this._securityDeps();
+        session.fileOverrides = installFileOverrides(session, fileOverrides, { ...deps, roots: resolvedFileRoots(session, deps) });
+      }
       if (session.strictWorkspaceOnly) {
         if (session.requestFilterInstalled !== true) {
           throw new Error('Strict browser sessions require request filtering.');
         }
-        const policyResult = this._classifyAllowedUrl(session.url, session);
+        const policyResult = classifyAllowedUrl(session.url, session, this._securityDeps());
         if (!policyResult.allowed) {
           throw new Error('Strict browser sessions require a contained workspace file URL.');
         }
       }
       await this._loadUrl(session, String(url || ''));
       _throwIfAborted(abortSignal);
+      if (hideScrollbars === true && typeof webContents?.insertCSS === 'function') {
+        // A picture of the page, not of this window's scrollbars. Best-effort.
+        try {
+          await webContents.insertCSS(HIDE_SCROLLBARS_CSS, { cssOrigin: 'user' });
+        } catch (_error) { /* the picture keeps its scrollbar */ }
+      }
       this._touch(session);
       this._logger('INFO', 'browser.session_opened', {
         sessionId: safeSessionId,
@@ -620,6 +641,8 @@ class BrowserSessionService {
       show: false,
       width,
       height,
+      // `contentSize` makes the size the page's own, without the window frame.
+      ...(bounds.contentSize === true ? { useContentSize: true } : {}),
       webPreferences: {
         partition: `jenny-browser-tool-${partitionToken}-${partitionNonce}`,
         devTools: false,
@@ -640,133 +663,14 @@ class BrowserSessionService {
     };
   }
 
-  _configureWebContentsSecurity(session) {
-    const webContents = session.webContents;
-    if (!webContents) {
-      return;
-    }
-    if (typeof webContents.setWebRTCIPHandlingPolicy === 'function') {
-      try {
-        webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
-      } catch (_) {
-        // Older Electron: the hidden window still has no media permissions.
-      }
-    }
-    if (typeof webContents.setWindowOpenHandler === 'function') {
-      webContents.setWindowOpenHandler((details = {}) => {
-        const policyResult = this._classifyAllowedUrl(details.url, session);
-        this._logger('WARN', 'browser.window_open_denied', {
-          sessionId: session.sessionId,
-          reason: 'window_open_disabled',
-          host: policyResult.policy.host,
-          scheme: policyResult.policy.scheme,
-        });
-        return { action: 'deny' };
-      });
-    }
-    const browserSession = webContents.session;
-    if (browserSession && typeof browserSession.setPermissionRequestHandler === 'function') {
-      browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-        this._logger('WARN', 'browser.permission_denied', {
-          sessionId: session.sessionId,
-          permission: String(permission || '').slice(0, 80),
-        });
-        callback(false);
-      });
-    }
-    if (browserSession && typeof browserSession.setPermissionCheckHandler === 'function') {
-      browserSession.setPermissionCheckHandler(() => false);
-    }
-    if (browserSession && typeof browserSession.setDevicePermissionHandler === 'function') {
-      browserSession.setDevicePermissionHandler(() => false);
-    }
-    // Recorded so a strict session can refuse to open without the filter
-    // instead of silently loading unfiltered.
-    session.requestFilterInstalled = Boolean(
-      browserSession?.webRequest && typeof browserSession.webRequest.onBeforeRequest === 'function'
-    );
-    if (session.requestFilterInstalled) {
-      browserSession.webRequest.onBeforeRequest((details, callback) => {
-        const policyResult = this._classifyAllowedUrl(details?.url, session);
-        if (!policyResult.allowed) {
-          this._logger('WARN', 'browser.request_blocked', {
-            sessionId: session.sessionId,
-            reason: policyResult.policy.reason,
-            host: policyResult.policy.host,
-            scheme: policyResult.policy.scheme,
-            resourceType: String(details?.resourceType || '').slice(0, 80),
-          });
-          callback({ cancel: true });
-          return;
-        }
-        callback({});
-      });
-    }
-    webContents.on?.('will-navigate', (event, nextUrl) => {
-      this._preventDisallowedNavigation(event, nextUrl, session, 'will_navigate');
-    });
-    webContents.on?.('will-redirect', (event, nextUrl) => {
-      this._preventDisallowedNavigation(event, nextUrl, session, 'will_redirect');
-    });
+  // The limits themselves live in browser-session-security.js.
+  _securityDeps() {
+    return { fsImpl: this._fs, pathImpl: this._path, logger: this._logger };
   }
 
-  _clearWebContentsSecurity(session) {
-    const browserSession = session.webContents?.session;
-    try {
-      browserSession?.webRequest?.onBeforeRequest?.(null);
-    } catch (_) {
-      // Best-effort cleanup; the owning in-memory partition is session-scoped.
-    }
-    try {
-      browserSession?.setPermissionRequestHandler?.(null);
-      browserSession?.setPermissionCheckHandler?.(null);
-      browserSession?.setDevicePermissionHandler?.(null);
-    } catch (_) {
-      // Best-effort cleanup.
-    }
-  }
-
-  _preventDisallowedNavigation(event, nextUrl, session, source) {
-    const policyResult = this._classifyAllowedUrl(nextUrl, session);
-    if (policyResult.allowed) {
-      return;
-    }
-    event?.preventDefault?.();
-    this._logger('WARN', 'browser.navigation_blocked', {
-      sessionId: session.sessionId,
-      source,
-      reason: policyResult.policy.reason,
-      host: policyResult.policy.host,
-      scheme: policyResult.policy.scheme,
-    });
-  }
-
-  // Allowed roots are realpath-resolved once per session; every request
-  // still resolves its own candidate path.
-  _resolvedFileRoots(session) {
-    if (Array.isArray(session.resolvedFileRoots)) return session.resolvedFileRoots;
-    const resolved = [];
-    for (const root of session.allowedFileRoots || []) {
-      try {
-        resolved.push(this._fs.realpathSync(this._path.resolve(root)));
-      } catch (_) {
-        // An unavailable root never matches; the classifier fails closed.
-      }
-    }
-    session.resolvedFileRoots = resolved;
-    return resolved;
-  }
-
-  _classifyAllowedUrl(rawUrl, session) {
-    const policy = classifyBrowserUrlWithRealpathSync(rawUrl, {
-      allowedFileRoots: this._resolvedFileRoots(session),
-      allowedFileRootsResolved: true,
-      fsImpl: this._fs,
-      pathImpl: this._path,
-    });
-    const allowed = policy.decision === 'allow'
-      && (!session.strictWorkspaceOnly || policy.reason === 'workspace_file_url');
-    return { allowed, policy };
+  // Which overridden files a render asked for, by the ids given to open().
+  fileOverrideReport(sessionId) {
+    return this._sessions.get(_normalizeSessionId(sessionId))?.fileOverrides?.report() || null;
   }
 
   _attachWebContentsObservers(session) {
@@ -986,7 +890,7 @@ class BrowserSessionService {
 
   _releaseClosedSession(id, session) {
     try {
-      this._clearWebContentsSecurity(session);
+      clearWebContentsSecurity(session);
       for (const event of ['console-message', 'will-navigate', 'will-redirect', 'render-process-gone', 'did-fail-load']) {
         session.webContents?.removeAllListeners?.(event);
       }

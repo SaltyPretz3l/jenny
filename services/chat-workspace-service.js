@@ -22,9 +22,11 @@ const {
   section,
   succeed,
   validateChangeDiffRequest,
+  validateListChangesRequest,
   validateSessionRequest,
   validateSetViewRequest,
 } = require('./chat-workspace-contract');
+const { ChangesCache, boundedSet } = require('./chat-workspace-changes-cache');
 const { createChangeNotifier } = require('./chat-workspace-change-notifier');
 const {
   buildBackgroundTasksSection,
@@ -34,6 +36,7 @@ const {
   buildOutputsSection,
   collectOutputs,
 } = require('./chat-workspace-summary-sections');
+const { createWorkspaceGitBranchCompare, registryBaseRef } = require('./workspace-git-branch-compare');
 const { createWorkspaceGitChangeSummary } = require('./workspace-git-change-summary');
 
 const CHANGES_FRESH_MS = 2000;
@@ -41,7 +44,6 @@ const CHANGES_BUDGET_MS = 1500;
 const PREVIEW_BUDGET_MS = 1500;
 const PREVIEW_PENDING = Object.freeze({ status: 'unavailable', reason: 'preview_pending' });
 const WORKTREE_CACHE_MS = 5000;
-const MAX_TRACKED = 64;
 const WATCH_TTL_MS = 10 * 60 * 1000;
 const TERMINAL_STREAM_TYPES = new Set(['complete', 'error', 'question_batch', 'plan_proposal']);
 const NO_STALE_REASONS = new Set(['feature_disabled', 'no_workspace', 'not_a_git_repository']);
@@ -50,12 +52,6 @@ const LINKED_STREAM_TYPES = new Set(['started', ...TERMINAL_STREAM_TYPES]);
 const MAX_LINKED_CHILDREN = 32;
 const LINKED_WORKS_PER_CHILD = 50;
 const PARENT_CACHE_LIMIT = 512;
-
-function boundedSet(map, key, value, limit = MAX_TRACKED) {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > limit) map.delete(map.keys().next().value);
-}
 
 class ChatWorkspaceService {
   constructor({
@@ -72,6 +68,7 @@ class ChatWorkspaceService {
     getRuntimeStore = () => null,
     isActivityEnabled = () => false,
     changeSummary = createWorkspaceGitChangeSummary(),
+    branchCompare = createWorkspaceGitBranchCompare(),
     emit = () => {},
     log = () => {},
     now = () => new Date(),
@@ -96,13 +93,17 @@ class ChatWorkspaceService {
     this._getRuntimeStore = getRuntimeStore;
     this._isActivityEnabled = isActivityEnabled;
     this._changeSummary = changeSummary;
+    this._branchCompare = branchCompare;
     this._log = log;
     this._now = now;
     this._changesBudgetMs = changesBudgetMs;
     this._previewBudgetMs = previewBudgetMs;
     this._previews = new Map(); // sessionId -> last estimated preview
-    this._changesFreshMs = changesFreshMs;
-    this._changes = new Map(); // sessionId -> { key, at, promise, value, lastAvailable }
+    const cacheOptions = {
+      now, freshMs: changesFreshMs, noStaleReasons: NO_STALE_REASONS, notify: (id) => this._notifier.notify(id), isDisposed: () => this._disposed,
+    };
+    this._changes = new ChangesCache(cacheOptions); // working-tree reads
+    this._branchChanges = new ChangesCache(cacheOptions); // whole-branch reads, never mixed with the above
     this._outputs = new Map(); // sessionId -> { key, outputs }
     this._watched = new Map(); // sessionId -> { rootId, seenAt } (sessions a renderer has read)
     this._parents = new Map(); // sessionId -> parent session id | null (spawned_from is immutable)
@@ -191,7 +192,7 @@ class ChatWorkspaceService {
   }
 
   async listChanges(raw) {
-    const checked = validateSessionRequest(raw);
+    const checked = validateListChangesRequest(raw);
     if (!checked.ok) return fail(checked.reason);
     const sessionId = checked.value.session_id;
     const known = this._readSession(sessionId);
@@ -201,7 +202,7 @@ class ChatWorkspaceService {
     if (!captured.authority.root_path) return this._changesEnvelope({ state: 'unavailable', reason: 'no_workspace' });
     this._touch(sessionId, captured.authority);
     try {
-      return this._changesEnvelope(await this._changesFor(sessionId, captured.authority));
+      return this._changesEnvelope(await this._changesFor(sessionId, captured.authority, checked.value.scope));
     } catch {
       return this._changesEnvelope({ state: 'unavailable', reason: 'git_failed' });
     }
@@ -210,7 +211,7 @@ class ChatWorkspaceService {
   async getChangeDiff(raw) {
     const checked = validateChangeDiffRequest(raw);
     if (!checked.ok) return fail(checked.reason);
-    const { session_id: sessionId, path } = checked.value;
+    const { session_id: sessionId, path, scope } = checked.value;
     const known = this._readSession(sessionId);
     if (!known.ok) return fail(known.reason);
     const captured = this._authority(sessionId);
@@ -220,7 +221,11 @@ class ChatWorkspaceService {
     let result;
     try {
       const gitService = this._resolveGitService(authority, sessionId);
-      result = await this._changeSummary.getChangeDiff({ gitService, root: authority.root_path, path });
+      result = scope === 'branch'
+        ? await this._branchCompare.getBranchChangeDiff({
+          gitService, root: authority.root_path, path, registryBase: registryBaseRef(this._worktreeEntries(), authority.root_path),
+        })
+        : await this._changeSummary.getChangeDiff({ gitService, root: authority.root_path, path });
     } catch {
       result = { ok: false, reason: 'git_failed' };
     }
@@ -293,6 +298,7 @@ class ChatWorkspaceService {
     try { this._activity.unsubscribe?.(); } catch { /* observational */ }
     this._activity = { unsubscribe: null, signatures: new Map(), source: null };
     this._changes.clear();
+    this._branchChanges.clear();
     this._outputs.clear();
     this._watched.clear();
     this._parents.clear();
@@ -462,44 +468,19 @@ class ChatWorkspaceService {
     });
   }
 
-  // Shared, single-flight, briefly cached Changes read for one session.
-  _changesFor(sessionId, authority) {
+  // Shared, single-flight, briefly cached Changes read for one session and scope.
+  _changesFor(sessionId, authority, scope = 'working_tree') {
+    const branch = scope === 'branch';
     const key = `${authority.root_id}|${authority.root_revision}`;
-    const entry = this._changes.get(sessionId);
-    const nowMs = this._now().getTime();
-    if (entry && entry.key === key) {
-      if (entry.promise) return entry.promise;
-      if (entry.value && nowMs - entry.at < this._changesFreshMs) return Promise.resolve(entry.value);
-    }
-    const previous = entry && entry.key === key ? entry.lastAvailable : null;
-    const record = { key, at: nowMs, promise: null, value: null, lastAvailable: previous };
-    const run = (async () => {
-      let result;
-      try {
-        const gitService = this._resolveGitService(authority, sessionId);
-        result = await this._changeSummary.listChanges({
-          gitService, root: authority.root_path, workspaceId: authority.root_id || null,
-        });
-      } catch {
-        result = { state: 'unavailable', reason: 'git_failed', sampled_at: this._iso(), data: null };
-      }
-      if (result.state === 'available') {
-        record.lastAvailable = result;
-      } else if (result.state === 'unavailable' && record.lastAvailable && !NO_STALE_REASONS.has(result.reason)) {
-        result = { ...result, state: 'stale', data: record.lastAvailable.data, sampled_at: record.lastAvailable.sampled_at };
-      }
-      record.value = result;
-      // Invalidated while the read ran: the result predates the change, so it is not fresh and the
-      // session is told to read again.
-      record.at = record.dirty ? 0 : this._now().getTime();
-      record.promise = null;
-      if (record.dirty && !this._disposed) this._notifier.notify(sessionId);
-      record.dirty = false;
-      return result;
-    })();
-    record.promise = run;
-    boundedSet(this._changes, sessionId, record);
-    return run;
+    return (branch ? this._branchChanges : this._changes).read(sessionId, key, () => {
+      const gitService = this._resolveGitService(authority, sessionId);
+      const request = { gitService, root: authority.root_path, workspaceId: authority.root_id || null };
+      return branch
+        ? this._branchCompare.listBranchChanges({
+          ...request, registryBase: registryBaseRef(this._worktreeEntries(), authority.root_path),
+        })
+        : this._changeSummary.listChanges(request);
+    });
   }
 
   // Summary budget: a slow Git read reports `checking` and invalidates the
@@ -554,10 +535,8 @@ class ChatWorkspaceService {
   }
 
   _expireChanges(sessionId) {
-    const entry = this._changes.get(sessionId);
-    if (!entry) return;
-    if (entry.promise) entry.dirty = true;
-    else entry.at = 0;
+    this._changes.expire(sessionId);
+    this._branchChanges.expire(sessionId);
   }
 
   // Test Runner activity is the one source with per-session rows. A change of

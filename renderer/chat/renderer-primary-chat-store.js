@@ -16,6 +16,7 @@
   const SCHEMA_VERSION = 1;
   const FLAGS_ON = Object.freeze({ controls: true, launch_permission: true, activity_log: true });
   const FLAGS_OFF = Object.freeze({ controls: false, launch_permission: false, activity_log: false });
+  const NO_FULL_AUTO = Object.freeze({ available: false, armed: false });
 
   function isObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -46,7 +47,7 @@
     const onChanged = typeof o.onChanged === 'function' ? o.onChanged : () => {};
     const log = typeof o.appendClientLog === 'function' ? o.appendClientLog : () => {};
     const listeners = new Set();
-    let data = { paused: false, paused_at: null, session_id: null, flags: { ...FLAGS_ON }, status: 'idle' };
+    let data = { paused: false, paused_at: null, session_id: null, flags: { ...FLAGS_ON }, status: 'idle', full_auto: NO_FULL_AUTO };
     let signature = '';
     let inflight = null;
     let queued = null;
@@ -71,7 +72,7 @@
         if (data.status === 'ready') state.ui.primaryChat = { paused: data.paused, session_id: data.session_id };
         else delete state.ui.primaryChat;
       }
-      const next = JSON.stringify([data.paused, data.paused_at, data.session_id, data.flags, data.status]);
+      const next = JSON.stringify([data.paused, data.paused_at, data.session_id, data.flags, data.status, data.full_auto]);
       if (next === signature) return false;
       signature = next;
       for (const listener of [...listeners]) {
@@ -87,15 +88,43 @@
       publish();
     }
 
-    function applyState(answer) {
+    function applyState(answer, fullAuto) {
       data = {
         paused: answer.paused === true,
         paused_at: typeof answer.paused_at === 'string' ? answer.paused_at : null,
         session_id: typeof answer.session_id === 'string' && answer.session_id ? answer.session_id : data.session_id,
         flags: normalizeFlags(answer.flags),
         status: 'ready',
+        full_auto: fullAuto,
       };
       publish();
+    }
+
+    // Full auto's armed state lives in the main process; an old or hosted bridge reads as not offered.
+    // A failed read keeps the last answer: dropping to plain Auto would understate an armed chat.
+    async function readFullAuto(bridge) {
+      if (typeof bridge.getFullAuto !== 'function') return NO_FULL_AUTO;
+      try {
+        const answer = await bridge.getFullAuto({ schema_version: SCHEMA_VERSION });
+        return isObject(answer) && answer.ok === true
+          ? { available: answer.available === true, armed: answer.armed === true } : data.full_auto;
+      } catch (_error) {
+        return data.full_auto;
+      }
+    }
+
+    async function fullAutoCommand(method) {
+      const bridge = currentBridge();
+      if (!bridge || typeof bridge[method] !== 'function') return { ok: false, armed: false, reason: 'unavailable' };
+      let answer;
+      try {
+        answer = await bridge[method]({ schema_version: SCHEMA_VERSION });
+      } catch (error) {
+        log('WARN', `primary_chat.${method}_failed`, { reason: (error && (error.code || error.name)) || 'error' });
+        return { ok: false, armed: false, reason: 'unavailable' };
+      }
+      await refresh();
+      return isObject(answer) ? answer : { ok: false, armed: false, reason: 'unavailable' };
     }
 
     async function fetchState() {
@@ -104,9 +133,9 @@
       if (!bridge || typeof bridge.getState !== 'function') { markUnavailable('unavailable'); return snapshot(); }
       if (data.status === 'idle') data = { ...data, status: 'loading' };
       try {
-        const answer = await bridge.getState({ schema_version: SCHEMA_VERSION });
+        const [answer, fullAuto] = await Promise.all([bridge.getState({ schema_version: SCHEMA_VERSION }), readFullAuto(bridge)]);
         if (disposed) return snapshot();
-        if (isObject(answer) && answer.ok === true) applyState(answer);
+        if (isObject(answer) && answer.ok === true) applyState(answer, fullAuto);
         else if (failureReason(answer) === 'disabled') markUnavailable('disabled');
         else if (data.status !== 'ready') markUnavailable(failureReason(answer));
       } catch (error) {
@@ -188,6 +217,13 @@
       dispose,
       pause: () => command('pause'),
       resume: () => command('resume'),
+      armFullAuto: () => fullAutoCommand('armFullAuto'),
+      disarmFullAuto: () => fullAutoCommand('disarmFullAuto'),
+      // '' for every chat but the Jenny chat, and while the switch is off; else 'offered' or 'armed'.
+      fullAutoFor(sessionId) {
+        if (!sessionId || data.session_id !== sessionId || data.full_auto.available !== true) return '';
+        return data.full_auto.armed === true ? 'armed' : 'offered';
+      },
       getSnapshot: snapshot,
       isPaused: (sessionId) => Boolean(sessionId) && data.paused === true && data.session_id === sessionId,
       isAvailable: () => data.status !== 'unavailable' && Boolean(currentBridge()),
@@ -205,10 +241,13 @@
     return defaultStore;
   }
 
+  // The store the shell built, or null before it has: a reader must never build one without the shell's deps.
+  const peekDefaultPrimaryChatStore = () => defaultStore;
+
   function resetDefaultPrimaryChatStore() {
     if (defaultStore) defaultStore.dispose();
     defaultStore = null;
   }
 
-  return { createPrimaryChatStore, getDefaultPrimaryChatStore, resetDefaultPrimaryChatStore };
+  return { createPrimaryChatStore, getDefaultPrimaryChatStore, peekDefaultPrimaryChatStore, resetDefaultPrimaryChatStore };
 });

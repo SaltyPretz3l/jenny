@@ -67,6 +67,30 @@ def _describe_invalid_path_argument(path_argument: str) -> str | None:
     return None
 
 
+def _healed_leading_slash(requested: Path, root: Path, *, strict: bool) -> Path:
+    """Read "/src/app.py" as "src/app.py" when only the second one exists (row 129, B6).
+
+    A local model often writes a workspace path with a leading slash. The result is
+    an ordinary relative path: it goes through every containment check that follows.
+    """
+    text = str(requested)
+    if text[:1] not in ("/", "\\") or text[1:2] in ("/", "\\", ""):
+        return requested
+    relative = Path(text.lstrip("/\\"))
+    try:
+        if requested.exists():
+            return requested
+        inside = root / relative
+        # A new file: only when the path as written has no folder of its own to land in.
+        if inside.exists() or (
+            not strict and inside.parent.is_dir() and not requested.parent.is_dir()
+        ):
+            return relative
+    except OSError:
+        pass
+    return requested
+
+
 def _is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.relative_to(parent)
@@ -309,7 +333,7 @@ class WorkspaceGuard:
                 ) from error
             expanded_candidate = home + candidate[1:]
 
-        requested = Path(expanded_candidate)
+        requested = _healed_leading_slash(Path(expanded_candidate), root, strict=strict)
         if (
             os.name == "nt"
             and _win32_rewrites_segment(requested)
@@ -366,7 +390,10 @@ class WorkspaceGuard:
         if not _is_relative_to(resolved, root):
             raise ToolExecutionFailure(
                 code=CMP_TOOL_OUTSIDE_WORKSPACE,
-                message="resolved path escapes tools workspace root",
+                message=(
+                    "path is outside the workspace. Use a path relative to "
+                    'the workspace root, such as src/app.py, or "." for the root.'
+                ),
                 retryable=False,
             )
 

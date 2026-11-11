@@ -181,11 +181,9 @@
 
   function isInternalDiagnosticToolResult(toolResult, toolName) {
     const normalizedToolName = String(toolName || toolResult?.tool_name || '').trim().toLowerCase();
-    const metadata = toolResult?.metadata && typeof toolResult.metadata === 'object'
-      ? toolResult.metadata
-      : {};
+    const metadata = toolResult?.metadata || {};
     const resultKind = String(metadata.result_kind || metadata.kind || '').trim().toLowerCase();
-    return normalizedToolName === 'inspect_harness' || resultKind === 'harness_snapshot';
+    return normalizedToolName === 'inspect_harness' || normalizedToolName === 'browser' || resultKind === 'harness_snapshot';
   }
 
   function buildGeneratedArtifactPreviewText(metadata) {

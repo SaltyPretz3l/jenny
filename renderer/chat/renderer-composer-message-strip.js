@@ -7,15 +7,12 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (copy, storeModule) {
   'use strict';
 
-  // The message strip above a pane's composer (row 59 checkpoint 4): the inbox backlog line
-  // ("N messages will be included in the next turn . Review") and the sender's receipts
-  // (Sending / Couldn't deliver + Retry + Cancel send / Delivered). It renders from the
-  // pane session's live inbox and outbox, marks visible unread messages read, and announces
-  // state changes through the shared announcer rather than a live region that repaints.
+  // The strip above a pane's composer (row 59): inbox backlog line and sender receipts, from the
+  // pane session's live inbox and outbox. State changes go through the shared announcer.
 
   const { jt, jtn, escapeHtml } = copy;
   const MAX_DELIVERED_EXPANDED = 10;
-  const RECEIPT_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const RECEIPT_WINDOW_MS = 10 * 60 * 1000;
 
   function stamp(value) {
     const ms = value ? new Date(value).valueOf() : 0;
@@ -55,16 +52,16 @@
     }).map(receiptOf);
     // Failures and in-flight sends first (they need a decision), then deliveries; newest first in each.
     all.sort((a, b) => (Number(a.state === 'delivered') - Number(b.state === 'delivered')) || (b.order - a.order));
-    // Option C (2026-10-20): a send with its own row in the conversation shows its receipt there,
-    // so the strip keeps the rest. Every failure and in-flight send shows; of the deliveries only
-    // the newest, the others behind "N earlier" (expanded in place).
+    // A send with its own conversation row shows its receipt there. Every failure and in-flight send
+    // shows; of the deliveries the newest, the rest behind "N earlier". The next send clears them.
     const exclude = options && options.exclude instanceof Set ? options.exclude : new Set();
     const rest = all.filter((receipt) => !exclude.has(receipt.id));
     const open = rest.filter((receipt) => receipt.state !== 'delivered');
-    const delivered = rest.filter((receipt) => receipt.state === 'delivered');
+    const delivered = rest.filter((receipt) => receipt.state === 'delivered' && receipt.order > ((options && options.lastSendMs) || 0));
     const shownDelivered = delivered.slice(0, options && options.expanded === true ? MAX_DELIVERED_EXPANDED : 1);
     return { backlog, receipts: open.concat(shownDelivered), all, earlier: delivered.length - shownDelivered.length,
-      expanded: options && options.expanded === true && delivered.length > 1 };
+      expanded: options && options.expanded === true && delivered.length > 1,
+      expiresAt: delivered.length ? delivered[delivered.length - 1].order + RECEIPT_WINDOW_MS : 0 };
   }
 
   /** One outbox item as a receipt: what happened, the words for it, and what can still be done. */
@@ -135,8 +132,7 @@
     return html;
   }
 
-  /* One line per receipt: dot, "Sent to “X”", what happened, when or why, and what can still be
-   * done. The strip and a send's own row in the conversation share it. */
+  /* One receipt line; the strip and a send's own conversation row share it. */
   function receiptMarkup(receipt, link) {
     let controls = '';
     // A send still pending here was not durably delivered (delivery is synchronous): offer the same recovery.
@@ -220,6 +216,8 @@
     let previousBacklog = '';
     let lastMarkKey = '';
     let expanded = false; // "N earlier" opened in place, per chat
+    let expiry = 0;
+    const lastSend = new Map();
     const marking = new Set(); // chats with a markRead in flight; keyed so a session switch never skips the new chat
     const disposers = [];
 
@@ -250,7 +248,9 @@
       if (disposed) return;
       const lookup = sessionId ? store.lookup(sessionId) : null;
       const painted = lookup ? paintConversationReceipts(o.chatTimeline, lookup, linkFor(actionButton)) : new Set();
-      const view = buildStripView(lookup, now(), { exclude: painted, expanded });
+      const view = buildStripView(lookup, now(), { exclude: painted, expanded, lastSendMs: lastSend.get(sessionId) });
+      win.clearTimeout(expiry);
+      if (view.expiresAt) expiry = win.setTimeout(render, view.expiresAt - now() + 50);
       const html = stripMarkup(view, { actionButton });
       announceChanges(view);
       if (html === lastHtml) return;
@@ -326,6 +326,7 @@
     // A send's receipt on its own row in the conversation (option C) acts through the same store.
     if (o.chatTimeline) listen(o.chatTimeline, 'click', (event) => onAction(event, o.chatTimeline));
     listen(win, 'jenny:focused-chat-changed', syncSession);
+    listen(win, 'jenny:chat-sent', (event) => { lastSend.set(event.detail.sessionId, now()); render(); });
     // A render may have redrawn a send's row from cached markup: repaint its receipt.
     if (o.pane) listen(o.pane, 'composer-state-rendered', () => { if (!syncSession()) render(); });
     if (o.chatTimeline) listen(o.chatTimeline, 'transcript-view-rendered', syncSession);
@@ -341,6 +342,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      win.clearTimeout(expiry);
       if (release) release();
       release = null;
       while (disposers.length) {

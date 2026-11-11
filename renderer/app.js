@@ -104,7 +104,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     logResultsLabel, logSearchInput, logSourceFilter, copyLogsReportButton, logAutoScrollToggle,
     observabilityRefreshButton, toolLatencyTable, slowOperationsList, recentTracesList,
     modelBadge, composerModelSelect, composerEffortSelect,
-    jumpToTopButton, jumpToLastPromptButton, jumpToBottomButton, composerAttachMenu,
+    jumpToTopButton, jumpToBottomButton, composerAttachMenu,
     commandPaletteOverlay, commandPaletteInput, commandPaletteList, titlebarPalettePill,
     commandPaletteScope, commandPaletteCount, commandPaletteLegend, commandPaletteStatus, commandPaletteFieldIcon,
     attachFilesButton, captureScreenButton,
@@ -137,7 +137,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     artifactReviewEditorHost, artifactReviewEditorFallback, artifactReviewSaveButton,
     artifactReviewRevertButton, artifactReviewRevealButton, artifactReviewOpenExternalButton,
     artifactReviewJumpButton, artifactReviewDeleteButton, artifactReviewProvenanceTimeline,
-    chatContextPanel, contextSessionLogs, contextPanelToggle,
+    chatContextPanel,
   } = rendererBootstrap.dom;
   const {
     APPEARANCE_STORAGE_KEY, SIDEBAR_STORAGE_KEY,
@@ -349,7 +349,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     INTERACTIVE_SEQUENCE_IDLE, INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE, INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
     get settingsShellController() { return settingsShellController; },
     get chatShellController() { return chatShellController; },
-    getChatWayfinderController: () => chatWayfinderController,
     renderComposerJumpControls: (...a) => renderComposerJumpControls(...a),
     registerRendererCleanup,
     isDisposed: () => rendererDisposed,
@@ -452,7 +451,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     scrollThreadToBottom, scrollMessageIntoView, getCurrentMessageById, isInteractiveRoundRecapExpanded,
     pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, toggleContextCompactionDetails, showCopyFeedback,
     syncThinkingBlockNode, scheduleMessageViewportSync, disposeViewportController,
-    pinToTopController, shellArtifactBridge, getArtifactsForSession, selectArtifact,
+    shellArtifactBridge, getArtifactsForSession, selectArtifact,
     invalidateSessionArtifacts, pruneSessionArtifacts, resetArtifactsState,
     isArtifactReviewVisible, renderArtifactReviewPanelSafe, openArtifactTarget,
     openCodeReviewTarget, openFilePreviewTarget, contextPanelController, getSessionMessages,
@@ -514,7 +513,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     rekeyProjectionContextCache, updateAssistantSpritePositionRef, renderLiveThinkingChip,
     settingsRendererUtils, appearanceUtils, renderPipelineUtils, sendUtils, streamHandlerUtils, shellModules,
     lifecycleController, contextPanelController,
-    pinToTopController, chatScrollCoordinator, thinkingController, thinkingIndicator, toastActionHandlers, multiStreamController,
+    chatScrollCoordinator, thinkingController, thinkingIndicator, toastActionHandlers, multiStreamController,
     onSurfaceLifecycleSync, publishFirstTokenImpulse, publishToolStartImpulse, publishCompleteImpulse, publishCancelImpulse,
     uiRuntime, spriteRuntime, healthPillController: null,
     retryBackendStart,
@@ -525,7 +524,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack,
     logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList,
     stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
-    jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell,
+    jumpToTopButton, jumpToBottomButton, composerModelSelectShell, composerEffortSelectShell,
     workbenchHealthPillSlot,
     chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel,
     toolLatencyTable, slowOperationsList, recentTracesList, observabilityRefreshButton,
@@ -620,7 +619,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     removeQueuedAttachment = noop, mergePreparedAttachments = noop, handleAttachmentPicker = noopAsync,
     prepareDroppedAttachments = noopAsync, queueInlineImageAttachment = noopAsync, setDropActive = noop,
     suppressFileDropNavigation = (e) => { e.preventDefault(); e.stopPropagation(); },
-    getDroppedFilePaths = noopArr, loadSessions = noopAsync, openSession = noopAsync, refreshSnapshots = noopAsync,
+    getDroppedFilePaths = noopArr, loadSessions = noopAsync, refreshSessionSummariesWithWorkspace = noopAsync, openSession = noopAsync, refreshSnapshots = noopAsync,
     bootstrap = noopAsync, handleRenameSession = noopAsync, refreshComposerToolToggles = noopAsync,
     queueDeferredStartupTask = noop,
     handleCreateSessionWithWorkspace: controllerHandleCreateSessionWithWorkspace = noopAsync,
@@ -636,78 +635,19 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   // Split view W1-4c: pane 1 is built by the SAME builders as pane 0 (the three
   // compositions export them) and routed by the render frame through
   // renderSessionPane; with one pane every entry point answers "not mine".
-  let paneProjectSwitcher = null;
-  const getPaneProjectName = (projectId) => {
-    if (!paneProjectSwitcher) {
-      Promise.resolve(getProjectSwitcher?.()).then((switcher) => {
-        if (!switcher || paneProjectSwitcher) return undefined;
-        paneProjectSwitcher = switcher;
-        // The switcher lists projects lazily (its menu refreshes on open); read
-        // the list once so a kicker can name a project the menu never showed.
-        return Promise.resolve(switcher.refresh?.()).then(() => paneComposition?.renderKickers?.());
-      }).catch(() => {});
-    }
-    const project = paneProjectSwitcher?.projectById?.(projectId);
-    if (project?.name) return project.name;
-    return projectId === 'project_general' ? jt('projects.switcher.generalName', 'General') : '';
-  };
-  window.rendererSessionMessageRows?.configure?.({ getProjectName: getPaneProjectName }); // row 59 cp4 card headers
-  window.rendererSessionRail?.configure?.({ openSession: (id) => activateWorkspaceSession(id, { mode: 'replace' }) }); // cp5a linked rows
-  paneComposition = paneLayoutController && window.rendererAppPaneComposition?.createPaneComposition?.({
-    documentRef: document, windowRef: window, state, chatView, layoutController: paneLayoutController,
-    resolvePane: (paneRoot) => surfaceDom.chat.resolvePane(paneRoot),
-    createPaneRuntime: ({ paneId }) => window.rendererPaneRuntime.createPaneRuntime({ paneId, shared: paneSharedStore }),
-    buildPaneSurface: lifecycleComposition.buildPaneSurface,
-    buildRenderPipeline: controllerComposition.buildRenderPipeline,
-    buildChatShellController: controllerComposition.buildChatShellController,
-    createThinkingController: () => new ThinkingPanelController(), // pane 1's own reasoning-disclosure state
-    relatchPrimaryFollow: () => { thinkingController.resumeAutoScroll(); setFollowLatest(true); }, // pane 0 took another session through a layout change
-    getPrimaryShell: () => chatShellController,
-    getPrimaryComposerInput: () => chatInput, // pane 0's composer, wherever the Workspace dock holds it
-    createResizer: (resizerDeps) => window.rendererChatPaneResizer?.createChatPaneResizer?.(resizerDeps) || null,
-    persistSplitRatio: (splitRatio) => workspaceStateController?.persistPaneLayout?.({ splitRatio }),
-    renderPrimaryMessages: () => renderMessages(),
-    requestFullRender: () => renderAll(),
-    getStoredLayout: () => workspaceStateController?.getPaneLayout?.() || null,
-    collapseSidePanel: () => { shellArtifactBridge?.collapseSidePanel?.(); contextPanelController?.collapseForOwnerClose?.(); }, // W3-2: the owning pane closed
-    getSessionSummary: (sessionId) => (state.sessions || []).find((session) => session?.id === sessionId) || null,
-    getProjectName: getPaneProjectName,
-    getSessionMessages: (sessionId) => getSessionMessages(sessionId),
-    getVisibleSessionMessages: (sessionId) => getVisibleSessionMessages(sessionId),
-    loadSessionMessages: async (sessionId) => {
-      if (!sessionId || state.messagesBySession.has(sessionId) || !window.jennyShell?.sessions?.getMessages) return false;
-      const payload = await window.jennyShell.sessions.getMessages(sessionId);
-      if (!payload || state.messagesBySession.has(sessionId)) return false;
-      setSessionMessages(sessionId, payload.data || [], `session_${sessionId}`);
-      setSessionTurnEventState(sessionId, {
-        turnEventLogVersion: Number(payload?.turn_event_log_version || 0),
-        turnEvents: Array.isArray(payload?.turn_events) ? payload.turn_events : [],
-        activeTurn: payload?.active_turn ?? null,
-      });
-      return true;
-    },
-    listSwitchCandidates: () => {
-      const snapshot = workspaceStateController?.getRollbackSnapshot?.() || {};
-      const open = Array.isArray(snapshot.openSessionIds) ? snapshot.openSessionIds : [];
-      return (Array.isArray(snapshot.mruStack) ? snapshot.mruStack : []).filter((id) => open.includes(id)).concat(open);
-    },
-    isSessionStreaming: (sessionId) => isSessionStreaming(sessionId),
-    hasPendingToolApproval: (sessionId) => hasPendingToolApprovalForSession(sessionId),
-    getSendLifecycle: (sessionId) => getChatSendLifecycle(sessionId),
-    countQueuedSends: (sessionId) => (state.queuedSendBySession?.get?.(sessionId) ? 1 : 0)
-      + (state.runtimeSendController?.listPending?.(sessionId) || []).length,
-    appendClientLog: (...a) => appendClientLog(...a),
-    // W2-2b: pane 1's attachments (its queue is its session's composer record).
-    TOAST_SOURCE, getQueuedAttachments: (sessionId) => window.rendererComposerSessionState?.getQueuedAttachments?.(state, sessionId) || [],
-    renderAttachmentTray: (target) => renderAttachmentTray(target),
-    // W3-1: pane 1's status notice (the slot keyed to its session) and its failed-send notice.
-    renderComposerStatusNotice: (target) => renderComposerStatusNotice(target), clearComposerStatusNotice: () => clearComposerStatusNotice(),
-    mountFailedSendNotice: (notice) => window.rendererAppShellBindings?.mountFailedSendNotice?.({ ...notice, getSessionMessages, setSessionMessages, renderAll, appendClientLog }) || null,
-    attachmentCallbacks: { resetAttachmentQueue, removeQueuedAttachment, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker,
-      prepareDroppedAttachments, queueInlineImageAttachment, suppressFileDropNavigation, getDroppedFilePaths, showToastMessage, toErrorMessage,
-      appendClientLog: (...a) => appendClientLog(...a) },
-    createPaneComposerRail: (railOptions) => window.rendererPaneComposerRail?.createPaneComposerRail?.({ ...railOptions, deps: { getRuntimePreferencesFromSession, getActivitySnapshot, isActivityBusy, applyActivityAttributes, ACTIVITY_SCOPE, buildModelOptionMarkup } }) || null, // W2-2a
-  }) || null;
+  paneComposition = window.rendererAppSplitViewComposition.createSplitView({
+    ACTIVITY_SCOPE, TOAST_SOURCE, ThinkingPanelController, activateWorkspaceSession, applyActivityAttributes,
+    beginAttachmentToken, buildModelOptionMarkup, cancelAttachmentToken, chatInput, chatShellController, chatView,
+    clearComposerStatusNotice, contextPanelController, controllerComposition, getActivitySnapshot,
+    getChatSendLifecycle, getDroppedFilePaths, getProjectSwitcher, getRuntimePreferencesFromSession,
+    getSessionMessages, getVisibleSessionMessages, handleAttachmentPicker, hasPendingToolApprovalForSession,
+    isActivityBusy, isSessionStreaming, lifecycleComposition, paneLayoutController, paneSharedStore,
+    prepareDroppedAttachments, queueInlineImageAttachment, removeQueuedAttachment, renderAll, renderAttachmentTray,
+    renderComposerStatusNotice, renderMessages, resetAttachmentQueue, setFollowLatest, setSessionMessages,
+    setSessionTurnEventState, shellArtifactBridge, showToastMessage, state, suppressFileDropNavigation, surfaceDom,
+    thinkingController, toErrorMessage, workspaceStateController,
+    appendClientLog: (...a) => appendClientLog(...a), getPaneComposition: () => paneComposition,
+  });
   registerRendererCleanup(() => paneComposition?.dispose?.());
   workspaceChromeController?.setPaneDropTarget?.(paneComposition?.getDropTarget?.() || null); // W2-1: rail tab drag -> drop zones
   // Agent hooks open a chat the way the sidebar does (workspace activation selects its tab);
@@ -720,183 +660,43 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       return String(state.currentSessionId || '').trim() === String(sessionId || '').trim();
     },
   };
-  await window.rendererAppShellBindings.bindAppShell({
-    state,
-    windowRef: window,
-    documentRef: document,
-    constants: { TOAST_SOURCE, SURFACE_EFFECT_STAGES },
-    dom: {
-      attachFilesButton,
-      attachmentTray,
-      captureScreenButton,
-      chatInput,
-      chatTimeline,
-      chatView,
-      commandPaletteInput,
-      commandPaletteList,
-      commandPaletteOverlay,
-      commandPaletteScope,
-      commandPaletteCount,
-      commandPaletteLegend,
-      commandPaletteStatus,
-      commandPaletteFieldIcon,
-      composerAttachShortcut,
-      composerAttachMenu,
-      composerWrap,
-      conversationGroups,
-      copyLogsReportButton,
-      logAutoScrollToggle,
-      logLevelFilter,
-      logList,
-      logSearchInput,
-      logSourceFilter,
-      newChatButton,
-      localProfileSettingsMount,
-      searchInput,
-      sendButton,
-      sessionActionButton,
-      sidebarResizer,
-      titlebarPalettePill,
-    },
-    controllers: {
-      chatShellController,
-      chatWayfinderController,
-      contextPanelController,
-      lifecycleController,
-      multiStreamController,
-      pinToTopController,
-      settingsShellController,
-      shellStatusController,
-      thinkingIndicator,
-      workspaceChromeController,
-      workspaceStateController,
-    },
-    modules: {
-      contextUsageModule,
-    },
-    refs: {
-      getRenderComposerPopover: () => renderComposerPopover,
-      thinkingIndicatorRenderFrame: {
-        get: () => thinkingIndicatorRenderFrame,
-        set: (next) => { thinkingIndicatorRenderFrame = next; },
-      },
-    },
-    callbacks: {
-      clearProjectionContextCacheForSession: (...a) => clearProjectionContextCacheForSession(...a),
-      activateSurfaceEffect: (...a) => activateSurfaceEffect(...a),
-      activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
-      appendClientLog: (...a) => appendClientLog(...a),
-      handleStopActiveStream: (...a) => handleStopActiveStream(...a),
-      applyAppearancePreferences: (...a) => applyAppearancePreferences(...a),
-      applySetupBackendStatus: (...a) => applySetupBackendStatusSafe(...a),
-      applySurfaceEffect: (...a) => applySurfaceEffect(...a),
-      bootstrap: (...a) => bootstrap(...a),
-      chooseWorkspaceRoot: (...a) => handleWorkspaceRootChoose(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
-      closeComposerPopover: (...a) => closeComposerPopover(...a),
-      openComposerPopover: (...a) => openComposerPopover(...a),
-      dismissToast: (...a) => dismissToast(...a),
-      disposeComposerHolo: (...a) => disposeComposerHolo?.(...a),
-      disposeViewportController: (...a) => disposeViewportController?.(...a),
-      ensureComposerFeatureStateLoaded: (...a) => _ensureComposerFeatureStateLoaded(...a),
-      escapeHtml,
-      estimateTokens,
-      finishSidebarResize: (...a) => finishSidebarResize(...a),
-      getCurrentRuntimePreferences,
-      getDroppedFilePaths,
-      ensureLogRowMounted,
-      getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
-      getSessionMessages: (...a) => getSessionMessages(...a),
-      handleAttachmentPicker: (...a) => handleAttachmentPicker(...a),
-      handleDeleteSessionWithWorkspace: (...a) => handleDeleteSessionWithWorkspace(...a),
-      handleLifecycleBackendStatus: (...a) => _handleLifecycleBackendStatus(...a),
-      handleLinkedSessionPopover: (...a) => handleLinkedSessionPopover(...a),
-      handleRenameSession: (...a) => handleRenameSession(...a),
-      handleSidebarResizeKeydown: (...a) => handleSidebarResizeKeydown(...a),
-      handleSidebarResizeMove: (...a) => handleSidebarResizeMove(...a),
-      handleSidebarResizeStart: (...a) => handleSidebarResizeStart(...a),
-      handleWorkspaceShortcut: (...a) => handleWorkspaceShortcut(...a),
-      getIdeCommandItems: (...a) => getIdeCommandItemsSafe(...a),
-      openIdeHelpOverlay: (...a) => openIdeHelpOverlaySafe(...a),
-      hydrateCachedLazyShellState: (...a) => hydrateCachedLazyShellState(...a),
-      initSetupController: (...a) => initSetupControllerSafe(...a),
-      isDisposed: () => rendererDisposed,
-      isSendPreflightPending,
-      loadSessions: (...a) => loadSessions(...a),
-      logSurfaceEffectFailure: (...a) => _logSurfaceEffectFailure(...a),
-      mergePreparedAttachments: (...a) => mergePreparedAttachments(...a),
-      beginAttachmentToken: (...a) => beginAttachmentToken(...a), cancelAttachmentToken: (...a) => cancelAttachmentToken(...a),
-      navigateToDiagnosticsTrace: (...a) => navigateToDiagnosticsTrace(...a),
-      openSettingsSection: (...a) => openSettingsSection(...a),
-      openSetupTile: (...a) => openSetupTileSafe(...a),
-      persistRuntimePreferences: (...a) => persistRuntimePreferences(...a),
-      prepareDroppedAttachments: (...a) => prepareDroppedAttachments(...a),
-      queueDeferredStartupTask: (...a) => queueDeferredStartupTask(...a),
-      queueInlineImageAttachment: (...a) => queueInlineImageAttachment(...a),
-      queueStartupLazyHydration: (...a) => queueStartupLazyHydration(...a),
-      refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
-      refreshComposerToolToggles: (...a) => refreshComposerToolToggles(...a),
-      refreshDefaultChatTimelineBatch4Preference: (...a) => refreshDefaultChatTimelineBatch4Preference(...a),
-      refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a),
-      refreshPhasePercentiles: (...a) => refreshPhasePercentiles(...a),
-      resetPhasePercentiles: (...a) => resetPhasePercentiles(...a),
-      refreshSnapshots: (...a) => refreshSnapshots(...a),
-      refreshWorkspaceRootState: (...a) => refreshWorkspaceRootState(...a),
-      registerCleanup: registerRendererCleanup,
-      removeQueuedAttachment: (...a) => removeQueuedAttachment(...a),
-      renderAll: (...a) => renderAll(...a),
-      renderAttachmentTray: (...a) => renderAttachmentTray(...a),
-      renderComposerState: (...a) => renderComposerState(...a),
-      renderLogs: (...a) => renderLogs(...a),
-      renderOfflineManager: (...a) => renderOfflineManagerSafe(...a),
-      renderSessions: (...a) => renderSessions(...a),
-      renderSettings: (...a) => renderSettings(...a),
-      setRovingChatSession: (...a) => setRovingChatSession(...a),
-      toggleChatsScope: (...a) => toggleChatsScope(...a),
-      resetAttachmentQueue,
-      resetLogsViewState,
-      resetSidebarWidth,
-      runStartupAuditAutoSend: (...a) => runStartupAuditAutoSend(...a),
-      scrollLogsToBottom,
-      setActiveView,
-      setDropActive,
-      setSessionMessages: (...a) => setSessionMessages(...a),
-      setSidebarCollapsed,
-      // Row 94 P3: the app_view openers that live here (renderer/shell/renderer-app-view-controller.js).
-      appViewOpeners: {
-        openFile: (path, line) => { const event = new CustomEvent('ide:open-file-at-line', { cancelable: true, detail: { path, line: line || 1, column: 1, preferIde: true } }); window.dispatchEvent(event); return event.defaultPrevented; },
-        openTerminal: async () => { setActiveView('ide'); return await openIdeTerminalSafe() === true; },
-        runInTerminal: async (command) => { setActiveView('ide'); return await runIdeTaskTerminalSafe(command); }, // row 94 P4 terminal_run
-        split: async (sessionId) => {
-          if (paneLayoutController?.isSessionInPane?.(sessionId)) return (paneLayoutController.getPaneCount?.() || 1) > 1;
-          if ((state.workspace?.openSessionIds || []).includes(sessionId)) return paneLayoutController?.openBeside?.(sessionId) === true;
-          const previous = state.currentSessionId; // not an open tab: open it, then put the previous chat beside it
-          await activateWorkspaceSession(sessionId, { mode: 'new-tab' });
-          return Boolean(previous) && previous !== sessionId && paneLayoutController?.openBeside?.(previous) === true;
-        },
-        close: (pane) => (pane === 'preview' ? shellArtifactBridge?.collapseSidePanel?.() === true
-          : pane === 'terminal' ? closeIdeBottomPanelSafe()
-            : pane === 'split' && (paneLayoutController?.getPaneCount?.() || 1) > 1 // the pane the user is not on, as the split toggle does
-              ? paneLayoutController.closePane(paneLayoutController.getLayout?.().focusedPaneId === 0 ? 1 : 0) !== false : false),
-        readLayout: () => ({
-          split_session_ids: (paneLayoutController?.getPaneCount?.() || 1) > 1 ? (paneLayoutController.getLayout?.().panes || []).map((pane) => pane?.sessionId).filter(Boolean) : [],
-          sidebar_collapsed: workspace?.classList?.contains?.('panel-collapsed') === true,
-          preview_open: shellArtifactBridge?.isArtifactReviewVisible?.() === true,
-        }),
-      },
-      showComposerActionError,
-      showSessionActionError,
-      showShellErrorToast,
-      showToastMessage,
-      signalRendererReadyOnce: (...a) => signalRendererReadyOnce(...a),
-      suppressFileDropNavigation,
-      syncBackendActivityFromStatus: (...a) => syncBackendActivityFromStatus(...a),
-      syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
-      syncComposerVisualState: (...a) => syncComposerVisualState(...a),
-      // The stored second pane hydrates after the first real restore
-      // (workspace coordinator onWorkspaceRestored; W1-4c).
-      syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
-      toErrorMessage,
-      updateComposerSafeOffset,
+  await window.rendererAppShellBindingsComposition.bindAppShellFromApp({
+    SURFACE_EFFECT_STAGES, TOAST_SOURCE, _ensureComposerFeatureStateLoaded, _handleLifecycleBackendStatus,
+    _logSurfaceEffectFailure, activateSurfaceEffect, activateWorkspaceSession, applyAppearancePreferences,
+    applySetupBackendStatusSafe, applySurfaceEffect, attachFilesButton, attachmentTray, beginAttachmentToken,
+    bootstrap, cancelAttachmentToken, captureScreenButton, chatInput, chatShellController, chatTimeline, chatView,
+    chatWayfinderController, clearProjectionContextCacheForSession, closeComposerPopover, closeIdeBottomPanelSafe,
+    commandPaletteCount, commandPaletteFieldIcon, commandPaletteInput, commandPaletteLegend, commandPaletteList,
+    commandPaletteOverlay, commandPaletteScope, commandPaletteStatus, composerAttachMenu, composerAttachShortcut,
+    composerWrap, contextPanelController, contextUsageModule, conversationGroups, copyLogsReportButton, dismissToast,
+    disposeComposerHolo, disposeViewportController, ensureLogRowMounted, escapeHtml, estimateTokens,
+    finishSidebarResize, getCurrentRuntimePreferences, getDroppedFilePaths, getIdeCommandItemsSafe,
+    getProjectSwitcher, getRendererElapsedMs, getSessionMessages, handleAttachmentPicker,
+    handleDeleteSessionWithWorkspace, handleLinkedSessionPopover, handleRenameSession, handleSidebarResizeKeydown,
+    handleSidebarResizeMove, handleSidebarResizeStart, handleStopActiveStream, handleWorkspaceRootChoose,
+    handleWorkspaceShortcut, hydrateCachedLazyShellState, initSetupControllerSafe, isSendPreflightPending,
+    lifecycleController, loadSessions, localProfileSettingsMount, logAutoScrollToggle, logLevelFilter, logList,
+    logSearchInput, logSourceFilter, mergePreparedAttachments, multiStreamController, navigateToDiagnosticsTrace,
+    newChatButton, openComposerPopover, openIdeHelpOverlaySafe, openIdeTerminalSafe, openSettingsSection,
+    openSetupTileSafe, paneLayoutController, persistRuntimePreferences,
+    prepareDroppedAttachments, queueDeferredStartupTask, queueInlineImageAttachment, queueStartupLazyHydration,
+    refreshApprovedMemoriesSafe, refreshComposerToolToggles, refreshDefaultChatTimelineBatch4Preference,
+    refreshPendingMemoriesSafe, refreshPhasePercentiles, refreshSessionSummariesWithWorkspace, refreshSnapshots, refreshWorkspaceRootState,
+    registerRendererCleanup, removeQueuedAttachment, renderAll, renderAttachmentTray, renderComposerState, renderHeader,
+    renderLogs, renderOfflineManagerSafe, renderSessions, renderSettings, resetAttachmentQueue, resetLogsViewState,
+    resetPhasePercentiles, resetSidebarWidth, runIdeTaskTerminalSafe, runStartupAuditAutoSend, scrollLogsToBottom,
+    searchInput, sendButton, sessionActionButton, setActiveView, setDropActive, setRovingChatSession,
+    setSessionMessages, setSidebarCollapsed, settingsShellController, shellArtifactBridge, shellStatusController,
+    showComposerActionError, showSessionActionError, showShellErrorToast, showToastMessage, sidebarResizer,
+    signalRendererReadyOnce, state, suppressFileDropNavigation, syncBackendActivityFromStatus,
+    syncComposerInputHeight, syncComposerVisualState, syncWorkspaceFromStore, thinkingIndicator, titlebarPalettePill,
+    toErrorMessage, toggleChatsScope, updateComposerSafeOffset, workspace, workspaceChromeController,
+    workspaceStateController,
+    appendClientLog: (...a) => appendClientLog(...a), isRendererDisposed: () => rendererDisposed,
+    getRenderComposerPopover: () => renderComposerPopover,
+    thinkingIndicatorRenderFrameRef: {
+      get: () => thinkingIndicatorRenderFrame,
+      set: (next) => { thinkingIndicatorRenderFrame = next; },
     },
   });
 })().catch((error) => {

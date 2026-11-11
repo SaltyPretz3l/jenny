@@ -3,8 +3,8 @@ const { randomUUID } = require('node:crypto');
 const { encodeEnvelope, decodeEnvelope, validateResponse } = require('./worker-protocol');
 const { sandboxError } = require('./sandbox-errors');
 class DockerWorkerTransport {
-  constructor({ launcher, containerId, imageId, snapshotDirectory }) {
-    Object.assign(this, { launcher, containerId, imageId, snapshotDirectory });
+  constructor({ launcher, containerId, imageId, snapshotDirectory, mirror = null }) {
+    Object.assign(this, { launcher, containerId, imageId, snapshotDirectory, mirror });
     this.key = null;
     this.submittedStartedAt = null;
   }

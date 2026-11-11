@@ -41,7 +41,7 @@ function createClock({ clearWorks = true } = {}) {
   };
 }
 
-function createRig({ reduced = false, drawing = false, clearWorks = true } = {}) {
+function createRig({ reduced = false, drawing = false, clearWorks = true, onLoopsReleased = undefined } = {}) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="sprite"><span class="chat-assistant-sprite-glyph">J</span></div></body>'
   );
@@ -103,6 +103,7 @@ function createRig({ reduced = false, drawing = false, clearWorks = true } = {})
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     now: clock.now,
+    onLoopsReleased,
   });
   const root = sprite.querySelector('.chat-sprite-dot');
   return {

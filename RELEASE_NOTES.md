@@ -1,5 +1,66 @@
 # Release Notes
 
+## 1.7.0 - 2026-11-10
+
+Everything landed since 1.6.1, through private `main` on 2026-11-10: 226
+commits over seven days.
+The headline is a local model that can browse in a page you watch beside the
+chat, with your hands on the controls, while Workspace shows each file arrive as
+the model writes it and pictures a web page before and after a change. ComfyUI
+joins as a second image engine, the tool list a local model sees is shorter and
+plainer, and chat names, the session bar, palettes, startup and scrolling are
+calmer.
+
+### Changelog
+
+**Features**
+
+- Browser use: switch Browser on for a chat and a local model can open web pages in a visible panel beside the chat, read them and act on numbered element references; Stop, Take over and Hand back work at any time. Each chat gets a fresh in-memory profile with no saved sign-ins; new sites, localhost and risky actions ask first; at most two pages are live; Strict safety turns it off; saved history keeps a step summary only. A new chat copies your last Browser choice, and a fresh install starts with it off. Kill switch `JENNY_ENABLE_TOOLS_BROWSER_USE=0`.
+- Browser controls by hand: back, forward, reload, an editable address bar, site info, right-click, find and zoom. Downloads happen only by hand through the Save dialog (the model never starts one), PDFs open in the panel, failed, crashed, closed and blocked pages say so plainly, handing back after a sign-in warns you once, and a fixed status line stops the page resizing on every step.
+- Browser sound and ad blocking: a page keeps playing when you leave its chat only if it was audible when you left; a speaker icon on the chat's row and one mute control in the title bar cover the app; the model knows whether media is playing and where a video is. Ad blocking is on by default per chat with a switch in the panel, its filter lists ship with the app, and a site's own Skip button is pressed for you.
+- Follow Jenny: when the model writes or edits a file, Workspace opens a read-only draft tab that fills as the model writes. It never touches the disk or your own tab and never takes the editor while you type; the chat's approval card stays the only place to answer. A "Follow Jenny" switch sits in the Workspace status bar. Kill switch `JENNY_ENABLE_FOLLOW_JENNY=0`.
+- Before and after pictures: when a turn changes a web page in the workspace, or a stylesheet, script or image it uses, Jenny pictures its first screen before and after the turn. Changes shows the pair with a slider, the chat shows it small under the reply, and the Working tree page compares against the last commit; a phone-size check and a Settings switch are included. Kill switch `JENNY_ENABLE_CHANGE_PICTURES=0`.
+- IDE live preview: the HTML preview builds linked stylesheets, scripts and images into the page, updates as you or the model edit with the scroll position kept, offers Reload and Try again, blocks links inside the sandboxed page with a note and recovers when a page script navigates away. Not loaded yet: fonts linked from CSS, module imports, CSS `@import`, root-relative paths and web URLs.
+- ComfyUI image engine: Settings > Models > Image engine can use your existing ComfyUI folder. Jenny starts it headless on loopback, runs a shipped recipe (MiniMax-H3-Image first), puts the picture in the chat and stops ComfyUI so the chat model gets the GPU back. Jenny does not install ComfyUI, run custom nodes or take your own workflows. Kill switch `JENNY_ENABLE_IMAGE_COMFYUI=0`.
+- Full auto for the Jenny chat: an armed state over Auto, behind a warning, that removes every remaining approval stop for the turns you send and for wake turns. Scheduled checks and digests keep asking, deny rules still refuse, and it ends at restart. Kill switch `JENNY_ENABLE_PRIMARY_FULL_AUTO=0`.
+- Chat names from your local model: after the first reply, the local model names the chat in two to six words, once, and never over a name you gave it. Kill switch `JENNY_ENABLE_SESSION_MODEL_TITLES=0`.
+- Chats sidebar multi-select: Ctrl/Cmd+click, Shift+click and Ctrl+A select chats without a Select mode; right-click a selection to move it to a project, archive or restore it, or delete it (confirm, then a 6-second Undo); Escape clears it. The Jenny chat is never selected.
+- Move a model on Add: "Add GGUF model..." offers to move a file picked from Downloads or the Desktop, with its projector, drafter and shards, into its own folder under your model folder, with progress and Cancel across drives, and warns when the bundled llama-server does not know the file's architecture.
+- Synced workspace sandbox: a third command-sandbox setting runs commands offline in a Linux copy of the workspace (Docker) and writes changed files back after a restore point, with the Changed files review and Undo. `.git`, `.jenny`, hook and dependency folders and links are never written back.
+- Local engines: the managed llama-server stays on the GPU, drafts with a model's embedded MTP head and streams live speed numbers; Tune > Engine shows the served context; the Tune drawer is plain-language rows and accepts a custom context window. NInfer reuses its prompt cache across turns.
+- The Chalk palette, Slate's light twin.
+
+**Reworks**
+
+- Session bar: one bar per chat pane replaces the floating buttons. The branch and its uncommitted counts are one control, Changes gains a Whole branch tab, Transcript view and Wide move into a menu, the wayfinder becomes one jump pill, the Session rail glides and resizes, and Ctrl+\ closes the panel. The Context button is gone.
+- Jump control: a small circle over the composer that shows only after you scroll up, with Jenny's sprite while she works. Back to prompt moved to the chat's More menu, and the composer's last-prompt button is gone.
+- Palettes: every palette now sets every colour, so Lexicon and Rocko no longer show Midnight's blue; a contrast check covers the sidebar, secondary text, the composer placeholder, button labels, the accent and the editor; every palette has editor colours. Signal is retired, and a saved Signal opens as Obsidian.
+- Plan mode: each step opens with a short action phrase that carries the scan, Notes use the chat's Markdown styling, Notes and the check fold and stay folded, and a decided plan shows every step.
+- Startup: the star curtain runs in a worker so script loading cannot stall it, the window opens in your palette's colours, and the curtain dissolves or collapses into the name depending on how much sky appeared. Reduced motion and animation off show no sky.
+- Tools for local models: the session spawn, wait and result tools are no longer offered; `mermaid_generate` gives way to fenced mermaid blocks; 19 rarely used tools are found through `tool_search`; `automation_read` is merged into `automation_list`. Failures share one wording, near-miss arguments are repaired, results are smaller and descriptions plainer.
+- Faster search: `grep_search` over a whole large repository takes under 2 s instead of about 6 s, and `knowledge_search` is about twice as fast, with the same output.
+- Windows commands start through a small native launcher: about 30 ms instead of half a second per command in the installed app, with the old path as the fallback. Kill switch `JENNY_ENABLE_NATIVE_LAUNCHER=0`.
+- Chats and turns: chat tabs open only when you ask; Deny on a card ends the turn; any chat can message the Jenny chat; the "Delivered" line clears at your next send or after 10 minutes; Enter on a bare slash skill runs it; `/handoff` asks for a destination project and whether the new chat continues or starts read-only; a path outside the project copies with a "Path copied" toast; stopping a background job from the rail reaches the model at its next step and never wakes a turn.
+- Under the hood: two tech-debt waves split dozens of near-limit files into smaller modules with no change in behaviour.
+
+**Fixes**
+
+- Security: a command containing a bidi override or a zero-width character could run as read-only with no card and display reordered; it now always asks and shows the characters safely.
+- Scrolling: a chat opens on its latest message in the first painted frame; the timeline no longer drops at each tool start, jumps while a tool-heavy reply streams in a long chat, or slides when an answer starts under a closing Thinking panel; following re-latches at the bottom, with a floating return-to-latest button.
+- Chats and delegation: a final answer stays after its turn's tool rows when its message is missing; a running delegation keeps its card and children when the chat is reopened; chats started by another chat get its tool switches; a woken chat can close its browser page and a delegate frees its page when it reports; Jenny's launch permission works when her own chats report back; model-written names fired on the real send path only after a fix.
+- Tool loop: a local model no longer repeats a refused tool call; a turn continues when the app refuses a tool before any card; an approved call that meets a busy resource waits without a second card; the tool-output sanitizer no longer redacts ordinary code; `diffs` reach Changes and Undo for Synced workspace runs; a stalled compaction summary is no longer re-asked as a malformed reply.
+- Interface: Space in the chat rename box no longer commits the rename; the jump control reaches an unread reply; More > Back to prompt works in the first chat pane; a reply that edits several pages gets pictures for each; a late draft is followed and Workspace no longer opens blank after a chat wrote a file; `/handoff` keeps its project, link and Plan mode while another chat is busy; the Tools panel title no longer hides under the header on a short window; unsaved plan edits survive a re-render; PDF thumbnails are no longer blocked.
+- Updates: an unpacked build falls back to the GitHub releases check.
+
+### Migration and qualification
+
+- Canonical sessions move from schema 26 to 27: a user message may carry an optional `author` field reserved for team hosting. Desktop Jenny never writes it and the upgrade adds nothing to existing chats; as with every schema move, an older Jenny opens a profile a newer one has written read-only. The image model store moves to v2 (ComfyUI sets) on first start. The memory store stays at 10 and shell configuration at 59. The sidecar `API_VERSION` stays `2026-10-15` (one additive method for chat names and one optional field); Electron and its sidecar still ship together.
+- Team hosting is in the source but switched off in this release: Settings has no Team page, no team code loads and no team connection opens. Its bundled `jenny-team-bridge` binary ships unused.
+- The release workflow can now sign Windows builds through Azure Artifact Signing; this release is not signed.
+- The candidate passed the full local CI gate on the cut tree: 46 policy checks, 3,059 Node test files, 17,287 Python tests, 282 backend contracts, lint, typing, 92.3% sidecar coverage and the packaged-flow smoke. Before the cut, the public-export probe found four shipped comments citing unshipped documents and two personal paths in source; both are fixed. The real-app GUI suite and the packaged smoke in a Linux container were not run for this cut.
+- Not yet covered by a person: browser use and its controls, sound and ad blocking on your own sites; Follow Jenny, before and after pictures and the IDE live preview in your own projects; a ComfyUI image on your machine; Full auto with a deny rule and a scheduled check; the session bar, jump control, palettes, Plan mode and startup by eye, maximized and in a packaged build; multi-select, moving a model across drives and the Synced workspace sandbox in the real app; the native launcher in the installed app; and the installed 1.6.1 to 1.7.0 upgrade on Windows. The fixes from the last real-app check of multi-select, the jump control and Follow Jenny were tested headless and not yet rechecked live.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.7.0.
+
 ## 1.6.1 - 2026-11-03
 
 Everything landed since 1.6.0, through private `main` on 2026-11-03: 104

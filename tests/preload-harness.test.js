@@ -467,7 +467,10 @@ test('preload exposes the primary chat bridge with only its closed methods and a
   assert.deepEqual(Object.keys(primaryChat).sort(), [
     'activity',
     'addRule',
+    'armFullAuto',
+    'disarmFullAuto',
     'forgetPreview',
+    'getFullAuto',
     'getState',
     'grantLaunch',
     'onChanged',

@@ -15,6 +15,7 @@ from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate, trun
 from sidecar.runtime.tool_execution_support import (
     GenerationResult,
     ToolCallRequest,
+    ignored_argument_note,
     strip_private_arguments,
     wrap_untrusted_tool_output,
 )
@@ -76,10 +77,24 @@ def bounded_tool_output(
     return _bounded_plain_text(sanitized, max_chars=max_chars, keep_edges=keep_edges), True
 
 
+def _middle_marker(omitted: int) -> str:
+    return (
+        f"\n...[{omitted} characters omitted from the middle; ask for a smaller range, "
+        "a filter or fewer results to see them]\n"
+    )
+
+
 def _edge_text(text: str, *, max_chars: int) -> str:
-    marker = "\n...[middle truncated by router]\n"
     if len(text) <= max_chars:
         return text
+    # The count's digits change the marker's length, so settle the two together.
+    marker = _middle_marker(len(text))
+    for _ in range(3):
+        settled = _middle_marker(len(text) - max(0, max_chars - len(marker)))
+        if len(settled) == len(marker):
+            marker = settled
+            break
+        marker = settled
     budget = max(0, max_chars - len(marker))
     head = int(budget * 0.7)
     tail = budget - head
@@ -334,6 +349,10 @@ def tool_result_message(
             detail=(value if isinstance((value := metadata.get("detail")), str) else None),
             remediation=(
                 value if isinstance((value := metadata.get("remediation")), str) else None
+            ),
+            # Only a call that ran: a rejected call still holds its raw argument names.
+            note=(
+                ignored_argument_note(call.tool_id, call.arguments) if outcome.success else None
             ),
         )
     else:

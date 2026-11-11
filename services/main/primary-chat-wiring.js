@@ -15,6 +15,7 @@ const { createSessionMailStore } = require('../backend/session-mail-store');
 const { createChatProposalStore } = require('../backend/chat-proposal-store');
 const { createPrimaryChatControls } = require('../primary-chat-controls');
 const { createPrimaryActionRules } = require('../primary-action-rules');
+const { createPrimaryFullAuto } = require('../primary-full-auto');
 const { createPrimaryActivityLog } = require('../primary-activity-log');
 const { wirePrimaryScheduledChecks } = require('../primary-scheduled-check');
 const { createPrimarySettingsService } = require('../primary-settings-service');
@@ -51,6 +52,15 @@ function attachPrimaryChat(backendService, {
       const depth = backendService.chatMessages?.wakeDepth?.(turnId);
       return !Number.isSafeInteger(depth) || depth > 0 || backendService.chatMessages?.mailTurn?.(turnId) === true;
     },
+    log,
+  });
+  // Full auto: the in-memory armed state over the Jenny chat's Auto mode (never persisted). A change rides the
+  // existing primaryChat.onChanged invalidation; the renderer refetches getFullAuto.
+  backendService.primaryFullAuto = createPrimaryFullAuto({
+    primarySessionId: () => backendService.primaryChatControls?.primarySessionId?.() || '',
+    getRunMode: (sessionId) => store()?.getSessionSummary?.(sessionId)?.run_mode ?? '',
+    isEnabled: () => backendService.featureFlags?.primary_full_auto !== false && backendService.featureFlags?.primary_chat !== false,
+    onChange: () => emit({ schema_version: 1, session_id: backendService.primaryChatControls?.primarySessionId?.() || '' }),
     log,
   });
   backendService.primaryActivityLog = createPrimaryActivityLog({

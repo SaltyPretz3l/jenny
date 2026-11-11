@@ -37,6 +37,8 @@ function harness(t, overrides = {}) {
     getStartPromptSend: () => startPromptSend,
     createSession: overrides.createSession || (async (options) => { calls.creates.push(options); return CHILD_ID; }),
     getHandoffApi: () => ('api' in overrides ? overrides.api : { generateNote }),
+    listProjects: overrides.listProjects || (async () => []),
+    get projectMenu() { return overrides.projectMenu?.(); },
     setNotice: (text, tone) => calls.notices.push({ text, tone }),
     clearComposer: () => { calls.clears += 1; },
     setComposerDraft: overrides.setComposerDraft || ((text, sessionId) => { calls.drafts.push({ text, sessionId }); return true; }),
@@ -70,13 +72,95 @@ test('drafts the note, lets the user edit it, then creates a linked chat and sen
   assert.deepEqual(result, { ok: true, code: 'handoff_started' });
   assert.equal(h.modal(), null, 'the dialog closes on Start');
   assert.equal(h.calls.clears, 1, 'the source composer is cleared before the new chat opens');
-  assert.deepEqual(h.calls.creates, [{ title: 'make the parser tests pass.', handoffFromSessionId: SOURCE_ID, projectId: 'project_1' }]);
+  assert.deepEqual(h.calls.creates, [{ title: 'make the parser tests pass.', requireRecord: true, handoffFromSessionId: SOURCE_ID, projectId: 'project_1' }]);
   assert.equal(h.calls.sends.length, 1);
   assert.equal(h.calls.sends[0].prompt, NOTE + '\nAlso: check the fixtures.');
   assert.deepEqual(h.calls.sends[0].options, { sessionIdOverride: CHILD_ID, preserveComposerDraft: true });
   assert.deepEqual(h.calls.drafts, []);
   assert.deepEqual(h.calls.notices, []);
   assert.ok(!h.calls.logs.some((entry) => JSON.stringify(entry).includes('render_list')), 'the note text is never logged');
+});
+
+const PROJECT_LIST = async () => ({ projects: [{ id: 'project_1', name: 'proj-p' }, { id: 'project_2', name: 'jenny' }] });
+const intentOption = (h, value) => h.modal().querySelector(`[data-inv-segmented="handoffIntent"] [data-value="${value}"]`);
+const pickIntent = async (h, value) => {
+  intentOption(h, value).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await settle();
+};
+
+test('the destination picker reads the project menu when the dialog opens, not when the app composes', async (t) => {
+  // In the app this script loads before the project menu's, so a read at construction finds nothing.
+  const realMenu = require('../renderer/features/renderer-project-menu');
+  let loaded = false;
+  const h = harness(t, { listProjects: PROJECT_LIST, projectMenu: () => (loaded ? realMenu : {}) });
+  loaded = true;
+  const pending = h.handler({ sessionId: SOURCE_ID, args: '' });
+  await settle();
+  assert.ok(h.modal().querySelector(`#${PROJECT_FIELD_ID}`), 'the project picker is shown');
+  h.click('[data-step-modal-action="cancel"]');
+  await pending;
+});
+
+test('an ordinary chat picks another project without a new draft, and the new chat stays linked', async (t) => {
+  const h = harness(t, { listProjects: PROJECT_LIST });
+  const pending = h.handler({ sessionId: SOURCE_ID, args: '' });
+  await settle();
+  const select = h.modal().querySelector(`#${PROJECT_FIELD_ID}`);
+  assert.equal(select.value, 'project_1', 'defaults to the current project');
+  assert.match(select.selectedOptions[0].textContent, /proj-p \(this chat\)/);
+  select.value = 'project_2';
+  select.dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(h.calls.generate.length, 1, 'the note is about this chat, wherever it goes');
+  assert.match(h.modal().querySelector('.inv-step-modal-summary').textContent, /new chat in jenny, linked to this one/);
+  h.click('[data-step-modal-action="start"]');
+  await pending;
+  assert.equal(h.calls.creates[0].projectId, 'project_2');
+  assert.equal(h.calls.creates[0].requireRecord, true, 'a busy chat elsewhere must not turn this into a local draft');
+  assert.equal(h.calls.creates[0].handoffFromSessionId, SOURCE_ID);
+  assert.equal('runMode' in h.calls.creates[0], false);
+});
+
+test('no second project, or no list, leaves the picker out', async (t) => {
+  for (const listProjects of [async () => ({ projects: [{ id: 'project_1', name: 'proj-p' }] }), async () => { throw new Error('nope'); }]) {
+    const h = harness(t, { listProjects });
+    const pending = h.handler({ sessionId: SOURCE_ID, args: '' });
+    await settle();
+    assert.equal(h.modal().querySelector(`#${PROJECT_FIELD_ID}`), null);
+    assert.ok(intentOption(h, 'orient'), 'the intent choice is always there');
+    h.handler.dispose();
+    await pending;
+  }
+});
+
+test('read-only orientation redrafts as a brief and starts the new chat in Plan mode', async (t) => {
+  const seen = [];
+  const h = harness(t, { generateNote: async (_id, options) => { seen.push(options); return { ok: true, note: NOTE }; } });
+  const pending = h.handler({ sessionId: SOURCE_ID, args: '' });
+  await settle();
+  assert.deepEqual(seen, [{}]);
+  await pickIntent(h, 'orient');
+  assert.deepEqual(seen, [{}, { intent: 'orient' }]);
+  assert.match(h.modal().querySelector('[data-handoff-hint]').textContent, /Starts in Plan mode/);
+  h.click('[data-step-modal-action="start"]');
+  await pending;
+  assert.equal(h.calls.creates[0].runMode, 'plan');
+});
+
+test('an edited note is not redrafted over when the intent changes', async (t) => {
+  const seen = [];
+  const h = harness(t, { generateNote: async (_id, options) => { seen.push(options); return { ok: true, note: NOTE }; } });
+  const pending = h.handler({ sessionId: SOURCE_ID, args: '' });
+  await settle();
+  h.field().value = 'My own words';
+  await pickIntent(h, 'orient');
+  assert.equal(seen.length, 1);
+  assert.equal(h.field().value, 'My own words');
+  assert.equal(intentOption(h, 'continue').getAttribute('aria-checked'), 'true', 'the choice goes back');
+  assert.match(h.modal().querySelector('.inv-step-modal-summary').textContent, /stays as written/);
+  h.click('[data-step-modal-action="start"]');
+  await pending;
+  assert.equal('runMode' in h.calls.creates[0], false);
 });
 
 test('Cancel, Escape and the backdrop resolve as handled without creating anything', async (t) => {
@@ -252,7 +336,7 @@ test('row 73: on the primary chat the suggested project is preselected and the n
   assert.equal(h.mentions().hidden, true, 'nothing from other work is mentioned');
   h.click('[data-step-modal-action="start"]');
   assert.deepEqual(await pending, { ok: true, code: 'handoff_started' });
-  assert.deepEqual(h.calls.creates, [{ title: 'make the parser tests pass.', projectId: 'project_atlas' }],
+  assert.deepEqual(h.calls.creates, [{ title: 'make the parser tests pass.', requireRecord: true, projectId: 'project_atlas' }],
     'the chat opens in the chosen project with no link to the primary');
   assert.equal(h.calls.sends[0].prompt, NOTE);
 });

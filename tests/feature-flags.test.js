@@ -146,6 +146,9 @@ test('read_only_commands is an internal default-on flag that can be disabled fro
 
   assert.equal(defaults.read_only_commands, true);
   assert.equal(disabled.read_only_commands, false);
+  assert.equal(defaults.follow_jenny, true, 'row 121');
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_FOLLOW_JENNY: '0' }).follow_jenny, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('follow_jenny'));
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('read_only_commands'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('read_only_commands'));
 });
@@ -573,6 +576,14 @@ test('unattended_guard is a default-on user override with env rollback', () => {
   );
 });
 
+test('primary_full_auto is an internal default-on flag with env rollback', () => {
+  assert.equal(buildFeatureFlagDefaults({}).primary_full_auto, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_ENABLE_PRIMARY_FULL_AUTO: '0' }).primary_full_auto, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('primary_full_auto'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('primary_full_auto'));
+  assert.deepEqual(normalizeFeatureOverrides({ primary_full_auto: false }), {});
+});
+
 test('chat_timeline_streaming_article_morph is an internal DEFAULT-ON flag with env rollback (Track B streaming article morph)', () => {
   const defaults = buildFeatureFlags({});
   const enabled = buildFeatureFlags({ JENNY_ENABLE_CHAT_TIMELINE_STREAMING_ARTICLE_MORPH: '1' });
@@ -616,6 +627,16 @@ test('text_spellcheck is a default-on user override with an environment default 
     buildFeatureFlagDefaults({ JENNY_ENABLE_TEXT_SPELLCHECK: '0' }).text_spellcheck,
     false
   );
+});
+
+test('change_pictures is a default-on user override with an environment default rollback', () => {
+  assert.ok(FEATURE_OVERRIDE_KEYS.includes('change_pictures'));
+  assert.ok(!INTERNAL_FEATURE_FLAG_KEYS.includes('change_pictures'));
+  assert.equal(buildFeatureFlags({}).change_pictures, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_ENABLE_CHANGE_PICTURES: '0' }).change_pictures, false);
+  assert.equal(buildFeatureFlags({}, { change_pictures: false }).change_pictures, false);
+  // A stored choice beats the environment default.
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_CHANGE_PICTURES: '0' }, { change_pictures: true }).change_pictures, true);
 });
 
 test('surface_effect_gallery is an internal flag patterned on agent_test_hooks (agent/dev launcher default, env-only override)', () => {
@@ -810,4 +831,71 @@ test('retired 2026-10-06 flags are gone from the registry and their env names ar
     assert.doesNotThrow(() => { flags = buildFeatureFlags(env, staleOverrides); });
     assert.deepEqual(flags, defaults, `JENNY_ENABLE_*=${value} for retired keys must be ignored`);
   }
+});
+
+test('the declarative flag table is well formed and every derived export agrees with it', () => {
+  const { FEATURE_FLAG_TABLE } = require('../services/feature-flag-table');
+  const keys = FEATURE_FLAG_TABLE.map((row) => row.key);
+  assert.equal(new Set(keys).size, keys.length, 'every row has a unique key');
+  assert.equal(new Set(FEATURE_FLAG_TABLE.map((row) => row.env)).size, keys.length, 'every row has a unique env suffix');
+  const allowed = new Set(['key', 'env', 'default', 'override', 'internal', 'forceDeny', 'dynamicDefault']);
+  for (const row of FEATURE_FLAG_TABLE) {
+    assert.match(row.key, /^[a-z][a-z0-9_]*$/, `${row.key}: key`);
+    assert.match(row.env, /^[A-Z][A-Z0-9_]*$/, `${row.key}: env suffix (no JENNY_ENABLE_ prefix)`);
+    assert.equal(typeof row.default, 'boolean', `${row.key}: boolean default`);
+    assert.ok(!(row.override && row.internal), `${row.key}: override and internal are exclusive`);
+    for (const field of Object.keys(row)) assert.ok(allowed.has(field), `${row.key}: unknown field ${field}`);
+    for (const field of ['override', 'internal', 'forceDeny']) {
+      assert.ok(row[field] === undefined || row[field] === true, `${row.key}: ${field} is true or absent`);
+    }
+    assert.equal(Object.isFrozen(row), true);
+  }
+  const followers = FEATURE_FLAG_TABLE.filter((row) => row.dynamicDefault === 'canonical_m3_rollout');
+  assert.deepEqual(followers.map((row) => row.key), ['canonical_turn_events', 'canonical_bridge']);
+  for (const row of followers) assert.ok(keys.indexOf('canonical_m3_rollout') < keys.indexOf(row.key));
+
+  assert.deepEqual(FEATURE_OVERRIDE_KEYS, FEATURE_FLAG_TABLE.filter((row) => row.override).map((row) => row.key));
+  assert.deepEqual(INTERNAL_FEATURE_FLAG_KEYS, FEATURE_FLAG_TABLE.filter((row) => row.internal).map((row) => row.key));
+  assert.deepEqual(FORCE_DENY_ENV_KEYS, Object.fromEntries(FEATURE_FLAG_TABLE
+    .filter((row) => row.forceDeny).map((row) => [row.key, `JENNY_ENABLE_${row.env}`])));
+  for (const list of [FEATURE_OVERRIDE_KEYS, INTERNAL_FEATURE_FLAG_KEYS, FORCE_DENY_ENV_KEYS]) assert.equal(Object.isFrozen(list), true);
+
+  // Every row is emitted, each static default holds, and its kill switch flips it both ways.
+  const defaults = buildFeatureFlagDefaults({});
+  assert.deepEqual(Object.keys(defaults), keys);
+  for (const row of FEATURE_FLAG_TABLE.filter((entry) => !entry.dynamicDefault)) {
+    assert.equal(defaults[row.key], row.default, `${row.key}: default`);
+    const envKey = `JENNY_ENABLE_${row.env}`;
+    assert.equal(buildFeatureFlagDefaults({ [envKey]: '0' })[row.key], false, `${envKey}=0`);
+    assert.equal(buildFeatureFlagDefaults({ [envKey]: '1' })[row.key], true, `${envKey}=1`);
+  }
+  // Retired env names never collide with a live row.
+  const liveEnvs = new Set(FEATURE_FLAG_TABLE.map((row) => `JENNY_ENABLE_${row.env}`));
+  for (const [key, entry] of Object.entries(RETIRED_FEATURE_FLAG_ENV_KEYS)) {
+    assert.equal(keys.includes(key), false, `${key} is retired`);
+    assert.equal(liveEnvs.has(entry.env), false, `${entry.env} is retired`);
+  }
+});
+
+test('dynamic defaults follow the agent launcher and the canonical M3 rollout', () => {
+  assert.equal(buildFeatureFlagDefaults({}).agent_test_hooks, false);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1' }).agent_test_hooks, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1' }).surface_effect_gallery, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1', JENNY_ENABLE_AGENT_TEST_HOOKS: '0' }).agent_test_hooks, false);
+  assert.equal(buildFeatureFlagDefaults({}).desktop_notifications, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1' }).desktop_notifications, false);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1', JENNY_AGENT_QUIET: '0' }).desktop_notifications, true);
+  const rolledBack = buildFeatureFlagDefaults({ JENNY_ENABLE_CANONICAL_M3_ROLLOUT: '0' });
+  assert.equal(rolledBack.canonical_turn_events, false);
+  assert.equal(rolledBack.canonical_bridge, false);
+  assert.equal(buildFeatureFlagDefaults({}).canonical_bridge, true);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_ENABLE_CANONICAL_M3_ROLLOUT: '0', JENNY_ENABLE_CANONICAL_BRIDGE: '1' }).canonical_bridge, true);
+});
+
+test('team is an internal default-off flag that env can turn on (row 123; owner, 2026-11-10)', () => {
+  assert.equal(buildFeatureFlags({}).team, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_TEAM: '1' }).team, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_TEAM: '0' }).team, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('team'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('team'));
 });

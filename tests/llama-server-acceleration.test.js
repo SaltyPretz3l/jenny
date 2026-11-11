@@ -341,6 +341,30 @@ test('resolver pairs Qwen3.8 with its separate mtp drafter, without allowUnverif
   assert.deepEqual([missing.mode, missing.reason], ['ngram', 'drafter_missing']);
 });
 
+// 2026-11-04: a Qwen3.8 finetune shipping its MTP head inside the GGUF
+// (`qwen35.nextn_predict_layers = 1`) decoded with ngram-cache for want of a file.
+test('a Qwen3.8 GGUF with an embedded head drafts with it when no drafter file exists', () => {
+  const embedded = resolve({ modelTag: 'qwen3.8-27b-x', fsImpl: NO_DRAFTER_FS, embeddedMtpLayers: 1 });
+  assert.deepEqual([embedded.mode, embedded.reason, embedded.drafter], ['mtp', 'mtp_embedded', '']);
+  assert.deepEqual(embedded.extraArgs, ['--spec-type', 'draft-mtp', '--spec-draft-n-max', '4']);
+
+  const fsImpl = { readdirSync: () => ['model.gguf', 'mtp-Qwen3.8-27B-Q4_0.gguf'] };
+  const fileWins = resolve({ modelTag: 'qwen3.8-27b-x', fsImpl, embeddedMtpLayers: 1 });
+  assert.deepEqual([fileWins.reason, fileWins.drafter], ['mtp', 'mtp-Qwen3.8-27B-Q4_0.gguf']);
+
+  for (const embeddedMtpLayers of [0, null]) {
+    const none = resolve({ modelTag: 'qwen3.8-27b-x', fsImpl: NO_DRAFTER_FS, embeddedMtpLayers });
+    assert.deepEqual([none.mode, none.reason], ['ngram', 'drafter_missing'], String(embeddedMtpLayers));
+  }
+});
+
+test('a native-head family falls back when the GGUF header says it has no head', () => {
+  const missing = resolve({ modelTag: 'ornith15:9b', allowUnverified: true, embeddedMtpLayers: 0 });
+  assert.deepEqual([missing.mode, missing.reason], ['ngram', 'mtp_head_missing']);
+  const unread = resolve({ modelTag: 'ornith15:9b', allowUnverified: true, embeddedMtpLayers: null });
+  assert.equal(unread.mode, 'mtp', 'an unread header keeps the pre-header behavior');
+});
+
 test('resolver falls back when a separate drafter is missing or its pattern is unsafe', () => {
   const unsafeCatalog = structuredClone(CATALOG);
   unsafeCatalog.families.find((entry) => entry.family === 'gemma4').drafterPattern = '../mtp-*.gguf';

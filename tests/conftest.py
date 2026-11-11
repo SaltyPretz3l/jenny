@@ -50,6 +50,18 @@ def _fresh_pdf_page_cache() -> None:
         rapid.reset_shared_engine()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_session_capability_hashes() -> None:
+    # Each session's last prompt-visible capability hash lives for the process, and
+    # most tests share the id "session_1": a hash recorded by one test made the next
+    # test's send add the "capabilities changed" note its preview never counted
+    # (test_the_send_meter_reads_on_the_preview_scale, order-dependent under xdist).
+    overlays = sys.modules.get("sidecar.ai.context.runtime_overlays")
+    if overlays is not None:
+        with overlays._SESSION_ENVIRONMENT_LAST_HASHES_LOCK:
+            overlays._SESSION_ENVIRONMENT_LAST_HASHES.clear()
+
+
 @pytest.fixture
 def jenny_test_mode() -> str:
     return str(os.environ.get("JENNY_TEST_MODE", "")).strip().lower()

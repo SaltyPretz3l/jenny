@@ -39,6 +39,7 @@ const {
   resolveLaunchAcceleration,
   shouldRetryWithoutAcceleration,
 } = require('./llama-server-acceleration-launch');
+const { planLaunchMemory } = require('../backend/llama-server-memory-fit');
 const {
   createRuntimePickRegistry,
   describeRuntimeLabel,
@@ -118,6 +119,7 @@ function createLlamaServerManager({
   chatModelGate = () => '',
   lifecycle = llamaServerLifecycle,
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
+  planLaunchMemoryImpl = planLaunchMemory,
   resolveSettingsImpl = resolveLlamaServerSettings,
   loadProfileImpl = loadLlamaServerProfile,
   buildFeatureFlagsImpl = buildFeatureFlags,
@@ -157,7 +159,7 @@ function createLlamaServerManager({
     accelerationMode: 'off',
     accelerationReason: '',
     accelerationDrafter: '',
-    contextSize: 0,
+    contextSize: 0, servedContextSize: 0,
     mmproj: '',
     runtimeLabel: '',
     reused: false,
@@ -441,7 +443,7 @@ function createLlamaServerManager({
       accelerationMode: 'off',
       accelerationReason: '',
       accelerationDrafter: '',
-      contextSize: 0,
+      contextSize: 0, servedContextSize: 0,
       lastError: `llama_server_exited:${code != null ? code : signal || 'unknown'}`,
     });
     log('WARN', 'llama.server.crashed_pending_recovery', {
@@ -517,11 +519,33 @@ function createLlamaServerManager({
     });
     let nextHandle;
     try {
+      // Cap the context where every layer still fits on the GPU (q8_0 KV,
+      // acceleration headroom kept free); llama-server-memory-fit.js says why.
+      const memory = await planLaunchMemoryImpl({
+        binaryPath: launchOptions.binaryPath,
+        modelPath: launchOptions.modelPath,
+        projectorPath: launchOptions.projectorPath,
+        requestedContext: launchOptions.contextSize,
+        profileExtraArgs,
+        headroomMb: accel.extraArgs.length > 0 ? accel.vramHeadroomMb : 0,
+        signal: abortController.signal,
+      });
+      log(memory.reason === 'spill' ? 'WARN' : 'INFO', 'llama.server.memory_plan', {
+        reason: memory.reason, requestedContext: launchOptions.contextSize, contextSize: memory.contextSize,
+        fittedContext: memory.fittedContext, gpuLayers: memory.gpuLayers, marginMb: memory.marginMb,
+      });
+      if (startGeneration !== generation) {
+        return getStatus();
+      }
+      if (abortController.signal.aborted) {
+        throw new Error('readiness_aborted');
+      }
+      const spawnOptions = { ...launchOptions, contextSize: memory.contextSize };
       try {
         nextHandle = await lifecycle.startLlamaServer({
-          ...launchOptions,
+          ...spawnOptions,
           ...launchExtras,
-          extraArgs: [...profileExtraArgs, ...accel.extraArgs],
+          extraArgs: [...profileExtraArgs, ...memory.extraArgs, ...accel.extraArgs],
           abortSignal: abortController.signal,
           onExit,
           onEngineActivity,
@@ -551,9 +575,10 @@ function createLlamaServerManager({
         accelerationMode = 'off';
         accelerationReason = 'spawn_failed';
         nextHandle = await lifecycle.startLlamaServer({
-          ...launchOptions,
+          ...spawnOptions,
           ...launchExtras,
-          extraArgs: profileExtraArgs,
+          // The fitted context assumes the memory args; only acceleration is dropped.
+          extraArgs: [...profileExtraArgs, ...memory.extraArgs],
           abortSignal: abortController.signal,
           onExit,
           onEngineActivity,
@@ -599,6 +624,7 @@ function createLlamaServerManager({
         accelerationReason: reportedReason,
         accelerationDrafter: reportedDrafter,
         contextSize: reportedContextSize,
+        servedContextSize: nextHandle.reused ? 0 : spawnOptions.contextSize, // after the memory plan's cap
         mmproj: nextHandle.reused ? 'unknown' : String(nextHandle.mmproj || ''),
         runtimeLabel: nextHandle.reused ? 'unknown' : String(launchOptions.runtimeLabel || ''),
         identityRetained: false,
@@ -635,7 +661,7 @@ function createLlamaServerManager({
       const message = vanishedRuntimeError(launchOptions) || String(error && error.message || error);
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-        accelerationDrafter: '', contextSize: 0, identityReused: false, lastError: message,
+        accelerationDrafter: '', contextSize: 0, servedContextSize: 0, identityReused: false, lastError: message,
       });
       log('WARN', 'llama.server.start_failed', { message });
       emitStartupAuditMark('llama-server-failed', { source: 'main', message });
@@ -737,7 +763,7 @@ function createLlamaServerManager({
     if (current.reused) {
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-        accelerationDrafter: '', contextSize: 0, lastError: '',
+        accelerationDrafter: '', contextSize: 0, servedContextSize: 0, lastError: '',
       });
       return getStatus();
     }
@@ -765,7 +791,7 @@ function createLlamaServerManager({
     }
     setState('stopped', {
       pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-      accelerationDrafter: '', contextSize: 0, identityReused: false,
+      accelerationDrafter: '', contextSize: 0, servedContextSize: 0, identityReused: false,
       identityRetained: Boolean(retainedIdentity), lastError: stopError,
     });
     return getStatus();
@@ -831,7 +857,7 @@ function createLlamaServerManager({
   }
 
   // A relaunch without a spec takes the last model with its CURRENT saved
-  // engine settings, built exactly as a Use builds them (backend-runtime.js),
+  // engine settings, built exactly as a Use builds them (backend-model-load.js),
   // so a Tune Apply (build, MTP, GGUF file) is live after the restart. Before
   // any Use (boot autostart) that model is the last-used one, unless an env
   // model or profile chose the launch.
@@ -958,7 +984,7 @@ function createLlamaServerManager({
     if (state !== 'stopped') {
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-        accelerationDrafter: '', contextSize: 0, identityRetained: false, identityReused: false,
+        accelerationDrafter: '', contextSize: 0, servedContextSize: 0, identityRetained: false, identityReused: false,
       });
     }
   }

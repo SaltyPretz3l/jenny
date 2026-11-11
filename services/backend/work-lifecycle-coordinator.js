@@ -3,6 +3,7 @@ const {
 } = require('./chat-stream-session-lifecycle');
 const { normalizeString } = require('../shared/normalize');
 const { normalizeUsage, normalizeChildActivity } = require('./subagent-report-metadata');
+const { applyDelegateChildEvent, isDelegateChildFrame } = require('./delegate-active-turn-children');
 
 const TERMINAL_AGENT_STATUSES = new Set([
   'completed',
@@ -168,8 +169,26 @@ function normalizeAgentProgressNotification(params = {}, {
   });
 }
 
+// Runs for every frame: a settling child's frame also carries activity.
+function recordDelegateChild(adapter, event) {
+  if (!isDelegateChildFrame(event) || typeof adapter.touchActiveTurn !== 'function') return;
+  const current = adapter.peekActiveTurn?.() || adapter.getActiveTurn?.();
+  if (!current) return;
+  const children = applyDelegateChildEvent(current.delegate_children, event);
+  if (children) {
+    adapter.touchActiveTurn(
+      { request_id: event.requestId, stream_id: event.streamId },
+      { delegate_children: children }
+    );
+  }
+}
+
 function mirrorAgentStatusToActiveTurn(adapter, event) {
-  if (!adapter || !event || event.childActivity) {
+  if (!adapter || !event) {
+    return null;
+  }
+  recordDelegateChild(adapter, event);
+  if (event.childActivity) {
     return null;
   }
   return touchActiveTurnProgress(adapter, {

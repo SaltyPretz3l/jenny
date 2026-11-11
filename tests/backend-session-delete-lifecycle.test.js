@@ -209,3 +209,22 @@ test('a refused quiescence never purges', async () => {
   assert.equal(result.deleted, false);
   assert.equal(requests, 0);
 });
+
+test('a deleted chat closes its browser page, and a failure there never fails the delete', async () => {
+  const h = harness();
+  const closed = [];
+  h.service.toolExecutor = { browserUse: { closeSession: async (id) => { closed.push(id); throw new Error('gone'); } } };
+  h.service.sessionTurnActors.commitDeletion = async () => ({ ok: true, result: { object: 'session', id: 'a', deleted: true } });
+  const result = await deleteSessionWithQuiescence(h.service, 'a', {});
+  assert.equal(result.deleted, true);
+  assert.deepEqual(closed, ['a']);
+});
+
+test('a refused delete leaves the browser page open', async () => {
+  const h = harness();
+  const closed = [];
+  h.service.toolExecutor = { browserUse: { closeSession: async (id) => closed.push(id) } };
+  h.service.sessionTurnActors.commitDeletion = async () => ({ ok: true, result: { object: 'session', id: 'a', deleted: false } });
+  await deleteSessionWithQuiescence(h.service, 'a', {});
+  assert.deepEqual(closed, []);
+});

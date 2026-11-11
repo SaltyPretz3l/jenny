@@ -43,7 +43,6 @@
   var anchoredListbox = root.inventoryAnchoredListbox;
   var orbitCard = root.inventoryOrbitCard;
   var stepModal = root.inventoryStepModal;
-  var chatWayfinderAffordance = root.inventoryChatWayfinderAffordance;
   var actionButton = root.inventoryActionButton;
   var chip = root.inventoryChip;
   var popover = root.inventoryPopover;
@@ -73,7 +72,6 @@
     anchoredListbox: anchoredListbox,
     orbitCard: orbitCard,
     stepModal: stepModal,
-    chatWayfinderAffordance: chatWayfinderAffordance,
     actionButton: actionButton,
     chip: chip,
     popover: popover,

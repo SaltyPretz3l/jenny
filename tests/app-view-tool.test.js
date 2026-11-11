@@ -39,7 +39,8 @@ function harness({ port, featureFlags, visible = ['sess_other'] } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('each action takes only its own keys; purpose is required except for state', async () => {
   const { context, calls } = harness();

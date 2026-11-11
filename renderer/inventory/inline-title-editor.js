@@ -99,6 +99,14 @@
         cancel();
       }
     });
+    // The sidebar mounts this input inside the row's <button>. Chromium clicks a button when a
+    // Space keyup passes through it, even from a descendant, which opened the chat and ended the
+    // edit at the first space. Cancelling the keyup's default stops that; the character is typed
+    // on keydown, so it still arrives.
+    input.addEventListener('keyup', function handleEditorKeyup(event) {
+      event.stopPropagation();
+      if (event.key === ' ' || event.key === 'Spacebar') event.preventDefault();
+    });
     input.addEventListener('click', function handleEditorClick(event) {
       event.stopPropagation();
     });

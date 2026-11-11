@@ -268,6 +268,12 @@ test('Undo… shows only for undoable turns and an undone turn offers Redo', () 
   const t1 = mountEl.querySelector('[data-changes-turn-block="t1"]');
   assert.ok(t1.classList.contains('changes-history-turn--undone'));
   assert.deepEqual(Array.from(t1.querySelectorAll('.changes-history-note')).map((el) => el.textContent), ['undone', 'kept']);
+  // Row 122: the picture slot sits between a turn's head and its files; an undone turn has none.
+  assert.equal(t1.querySelector('.cp-slot'), null);
+  const slot = mountEl.querySelector('[data-changes-turn-block="t2"] .cp-slot');
+  assert.equal(slot.dataset.cpTurn, 't2');
+  assert.ok(slot.previousElementSibling.classList.contains('changes-history-turn-head'));
+  assert.ok(slot.nextElementSibling.classList.contains('changes-history-files'));
   mountEl.querySelector('[data-changes-undo]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   mountEl.querySelector('[data-changes-redo]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(calls, [['undo', 't2'], ['redo', 't1']]);

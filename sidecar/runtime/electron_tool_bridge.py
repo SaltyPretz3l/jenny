@@ -65,7 +65,7 @@ _PATH_METADATA_KEYS = {
     "preview_image", "previewImage", "data_base64", "trusted_attachments",
 }
 # Tools whose bounded PNG may reach a vision chat model; see preview_vision.
-_PREVIEW_IMAGE_TOOLS = frozenset({"preview_test", "image_generate"})
+_PREVIEW_IMAGE_TOOLS = frozenset({"preview_test", "image_generate", "browser"})
 # Electron owns message consent inside its producer and command consent in prepare.
 # Match chat-stream-tool-approval.js: 10 minutes normally, extendible to 4 hours
 # by the existing unattended guard. Reserve that bounded window up front since
@@ -237,6 +237,20 @@ def _sanitize_metadata_value(value: Any, depth: int = 0) -> Any:
     return _OMIT_METADATA_VALUE
 
 
+def _sanitize_top_level_value(key: Any, raw_value: Any) -> Any:
+    # Function-local: only tool results need it, and the sidecar's startup import graph is budgeted.
+    from sidecar.runtime.electron_tool_change_review import (
+        CHANGE_REVIEW_METADATA_KEYS,
+        sanitize_change_review,
+    )
+
+    if str(key) not in CHANGE_REVIEW_METADATA_KEYS:
+        return _sanitize_metadata_value(raw_value)
+    return sanitize_change_review(
+        raw_value, _sanitize_metadata_scalar, _is_path_metadata_key, _OMIT_METADATA_VALUE,
+    )
+
+
 def _sanitize_metadata(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -244,7 +258,7 @@ def _sanitize_metadata(value: Any) -> dict[str, Any]:
     for key, raw_value in itertools.islice(value.items(), _MAX_METADATA_ITEMS):
         if _is_path_metadata_key(key):
             continue
-        cleaned = _sanitize_metadata_value(raw_value)
+        cleaned = _sanitize_top_level_value(key, raw_value)
         if cleaned is not _OMIT_METADATA_VALUE:
             sanitized[str(key)] = cleaned
     return sanitized
@@ -331,9 +345,11 @@ def _response_wait_timeout(request: ElectronToolBridgeRequest) -> float:
     )
     message_consent = (request.tool_name == "session_message"
                        and request.arguments.get("action") == "send" and producer_response)
+    # The browser tool may ask the user inside Electron (any action can need consent).
+    browser_consent = request.tool_name == "browser"
     command_consent = (request.tool_name == "run_command"
                        and request.before_resource_start is not None and not producer_response)
-    if message_consent or command_consent:
+    if message_consent or command_consent or browser_consent:
         # Messages ask inside the producer; sandbox commands ask in preparation.
         # Command execution itself retains its ordinary working deadline.
         return timeout + _ELECTRON_CONSENT_WAIT_SECONDS
@@ -449,6 +465,8 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                     request.tool_call_id
                     if request.tool_name == "image_generate"
                     or request.arguments.get("screenshot") is True
+                    or (request.tool_name == "browser"
+                        and request.arguments.get("action") == "screenshot")
                     else ""
                 ),
             )

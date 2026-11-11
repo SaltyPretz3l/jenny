@@ -41,7 +41,8 @@ _FIX_TEMPLATES: dict[str, str] = {
     "limit_exceeded": "Reduce the request size or scope to fit the stated limit, then retry.",
     "transient": "Retry the same arguments after a brief delay.",
     "internal_error": (
-        "Do not retry automatically; inspect diagnostics and use a safer alternative."
+        "The message below says what went wrong. Change what it names and call again, or "
+        "use another tool; do not repeat the same call unchanged."
     ),
 }
 
@@ -128,6 +129,7 @@ def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
     trace: str | None = None,
     detail: str | None = None,
     remediation: str | None = None,
+    note: str | None = None,
 ) -> str:
     """Render the closed W1 envelope without mutating the raw tool output."""
     header_tool = _header_identifier(tool_id, fallback="tool")
@@ -173,6 +175,8 @@ def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
         if (detail_text := _sanitize_detail(detail, tool_name=tool_id)) is not None:
             lines.append(f"detail: {detail_text}")
 
+    if (note_text := _optional_text(note, tool_name=tool_id)) is not None:
+        lines.append(f"note: {note_text}")
     body = _neutralize_body(str(output_text or ""))
     lines.extend((_OPEN_TAG, body, _CLOSE_TAG))
     return "\n".join(lines)

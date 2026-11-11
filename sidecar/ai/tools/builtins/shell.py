@@ -48,6 +48,9 @@ from sidecar.ai.tools.builtins.shell_background_wait import (
     sleep_payload_if_waiting,
     wait_for_settle,
 )
+from sidecar.ai.tools.builtins.shell_command_hint import (
+    unresolved_command_hint as _unresolved_command_hint,
+)
 from sidecar.ai.tools.builtins.shell_command_split import (
     cmd_exe_multiline_refusal,
     split_compound_command,
@@ -88,6 +91,8 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 MIN_TIMEOUT_SECONDS = 0.1
 MAX_TIMEOUT_SECONDS = 600.0
 MAX_BACKGROUND_TIMEOUT_SECONDS = 86_400.0
+# A background job is a server, build or test run: the foreground default would kill it at once.
+DEFAULT_BACKGROUND_TIMEOUT_SECONDS = MAX_BACKGROUND_TIMEOUT_SECONDS
 MAX_OUTPUT_CHARS = 20_000
 MAX_FAILURE_STREAM_CHARS = 6_000
 MAX_EXPECTED_EXIT_CODES = 16
@@ -103,6 +108,12 @@ SEMANTIC_EXIT_OVERRIDES: dict[str, dict[int, str]] = {
     "diff": {1: "files differ (normal)"},
     "cmp": {1: "files differ (normal)"},
     "test": {1: "condition is false (normal)"},
+    # Windows equivalents: a month of real chats counted these as tool errors (row 129, A3).
+    "findstr": {1: "no matches found"},
+    "where": {1: "not found on PATH"},
+    "where.exe": {1: "not found on PATH"},
+    "fc": {1: "files differ (normal)"},
+    "robocopy": dict.fromkeys(range(1, 8), "robocopy finished; exit codes below 8 mean success"),
 }
 
 # ── Module-level config ───────────────────────────────────────────────
@@ -135,9 +146,12 @@ def _truncate_failure_stream(value: str, display_path: str | None = None) -> str
 
 
 def _parse_timeout(arguments: dict[str, object]) -> float:
-    raw = arguments.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
-    ceiling = (MAX_BACKGROUND_TIMEOUT_SECONDS if arguments.get("run_in_background") is True
-               else MAX_TIMEOUT_SECONDS)
+    background = arguments.get("run_in_background") is True
+    raw = arguments.get(
+        "timeout_seconds",
+        DEFAULT_BACKGROUND_TIMEOUT_SECONDS if background else DEFAULT_TIMEOUT_SECONDS,
+    )
+    ceiling = MAX_BACKGROUND_TIMEOUT_SECONDS if background else MAX_TIMEOUT_SECONDS
     if (isinstance(raw, bool) or not isinstance(raw, (int, float))
             or not MIN_TIMEOUT_SECONDS <= raw <= ceiling or not math.isfinite(raw)):
         raise ToolExecutionFailure(
@@ -195,8 +209,15 @@ def _display_cwd(cwd: Path, workspace: WorkspaceGuard) -> str:
 def _is_semantic_ok(command: str, exit_code: int) -> str | None:
     """Return an explanation when *exit_code* is semantically OK."""
     lower = command.lower()
-    if re.search(r"(?:&&|\|\||[;|\r\n])", lower):
+    if re.search(r"(?:&&|\|\||[;\r\n])", lower):
         return None
+    if "|" in lower:
+        if '"' in lower or "'" in lower:
+            return None  # a quoted "|" is text, not a pipe
+        # A plain pipeline exits with its last command's code: `dir /s | findstr x`.
+        lower = lower.rsplit("|", 1)[1].strip()
+        if lower.startswith("git diff"):
+            return None
     if (
         (lower == "git diff" or lower.startswith("git diff "))
         and ("--exit-code" in lower or "--quiet" in lower)
@@ -305,54 +326,6 @@ def _shell_argv(command: str) -> list[str]:
             retryable=False,
         )
     return [interpreter, "-c", command]
-
-
-_UNRESOLVED_COMMAND_RE = re.compile(
-    r"'([^']+)' is not recognized as an internal or external command"
-    r"|([^\s:]+): (?:command not found|not found)"
-    r"|The term ['\"]([^'\"]+)['\"] is not recognized as (?:the |a )?name of a cmdlet",
-    re.IGNORECASE,
-)
-# The name comes from command output (untrusted) and is echoed into the
-# trusted-looking ``hint``: only a short bare program name qualifies.
-_HINT_COMMAND_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
-
-
-def _unresolved_command_hint(stderr: str) -> str | None:
-    """Turn a bare shell "not recognized" line into actionable guidance.
-
-    Without this the model sees only the shell's own message, concludes it
-    should retry with a full path, announces that, and burns another turn.
-    """
-    match = _UNRESOLVED_COMMAND_RE.search(stderr or "")
-    if match is None or not (
-        name := (match.group(1) or match.group(2) or match.group(3) or "").strip()
-    ) or _HINT_COMMAND_NAME_RE.fullmatch(name) is None:
-        return None
-    powershell_error = match.group(3) is not None
-    resolved = shutil.which(name)
-    if resolved:
-        if powershell_error:
-            escaped = resolved.replace("'", "''")
-            return f"{name!r} was not found by PowerShell; invoke the executable as & '{escaped}'."
-        return f"{name!r} is not on this shell's PATH; invoke it as {resolved!r}."
-    if name.lower() in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        directory = _powershell_directory()
-        if directory is not None:
-            return (
-                f"{name!r} is not on this shell's PATH; invoke it as "
-                f"{str(directory / 'powershell.exe')!r}."
-            )
-    if powershell_error:
-        return (
-            f"{name!r} was not found by PowerShell. Check Get-Command, the command spelling, "
-            "and installation; use & 'absolute executable path' for commands outside the "
-            "constructed tool PATH."
-        )
-    return (
-        f"{name!r} could not be resolved by {_shell_name()}. Use an absolute "
-        "path, or a different tool for this step."
-    )
 
 
 def _run_owned_process(
@@ -836,7 +809,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         payload["semantic_note"] = semantic
     payload.update(output_fields)
     if not is_ok:
-        hint = _unresolved_command_hint(raw_stderr)
+        hint = _unresolved_command_hint(f"{raw_stderr}\n{raw_stdout}", cwd=cwd)
         if hint is not None:
             payload["hint"] = hint
 
@@ -967,6 +940,13 @@ def check_background_job_tool(
         )
     status.pop("schema_version", None)  # persistence detail, never model-facing
     _test_progress.attach_job_progress(status, job_id)
+    if status.get("state") == "failed":
+        # The job's own cwd is not recorded; the workspace root is the usual one.
+        hint = _unresolved_command_hint(
+            f"{status.get('stderr') or ''}\n{status.get('stdout') or ''}", cwd=root,
+        )
+        if hint is not None:
+            status["hint"] = hint
     # A running or terminal job (completed, failed, cancelled, timed out) is a
     # state the poll read successfully: ``state``/``exit_code``/``error`` carry
     # the job's outcome. Only an unreadable or rejected status fails the poll.

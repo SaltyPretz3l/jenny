@@ -44,6 +44,8 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   'conversations.embed_step': 35_000,
   'suggestions.generate': 8_000,
   'commit.generate_message': 30_000,
+  // Row 112: one short local generation naming a new chat.
+  'session.generate_title': 20_000,
   // /handoff: one bounded local generation over a clipped transcript.
   'handoff.generate_note': 120_000,
   'hardware.profile': 10_000,

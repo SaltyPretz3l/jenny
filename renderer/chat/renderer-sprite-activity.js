@@ -336,6 +336,106 @@
     return { message: latestAssistantMessage, hasCurrentTurnAssistant: true, fallbacks };
   }
 
+  // The activity for a pane whose rail cannot show it (split view, IDE dock, phone width, an unmounted
+  // row). The anchor comes from messages alone, so the jump control can still animate.
+  function deriveDetachedSpriteActivity(source) {
+    const { tracker, gatherDeps, sessionId, messages, assistantAnchor, latestAssistantId, streamId, normalizePhase, turnKey } = source;
+    const anchor = assistantAnchor.message;
+    const latest = assistantAnchor.hasCurrentTurnAssistant
+      ? messages.find((message) => message?.id === latestAssistantId) : null;
+    const outcomeMessage = latest || anchor;
+    const input = gatherSpriteActivityInput(gatherDeps, sessionId, {
+      messages,
+      streamId: token(streamId) || token(anchor?.streamId),
+      status: anchor?.status,
+      outcome: outcomeMessage ? normalizePhase(outcomeMessage) : '',
+    });
+    return { activity: tracker.derive(input, { turnKey, visible: true }).activity, runningTools: input.runningTools };
+  }
+
+  function findDot(host) {
+    return host ? [...host.children].find((child) => child.classList.contains('chat-sprite-dot')) || null : null;
+  }
+
+  function cssLoops(dot) {
+    if (typeof dot?.getAnimations !== 'function') return [];
+    return dot.getAnimations({ subtree: true }).filter((animation) => animation.animationName);
+  }
+
+  function loopKey(animation) {
+    const target = animation.effect?.target;
+    return `${animation.animationName}|${target?.parentElement?.className}|${target?.className}`;
+  }
+
+  // Both dots run the same CSS loops; sharing a start time makes them one animation.
+  function copyLoopPhase(sourceDot, mirrorDot) {
+    const source = new Map(cssLoops(sourceDot).map((animation) => [loopKey(animation), animation]));
+    for (const loop of cssLoops(mirrorDot)) {
+      const match = source.get(loopKey(loop));
+      if (match?.playState === 'running' && loop.playState === 'running'
+        && match.startTime != null && loop.startTime !== match.startTime) {
+        loop.startTime = match.startTime;
+      }
+    }
+  }
+
+  // The jump control's copy of the rail sprite: a second morph engine told the same thing in the same
+  // task, phase-locked to the rail, and suspended while the control is hidden.
+  function createSpritePillMirror({ button, railHost, createMorph, MutationObserverRef, onShow }) {
+    if (!button || typeof createMorph !== 'function') return null;
+    let disposed = false;
+    let shown = null;
+    let alignRun = 0;
+
+    function align() {
+      if (disposed || !shown) return;
+      const railDot = findDot(railHost);
+      const pillDot = findDot(button);
+      const loops = [...cssLoops(railDot), ...cssLoops(pillDot)];
+      if (!loops.length) return;
+      alignRun += 1;
+      const run = alignRun;
+      const copy = () => { if (run === alignRun && !disposed) copyLoopPhase(railDot, pillDot); };
+      Promise.all(loops.map((loop) => loop.ready)).then(copy, copy);
+    }
+
+    const morph = createMorph(button, { onLoopsReleased: align });
+    const isShowing = () => button.dataset.visible === 'true';
+
+    function syncVisibility() {
+      if (shown === isShowing()) return;
+      shown = isShowing();
+      if (!shown) {
+        morph.suspend();
+        return;
+      }
+      morph.resume();
+      // A suspended engine skips form holds, so it can come back a step off the rail. With no
+      // live rail the pipeline re-derives the form instead: anything remembered here is stale.
+      const railDot = findDot(railHost);
+      if (railDot && !railDot.hasAttribute('data-suspended')) morph.setActivity(railDot.getAttribute('data-activity'));
+      onShow?.();
+      align();
+    }
+
+    const observer = typeof MutationObserverRef === 'function' ? new MutationObserverRef(syncVisibility) : null;
+    observer?.observe(button, { attributes: true, attributeFilter: ['data-visible'] });
+    syncVisibility();
+
+    return {
+      align,
+      isShowing,
+      setActivity: morph.setActivity,
+      reset: morph.reset,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        observer?.disconnect();
+        morph.dispose();
+      },
+    };
+  }
+
   function createSpriteViewApplier({
     chatSpriteLayer,
     chatAssistantSprite,
@@ -409,7 +509,7 @@
         morph?.suspend();
         // A new session never inherits the old one's done or live form.
         if (nextState.suppressionReason === 'session_changed') morph?.reset();
-        onHidden();
+        onHidden(nextState.suppressionReason);
         return true;
       }
 
@@ -434,6 +534,8 @@
     gatherSpriteActivityInput,
     findPaneAdmissionWait,
     createSpriteViewApplier,
+    createSpritePillMirror,
+    deriveDetachedSpriteActivity,
     hasRenderableAssistantContent,
     resolveAssistantSpriteAnchor,
     SPRITE_ACTIVITIES,

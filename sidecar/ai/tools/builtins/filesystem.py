@@ -38,19 +38,23 @@ from sidecar.ai.tools.builtins.file_state import (
     build_read_snapshot,
     decode_text_state_strict,
     encode_text_for_existing_file,
-    extract_markdown_sections,
     is_binary_content,
     is_binary_extension,
     is_binary_file,
     load_existing_text_state_for_mutation,
     open_regular_file,
-    parse_requested_headings,
     read_capped_bytes,
     refuse_reserved_internal_path,
     require_full_read_snapshot,
     validate_current_snapshot,
 )
 from sidecar.ai.tools.builtins.filesystem_content import is_supported_media_path, read_media_file
+from sidecar.ai.tools.builtins.filesystem_read_window import (
+    MAX_PAGINATED_OUTPUT_BYTES,
+    MAX_READ_BYTES,
+    READ_OUTPUT_CHAR_BUDGET,
+    build_read_window_result,
+)
 from sidecar.ai.tools.builtins.filesystem_rich import (
     RICH_FILE_SUFFIXES,
     read_rich_file,
@@ -60,6 +64,10 @@ from sidecar.ai.tools.builtins.filesystem_settings import (
     _FILESYSTEM_SETTINGS,
     DEFAULT_MAX_EDIT_FILE_BYTES,  # noqa: F401 - re-export
     configure_filesystem_tools,  # noqa: F401 - re-export
+)
+from sidecar.ai.tools.builtins.markdown_sections import (
+    extract_markdown_sections,
+    parse_requested_headings,
 )
 from sidecar.ai.tools.contracts import (
     ToolExecutionFailure,
@@ -71,8 +79,6 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 
 logger = logging.getLogger(__name__)
 
-MAX_READ_BYTES = 200_000
-MAX_PAGINATED_OUTPUT_BYTES = MAX_READ_BYTES
 # The paginated "fast path" reads the whole file into memory to slice a window out
 # of it, so it stays bounded by the streaming path's *output* cap rather than a
 # separate, much larger ceiling that would buffer a big file before any truncation.
@@ -249,7 +255,7 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             limit=limit,
             root=workspace.require_root(),
         )
-    workspace.check_file_size(resolved, MAX_READ_BYTES)
+    workspace.check_file_size(resolved, MAX_READ_BYTES, hint=_oversize_read_hint(resolved))
     stat_result, raw_bytes, content, encoding = _read_decoded_file(
         resolved, relative_path=relative_path, max_bytes=MAX_READ_BYTES,
         root=workspace.require_root(),
@@ -277,6 +283,23 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
                 "read_snapshot": snapshot.to_metadata(),
             },
         )
+    if len(content) > READ_OUTPUT_CHAR_BUDGET:
+        # Too long for one result: show the head as a window that names the
+        # next offset. Every byte was read and hashed, so the snapshot stays
+        # full and the read-before-write gate is satisfied as before.
+        all_lines = io.StringIO(content, newline="").readlines()
+        return build_read_window_result(
+            relative_path=relative_path,
+            stat_result=stat_result,
+            offset=0,
+            limit=None,
+            total_lines=len(all_lines),
+            selected_lines=all_lines,
+            truncated_by_bytes=False,
+            full_file_bytes=raw_bytes,
+            encoding=encoding,
+            whole_file_read=True,
+        )
     snapshot = build_read_snapshot(
         relative_path=relative_path,
         scope=READ_SNAPSHOT_SCOPE_FULL,
@@ -292,6 +315,18 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             "encoding": encoding,
             "read_snapshot": snapshot.to_metadata(),
         },
+    )
+
+
+def _oversize_read_hint(resolved: Path) -> str:
+    """What to send instead when a whole-file read is over the limit (a windowed read works)."""
+    try:
+        size = f"The file is {resolved.stat().st_size} bytes. "
+    except OSError:
+        size = ""
+    return (
+        f"{size}Read it in parts, for example read_file with offset=0 and limit=400 and then "
+        "the next offset, or use grep_search to find the part you need."
     )
 
 
@@ -386,7 +421,7 @@ def _read_file_window_fast(
         selected_lines.append(line)
         selected_bytes += line_bytes
 
-    return _build_read_window_result(
+    return build_read_window_result(
         relative_path=relative_path,
         stat_result=stat_result,
         offset=offset,
@@ -512,7 +547,7 @@ def _read_file_window_streaming(
         utf8_validator.finish()
     selected_lines = [line.decode("utf-8", errors="strict") for line in selected_line_bytes]
 
-    return _build_read_window_result(
+    return build_read_window_result(
         relative_path=relative_path,
         stat_result=stat_result,
         offset=offset,
@@ -524,80 +559,6 @@ def _read_file_window_streaming(
         has_more=has_unscanned_content,
         encoding="utf-8-sig" if has_utf8_bom else "utf-8",
     )
-
-
-def _build_read_window_result(
-    *,
-    relative_path: str,
-    stat_result: os.stat_result,
-    offset: int,
-    limit: int | None,
-    total_lines: int,
-    selected_lines: list[str],
-    truncated_by_bytes: bool,
-    full_file_bytes: bytes | None = None,
-    totals_known: bool = True,
-    has_more: bool = False,
-    encoding: str = "utf-8",
-) -> ToolHandlerResult:
-    returned_line_count = len(selected_lines)
-    returned_line_start = (offset + 1) if selected_lines else None
-    returned_line_end = (offset + returned_line_count) if selected_lines else None
-    requested_limit = limit if limit is not None else "EOF"
-    returned_range = (
-        f"{returned_line_start}-{returned_line_end}" if returned_line_start is not None else "empty"
-    )
-    total_label = str(total_lines) if totals_known else f"at least {total_lines}"
-    header_lines = [
-        f"path: {relative_path}",
-        f"requested: offset={offset}, limit={requested_limit}",
-        f"returned: lines {returned_range} of {total_label}",
-    ]
-    if not totals_known:
-        header_lines.append("totals_known: false; stopped after the requested window")
-    if truncated_by_bytes:
-        header_lines.append(
-            f"truncated: selected output exceeded {MAX_PAGINATED_OUTPUT_BYTES} bytes; "
-            "returning complete lines that fit"
-        )
-    header = "\n".join(header_lines)
-    window_text = "".join(selected_lines)
-    output = header if not window_text else f"{header}\n\n{window_text}"
-    # A window that starts at the top, isn't byte-truncated, and returned every line has
-    # shown the model the whole file, so it earns a full snapshot (sha256 over the real
-    # bytes) and can satisfy the read-before-write gate — exactly like an unpaginated
-    # read. Without the full bytes in hand (streaming path) it stays a partial snapshot.
-    covers_entire_file = (
-        full_file_bytes is not None
-        and totals_known
-        and offset == 0
-        and not truncated_by_bytes
-        and returned_line_count == total_lines
-    )
-    snapshot = build_read_snapshot(
-        relative_path=relative_path,
-        scope=READ_SNAPSHOT_SCOPE_FULL if covers_entire_file else READ_SNAPSHOT_SCOPE_PARTIAL,
-        stat_result=stat_result,
-        raw_bytes=full_file_bytes if covers_entire_file else None,
-        encoding=encoding,
-    )
-    metadata: dict[str, object] = {
-        "path": relative_path,
-        "encoding": encoding,
-        "paginated": True,
-        "offset": offset,
-        "limit": limit,
-        "total_lines": total_lines if totals_known else None,
-        "lines_scanned": total_lines,
-        "totals_known": totals_known,
-        "has_more": has_more,
-        "returned_line_start": returned_line_start,
-        "returned_line_end": returned_line_end,
-        "returned_line_count": returned_line_count,
-        "truncated_by_bytes": truncated_by_bytes,
-        "read_snapshot": snapshot.to_metadata(),
-    }
-    return ToolHandlerResult(output=output, success=True, metadata=metadata)
 
 
 def write_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:

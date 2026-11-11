@@ -142,6 +142,11 @@
   display: none;
 }
 
+/* Muted stays visible and tinted, so the way back is never hidden. */
+.titlebar-icon-button[data-muted="true"] {
+  color: var(--state-warning);
+}
+
 .titlebar-icon {
   width: 20px;
   height: 20px;

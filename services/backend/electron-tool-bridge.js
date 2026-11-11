@@ -8,6 +8,7 @@ const { FORBIDDEN_STORAGE_KEYS } = require('./tool-result-metadata-bounds');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { withQuestionWithdrawal } = require('./runtime-decision-control');
 const { emitToolProgress } = require('./chat-stream-tool-progress');
+const { MID_TOOL_CONSENT_TOOLS } = require('../tools/mid-tool-consent');
 const {
   resolveTurnImagePrompt, claimPinnedRender, releasePinnedRender,
 } = require('./image-prompt-pin');
@@ -27,7 +28,6 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'worktree_select',
   'worktree_delete',
   'automation_list',
-  'automation_read',
   'workspace_present',
   'preview_test',
   'verify',
@@ -44,7 +44,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'complete_session_handoff',
   'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
   'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
-  'session_export', 'terminal_read', 'terminal_run',
+  'session_export', 'terminal_read', 'terminal_run', 'browser',
 ]);
 
 function normalizeBridgeArguments(value) {
@@ -349,6 +349,7 @@ async function executeElectronToolRequest(
     executionAuthority = null,
     sandboxAuthorization = null,
     authorize = null,
+    suspendTurnClocks = null,
     canonicalReadOnly = true,
     runtimeDecisionControl = null,
     logicalTurnId = null,
@@ -511,7 +512,7 @@ async function executeElectronToolRequest(
         runtimeDecision: payload.runtime_decision,
       } : {}),
     },
-    { authorize }
+    { authorize, suspendTurnClocks }
   );
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return bridgeFailure(toolName, 'Electron tool bridge returned a malformed executor result.');
@@ -530,7 +531,7 @@ async function executeElectronToolRequest(
   });
   const metadata = sanitizeBridgeMetadata(rawMetadata);
   // preview_test screenshots and image_generate pictures reach a vision chat model.
-  const carriesPreviewImage = toolName === 'image_generate'
+  const carriesPreviewImage = toolName === 'image_generate' || (toolName === 'browser' && input.action === 'screenshot')
     || (toolName === 'preview_test' && input.screenshot === true);
 
   return {
@@ -629,17 +630,24 @@ function buildManagedSidecarChatSendOptions({
       return false;
     }
   }
-  async function authorizeSessionMessage(params) {
+  // A wait on the user is not a hang: the idle watchdog and the chat.send deadline stop until it ends.
+  function suspendTurnClocks() {
     const resumeIdle = suspendIdleWatchdog();
     const resumeTransport = suspendTransportTimeout();
-    try {
-      onApprovalObserved?.();
-      runtime.persistToolBoundarySegment?.();
-      return await waitForAuthorizedToolApproval(params);
-    } finally {
+    return () => {
       resumeTransport();
       if (typeof resumeIdle === 'function') resumeIdle();
       else recordStreamActivity();
+    };
+  }
+  async function authorizeToolConsent(params, signal) { // a per-call signal (Stop, the user taking over) settles the card too
+    const resumeClocks = suspendTurnClocks();
+    try {
+      onApprovalObserved?.();
+      runtime.persistToolBoundarySegment?.();
+      return await waitForAuthorizedToolApproval(params, signal && signal !== controller.signal ? { signal } : controller);
+    } finally {
+      resumeClocks();
     }
   }
   return {
@@ -757,7 +765,8 @@ function buildManagedSidecarChatSendOptions({
       const suspendsIdle = params?.tool_name === 'ask_user' || params?.tool_name === 'image_generate';
       if (!suspendsIdle) {
         return executeElectronToolRequest(service, {
-          authorize: params?.tool_name === 'session_message' ? authorizeSessionMessage : null,
+          authorize: MID_TOOL_CONSENT_TOOLS.has(params?.tool_name) ? authorizeToolConsent : null,
+          suspendTurnClocks,
           beforeProducer,
           logicalTurnId: turnIdentity?.turnId ?? null,
           sessionIncarnation: turnIdentity?.sessionIncarnation ?? null,

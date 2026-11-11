@@ -7,6 +7,9 @@ const { createMainWindowStartupLifecycle } = require('../main-window-startup-lif
 const { attachSpellcheckMenuBridge } = require('./spellcheck-menu-bridge');
 const { installApplicationMenu } = require('./app-menu');
 const { buildFeatureFlags } = require('../feature-flags');
+const { getDefaultAppearancePreferences, resolvePaletteBootColors } = require('../../renderer/shared/appearance-utils');
+
+const DEFAULT_WINDOW_BACKGROUND = '#0b0d14';
 
 function resolveWindowIconPath({ isPackaged, platform, rootDir, resourcesPath }) {
   // Windows/mac executables carry their icon; the Linux ELF does not, so
@@ -61,6 +64,12 @@ function createMainWindowWithDeps({
   } catch (_error) {
     initialAppZoomFactor = APP_ZOOM_DEFAULT / 100;
   }
+  let portableAppearance = null;
+  try {
+    portableAppearance = getPortableAppearance();
+  } catch (_error) {
+    // Appearance projection is optional; the renderer falls back to storage.
+  }
   const browserWindowOptions = {
     width: initialWindowState.width || 1600,
     height: initialWindowState.height || 930,
@@ -70,7 +79,9 @@ function createMainWindowWithDeps({
     minWidth: 640,
     minHeight: 560,
     frame: false,
-    backgroundColor: '#0b0d14',
+    // No saved appearance is a new profile, which renders the fresh default palette.
+    backgroundColor: resolvePaletteBootColors(portableAppearance?.paletteId || getDefaultAppearancePreferences().paletteId)?.bg
+      || DEFAULT_WINDOW_BACKGROUND,
     show: false,
     ...(windowIconPath ? { icon: windowIconPath } : {}),
     webPreferences: {
@@ -217,12 +228,6 @@ function createMainWindowWithDeps({
   windowRef.webContents.once('dom-ready', () => {
     emitStartupAuditMark('dom-ready', { source: 'main' });
   });
-  let portableAppearance = null;
-  try {
-    portableAppearance = getPortableAppearance();
-  } catch (_error) {
-    // Appearance projection is optional; the renderer falls back to storage.
-  }
   const query = portableAppearance
     ? { jennyAppearance: JSON.stringify(portableAppearance) }
     : {};

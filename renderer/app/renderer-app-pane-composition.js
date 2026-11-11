@@ -60,14 +60,20 @@
  *
  * No `with (ctx)`: every dependency is injected, so jsdom tests build it with
  * fakes. The module holds no pane-0 construction; pane 0 stays the app's.
+ * Created once and called through: the per-pane chrome (renderer-app-pane-
+ * chrome.js), the controller stack (renderer-app-pane-stack.js), focus, dock
+ * focus and hosting (renderer-app-pane-placement.js) and the kickers
+ * (renderer-app-pane-kickers.js).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(root, require('./renderer-pane-drag-controller'), require('../chat/renderer-composer-pane-drafts'), require('./renderer-app-pane-chrome'));
+    module.exports = factory(root, require('./renderer-pane-drag-controller'), require('../chat/renderer-composer-pane-drafts'), require('./renderer-app-pane-chrome'),
+      require('./renderer-app-pane-stack'), require('./renderer-app-pane-placement'), require('./renderer-app-pane-kickers'));
     return;
   }
-  root.rendererAppPaneComposition = factory(root, root.rendererPaneDragController, root.rendererComposerPaneDrafts, root.rendererAppPaneChrome);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, paneDragController, paneDrafts, paneChrome) {
+  root.rendererAppPaneComposition = factory(root, root.rendererPaneDragController, root.rendererComposerPaneDrafts, root.rendererAppPaneChrome,
+    root.rendererAppPaneStack, root.rendererAppPanePlacement, root.rendererAppPaneKickers);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, paneDragController, paneDrafts, paneChrome, paneStack, panePlacement, paneKickers) {
   'use strict';
 
   var jtFallback = function (key, fallback, params) {
@@ -75,27 +81,8 @@
       return Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match;
     }) : fallback;
   };
-  var GENERAL_PROJECT_ID = 'project_general';
-  var ICON_CLOSE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
   var live = null;
-  /* What a second pane's pipeline must NOT touch: the document-global chrome
-     pane 0's pipeline owns (header, rail, artifact panel, composer chrome,
-     backend notice, surface effects, token display). */
-  var GLOBAL_CHROME_NOOPS = {
-    renderHeader: noop, renderArtifactReviewPanel: noop, syncBackendNotice: noop,
-    refreshActiveSurfaceEffect: noop, onSurfaceLifecycleSync: noop, renderContextPanel: noop,
-    renderPinnedNotes: noop, renderSessions: noop, renderWorkspaceChrome: noop, renderSettings: noop, renderComposerCarriers: noop,
-    renderIde: noop, layoutIdeEditor: noop, reconcileChatDockHost: function () { return false; },
-    renderHomePanel: noop, shouldRenderHomePanel: function () { return false; },
-    renderAttachmentTray: noop, renderComposerStatusNotice: noop, renderToastViewport: noop,
-    renderComposerPopover: noop, renderComposerEnhancements: noop,
-    renderComposerInteractivePanel: noop, closeComposerPopover: noop,
-    setComposerHoloState: noop, updateTokenDisplay: noop,
-  };
-
-  function noop() {}
   var normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
-  function projectKey(value) { return normalizeId(value) || GENERAL_PROJECT_ID; }
   function safely(fn) {
     try { fn(); } catch (_error) { /* best-effort teardown, as the cleanup registry does */ }
   }
@@ -127,7 +114,6 @@
     var routing = false;
     var fullRenderQueued = false;
     var paneRenderQueued = new Set();
-    var focusCleanup = null;
     var resizer = null;
     var paneRenderListener = null; // W6b: the Workspace's second chat hears pane renders (unread, its Changes)
 
@@ -163,6 +149,10 @@
     var showPaneDraft = chrome.showPaneDraft;
     var autosizeInput = chrome.autosizeInput;
     var insertButton = chrome.insertButton;
+    var stack = paneStack.createPaneStack({
+      state: state, layoutController: layoutController, call: call, syncPaneComposer: syncPaneComposer,
+      autosizeInput: autosizeInput, getPaneRenderListener: function () { return paneRenderListener; }, safely: safely,
+    });
 
     /* ── P2: a pane's selection mode belongs to the session it showed. A pane
        whose session changed (replaced, swapped, pane 0 taking pane 1's on a
@@ -192,35 +182,6 @@
       layout.panes.forEach(function (entry, paneId) { notePaneSession(paneId, normalizeId(entry.sessionId), rekeyed, true); });
     }
 
-    /* The shell's stream-handler factory for a pane that is not pane 0: a
-       facade over pane 0's ONE handler. One IPC subscription, one render
-       latch; the optimistic append and flushes are session-keyed already. */
-    function createStreamHandlerFacade() {
-      function primary() {
-        var shell = call('getPrimaryShell');
-        return shell && shell.streamHandler ? shell.streamHandler : null;
-      }
-      function forward(name, fallback) {
-        return function () {
-          var handler = primary();
-          return handler && typeof handler[name] === 'function' ? handler[name].apply(handler, arguments) : fallback();
-        };
-      }
-      return {
-        createStreamHandler: function createStreamHandler() {
-          return {
-            optimisticAppend: forward('optimisticAppend', function () { return {}; }),
-            flushBufferedStreamEvents: forward('flushBufferedStreamEvents', function () { return Promise.resolve({ flushedCount: 0, terminal: false }); }),
-            flushPendingStreamCommitsForSession: forward('flushPendingStreamCommitsForSession', function () { return { flushedCount: 0, catchupRequired: false }; }),
-            dropBufferedStreamEvents: forward('dropBufferedStreamEvents', noop),
-            rehydrateSessionFromPersistedTurnEvents: forward('rehydrateSessionFromPersistedTurnEvents', function () { return null; }),
-            registerStreamHandler: noop,
-            dispose: noop,
-          };
-        },
-      };
-    }
-
     function mount(paneId, sessionId) {
       if (disposed || paneId !== 1 || panes.has(paneId)) return panes.get(paneId) || null;
       var template = chatView.querySelector('template#chatPaneTemplate') || (doc && doc.getElementById('chatPaneTemplate'));
@@ -241,64 +202,8 @@
       pane.rail = call('createPaneComposerRail', { state: state, paneRoot: rootEl, railEl: toolbarRight, hintHost: pane.composer, sessionContext: { paneId: paneId, getSessionId: getSessionId }, documentRef: doc }) || null;
       if (pane.rail) Object.assign(pane.dom, pane.rail.dom);
       panes.set(paneId, pane);
-      kickerKey = '';
-
-      pane.runtime = call('createPaneRuntime', { paneId: paneId }) || { paneId: paneId };
-      /* Follow intent and reasoning-disclosure state are this pane's own: sharing pane 0's
-         (state.ui.followLatest, the app-level ThinkingPanelController) lets one pane's
-         scroll or full render release, re-latch or wipe the other's. */
-      var followLatest = true;
-      pane.followState = { get: function () { return followLatest; }, set: function (value) { followLatest = value; } };
-      pane.thinkingController = call('createThinkingController') || null;
-      pane.controllers = pane.thinkingController ? { thinkingController: pane.thinkingController } : {};
-      pane.spriteRuntime = { frameHandle: 0, targetMessageId: '', targetY: 0 };
-      pane.surface = call('buildPaneSurface', {
-        paneId: paneId,
-        dom: pane.dom,
-        followState: pane.followState,
-        getSessionId: getSessionId,
-        controllers: pane.controllers,
-        overrides: {
-          renderJumpControls: noop,
-          isStreaming: function () { return call('isSessionStreaming', getSessionId()) === true; },
-          getCurrentSessionMessages: function () { return call('getSessionMessages', getSessionId()) || []; },
-          renderMessages: function () { return pane.pipeline && pane.pipeline.renderMessages ? pane.pipeline.renderMessages.apply(null, arguments) : undefined; },
-          updateAssistantSpritePosition: function () { return pane.pipeline && pane.pipeline.updateAssistantSpritePosition ? pane.pipeline.updateAssistantSpritePosition.apply(null, arguments) : undefined; },
-          getWayfinderController: function () { return null; },
-        },
-      }) || {};
-      var viewportApi = pane.surface.viewportApi || {};
-      var viewport = function (name, fallback) {
-        return function () { return typeof viewportApi[name] === 'function' ? viewportApi[name].apply(null, arguments) : fallback; };
-      };
-      pane.pipeline = call('buildRenderPipeline', {
-        paneId: paneId,
-        dom: pane.dom,
-        runtime: { uiRuntime: pane.runtime, spriteRuntime: pane.spriteRuntime },
-        controllers: Object.assign({
-          scrollCoordinator: pane.surface.scrollCoordinator || null,
-          getSendOutboxActions: function () { return pane.shell ? pane.shell.sendOutboxActions : null; },
-          // The pane's own durable send controller (buildShell keeps it off the state slot).
-          getRuntimeSendController: function () { return pane.runtimeSendController || null; },
-        }, pane.controllers),
-        overrides: Object.assign({}, GLOBAL_CHROME_NOOPS, {
-          syncPaneLayout: undefined,
-          reconcileChatDockHost: function () {
-            if (paneRenderListener) safely(function () { paneRenderListener(paneId); });
-            return false;
-          },
-          syncComposerInputHeight: function () { autosizeInput(pane.dom.chatInput); },
-          getCurrentSessionMessages: function () { return call('getSessionMessages', getSessionId()) || []; },
-          getCurrentVisibleMessages: function () { return call('getVisibleSessionMessages', getSessionId()) || []; },
-          scheduleMessageViewportSync: viewport('scheduleMessageViewportSync'),
-          setFollowLatest: viewport('setFollowLatest'),
-          isFollowingLatest: viewport('isFollowingLatest', true),
-          updateComposerSafeOffset: viewport('updateComposerSafeOffset'),
-          syncTurnElapsedClock: function () { if (pane.shell && pane.shell.syncTurnElapsedClock) pane.shell.syncTurnElapsedClock(); },
-        }),
-      }) || {};
-      pane.shell = buildShell(pane, getSessionId, viewportApi);
-      if (pane.shell && typeof pane.shell.bind === 'function') pane.shell.bind();
+      kickers.resetKickers();
+      stack.buildPaneControllers(pane, paneId, getSessionId);
       pane.attachments = createPaneAttachments(pane);
       mountPaneNotices(pane, getSessionId);
 
@@ -324,70 +229,6 @@
       return pane;
     }
 
-    /* Pane 0's two send-controller single slots (state.runtimeSendController,
-       state.sendReceiptController) stay pane 0's: a second shell registers its
-       own and would otherwise take them over. Wave 2 makes them per pane. */
-    function buildShell(pane, getSessionId, viewportApi) {
-      var savedSlots = { runtimeSendController: state.runtimeSendController, sendReceiptController: state.sendReceiptController };
-      var fromViewport = function (name, fallback) {
-        return function () { return typeof viewportApi[name] === 'function' ? viewportApi[name].apply(null, arguments) : fallback; };
-      };
-      var shell;
-      try {
-        shell = call('buildChatShellController', {
-          paneId: pane.paneId,
-          sessionContext: layoutController.createSessionContext(pane.paneId),
-          dom: pane.dom,
-          controllers: Object.assign({
-            timelineVirtualizer: pane.pipeline.timelineVirtualizer || null,
-            chatScrollCoordinator: pane.surface.scrollCoordinator || null,
-          }, pane.controllers),
-          // W2-3: no chatEventUtils override -- pane 1 binds with pane 0's own
-          // rendererChatEventUtils, which registers only the pane-scoped set for
-          // a pane that is not pane 0 (renderer-chat-event-utils.js).
-          factories: { streamHandlerUtils: createStreamHandlerFacade() },
-          overrides: {
-            renderMessages: function () { return pane.pipeline.renderMessages ? pane.pipeline.renderMessages.apply(null, arguments) : undefined; },
-            renderComposerState: function () { syncPaneComposer(pane); },
-            syncComposerInputHeight: function () { autosizeInput(pane.dom.chatInput); },
-            syncComposerVisualState: noop,
-            getCurrentSessionMessages: function () { return call('getSessionMessages', getSessionId()) || []; },
-            getCurrentVisibleMessages: function () { return call('getVisibleSessionMessages', getSessionId()) || []; },
-            setFollowLatest: function () { return typeof viewportApi.setFollowLatest === 'function' ? viewportApi.setFollowLatest.apply(null, arguments) : undefined; },
-            getScrollMetrics: viewportApi.getScrollMetrics,
-            scrollMessageIntoView: viewportApi.scrollMessageIntoView,
-            viewportReveal: viewportApi.viewportReveal || null,
-            showCopyFeedback: viewportApi.showCopyFeedback,
-            // W2-3: the transcript handlers read THIS pane's messages and patch THIS pane's timeline.
-            getCurrentMessageById: fromViewport('getCurrentMessageById', null),
-            toggleInteractiveRoundRecap: fromViewport('toggleInteractiveRoundRecap'),
-            toggleContextCompactionDetails: fromViewport('toggleContextCompactionDetails'),
-            syncThinkingBlockNode: fromViewport('syncThinkingBlockNode'),
-            toggleThreadBranch: function () { return pane.pipeline.toggleThreadBranch ? pane.pipeline.toggleThreadBranch.apply(null, arguments) : undefined; },
-            syncThreadScrollState: function () {
-              var coordinator = pane.surface.scrollCoordinator;
-              if (coordinator && typeof coordinator.scheduleFrame === 'function') coordinator.scheduleFrame();
-            },
-            setUnreadOrientationController: function (controller) {
-              var coordinator = pane.surface.scrollCoordinator;
-              if (coordinator && typeof coordinator.setUnreadController === 'function') coordinator.setUnreadController(controller);
-            },
-            onUnreadOrientationStateChange: noop,
-          },
-        }) || null;
-      } finally {
-        if (state.runtimeSendController !== savedSlots.runtimeSendController) {
-          pane.runtimeSendController = state.runtimeSendController;
-          state.runtimeSendController = savedSlots.runtimeSendController;
-        }
-        if (state.sendReceiptController !== savedSlots.sendReceiptController) {
-          pane.sendReceiptController = state.sendReceiptController;
-          state.sendReceiptController = savedSlots.sendReceiptController;
-        }
-      }
-      return shell;
-    }
-
     function unmount(paneId) {
       var pane = panes.get(paneId);
       if (!pane) return false;
@@ -403,7 +244,7 @@
       safely(function () { if (pane.runtime && pane.runtime.dispose) pane.runtime.dispose(); });
       safely(function () { if (pane.rail) pane.rail.dispose(); });
       safely(function () { pane.root.remove(); });
-      kickerKey = '';
+      kickers.resetKickers();
       if (!panes.size) {
         if (resizer) safely(function () { resizer.dispose(); });
         resizer = null;
@@ -420,100 +261,6 @@
       return true;
     }
 
-    /* ── focus: a pointerdown (capture) or focusin inside a pane root focuses
-       that pane; bound only while two panes are open ── */
-    // A root the Workspace hosts is not tracked: there pane 0 names the chat the IDE shows.
-    function paneIdFromEvent(event) {
-      var target = event && event.target;
-      var rootEl = target && typeof target.closest === 'function' ? target.closest('.chat-pane') : null;
-      if (!rootEl || rootEl.parentElement !== chatView) return -1;
-      var paneId = Number(rootEl.dataset.paneId);
-      return Number.isInteger(paneId) ? paneId : -1;
-    }
-    function handleFocusEvent(event) {
-      var paneId = paneIdFromEvent(event);
-      if (paneId >= 0 && layoutController.getPaneCount() > 1) layoutController.setFocusedPane(paneId);
-    }
-    function bindFocusTracking() {
-      if (focusCleanup) return;
-      chatView.addEventListener('pointerdown', handleFocusEvent, true);
-      chatView.addEventListener('focusin', handleFocusEvent);
-      focusCleanup = function () {
-        chatView.removeEventListener('pointerdown', handleFocusEvent, true);
-        chatView.removeEventListener('focusin', handleFocusEvent);
-      };
-    }
-    function unbindFocusTracking() {
-      if (focusCleanup) focusCleanup();
-      focusCleanup = null;
-    }
-
-    function syncFocus() {
-      var layout = layoutController.getLayout();
-      var two = layout.panes.length > 1;
-      paneRoots().forEach(function (rootEl) {
-        var paneId = Number(rootEl.dataset.paneId);
-        var focused = !two || layout.focusedPaneId === paneId;
-        if (rootEl.dataset.paneFocused !== String(focused)) rootEl.dataset.paneFocused = String(focused);
-      });
-    }
-
-    /* ── kickers: hidden and empty with one pane (identity); with two, the
-       session title, "· project" when the two panes' projects differ, and a
-       close glyph ── */
-    function sessionTitle(sessionId) {
-      var summary = call('getSessionSummary', sessionId);
-      var title = summary && normalizeId(summary.title);
-      return title || jt('chat.empty.newSession', 'New session');
-    }
-    /* Rebuilt only when what it shows changed, so the header/full-render sync
-       below can call it on every pass (a rename, an auto-title or a project
-       move reaches the kicker without a layout change). A mount or unmount
-       clears the key: the new or restored kicker node starts empty. */
-    var kickerKey = '';
-    function renderKickers() {
-      var layout = layoutController.getLayout();
-      var two = layout.panes.length > 1;
-      var projects = layout.panes.map(function (entry) {
-        var summary = call('getSessionSummary', entry.sessionId);
-        return projectKey(summary && summary.project_id);
-      });
-      var projectsDiffer = two && projects[0] !== projects[1];
-      var lines = [0, 1].map(function (paneId) {
-        if (!two) return null;
-        return {
-          title: sessionTitle(paneSessionId(paneId)),
-          projectName: projectsDiffer ? normalizeId(call('getProjectName', projects[paneId])) : '',
-        };
-      });
-      var key = JSON.stringify(lines);
-      if (key === kickerKey) return;
-      kickerKey = key;
-      [0, 1].forEach(function (paneId) {
-        var kicker = kickerFor(paneId);
-        if (!kicker) return;
-        kicker.replaceChildren();
-        kicker.hidden = !two;
-        if (!two) return;
-        var title = doc.createElement('span');
-        title.className = 'chat-pane-kicker-title';
-        title.setAttribute('dir', 'auto'); // an English title keeps LTR inside RTL chrome
-        title.textContent = lines[paneId].title;
-        title.addEventListener('pointerdown', function (event) { startKickerDrag(event, paneId); });
-        kicker.appendChild(title);
-        var projectName = lines[paneId].projectName;
-        if (projectName) {
-          var project = doc.createElement('span');
-          project.className = 'chat-pane-kicker-project';
-          project.textContent = ' ' + jt('chat.panes.kickerProject', '· {name}', { name: projectName });
-          kicker.appendChild(project);
-        }
-        var label = jt('chat.panes.close', 'Close pane');
-        var close = insertButton(kicker, { className: 'workspace-rail-close-button chat-pane-close', ariaLabel: label, title: label, trustedHtml: ICON_CLOSE });
-        if (close) close.addEventListener('click', function () { layoutController.closePane(paneId); });
-      });
-    }
-
     /* ── drag-to-split (W2-1) and the kicker drag: renderer-pane-drag-controller.js. ── */
     var dragController = paneDragController.createPaneDragController({
       chatView: chatView, documentRef: doc, layoutController: layoutController, kickerFor: kickerFor,
@@ -523,6 +270,21 @@
     var dropTarget = dragController.dropTarget;
     var startKickerDrag = dragController.startKickerDrag;
     var cancelKickerDrag = dragController.cancelKickerDrag;
+    /* ── kickers and the focused-chat signal: renderer-app-pane-kickers.js; focus,
+       dock focus, hosting and the jump target: renderer-app-pane-placement.js. ── */
+    var kickers = paneKickers.createPaneKickers({
+      layoutController: layoutController, call: call, doc: doc, jt: jt, kickerFor: kickerFor, paneSessionId: paneSessionId,
+      insertButton: insertButton, startKickerDrag: startKickerDrag, normalizeId: normalizeId, safely: safely,
+    });
+    var renderKickers = kickers.renderKickers;
+    var placement = panePlacement.createPanePlacement({
+      chatView: chatView, doc: doc, layoutController: layoutController, panes: panes, pane0Root: pane0Root, paneRootOf: paneRootOf,
+      paneRoots: paneRoots, resizerEl: resizerEl, call: call, isDisposed: function () { return disposed; }, normalizeId: normalizeId,
+    });
+    var bindFocusTracking = placement.bindFocusTracking;
+    var unbindFocusTracking = placement.unbindFocusTracking;
+    var syncFocus = placement.syncFocus;
+    var focusPaneInput = placement.focusPaneInput;
 
     function measureWidth() {
       var width = function (element) {
@@ -579,28 +341,13 @@
       return renderPane(paneId);
     }
 
-    /* The Explorer nudge names the focused chat's project (pane 0's while docked): a header or full
-       render raises `jenny:focused-chat-changed` only when either chat or its project moved. */
-    var focusedChatKey = '';
-    function projectOfSession(sessionId) {
-      var summary = sessionId ? call('getSessionSummary', sessionId) : null;
-      return normalizeId(summary && summary.project_id);
-    }
-    function noteFocusedChat() {
-      var layout = layoutController.getLayout();
-      var focused = layout.panes[layout.focusedPaneId] ? layout.panes[layout.focusedPaneId].sessionId : '';
-      var zero = layout.panes[0] ? layout.panes[0].sessionId : '';
-      var key = [focused, projectOfSession(focused), zero, projectOfSession(zero)].join('\u0000');
-      if (key === focusedChatKey) return;
-      focusedChatKey = key;
-      var view = doc && doc.defaultView;
-      if (view && typeof view.CustomEvent === 'function') safely(function () { view.dispatchEvent(new view.CustomEvent('jenny:focused-chat-changed')); });
-    }
-
     function syncPaneLayout(kind) {
       if (disposed) return;
       layoutController.syncFocusedPaneFromState();
-      if (kind === 'all' || kind === 'header') noteFocusedChat();
+      if (kind === 'all' || kind === 'header') {
+        kickers.noteFocusedChat();
+        root.rendererSessionBar?.syncAll?.(); // a rename reaches the session bar's title
+      }
       if (layoutController.getPaneCount() < 2) notePaneSession(0, normalizeId(state.currentSessionId), false);
       if (routing || layoutController.getPaneCount() < 2) return;
       if (kind === 'all' || kind === 'header') renderKickers();
@@ -693,46 +440,6 @@
       requestFullRender();
     }
 
-    /* ── IDE dock: it hosts pane 0's thread and composer (a W1 limit), so pane
-       0 is the focused pane while docked: the dock header, its session
-       picker, a dock send and the IDE all name the chat it shows. Undocking
-       gives focus back to the pane that had it, DOM focus included (the
-       dock's own focus restore lands in pane 0's composer). ── */
-    function focusPaneInput(paneId) {
-      var rootEl = paneRootOf(paneId);
-      var input = rootEl ? rootEl.querySelector('textarea') : null;
-      // Pane 0's composer may sit in the Workspace dock, outside its root.
-      if (!input && paneId === 0) input = call('getPrimaryComposerInput') || null;
-      if (input && typeof input.focus === 'function') input.focus({ preventScroll: true });
-      return Boolean(input);
-    }
-
-    /* The legacy #chatInput is pane 0's; with two panes a view activation
-       focuses the focused pane's composer instead. False with one pane. */
-    function focusComposer() {
-      var layout = layoutController.getLayout();
-      return !disposed && layout.panes.length > 1 && focusPaneInput(layout.focusedPaneId);
-    }
-
-    var focusBeforeDock = -1;
-    function handleChatDocked(docked) {
-      if (disposed) return false;
-      var layout = layoutController.getLayout();
-      if (docked) {
-        if (layout.panes.length < 2 || layout.focusedPaneId === 0) return false;
-        focusBeforeDock = layout.focusedPaneId;
-        return layoutController.setFocusedPane(0);
-      }
-      var restore = focusBeforeDock;
-      focusBeforeDock = -1;
-      if (restore < 1 || layout.panes.length <= restore) return false;
-      layoutController.setFocusedPane(restore);
-      var active = doc.activeElement;
-      var zeroRoot = chatView.querySelector(':scope > .chat-pane[data-pane-id="0"]');
-      if (!active || active === doc.body || (zeroRoot && zeroRoot.contains(active))) focusPaneInput(restore);
-      return true;
-    }
-
     /* ── Ctrl+Shift+\ : one pane -> the most recent other open tab beside;
        two panes -> close the non-focused pane ── */
     function toggleSplit() {
@@ -766,59 +473,6 @@
       return layoutController.getPaneCount() > 1;
     }
 
-    /* Row 40 W6b: the Workspace shows a pane other than pane 0 as its second chat. The whole root
-       moves (kicker, thread, composer, tray), so everything pane-scoped keeps working; a null host
-       puts it back after the divider. The pane's virtualizer rebuilds on the next frame. */
-    function setPaneHost(paneId, host) {
-      var pane = disposed ? null : panes.get(paneId);
-      if (!pane || !pane.root) return false;
-      var target = host || chatView;
-      if (pane.root.parentNode === target) return false;
-      var focused = pane.root.contains(doc.activeElement) ? doc.activeElement : null;
-      var scroller = pane.dom && pane.dom.chatThreadScroll;
-      var scrollTop = scroller ? scroller.scrollTop : 0;
-      var divider = resizerEl();
-      var parent = host || (divider && divider.parentNode) || chatView;
-      var before = host ? null : (divider ? divider.nextSibling : null);
-      // moveBefore keeps the subtree's state (scroll, focus) where the engine has it.
-      if (typeof parent.moveBefore === 'function') parent.moveBefore(pane.root, before);
-      else parent.insertBefore(pane.root, before);
-      if (scroller && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop;
-      if (host) pane.root.dataset.paneHosted = 'workspace';
-      else delete pane.root.dataset.paneHosted;
-      // In the Workspace the root takes the dock body's adaptations (compact thread, docked composer).
-      pane.root.classList.toggle('ide-chat-dock-body', Boolean(host));
-      if (focused && focused.isConnected && typeof focused.focus === 'function') focused.focus({ preventScroll: true });
-      var rebuild = function () {
-        if (panes.get(paneId) !== pane) return;
-        if (pane.pipeline && typeof pane.pipeline.rebuildVirtualizer === 'function') pane.pipeline.rebuildVirtualizer();
-        if (scroller && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop;
-      };
-      var win = doc && doc.defaultView;
-      if (win && typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(rebuild);
-      else rebuild();
-      return true;
-    }
-
-    /* "Jump to chat": the non-zero pane showing `sessionId` (timeline, scroll, projection), else null. */
-    function getSessionPaneTarget(sessionId) {
-      var id = normalizeId(sessionId);
-      var entries = layoutController.getLayout().panes;
-      var paneId = -1;
-      for (var index = 1; id && index < entries.length; index += 1) if (normalizeId(entries[index].sessionId) === id) paneId = index;
-      var pane = disposed || paneId < 1 ? null : panes.get(paneId);
-      if (!pane || !pane.dom || !pane.dom.chatTimeline) return null;
-      var viewportApi = (pane.surface && pane.surface.viewportApi) || {};
-      return {
-        chatTimeline: pane.dom.chatTimeline,
-        scrollMessageIntoView: typeof viewportApi.scrollMessageIntoView === 'function' ? viewportApi.scrollMessageIntoView : function () { return false; },
-        getProjectionContext: function () {
-          var cache = pane.runtime && pane.runtime.projectionContextBySession, entry = cache && typeof cache.get === 'function' ? cache.get(id) : null;
-          return (entry && entry.currentContext) || null;
-        },
-      };
-    }
-
     function dispose() {
       if (disposed) return;
       Array.from(panes.keys()).forEach(unmount);
@@ -833,7 +487,7 @@
       getPane: function (paneId) { return panes.get(paneId) || null; },
       getPaneCount: function () { return layoutController.getPaneCount(); },
       getPaneSessionId: function (paneId) { return disposed ? '' : normalizeId(paneSessionId(paneId)); },
-      setPaneHost: setPaneHost,
+      setPaneHost: placement.setPaneHost,
       setPaneRenderListener: function (fn) { paneRenderListener = typeof fn === 'function' ? fn : null; },
       handleLayoutChanged: handleLayoutChanged,
       renderSessionPane: renderSessionPane,
@@ -846,9 +500,9 @@
       measureWidth: measureWidth,
       toggleSplit: toggleSplit,
       hydrateOnce: hydrateOnce,
-      handleChatDocked: handleChatDocked,
-      focusComposer: focusComposer,
-      getSessionPaneTarget: getSessionPaneTarget,
+      handleChatDocked: placement.handleChatDocked,
+      focusComposer: placement.focusComposer,
+      getSessionPaneTarget: placement.getSessionPaneTarget,
       dispose: dispose,
     };
     live = api;

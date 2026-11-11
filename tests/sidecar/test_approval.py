@@ -15,6 +15,31 @@ from sidecar.runtime.multiplexer import TurnCancellationHandle
 _LOGGER = logging.getLogger("tests.approval")
 
 
+# ── an app refusal: never approves, carries the reason for the model ──
+
+
+def test_app_refusal_carries_the_reason_and_never_approves() -> None:
+    resolution = approval_resolution_from_response(
+        {"id": 7, "result": {"approved": False, "decision": "app_refused", "feedback": ' {"ok":false} '}}, 7
+    )
+    assert (resolution.approved, resolution.status) == (False, "denied")
+    assert (resolution.decision, resolution.feedback) == ("app_refused", '{"ok":false}')
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"approved": True, "decision": "app_refused", "feedback": "x"},
+        {"approved": False, "decision": "app_refused"},
+        {"approved": False, "decision": "app_refused", "feedback": "   "},
+        {"approved": False, "decision": "app_refused", "feedback": 7},
+    ],
+)
+def test_a_malformed_app_refusal_is_an_ordinary_denial(result: dict) -> None:
+    resolution = approval_resolution_from_response({"id": 8, "result": result}, 8)
+    assert (resolution.approved, resolution.status, resolution.decision) == (False, "denied", "")
+
+
 # ── approval_request_message ──
 
 

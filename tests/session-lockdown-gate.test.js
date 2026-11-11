@@ -25,7 +25,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 87);
+  assert.equal(manifestNames.length, 86);
   // Row 94 P4: the export and the terminal read touch no network; terminal_run types into a real shell.
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_export, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.terminal_read, 'none');

@@ -176,6 +176,7 @@ class UpdateService extends EventEmitter {
     storePath = '', logger = null, platform = process.platform, arch = process.arch,
     env = process.env, execPath = process.execPath, now = () => new Date(),
     releaseClient = createGitHubReleaseClient(),
+    updateConfigPath = process.resourcesPath ? path.join(process.resourcesPath, 'app-update.yml') : '',
     macUpdatesSigned = /^(1|true|yes|on)$/i.test(String(process.env.JENNY_MAC_SIGNED || '').trim()),
   } = {}) {
     super();
@@ -188,6 +189,7 @@ class UpdateService extends EventEmitter {
     this.env = env || {};
     this.execPath = execPath;
     this.macUpdatesSigned = Boolean(macUpdatesSigned);
+    this.updateConfigPath = String(updateConfigPath || '');
     this.now = now;
     this.logger = typeof logger === 'function' ? logger : null;
     this.releaseClient = releaseClient;
@@ -430,6 +432,11 @@ class UpdateService extends EventEmitter {
       } else {
         return 'Automatic updates are currently enabled only for Windows, macOS, and Linux AppImage packaged builds.';
       }
+    }
+    // An unpacked `electron-builder --dir` build is packaged but has no updater
+    // config: electron-updater would fail with ENOENT before reaching GitHub.
+    if (this.updateConfigPath && !fs.existsSync(this.updateConfigPath)) {
+      return 'Automatic updates are unavailable in this unpacked build; download the latest installer from the releases page.';
     }
     if (checkUpdater && (
       !this.autoUpdater

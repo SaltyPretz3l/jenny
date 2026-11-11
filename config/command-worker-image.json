@@ -14,6 +14,8 @@
     "server/worker/security.py",
     "server/worker/protocol.py",
     "server/worker/health.py",
-    "server/worker/relay.py"
+    "server/worker/relay.py",
+    "server/worker/mirror.py",
+    "server/worker/sync_steps.py"
   ]
 }

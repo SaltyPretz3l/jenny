@@ -15,11 +15,24 @@ from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.mcp.models import MCPToolResult
 from sidecar.ai.mcp.transport_stdio import StdioMCPTransport
 from sidecar.ai.routing.tool_dispatch import dispatch_tool_call
-from sidecar.ai.routing.tool_resource_deferral import ToolResourceDeferred, ToolResourceWait
+from sidecar.ai.routing.tool_resource_deferral import (
+    ToolResourceDeferred,
+    ToolResourceWait,
+    resource_wait_failure,
+)
 from sidecar.ai.tools.builtins import temp_script
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime.chat_models import TerminalChatStateError
+
+
+def test_a_busy_resource_asks_for_the_same_call_again() -> None:
+    wait = ToolResourceWait(operation_id="op-1", resource_class="native_processes", reason="resource_capacity")
+    failure = resource_wait_failure(wait)
+    assert failure.retryable is True
+    assert failure.failure_class == "transient"
+    assert "repeat it unchanged" in str(failure)
+
 
 _BUILTIN = "jenny_builtin"
 _ELECTRON = "electron_tool_bridge"

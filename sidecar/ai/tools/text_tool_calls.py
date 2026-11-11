@@ -79,6 +79,20 @@ def contract_tool_names(tool_contract: Any) -> tuple[str, ...]:
     return tuple(sorted(names - {""}))
 
 
+def recognized_tool_names(tool_contract: Any) -> frozenset[str]:
+    """The contract's tools plus every builtin Jenny ships.
+
+    A tool the configuration never registered (the command sandbox's allowlist,
+    a disabled feature) is absent from the contract, yet a model that saw it in an
+    earlier turn still writes its call as text (2026-11-03: sessions_list in the
+    primary chat). Recognized, it is recovered to dispatch, where the model reads
+    that it is unavailable, or stripped at the cap, instead of leaking as markup.
+    """
+    from sidecar.ai.tools.catalog import builtin_tool_names
+
+    return frozenset(contract_tool_names(tool_contract)) | builtin_tool_names()
+
+
 def _unframe(value: str) -> str:
     # One leading and one trailing newline are the template's own framing.
     value = value[1:] if value.startswith("\n") else value

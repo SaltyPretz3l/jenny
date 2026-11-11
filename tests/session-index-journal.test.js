@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+const { ElectronSessionStore, STORE_SCHEMA_VERSION } = require('../services/backend/electron-session-store');
 const { FileJsonStore } = require('../services/backend/file-json-store');
 const { JournaledJsonStore } = require('../services/backend/journaled-json-store');
 const { SessionShadowStore } = require('../services/backend/session-shadow-store');
@@ -195,7 +195,7 @@ test('dispose leaves an index file that lists every chat with its current summar
 
   store.dispose();
   const base = readRawIndex(profile);
-  assert.equal(base.schema_version, 26);
+  assert.equal(base.schema_version, STORE_SCHEMA_VERSION);
   assert.ok(base.journal_epoch >= 1);
   assert.deepEqual(Object.keys(base).sort(), ['journal_epoch', 'schema_version', 'sessions']);
   assert.deepEqual(Object.keys(base.sessions).sort(), ['chat_a', 'chat_c']);

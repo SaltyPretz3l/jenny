@@ -67,6 +67,7 @@ function createControllerHarness(messages, options = {}) {
   };
   const chatInput = options.chatInput || { value: String(options.chatInputValue || ''), disabled: false };
   const calls = {
+    followArms: [],
     startStream: [],
     editAndRegenerate: [],
     cancelStream: [],
@@ -227,7 +228,7 @@ function createControllerHarness(messages, options = {}) {
       renderAll: () => { calls.renderAll += 1; },
       syncComposerInputHeight: () => {},
       syncComposerVisualState: () => {},
-      setFollowLatest: () => {},
+      setFollowLatest: (value) => { calls.followArms.push(['follow', value]); },
       appendClientLog: (level, event, details) => {
         calls.logs.push({ level, event, details });
       },
@@ -241,7 +242,7 @@ function createControllerHarness(messages, options = {}) {
         validSessionIds: new Set([state.currentSessionId]),
       }),
       thinkingController: {
-        resumeAutoScroll: () => {},
+        resumeAutoScroll: () => { calls.followArms.push(['resume']); },
       },
       flushBufferedStreamEvents: typeof options.flushBufferedStreamEvents === 'function'
         ? options.flushBufferedStreamEvents

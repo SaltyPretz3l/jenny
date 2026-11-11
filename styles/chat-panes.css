@@ -8,12 +8,8 @@
    The measure is relative to the PANE, not the window: min(the line-length cap,
    the pane's inline size minus a gutter on each side). The gutter is 3% of the
    pane, 16 to 40px (12px floor in a split pane), and never narrower than the avatar rail so the rail always
-   sits inside it. In one pane it also makes room for the floating transcript utilities:
-   --chat-utility-reserve is how far they reach in from the stage's end
-   (renderer-chat-pane-surface-controllers.js), and the gutter grows to it so text never scrolls under
-   them, but only while the measure keeps --chat-reading-floor (the 320px pane floor); a narrower pane
-   keeps its reading width and lets the utilities float over the edge. The timeline and the composer
-   read the same value.
+   sits inside it. The transcript utilities live in the session bar above the stage
+   (chat-session-bar.css), so they reserve nothing here. The timeline and the composer read the same value.
    - --content-column-width is for the timeline column. It uses cqi, which
      resolves against #chatThreadStage (the `chatstage` size container, as wide
      as the pane).
@@ -29,17 +25,14 @@
 .chat-pane:not(.ide-chat-dock-body) {
   --chat-gutter-min: 16px;
   --chat-reading-floor: 320px;
-  --chat-utility-room: var(--chat-utility-reserve, 0px);
-  --content-column-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100cqi - 2 * max(clamp(var(--chat-gutter-min), 3cqi, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (100cqi - var(--chat-reading-floor)) / 2)))));
-  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100% - 2 * max(clamp(var(--chat-gutter-min), 3%, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (100% - var(--chat-reading-floor)) / 2)))));
+  --content-column-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100cqi - 2 * max(clamp(var(--chat-gutter-min), 3cqi, 40px), var(--chat-sprite-rail-offset)))));
+  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100% - 2 * max(clamp(var(--chat-gutter-min), 3%, 40px), var(--chat-sprite-rail-offset)))));
 }
 
 /* Split panes may be as narrow as the 320px resizer floor, where the streaming
-   composer row only fits with the 12px (space-6) gutter the split always used;
-   their utilities keep floating over the edge as before. */
+   composer row only fits with the 12px (space-6) gutter the split always used. */
 .chat-view[data-pane-count="2"] .chat-pane {
   --chat-gutter-min: var(--space-6);
-  --chat-utility-room: 0px;
 }
 
 /* The scroller keeps its scrollbar gutter on BOTH edges, so the column centres
@@ -138,15 +131,16 @@
   grid-column: 3;
 }
 
-/* Inside a pane: kicker row 1; hero, thread and utility cluster overlap in
-   row 2 as they do in the view today; composer row 3. */
+/* Inside a pane: kicker row 1 (the session bar, see chat-session-bar.css; column 1 is explicit
+   because the cluster shares its cell); hero and thread overlap in row 2 as they do in the view
+   today; composer row 3. */
 .chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker {
+  grid-column: 1;
   grid-row: 1;
 }
 
 .chat-view[data-pane-count="2"] > .chat-pane > .hero-stage,
-.chat-view[data-pane-count="2"] > .chat-pane > .chat-thread-stage,
-.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster {
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-thread-stage {
   grid-column: 1;
   grid-row: 2;
 }

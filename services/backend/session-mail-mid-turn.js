@@ -167,6 +167,8 @@ function pushMidTurnMail(service, { sessionId, messageIds, now } = {}) {
   }
   budget.acceptedRows += wire.length; // charged only for rows the sidecar will see
   budget.acceptedBytes += bytes;
+  // The live turn now carries another chat's words: rules and the launch permission see it as a mail turn.
+  try { service.chatMessages?.noteMailTurn?.(ctx.turnId, reserved.rows); } catch { /* best effort */ }
   notifyChanged(service, id);
   log(service, 'INFO', 'chat.session_mail_mid_turn_pushed', {
     sessionId: id, streamId: ctx.streamId, snapshotId, count: reservedIds.length,

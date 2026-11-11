@@ -38,6 +38,34 @@ test('set(true) stores "1" and reads back true; set(false) clears it', () => {
   });
 });
 
+function recordingWorkspaceController() {
+  const calls = [];
+  return {
+    calls,
+    openSession: (id) => { calls.push(['openSession', id]); return 'opened'; },
+    replaceActiveSession: (id) => { calls.push(['replaceActiveSession', id]); return 'replaced'; },
+  };
+}
+
+test('openSessionPerPreference replaces the active tab by default', () => {
+  withStubbedLocalStorage(() => {
+    const controller = recordingWorkspaceController();
+    const result = prefs.openSessionPerPreference(controller, 'session-1');
+    assert.deepEqual(controller.calls, [['replaceActiveSession', 'session-1']]);
+    assert.equal(result, 'replaced');
+  });
+});
+
+test('openSessionPerPreference adds a tab when the preference is on', () => {
+  withStubbedLocalStorage(() => {
+    prefs.setOpenSessionsInNewTab(true);
+    const controller = recordingWorkspaceController();
+    const result = prefs.openSessionPerPreference(controller, 'session-1');
+    assert.deepEqual(controller.calls, [['openSession', 'session-1']]);
+    assert.equal(result, 'opened');
+  });
+});
+
 test('a throwing localStorage degrades reads and exposes write failure', () => {
   const prev = globalThis.localStorage;
   globalThis.localStorage = {

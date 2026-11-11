@@ -36,6 +36,7 @@ from sidecar.ai.context.compaction_micro import (
     touched_files_block,
 )
 from sidecar.ai.context.compaction_micro import compaction_policy as compaction_policy
+from sidecar.ai.context.compaction_micro import trim_browser_outlines as trim_browser_outlines
 from sidecar.ai.context.compaction_passes import summarize_source_in_passes
 from sidecar.ai.context.compaction_prompts import (
     COMPACTION_SUMMARY_RETRY_REMINDER,

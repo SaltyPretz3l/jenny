@@ -201,7 +201,7 @@ test('service: the outcome note names the file and line', () => {
 
 // ── Renderer controller ─────────────────────────────────────────────────────
 
-function makeController({ openFileAtLine, getActiveView } = {}) {
+function makeController({ openFileAtLine, getActiveView, draft = '' } = {}) {
   const dom = new JSDOM('<div id="ideMain"></div>');
   const ideMain = dom.window.document.getElementById('ideMain');
   const calls = { opens: [], reports: [], previews: [], maps: 0 };
@@ -224,7 +224,7 @@ function makeController({ openFileAtLine, getActiveView } = {}) {
     },
   };
   const controller = createWorkspacePresentationController({
-    getDom: () => ({ ideMain }),
+    getDom: () => ({ ideMain, chatInput: { value: draft } }),
     windowRef,
     escapeHtml: (v) => String(v == null ? '' : v),
     getActiveView: getActiveView || (() => 'ide'),
@@ -262,7 +262,7 @@ test('controller: a safe file request opens the file at the line and reports sho
 });
 
 test('controller: a busy user gets the chip; Show opens the file and reports shown_by_user', (t) => {
-  const h = makeController({ getActiveView: () => 'chat' });
+  const h = makeController({ getActiveView: () => 'chat', draft: 'half a sentence' });
   t.after(() => h.controller.dispose());
   h.controller.handleRequest({ view: 'file', path: 'src/app.js', line: 7, request_id: 'wsp-3' });
   h.fireTimers();

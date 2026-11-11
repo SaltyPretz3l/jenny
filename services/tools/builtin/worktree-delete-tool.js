@@ -172,10 +172,11 @@ module.exports = {
       }
     }
     let activeRootNote = '';
+    // Row 129 C10: say what the deletion did to this chat's tools, and what to do next.
     if (activeRootClearFailed) {
-      activeRootNote = ' Active workspace root could not be cleared.';
+      activeRootNote = " This chat's tools were working in that worktree and the folder could not be cleared, so they still point at the deleted folder. Call worktree_select to pick another worktree, or ask the user to choose a folder.";
     } else if (activeRootCleared) {
-      activeRootNote = ' Active workspace root was cleared.';
+      activeRootNote = " This chat's tools were working in that worktree, so they now have no folder. Call worktree_select to pick another worktree, or ask the user to choose a folder, before using file tools.";
     }
     const pruned = status === 'pruned_missing';
     return {

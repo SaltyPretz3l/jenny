@@ -318,7 +318,10 @@ def test_batch_reports_every_failing_item_at_once(tmp_path: Path) -> None:
 
     assert result.success is False
     assert result.error_code == CMP_TOOL_EXECUTION_FAILED
-    assert result.output.startswith("2 of 4 edits failed; no changes were applied.")
+    assert result.output.startswith(
+        "Nothing was written: many.txt is unchanged. 2 of 4 edits failed, so none of the 4 were applied"
+    )
+    assert "resend the whole batch" in result.output
     assert "Edit 2: " in result.output
     assert "Edit 4: " in result.output
     assert "Edit 1: " not in result.output
@@ -349,7 +352,7 @@ def test_batch_failure_after_successful_earlier_item_is_still_reported(tmp_path:
     )
 
     assert result.success is False
-    assert result.output.startswith("2 of 5 edits failed; no changes were applied.")
+    assert result.output.startswith("Nothing was written: later.txt is unchanged. 2 of 5 edits failed")
     assert "Edit 2: " in result.output
     assert "Edit 5: Found" in result.output
     assert result.metadata.get("failed_edits") == [2, 5]

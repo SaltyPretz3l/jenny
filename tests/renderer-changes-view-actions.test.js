@@ -347,3 +347,15 @@ test('file menu items: Copy diff is disabled without hunks and Ask Jenny toasts 
   assert.deepEqual(toasts, ['Open a chat to ask Jenny']);
   assert.equal(viewActions.buildFileMenuItems({ ...base, hunks: [] })[1].disabled, true);
 });
+
+test('a Whole branch page is a git page too: its focused file wins over a hidden ledger detail', async () => {
+  const h = buildPage({ scope: 'this_chat' });
+  openLedgerDetail(h, 0);
+  h.pageEl.dataset.changesScope = 'branch';
+  h.workingTreeEl.innerHTML = workingTreeFile('src/b.js', HUNKS_B);
+  h.document.activeElement.blur();
+  press(h, h.pageEl, 'ContextMenu');
+  item(h, 'Copy path').action();
+  await settle();
+  assert.deepEqual(h.clipboard, ['src/b.js'], 'the ledger detail is not consulted for a branch page');
+});

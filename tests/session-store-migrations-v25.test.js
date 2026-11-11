@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { migrateStorePayload, repairSessionForV25 } = require('../services/backend/session-store-migrations');
+const { STORE_SCHEMA_VERSION, migrateStorePayload, repairSessionForV25 } = require('../services/backend/session-store-migrations');
 
 const COORDINATION_DEFAULTS = {
   spawned_from: null,
@@ -64,7 +64,7 @@ test('migrateStorePayload from v24 adds coordination defaults to every session a
     },
   };
   const migrated = migrateStorePayload(payload);
-  assert.equal(migrated.schema_version, 26);
+  assert.equal(migrated.schema_version, STORE_SCHEMA_VERSION);
   assert.deepEqual(migrated.sessions.s1.workspace_view, COORDINATION_DEFAULTS.workspace_view);
   assert.equal(migrated.sessions.s1.title, 'One');
   assert.deepEqual(migrated.sessions.s1.linked_session_ids, ['x']);

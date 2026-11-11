@@ -265,8 +265,7 @@ def _normalize(value: Any) -> dict[str, Any]:
 
 def _validate_resource_position(resource, effects, position, predecessor, prior_count, *, wait):  # noqa: PLR0913
     if resource and (
-        not effects
-        or any(ref["call_id"] in position["ordered_call_ids"] for ref in effects)
+        any(ref["call_id"] in position["ordered_call_ids"] for ref in effects)
         or (predecessor is None and prior_count != 0)
         or wait["kind"] != "resource"
     ):

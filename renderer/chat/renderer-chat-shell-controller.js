@@ -490,7 +490,7 @@
         ...forwardOptional([
           'scheduleMessageViewportSync', 'setSessionTurnEventState', 'handlePresenceStreamEvent', 'handleWorkspaceActivityStreamEvent',
           'dismissToast', 'getChatTimelineRowModelEnabled', 'recordChatTimelineRolloutSignal', 'publishFirstTokenImpulse',
-          'publishToolStartImpulse', 'publishCompleteImpulse', 'invalidateProjectionStateForSession',
+          'publishToolStartImpulse', 'publishCompleteImpulse', 'invalidateProjectionStateForSession', 'setActiveView',
         ]),
         renderSessionPane: callbacks.renderSessionPane,
         syncTurnElapsedClock,
@@ -543,7 +543,6 @@
         stopStreamButton: dom.stopStreamButton,
         sendButton: dom.sendButton,
         jumpToTopButton: dom.jumpToTopButton,
-        jumpToLastPromptButton: dom.jumpToLastPromptButton,
         jumpToBottomButton: dom.jumpToBottomButton,
         chatView: dom.chatView,
         chatThreadScroll: dom.chatThreadScroll,
@@ -562,7 +561,7 @@
           'refreshSnapshots', 'refreshApprovedMemories', 'resetArtifactsState', 'resetAttachmentQueue', 'closeComposerPopover',
           'hideAssistantSprite', 'setFollowLatest', 'setActiveView', 'syncComposerInputHeight', 'syncComposerVisualState',
           'renderComposerState', 'handleCreateSession', 'showSessionActionError', 'showComposerActionError',
-          'setComposerStatusNotice', 'clearComposerStatusNotice', 'handleJumpToTop', 'handleJumpToLastPrompt',
+          'setComposerStatusNotice', 'clearComposerStatusNotice', 'handleJumpToTop',
           'handleJumpToBottom', 'syncThreadScrollState', 'getPendingQuestionBatch', 'toggleInteractiveRoundRecap',
           'toggleContextCompactionDetails', 'handleFollowUpMessage', 'syncThinkingBlockNode', 'dismissToast',
           'showShellErrorToast', 'showToastMessage', 'toErrorMessage', 'beginActivity', 'resolveActivity', 'failActivity',
@@ -575,7 +574,7 @@
         ...forwardOptional([
           'setToolCallExpansion', 'refreshComposerToolToggles', 'resetPanes', 'updateAssistantSpritePosition', 'toggleThreadBranch',
           'setReasoningPhaseExpandedPreference', 'clearChatSendLifecycle', 'adjustChatZoomPercent', 'resetChatZoomPercent',
-          'getSessionTurnEventState', 'scrollMessageIntoView', 'focusEntryByMessageId',
+          'getSessionTurnEventState', 'scrollMessageIntoView', 'focusEntryByMessageId', 'getCurrentVisibleMessages',
         ]),
         getSessionMessages: callbacks.getSessionMessages,
         setSessionMessages: (...args) => {

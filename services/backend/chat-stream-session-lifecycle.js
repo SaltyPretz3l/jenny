@@ -386,6 +386,7 @@ function persistUserTurn(adapter, {
   attachments,
   skill_invocation = null,
   image_prompt_pin = null,
+  author = null,
   application_turn = '',
   timestamp = new Date().toISOString(),
   model = '',
@@ -400,6 +401,8 @@ function persistUserTurn(adapter, {
       attachments: normalizeAttachmentMetadataList(attachments),
       skill_invocation,
       ...(image_prompt_pin ? { image_prompt_pin } : {}),
+      // Slice 3-5: the store's normalization keeps only a valid member author.
+      ...(author ? { author } : {}),
       ...(application_turn ? { application_turn } : {}),
     },
     { model }

@@ -1,13 +1,9 @@
-/* renderer/chat/renderer-slash-handoff-command.js -- /handoff (row 60 W4): Jenny drafts a handoff note
- * from this chat off-transcript (handoff.generateNote), the user edits it in a step-modal dialog, and
- * Start creates a new chat linked to this one (sessions.create with handoffFromSessionId) and sends the
- * note as its first message. Cancel, Escape and the backdrop resolve the command as handled (no failure
- * toast). The edited note is the user's work: a chat that cannot be created reopens the editor with it,
- * a send that does not start leaves it in the new chat's composer, and a shell torn down mid-flight
- * keeps it for the new chat rather than losing it. The note text is never logged.
- * Row 73: on the primary Jenny chat the dialog first names one project (preselected from the chat
- * Jenny looked at last); the note is drafted about that project only, other work it mentions is
- * flagged, and Start opens a chat in that project on its own (never linked under the primary). */
+/* renderer/chat/renderer-slash-handoff-command.js -- /handoff (row 60 W4): Jenny drafts a note from this
+ * chat off-transcript, the user edits it in a step modal, and Start creates a linked chat and sends the
+ * note first. The edited note is the user's work: a failed create reopens the editor with it, and a
+ * send that does not start leaves it in the new chat's composer. The note text is never logged.
+ * Row 73: on the primary Jenny chat the note is about one chosen project and the new chat is not linked.
+ * Owner pick A (2026-11-08): it also takes the destination and the intent (read-only starts in Plan). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(root);
@@ -23,7 +19,6 @@
   const MODAL_ID = 'handoff-note';
   const NOTE_FIELD_ID = 'handoffNoteField';
   const PROJECT_FIELD_ID = 'handoffProjectField';
-  // The flagged-mention line names at most this many before "…".
   const MAX_SHOWN_MENTIONS = 3;
   // Electron clips a composer draft at 4,200 characters; the sidecar caps its note at 4,000.
   const MAX_NOTE_CHARS = 4000;
@@ -100,27 +95,28 @@
     const stepModal = resolveModule(deps.stepModal, 'inventoryStepModal', '../inventory/step-modal');
     const textFieldModule = resolveModule(deps.textField, 'inventoryTextField', '../inventory/text-field');
     const renderSelectField = resolveModule(deps.selectField, 'inventorySelectField', '../inventory/select-field');
-    // The project order every surface uses (D18); the backend's name order when it is missing.
-    const projectMenu = resolveModule(deps.projectMenu, 'rendererProjectMenu', '../features/renderer-project-menu');
-    // The inventory text-field module exports its render function directly.
+    const segmented = resolveModule(deps.segmented, 'inventorySegmentedControl', '../inventory/segmented-control');
+    // D18 order. Read at use: that script loads after this handler is built.
+    const getProjectMenu = () => resolveModule(deps.projectMenu, 'rendererProjectMenu', '../features/renderer-project-menu');
     const renderTextField = typeof textFieldModule === 'function' ? textFieldModule
       : typeof textFieldModule?.textField === 'function' ? textFieldModule.textField : null;
     const getStartPromptSend = typeof deps.getStartPromptSend === 'function' ? deps.getStartPromptSend : () => null;
     const createSession = typeof deps.createSession === 'function' ? deps.createSession : null;
     const getHandoffApi = typeof deps.getHandoffApi === 'function' ? deps.getHandoffApi
       : () => globalThis.window?.jennyShell?.handoff || null;
+    const listProjects = typeof deps.listProjects === 'function' ? deps.listProjects
+      : () => globalThis.window?.jennyShell?.projects?.list?.();
     const setNotice = typeof deps.setNotice === 'function' ? deps.setNotice : noop;
     const clearComposer = typeof deps.clearComposer === 'function' ? deps.clearComposer : noop;
     const setComposerDraft = typeof deps.setComposerDraft === 'function' ? deps.setComposerDraft : noop;
-    // Without a pane context every chat counts as current (the owner always provides one).
     const isSessionCurrent = typeof deps.isSessionCurrent === 'function' ? deps.isSessionCurrent : () => true;
     const getComposerController = typeof deps.getComposerController === 'function' ? deps.getComposerController : () => null;
     const appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const getOverlayManager = typeof deps.getOverlayManager === 'function' ? deps.getOverlayManager
       : () => deps.overlayManager || root?.rendererOverlayManagerController || null;
 
-    // scope (primary chat only): { projectId, projects: [{ id, name }], mentions, suggestionTried }
-    let dialog = null; // { mountRoot, lifecycle, resolve, sessionId, phase, draftToken, draftedNote, scope }
+    // scope (primary only): { projectId, projects, mentions, suggestionTried }; choice: { intent, dest: ordinary chat's picker | null }
+    let dialog = null; // { mountRoot, lifecycle, resolve, sessionId, phase, draftToken, draftedNote, scope, choice }
     let disposed = false; // the owning shell is gone: nothing after an await may touch the pane
     let inFlight = false; // Start accepted: the new chat is being created or the note sent
 
@@ -158,7 +154,8 @@
     }
 
     function projectOptions(scope) {
-      const options = scope.projects.map((project) => ({ value: project.id, label: project.name }));
+      const options = scope.projects.map((project) => ({ value: project.id,
+        label: project.id === scope.sourceId ? jt('chat.handoff.projectThisChat', '{project} (this chat)', { project: project.name }) : project.name }));
       return scope.projectId ? options
         : [{ value: '', label: jt('chat.handoff.projectPlaceholder', 'Choose a project'), disabled: true }, ...options];
     }
@@ -171,7 +168,7 @@
       select.value = scope.projectId;
     }
 
-    // The line under the note naming other work it mentions (primary-chat handoffs only).
+    // The line naming other work the note mentions (primary only).
     function updateMentions() {
       const line = query('[data-handoff-mentions]');
       const scope = dialog && dialog.scope;
@@ -182,6 +179,21 @@
         ? jt('chat.handoff.mentionsOther', 'This note mentions other work: {names}. Cut it if it doesn’t belong.', { names: shown })
         : '';
       line.hidden = !found.length;
+    }
+
+    function readySummary() {
+      const { scope, choice: { dest } } = dialog;
+      const text = scope
+        ? jt('chat.handoff.summaryReadyProject', 'Edit the note if you like. It becomes the first message of a new chat in {project}.', { project: projectName(scope) })
+        : dest && dest.projectId !== dest.sourceId
+          ? jt('chat.handoff.summaryReadyIn', 'Edit the note if you like. It becomes the first message of a new chat in {project}, linked to this one.', { project: projectName(dest) })
+          : jt('chat.handoff.summaryReady', 'Edit the note if you like. It becomes the first message of a new chat linked to this one.');
+      return dialog.truncated ? text + ' ' + jt('chat.handoff.summaryTruncated', 'Only the most recent part of this chat fit the model, so the note may miss earlier work.') : text;
+    }
+
+    function setSummary(text) {
+      const summary = query('.inv-step-modal-summary');
+      if (summary) summary.textContent = text;
     }
 
     function setPhase(phase, options = {}) {
@@ -200,16 +212,13 @@
           : jt('chat.handoff.summaryChooseProject', 'Choose the project this note is about. Jenny writes about that project only; read the note before you start.');
       } else if (phase === 'drafting') {
         statusText = jt('chat.handoff.statusDrafting', 'Drafting…');
-        summaryText = scope
-          ? jt('chat.handoff.summaryDraftingProject', 'Jenny is writing a note about {project} only: the goal, what is done, the files, what is open and the next step.', { project: projectName(scope) })
+        summaryText = dialog.choice.intent === 'orient'
+          ? jt('chat.handoff.summaryDraftingOrient', 'Jenny is writing a read-only brief: the goal, what is known, what to read and the questions to answer.')
+          : scope ? jt('chat.handoff.summaryDraftingProject', 'Jenny is writing a note about {project} only: the goal, what is done, the files, what is open and the next step.', { project: projectName(scope) })
           : jt('chat.handoff.summaryDrafting', 'Jenny is writing a note from this chat: the goal, what is done, the files, what is open and the next step.');
       } else if (phase === 'ready') {
-        summaryText = scope
-          ? jt('chat.handoff.summaryReadyProject', 'Edit the note if you like. It becomes the first message of a new chat in {project}.', { project: projectName(scope) })
-          : jt('chat.handoff.summaryReady', 'Edit the note if you like. It becomes the first message of a new chat linked to this one.');
-        if (options.transcriptTruncated) {
-          summaryText += ' ' + jt('chat.handoff.summaryTruncated', 'Only the most recent part of this chat fit the model, so the note may miss earlier work.');
-        }
+        dialog.truncated = options.transcriptTruncated === true;
+        summaryText = readySummary();
       } else {
         statusText = jt('chat.handoff.statusFailed', 'Couldn’t draft');
         summaryText = failureCopy(options.reason);
@@ -219,6 +228,10 @@
         status.hidden = !statusText;
       }
       if (summary) summary.textContent = summaryText;
+      dialog.mountRoot.querySelectorAll('.inv-segmented-option').forEach((option) => { option.disabled = phase === 'drafting'; });
+      const hint = query('[data-handoff-hint]');
+      if (hint) hint.textContent = dialog.choice.intent === 'orient' ? jt('chat.handoff.intentOrientHint', 'Starts in Plan mode, so it reads and reports but cannot change files.')
+        : jt('chat.handoff.intentContinueHint', 'Picks up where this chat stopped, with fresh context.');
       if (field) {
         field.disabled = phase === 'drafting' || phase === 'choosing';
         if (phase === 'ready') {
@@ -252,6 +265,7 @@
       scope.projects = (Array.isArray(result.projects) ? result.projects : [])
         .filter((entry) => entry && str(entry.id) && str(entry.name))
         .map((entry) => ({ id: str(entry.id), name: str(entry.name) }));
+      const projectMenu = getProjectMenu();
       if (typeof projectMenu?.orderProjects === 'function') {
         scope.projects = projectMenu.orderProjects(scope.projects, { sessions: state.sessions });
       }
@@ -275,7 +289,7 @@
       let result;
       try {
         const api = getHandoffApi();
-        const options = current.scope ? { projectId: current.scope.projectId } : undefined;
+        const options = { ...(current.scope ? { projectId: current.scope.projectId } : {}), ...(current.choice.intent === 'orient' ? { intent: 'orient' } : {}) };
         result = typeof api?.generateNote === 'function' ? await api.generateNote(current.sessionId, options) : { ok: false, reason: 'unavailable' };
       } catch (error) {
         result = { ok: false, reason: 'request_failed', detail: str(error && error.message).slice(0, 120) };
@@ -310,9 +324,17 @@
       });
     }
 
-    function openDialog(sessionId, initialNote, scope = null) {
+    function intentHtml(intent) {
+      if (typeof segmented !== 'function') return '';
+      const label = jt('chat.handoff.intentLabel', 'What the new chat does');
+      return '<div class="handoff-intent"><span class="handoff-intent-label">' + segmented.escapeHtml(label) + '</span>'
+        + segmented({ id: 'handoffIntent', ariaLabel: label, value: intent, options: [{ value: 'continue', label: jt('chat.handoff.intentContinue', 'Continue the work') },
+          { value: 'orient', label: jt('chat.handoff.intentOrient', 'Read-only orientation') }] }) + '</div><p class="handoff-intent-hint" data-handoff-hint></p>';
+    }
+
+    function openDialog(sessionId, initialNote, scope, choice) {
       if (!documentRef || !documentRef.body || !stepModal || typeof stepModal.renderStepModal !== 'function' || !renderTextField
-        || (scope && typeof renderSelectField !== 'function')) {
+        || ((scope || choice.dest) && typeof renderSelectField !== 'function')) {
         return null;
       }
       removeDialog();
@@ -322,7 +344,7 @@
         title: jt('chat.handoff.title', 'Continue in a new chat'),
         status: jt('chat.handoff.statusDrafting', 'Drafting…'),
         summary: jt('chat.handoff.summaryDrafting', 'Jenny is writing a note from this chat: the goal, what is done, the files, what is open and the next step.'),
-        bodyHtml: (scope ? projectFieldHtml(scope) : '') + renderTextField({
+        bodyHtml: (scope || choice.dest ? projectFieldHtml(scope || choice.dest) : '') + intentHtml(choice.intent) + renderTextField({
           id: NOTE_FIELD_ID,
           multiline: true,
           rows: 12,
@@ -362,18 +384,33 @@
         if (start) start.disabled = !canStart();
         updateMentions();
       };
+      const onIntentChange = (event) => {
+        const value = event.detail && event.detail.value;
+        if (!dialog || value === dialog.choice.intent) return;
+        const note = str(noteField() && noteField().value);
+        if (note && note !== dialog.draftedNote) {
+          segmented.select(event.target, dialog.choice.intent);
+          setSummary(jt('chat.handoff.noteKept', 'You changed this note, so it stays as written. Clear the note to draft it again.'));
+          return;
+        }
+        dialog.choice.intent = value;
+        void draft();
+      };
       const onProjectChange = (event) => {
-        if (!dialog || !dialog.scope || dialog.phase === 'drafting') return;
+        if (!dialog || dialog.phase === 'drafting') return;
         const value = str(event && event.target && event.target.value);
+        if (dialog.choice.dest) { // the note is about this chat: no new draft
+          dialog.choice.dest.projectId = value;
+          if (dialog.phase === 'ready') setSummary(readySummary());
+          return;
+        }
+        if (!dialog.scope) return;
         if (!value || value === dialog.scope.projectId) return;
         // A note the person wrote or changed stays with its project: a switch would redraft over it.
         const note = str(noteField() && noteField().value);
         if (note && note !== dialog.draftedNote) {
           renderProjectOptions();
-          const summary = query('.inv-step-modal-summary');
-          if (summary) {
-            summary.textContent = jt('chat.handoff.projectKeepsEdits', 'You changed this note, so it stays with {project}. Clear the note to choose another project.', { project: projectName(dialog.scope) });
-          }
+          setSummary(jt('chat.handoff.projectKeepsEdits', 'You changed this note, so it stays with {project}. Clear the note to choose another project.', { project: projectName(dialog.scope) }));
           return;
         }
         dialog.scope.projectId = value;
@@ -381,7 +418,9 @@
         renderProjectOptions();
         void draft();
       };
-      dialog = { mountRoot, lifecycle: null, resolve, sessionId, phase: 'drafting', draftToken: 0, draftedNote: '', onClick, scope };
+      dialog = { mountRoot, lifecycle: null, resolve, sessionId, phase: 'drafting', draftToken: 0, draftedNote: '', onClick, scope, choice };
+      mountRoot.addEventListener('inv-segmented-change', onIntentChange);
+      if (typeof segmented === 'function') segmented.initSegmentedHandlers(mountRoot);
       documentRef.addEventListener('click', onClick, true);
       const field = noteField();
       if (field) field.addEventListener('input', onInput);
@@ -415,7 +454,7 @@
     // The note could not be sent: keep it where the new chat will show it. The visible input only
     // while the new chat holds the pane; otherwise that chat's own composer record, which restores
     // when it is shown, never the input of whichever chat is visible now. False when nothing can
-    // hold it, so the notice says so instead of promising it.
+    // hold it, so the notice says so.
     function keepNoteForChild(note, childId, reason) {
       let kept = false;
       if (isSessionCurrent(childId)) {
@@ -431,11 +470,11 @@
       return kept;
     }
 
-    async function startChat(sourceSessionId, note, scope = null) {
+    async function startChat(sourceSessionId, note, scope, choice) {
       const source = sessionSummary(sourceSessionId);
       const title = deriveChildTitle(note, source && source.title, scope ? { projectName: projectName(scope) } : {});
       // A primary-chat handoff opens in the chosen project on its own: no link to the primary.
-      const projectId = scope ? scope.projectId : str(source && source.project_id);
+      const projectId = scope ? scope.projectId : str(choice.dest ? choice.dest.projectId : source && source.project_id);
       // The source composer still shows "/handoff"; the slash dispatch only clears it while the
       // source is current, and the new chat is about to be.
       clearComposer();
@@ -443,8 +482,10 @@
       try {
         childId = str(await createSession({
           title,
+          requireRecord: true,
           ...(scope ? {} : { handoffFromSessionId: sourceSessionId }),
           ...(projectId ? { projectId } : {}),
+          ...(choice.intent === 'orient' ? { runMode: 'plan' } : {}),
         }));
       } catch (error) {
         appendClientLog('WARN', 'slash.handoff_create_failed', { sessionId: sourceSessionId, message: str(error && error.message).slice(0, 200) });
@@ -487,6 +528,14 @@
       return { ok: true, code: 'handoff_started' };
     }
 
+    async function destinationFor(source) {
+      let projects = [];
+      const projectMenu = getProjectMenu();
+      try { projects = projectMenu.orderProjects(projectMenu.normalizeProjectList(await listProjects()), { sessions: state.sessions }); } catch (_error) { /* no picker */ }
+      const sourceId = projectMenu ? projectMenu.sessionProjectId(source) : '';
+      return projects.length > 1 && projects.some((entry) => entry.id === sourceId) ? { projectId: sourceId, sourceId, projects } : null;
+    }
+
     async function handleHandoffCommand(invocation) {
       const sessionId = str(invocation && invocation.sessionId);
       if (!sessionId || !createSession || typeof getHandoffApi()?.generateNote !== 'function') {
@@ -496,12 +545,17 @@
       if (disposed) return { ok: false, handled: true, code: 'disposed' };
       if (dialog || inFlight) return { ok: false, handled: true, code: 'busy' };
       // The primary Jenny chat (row 69) hands off one project at a time (row 73).
-      const scope = isPrimarySession(sessionSummary(sessionId))
+      const source = sessionSummary(sessionId);
+      const scope = isPrimarySession(source)
         ? { projectId: '', projects: [], mentions: [], suggestionTried: false }
         : null;
+      inFlight = true;
+      const choice = { intent: 'continue', dest: scope ? null : await destinationFor(source) };
+      inFlight = false;
+      if (disposed) return { ok: false, handled: true, code: 'disposed' };
       let initialNote = '';
       for (;;) {
-        const settled = openDialog(sessionId, initialNote, scope);
+        const settled = openDialog(sessionId, initialNote, scope, choice);
         if (!settled) {
           setNotice(jt('chat.handoff.unavailable', 'Handoff is not available here.'), 'warning');
           return { ok: false, handled: true, code: 'dialog_unavailable' };
@@ -515,7 +569,7 @@
         inFlight = true;
         let result;
         try {
-          result = await startChat(sessionId, note, scope);
+          result = await startChat(sessionId, note, scope, choice);
         } finally {
           inFlight = false;
         }

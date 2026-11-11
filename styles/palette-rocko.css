@@ -24,6 +24,9 @@
   --text-decorative: #5a8a84;
   --text-bright: #f5ead8;
   --text-accent-soft: color-mix(in srgb, #e8641a 52%, #f0e4cc);
+  --text-danger-soft: #ff9a8c;
+  --text-success-soft: #7fe0c8;
+  --text-danger-emphasis: #ffa89a;
 
   /* ── Accents ── */
   --accent: #e8641a;
@@ -35,14 +38,21 @@
   /* ── Holo palette — mapped to the show's colors ── */
   --holo-periwinkle: #e8841a;
   --holo-lavender: #d43ca0;
-  --holo-pink: #e8641a;
-  --holo-cyan: #3dbfab;
 
-  /* ── Doodle field — wobbly hand-drawn linework, two-pass rough rendering, generous breathing room. */
+  /* ── Editor colours — orange keyword, leaf-green string, teal type, amber function ── */
+  --syntax-keyword: #f27d34;
+  --syntax-string: #8fdc9b;
+  --syntax-comment: #5f9189;
+  --syntax-number: #e48fc2;
+  --syntax-function: #f0c850;
+  --syntax-type: #3dbfab;
+  --syntax-variable: #8db8b0;
+  --syntax-constant: #ff8a78;
 
   /* ── Reactive grid dots: orange idle, teal active ── */
   --widget-reactive-grid-dot-idle: rgba(232, 100, 26, 0.24);
   --widget-reactive-grid-dot-active: rgba(94, 232, 208, 0.96);
+  --reactive-grid-wave-contrast: 1.3;
 
   /* ── Playlist scroll ── */
   --playlist-scroll-line-color: rgba(232, 100, 26, 0.5);
@@ -121,18 +131,9 @@
   --surface-input-background-strong: rgba(8, 18, 16, 0.78);
   --surface-toolbar-background: rgba(14, 32, 28, 0.88);
 
-  --surface-prompt-chip-background: rgba(255, 255, 255, 0.03);
-  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.055);
-  --surface-prompt-chip-border: rgba(61, 191, 171, 0.14);
-  --surface-prompt-chip-border-hover: rgba(232, 100, 26, 0.26);
-
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(14, 36, 32, 0.96), rgba(8, 20, 18, 0.96)),
     radial-gradient(circle at top left, rgba(232, 100, 26, 0.08), transparent 48%);
-
-  --surface-notice-background:
-    linear-gradient(180deg, rgba(46, 32, 14, 0.72), rgba(30, 20, 8, 0.7)),
-    rgba(22, 14, 6, 0.68);
 
   --surface-composer-inner:
     linear-gradient(180deg, rgba(18, 44, 40, 0.94), rgba(13, 32, 28, 0.97)),
@@ -140,55 +141,58 @@
   --surface-composer-signal-background: rgba(12, 28, 24, 0.78);
   --surface-composer-mode-background: rgba(12, 28, 24, 0.72);
 
-  --surface-user-bubble-background:
-    linear-gradient(180deg, rgba(22, 52, 46, 0.96), rgba(15, 34, 30, 0.98));
-
   --surface-auth-overlay: rgba(4, 12, 10, 0.76);
-  --surface-auth-card: linear-gradient(180deg, rgba(18, 44, 40, 0.98), rgba(12, 28, 24, 0.98));
 
   --surface-popover-background: linear-gradient(180deg, rgba(18, 44, 40, 0.98), rgba(12, 32, 28, 0.98));
   --surface-popover-row: rgba(32, 68, 60, 0.44);
   --surface-popover-row-hover: rgba(46, 92, 82, 0.56);
 
-  --surface-dev-row-background: rgba(14, 36, 30, 0.5);
-  --surface-dev-row-border: rgba(61, 191, 171, 0.16);
-
   /* ── Material hierarchy ── */
+  --mat-chrome-bg: linear-gradient(90deg, rgba(22, 50, 45, 0.98), rgba(13, 32, 28, 0.98));
+  --mat-work-bg:
+    radial-gradient(circle at 18% 12%, rgba(232, 100, 26, 0.10), rgba(12, 30, 27, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(61, 191, 171, 0.10), rgba(12, 30, 27, 0) 28%),
+    #0f2723;
+  --mat-work-text: var(--text-primary);
+  --mat-live-bg: var(--surface-sidebar-background);
   --mat-live-accent: var(--accent-cyan);
   --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 12%, var(--border-subtle));
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.28);
 
   /* ── Widget tokens ── */
 
   /* Buttons */
   --widget-button-primary-bg: linear-gradient(180deg, #f07228, #e8641a);
-  --widget-button-primary-color: #ffffff;
+  --widget-button-primary-color: #2a1004;
   --widget-button-primary-shadow: rgba(232, 100, 26, 0.24);
   --widget-button-secondary-bg: rgba(20, 50, 44, 0.92);
   --widget-button-secondary-border: rgba(61, 191, 171, 0.2);
   --widget-button-secondary-color: #d8f0ec;
-  --widget-button-session-bg: linear-gradient(180deg, #f0c030, #e8b420);
-  --widget-button-session-color: #1c1400;
+  --widget-button-danger-bg: rgba(255, 110, 90, 0.14);
+  --widget-button-danger-border: rgba(255, 110, 90, 0.28);
+  --widget-button-danger-color: #ff9a8c;
+  --widget-close-hover-bg: #c2432f;
   --widget-hero-avatar-bg: linear-gradient(180deg, #f07228, #e8641a);
 
   /* Sidebar & item states */
+  --widget-badge-bg: rgba(240, 228, 204, 0.04);
+  --widget-scrollbar-color: rgba(61, 191, 171, 0.28);
   --widget-item-active-bg: linear-gradient(180deg, rgba(232, 100, 26, 0.1), rgba(232, 100, 26, 0.04));
   --widget-item-active-border: rgba(232, 100, 26, 0.16);
-  --widget-badge-color: #7ab8b0;
-  --widget-badge-secondary-color: #5a9890;
-  --widget-action-color: #7ab8b0;
   --widget-action-bg: rgba(255, 255, 255, 0.04);
-  --widget-action-border: rgba(61, 191, 171, 0.12);
   --widget-action-hover-bg: rgba(232, 100, 26, 0.12);
   --widget-action-hover-border: rgba(232, 100, 26, 0.24);
   --widget-action-hover-color: #f0e4cc;
-  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(240, 114, 40, 0.9), rgba(232, 100, 26, 0.88));
 
   /* Chat & copy */
-  --widget-chat-meta-color: #5a8a84;
+  --widget-chat-meta-error-color: #ff9a8c;
   --widget-copy-chip-bg: linear-gradient(180deg, rgba(18, 44, 40, 0.98), rgba(12, 28, 24, 0.98));
   --widget-copy-chip-border: rgba(61, 191, 171, 0.16);
   --widget-copy-chip-color: #d8f0ec;
-
 
   /* Rail J glyph */
   --widget-sprite-color: rgba(224, 244, 240, 0.94);
@@ -203,38 +207,41 @@
     linear-gradient(180deg, rgba(14, 34, 30, 0.84), rgba(9, 22, 20, 0.9)),
     radial-gradient(circle at left center, rgba(232, 100, 26, 0.07), transparent 55%);
   --widget-tool-border: rgba(61, 191, 171, 0.18);
-  --widget-tool-running-border: rgba(61, 191, 171, 0.26);
   --widget-tool-color: #d8f0ec;
-  --widget-tool-name-color: #f0e4cc;
   --widget-tool-success-color: rgba(61, 191, 171, 0.9);
+  --widget-tool-error-color: rgba(255, 138, 120, 0.9);
+  --widget-tool-denied-color: rgba(130, 165, 158, 0.7);
   --widget-tool-code-bg: rgba(0, 0, 0, 0.22);
   --widget-tool-code-color: rgba(200, 236, 230, 0.88);
-  --widget-approve-bg: linear-gradient(180deg, rgba(240, 114, 40, 0.78), rgba(200, 88, 20, 0.82));
+  --widget-approve-bg: linear-gradient(180deg, rgba(240, 114, 40, 0.92), rgba(232, 100, 26, 0.94));
+  --widget-approve-color: #2a1004;
   --widget-approve-border: rgba(255, 180, 100, 0.24);
   --widget-approve-hover-border: rgba(255, 180, 100, 0.38);
+  --widget-deny-bg: rgba(20, 50, 44, 0.74);
+  --widget-deny-border: rgba(61, 191, 171, 0.22);
+  --widget-deny-color: rgba(216, 240, 236, 0.84);
 
   /* Composer */
-  --widget-placeholder-color: #4a7870;
+  --widget-placeholder-color: #639a92;
   --widget-placeholder-focus-color: #5a9890;
   --widget-composer-mode-active-bg: rgba(232, 100, 26, 0.18);
   --widget-send-bg: linear-gradient(180deg, #f07228, #e8641a);
   --widget-send-border: rgba(232, 100, 26, 0.24);
-  --widget-send-color: #ffffff;
+  --widget-send-color: #2a1004;
   --widget-send-hover-bg: linear-gradient(180deg, #f87c30, #f07228);
-  --widget-send-hover-color: #ffffff;
+  --widget-send-hover-color: #2a1004;
   --widget-composer-signal-border: rgba(61, 191, 171, 0.16);
   --widget-select-caret-color: #5a8a84;
   --widget-select-hover-color: #f0e4cc;
   --widget-select-option-bg: #122a26;
   --widget-select-option-color: #d8f0ec;
-  --widget-composer-meta-color: #4a7870;
+  --widget-composer-meta-color: #639a92;
   --widget-composer-scrollbar-color: rgba(61, 191, 171, 0.52);
-  --widget-jump-color: rgba(141, 184, 176, 0.82);
-  --widget-jump-hover-color: #d8f0ec;
 
   /* Interactive mode */
   --widget-interactive-card-border: rgba(61, 191, 171, 0.2);
-  --widget-interactive-pending-border: rgba(232, 100, 26, 0.3);
+  --widget-interactive-intro-color: rgba(240, 228, 204, 0.92);
+  --widget-interactive-prompt-color: rgba(245, 236, 216, 0.94);
   --widget-interactive-option-bg: rgba(18, 46, 42, 0.36);
   --widget-interactive-option-border: rgba(61, 191, 171, 0.16);
   --widget-interactive-option-color: rgba(210, 244, 238, 0.92);
@@ -253,32 +260,38 @@
 
   /* Settings shell */
   --widget-settings-badge-bg: rgba(232, 100, 26, 0.16);
+  --widget-token-pill-bg: rgba(20, 50, 44, 0.66);
+  --widget-token-pill-color: #8db8b0;
   --settings-shell-accent: var(--mat-live-accent);
   --settings-shell-nav-bg: var(--surface-sidebar-background);
   --settings-shell-masthead-bg: var(--surface-card-background);
   --settings-shell-panel-bg: var(--surface-card-background);
   --settings-shell-field-bg: var(--surface-input-background);
 
-  /* Personality */
-  --widget-personality-preview-color: rgba(180, 228, 218, 0.9);
-
-  /* Mermaid */
-
-  /* Artifact focus */
-  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-
   /* Activity states */
   --widget-activity-pending-glow: rgba(232, 100, 26, 0.08);
   --widget-activity-pending-border: rgba(232, 100, 26, 0.48);
   --widget-activity-pending-color: #f07228;
   --widget-activity-success-color: rgba(61, 191, 171, 0.9);
+  --widget-activity-error-color: #ff9a8c;
   --widget-activity-pulse-color: rgba(232, 100, 26, 0.14);
+
+  /* Attachments */
+  --widget-attachment-bg: rgba(16, 40, 36, 0.88);
+  --widget-attachment-border: rgba(61, 191, 171, 0.18);
+  --widget-attachment-color: #d8f0ec;
+  --widget-attachment-meta-color: #6f9d96;
+  --widget-attachment-remove-color: #9fc4bd;
+  --widget-attachment-clear-color: #6f9d96;
+
+  /* Popover badge & stop */
+  --widget-stop-bg: rgba(255, 110, 90, 0.16);
+  --widget-stop-color: #ff9a8c;
 
   /* Composer holo draw */
   --composer-holo-opacity-active: 0.64;
   --composer-holo-opacity-streaming: 0.56;
   --composer-holo-draw-glow-alpha-scale: 1.8;
-
 }
 
 @supports not (backdrop-filter: blur(1px)) {

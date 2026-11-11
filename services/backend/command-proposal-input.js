@@ -9,6 +9,7 @@
  */
 
 const crypto = require('node:crypto');
+const { COMMAND_SANDBOX_MODES } = require('../shell-config-command-sandbox');
 
 const COMMAND_PROPOSAL_KIND = 'command_proposal';
 const MAX_COMMAND_BYTES = 8 * 1024;
@@ -22,6 +23,8 @@ const SHA256 = /^[0-9a-f]{64}$/u;
 const TOP_KEYS = ['schema_version', 'proposal_id', 'accepted_revision', 'decision_id', 'command_operation_id',
   'tool_call_id', 'command_sha256', 'command_binding', 'command_input'].sort();
 const BINDING_KEYS = ['backend', 'shell', 'cwd', 'root_revision'].sort();
+// Row 106: a Docker binding may name its workspace mode; a missing key reads copy.
+const DOCKER_BINDING_KEYS = [...BINDING_KEYS, 'workspace'].sort();
 const INPUT_KEYS = ['command', 'cwd', 'timeout_seconds', 'expected_exit_codes', 'purpose'].sort();
 
 function invalid(reason) {
@@ -58,8 +61,10 @@ function normalizeCommandProposal(value) {
     if (typeof record[key] !== 'string' || !UUID.test(record[key])) throw invalid(key);
   }
   if (typeof record.command_sha256 !== 'string' || !SHA256.test(record.command_sha256)) throw invalid('command_sha256');
-  const binding = plain(record.command_binding, BINDING_KEYS, 'command_binding');
-  if (!['native', 'docker'].includes(binding.backend) || !['cmd.exe', '/bin/sh'].includes(binding.shell)) {
+  const keyed = record.command_binding?.workspace !== undefined;
+  const binding = plain(record.command_binding, keyed ? DOCKER_BINDING_KEYS : BINDING_KEYS, 'command_binding');
+  if (!['native', 'docker'].includes(binding.backend) || !['cmd.exe', '/bin/sh'].includes(binding.shell)
+    || (keyed && (binding.backend !== 'docker' || !COMMAND_SANDBOX_MODES.includes(binding.workspace)))) {
     throw invalid('command_binding');
   }
   text(binding.cwd, 'command_binding', { maxChars: MAX_CWD_CHARS });
@@ -90,7 +95,7 @@ function normalizeCommandProposal(value) {
     tool_call_id: record.tool_call_id,
     command_sha256: record.command_sha256,
     command_binding: Object.freeze({ backend: binding.backend, shell: binding.shell, cwd: binding.cwd,
-      root_revision: binding.root_revision }),
+      root_revision: binding.root_revision, ...(binding.backend === 'docker' ? { workspace: binding.workspace || 'copy' } : {}) }),
     command_input: Object.freeze({ command: input.command, cwd: input.cwd, timeout_seconds: input.timeout_seconds,
       expected_exit_codes: Object.freeze([...input.expected_exit_codes]), purpose: input.purpose }),
   });

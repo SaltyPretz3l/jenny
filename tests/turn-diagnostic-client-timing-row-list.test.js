@@ -71,6 +71,9 @@ test('client_timing keeps the row-list morph counters and their bounded reason h
       row_list_rows_reused: 0,
       row_list_rows_rebuilt: 7259,
       row_list_morph_reasons: { ...oversized, 'live:segment_row_state_mismatch>block_key_mismatch': 61, zero: 0 },
+      scroll_snaps: 3,
+      scroll_snap_max_px: 218,
+      scroll_snap_reasons: { 'tail_cushion:reply_end': 2, virtualizer: 1 },
     },
     attempts: 1,
     delayMs: 1,
@@ -84,4 +87,8 @@ test('client_timing keeps the row-list morph counters and their bounded reason h
     'live:segment_row_state_mismatch>block_key_mismatch': 61,
   });
   assert.equal('zero' in payload.client_timing.row_list_morph_reasons, false);
+  // Row 131: the per-reply snap count survives the allowlist.
+  assert.equal(payload.client_timing.scroll_snaps, 3);
+  assert.equal(payload.client_timing.scroll_snap_max_px, 218);
+  assert.deepEqual(payload.client_timing.scroll_snap_reasons, { 'tail_cushion:reply_end': 2, virtualizer: 1 });
 });

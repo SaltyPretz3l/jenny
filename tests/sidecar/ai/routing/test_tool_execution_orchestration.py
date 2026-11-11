@@ -274,62 +274,6 @@ def test_resource_wait_captures_full_frozen_input_before_any_started_audit(
     assert client.calls == []
 
 
-def test_execute_tool_injects_authoritative_read_only_only_into_mermaid_dispatch() -> None:
-    descriptor = _descriptor("mermaid_generate")
-    client = _RecordingMCPClient(
-        descriptor,
-        result=_mcp_result(tool_name="mermaid_generate", success=True),
-    )
-    kernel = _kernel(client)
-    runtime, _store = _runtime()
-    runtime.request_context = SimpleNamespace(read_only=True)
-    arguments = {"prompt": "graph TD\nA --> B", "diagram_type": "flowchart"}
-
-    outcome = execute_tool(
-        kernel,
-        ToolCallRequest(tool_id="mermaid_generate", arguments=arguments, call_id="c-mermaid"),
-        request_id=REQUEST_ID,
-        session_id=SESSION_ID,
-        read_snapshot_cache={},
-        tool_contract=_Contract(descriptor),
-        runtime=runtime,
-    )
-
-    assert client.calls[0][1]["_jenny_read_only"] is True
-    assert client.calls[0][1]["_jenny_session_id"] == SESSION_ID
-    assert outcome.tool_input == arguments
-    assert "_jenny_read_only" not in outcome.tool_input
-
-
-def test_execute_tool_reuses_frozen_plan_capability_before_mermaid_dispatch() -> None:
-    descriptor = _descriptor("mermaid_generate")
-    descriptor.availability = SimpleNamespace(plan_mode_artifact_write=True)
-    client = _RecordingMCPClient(
-        descriptor,
-        result=_mcp_result(tool_name="mermaid_generate", success=True),
-    )
-    kernel = _kernel(client)
-    runtime, _store = _runtime()
-    runtime.request_context = SimpleNamespace(plan_mode=False, read_only=True)
-    arguments = {"prompt": "flowchart TD\nA --> B"}
-
-    outcome = execute_tool(
-        kernel,
-        ToolCallRequest(tool_id="mermaid_generate", arguments=arguments, call_id="c-plan"),
-        request_id=REQUEST_ID,
-        session_id=SESSION_ID,
-        read_snapshot_cache={},
-        tool_contract=_Contract(descriptor),
-        trusted_plan_artifact_write=True,
-        runtime=runtime,
-    )
-
-    dispatched = client.calls[0][1]
-    assert dispatched["_jenny_read_only"] is False
-    assert "_jenny_plan_artifact_write" not in dispatched
-    assert "_jenny_plan_artifact_write" not in outcome.tool_input
-
-
 @pytest.mark.parametrize("tool_name", ["todo_read", "todo_write"])
 def test_execute_tool_injects_approved_plan_only_into_todo_read_dispatch(
     tool_name: str,

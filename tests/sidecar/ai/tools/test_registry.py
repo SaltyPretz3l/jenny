@@ -163,23 +163,10 @@ def test_connections_dispatch_injects_request_local_lockdown_metadata(
     assert captured[1]["_jenny_session_offline_lockdown"] is False
 
 
-def test_build_default_registry_excludes_mermaid_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-
-    registry = build_default_registry(config={"tools_mermaid_enabled": False})
-
-    assert "mermaid_generate" not in registry
-
-
-def test_build_default_registry_includes_mermaid_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-
-    registry = build_default_registry(config={"tools_mermaid_enabled": True})
-
-    assert "mermaid_generate" in registry
-    assert "prompt" in registry["mermaid_generate"].input_schema["properties"]
+def test_build_default_registry_never_binds_mermaid_generate() -> None:
+    # The tool is gone; a stale config key must neither bind it nor raise.
+    for config in ({}, {"tools_mermaid_enabled": True}, {"tools_mermaid_enabled": False}):
+        assert "mermaid_generate" not in build_default_registry(config=config)
 
 
 def test_build_default_registry_excludes_workspace_manifest_when_disabled() -> None:
@@ -395,8 +382,7 @@ def test_tool_manifest_matches_batch4_git_and_read_file_contract() -> None:
     assert "grep" not in tools
     assert "glob_files" in tools
     assert "grep_search" in tools
-    assert "mermaid_generate" in tools
-    assert "diagram_type" in tools["mermaid_generate"]["parameters"]["properties"]
+    assert "mermaid_generate" not in tools
     assert "workspace_manifest_read" in tools
     assert (
         tools["workspace_manifest_read"]["availability"]["config_flag"]
@@ -418,11 +404,9 @@ def test_tool_manifest_matches_batch4_git_and_read_file_contract() -> None:
     assert tools["worktree_list"]["surfaces"] == ["managed_sidecar"]
     assert tools["worktree_create"]["surfaces"] == ["managed_sidecar"]
     assert tools["automation_list"]["tool_family"] == "runtime"
-    assert tools["automation_read"]["tool_family"] == "runtime"
     assert tools["automation_list"]["availability"]["config_flag"] == "tools_automations_enabled"
-    assert tools["automation_read"]["availability"]["config_flag"] == "tools_automations_enabled"
     assert tools["automation_list"]["read_only"] is True
-    assert tools["automation_read"]["read_only"] is True
+    assert "automation_read" not in tools
 
 
 def test_build_default_registry_exposes_read_snapshot_contract_for_file_mutations(
@@ -456,8 +440,6 @@ def test_infer_tool_classification_helpers_cover_builtin_and_external_tools() ->
     assert infer_tool_family("worktree_list") == "git"
     assert infer_tool_family("worktree_create") == "git"
     assert infer_tool_family("automation_list") == "runtime"
-    assert infer_tool_family("automation_read") == "runtime"
-    assert infer_tool_family("mermaid_generate") == "diagram"
     assert infer_tool_family("lsp") == "code_intelligence"
 
 
@@ -513,7 +495,6 @@ def test_every_flag_gated_binding_resolves_to_a_callable_handler() -> None:
         "tools_shell_enabled": True,
         "tools_web_enabled": True,
         "tools_todo_enabled": True,
-        "tools_mermaid_enabled": True,
         "tools_workspace_manifest_enabled": True,
         "tools_rich_files_enabled": True,
         "tools_knowledge_enabled": True,
@@ -531,7 +512,6 @@ def test_every_flag_gated_binding_resolves_to_a_callable_handler() -> None:
         "fetch_url",
         "todo_read",
         "todo_write",
-        "mermaid_generate",
         "workspace_manifest_read",
         "knowledge_search",
         "knowledge_view",

@@ -12,7 +12,6 @@ const worktreeCreateTool = require('./builtin/worktree-create-tool');
 const worktreeSelectTool = require('./builtin/worktree-select-tool');
 const worktreeDeleteTool = require('./builtin/worktree-delete-tool');
 const automationListTool = require('./builtin/automation-list-tool');
-const automationReadTool = require('./builtin/automation-read-tool');
 const workspacePresentTool = require('./builtin/workspace-present-tool');
 const previewTestTool = require('./builtin/preview-test-tool');
 const verifyTool = require('./builtin/verify-tool');
@@ -46,6 +45,7 @@ const scheduleListTool = require('./builtin/schedule-list-tool');
 const scheduleChangeTool = require('./builtin/schedule-change-tool');
 const awayDigestTool = require('./builtin/away-digest-tool');
 const jennyHelpTool = require('./builtin/jenny-help-tool');
+const browserTool = require('./builtin/browser-tool');
 
 function createDefaultRegistry(options = {}) {
   const registry = new ToolRegistry();
@@ -68,7 +68,6 @@ function createDefaultRegistry(options = {}) {
   }
   if (options.toolsAutomationsEnabled === true) {
     registry.registerTool(withManifestSchema(automationListTool));
-    registry.registerTool(withManifestSchema(automationReadTool));
   }
   if (options.toolsWorkspacePresentEnabled === true) {
     registry.registerTool(withManifestSchema(workspacePresentTool));
@@ -79,6 +78,8 @@ function createDefaultRegistry(options = {}) {
   if (options.toolsVerifyEnabled === true) {
     registry.registerTool(withManifestSchema(verifyTool));
   }
+  // Row 114: the model-driven browser; the caller passes the tools_browser_use_enabled flag.
+  if (options.toolsBrowserUseEnabled === true) registry.registerTool(withManifestSchema(browserTool));
   if (options.toolsImageGenerateEnabled === true) {
     registry.registerTool(withManifestSchema(require('./builtin/image-generate-tool')));
   }

@@ -224,11 +224,14 @@
       const dirty = isArtifactDirty(state, artifact);
       const capabilities = resolveCapabilities(artifact);
       const titleSlot = panelEl.querySelector('[data-artifact-panel-title-slot]');
+      const browserHost = windowRef?.rendererBrowserUseHost;
       const title = artifactMode ? (artifact ? null : jt('artifacts.review.toggleTitle', 'Artifacts'))
         : mode === 'code_review' ? jt('artifactPanelV2Render.changes', 'Changes')
         : mode === 'file_preview' ? jt('ide.filePreviewLabel', 'File preview')
-        : mode === 'notes' ? jt('projectNotes.title', 'Notes') : jt('artifactPanelV2Render.tasks', 'Tasks');
-      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, title, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
+        : mode === 'notes' ? jt('projectNotes.title', 'Notes')
+        : mode === 'browser' ? (browserHost?.panelTitle?.() || jt('composer.toolFamily.browser.label', 'Browser'))
+        : jt('artifactPanelV2Render.tasks', 'Tasks');
+      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, title, glyphHtml: mode === 'browser' ? browserHost?.glyphHtml : '', artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
       // Non-artifact surfaces clear the live title text before rendering; an
       // unchanged cached slot would otherwise leave it blank.
       const titleText = artifactMode ? null : titleSlot?.querySelector('.artifact-panel-title-text');

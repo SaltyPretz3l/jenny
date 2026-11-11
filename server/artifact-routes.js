@@ -2,6 +2,7 @@
 
 const { downloadDisposition } = require('./download-headers');
 const { sendHostFailure } = require('./http-server');
+const { createRouteDenier } = require('./team/route-guard');
 
 const SESSION_ID_PATTERN_BODY = '[A-Za-z0-9_-]{1,128}';
 const ARTIFACT_ID_PATTERN_BODY = '[A-Za-z0-9_-]{1,512}';
@@ -19,10 +20,11 @@ function routeMatch(pathname) {
 }
 
 /** Handle authenticated generated-artifact byte downloads. */
-function createArtifactRoutes({ commands } = {}) {
+function createArtifactRoutes({ commands, guardRequired = false } = {}) {
   if (!commands || typeof commands.read !== 'function') {
     throw new TypeError('Artifact routes require the artifact command surface.');
   }
+  const denied = createRouteDenier({ guardRequired, send: sendHostFailure });
   return async function artifactRoutes(ctx = {}) {
     if (String(ctx.request?.method || '').toUpperCase() !== 'GET') return false;
     const match = routeMatch(String(ctx.pathname || ''));
@@ -31,6 +33,8 @@ function createArtifactRoutes({ commands } = {}) {
       sendHostFailure(ctx.response, { error: { code: 'CMP-HOST-0003', reason: 'client_required' } }, ctx.requestId);
       return true;
     }
+    const resource = { kind: 'session', id: match[1] };
+    if (denied(ctx, 'session.read', resource)) return true;
     const result = await commands.read(match[1], match[2]);
     // Reading the file is an awaited authority boundary; do not send even a
     // valid result when the client lost its authenticated lease meanwhile.
@@ -38,6 +42,7 @@ function createArtifactRoutes({ commands } = {}) {
       sendHostFailure(ctx.response, { error: { code: 'CMP-HOST-0003', reason: 'client_required' } }, ctx.requestId);
       return true;
     }
+    if (denied(ctx, 'session.read', resource)) return true;
     if (!result.ok) {
       sendHostFailure(ctx.response, result, ctx.requestId);
       return true;

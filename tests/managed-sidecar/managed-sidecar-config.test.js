@@ -270,7 +270,7 @@ test('managed sidecar config reads the canonical nested tools settings shape', (
   assert.equal(config.tools_web_enabled, true);
   assert.equal(config.tools_worktree_enabled, true);
   assert.equal(config.electron_tool_bridge_enabled, true);
-  assert.equal(config.tools_mermaid_enabled, true);
+  assert.equal(Object.hasOwn(config, 'tools_mermaid_enabled'), false);
   assert.equal(config.tools_lsp_enabled, true);
   assert.equal(config.tools_image_read_enabled, true);
   assert.equal(config.tools_python_runtime_enabled, true);

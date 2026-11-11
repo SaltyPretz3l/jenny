@@ -67,3 +67,32 @@ test('review #13: decision ids are lowercase only', () => {
   assert.equal(R.isUuid('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), true);
   assert.equal(R.isUuid('AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'), false);
 });
+
+test('a sandbox-backed Run is withheld while the command sandbox is not ready (Copy stays)', () => {
+  const ctx = { now: NOW, commandRunSupported: true };
+  const docker = makeCommand(1, 'npm test', { backend: 'docker', binding: { backend: 'docker' } });
+  assert.deepEqual(R.projectProposal(docker, { ...ctx, commandSandboxReady: false }).actions.run,
+    { available: false, reason: 'sandbox_not_ready' });
+  assert.equal(R.projectProposal(docker, { ...ctx, commandSandboxReady: true }).actions.run.available, true);
+  assert.equal(R.projectProposal(makeCommand(1), { ...ctx, commandSandboxReady: false }).actions.run.available, true,
+    'a native Run ignores the sandbox');
+  assert.deepEqual(R.projectProposal(docker, { ...ctx, commandSandboxReady: false, readOnly: true }).actions.run,
+    { available: false, reason: 'read_only' }, 'earlier gates keep precedence');
+});
+
+test('a sandbox Run bound to the other mode keeps Copy only; bindings validate the mode key (row 106)', () => {
+  const ctx = { now: NOW, commandRunSupported: true, commandSandboxReady: true };
+  const synced = makeCommand(1, 'npm test', { backend: 'docker', binding: { backend: 'docker', workspace: 'synced' } });
+  assert.equal(R.projectProposal(synced, { ...ctx, commandSandboxWorkspace: 'synced' }).actions.run.available, true);
+  assert.deepEqual(R.projectProposal(synced, { ...ctx, commandSandboxWorkspace: 'copy' }).actions.run,
+    { available: false, reason: 'sandbox_mode_changed' });
+  const legacy = makeCommand(1, 'npm test', { backend: 'docker', binding: { backend: 'docker' } });
+  assert.deepEqual(R.projectProposal(legacy, { ...ctx, commandSandboxWorkspace: 'synced' }).actions.run,
+    { available: false, reason: 'sandbox_mode_changed' }, 'a missing key reads copy');
+  const bad = R.createProposalRecord({ kind: 'command', ...identity(2), input: synced.normalized_input,
+    binding: { ...synced.binding, command: { ...synced.binding.command, workspace: 'live' } } });
+  assert.equal(bad.ok, false);
+  const native = R.createProposalRecord({ kind: 'command', ...identity(3), input: synced.normalized_input,
+    binding: { ...synced.binding, command: { ...synced.binding.command, backend: 'native', shell: 'cmd.exe', workspace: 'copy' } } });
+  assert.equal(native.ok, false, 'only Docker bindings name a mode');
+});

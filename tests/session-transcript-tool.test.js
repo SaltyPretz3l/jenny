@@ -33,8 +33,9 @@ function harness({ directory = null } = {}) {
 }
 
 // Every ok answer carries the data note (other chats' text is data, not instructions); asserted here once.
+const { parseToolOutput } = require('./helpers/refusal-output');
 const output = (result) => {
-  const { note, ...value } = JSON.parse(result.content);
+  const { note, ...value } = parseToolOutput(result);
   assert.equal(note, value.ok === true ? DIRECTORY_DATA_NOTE : undefined);
   return value;
 };
@@ -93,4 +94,69 @@ test('session_transcript is read-only: Plan preflight keeps it, policy is auto, 
   assert.equal(executor._evaluateToolPolicy(descriptor, { session_id: 'a' }, context).decision, 'auto');
   const hosted = await executeElectronToolRequest({ hostMode: 'server' }, { params: { tool_name: 'session_transcript' } });
   assert.equal(hosted.success, false);
+});
+
+// ---------- row 129, C8: the last reply once, inside a stated character budget ----------
+
+const longText = (label, length) => `${label} ${'x'.repeat(length)}`;
+
+// A first page as the directory builds it: rows up to 2,000 characters each, plus last_reply.
+function firstPage(rowCount, rowLength) {
+  const rows = Array.from({ length: rowCount }, (_, index) => ({
+    id: `m${index}`, role: index % 2 ? 'assistant' : 'user', text: longText(`row ${index}`, rowLength), timestamp: '2026-11-09T10:00:00.000Z' }));
+  const last = rows.filter(row => row.role === 'assistant').at(-1);
+  return { ok: true, session_id: 'target', title: 'A chat', rows, more_before: true,
+    last_reply: last.text, last_reply_clipped: false, last_reply_message_id: last.id };
+}
+
+test('the latest reply is sent once, as a row, not again as last_reply', async () => {
+  const page = firstPage(20, 1500);
+  const { context } = harness({ directory: { transcript: async () => structuredClone(page) } });
+  const result = await tool.execute({ session_id: 'target' }, context);
+  const value = output(result);
+  assert.equal(value.last_reply, undefined);
+  assert.equal(value.last_reply_message_id, undefined);
+  assert.equal(value.last_reply_clipped, undefined);
+  assert.equal(value.rows.at(-1).id, 'm19');
+  const raw = JSON.stringify(page).length;
+  assert.ok(result.content.length < raw / 2, `${result.content.length} vs ${raw}`);
+});
+
+test('the default keeps the newest rows within the stated budget and says how to read earlier ones', async () => {
+  const { context } = harness({ directory: { transcript: async () => firstPage(20, 1500) } });
+  const value = output(await tool.execute({ session_id: 'target' }, context));
+  const chars = value.rows.reduce((sum, row) => sum + row.text.length, 0);
+  assert.ok(chars <= value.budget_chars, `${chars} chars over a budget of ${value.budget_chars}`);
+  assert.equal(value.budget_chars, 6000);
+  assert.ok(value.rows.length >= 3 && value.rows.length < 20);
+  assert.deepEqual(value.rows.map(row => row.id), Array.from({ length: value.rows.length }, (_, index) => `m${20 - value.rows.length + index}`));
+  assert.equal(value.more_before, true);
+  assert.match(value.earlier, new RegExp(`before_message_id set to "${value.rows[0].id}"`, 'u'));
+});
+
+test('one reply longer than the budget is cut to it, and a reply missing from the rows is kept but cut', async () => {
+  const huge = firstPage(2, 9000);
+  const { context } = harness({ directory: { transcript: async () => structuredClone(huge) } });
+  const value = output(await tool.execute({ session_id: 'target' }, context));
+  assert.equal(value.rows.length, 1);
+  assert.ok(value.rows[0].text.length <= 6000);
+  const detached = { ...firstPage(2, 100), last_reply: longText('tail', 9000), last_reply_message_id: 'gone' };
+  const kept = output(await tool.execute({ session_id: 'target' }, harness({ directory: { transcript: async () => structuredClone(detached) } }).context));
+  assert.equal(kept.last_reply_message_id, 'gone');
+  assert.ok(kept.last_reply.length <= 6000);
+});
+
+test('a paged read and a short chat are passed through with only the stated budget added', async () => {
+  const paged = { ok: true, session_id: 'target', title: 'A chat', rows: [{ id: 'm1', role: 'user', text: 'hi' }], more_before: false };
+  const { context } = harness({ directory: { transcript: async () => structuredClone(paged) } });
+  assert.deepEqual(output(await tool.execute({ session_id: 'target', before_message_id: 'm9' }, context)), { ...paged, budget_chars: 6000 });
+});
+
+test('a reply longer than its row still comes once more, as its tail', async () => {
+  const page = firstPage(2, 300);
+  const reply = `${page.rows[1].text} and the long ending ${'y'.repeat(4000)} THE-END`;
+  const { context } = harness({ directory: { transcript: async () => ({ ...page, last_reply: reply }) } });
+  const value = output(await tool.execute({ session_id: 'target' }, context));
+  assert.ok(value.last_reply.endsWith('THE-END'), 'the end of the reply is readable');
+  assert.equal(value.last_reply_message_id, 'm1');
 });

@@ -149,6 +149,10 @@ function captureToggleToolDetails(dom, frames) {
     rendererRenderPipelineThreadStateUtils: {},
   };
   context.globalThis = context;
+  // renderer-chat-event-utils.js resolves its split siblings from the same browser-shaped context.
+  for (const sibling of ['renderer-chat-tool-row-toggles.js', 'renderer-chat-shell-subscriptions.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', sibling), 'utf8'), context);
+  }
   const source = fs.readFileSync(path.join(__dirname, '../renderer/chat/renderer-chat-event-utils.js'), 'utf8');
   vm.runInNewContext(source, context, { filename: 'renderer-chat-event-utils.js' });
   const timeline = dom.window.document.getElementById('timeline');

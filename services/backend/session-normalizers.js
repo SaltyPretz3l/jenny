@@ -7,11 +7,12 @@ const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
 } = require('../shell-config-followups-schema');
+const { normalizeDelegateChildren } = require('./delegate-active-turn-children');
 
 const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
   'files', 'web', 'local_browser', 'python', 'terminal', 'git', 'code',
-  'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers',
+  'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers', 'browser_use',
 ]);
 const TOOL_CONNECTION_OVERRIDES_MAX = 64;
 const COMPOSER_DRAFT_CLIP_MARKER = '\n\n[clipped]';
@@ -84,12 +85,14 @@ function buildActiveTurnLifecycleSnapshot(value) {
       ? source.agent_percent
       : source.agentPercent
   );
+  const delegateChildren = normalizeDelegateChildren(source.delegate_children);
   return {
     ...(taskId ? { task_id: taskId } : {}),
     ...(taskType ? { task_type: taskType } : {}),
     ...(agentStage ? { agent_stage: agentStage } : {}),
     ...(agentSummary ? { agent_summary: agentSummary } : {}),
     ...(agentPercent != null ? { agent_percent: agentPercent } : {}),
+    ...(delegateChildren.length ? { delegate_children: delegateChildren } : {}),
   };
 }
 

@@ -44,7 +44,7 @@
   // Ollama treats tags case-insensitively and a bare name as `:latest`, so the
   // loaded model ("gemma3") and its list id ("gemma3:latest") must compare
   // equal — the in-use guard is defeatable otherwise. Mirrors the IPC-handler
-  // guard's canonicalization (ipc-handler-registration.js models.delete).
+  // guard's canonicalization (services/main/ipc-registration/engines-ipc.js models.delete).
   function canonicalOllamaTag(value) {
     var tag = String(value || '').trim().toLowerCase();
     if (!tag) {

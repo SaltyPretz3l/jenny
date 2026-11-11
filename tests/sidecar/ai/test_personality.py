@@ -262,3 +262,13 @@ def test_canonical_personality_text_has_no_runtime_capability_catalog() -> None:
 
     for stale_term in ("read_file", "web_search", "current date", "create_artifact", "provider"):
         assert stale_term not in stock
+
+
+def test_bootstrap_redacts_keyword_values_that_tool_output_keeps() -> None:
+    from sidecar.ai.personality.sanitization import sanitize_bootstrap
+    from sidecar.ai.tools.secret_redaction import redact_obvious_secrets
+
+    text = "Bearer abcdefghi signature=abc"
+    assert redact_obvious_secrets(text) == text
+    assert sanitize_bootstrap(text) == "[REDACTED] [REDACTED]"
+    assert sanitize_bootstrap("token=abc123") == "[REDACTED]"

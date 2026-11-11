@@ -139,9 +139,9 @@ function createTestProgressThrottle(now) {
 }
 
 class BackendEvents {
-  constructor({ backend, bootEpoch, now = Date.now }) {
+  constructor({ backend, bootEpoch, now = Date.now, maxClients }) {
     this.backend = backend;
-    this.events = new EventStream({ bootEpoch, now });
+    this.events = new EventStream({ bootEpoch, now, maxClients });
     this.live = new Map();
     this.active = new Map();
     const throttleTestProgress = createTestProgressThrottle(now);
@@ -205,7 +205,8 @@ class BackendEvents {
   }
 
   snapshot(sessionId) { return structuredClone(this.live.get(sessionId) || null); }
-  publish(type, payload) { this.events.publish(type, payload); }
+  // Options (audience, bucket, ephemeral) and the subscription identity pass straight through.
+  publish(type, payload, options) { this.events.publish(type, payload, options); }
   subscribe(options) { return this.events.subscribe(options); }
   heartbeat() { this.events.heartbeat(); }
   revokeDevice(deviceId) { this.events.revokeDevice(deviceId); }

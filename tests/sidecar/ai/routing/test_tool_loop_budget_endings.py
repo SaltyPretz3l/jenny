@@ -30,10 +30,10 @@ from sidecar.ai.routing.loop_events import (
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.tool_loop_recovery import (
-    _is_tool_call_markup,
     budget_exhausted_wind_down,
     max_iterations_summary,
 )
+from sidecar.ai.routing.tool_loop_wind_down import _is_tool_call_markup
 from sidecar.ai.tools.models import (
     GenerationResult,
     GenerationUsage,
@@ -91,7 +91,7 @@ def test_budget_exhausted_wind_down_sets_resumable_stop(
     reason: str,
 ) -> None:
     monkeypatch.setattr(
-        "sidecar.ai.routing.tool_loop_recovery.wind_down_response",
+        "sidecar.ai.routing.tool_loop_wind_down.wind_down_response",
         lambda _loop, _spec: ("Budget summary.", "model_winddown"),
     )
 
@@ -111,7 +111,7 @@ def _captured_wind_down_note(monkeypatch: pytest.MonkeyPatch, reason: str) -> st
         notes.append(spec.system_message)
         return "Summary.", "model_winddown"
 
-    monkeypatch.setattr("sidecar.ai.routing.tool_loop_recovery.wind_down_response", _capture)
+    monkeypatch.setattr("sidecar.ai.routing.tool_loop_wind_down.wind_down_response", _capture)
     budget_exhausted_wind_down(
         _budget_stop_loop(), GenerationResult(content="", finish_reason="stop"), reason=reason
     )
@@ -154,7 +154,7 @@ def test_max_iterations_summary_sets_resumable_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "sidecar.ai.routing.tool_loop_recovery.wind_down_response",
+        "sidecar.ai.routing.tool_loop_wind_down.wind_down_response",
         lambda _loop, _spec: ("Iteration summary.", "model_winddown"),
     )
 
@@ -195,7 +195,6 @@ def test_tool_cap_markup_final_runs_clean_visible_wind_down(caplog) -> None:
     decision = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=1,
     ).build_chat_decision(
         request_id="req_tool_cap_markup",
@@ -252,7 +251,6 @@ def test_tool_cap_prose_final_is_kept_without_regeneration() -> None:
     decision = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=1,
     ).build_chat_decision(
         request_id="req_tool_cap_prose",
@@ -280,12 +278,12 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
 ) -> None:
     caplog.set_level(logging.INFO, logger="sidecar.ai.routing.tool_loop")
     tracker = BudgetTracker()
+    for flag_target in ("chat_decision", "chat_decision_preflight"):
+        monkeypatch.setattr(
+            f"sidecar.ai.routing.{flag_target}.is_feature_flag_enabled", lambda _flags, _name: True
+        )
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.is_feature_flag_enabled",
-        lambda _flags, _name: True,
-    )
-    monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.apply_budget_check",
+        "sidecar.ai.routing.chat_decision_preflight.apply_budget_check",
         lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
@@ -412,7 +410,6 @@ def test_tool_cap_overflow_then_prose_still_gets_footer() -> None:
     decision = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=1,
     ).build_chat_decision(
         request_id="req_tool_cap_overflow",
@@ -451,7 +448,6 @@ def test_tool_cap_truncated_final_keeps_stream_terminal_contract() -> None:
     decision = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=1,
     ).build_chat_decision(
         request_id="req_tool_cap_truncated",
@@ -477,12 +473,12 @@ def test_context_budget_stop_uses_deterministic_summary_without_regeneration(
     caplog.set_level(logging.INFO, logger="sidecar.ai.routing.tool_loop")
     tracker = BudgetTracker()
     monkeypatch.setattr(tracker, "stop_reason", lambda: "context_budget")
+    for flag_target in ("chat_decision", "chat_decision_preflight"):
+        monkeypatch.setattr(
+            f"sidecar.ai.routing.{flag_target}.is_feature_flag_enabled", lambda _flags, _name: True
+        )
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.is_feature_flag_enabled",
-        lambda _flags, _name: True,
-    )
-    monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.apply_budget_check",
+        "sidecar.ai.routing.chat_decision_preflight.apply_budget_check",
         lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
@@ -511,7 +507,6 @@ def test_context_budget_stop_uses_deterministic_summary_without_regeneration(
     decision = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
         max_tools_per_turn=10,
     ).build_chat_decision(
         request_id="req_context_budget",
@@ -611,7 +606,7 @@ def test_tool_call_markup_detector_flags_real_markup(text: str) -> None:
 @pytest.mark.parametrize("reason", ["tool_cap", "diminishing_returns"])
 def test_budget_exhausted_wind_down_runs_with_thinking_off(monkeypatch, reason) -> None:
     seen: list[object] = []
-    target = "sidecar.ai.routing.tool_loop_recovery.wind_down_response"
+    target = "sidecar.ai.routing.tool_loop_wind_down.wind_down_response"
     monkeypatch.setattr(target, lambda _l, s: (seen.append(s.reasoning_effort), ("S.", "m"))[1])
     stop = GenerationResult(content="", finish_reason="stop")
     budget_exhausted_wind_down(_budget_stop_loop(), stop, reason=reason)

@@ -25,7 +25,7 @@
   min-block-size: 0;
 }
 .changes-wt[hidden] { display: none; }
-.changes-detail-page[data-changes-scope="working_tree"] > .changes-wt { flex: 1 1 auto; }
+.changes-detail-page:is([data-changes-scope="working_tree"], [data-changes-scope="branch"]) > .changes-wt { flex: 1 1 auto; }
 
 /* The owner line takes the same start edge and gutter as the rows below it. */
 #artifactReviewPanel[data-artifact-review-mode="code_review"] > .side-panel-owner-line {
@@ -34,7 +34,7 @@
   scrollbar-gutter: stable;
 }
 
-/* ── Scope row: branch, tools, Working tree / This chat ── */
+/* ── Scope row: branch, Working tree / This chat / Whole branch, then the summary line with the list tools ── */
 .changes-wt-scope { flex: 0 0 auto; }
 .changes-scope {
   display: flex;
@@ -97,7 +97,10 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
+  padding-inline: var(--space-6);
   margin-block-end: var(--space-4);
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 .changes-wt-tools {
   display: inline-flex;
@@ -105,13 +108,19 @@
   margin-block-start: calc(-1 * var(--space-2));
 }
 .changes-wt-summary {
+  display: flex;
   flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 var(--space-4);
   min-inline-size: 0;
   margin: 0;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
+.changes-wt-summary-text { min-inline-size: 0; }
+.changes-wt-summary-counts { flex: none; margin-inline-start: auto; white-space: nowrap; }
 .changes-wt-add { color: var(--widget-tool-success-color); }
 .changes-wt-del { color: var(--widget-tool-error-color); }
 .changes-wt-limit {

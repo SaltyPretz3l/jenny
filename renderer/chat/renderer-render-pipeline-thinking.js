@@ -53,6 +53,7 @@
       chatThreadColumn = null,
       chatSpriteLayer = null,
       chatAssistantSprite = null,
+      jumpToBottomButton = null,
     } = dom;
     const {
       thinkingIndicator = null,
@@ -138,8 +139,19 @@
     }
     const spriteTracker = spriteActivityUtils.createSpriteActivityTracker();
     const spriteMorph = chatAssistantSprite
-      ? spriteMorphUtils.createSpriteMorph(chatAssistantSprite)
+      ? spriteMorphUtils.createSpriteMorph(chatAssistantSprite, { onLoopsReleased: () => pillMirror?.align() })
       : null;
+    const pillMirror = spriteActivityUtils.createSpritePillMirror({
+      button: jumpToBottomButton,
+      railHost: chatAssistantSprite,
+      createMorph: spriteMorphUtils.createSpriteMorph,
+      MutationObserverRef: windowRef.MutationObserver,
+      onShow: () => reconcileLayout(),
+    });
+    // The rail is out of sight, but the turn is not over: the jump control keeps showing it.
+    const RAIL_ONLY_HIDES = new Set(['responsive_hidden', 'missing_target', 'missing_geometry']);
+    const isChatSurfaceLive = () => globalThis.rendererChatSurfaceLiveUtils?.isChatSurfaceLive?.(state)
+      ?? (state?.ui?.activeView === 'chat');
     const {
       createHiddenSpriteState,
       createVisibleSpriteState,
@@ -151,8 +163,11 @@
       normalizeSpritePhase,
       morph: spriteMorph,
       isDisposed: () => disposed,
-      onHidden: () => {
-        spriteTracker.invalidate();
+      onHidden: (reason) => {
+        const railOnly = RAIL_ONLY_HIDES.has(reason);
+        // A turn nobody can see still plays no late done; the jump control counts as seeing it.
+        if (!railOnly || !pillMirror?.isShowing()) spriteTracker.invalidate();
+        if (!railOnly) pillMirror?.reset();
         if (!getActiveThinkingStreamState().activeStreamId) clearLiveReasoningShimmer(); // keep a live row's shimmer
       },
     });
@@ -304,6 +319,7 @@
         return;
       }
       applySpriteViewState(createVisibleSpriteState(targetMessage, targetY, spriteActivity));
+      pillMirror?.setActivity(spriteActivity);
       renderLiveThinkingChip(thinkingState, targetMessage.id);
     }
 
@@ -344,7 +360,8 @@
           || !chatThreadColumn
           || !chatSpriteLayer
           || !chatAssistantSprite
-          || uiState.activeView !== 'chat'
+          || !isChatSurfaceLive()
+          || (uiState.activeView !== 'chat' && !pillMirror?.isShowing()) // the dock's only sprite is the jump control
           || uiState.chatMode !== 'thread'
         ) {
           const offThreadMode = uiState.activeView === 'chat' && uiState.chatMode !== 'thread';
@@ -383,6 +400,33 @@
           || sendPreflightActive
         );
         const preflightWait = sendPreflightActive && !assistantAnchor.hasCurrentTurnAssistant;
+        // A just-ran tool counts for a short window only: look again once it closes,
+        // so a quick tool followed by silence does not keep its form until the next event.
+        const armJustRanCheck = (runningTools) => {
+          if (!runningTools.some((tool) => tool.justRan) || spriteRuntime.justRanTimer) return;
+          spriteRuntime.justRanTimer = windowRef.setTimeout?.(() => {
+            spriteRuntime.justRanTimer = 0;
+            reconcileLayout();
+          }, spriteActivityUtils.JUST_RAN_MS + 20) || 0;
+        };
+        const turnKey = `${sessionId}|${getLatestUserMessageId(messages)}`;
+        const hideRailKeepPill = (reason) => {
+          hideAssistantSprite({ reason });
+          if (!pillMirror?.isShowing()) return;
+          const detached = spriteActivityUtils.deriveDetachedSpriteActivity({
+            tracker: spriteTracker,
+            gatherDeps: { state, runtimeSendController: getRuntimeSendController() },
+            sessionId,
+            messages,
+            assistantAnchor,
+            latestAssistantId: nextTargetId,
+            streamId: thinkingState.activeStreamId,
+            normalizePhase: normalizeSpritePhase,
+            turnKey,
+          });
+          armJustRanCheck(detached.runningTools);
+          pillMirror.setActivity(detached.activity);
+        };
         let targetNode = null;
         if (!preflightWait && assistantTargetMessage) {
           for (const candidate of [assistantTargetMessage, ...assistantAnchor.fallbacks]) {
@@ -416,20 +460,20 @@
           : assistantTargetMessage;
         if (usingThinkingFallback) targetNode = resolveVisibleMessageDomTarget(chatTimeline, resolvedTargetId);
         if (!baseTargetMessage || !targetNode) {
-          hideAssistantSprite({ reason: 'missing_target' });
+          hideRailKeepPill('missing_target');
           return;
         }
 
         const spriteDisplay = windowRef.getComputedStyle?.(chatSpriteLayer)?.display || '';
         if (spriteDisplay === 'none') {
-          hideAssistantSprite({ reason: 'responsive_hidden' });
+          hideRailKeepPill('responsive_hidden');
           return;
         }
 
         const layerRect = chatSpriteLayer.getBoundingClientRect?.();
         const targetRect = targetNode.getBoundingClientRect?.();
         if (!layerRect || !targetRect) {
-          hideAssistantSprite({ reason: 'missing_geometry' });
+          hideRailKeepPill('missing_geometry');
           return;
         }
         let targetYValue = Math.max(targetRect.top - layerRect.top, 0);
@@ -485,16 +529,9 @@
         });
         const { activity: spriteActivity } = spriteTracker.derive(
           spriteInput,
-          { turnKey: `${sessionId}|${getLatestUserMessageId(messages)}`, visible: true },
+          { turnKey, visible: true },
         );
-        // A just-ran tool counts for a short window only: look again once it closes,
-        // so a quick tool followed by silence does not keep its form until the next event.
-        if (spriteInput.runningTools.some((tool) => tool.justRan) && !spriteRuntime.justRanTimer) {
-          spriteRuntime.justRanTimer = windowRef.setTimeout?.(() => {
-            spriteRuntime.justRanTimer = 0;
-            reconcileLayout();
-          }, spriteActivityUtils.JUST_RAN_MS + 20) || 0;
-        }
+        armJustRanCheck(spriteInput.runningTools);
         applyAssistantSprite(targetMessage, targetYValue, thinkingState, spriteActivity);
       };
 
@@ -508,7 +545,7 @@
     // Reconcile from current session data after layout or virtualizer changes;
     // no polling deadline and no stale message snapshot retained by a retry.
     const reconcileLayout = () => {
-      if (!disposed && state?.ui?.activeView === 'chat') updateAssistantSpritePosition();
+      if (!disposed && isChatSurfaceLive()) updateAssistantSpritePosition();
     };
     const resizeObserver = typeof windowRef.ResizeObserver === 'function'
       ? new windowRef.ResizeObserver(reconcileLayout) : null;
@@ -535,6 +572,7 @@
       if (spriteRuntime.justRanTimer) windowRef.clearTimeout?.(spriteRuntime.justRanTimer);
       spriteRuntime.justRanTimer = 0;
       hideAssistantSprite({ clearTarget: true, reason: 'disposed' });
+      pillMirror?.dispose();
       spriteMorph?.dispose();
       disposed = true;
       positionRequestVersion += 1;

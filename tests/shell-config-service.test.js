@@ -538,7 +538,7 @@ test('shell config service migrates chat UI settings into v12 defaults', () => {
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 100, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
     safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
   });
 });
 
@@ -554,7 +554,7 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 135, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
     safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
   });
 
   service.updateChatUiSettings({
@@ -564,14 +564,14 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
     safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
   });
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.deepEqual(reloaded.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
     safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
   });
 });
 
@@ -815,8 +815,13 @@ test('shell config service getCompactionTuning/setCompactionTuning persist, sani
   service.setCompactionTuning({ modelId: 'qwen3:35b', contextLength: 131072 });
   assert.deepEqual(service.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072 });
   assert.equal(reasons.at(-1), 'context_length_tuning_updated');
-  service.setCompactionTuning({ modelId: 'bad-model', contextLength: 12345 });
-  assert.deepEqual(service.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072 });
+  // Any whole number in [2048, 262144] is a custom window; anything else is dropped.
+  service.setCompactionTuning({ modelId: 'custom-model', contextLength: 200000 });
+  assert.deepEqual(service.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072, 'custom-model': 200000 });
+  for (const contextLength of [2047, 262145, 4096.5, '12k']) {
+    service.setCompactionTuning({ modelId: 'bad-model', contextLength });
+  }
+  assert.deepEqual(service.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072, 'custom-model': 200000 });
 
   // A custom prompt persists independently of the per-model ratio map.
   service.setCompactionTuning({ customPrompt: 'Summarize tersely.' });
@@ -830,7 +835,8 @@ test('shell config service getCompactionTuning/setCompactionTuning persist, sani
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.equal(reloaded.getCompactionTuning().customPrompt, 'Summarize tersely.');
-  assert.deepEqual(reloaded.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072 });
+  // A custom window survives a reload (read-time normalization keeps it).
+  assert.deepEqual(reloaded.getCompactionTuning().contextLengthByModel, { 'qwen3:35b': 131072, 'custom-model': 200000 });
 });
 
 test('shell config service migrates v6 tool toggles and feature overrides into the v7 settings layer', () => {

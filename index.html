@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self'; font-src 'self'; frame-src 'self' jenny-artifact:; object-src 'none'; base-uri 'none'; form-action 'self'"
+    content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; connect-src 'self'; font-src 'self'; frame-src 'self' jenny-artifact:; object-src 'none'; base-uri 'none'; form-action 'self'"
   >
   <title>Jenny</title>
   <script src="renderer/shared/startup-audit-renderer-probe.js" data-startup-audit-phase="start"></script>
@@ -16,6 +16,23 @@
   <script src="renderer/shared/session-open-pref-utils.js"></script>
   <script src="renderer/chat/chat-zoom-utils.js"></script>
   <script src="renderer/shared/theme-bootstrap.js"></script>
+  <!-- Only what the boot curtain needs blocks first paint; the app's sheets load after it. -->
+  <link rel="stylesheet" href="styles/foundation.css">
+  <link rel="stylesheet" href="styles/startup-overlay.css">
+</head>
+<body>
+  <!-- UIUX-021: role/aria-live flip to alertdialog (aria-modal="true") only during a fatal
+       failure; window controls stay above this curtain. The status line is its label. -->
+  <div class="startup-overlay" id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlaySublabel" aria-describedby="startupOverlaySecondary">
+    <canvas class="startup-overlay-sky" id="startupOverlaySky" aria-hidden="true"></canvas>
+    <div class="startup-overlay-content">
+      <div class="startup-overlay-wordmark" aria-hidden="true">Jenny</div>
+      <div class="startup-overlay-sublabel" id="startupOverlaySublabel" data-i18n="setup.startup.restoringChats">Restoring your chats</div>
+      <div class="startup-overlay-secondary" id="startupOverlaySecondary"></div>
+      <div class="startup-overlay-actions" id="startupOverlayActions"></div>
+    </div>
+    <script src="renderer/shell/renderer-startup-starfield.js"></script>
+  </div>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="styles/chat-user-questions.css">
   <link rel="stylesheet" href="styles/activity.css">
@@ -33,23 +50,6 @@
   <link rel="stylesheet" href="styles/settings-data-storage.css">
   <!-- xterm.css (PTY terminal): vendored from node_modules under CSP 'self'. -->
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
-</head>
-<body>
-  <!-- UIUX-021: role/aria-live flip to alertdialog/assertive (and
-       aria-modal="true" is set) only while a fatal startup/backend failure
-       is showing; the window controls remain available above this curtain.
-       The status line is the curtain's label. The sky canvas is painted by
-       renderer-startup-starfield.js, which the lifecycle controller mounts. -->
-  <div class="startup-overlay" id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlaySublabel" aria-describedby="startupOverlaySecondary">
-    <canvas class="startup-overlay-sky" id="startupOverlaySky" aria-hidden="true"></canvas>
-    <div class="startup-overlay-content">
-      <div class="startup-overlay-wordmark" aria-hidden="true">Jenny</div>
-      <div class="startup-overlay-sublabel" id="startupOverlaySublabel" data-i18n="setup.startup.restoringChats">Restoring your chats</div>
-      <div class="startup-overlay-secondary" id="startupOverlaySecondary"></div>
-      <div class="startup-overlay-actions" id="startupOverlayActions"></div>
-    </div>
-    <script defer src="renderer/shell/renderer-startup-starfield.js"></script>
-  </div>
 
   <div class="app-shell" id="appShell">
     <header class="titlebar">
@@ -107,7 +107,7 @@
               <input class="inv-text-field-control" id="conversationSearch" type="search" placeholder="Search chats" data-i18n-placeholder="sidebar.searchLabel" autocomplete="off" aria-label="Search chats" data-i18n-aria-label="sidebar.searchLabel">
             </label>
 
-            <div class="chats-project-row" id="chatsProjectRow"></div><div class="chats-scope-row"><div class="chats-scope-slot" id="chatsScopeSlot"></div><div id="chatsSelectionEntry"></div></div>
+            <div class="chats-project-row" id="chatsProjectRow"></div><div class="chats-scope-row"><div class="chats-scope-slot" id="chatsScopeSlot"></div></div>
           </div>
 
           <div class="sidebar-history-content" id="sidebarHistoryContent">
@@ -326,34 +326,20 @@
                 </svg>
                 <span class="sr-only" data-i18n="chat.navigation.jumpTopTitle">Jump to top</span>
               </button>
-              <button
-                class="composer-jump-button"
-                id="jumpToLastPromptButton" data-chat-node="jumpToLastPromptButton"
-                type="button"
-                aria-label="Jump to last user prompt" data-i18n-aria-label="chat.navigation.jumpLastPromptLabel"
-                title="Jump to last prompt" data-i18n-title="chat.navigation.jumpLastPromptTitle"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M3.25 4.75c0-1.1.9-2 2-2h5.5c1.1 0 2 .9 2 2v3.5c0 1.1-.9 2-2 2H7.5L4.5 13.25v-3H5.25c-1.1 0-2-.9-2-2z"></path>
-                  <path d="M6 6.5h4"></path>
-                </svg>
-                <span class="sr-only" data-i18n="chat.navigation.jumpLastPromptTitle">Jump to last prompt</span>
-              </button>
-              <button
-                class="composer-jump-button"
-                id="jumpToBottomButton" data-chat-node="jumpToBottomButton"
-                type="button"
-                aria-label="Jump to bottom of chat" data-i18n-aria-label="chat.navigation.jumpBottomLabel"
-                title="Jump to bottom" data-i18n-title="chat.navigation.jumpBottomTitle"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M3 12.75h10"></path>
-                  <path d="M8 3.25v8"></path>
-                  <path d="M4.75 8 8 11.25 11.25 8"></path>
-                </svg>
-                <span class="sr-only" data-i18n="chat.navigation.jumpBottomTitle">Jump to bottom</span>
-              </button>
             </div>
+            <button
+              class="chat-jump-latest"
+              id="jumpToBottomButton" data-chat-node="jumpToBottomButton"
+              type="button"
+              data-visible="false"
+              inert
+              aria-label="Jump to bottom of chat" data-i18n-aria-label="chat.navigation.jumpBottomLabel" data-tooltip=""
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 3.25v9.25"></path>
+                <path d="M4 8.75 8 12.75l4-4"></path>
+              </svg>
+            </button>
           </div>
 
           <div class="chat-timeline-utility-cluster" id="chatTimelineUtilityCluster" data-chat-node="chatTimelineUtilityCluster" aria-label="Conversation utilities" data-i18n-aria-label="chat.utilities.label">
@@ -372,7 +358,6 @@
                 <path d="m7 8.5-1.5 1.5L7 11.5M9 8.5l1.5 1.5L9 11.5"></path>
               </svg>
             </button>
-            <div class="composer-wayfinder-host chat-timeline-wayfinder-host" id="composerWayfinderHost" data-chat-node="composerWayfinderHost" hidden></div>
           </div>
 
           <div class="composer-wrap" id="composerWrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
@@ -483,27 +468,7 @@
           </aside>
 
           <aside class="chat-context-panel" id="chatContextPanel" data-chat-node="chatContextPanel">
-            <div class="context-panel-scroll">
-              <section class="context-section" id="contextArtifactSection">
-                <div class="context-section-header">
-                  <span class="context-section-rule" aria-hidden="true"></span>
-                  <button class="context-section-action context-panel-collapse" id="contextPanelToggle"
-                          type="button" aria-label="Hide context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
-                    <span class="context-section-action-text" data-i18n="chat.context.hideShort">Hide</span><svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
-                  </button>
-                </div>
-              </section>
-              <section class="context-section logs-collapsed" id="contextLogSection">
-                <button class="context-section-header context-section-disclosure" id="contextLogDisclosure"
-                        type="button" aria-expanded="false" aria-controls="contextSessionLogs">
-                  <svg class="context-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
-                  <span class="context-section-label" data-i18n="activity.diagnosticLog">Diagnostic log</span>
-                  <span class="orbit-section-count" id="contextLogCount">0</span>
-                  <span class="context-section-rule" aria-hidden="true"></span>
-                </button>
-                <div class="context-log-feed" id="contextSessionLogs" hidden></div>
-              </section>
-            </div>
+            <div class="context-panel-scroll"></div>
           </aside>
           <template id="chatPaneTemplate">
             <div class="chat-pane">
@@ -539,7 +504,6 @@
                 <div class="composer-jump-tools chat-jump-cluster hidden" aria-label="Thread navigation" data-i18n-aria-label="chat.navigation.label" aria-hidden="true"></div>
               </div>
               <div class="chat-timeline-utility-cluster" data-chat-node="chatTimelineUtilityCluster" aria-label="Conversation utilities" data-i18n-aria-label="chat.utilities.label">
-                <div class="composer-wayfinder-host chat-timeline-wayfinder-host" data-chat-node="composerWayfinderHost" hidden></div>
               </div>
               <div class="composer-wrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
                 <div class="attachment-preview-pill hidden" data-chat-node="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
@@ -1093,8 +1057,8 @@
                   <div class="settings-note" id="usageActionStatus" role="status" aria-live="polite"></div>
                 </div>
               </section>
-
               <section class="settings-card" data-settings-section="runtime" id="runtimeSettingsSection"><div id="sessionRuntimeSettingsMount"></div></section>
+              <section class="settings-card team-set" data-settings-section="team" data-feature-flag="team" id="teamSettingsSection" hidden><div class="settings-card-header"><h3 data-i18n="settings.team.heading">Team</h3></div><p class="settings-copy" data-i18n="settings.team.lede">Work with people you trust: host a team on this PC or join someone else’s. Your own chats stay on this PC either way.</p><div id="teamSettingsBody"></div></section>
               <section class="settings-card" data-settings-section="advanced" id="advancedSettingsSection">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.advanced.heading">Limits &amp; budgets</h3>
@@ -1235,6 +1199,8 @@
   <script defer src="renderer/features/interactive-mode-utils.js"></script>
   <script defer src="renderer/features/personality-ui-utils.js"></script>
   <script defer src="renderer/chat/tool-approval-facts.js"></script>
+  <script defer src="renderer/chat/tool-call-status.js"></script>
+  <script defer src="renderer/chat/tool-run-utils.js"></script>
   <script defer src="renderer/chat/tool-call-utils.js"></script>
   <script defer src="renderer/inventory/badge.js"></script>
   <script defer src="renderer/inventory/spinner.js"></script>
@@ -1259,7 +1225,6 @@
   <!-- F4/F5/F6: multi-select primitives -->
   <script defer src="renderer/inventory/selection-handle.js"></script>
   <script defer src="renderer/inventory/selection-action-bar.js"></script>
-  <script defer src="renderer/inventory/chat-wayfinder-affordance.js"></script>
   <script defer src="renderer/inventory/action-button.js"></script>
   <!-- SP-19: persistent durability warning/actions consume badge + action-button. -->
   <script defer src="renderer/chat/renderer-unsaved-reply-actions.js"></script>
@@ -1310,6 +1275,9 @@
   <script defer src="renderer/inventory/image-edit-draft.js"></script>
   <script defer src="renderer/features/renderer-image-edit-draft.js"></script>
   <script defer src="renderer/chat/renderer-artifact-card-utils.js"></script>
+  <script defer src="renderer/chat/renderer-approval-text.js"></script>
+  <script defer src="renderer/chat/renderer-approval-receipts.js"></script>
+  <script defer src="renderer/chat/renderer-approval-block-cards.js"></script>
   <script defer src="renderer/chat/renderer-approval-block.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-block.js"></script>
   <script defer src="renderer/chat/renderer-tool-marker-utils.js"></script>
@@ -1360,6 +1328,7 @@
   <script defer src="renderer/chat/renderer-transcript-agent-progress.js"></script>
   <script defer src="renderer/chat/renderer-transcript-interactions.js"></script>
   <script defer src="renderer/chat/renderer-transcript-tool-result-utils.js"></script>
+  <script defer src="renderer/chat/renderer-transcript-tool-call-view-model.js"></script>
   <script defer src="renderer/chat/renderer-transcript-tool-calls.js"></script>
   <script defer src="renderer/chat/renderer-transcript-actions.js"></script>
   <script defer src="renderer/chat/renderer-transcript-utils.js"></script>
@@ -1396,6 +1365,9 @@
 <script defer src="renderer/chat/renderer-stream-waiting-line.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-typed.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-row.js"></script>
+<script defer src="renderer/chat/renderer-follow-argument-decoder.js"></script>
+<script defer src="renderer/chat/renderer-stream-activity-tail.js"></script>
+<script defer src="renderer/chat/renderer-follow-store.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-tools.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-terminal-merge.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-terminal-postwork-utils.js"></script>
@@ -1406,6 +1378,8 @@
 <script defer src="renderer/chat/renderer-stream-pending-commit-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-render-frame.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-live-events.js"></script>
+<script defer src="renderer/chat/renderer-stream-handler-deps.js"></script>
+<script defer src="renderer/chat/renderer-stream-handler-wiring.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler.js"></script>
 <script defer src="renderer/chat/renderer-navigation-intent.js"></script>
 <script defer src="renderer/chat/renderer-send-outbox.js"></script>
@@ -1426,6 +1400,8 @@
 <script defer src="renderer/chat/renderer-stuck-send.js"></script>
 <script defer src="renderer/chat/renderer-durable-send-pause.js"></script>
 <script defer src="renderer/chat/renderer-durable-send.js"></script>
+<script defer src="renderer/chat/renderer-send-assembly.js"></script>
+<script defer src="renderer/chat/renderer-send-retry-stop.js"></script>
 <script defer src="renderer/chat/renderer-send-utils.js"></script>
   <script defer src="renderer/features/renderer-interactive-panel-utils.js"></script>
   <script defer src="renderer/features/renderer-plan-proposal-card.js"></script>
@@ -1493,6 +1469,9 @@
 <script defer src="renderer/features/renderer-pretext-utils.js"></script>
 <script defer src="renderer/shell/renderer-settings-field-descriptors.js"></script>
 <script defer src="renderer/shell/renderer-settings-field-copy.js"></script>
+<script defer src="renderer/shell/renderer-settings-web-search.js"></script>
+<script defer src="renderer/shell/renderer-settings-tool-config.js"></script>
+<script defer src="renderer/shell/renderer-settings-external-sync.js"></script>
 <script defer src="renderer/shell/renderer-settings-support.js"></script>
 <script defer src="renderer/shell/renderer-settings-foundation.js"></script>
 <script defer src="renderer/shell/renderer-phase-percentiles-utils.js"></script>
@@ -1534,6 +1513,7 @@
 <script defer src="renderer/shell/renderer-settings-model-library-section.js"></script>
 <script defer src="renderer/shell/renderer-plugin-session-controller.js"></script>
 <script defer src="renderer/inventory/drawer.js"></script>
+<script defer src="renderer/shell/renderer-model-tuning-rows.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-engine-utils.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-ninfer.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-drawer.js"></script>
@@ -1562,6 +1542,7 @@
   <script defer src="renderer/shell/renderer-chats-panel-scroll.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-model.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-projects.js"></script>
+  <script defer src="renderer/shell/renderer-app-sound.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel.js"></script>
   <script defer src="renderer/shell/renderer-sidebar-utils.js"></script>
   <script defer src="renderer/shell/renderer-view-panel-registry.js"></script>
@@ -1586,7 +1567,6 @@
   <script defer src="renderer/shell/renderer-viewport-thinking-panel-utils.js"></script>
   <script defer src="renderer/shell/renderer-viewport-tail-cushion-utils.js"></script>
   <script defer src="renderer/shell/renderer-viewport-utils.js"></script>
-  <script defer src="renderer/chat/renderer-pin-to-top-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-wayfinder-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-scroll-coordinator.js"></script>
   <script defer src="renderer/features/renderer-attachment-queue-utils.js"></script>
@@ -1605,6 +1585,8 @@
   <script defer src="renderer/shell/renderer-home-view-hydrate.js"></script>
   <script defer src="renderer/shell/renderer-lifecycle-format-utils.js"></script>
   <script defer src="renderer/shell/renderer-snapshot-refresh.js"></script>
+  <script defer src="renderer/shell/renderer-lifecycle-navigation.js"></script>
+  <script defer src="renderer/shell/renderer-lifecycle-session-actions.js"></script>
   <script defer src="renderer/shell/renderer-lifecycle-utils.js"></script>
   <script defer src="renderer/shell/renderer-lifecycle-progress-utils.js"></script>
   <script defer src="renderer/shell/renderer-header-utils.js"></script>
@@ -1644,6 +1626,9 @@
   <script defer src="renderer/chat/renderer-turn-shell.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-model-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-elapsed-clock.js"></script>
+  <script defer src="renderer/chat/renderer-tool-row-expansion-state.js"></script>
+  <script defer src="renderer/chat/renderer-turn-row-mermaid-fallback.js"></script>
+  <script defer src="renderer/chat/renderer-turn-row-approval-gap-markup.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-tool-render-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-list-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-bubble-utils.js"></script>
@@ -1664,6 +1649,8 @@
   <script defer src="renderer/chat/renderer-render-pipeline-thinking.js"></script>
   <script defer src="renderer/chat/renderer-composer-vision-gate.js"></script>
   <script defer src="renderer/chat/renderer-api-provider-notice.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-chrome-composer.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-chrome-hero.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-chrome.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thread-state.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-surface-state.js"></script>
@@ -1677,6 +1664,7 @@
   <script defer src="renderer/chat/renderer-render-pipeline-shell-resolvers.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-chrome-delegates.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-article-prediction.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-article-legacy.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-article-markup.js"></script>
   <script defer src="renderer/chat/renderer-chat-timeline-orientation-utils.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thread-dom.js"></script>
@@ -1688,7 +1676,12 @@
   <script defer src="renderer/chat/renderer-render-pipeline-render-ladder.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-stream-reveal-callbacks.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-render-signatures.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-render-prelude.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-streaming-article.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-message-renderer.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-pane-runtime.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-projection-stack.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-virtualizer.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-status-controller.js"></script>
   <script defer src="renderer/features/renderer-memory-shared-utils.js"></script>
@@ -1701,6 +1694,8 @@
   <script defer src="renderer/features/renderer-memory-utils.js"></script>
 <!-- monaco-editor/min/vs/loader.js (+ editor.main) is lazy-loaded on first artifact-editor or Workspace-editor use via renderer-monaco-editor-utils.js (ensureMonacoLoader). -->
 <script defer src="renderer/features/renderer-monaco-editor-utils.js"></script>
+  <script defer src="renderer/features/renderer-ide-state-normalizers.js"></script>
+  <script defer src="renderer/features/renderer-ide-state-layout.js"></script>
   <script defer src="renderer/features/renderer-ide-state.js"></script>
   <!-- The Workspace IDE group (including the ANSI stripper and terminal-stream
        painter) loads on first use, in the order of this manifest. -->
@@ -1773,7 +1768,6 @@
   <script defer src="renderer/inventory/activity-list.js"></script>
   <script defer src="renderer/features/renderer-activity-view.js"></script>
   <script defer src="renderer/features/renderer-chat-activity.js"></script>
-  <script defer src="renderer/features/renderer-context-panel-utils.js"></script>
   <!-- Leaf Enter/IME keydown guard: must precede renderer-user-questions-actions.js and renderer-chat-event-utils.js, which both consume it. -->
   <script defer src="renderer/chat/renderer-enter-keydown-utils.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-actions.js"></script>
@@ -1783,7 +1777,12 @@
   <script defer src="renderer/chat/renderer-session-rail-render.js"></script>
   <script defer src="renderer/chat/renderer-session-rail-jobs.js"></script>
   <script defer src="renderer/chat/renderer-session-rail-performance.js"></script>
+  <script defer src="renderer/chat/renderer-session-bar.js"></script>
+  <script defer src="renderer/chat/renderer-session-rail-motion.js"></script>
   <script defer src="renderer/chat/renderer-session-rail.js"></script>
+  <script defer src="renderer/chat/renderer-chat-tool-row-toggles.js"></script>
+  <script defer src="renderer/chat/renderer-chat-approval-card-bindings.js"></script>
+  <script defer src="renderer/chat/renderer-chat-message-action-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-transcript-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-settings-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-interactive-bindings.js"></script>
@@ -1802,6 +1801,7 @@
   <script defer src="renderer/chat/renderer-plan-mode-shortcut.js"></script>
   <!-- Ctrl-gated non-passive wheel zoom listener: must precede renderer-chat-event-utils.js, which consumes it. -->
   <script defer src="renderer/chat/renderer-chat-ctrl-wheel-gate.js"></script>
+  <script defer src="renderer/chat/renderer-chat-shell-subscriptions.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-utils.js"></script>
   <!-- Settings persistence adapters (read->normalize->write->default->redact->rollback contract), shared by Quick Settings. -->
   <script defer src="renderer/shell/renderer-settings-persistence-adapters.js"></script>
@@ -1817,8 +1817,13 @@
   <script defer src="renderer/shell/renderer-workspace-chrome-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-tab-drag-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-session-utils.js"></script>
+  <script defer src="renderer/shell/renderer-shell-artifact-prefs.js"></script>
+  <script defer src="renderer/shell/renderer-shell-side-panel.js"></script>
+  <script defer src="renderer/shell/renderer-shell-artifact-rails.js"></script>
   <script defer src="renderer/shell/renderer-shell-artifact-bridge.js"></script>
   <script defer src="renderer/shell/renderer-new-chat-entry.js"></script>
+  <script defer src="renderer/shell/renderer-shell-context-ring.js"></script>
+  <script defer src="renderer/shell/renderer-shell-recovery-actions.js"></script>
   <script defer src="renderer/shell/renderer-shell-runtime-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-state-runtime-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-root-transition.js"></script>
@@ -1864,11 +1869,21 @@
   <script defer src="renderer/chat/renderer-pane-composer-rail.js"></script>
   <script defer src="renderer/chat/renderer-side-panel-owner.js"></script>
   <script defer src="renderer/chat/renderer-composer-toolbar-fit.js"></script>
+  <script defer src="renderer/app/renderer-app-boot-preferences-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-shell-services-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-notices-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-navigation-composition.js"></script>
   <script defer src="renderer/app/renderer-app-lifecycle-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-settings-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-chat-shell-composition.js"></script>
   <script defer src="renderer/app/renderer-app-controller-composition.js"></script>
   <script defer src="renderer/app/renderer-pane-drag-controller.js"></script>
   <script defer src="renderer/app/renderer-app-pane-chrome.js"></script>
+  <script defer src="renderer/app/renderer-app-pane-stack.js"></script>
+  <script defer src="renderer/app/renderer-app-pane-placement.js"></script>
+  <script defer src="renderer/app/renderer-app-pane-kickers.js"></script>
   <script defer src="renderer/app/renderer-app-pane-composition.js"></script>
+  <script defer src="renderer/app/renderer-app-split-view-composition.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-mcp.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-display-media.js"></script>
   <script defer src="renderer/app/renderer-app-image-viewer-binding.js"></script>
@@ -1876,6 +1891,7 @@
   <script defer src="renderer/app/renderer-app-shell-bindings-quick-settings.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-controllers.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings.js"></script>
+  <script defer src="renderer/app/renderer-app-shell-bindings-composition.js"></script>
   <script defer src="renderer/chat/renderer-pane-runtime.js"></script>
   <script defer src="renderer/app.js"></script>
   <script defer src="renderer/shared/startup-audit-renderer-probe.js" data-startup-audit-phase="scripts-parsed"></script>

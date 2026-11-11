@@ -17,127 +17,7 @@ const {
   createViewportTailCushion,
 } = require('../renderer/shell/renderer-viewport-tail-cushion-utils.js');
 const { createViewportSchedulingUtils } = require('../renderer/shell/renderer-viewport-scheduling-utils.js');
-
-// A scroll container with browser clamping: scrollHeight is the fixed chrome
-// (thread offset + composer padding) plus the timeline plus the sentinel's
-// cushion, and scrollTop never exceeds scrollHeight - clientHeight.
-function createScene(options = {}) {
-  const chromePx = options.chromePx ?? 300;
-  const scene = {
-    makeRow(spec) {
-      const row = { ...spec };
-      row.getBoundingClientRect = () => ({ top: 50 + scene.tailOffset + row.offset, height: row.height });
-      return row;
-    },
-    timelineHeight: options.timelineHeight ?? 3000,
-    tailOffset: options.tailOffset ?? 2000,
-    cushion: 0,
-    clientHeight: options.clientHeight ?? 900,
-    scrollTopValue: 0,
-    following: true,
-    released: false,
-    streaming: true,
-    sessionId: 'session-a',
-    reducedMotion: false,
-    clock: 1000,
-    frames: [],
-    writes: [],
-    scrollListeners: [],
-    observerCallback: null,
-  };
-  const sentinel = {
-    style: {
-      setProperty(name, value) {
-        assert.equal(name, TAIL_CUSHION_PROPERTY);
-        scene.cushion = Number.parseFloat(value);
-      },
-      removeProperty(name) {
-        assert.equal(name, TAIL_CUSHION_PROPERTY);
-        scene.cushion = 0;
-      },
-    },
-  };
-  // options.answerRow: the turn holds rows, the last an answer row
-  // scene.answerOffset below the turn's top.
-  scene.answerOffset = options.answerOffset ?? 400;
-  const answerRow = {
-    getBoundingClientRect: () => ({ top: 50 + scene.tailOffset + scene.answerOffset, height: 120 }),
-  };
-  // options.rows: the turn's rows as { offset, height } below the turn's top
-  // (height 0 = hidden); tests edit scene.rows to model a frame's changes.
-  scene.rows = (options.rows || []).map((row) => scene.makeRow(row));
-  const tail = {
-    classList: { contains: () => false },
-    previousElementSibling: null,
-    getBoundingClientRect: () => ({ top: 50 + scene.tailOffset }),
-    querySelectorAll: (selector) => {
-      if (selector !== '.turn-row-list > .chat-row') return [];
-      if (options.rows) return scene.rows;
-      return options.answerRow ? [answerRow] : [];
-    },
-    contains: (node) => node === tail || scene.rows.includes(node) || node === answerRow,
-  };
-  scene.tail = tail;
-  const chatTimeline = {
-    lastElementChild: tail,
-    getBoundingClientRect: () => ({ top: 50, height: scene.timelineHeight }),
-  };
-  const maxScrollTop = () => Math.max(0, chromePx + scene.timelineHeight + scene.cushion - scene.clientHeight);
-  const chatThreadScroll = {
-    get scrollTop() { return scene.scrollTopValue; },
-    set scrollTop(value) { scene.scrollTopValue = Math.max(0, Math.min(Number(value) || 0, maxScrollTop())); },
-    get scrollHeight() { return chromePx + scene.timelineHeight + scene.cushion; },
-    get clientHeight() { return scene.clientHeight; },
-    querySelector: (selector) => (selector === '.chat-thread-scroll-sentinel' ? sentinel : null),
-    addEventListener: (name, listener) => { if (name === 'scroll') scene.scrollListeners.push(listener); },
-    removeEventListener: () => {},
-  };
-  class FakeResizeObserver {
-    constructor(callback) { scene.observerCallback = callback; }
-    observe() {}
-    disconnect() { scene.observerCallback = null; }
-  }
-  scene.chatThreadScroll = chatThreadScroll;
-  scene.chatTimeline = chatTimeline;
-  scene.maxScrollTop = maxScrollTop;
-  scene.pinToBottom = () => { chatThreadScroll.scrollTop = maxScrollTop(); };
-  // Layout after a height change: the browser clamps, then the observer runs
-  // before paint.
-  scene.resizeTimeline = (deltaPx, { aboveTail = 0 } = {}) => {
-    scene.timelineHeight += deltaPx;
-    scene.tailOffset += aboveTail;
-    chatThreadScroll.scrollTop = scene.scrollTopValue;
-    scene.observerCallback?.([]);
-  };
-  scene.scroll = (top) => {
-    chatThreadScroll.scrollTop = top;
-    scene.scrollListeners.forEach((listener) => listener());
-  };
-  scene.runFrames = (count, stepMs = 16) => {
-    for (let index = 0; index < count && scene.frames.length; index += 1) {
-      scene.clock += stepMs;
-      const callback = scene.frames.shift();
-      callback(scene.clock);
-    }
-  };
-  scene.cushionController = createViewportTailCushion({
-    dom: { chatThreadScroll, chatTimeline },
-    followState: { get: () => scene.following },
-    getSessionId: () => scene.sessionId,
-    isStreaming: () => scene.streaming,
-    isReaderReleaseHeld: () => scene.released,
-    getComposerSafeOffset: () => options.safeOffset ?? 200,
-    noteProgrammaticWrite: (reason) => scene.writes.push(reason),
-    reducedMotionQuery: { get matches() { return scene.reducedMotion; } },
-    requestFrame: (callback) => { scene.frames.push(callback); return scene.frames.length; },
-    cancelFrame: () => { scene.frames.length = 0; },
-    now: () => scene.clock,
-    ResizeObserverRef: FakeResizeObserver,
-  });
-  scene.pinToBottom();
-  assert.equal(scene.cushionController.attach(), true);
-  return scene;
-}
+const { createScene } = require('./helpers/renderer-viewport-tail-cushion-scene.js');
 
 test('a tail shrink in a followed live reply keeps the view and becomes blank room', () => {
   const scene = createScene();
@@ -274,66 +154,6 @@ test('the room is dropped at once on a session switch and before a forced bottom
   assert.equal(scene.cushion, 150);
   scene.cushionController.drop('force_bottom');
   assert.equal(scene.cushion, 0);
-});
-
-test('leftover room glides away when the reply ends', () => {
-  const scene = createScene();
-  scene.resizeTimeline(-200);
-  scene.streaming = false;
-
-  scene.cushionController.noteViewportSync();
-  assert.equal(scene.cushion, 200, 'the glide starts on the next frame');
-
-  scene.runFrames(1, 48);
-  const midway = scene.cushion;
-  assert.ok(midway > 0 && midway < 200, `glide is partway (${midway}px)`);
-
-  scene.runFrames(20, 16);
-  assert.equal(scene.cushion, 0);
-  // Ease-out: the last sub-pixel stretch rounds to zero a little early.
-  assert.ok(scene.clock - 1000 >= TAIL_CUSHION_GLIDE_MS * 0.75, `glide lasted ${scene.clock - 1000}ms`);
-  assert.equal(scene.frames.length, 0, 'the glide stops its frame loop');
-});
-
-test('a shrink in the frame after streaming ends still becomes room, then glides away', () => {
-  // Gate F29: the Answers view hides the settled turn's reasoning lines in the
-  // terminal render, after the stream handler has flipped streaming off.
-  const scene = createScene({ answerRow: true });
-  scene.resizeTimeline(0);
-  scene.streaming = false;
-  scene.cushionController.noteViewportSync();
-  scene.clock += 16;
-  const topBefore = scene.chatThreadScroll.scrollTop;
-
-  scene.resizeTimeline(-96);
-
-  assert.equal(scene.cushion, 96, 'the hidden lines became room');
-  assert.equal(scene.chatThreadScroll.scrollTop, topBefore, 'nothing above the tail moved');
-  assert.equal(scene.frames.length, 1, 'the room is retired on the next frame');
-  scene.runFrames(1, 16);
-  assert.ok(scene.frames.length === 1, 'the glide took over');
-  scene.runFrames(30, 16);
-  assert.equal(scene.cushion, 0);
-
-  // Well after the reply ended the cushion is disarmed as before.
-  const late = createScene({ answerRow: true });
-  late.resizeTimeline(0);
-  late.streaming = false;
-  late.clock += 1000;
-  late.resizeTimeline(-96);
-  assert.equal(late.cushion, 0);
-});
-
-test('leftover room closes instantly under reduced motion', () => {
-  const scene = createScene();
-  scene.resizeTimeline(-200);
-  scene.reducedMotion = true;
-  scene.streaming = false;
-
-  scene.cushionController.noteViewportSync();
-
-  assert.equal(scene.cushion, 0);
-  assert.equal(scene.frames.length, 0);
 });
 
 test('a reader who scrolls away keeps the room until it is off-screen', () => {
@@ -504,4 +324,62 @@ test('a swap that leaves no remembered row is skipped rather than guessed at', (
   scene.resizeTimeline(-74);
 
   assert.equal(scene.cushion, 0);
+});
+
+// Row 131 S0b: a drop names its cause on the marker so a snap in the log is
+// attributable to the call site that removed the room.
+test('a drop that removes room names its cause on the programmatic marker', () => {
+  for (const reason of ['session', 'offscreen', 'force_bottom', 'resize', 'reply_end']) {
+    const scene = createScene();
+    scene.resizeTimeline(-200);
+    scene.writes.length = 0;
+    scene.cushionController.drop(reason);
+    assert.equal(scene.cushion, 0);
+    assert.deepEqual(scene.writes, [`tail_cushion:${reason}`]);
+  }
+});
+
+test('an unknown or missing drop reason stays plain tail_cushion', () => {
+  for (const reason of ['bogus', '', undefined, 'tail_cushion:reply_end']) {
+    const scene = createScene();
+    scene.resizeTimeline(-200);
+    scene.writes.length = 0;
+    scene.cushionController.drop(reason);
+    assert.deepEqual(scene.writes, ['tail_cushion'], `reason ${String(reason)}`);
+  }
+});
+
+test('a drop with no room to remove writes nothing', () => {
+  const scene = createScene();
+  scene.writes.length = 0;
+  scene.cushionController.drop('force_bottom');
+  assert.deepEqual(scene.writes, []);
+});
+
+test('a glide that ends reports the reason settle was called with', () => {
+  const scene = createScene();
+  scene.resizeTimeline(-200);
+  scene.streaming = false;
+  scene.cushionController.noteViewportSync();
+  scene.writes.length = 0;
+  scene.scroll(scene.chatThreadScroll.scrollTop - 400);
+  assert.equal(scene.cushion, 0);
+  assert.deepEqual(scene.writes, ['tail_cushion:offscreen']);
+
+  const resized = createScene();
+  resized.resizeTimeline(-200);
+  resized.clientHeight = 1100;
+  resized.cushionController.noteViewportSync();
+  assert.ok(resized.frames.length > 0, 'a visible room glides away');
+  resized.writes.length = 0;
+  resized.runFrames(40, 16);
+  assert.equal(resized.cushion, 0);
+  assert.ok(resized.writes.every((reason) => reason === 'tail_cushion:resize'), resized.writes.join(','));
+});
+
+test('the scroll-keeping write in a shrink frame stays plain tail_cushion', () => {
+  const scene = createScene();
+  scene.resizeTimeline(-217);
+  assert.equal(scene.cushion, 217);
+  assert.deepEqual(scene.writes, ['tail_cushion']);
 });

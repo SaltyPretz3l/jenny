@@ -34,9 +34,12 @@
       ? options.onTreeExternalChanges
       : noop;
     const onExternalDelete = typeof options.onExternalDelete === 'function' ? options.onExternalDelete : noop;
+    const runWithoutStageReset = typeof options.runWithoutStageReset === 'function' ? options.runWithoutStageReset : (fn) => fn();
     const onExternalPreviewChange = typeof options.onExternalPreviewChange === 'function'
       ? options.onExternalPreviewChange
       : noop;
+    const onExternalDocumentReloaded = typeof options.onExternalDocumentReloaded === 'function' ? options.onExternalDocumentReloaded : noop;
+    const onWatchStateChange = typeof options.onWatchStateChange === 'function' ? options.onWatchStateChange : noop;
     // WIDE-028 retry knobs: injectable for deterministic tests; production
     // defaults give ~1s/2s/4s/8s/16s before the explicit degraded state.
     const setTimeoutImpl = typeof options.setTimeoutImpl === 'function' ? options.setTimeoutImpl : setTimeout;
@@ -54,9 +57,17 @@
     let retryTimer = null;
     let retryAttempt = 0;
     let degraded = false;
+    // True only while the native watcher is confirmed live (drives the Preview's Live cue).
+    let watching = false;
     // IDE-019: per-path reconcile slots. A path with an entry has a reconcile in
     // flight; the value is the newest change that arrived meanwhile (or null).
     const reconcileSlots = new Map();
+
+    function setWatching(next) {
+      if (watching === next) return;
+      watching = next;
+      onWatchStateChange();
+    }
 
     // The open-document key for a watcher change (normalized, then resolved
     // through the file operations' path identity when available).
@@ -126,10 +137,14 @@
           }
         }
         if (getIde().activeTabPath === path) {
-          editorHost.activateDocument(path);
+          // A disk refresh is not a user activation: Preview stays on stage.
+          await runWithoutStageReset(() => editorHost.activateDocument(path));
         }
         ideStateUtils.setTabStale?.(ide, path, false);
         renderTabs();
+        // The editor's disk reload is muted, so tell the Preview directly.
+        const reloadedKind = editorHost.getDocumentKind(path);
+        if (reloadedKind !== 'image' && reloadedKind !== 'document') onExternalDocumentReloaded(path);
       } catch (error) {
         appendClientLog('WARN', 'ide.external_reload_failed', {
           message: String(error?.message || error || ''),
@@ -255,6 +270,7 @@
         retryAttempt = 0;
         degraded = false;
         watcherActive = true;
+        setWatching(true);
         return;
       }
       const reason = String(payload?.reason || '');
@@ -264,6 +280,7 @@
         // reset the latch so a later activation can re-arm — no auto-retry.
         if (reason !== 'restarting') {
           watcherActive = false;
+          setWatching(false);
         }
         return;
       }
@@ -271,6 +288,7 @@
         // The native watcher died (WIDE-028's silent-stall defect): reset the
         // latch so restart is possible, then retry with bounded backoff.
         watcherActive = false;
+        setWatching(false);
         appendClientLog('WARN', 'ide.watch_lifecycle_degraded', { reason });
         scheduleRetry(reason, token);
       }
@@ -338,6 +356,7 @@
       }
       unsubscribeWatch = null;
       unsubscribeLifecycle = null;
+      setWatching(false);
       if (!watcherActive) {
         return;
       }
@@ -348,7 +367,7 @@
       }
     }
 
-    return { start, stop };
+    return { isWatching: () => watching, start, stop };
   }
 
   return { createIdeWatchController };

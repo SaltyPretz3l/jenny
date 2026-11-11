@@ -38,6 +38,7 @@ case "$RESULT" in
       remove_profile_child "background-memory"
       remove_profile_child "blob_storage"
       remove_profile_child "Cache"
+      remove_profile_child "change-pictures"
       remove_profile_child "Code Cache"
       remove_profile_child "compile-cache"
       remove_profile_child "Cookies"

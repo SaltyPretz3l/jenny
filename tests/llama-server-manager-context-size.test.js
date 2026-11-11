@@ -35,13 +35,20 @@ function makeSettings(profile = PROFILE) {
   };
 }
 
-function makeHarness({ profile = PROFILE, shellState = {}, getState = null, reused = false } = {}) {
+function makeHarness({ profile = PROFILE, shellState = {}, getState = null, reused = false, memoryPlan = null } = {}) {
+  const memoryCalls = [];
   const launches = [];
+  const logs = [];
   const stops = [];
   let nextPid = 100;
   const lifecycle = {
     async startLlamaServer(options) {
       launches.push(options);
+      if (lifecycle.failNext) {
+        const error = lifecycle.failNext;
+        lifecycle.failNext = null;
+        throw error;
+      }
       const pid = nextPid++;
       const handle = {
         pid,
@@ -62,6 +69,7 @@ function makeHarness({ profile = PROFILE, shellState = {}, getState = null, reus
     resolveGgufPath: () => ({ path: '', projectorPath: '' }),
     resolveProjectorPath: () => '',
     lastHandle: null,
+    failNext: null,
   };
   const shellConfigService = {
     getLocalEngines: () => ({ openaiCompatible: {} }),
@@ -78,8 +86,13 @@ function makeHarness({ profile = PROFILE, shellState = {}, getState = null, reus
       mode: 'off', reason: 'flag_off', extraArgs: [], drafter: '', vramHeadroomMb: 0,
     }),
     buildFeatureFlagsImpl: () => ({ llama_server_acceleration: false }),
+    planLaunchMemoryImpl: async (options) => {
+      memoryCalls.push(options);
+      return memoryPlan ? memoryPlan(options) : { contextSize: options.requestedContext, extraArgs: [], reason: 'fit_tool_missing' };
+    },
+    log: (level, event, payload) => logs.push({ level, event, payload }),
   });
-  return { manager, launches, stops, lifecycle };
+  return { manager, launches, stops, lifecycle, memoryCalls, logs };
 }
 
 test('normalizeSpec keeps only an in-range integer contextSize', () => {
@@ -191,4 +204,54 @@ test('a reused server is not relaunched over its unknown context size', async ()
 
   assert.equal(h.launches.length, 1, 'an unknown reused context size never forces a relaunch');
   assert.deepEqual(h.stops, []);
+});
+
+const MEMORY_ARGS = Object.freeze(['-ctk', 'q8_0', '-ctv', 'q8_0', '--fit-target', '3072']);
+
+test('the memory plan caps the spawned context while the status keeps the requested one', async () => {
+  const h = makeHarness({
+    memoryPlan: () => ({ contextSize: 100_000, extraArgs: [...MEMORY_ARGS], reason: 'context_reduced', fittedContext: 100_000, gpuLayers: -1, marginMb: 3072 }),
+  });
+  const status = await h.manager.start({ modelTag: PROFILE.modelTag, contextSize: 131_072 });
+
+  assert.equal(h.memoryCalls[0].requestedContext, 131_072);
+  assert.equal(h.memoryCalls[0].headroomMb, 0, 'no acceleration, no headroom');
+  assert.equal(h.launches[0].contextSize, 100_000);
+  assert.deepEqual(h.launches[0].extraArgs, MEMORY_ARGS);
+  assert.equal(status.contextSize, 131_072, 'needsRelaunch compares the requested size');
+  const plan = h.logs.find((entry) => entry.event === 'llama.server.memory_plan');
+  assert.equal(plan.level, 'INFO');
+  assert.equal(plan.payload.reason, 'context_reduced');
+  assert.equal(plan.payload.contextSize, 100_000);
+
+  await h.manager.ensureRunning({ modelTag: PROFILE.modelTag, contextSize: 131_072 });
+  assert.equal(h.launches.length, 1, 'a capped context is not a relaunch loop');
+});
+
+test('a spill is logged as a warning', async () => {
+  const h = makeHarness({
+    memoryPlan: (options) => ({ contextSize: options.requestedContext, extraArgs: [], reason: 'spill', gpuLayers: 40 }),
+  });
+  await h.manager.start();
+  const plan = h.logs.find((entry) => entry.event === 'llama.server.memory_plan');
+  assert.equal(plan.level, 'WARN');
+  assert.equal(plan.payload.gpuLayers, 40);
+});
+
+test('a failed spawn without acceleration is not retried, and the memory args stay on the launch', async () => {
+  const h = makeHarness({
+    memoryPlan: () => ({ contextSize: 40_000, extraArgs: [...MEMORY_ARGS], reason: 'context_reduced' }),
+  });
+  h.lifecycle.failNext = new Error('llama_server_exited:1');
+  const status = await h.manager.start();
+
+  assert.equal(status.state, 'stopped');
+  assert.equal(h.launches.length, 1, 'only acceleration args earn a retry');
+  assert.deepEqual(h.launches[0].extraArgs, MEMORY_ARGS);
+});
+
+test('a stop signal reaches the dry run', async () => {
+  const h = makeHarness();
+  await h.manager.start();
+  assert.ok(h.memoryCalls[0].signal instanceof AbortSignal);
 });

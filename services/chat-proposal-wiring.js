@@ -134,8 +134,12 @@ function createSessionPorts(backendService) {
     launchDenied: ({ sessionId, turnId, destinationProjectId, runMode }) => Boolean(backendService.primaryActionRules?.denial?.({
       action: 'launch', sessionId, turnId, target: { project_id: destinationProjectId ?? null }, runMode,
     })),
-    // A turn another chat's message or report woke (row 70 depth > 0) never spends a standing permission.
-    isWakeTurn: (_sessionId, turnId) => (backendService.chatMessages?.wakeDepth?.(turnId) ?? 0) > 0,
+    // A turn another chat's message or report woke (row 70 depth > 0) never spends a standing permission, except
+    // (owner, 2026-11-10) one whose only mail is reports from chats it started; a check or digest wake has no mail.
+    isWakeTurn: (_sessionId, turnId) => {
+      const messages = backendService.chatMessages;
+      return (messages?.wakeDepth?.(turnId) ?? 0) > 0 && messages?.ownChildReportTurn?.(turnId) !== true;
+    },
     // An accepted fork is created as a fork of its source chat; the rest of the launch is the same.
     createLinkedChildSession: (spec) => {
       if (typeof spec?.forkOfSessionId === 'string') {
@@ -204,6 +208,8 @@ function createCommandAdapter(backendService) {
         return false;
       }
     },
+    sandboxReady: () => require('./execution/command-bridge').sandboxReady(backendService),
+    sandboxWorkspace: () => require('./execution/command-bridge').sandboxMode(backendService),
     recheck: (record) => require('./chat-proposal-binding').recheckCommandBinding(record, { backendService }),
     submit: (args) => (typeof runtime()?.submitCommandProposal === 'function'
       ? runtime().submitCommandProposal(args) : RUNTIME_ABSENT),

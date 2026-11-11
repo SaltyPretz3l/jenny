@@ -63,6 +63,39 @@ def is_tool_placeholder(content: str) -> bool:
     )
 
 
+def trim_browser_outlines(
+    messages: list[dict[str, Any]],
+    *,
+    budget_chars: int,
+    keep: int = 2,
+    recall_hint: bool = False,
+) -> int:
+    """Stub old ``browser`` page outlines in place once they outgrow ``budget_chars``.
+
+    Rewriting older rows costs the local prefix cache, so this is a batch: nothing
+    changes while the live outlines fit the budget; past it, every outline except
+    the newest ``keep`` becomes a placeholder. Tool-call argument rows are never
+    touched. Returns the number of rows stubbed.
+    """
+    rows = [
+        row
+        for row in messages
+        if isinstance(row, dict)
+        and row.get("role") == "tool"
+        and row.get("name") == "browser"
+        and isinstance(row.get("content"), str)
+        and not is_tool_placeholder(row["content"])
+    ]
+    if sum(len(row["content"]) for row in rows) <= budget_chars:
+        return 0
+    stale = rows[: max(0, len(rows) - max(0, keep))]
+    for row in stale:
+        row["content"] = tool_placeholder(
+            str(row.get("tool_call_id") or ""), recall_hint=recall_hint
+        )
+    return len(stale)
+
+
 def micro_first_accepts(tokens_before: int, tokens_after: int, threshold: int) -> bool:
     """Stubbing alone is enough when it freed tokens and reached the usual target."""
     return tokens_after < tokens_before and tokens_after <= int(threshold * MICRO_TARGET)

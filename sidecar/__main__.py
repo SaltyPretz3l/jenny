@@ -127,9 +127,10 @@ def _run_owned_process_supervisor() -> int:
 
 
 def _run_grep_search_worker() -> int:
-    from sidecar.ai.tools.builtins.grep_search import _grep_search_worker_main
+    # The worker module, not grep_search: the worker skips the parent-only imports.
+    from sidecar.ai.tools.builtins.grep_search_worker import grep_search_worker_main
 
-    return _grep_search_worker_main()
+    return grep_search_worker_main()
 
 
 def _run_workspace_test_helper() -> int:

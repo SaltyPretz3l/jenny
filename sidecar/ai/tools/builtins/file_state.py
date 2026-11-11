@@ -15,15 +15,10 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
-    CMP_TOOL_OUTSIDE_WORKSPACE,
     CMP_TOOL_READ_SNAPSHOT_REQUIRED,
     CMP_TOOL_STALE_READ_SNAPSHOT,
 )
 from sidecar.ai.tools.builtins import edit_hints, pre_change_snapshot, structured_diff
-from sidecar.ai.tools.builtins.markdown_sections import (
-    extract_markdown_sections,  # noqa: F401 - filesystem compatibility re-export.
-    parse_requested_headings,  # noqa: F401 - filesystem compatibility re-export.
-)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.hosted_file_io import (
     hosted_file_io_enabled,
@@ -39,7 +34,7 @@ _CONTROL_BINARY_RATIO = 0.10
 _STREAM_PREFIX_BYTES = 4
 READ_SNAPSHOT_SCOPE_FULL = "full"
 READ_SNAPSHOT_SCOPE_PARTIAL = "partial"
-_BINARY_CONTROL_BYTES = frozenset((*range(0, 9), 11, 12, *range(14, 32), 127))
+_BINARY_CONTROL_BYTES = bytes((*range(0, 9), 11, 12, *range(14, 32), 127))
 UTF8_BOM = codecs.BOM_UTF8
 _UNSUPPORTED_BOMS = (
     codecs.BOM_UTF16_LE,
@@ -83,94 +78,17 @@ def open_regular_file(
 
 
 def verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path) -> None:
-    try:
-        # The handle's final path is fully resolved; compare against the root's
-        # final form too so a workspace that itself sits under a junction, symlink
-        # or substituted drive is not refused.
-        authorized_root = Path(os.path.realpath(authorized_root))
-        handle_stat = os.fstat(handle.fileno())
-        if os.name == "nt":
-            final_path = _windows_final_path(handle.fileno())
-            matches = _path_is_within(final_path, authorized_root, casefold=True)
-        elif Path("/proc/self/fd").is_dir():
-            descriptor_path = f"/proc/self/fd/{handle.fileno()}"
-            if not os.path.lexists(descriptor_path):
-                raise OSError("opened file descriptor is unavailable through /proc")
-            final_path = Path(os.path.realpath(descriptor_path))
-            matches = _path_is_within(final_path, authorized_root)
-        else:
-            final_path = Path(os.path.realpath(resolved))
-            matches = _path_is_within(final_path, authorized_root)
-            final_stat = os.stat(final_path)
-            matches = matches and (
-                final_stat.st_dev,
-                final_stat.st_ino,
-            ) == (
-                handle_stat.st_dev,
-                handle_stat.st_ino,
-            )
-    except ToolExecutionFailure:
-        raise
-    except Exception as error:
-        raise _workspace_containment_failure() from error
-    if not matches:
-        raise _workspace_containment_failure()
+    """Fail closed unless the opened handle's final path sits under the root's final form."""
+    # Imported on first use: starting the sidecar does not need the check.
+    from sidecar.ai.tools.builtins.handle_containment import (
+        resolve_final_root,
+        verify_handle_within,
+    )
+
+    verify_handle_within(handle, resolved, resolve_final_root(authorized_root))
 
 
 _verify_authorized_handle = verify_authorized_handle
-
-
-def _windows_final_path(fd: int) -> Path:
-    import ctypes  # unavailable Windows APIs are loaded only on Windows.
-    import msvcrt  # unavailable on POSIX.
-    from ctypes import wintypes  # Windows-only definitions.
-
-    get_final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
-    get_final_path.argtypes = [
-        wintypes.HANDLE,
-        wintypes.LPWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-    ]
-    get_final_path.restype = wintypes.DWORD
-    os_handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
-    capacity = 1024
-    while True:
-        buffer = ctypes.create_unicode_buffer(capacity)
-        length = get_final_path(os_handle, buffer, capacity, 0)
-        if length == 0:
-            error_code = ctypes.get_last_error()
-            raise OSError(error_code, ctypes.FormatError(error_code))
-        if length < capacity:
-            return Path(_strip_windows_device_prefix(buffer.value))
-        capacity = length + 1
-
-
-def _strip_windows_device_prefix(path: str) -> str:
-    if path.casefold().startswith("\\\\?\\unc\\"):
-        return "\\\\" + path[8:]
-    if path.casefold().startswith("\\\\?\\"):
-        return path[4:]
-    return path
-
-
-def _path_is_within(candidate: Path, root: Path, *, casefold: bool = False) -> bool:
-    candidate_parts = Path(os.path.normpath(candidate)).parts
-    root_parts = Path(os.path.normpath(root)).parts
-    if casefold:
-        candidate_parts = tuple(part.casefold() for part in candidate_parts)
-        root_parts = tuple(part.casefold() for part in root_parts)
-    return len(candidate_parts) >= len(root_parts) and (
-        candidate_parts[: len(root_parts)] == root_parts
-    )
-
-
-def _workspace_containment_failure() -> ToolExecutionFailure:
-    return ToolExecutionFailure(
-        code=CMP_TOOL_OUTSIDE_WORKSPACE,
-        message="resolved path escapes tools workspace root",
-        retryable=False,
-    )
 
 
 def _bounded_utf8_chunk_chars(remaining_budget: int) -> int:
@@ -324,10 +242,10 @@ def is_binary_extension(path: Path) -> bool:
 def is_binary_content(buffer: bytes) -> bool:
     if not buffer:
         return False
-    sample = buffer[:MAX_BINARY_SCAN_BYTES]
+    sample = bytes(buffer[:MAX_BINARY_SCAN_BYTES])
     if b"\x00" in sample:
         return True
-    control_bytes = sum(byte in _BINARY_CONTROL_BYTES for byte in sample)
+    control_bytes = len(sample) - len(sample.translate(None, _BINARY_CONTROL_BYTES))
     return (control_bytes / len(sample)) > _CONTROL_BINARY_RATIO
 
 

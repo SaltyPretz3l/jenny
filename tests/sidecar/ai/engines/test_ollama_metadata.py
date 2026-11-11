@@ -81,6 +81,39 @@ def test_build_tools_payload_cached_invalidates_when_schema_or_description_chang
     assert second[0]["function"]["description"] == "Read a file with optional page ranges"
 
 
+def _described_tool() -> list[dict[str, object]]:
+    return [
+        {
+            "name": "read_file",
+            "description": "Read a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File to read."}},
+            },
+        }
+    ]
+
+
+def test_the_cached_payload_sends_argument_descriptions_by_default(monkeypatch) -> None:
+    monkeypatch.delenv(ollama_metadata.ARGUMENT_DESCRIPTIONS_FLAG, raising=False)
+    engine = SimpleNamespace()
+    payload = ollama_metadata.build_tools_payload_cached(engine, _described_tool())
+    path = payload[0]["function"]["parameters"]["properties"]["path"]
+    assert path == {"type": "string", "description": "File to read."}
+
+
+def test_the_kill_switch_strips_argument_descriptions_and_rebuilds_the_cache(monkeypatch) -> None:
+    monkeypatch.delenv(ollama_metadata.ARGUMENT_DESCRIPTIONS_FLAG, raising=False)
+    engine = SimpleNamespace()
+    tools = _described_tool()
+    described = ollama_metadata.build_tools_payload_cached(engine, tools)
+    monkeypatch.setenv(ollama_metadata.ARGUMENT_DESCRIPTIONS_FLAG, "0")
+    compact = ollama_metadata.build_tools_payload_cached(engine, tools)
+    assert compact is not described
+    assert compact[0]["function"]["parameters"]["properties"]["path"] == {"type": "string"}
+    assert compact[0]["function"]["description"] == "Read a file."
+
+
 def test_build_tools_payload_cache_publishes_key_and_payload_as_one_state() -> None:
     key_barrier = threading.Barrier(2)
     second_payload_written = threading.Event()

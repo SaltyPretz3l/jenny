@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const FILES = Object.freeze(['Dockerfile.worker', 'config/command-worker-image.json',
-  ...['__init__','supervisor','job','snapshot','security','protocol','health','relay'].map((name) => 'server/worker/' + name + '.py')]);
+  ...['__init__','supervisor','job','snapshot','security','protocol','health','relay','mirror','sync_steps'].map((name) => 'server/worker/' + name + '.py')]);
 async function buildWorkerContext({ sourceRoot, outputDirectory }) {
   const hash = createHash('sha256');
   const contents = [];

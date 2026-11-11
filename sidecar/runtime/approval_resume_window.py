@@ -109,14 +109,16 @@ def _approval_resume_call_window(
     """
 
     approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
+    refused = bool(getattr(plan, "app_refusal", ""))
     selected: list[Any] = []
     dropped: list[Any] = []
     for index, call in enumerate(plan.tool_calls):
         call_id = str(getattr(call, "call_id", "") or "").strip()
         if approved_call_id and call_id == approved_call_id:
-            selected.append(call)
+            if not refused:
+                selected.append(call)
             trailing = list(plan.tool_calls[index + 1 :])
-            while recheck_trailing and trailing:
+            while recheck_trailing and trailing and not refused:
                 descriptor = _approval_resume_descriptor(
                     kernel=kernel, tool_contract=tool_contract, call=trailing[0]
                 )

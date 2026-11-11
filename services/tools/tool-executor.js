@@ -13,6 +13,7 @@ const { TOOL_ERROR_CODES } = require('../backend/error-codes');
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 const { executeResolvedTool } = require('./tool-execution-dispatch');
 const { effectiveSideEffecting, isNonEmptyPlainObject } = require('./tool-policy-actions');
+const { MID_TOOL_CONSENT_TOOLS } = require('./mid-tool-consent');
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -49,6 +50,7 @@ class ToolExecutor {
     primaryScheduleService,
     configService,
     refreshManagedConfig,
+    browserUse,
   }) {
     this.registry = registry;
     this._permissionStore = permissionStore;
@@ -59,6 +61,8 @@ class ToolExecutor {
     this._automationService = automationService || null;
     this._workspacePresentationService = workspacePresentationService || null;
     this._browserSessionService = browserSessionService || null;
+    // The lazy per-profile {get, dispose} holder for the model-driven browser (row 114).
+    this._browserUse = browserUse || null;
     // Attached, not injected: the Workspace Test Runner is created during IPC
     // registration, after this executor already exists.
     this._workspaceTestRunnerService = null;
@@ -114,12 +118,12 @@ class ToolExecutor {
     }
   }
 
-  async executePreApproved(rawCall, context, { authorize = null } = {}) {
+  async executePreApproved(rawCall, context, { authorize = null, suspendTurnClocks = null } = {}) {
     // One plain-object input for the preflight, the policy and the producer, so
     // the arguments the policy judged are exactly the ones the tool receives.
     const call = { ...rawCall, input: isPlainObject(rawCall.input) ? rawCall.input : {} };
     context = this._bindExecutionContext(context);
-    if (call.toolName === 'session_message') context = { ...context, authorize };
+    if (MID_TOOL_CONSENT_TOOLS.has(call.toolName)) context = { ...context, authorize, suspendTurnClocks };
     const { callId, toolName } = call;
     const preflight = this._preflightTool(call, context, { preApproved: true });
     if (!preflight.tool) {
@@ -165,8 +169,12 @@ class ToolExecutor {
     return this._workspacePresentationService;
   }
 
+  get browserUse() {
+    return this._browserUse;
+  }
+
   // Late-bind the Test Runner the `verify` tool reads off the execution
-  // context; ipc-handler-registration.js owns its construction order.
+  // context; services/main/ipc-registration/workspace-ipc.js owns its construction order.
   attachWorkspaceTestRunnerService(service) {
     this._workspaceTestRunnerService = service || null;
   }

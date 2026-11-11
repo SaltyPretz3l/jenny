@@ -9,16 +9,15 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const formatElapsedLabel = turnElapsedClockUtils.formatElapsedLabel;
-  const TERMINAL_TURN_PHASES = new Set([
-    'done', 'review_artifact', 'error', 'cancelled', 'canceled', 'denied',
-    'timeout', 'timed_out', 'interrupted', 'preempted',
-  ]);
-  const TERMINAL_TURN_STATUSES = new Set([
-    'error', 'errored', 'failed', 'cancelled', 'canceled', 'denied',
-    'timeout', 'timed_out', 'interrupted', 'preempted',
-  ]);
 
   const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  // Split out of this module; index.html loads each just before it.
+  const mermaidFallback = (typeof globalThis !== 'undefined' && globalThis.rendererTurnRowMermaidFallback)
+    || (typeof require === 'function' ? require('./renderer-turn-row-mermaid-fallback') : null);
+  const approvalGapMarkup = (typeof globalThis !== 'undefined' && globalThis.rendererTurnRowApprovalGapMarkup)
+    || (typeof require === 'function' ? require('./renderer-turn-row-approval-gap-markup') : null);
+  const toolRowExpansionState = (typeof globalThis !== 'undefined' && globalThis.rendererToolRowExpansionState)
+    || (typeof require === 'function' ? require('./renderer-tool-row-expansion-state') : null);
 
   function fallbackNormalizeId(value) {
     return String(value || '').trim();
@@ -26,36 +25,6 @@
 
   function fallbackFormatDurationMs() {
     return '';
-  }
-
-  // WS3 ⤢ "Open in panel" affordance for the mermaid fallback block. Same
-  // Tabler arrows-diagonal geometry as ICONS.expand in
-  // renderer-artifact-card-utils.js; rendered through the inventory
-  // actionButton primitive (emits nothing when the primitive is unavailable).
-  const ARTIFACT_PANEL_EXPAND_SVG = '<svg class="icon-mirror-rtl" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M7.5 2H10v2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 2L7 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.5 10H2V7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 10l3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-  const inventoryActionButton = (function resolveInventoryActionButton() {
-    if (typeof globalThis !== 'undefined' && globalThis.inventoryActionButton) {
-      return globalThis.inventoryActionButton;
-    }
-    if (typeof require === 'function') {
-      try { return require('../inventory/action-button'); } catch (_error) { /* not available */ }
-    }
-    return null;
-  })();
-  function buildArtifactPanelAffordanceMarkup(artifactId) {
-    const id = String(artifactId || '').trim();
-    if (!id || typeof inventoryActionButton !== 'function') return '';
-    return inventoryActionButton({
-      plain: true,
-      className: 'inv-artifact-action inv-artifact-panel',
-      ariaLabel: jt('chat.toolRow.openInPanel', 'Open in panel'),
-      title: jt('chat.toolRow.openInPanel', 'Open in panel'),
-      trustedHtml: ARTIFACT_PANEL_EXPAND_SVG,
-      dataset: {
-        'inv-artifact-action': 'panel',
-        'artifact-id': id,
-      },
-    });
   }
 
   // Resolved per call: tests install a global after this module loads; in the
@@ -121,82 +90,16 @@
     'denied', 'cancelled', 'blocked', 'timed_out', 'abandoned',
   ]);
 
-  // User expand/collapse overrides per composite tool-row key, module-scoped so they
-  // survive the per-delta full re-renders of the streaming pipeline (same
-  // pattern as the legacy transcript tool-call store). Bounded FIFO so a
-  // long session cannot grow it without bound.
-  const TOOL_ROW_EXPANSION_CAP = 500;
-  const _toolRowExpansionOverrides = new Map();
-  const _toolDetailContexts = new Map();
-
-  function registerToolDetailContext(rowKey, detailBodyBuilder, detailModel) {
-    const key = fallbackNormalizeId(rowKey);
-    if (!key || !detailBodyBuilder || typeof detailBodyBuilder.buildDetailBodyMarkup !== 'function') return;
-    if (_toolDetailContexts.has(key)) _toolDetailContexts.delete(key);
-    _toolDetailContexts.set(key, { detailBodyBuilder, detailModel });
-    while (_toolDetailContexts.size > TOOL_ROW_EXPANSION_CAP) {
-      _toolDetailContexts.delete(_toolDetailContexts.keys().next().value);
-    }
-  }
-
-  function materializeToolRowDetails(rowKey) {
-    const key = fallbackNormalizeId(rowKey);
-    const context = _toolDetailContexts.get(key);
-    if (!context) return { ok: false, reason: 'missing_render_context', markup: '' };
-    try {
-      const markup = context.detailBodyBuilder.buildDetailBodyMarkup({
-        ...context.detailModel,
-        expandFileDiffsByDefault: getToolRowExpansion(key) === true,
-      });
-      _toolDetailContexts.delete(key);
-      return {
-        ok: true,
-        reason: '',
-        markup,
-      };
-    } catch (_error) {
-      return { ok: false, reason: 'detail_build_failed', markup: '' };
-    }
-  }
-
-  function setToolRowExpansion(rowKey, expanded) {
-    const key = fallbackNormalizeId(rowKey);
-    if (!key) {
-      return;
-    }
-    if (_toolRowExpansionOverrides.has(key)) {
-      _toolRowExpansionOverrides.delete(key);
-    }
-    _toolRowExpansionOverrides.set(key, expanded === true);
-    while (_toolRowExpansionOverrides.size > TOOL_ROW_EXPANSION_CAP) {
-      const oldestKey = _toolRowExpansionOverrides.keys().next().value;
-      _toolRowExpansionOverrides.delete(oldestKey);
-    }
-  }
-
-  function getToolRowExpansion(rowKey) {
-    const key = fallbackNormalizeId(rowKey);
-    return _toolRowExpansionOverrides.has(key)
-      ? _toolRowExpansionOverrides.get(key)
-      : undefined;
-  }
-
-  function clearToolRowExpansionOverrides() {
-    _toolRowExpansionOverrides.clear();
-    _toolDetailContexts.clear();
-  }
-
-  // Transcript view switch: drop one session's overrides (row keys start with
-  // `session=<enc>|`, tool-call-utils buildToolRowKey) and keep the lazy detail
-  // contexts, which another pane may still materialize from.
-  function clearToolRowExpansionOverridesForSession(sessionId) {
-    const normalized = fallbackNormalizeId(sessionId);
-    if (!normalized) return;
-    const prefix = sharedToolCallUtils().toolRowKeySessionPrefix(normalized);
-    for (const key of Array.from(_toolRowExpansionOverrides.keys())) {
-      if (key.startsWith(prefix)) _toolRowExpansionOverrides.delete(key);
-    }
-  }
+  // User expand/collapse overrides and lazy detail contexts, module-scoped so
+  // they survive the streaming pipeline's per-delta full re-renders.
+  const {
+    registerToolDetailContext,
+    materializeToolRowDetails,
+    setToolRowExpansion,
+    getToolRowExpansion,
+    clearToolRowExpansionOverrides,
+    clearToolRowExpansionOverridesForSession,
+  } = toolRowExpansionState.createToolRowExpansionState();
 
   function createTurnRowToolRenderUtils(deps) {
     const settings = deps || {};
@@ -233,6 +136,10 @@
     const getNow = typeof settings.getNow === 'function'
       ? settings.getNow
       : function defaultGetNow() { return Date.now(); };
+    const { buildMermaidFallbackBlockMarkup } = mermaidFallback.createMermaidFallbackRenderer({ escapeHtml, normalizeId });
+    const { buildApprovalGapMarkup, readApprovalCardState } = approvalGapMarkup.createApprovalGapMarkup({
+      settings, toolCallUtils, normalizeId, escapeHtml, renderApprovalBlock, resolveProjectedRowCallId,
+    });
 
     // W1-4: render the summary's path portion as an inline open-in-IDE chip.
     // The chip carries the forward-slash-normalized path (what the IDE and
@@ -636,179 +543,6 @@
       `;
     }
 
-    function resolveMarkdownUtils() {
-      if (typeof globalThis !== 'undefined' && globalThis.markdownUtils) {
-        return globalThis.markdownUtils;
-      }
-      if (typeof require === 'function') {
-        try { return require('../shared/markdown-utils'); } catch (_error) { return null; }
-      }
-      return null;
-    }
-
-    function resolveResultMermaidSource(payload) {
-      if (normalizeId(payload.tool_name) !== 'mermaid_generate') {
-        return '';
-      }
-      if (payload.is_error === true || payload.result_is_error === true) {
-        return '';
-      }
-      const outputText = String(payload.output_text || '').trim();
-      if (!outputText.startsWith('{')) {
-        return '';
-      }
-      let parsed;
-      try { parsed = JSON.parse(outputText); } catch (_error) { return ''; }
-      return parsed && typeof parsed === 'object' && typeof parsed.mermaid === 'string'
-        ? parsed.mermaid.trim()
-        : '';
-    }
-
-    // The fallback (and the dedup that suppresses it) only run once the turn
-    // can no longer change: mid-turn the model may still be about to echo
-    // the fence, and rendering the diagram early would flash it.
-    //
-    // The live projected path renders tool articles with NO turn phase and
-    // isStreaming=false even mid-turn (per-message article buckets; the
-    // active-turn flags derive from the streaming MESSAGE, which does not
-    // exist in the gap between model calls). So when the turn's rows are
-    // available, "settled" is derived from them directly: the turn must have
-    // final assistant text or terminal error/cancellation evidence, and none
-    // of its messages may be the session's currently-streaming one. Without
-    // turnRows (hydrated/legacy contexts), an empty phase counts as settled.
-    function isTurnSettledForRender(options) {
-      const renderOptions = options || {};
-      if (renderOptions.isStreaming === true) {
-        return false;
-      }
-      const phase = normalizeId(renderOptions.turnPhase);
-      if (phase && !TERMINAL_TURN_PHASES.has(phase)) {
-        return false;
-      }
-      const turnRows = Array.isArray(renderOptions.turnRows) ? renderOptions.turnRows : null;
-      if (!turnRows || !turnRows.length) {
-        return true;
-      }
-      // Streaming message ids: the projection's activeStreamingMessageId
-      // (canonical path) plus the stream handler's pending map values (the
-      // live projected path, where the former stays empty).
-      const streamingIds = [];
-      const projectionStreamingId = normalizeId(
-        renderOptions.projectionContext && renderOptions.projectionContext.activeStreamingMessageId
-      );
-      if (projectionStreamingId) {
-        streamingIds.push(projectionStreamingId);
-      }
-      if (Array.isArray(renderOptions.pendingStreamMessageIds)) {
-        for (const pendingId of renderOptions.pendingStreamMessageIds) {
-          const normalizedPendingId = normalizeId(pendingId);
-          if (normalizedPendingId) {
-            streamingIds.push(normalizedPendingId);
-          }
-        }
-      }
-      if (streamingIds.length) {
-        for (const candidate of turnRows) {
-          const candidateId = normalizeId(candidate && candidate.primary_message_id);
-          if (candidateId && streamingIds.indexOf(candidateId) >= 0) {
-            return false;
-          }
-        }
-      }
-      let hasAssistantText = false;
-      let hasTerminalEvidence = false;
-      for (const candidate of turnRows) {
-        const kind = normalizeId(candidate && candidate.kind).toLowerCase();
-        const payload = candidate && candidate.payload && typeof candidate.payload === 'object'
-          ? candidate.payload
-          : {};
-        if (kind === 'assistant_text' && String(payload.text || '').trim()) {
-          hasAssistantText = true;
-        }
-        const subkind = normalizeId(payload.subkind).toLowerCase();
-        const terminalStatus = normalizeId(
-          payload.terminal_status || payload.terminalStatus || payload.recovery_class
-        ).toLowerCase();
-        if (kind === 'assistant_error'
-          || (kind === 'system_notice' && subkind === 'assistant_error')
-          || ((kind === 'system_notice' || kind === 'assistant_error')
-            && TERMINAL_TURN_STATUSES.has(terminalStatus))) {
-          hasTerminalEvidence = true;
-        }
-      }
-      if (hasTerminalEvidence) {
-        return true;
-      }
-      const lastRowKind = normalizeId(turnRows[turnRows.length - 1]?.kind).toLowerCase();
-      return hasAssistantText && lastRowKind !== 'tool_call' && lastRowKind !== 'tool_result';
-    }
-
-    function answerHasMatchingMermaidFence(options, mermaidSource) {
-      const markdownUtilsRef = resolveMarkdownUtils();
-      if (!markdownUtilsRef
-        || typeof markdownUtilsRef.extractMermaidFenceSources !== 'function'
-        || typeof markdownUtilsRef.normalizeMermaidSource !== 'function') {
-        return false;
-      }
-      const target = markdownUtilsRef.normalizeMermaidSource(mermaidSource);
-      if (!target) {
-        return false;
-      }
-      // turnRows spans the whole turn; siblingRows only this article's
-      // bucket (one render message). The answer's assistant_text row lives
-      // in a different bucket than the tool card, so prefer turnRows.
-      const renderOptions = options || {};
-      const candidateRows = Array.isArray(renderOptions.turnRows) && renderOptions.turnRows.length
-        ? renderOptions.turnRows
-        : (Array.isArray(renderOptions.siblingRows) ? renderOptions.siblingRows : []);
-      for (const sibling of candidateRows) {
-        if (normalizeId(sibling && sibling.kind) !== 'assistant_text') {
-          continue;
-        }
-        const text = String((sibling.payload && sibling.payload.text) || '');
-        if (!text) {
-          continue;
-        }
-        const sources = markdownUtilsRef.extractMermaidFenceSources(text);
-        for (const source of sources) {
-          if (markdownUtilsRef.normalizeMermaidSource(source) === target) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-
-    // The assistant answer is the diagram's canonical home. The tool card
-    // renders the mermaid_generate result as a chart only as a FALLBACK:
-    // turn settled and no whitespace-equivalent fence in any of the turn's
-    // assistant text. The emitted markdown-mermaid-block wrapper is what
-    // renderInlineMermaidBlocks picks up, exactly like a fenced ```mermaid
-    // block; the tool-result-body class keeps the markdown.css scoping and
-    // the GUI smoke selector working.
-    function buildMermaidFallbackBlockMarkup(resultPayload, domToken, options) {
-      // The cheap tool-name check first: the settled-turn walk visits every row.
-      const mermaidText = resultPayload ? resolveResultMermaidSource(resultPayload) : '';
-      if (!mermaidText || !isTurnSettledForRender(options) || answerHasMatchingMermaidFence(options, mermaidText)) {
-        return '';
-      }
-      const markdownUtilsRef = resolveMarkdownUtils();
-      if (!markdownUtilsRef || typeof markdownUtilsRef.buildMermaidTimelineBlockMarkup !== 'function') {
-        return '';
-      }
-      const blockMarkup = markdownUtilsRef.buildMermaidTimelineBlockMarkup(mermaidText, `tool-mermaid-${domToken}`);
-      if (!blockMarkup) {
-        return '';
-      }
-      // ⤢ affordance: only when a generated-artifact id resolves from the
-      // paired result payload (no id -> no control). Unconditional since the
-      // panel became the sole artifact surface (W1-5 flag retirement).
-      const affordanceArtifacts = Array.isArray(resultPayload.generated_artifacts) ? resultPayload.generated_artifacts : [];
-      const panelAffordanceMarkup = buildArtifactPanelAffordanceMarkup(String(affordanceArtifacts[0]?.artifact_id || '').trim());
-      const rawCallId = String(resultPayload.tool_call_id || resultPayload.call_id || '');
-      return `<div class="tool-result-body tool-result-diagram" data-tool-call-id="${escapeHtml(rawCallId)}">${blockMarkup}${panelAffordanceMarkup}</div>`;
-    }
-
     // Standalone result row — only reached for ORPHAN results (no tool_call
     // row with the same call id in the bucket). Paired results render inside
     // the call card via buildToolCallRowMarkup(options.pairedToolResultRow).
@@ -881,89 +615,6 @@
           ${artifactsMarkup}
         </div>
       `;
-    }
-
-    // A4: whether the runtime still waits on this approval (live, paused, inactive).
-    function readApprovalCardState(row, toolCallId, options) {
-      return typeof settings.getApprovalCardState === 'function'
-        ? settings.getApprovalCardState({ sessionId: options && options.sessionId, turnId: row && row.turn_id, callId: toolCallId, rowState: row && row.payload && row.payload.state })
-        : null;
-    }
-
-    function buildApprovalGapMarkup(row, _messages, options) {
-      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
-      const toolCallId = resolveProjectedRowCallId(row);
-      // A resolved row is a receipt of the decision; the live approval state
-      // has nothing left to say about it.
-      const resolved = payload.state === 'resolved';
-      const cardState = resolved ? { state: 'resolved' } : (readApprovalCardState(row, toolCallId, options) || {});
-      const toolName = String(payload.tool_name || '').trim();
-      // Same precedence as the tool row this card sits above (F16).
-      const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
-        ? toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name)
-        : (String(payload.tool_display_name || '').trim() || toolName);
-      const prompt = String(payload.prompt || '').trim();
-      if (!renderApprovalBlock) {
-        return '';
-      }
-      // Quote the exact command/args being approved (bounded by the block's
-      // own preview cap). The `input` object is the full sanitized payload;
-      // `input_json` is a capped serialization that collapses to a
-      // {truncated, preview} stub past the cap, so it is only the fallback
-      // and its stub is never previewed as if it were the arguments.
-      // Absent/unparsable input degrades to prompt-only.
-      let commandText = '';
-      let approvalInput = payload.input && typeof payload.input === 'object'
-        && !Array.isArray(payload.input) && Object.keys(payload.input).length ? payload.input : null;
-      const approvalInputJson = String(payload.input_json || '').trim();
-      if (!approvalInput && approvalInputJson.startsWith('{')) {
-        try {
-          approvalInput = JSON.parse(approvalInputJson);
-        } catch (_error) {
-          approvalInput = null;
-        }
-      }
-      if (approvalInput && approvalInput.truncated === true && typeof approvalInput.preview === 'string') {
-        approvalInput = null;
-      }
-      // A message to another chat is approved against its own full-body field (the block renders
-      // it); the clipped input preview and fact derivation never stand in for it.
-      const sendsMessage = toolName === 'session_message';
-      if (!sendsMessage && approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalCommandPreview === 'function') {
-        commandText = toolCallUtils.getApprovalCommandPreview(toolName, approvalInput);
-      }
-      return renderApprovalBlock({
-        toolCallId,
-        approvalId: normalizeId(payload.approval_id || payload.approvalId),
-        toolName,
-        displayToolName,
-        prompt,
-        policyScope: payload.policy_scope,
-        policyConsequence: payload.policy_consequence,
-        reason: payload.reason,
-        oneOffOnly: payload.one_off_only === true || payload.oneOffOnly === true,
-        purpose: approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalPurpose === 'function'
-          ? toolCallUtils.getApprovalPurpose(approvalInput) : '',
-        facts: !sendsMessage && approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalFacts === 'function'
-          ? toolCallUtils.getApprovalFacts(toolName, approvalInput) : [],
-        commandText,
-        sessionMessageApproval: sendsMessage ? payload.session_message_approval : undefined,
-        sessionStopApproval: toolName === 'session_stop' ? payload.session_stop_approval : undefined,
-        settingsChangeApproval: toolName === 'settings_change' ? payload.settings_change_approval : undefined,
-        scheduleChangeApproval: toolName === 'schedule_change' ? payload.schedule_change_approval : undefined,
-        // Always passed (even undefined): a command or write without its live exact presentation fails closed.
-        exactApproval: cardState.exactApproval,
-        // What a command's Always allow covers (live only), and what a resolved one saved (row 103).
-        alwaysAllowScope: cardState.alwaysAllowScope,
-        rememberOffer: cardState.rememberOffer,
-        mode: 'inline',
-        cardState: cardState.state,
-        resumeKey: cardState.resumeKey,
-        variant: normalizeId(payload.approval_variant),
-        decision: resolved ? normalizeId(payload.decision) : '',
-        approvalScope: resolved ? normalizeId(payload.approval_scope) : '',
-        alwaysAllowPrefix: resolved ? String(payload.always_allow_prefix || '') : '',
-      }, { escapeHtml });
     }
 
     return {

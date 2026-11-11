@@ -29,8 +29,15 @@
   // normalizePlatform maps every alias to one of these names.
   const UNVERIFIED_PLATFORMS = new Set(['linux', 'macos']);
   const DEFAULT_PLATFORM = 'unknown';
-  // Every run gets a disposable workspace copy and no network, whatever the bridge reports.
-  const SANDBOX_SCOPE = Object.freeze({ workspace: 'disposable_copy', network: 'none' });
+  // Every run has no network, whatever the bridge reports; the workspace follows the mode.
+  const SANDBOX_NETWORK = 'none';
+  // Row 106: an isolated copy (changes discarded) or a synced workspace (changes copied back).
+  const MODES = Object.freeze(['copy', 'synced']);
+  const MODE_FIELD = 'commandSandboxMode';
+  // The main process always sends the active mode's limits; an older main sends no mode at all.
+  const COPY_LIMITS = Object.freeze({ bytes: 64 * 1024 * 1024, entries: 2048, depth: 32 });
+  // Refused before anything changed: the sandbox stays as it was and the edited row says why.
+  const REFUSALS = new Set(['sandbox_wait_for_active_chats', 'sandbox_busy', 'sandbox_settings_invalid']);
 
   function normalizePlatform(value) {
     const platform = String(value || DEFAULT_PLATFORM).trim().toLowerCase();
@@ -48,6 +55,22 @@
     return String(value == null ? '' : value).trim().slice(0, 500);
   }
 
+  // Limits the bridge reports for the active mode; anything else reads as that mode's known limits.
+  function normalizeLimits(raw) {
+    const valid = (value) => Number.isSafeInteger(value) && value > 0;
+    if (!raw || typeof raw !== 'object' || !['bytes', 'entries', 'depth'].every((name) => valid(raw[name]))) {
+      return { ...COPY_LIMITS };
+    }
+    return { bytes: raw.bytes, entries: raw.entries, depth: raw.depth };
+  }
+
+  // The kill switch (or an older main process) offers only the copy; then the choice is hidden.
+  function modeFields(raw) {
+    const modes = Array.isArray(raw.modes) && raw.modes.includes('synced') ? [...MODES] : ['copy'];
+    const mode = modes.includes(raw.mode) ? raw.mode : 'copy';
+    return { mode, modes, workspace: mode === 'synced' ? 'synced' : 'disposable_copy', network: SANDBOX_NETWORK, limits: normalizeLimits(raw.limits) };
+  }
+
   function defaultState(options = {}) {
     const bridge = options.bridge || null;
     const platform = normalizePlatform(bridge?.platform || options.platform);
@@ -58,7 +81,7 @@
       message: '',
       platform,
       qualified: false,
-      ...SANDBOX_SCOPE,
+      ...modeFields({}),
     };
   }
 
@@ -87,7 +110,7 @@
       // visible and actionable when the bridge reports them, but are marked
       // unverified in the surface.
       qualified: platform === 'windows' && raw.qualified === true,
-      ...SANDBOX_SCOPE,
+      ...modeFields(raw),
     };
   }
 
@@ -103,18 +126,46 @@
     return jt('settings.commandSandbox.platformUnknown', 'Unknown platform');
   }
 
-  function stateMessage(state, reason = '') {
+  function formatCount(value) {
+    return Number(value).toLocaleString(globalThis.jennyI18n?.tag?.() || undefined);
+  }
+
+  function formatBytes(bytes) {
+    const gib = bytes >= 1024 * 1024 * 1024;
+    const scaled = bytes / (gib ? 1024 * 1024 * 1024 : 1024 * 1024);
+    return formatCount(Math.round(scaled * 10) / 10) + (gib ? ' GiB' : ' MiB');
+  }
+
+  // The message for a specific reason, or '' when the reason has none of its own.
+  // `context` is the sandbox state (its mode and that mode's limits).
+  function reasonMessage(reason, context = {}) {
+    reason = String(reason || '');
     if (reason === 'docker_missing') return jt('settings.commandSandbox.dockerMissing', 'Install and start Docker independently, then Retry.');
     if (reason === 'docker_local_daemon_required') return jt('settings.commandSandbox.localDaemon', 'Select a local Docker context, then Retry. Remote Docker daemons are unavailable.');
     if (reason === 'docker_linux_cgroup_v2_required') return jt('settings.commandSandbox.linuxEngine', 'Start Docker with a Linux engine supporting cgroup v2, then Retry.');
-    if (reason === 'snapshot_limit') return jt('settings.commandSandbox.snapshotLimit', 'Choose a workspace within 64 MiB, 2,048 entries and 32 levels, then Retry.');
+    if (reason === 'snapshot_limit') {
+      const limits = normalizeLimits(context.limits);
+      return jt('settings.commandSandbox.snapshotLimitWithin', 'Choose a workspace within {size}, {entries} entries and {depth} levels, then Retry.',
+        { size: formatBytes(limits.bytes), entries: formatCount(limits.entries), depth: formatCount(limits.depth) });
+    }
     if (reason === 'sandbox_workspace_required') return jt('settings.commandSandbox.workspaceRequired', 'Configure a tools workspace before running a command.');
     if (reason.startsWith('snapshot_')) return jt('settings.commandSandbox.snapshotRejected', 'The workspace copy was rejected. Use an ordinary local directory without links or special files, stop concurrent changes, then Retry.');
+    if (reason === 'sandbox_wait_for_active_chats') return jt('settings.commandSandbox.waitForActiveChats', 'Wait for running chats and commands to finish, then try again.');
+    if (reason === 'sandbox_busy') return jt('settings.commandSandbox.busyTryAgain', 'A sandbox command is running. Try again when it finishes.');
+    if (reason === 'sandbox_settings_invalid') return jt('settings.commandSandbox.settingsInvalid', 'That choice is not available right now.');
+    return '';
+  }
+
+  function stateMessage(state, reason = '', context = {}) {
+    const specific = reasonMessage(reason, context);
+    if (specific) return specific;
     const messages = {
       disabled: jt('settings.commandSandbox.messageDisabled', 'Command sandbox is off.'),
       unavailable: jt('settings.commandSandbox.messageUnavailable', 'Docker sandbox is unavailable. Install Docker or check the Docker service.'),
       preparing: jt('settings.commandSandbox.messagePreparing', 'Preparing the Docker sandbox…'),
-      ready: jt('settings.commandSandbox.messageReady', 'Docker sandbox is ready for foreground Linux shell commands.'),
+      ready: context.mode === 'synced'
+        ? jt('settings.commandSandbox.messageReadySynced', 'Ready. Commands run offline in a Linux copy of this workspace; changed files are copied back (not .git, hook or dependency folders, or links) and can be undone.')
+        : jt('settings.commandSandbox.messageReady', 'Docker sandbox is ready for foreground Linux shell commands.'),
       busy: jt('settings.commandSandbox.messageBusy', 'A sandbox command is running.'),
       'recovery-required': jt('settings.commandSandbox.messageRecoveryRequired', 'Sandbox recovery is required before another command can run.'),
     };
@@ -175,8 +226,41 @@
         || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
     }
 
-    function getMarkup() {
+    // The mode control takes the switch's locks; it also needs a bridge that can write it.
+    function modeLocked() {
+      return toggleLocked() || typeof getBridge()?.setMode !== 'function';
+    }
+    function modeDescriptor() {
+      const descriptors = globalThis.rendererSettingsFieldDescriptors
+        || (typeof require === 'function' ? require('./renderer-settings-field-descriptors') : null);
+      return descriptors?.getSettingDescriptor?.(MODE_FIELD) || null;
+    }
+
+    // "Where commands run" sits under the switch, on or off: turning the sandbox on starts in the chosen mode.
+    function getModeMarkup() {
       const state = currentState;
+      const descriptor = state.modes.length > 1 ? modeDescriptor() : null;
+      if (!descriptor) return '';
+      const help = state.mode === 'synced'
+        ? jt('settings.commandSandbox.modeSyncedHelp', 'Commands change your files offline; Jenny copies changes back after a restore point.')
+        : jt('settings.commandSandbox.modeCopyHelp', 'Commands work on a throwaway copy; nothing they change is kept.');
+      return fieldBinding().renderSettingRow(descriptor, state.mode, { inventory, sub: true, parentOff: !parentOn, disabled: modeLocked(), help });
+    }
+
+    function getMarkup() {
+      return getToggleMarkup() + getModeMarkup();
+    }
+
+    // A disabled segmented group only dims; the row lock disables its options too (a patch may also lift it).
+    function lockModeRow(patch = false) {
+      const locked = modeLocked();
+      const descriptor = (locked || patch) && host?.querySelector?.(`[data-settings-field="${MODE_FIELD}"]`) ? modeDescriptor() : null;
+      if (descriptor) fieldBinding().setRowDisabled(host, descriptor, locked);
+    }
+
+    function getToggleMarkup() {
+      const state = currentState;
+      const synced = state.mode === 'synced';
       const parentOff = !parentOn;
       const retryMarkup = typeof inventory.actionButton === 'function' && RETRY_STATES.has(state.state)
         ? inventory.actionButton({
@@ -189,12 +273,18 @@
           ? jt('settings.commandSandbox.qualifiedPlatform', 'Windows is the qualified platform for this build.')
           : jt('settings.commandSandbox.unknownPlatform', 'Platform qualification is unavailable.');
       // A failure is announced from the row's error slot; a state in progress replaces the help.
-      const failure = state.reason ? state.message || stateMessage(state.state, state.reason) : '';
+      const failure = state.reason ? state.message || stateMessage(state.state, state.reason, state) : '';
       const help = failure || state.state === 'disabled' || state.state === 'ready'
-        ? jt('settings.commandSandbox.rowHelp', 'A disposable copy with no network. Needs Docker.')
-        : state.message || stateMessage(state.state, state.reason);
-      const detail = jt('settings.commandSandbox.rowDetail', 'Foreground Linux shell only. Files are discarded after each run; the other file tools still work in your workspace as usual.')
-        + ' ' + jt('settings.commandSandbox.platformLine', 'Platform: {platform} · Workspace: disposable copy · Network: none', { platform: platformLabel(state.platform) })
+        ? (synced
+          ? jt('settings.commandSandbox.rowHelpSynced', 'Runs offline on a synced copy of your files. Needs Docker.')
+          : jt('settings.commandSandbox.rowHelp', 'A disposable copy with no network. Needs Docker.'))
+        : state.message || stateMessage(state.state, state.reason, state);
+      const platform = { platform: platformLabel(state.platform) };
+      const detail = (synced
+        ? jt('settings.commandSandbox.rowDetailSynced', 'Foreground Linux shell only. After each run, changed files are copied back to your workspace after a restore point, except .git, hook and dependency folders and links. Each change can be undone.')
+          + ' ' + jt('settings.commandSandbox.platformLineSynced', 'Platform: {platform} · Workspace: synced · Network: none', platform)
+        : jt('settings.commandSandbox.rowDetail', 'Foreground Linux shell only. Files are discarded after each run; the other file tools still work in your workspace as usual.')
+          + ' ' + jt('settings.commandSandbox.platformLine', 'Platform: {platform} · Workspace: disposable copy · Network: none', platform))
         + ' ' + platformMarkup;
       return fieldBinding().renderToggleRow({
         id: 'commandSandboxEnabled', controlId: 'commandSandboxEnabled', sub: true, parentOff, inventory,
@@ -208,10 +298,16 @@
     function setParentOn(value) {
       if (parentOn === (value === true)) return;
       parentOn = value === true;
+      const markParent = (el) => {
+        if (parentOn) el.removeAttribute('data-setting-parent-off');
+        else el.setAttribute('data-setting-parent-off', 'true');
+      };
+      const modeRow = disposed ? null : host?.querySelector?.(`[data-settings-field="${MODE_FIELD}"]`);
+      if (modeRow) markParent(modeRow);
+      lockModeRow(true);
       const row = disposed ? null : host?.querySelector?.('[data-settings-field="commandSandboxEnabled"]');
       if (!row) return;
-      if (parentOn) row.removeAttribute('data-setting-parent-off');
-      else row.setAttribute('data-setting-parent-off', 'true');
+      markParent(row);
       const track = row.querySelector('[data-inv-toggle="commandSandboxEnabled"]');
       if (track && setSwitchDisabled) {
         setSwitchDisabled(track, toggleLocked());
@@ -232,6 +328,7 @@
       if (markup === paintedMarkup) return;
       host.innerHTML = markup;
       paintedMarkup = markup;
+      lockModeRow();
     }
 
     function setApiUnavailable() {
@@ -266,6 +363,8 @@
       setState(unwrapState(rawState));
     }
 
+    // A null fallbackState marks a write whose row reports its own failures (the mode):
+    // any failure then restores the state from before the call, like a refusal does.
     async function invokeAction(method, args, fallbackState, key, fallback) {
       if (disposed || actionPromise) return currentState;
       const bridge = getBridge();
@@ -273,6 +372,12 @@
         setApiUnavailable();
         return currentState;
       }
+      const before = currentState;
+      // The echo carries `refusal`, the reason the adapter's ack hands to the edited row.
+      const refuse = (raw, reason, error) => {
+        setState({ ...(raw || before), reason: before.reason, message: before.message });
+        return { ...currentState, refusal: reasonMessage(reason, currentState) || errorMessage(error, fallback) };
+      };
       const generation = ++requestGeneration;
       // The switch keeps the acknowledged value until the bridge echoes a new one.
       setState({
@@ -285,6 +390,7 @@
         .then(() => (args === undefined ? bridge[method]() : bridge[method](args)))
         .then(async (result) => {
           if (disposed || generation !== requestGeneration) return currentState;
+          if (result?.ok === false && REFUSALS.has(result.reason)) return refuse(unwrapState(result), result.reason);
           if (result?.state && typeof result.state === 'object') return setState(result.state);
           if (result && typeof result === 'object' && (VALID_STATES.has(result.state) || 'enabled' in result)) {
             return setState(result);
@@ -292,9 +398,9 @@
           return refresh();
         })
         .catch((error) => {
-          if (!disposed && generation === requestGeneration) {
-            setFailure(fallbackState, error, key, fallback);
-          }
+          if (disposed || generation !== requestGeneration) return currentState;
+          if (fallbackState === null || REFUSALS.has(error?.reason)) return refuse(null, error?.reason, error);
+          setFailure(fallbackState, error, key, fallback);
           return currentState;
         })
         .finally(() => {
@@ -306,13 +412,30 @@
       return operation;
     }
 
-    // The switch persists through the shared Settings binding. The controller
-    // binds once for the app's lifetime, so its registry (one coordinator) lives here.
-    function bindEnabledSwitch(registerListener) {
+    // The switch and the mode persist through the shared Settings binding. The controller
+    // binds once for the app's lifetime, so its registry (one coordinator each) lives here.
+    function bindSandboxFields(registerListener) {
       const binding = fieldBinding();
       if (typeof binding?.bindSettingFields !== 'function') return;
       const updateFailed = () => jt('settings.commandSandbox.updateFailed', 'Command sandbox setting could not be saved.');
       const registry = binding.createSettingsAdapterRegistry();
+      registry.register({
+        id: MODE_FIELD,
+        mode: 'patch',
+        optimistic: false,
+        read: () => ({ mode: currentState.mode }),
+        normalize: (value) => ({ mode: value?.mode === 'synced' ? 'synced' : 'copy' }),
+        // A failed mode write leaves the sandbox state alone; the binding shows the reason on the mode row.
+        // A choice the main process already holds needs no write (a pick queued behind an in-flight one).
+        write: (patch) => (patch.mode === currentState.mode && !actionPromise ? currentState
+          : invokeAction('setMode', { mode: patch.mode }, null, 'set_mode_failed', updateFailed())),
+        ack: (echo, patch) => {
+          if (echo?.refusal) throw new Error(echo.refusal);
+          if (echo?.mode !== patch.mode) throw new Error(updateFailed());
+          return { mode: echo.mode };
+        },
+        apply: () => render(),
+      });
       registry.register({
         id: 'commandSandbox',
         mode: 'patch',
@@ -322,6 +445,7 @@
         // invokeAction owns the transport and surfaces an unavailable or failed call itself.
         write: (patch) => invokeAction('setEnabled', { enabled: patch.enabled }, 'unavailable', 'set_enabled_failed', updateFailed()),
         ack: (echo, patch) => {
+          if (echo?.refusal) throw new Error(echo.refusal);
           // The row shows one reason: the one invokeAction recorded, when there is one.
           if (echo?.enabled !== patch.enabled) throw new Error((currentState.reason && currentState.message) || updateFailed());
           return { enabled: echo.enabled };
@@ -333,7 +457,7 @@
           if (!currentState.reason) setState({ ...currentState, reason: 'set_enabled_failed', message: errorMessage(error, updateFailed()) });
         },
       });
-      binding.bindSettingFields({ container: host, ids: ['commandSandboxEnabled'], registry, registerListener, inventory });
+      binding.bindSettingFields({ container: host, ids: ['commandSandboxEnabled', MODE_FIELD], registry, registerListener, inventory });
     }
 
     function onClick(event) {
@@ -352,7 +476,7 @@
           listeners.push(() => target.removeEventListener(type, handler, listenerOptions));
         };
         registerListener(host, 'click', onClick);
-        bindEnabledSwitch(registerListener);
+        bindSandboxFields(registerListener);
       }
       const bridge = getBridge();
       if (bridge && typeof bridge.onChanged === 'function') {

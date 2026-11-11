@@ -23,6 +23,7 @@ from sidecar.ai.routing.router import ChatDecision
 from sidecar.ai.routing.turn_boundary import TurnBoundary, ends_turn_at_next_step
 from sidecar.ai.routing.turn_event_contract import build_canonical_turn_event
 from sidecar.ai.thinking_guard import resolve_thinking_budget_chars
+from sidecar.ai.tools.tool_families import saved_tool_output
 from sidecar.ai.tools.trusted_attachments import attachment_refs
 from sidecar.protocol import (
     CHAT_DONE_METHOD,
@@ -265,7 +266,9 @@ def _chat_response_from_decision(
                     {
                         "tool_name": outcome.tool_name,
                         "success": outcome.success,
-                        "tool_output_summary": outcome.output,
+                        "tool_output_summary": saved_tool_output(
+                            outcome.tool_name, outcome.output, outcome.metadata
+                        ),
                         "content_type": outcome.content_type,
                         "tool_input": dict(outcome.tool_input),
                         **({"error_code": outcome.error_code} if outcome.error_code else {}),

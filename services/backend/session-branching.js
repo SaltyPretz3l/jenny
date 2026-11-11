@@ -23,7 +23,7 @@ const { isPrimaryRole } = require('./primary-session');
 // carries the reserved incarnation, its spawned_from proof, reporting and the accepted preferences).
 const BRANCH_SESSION_FIELD_KEYS = Object.freeze([
   'session_incarnation', 'spawned_from', 'session_mail', 'preferred_model', 'reasoning_effort',
-  'run_mode', 'plan_mode', 'pre_plan_run_mode', 'lockdown',
+  'run_mode', 'plan_mode', 'pre_plan_run_mode', 'lockdown', 'tool_category_overrides',
 ]);
 
 function branchSessionFields(fields) {

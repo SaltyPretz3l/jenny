@@ -34,7 +34,8 @@ function harness({ directory = null } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 function executor() {
   return new ToolExecutor({ registry: createDefaultRegistry({ toolsSessionDirectoryEnabled: true }),
@@ -61,6 +62,13 @@ test('the caller comes from the live binding and the stop result passes through'
   assert.equal(tool.summarize({}), 'Session stop');
   const self = harness({ directory: { stop: async () => ({ ok: false, reason: 'self' }) } });
   assert.deepEqual(output(await tool.execute({ session_id: 'caller' }, self.context)), { ok: false, reason: 'self' });
+});
+
+test('a refused stop is an error row, a stop that ran is not', async () => {
+  const { context } = harness();
+  assert.equal((await tool.execute({ session_id: 'target' }, context)).isError, false);
+  const refused = await tool.execute({ session_id: 'target' }, { ...context, planMode: true });
+  assert.deepEqual([output(refused).ok, refused.isError], [false, true]);
 });
 
 test('Plan mode and read-only chats refuse the stop before any directory work', async () => {

@@ -172,6 +172,7 @@ def tool_schema_repair_hints(
     return {
         "required_keys": required_keys,
         "minimal_valid_arguments": minimal_valid_arguments,
+        "allowed_keys": [str(key) for key in properties] if isinstance(properties, dict) else [],
     }
 
 
@@ -184,15 +185,24 @@ def minimal_valid_arguments(input_schema: dict[str, Any] | None) -> dict[str, ob
 def tool_schema_hint_text(repair_hints: dict[str, object]) -> str:
     required_keys = repair_hints.get("required_keys")
     minimal_arguments = repair_hints.get("minimal_valid_arguments")
+    allowed_keys = repair_hints.get("allowed_keys")
+    allowed_text = (
+        ", ".join(str(key) for key in allowed_keys[:24]) if isinstance(allowed_keys, list) else ""
+    )
+    allowed = f" Allowed arguments: {allowed_text}." if allowed_text else ""
+    if isinstance(required_keys, list) and allowed_keys == required_keys:
+        allowed = ""  # the required list already names every argument
     if not isinstance(required_keys, list) or not required_keys:
-        return ""
+        return allowed
     required_text = ", ".join(str(key) for key in required_keys if str(key).strip())
     if not required_text:
-        return ""
+        return allowed
     if isinstance(minimal_arguments, dict) and minimal_arguments:
         minimal_json = json.dumps(minimal_arguments, ensure_ascii=False)
-        return f" Required keys: {required_text}. Minimal valid arguments: {minimal_json}."
-    return f" Required keys: {required_text}."
+        return (
+            f" Required keys: {required_text}. Minimal valid arguments: {minimal_json}.{allowed}"
+        )
+    return f" Required keys: {required_text}.{allowed}"
 
 
 def format_tool_arguments_example(input_schema: dict[str, Any] | None) -> str:

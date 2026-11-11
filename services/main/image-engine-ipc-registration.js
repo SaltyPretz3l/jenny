@@ -6,7 +6,11 @@ const { dialog } = require('electron');
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { isLocalAbsolutePath } = require('../shell-config-engines');
 const { scanModelFolder, saveModelSet, listModelSets, removeModelSet,
-  setDefaultModelSet, loadFamilies } = require('../image-model-sets');
+  setDefaultModelSet, loadFamilies, loadRecipes, comfyFolderHealth, setComfyFolder,
+  saveComfyModelSet, recipeAdded } = require('../image-model-sets');
+
+const COMFY_SET_KEYS = ['recipe', 'diffusion', 'text_encoder', 'vae', 'label'];
+const isHealth = (value) => Boolean(value) && typeof value.folder === 'string';
 
 function registerImageEngineIpc(ipcMain, {
   backendService, authorization, dialogImpl = dialog, getMainWindow = () => null,
@@ -69,17 +73,60 @@ function registerImageEngineIpc(ipcMain, {
     if (picked.canceled) return { ok: false, reason: 'cancelled' };
     return method(localPath(picked.filePaths?.[0]));
   };
+  // Row 127: ComfyUI folder health is a bounded walk of the models folder, so it
+  // is kept here and only recomputed when the saved folder moves or the user acts.
+  const comfyEnabled = () => backendService.featureFlags?.image_comfyui_enabled !== false;
+  let healthCache = null;
+  let recipeTable = null; // the shipped recipes never change while Jenny runs
+  const recipes = () => (recipeTable ??= loadRecipes().recipes);
+  const refreshHealth = () => {
+    const result = comfyFolderHealth({ storePath }, { recipes: recipes() });
+    healthCache = result === null || isHealth(result) ? { folder: result?.folder ?? null, health: result } : null;
+    return result;
+  };
+  // Which recipes already have a saved set is read from the live store, not the cache.
+  const withAdded = (health, sets) => ({
+    ...health,
+    recipes: Object.fromEntries(Object.entries(health.recipes).map(([id, entry]) => [id, {
+      ...entry, added: recipeAdded(sets, id, health.models_root),
+    }])),
+  });
+  const comfyState = (modelSets) => {
+    // Labels go out even with the kill switch off, so saved ComfyUI sets keep their names.
+    const summary = Object.fromEntries(Object.entries(recipes()).map(([id, recipe]) => [id, {
+      label: recipe.label, min_comfyui_version: recipe.min_comfyui_version || '', steps: recipe.locked.steps,
+    }]));
+    if (!comfyEnabled()) return { comfyui: { enabled: false, health: null }, recipes: summary };
+    const stored = modelSets?.comfyui_folder ?? null;
+    if (!healthCache || healthCache.folder !== stored) refreshHealth();
+    const health = healthCache?.health ? withAdded(healthCache.health, modelSets?.sets || []) : null;
+    return { comfyui: { enabled: true, health }, recipes: summary };
+  };
+  const comfyOnly = (handler) => (_event, payload) => safe(() => {
+    if (!comfyEnabled()) fail('image_comfyui_disabled');
+    return handler(payload);
+  });
+  const comfyHealthResult = ({ announce }) => {
+    const health = refreshHealth();
+    if (health && !isHealth(health)) return health;
+    if (announce) announceChanged();
+    return { ok: true, health };
+  };
   const modelId = (method) => (_event, payload) => safe(() => {
     if (typeof payload?.id !== 'string' || !/^[a-f0-9]{12}$/u.test(payload.id)) fail('invalid_payload');
     return method(payload.id, { storePath });
   });
   return registerIpcInvokeHandlers(ipcMain, {
-    'imageEngine.getState': noPayload(() => ({
-      ...backendService.imageEngine.getState(),
-      handoff: backendService.chatGpuHandoff?.getState?.() || null,
-      model_sets: listModelSets({ storePath }),
-      families: loadFamilies().families,
-    })),
+    'imageEngine.getState': noPayload(() => {
+      const modelSets = listModelSets({ storePath });
+      return {
+        ...backendService.imageEngine.getState(),
+        handoff: backendService.chatGpuHandoff?.getState?.() || null,
+        model_sets: modelSets,
+        families: loadFamilies().families,
+        ...comfyState(modelSets),
+      };
+    }),
     'imageEngine.install': (_event, payload) => safe(() => whileIdle(() => backendService.imageEngine.install({ confirmed: payload?.confirmed }))),
     'imageEngine.cancelInstall': noPayload(() => backendService.imageEngine.cancel()),
     'imageEngine.remove': (_event, payload) => safe(() => whileIdle(() => backendService.imageEngine.remove({ confirmed: payload?.confirmed }))),
@@ -100,6 +147,27 @@ function registerImageEngineIpc(ipcMain, {
       if (payload.vision_projector !== undefined) Object.assign(selected, fields(payload, ['vision_projector']));
       chosenRoot(selected.root);
       return saveModelSet({ storePath, ...selected });
+    }),
+    'imageEngine.chooseComfyFolder': comfyOnly((payload) => {
+      if (payload !== undefined) fail('unexpected_payload');
+      return choose({ properties: ['openDirectory'] }, (folder) => {
+        const saved = setComfyFolder({ storePath, folder });
+        return saved.ok ? comfyHealthResult({ announce: true }) : saved;
+      });
+    }),
+    'imageEngine.checkComfyFolder': comfyOnly((payload) => {
+      if (payload !== undefined) fail('unexpected_payload');
+      return comfyHealthResult({ announce: false });
+    }),
+    'imageEngine.saveComfySet': comfyOnly((payload) => {
+      const selected = fields(payload, ['recipe', 'diffusion', 'text_encoder', 'vae']);
+      if (payload.label !== undefined) Object.assign(selected, fields(payload, ['label']));
+      if (Object.keys(payload).some((key) => !COMFY_SET_KEYS.includes(key))) fail('invalid_payload');
+      const saved = saveComfyModelSet({ storePath, ...selected }, { recipes: recipes() });
+      // A save changes no file, so the cached lists stay; a refusal may mean they moved.
+      if (saved.ok) announceChanged();
+      else refreshHealth();
+      return saved;
     }),
     'imageEngine.listModelSets': noPayload(() => listModelSets({ storePath })),
     'imageEngine.removeModelSet': modelId(removeModelSet),

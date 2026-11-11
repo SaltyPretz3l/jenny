@@ -24,12 +24,29 @@
   word-break: break-all;
 }
 
+/* Row text lines up with the group heading, like the generated rows. */
+.knowledge-folders-row,
+.knowledge-catalog-toggle-row {
+  padding-inline: 0;
+}
+
+.knowledge-folders-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-top: 10px;
+}
+
 .knowledge-folders-add-input {
+  flex: 1 1 200px;
   min-width: 0;
 }
 
-.knowledge-folders-error {
-  min-height: 1em;
+.knowledge-folders-add-row > button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .knowledge-folders-error:not(:empty) {

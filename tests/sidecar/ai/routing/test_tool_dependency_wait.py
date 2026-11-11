@@ -11,9 +11,16 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
+from sidecar.ai.tools.tool_search import RUNTIME_CHILD_TOOLS_FLAG
 from sidecar.runtime.chat_models import ChatRequestContext
 from tests.sidecar.ai.routing.test_tool_loop import _build_router, _ToolLoopEngine, _ToolPlan
 from tests.sidecar.runtime.test_continuation_checkpoint import _callback, _result
+
+
+@pytest.fixture(autouse=True)
+def _offer_runtime_child_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The child tools are off unless this switch is set (tool review, row 129).
+    monkeypatch.setenv(RUNTIME_CHILD_TOOLS_FLAG, "1")
 
 
 class Checkpoint:

@@ -81,6 +81,8 @@
       onOpenProblems = noop,
       onToggleBottomPanel = noop,
       onOpenRun = noop,
+      getFollowJenny = () => null,
+      onToggleFollowJenny = noop,
     } = callbacks;
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
@@ -166,7 +168,20 @@
           + 'title="' + escapeHtml(jt('ide.statusbar.minimapDisabledTitle', 'Minimap is disabled for this large file to protect editor performance')) + '">'
           + escapeHtml(jt('ide.statusbar.minimapDisabled', 'Minimap: Off (large file)')) + '</span>'
         : '';
+      // Follow Jenny (row 121): shown while the feature is on; pressed while it follows.
+      const following = getFollowJenny();
+      const followSegment = typeof following === 'boolean'
+        ? actionButton({
+          plain: true,
+          className: `ide-statusbar-item ide-statusbar-action${following ? ' ide-statusbar-action--active' : ''}`,
+          title: jt('ide.follow.switchTitle', 'Open the file Jenny is writing and show it arriving'),
+          ariaPressed: following,
+          label: jt('ide.follow.switch', 'Follow Jenny'),
+          dataset: { 'ide-status-action': 'toggle-follow' },
+        })
+        : '';
       return branchSegment
+        + followSegment
         + problemsSegment
         + runSegment
         + minimapOverrideSegment
@@ -316,6 +331,7 @@
       ['open-problems', () => onOpenProblems()],
       ['toggle-panel', () => onToggleBottomPanel()],
       ['open-run', () => onOpenRun()],
+      ['toggle-follow', () => onToggleFollowJenny()],
     ]);
 
     function handleStatusClick(event) {

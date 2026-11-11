@@ -165,3 +165,64 @@ test('noteHydrated is a safe no-op when hot exit is unavailable', () => {
     else globalThis.rendererIdeHotExit = prev;
   }
 });
+
+test('the collector wires Follow Jenny: lifecycle callbacks, root commit and dispose', () => {
+  const prev = globalThis.rendererIdeFollowController;
+  const calls = [];
+  let seen = null;
+  globalThis.rendererIdeFollowController = {
+    createIdeFollowController: (deps) => {
+      seen = deps;
+      return { closeAll: () => calls.push('closeAll'), dispose: () => calls.push('dispose') };
+    },
+  };
+  try {
+    withStubbedModules(
+      { breadcrumbs: () => null, mru: () => null, saveHygiene: () => null },
+      () => {
+        const opened = [];
+        const qol = createIdeQolWiring({
+          getDom: () => ({}),
+          getIde: () => ({}),
+          editorHost: { id: 'host' },
+          getWorkspaceRootContext: () => ({ path: 'C:/work' }),
+          onOpenFile: (path) => opened.push(['plain', path]),
+          onOpenWritten: (path) => opened.push(['written', path]),
+          onCloseTab: (path) => opened.push(['close', path]),
+          renderTabs: () => opened.push(['render']),
+          schedulePersist: () => opened.push(['persist']),
+          activateTab: () => {},
+        });
+        assert.ok(qol.follow);
+        assert.equal(seen.editorHost.id, 'host');
+        assert.deepEqual(seen.getWorkspaceRootContext(), { path: 'C:/work' });
+        assert.equal(seen.getPresentation(), qol.presentation, 'it asks the same presentation controller before taking the editor');
+        seen.openFile('src/a.js');
+        seen.closeTab('diff://live/c1');
+        seen.renderTabs();
+        seen.schedulePersist();
+        assert.deepEqual(opened, [['written', 'src/a.js'], ['close', 'diff://live/c1'], ['render'], ['persist']]);
+
+        qol.handleWorkspaceRootCommitted({ context: { rootId: 'root_x' } });
+        qol.disposeAll();
+        assert.deepEqual(calls, ['closeAll', 'dispose']);
+      }
+    );
+  } finally {
+    if (prev === undefined) delete globalThis.rendererIdeFollowController;
+    else globalThis.rendererIdeFollowController = prev;
+  }
+});
+
+test('the collector has no Follow Jenny controller when its module is absent', () => {
+  const prev = globalThis.rendererIdeFollowController;
+  globalThis.rendererIdeFollowController = { createIdeFollowController: () => null };
+  try {
+    const qol = createIdeQolWiring({ getDom: () => ({}), getIde: () => ({}) });
+    assert.equal(qol.follow, null);
+    assert.doesNotThrow(() => { qol.handleWorkspaceRootCommitted({}); qol.disposeAll(); });
+  } finally {
+    if (prev === undefined) delete globalThis.rendererIdeFollowController;
+    else globalThis.rendererIdeFollowController = prev;
+  }
+});

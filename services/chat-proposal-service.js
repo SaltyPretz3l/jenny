@@ -461,8 +461,8 @@ class ChatProposalService {
 
   _project(record) {
     return this._records.projectProposal(record, {
-      now: this._now(), ...this._runState(record.source_session_id), commandRunSupported: this._commandSupported(),
-      sessionRuntimeSupported: true, sessionHandoffSupported: record.kind === 'session' && this._handoffSupported(),
+      now: this._now(), ...this._runState(record.source_session_id), commandRunSupported: this._commandSupported(), commandSandboxReady: this._commandAdapter?.sandboxReady?.(),
+      commandSandboxWorkspace: this._commandAdapter?.sandboxWorkspace?.(), sessionRuntimeSupported: true, sessionHandoffSupported: record.kind === 'session' && this._handoffSupported(),
       child: this._child.view(record),
     });
   }

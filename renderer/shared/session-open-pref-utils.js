@@ -1,14 +1,14 @@
 /* renderer/shared/session-open-pref-utils.js
  *
- * Tiny renderer-only sticky preference: when the user clicks an EXISTING session
- * (sidebar history / command palette), should it open in a NEW tab or REPLACE the
- * active tab? Default (off / absent) = replace; on = always new tab.
+ * Tiny renderer-only sticky preference: when a gesture does not name a mode,
+ * should opening a chat (an existing session or a new chat) go in a NEW tab or
+ * REPLACE the active tab? Default (off / absent) = replace; on = new tab.
+ * Gestures that name a mode (the context menu, split) keep it.
  *
  * Backed by localStorage and read synchronously at click time. (The
  * `jenny.composer.planMode` sticky pref this originally mirrored was retired
  * with the P4 composer run-mode work; run_mode is store-owned now.) No IPC, no
- * config schema, no CONFIG_VERSION bump. The + new-chat button is unaffected
- * (it pins mode:new-tab).
+ * config schema, no CONFIG_VERSION bump.
  */
 (function exposeSessionOpenPrefUtils(globalScope, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -42,5 +42,18 @@
     }
   }
 
-  return { STORAGE_KEY, getOpenSessionsInNewTab, setOpenSessionsInNewTab };
+  // Puts a session on the rail the way the preference says: for opens with no
+  // click to carry a mode (a first send's chat getting its tab).
+  function openSessionPerPreference(workspaceController, sessionId) {
+    return getOpenSessionsInNewTab()
+      ? workspaceController.openSession(sessionId)
+      : workspaceController.replaceActiveSession(sessionId);
+  }
+
+  return {
+    STORAGE_KEY,
+    getOpenSessionsInNewTab,
+    setOpenSessionsInNewTab,
+    openSessionPerPreference,
+  };
 });

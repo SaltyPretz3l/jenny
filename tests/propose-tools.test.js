@@ -152,7 +152,8 @@ test('propose_git_action rejects invalid arguments before any liveness, capture 
 });
 
 test('propose_command captures the binding, then validates with its shell and backend', async () => {
-  const { context, calls, deps } = makeHarness();
+  const { context, calls, deps, backendService } = makeHarness();
+  backendService.commandSandbox = { state: 'ready' };
   deps.binding.captureCommandProposalBinding = async (request) => {
     calls.captured.push({ kind: 'command', request });
     return { ok: true, binding: { command: { backend: 'docker', shell: '/bin/sh', cwd: '.', command_sha256: '2'.repeat(64) } } };
@@ -171,6 +172,33 @@ test('propose_command captures the binding, then validates with its shell and ba
   const text = `${result.content}${result.summary}${JSON.stringify(result.metadata)}`;
   assert.equal(text.includes('do-not-echo'), false);
   assert.match(result.content, /Copy or Run/);
+  // A sandbox Run never touches this computer, and the model is told so.
+  assert.match(result.content, /offline Linux copy of the workspace/);
+  assert.match(result.content, /only Node\.js and Python 3 installed/, 'the model learns which runtimes Run has');
+  // Row 106: in Synced workspace mode the model is told Run's changes come back and can be undone.
+  backendService.commandSandbox = { state: 'ready', mode: 'synced' };
+  const synced = await proposeCommandTool.execute(COMMAND_ARGS, context);
+  assert.match(synced.content, /copied back afterwards and can be undone/);
+});
+
+test('a docker proposal while the sandbox is not ready still records, and says Copy only', async () => {
+  const { context, calls, deps, backendService } = makeHarness();
+  backendService.commandSandbox = { state: 'unavailable' };
+  deps.binding.captureCommandProposalBinding = async () => ({
+    ok: true, binding: { command: { backend: 'docker', shell: '/bin/sh', cwd: '.', command_sha256: '2'.repeat(64) } },
+  });
+  const result = await proposeCommandTool.execute(COMMAND_ARGS, context);
+  assert.equal(result.isError, false);
+  assert.equal(calls.published.length, 1);
+  assert.match(result.content, /command sandbox is not ready/);
+  assert.equal(/Copy or Run/.test(result.content), false);
+});
+
+test('a native proposal keeps the plain Copy or Run result', async () => {
+  const { context } = makeHarness();
+  const result = await proposeCommandTool.execute(COMMAND_ARGS, context);
+  assert.match(result.content, /^The user can Copy or Run this command/);
+  assert.equal(/sandbox/.test(result.content), false);
 });
 
 test('a docker timeout above the sandbox limit and a multi-line cmd.exe command return validator errors', async () => {
@@ -181,7 +209,8 @@ test('a docker timeout above the sandbox limit and a multi-line cmd.exe command 
   const slow = await proposeCommandTool.execute({ ...COMMAND_ARGS, timeout_seconds: 200 }, docker.context);
   assert.equal(slow.isError, true);
   assert.equal(slow.errorCode, 'CMP-PROPOSAL-0001');
-  assert.match(slow.content, /timeout_sandbox_limit/);
+  // The limit is named, so the model corrects it in one try instead of guessing.
+  assert.match(slow.content, /timeout_seconds can be at most 120 while the command sandbox is on/);
   assert.equal(docker.calls.published.length, 0);
 
   const windows = makeHarness();

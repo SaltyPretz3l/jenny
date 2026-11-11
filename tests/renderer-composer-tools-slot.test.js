@@ -511,3 +511,20 @@ test('a session switch closes the open panel and drops the query', (t) => {
   assert.equal(slot.querySelector('[data-chat-panel-filter]').value, '');
   assert.ok([...slot.querySelectorAll('.composer-tool-row')].every((node) => !node.hidden));
 });
+
+test('every render tells the browser panel whether this chat has the Browser row on', async (t) => {
+  const { dom, controller, tools, slot } = setup(t);
+  const synced = [];
+  dom.window.rendererSyncBrowserUse = (args) => synced.push(args);
+  controller.setAvailableTools([{ name: 'browser', surfaceFamily: 'browser_use', available: true, lockdownAvailable: false }]);
+  tools.render();
+  tools.render();
+  assert.equal(synced.length, 2, 'also on the pass that changes nothing else');
+  assert.deepEqual(synced[0], { sessionId: 'a', enabled: false, chipHost: slot.querySelector('#composerChatChipHost') });
+  await controller.setToggle('browser_use', true);
+  tools.render();
+  assert.equal(synced.at(-1).enabled, true);
+  controller.setAvailableTools([{ name: 'browser', surfaceFamily: 'browser_use', available: false, reason: 'unavailable in Strict safety', lockdownAvailable: false }]);
+  tools.render();
+  assert.equal(synced.at(-1).enabled, false, 'a blocked row is off');
+});

@@ -25,6 +25,7 @@ from sidecar.ai.routing.iteration_limits import (
     effective_chunk_inactivity_seconds,
     effective_max_loop_wall_seconds,
     effective_max_tools_per_turn,
+    turn_tool_call_limit,
 )
 from sidecar.ai.routing.mutation_change_set_lifecycle import (
     bind_run_context,
@@ -408,7 +409,7 @@ def _validate_approval_plan_live_context(
         if isinstance(current_request_messages, list)
         else None
     )
-    current_tool_call_limit = max(effective_max_tools_per_turn(stack.config), 1)
+    current_tool_call_limit = max(turn_tool_call_limit(stack.config, current_tool_contract), 1)
     _plan_tool_call_limit, plan_remaining_tool_calls, budget_valid = (
         _approval_resume_tool_budget(
             plan,
@@ -559,6 +560,7 @@ def resume_chat_send_response_from_approval_plan(
     from sidecar.ai.routing.tool_call_execution import (
         execute_tool_calls_sequentially,
         pre_filter_tool_calls,
+        settle_app_refused_call,
         settle_dropped_tool_calls,
     )
     from sidecar.ai.routing.tool_loop import run_tool_loop
@@ -718,6 +720,8 @@ def resume_chat_send_response_from_approval_plan(
         if effective_runtime.quota_registry is not None:
             effective_runtime.quota_registry.validate_pending_admissions(
                 plan.tool_calls, tool_contract=tool_contract)
+        refused_repeatedly = settle_app_refused_call(plan, kernel=kernel, outcomes=outcomes,
+            working_messages=working_messages, iteration_calls=iteration_calls)
         settle_dropped_tool_calls(
             kernel=kernel,
             runtime=effective_runtime,
@@ -734,6 +738,9 @@ def resume_chat_send_response_from_approval_plan(
             ),
             window_calls=resume_tool_calls,
         )
+        # Local: the park path pulls extra routing modules; keep them off the startup graph.
+        from sidecar.runtime.approved_call_park import approved_call_deferral_callback
+
         approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
         audit_metadata_by_call = _approval_audit_metadata_map(
             plan,
@@ -798,6 +805,11 @@ def resume_chat_send_response_from_approval_plan(
                             trusted_plan_artifact_write_call_ids
                         ),
                         audit_metadata_by_call=audit_metadata_by_call,
+                        on_resource_deferral=approved_call_deferral_callback(
+                            plan, runtime=effective_runtime, kernel=kernel,
+                            request_context=resumed_request_context, tool_contract=tool_contract,
+                            outcomes=outcomes, change_set_id=resumed_change_set_id,
+                        ),
                     )
                 except (ToolLoopSuspended, DecisionSuspensionError):
                     raise
@@ -856,7 +868,7 @@ def resume_chat_send_response_from_approval_plan(
                 )
             resume_tool_payload = (
                 list(refreshed_tool_contract.prompt_schemas)
-                if effective_runtime.remaining_tool_calls > 0
+                if effective_runtime.remaining_tool_calls > 0 and not refused_repeatedly
                 else []
             )
             resumed = run_tool_loop(

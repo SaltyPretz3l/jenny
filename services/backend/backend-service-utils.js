@@ -1,6 +1,7 @@
 const {
   isPlainUserAssistantMessage,
 } = require('./session-shadow-store');
+const { APPLICATION_TURN_WAKE, isUnattendedApplicationTurn } = require('./application-turns');
 const {
   normalizeManagedReasoningEffortForModel,
   normalizeReasoningEffort,
@@ -9,7 +10,7 @@ const {
   ensureArray,
 } = require('../value-utils');
 
-const { ALWAYS_ON_TOOL_NAMES, LEGACY_TOGGLE_TO_SURFACE, resolveRequestToolPreferences } = require('../tools/tool-surface-families');
+const { ALWAYS_ON_TOOL_NAMES, LEGACY_TOGGLE_TO_SURFACE, resolveRequestToolPreferences, defaultOffFamilySwitches } = require('../tools/tool-surface-families');
 
 const LOCAL_AUTH_ACCOUNTS_KEY = 'local_auth_accounts_json';
 const MANAGED_REASONING_EFFORT_SUPPORTED_ENGINES = new Set(['vllm', 'openai-compatible', 'codex-cli', 'chatgpt', 'api-provider']);
@@ -405,6 +406,19 @@ function normalizeManagedToolPreferences(toolPreferences, { catalog } = {}) {
   return resolveRequestToolPreferences({ families }, catalog);
 }
 
+// What a turn starts from. A turn that names no preference (wake, resume, a scheduled check, a child) is
+// not a chat asking for everything: a default-off family still follows that chat's own switch.
+function requestToolPreferences(toolPreferences, { catalog, session, applicationTurn = '' } = {}) {
+  if (toolPreferences && typeof toolPreferences === 'object' && !Array.isArray(toolPreferences)) {
+    return normalizeManagedToolPreferences(toolPreferences, { catalog });
+  }
+  // A woken chat keeps its Browser switch so it can close a page it left open when another chat asks:
+  // browser-tool.js refuses every other step of a turn nobody typed. A check or digest still gets none.
+  const chatSwitches = isUnattendedApplicationTurn(applicationTurn) && applicationTurn !== APPLICATION_TURN_WAKE
+    ? null : session?.tool_category_overrides;
+  return resolveRequestToolPreferences({ families: defaultOffFamilySwitches(chatSwitches) }, catalog);
+}
+
 // The tools a chat's stored per-chat switches turn off, resolved exactly as a
 // request start resolves them. A missing catalog still resolves manifest tools.
 function resolveSessionToolDenyList(session, catalog) {
@@ -432,5 +446,6 @@ module.exports = {
   normalizeRecallQueryFragment,
   buildRecallQuery,
   normalizeManagedToolPreferences,
+  requestToolPreferences,
   resolveSessionToolDenyList,
 };

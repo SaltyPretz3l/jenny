@@ -111,12 +111,12 @@
   }
 
   function getMermaidPaletteMode(docRoot, computed) {
-    var paletteId = String(docRoot?.dataset?.palette || '').trim().toLowerCase();
-    // Deterministic light override set. Every other registered palette
-    // declares color-scheme: dark (including signal), so the computed
-    // colorScheme fallback below only decides unknown/future palettes.
-    if (paletteId === 'paper' || paletteId === 'woolly' || paletteId === 'jenny-day') {
-      return 'light';
+    // The registry stamps data-scheme on the root (appearance-utils.js), so no
+    // per-palette list lives here; the computed colorScheme below only decides
+    // a root that carries no stamp.
+    var scheme = String(docRoot?.dataset?.scheme || '').trim().toLowerCase();
+    if (scheme === 'light' || scheme === 'dark') {
+      return scheme;
     }
     var colorScheme = String(computed?.colorScheme || '').trim().toLowerCase();
     if (colorScheme.indexOf('light') !== -1 && colorScheme.indexOf('dark') === -1) {

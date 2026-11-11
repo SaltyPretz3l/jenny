@@ -103,6 +103,37 @@ def test_missing_metric_key_fails(tmp_path, monkeypatch, capsys) -> None:
     assert "missing metric key: test_files_over_600" in capsys.readouterr().out
 
 
+def test_over_900_counts_production_files_only(tmp_path, monkeypatch) -> None:
+    module = _load_script_module()
+    repo = _make_repo(tmp_path)
+    (repo / "renderer" / "big.js").write_text("x;\n" * 901, encoding="utf-8")
+    (repo / "renderer" / "mid.js").write_text("x;\n" * 700, encoding="utf-8")
+    (repo / "tests" / "big.test.js").write_text("x;\n" * 901, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", repo)
+
+    metrics = module.measure_metrics()
+
+    assert metrics["production_files_over_600"] == 2
+    assert metrics["production_files_over_900"] == 1
+    assert metrics["test_files_over_600"] == 1
+
+
+def test_overlong_note_fails(tmp_path, monkeypatch, capsys) -> None:
+    module = _load_script_module()
+    repo = _make_repo(tmp_path)
+    monkeypatch.setattr(module, "ROOT", repo)
+    _write_baselines(module, repo, module.measure_metrics())
+    path = repo / module.BASELINES_RELATIVE_PATH
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["index_html_lines"]["note"] = "x" * (module.NOTE_MAX_CHARS + 1)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert module.main() == 1
+    output = capsys.readouterr().out
+    assert "index_html_lines: note is" in output
+    assert "complexity-ratchet-history.md" in output
+
+
 def test_script_count_ignores_https_sources(tmp_path, monkeypatch) -> None:
     module = _load_script_module()
     repo = _make_repo(tmp_path)

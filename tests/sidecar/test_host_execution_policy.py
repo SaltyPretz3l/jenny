@@ -105,7 +105,6 @@ def test_server_builtin_tools_list_is_closed_and_dispatch_rejects_forged_tool(
         {
             "host_mode": "server",
             "host_execution_policy_version": HOST_EXECUTION_POLICY_VERSION,
-            "tools_mermaid_enabled": True,
         },
         workspace_root_present=True,
     )

@@ -142,6 +142,39 @@ async function readBounded(resolved, { fs = fsPromises } = {}) {
   }
 }
 
+// One listed file row from its path, origin, change kind and measured counts.
+function fileRow(filePath, origPath, change, counts) {
+  return {
+    path: filePath,
+    orig_path: typeof origPath === 'string' && origPath ? origPath : null,
+    change,
+    binary: counts?.binary === true,
+    additions: Number.isSafeInteger(counts?.additions) ? counts.additions : null,
+    deletions: Number.isSafeInteger(counts?.deletions) ? counts.deletions : null,
+  };
+}
+
+// Totals and the honest degraded reason for a listed file set; unknown is never zero.
+function summarizeFiles(files, truncated, countsAvailable) {
+  const measured = files.filter((file) => file.additions !== null && file.deletions !== null);
+  const sum = (key) => (files.length === 0 ? 0 : (measured.length === 0 ? null : measured.reduce((acc, f) => acc + f[key], 0)));
+  const complete = measured.length === files.length && !truncated;
+  return {
+    reason: complete ? null : (countsAvailable ? 'some_files_unmeasured' : 'counts_unavailable'),
+    additions: sum('additions'),
+    deletions: sum('deletions'),
+  };
+}
+
+// Result of a tracked-file `git diff` read: binary files carry no body, bodies are capped.
+function diffResult(filePath, change, raw) {
+  if (/^Binary files |^GIT binary patch/mu.test(raw)) {
+    return { ok: true, path: filePath, change, binary: true, truncated: false, diff: '' };
+  }
+  const truncated = raw.length > MAX_DIFF_CHARS;
+  return { ok: true, path: filePath, change, binary: false, truncated, diff: truncated ? raw.slice(0, MAX_DIFF_CHARS) : raw };
+}
+
 function synthesizeAdditionDiff(filePath, text) {
   const lines = text === '' ? [] : text.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
@@ -228,22 +261,13 @@ function createWorkspaceGitChangeSummary({
       const change = changeKind(file);
       const counts = change === 'untracked' ? untracked.get(file.path)
         : (change === 'conflicted' ? null : numstat?.get(file.path));
-      return {
-        path: file.path,
-        orig_path: typeof file.origPath === 'string' && file.origPath ? file.origPath : null,
-        change,
-        binary: counts?.binary === true,
-        additions: Number.isSafeInteger(counts?.additions) ? counts.additions : null,
-        deletions: Number.isSafeInteger(counts?.deletions) ? counts.deletions : null,
-      };
+      return fileRow(file.path, file.origPath, change, counts);
     });
-    const measured = files.filter((file) => file.additions !== null && file.deletions !== null);
-    const sum = (key) => (files.length === 0 ? 0 : (measured.length === 0 ? null : measured.reduce((acc, f) => acc + f[key], 0)));
-    const complete = measured.length === files.length && !truncated;
+    const totals = summarizeFiles(files, truncated, numstat !== null);
     const branch = status.detached === true || !status.branch ? null : String(status.branch);
     return {
       state: 'available',
-      reason: complete ? null : (numstat === null ? 'counts_unavailable' : 'some_files_unmeasured'),
+      reason: totals.reason,
       sampled_at: sampledAt,
       data: {
         workspace_id: workspaceId,
@@ -253,8 +277,8 @@ function createWorkspaceGitChangeSummary({
         branch,
         files,
         file_count: files.length,
-        additions: sum('additions'),
-        deletions: sum('deletions'),
+        additions: totals.additions,
+        deletions: totals.deletions,
         truncated,
       },
     };
@@ -280,12 +304,7 @@ function createWorkspaceGitChangeSummary({
     const args = [...GIT_ARGS_PREFIX, headInfo.hasHead ? 'HEAD' : '--cached', '--', ...specs];
     const result = await runRead(root, args, signal);
     if (!result.success) return { ok: false, reason: 'git_failed' };
-    const raw = String(result.stdout || '');
-    if (/^Binary files |^GIT binary patch/mu.test(raw)) {
-      return { ok: true, path: entry.path, change, binary: true, truncated: false, diff: '' };
-    }
-    const truncated = raw.length > MAX_DIFF_CHARS;
-    return { ok: true, path: entry.path, change, binary: false, truncated, diff: truncated ? raw.slice(0, MAX_DIFF_CHARS) : raw };
+    return diffResult(entry.path, change, String(result.stdout || ''));
   }
 
   async function untrackedDiff(filePath, resolved, change) {
@@ -304,17 +323,25 @@ function createWorkspaceGitChangeSummary({
     return { ok: true, path: filePath, change, binary: false, truncated, diff };
   }
 
-  return { listChanges, getChangeDiff };
+  // Read seams shared with the whole-branch read (workspace-git-branch-compare.js).
+  const kit = { runRead, mapStatusFailure, readHead, measureUntracked, untrackedDiff };
+  return { listChanges, getChangeDiff, kit };
 }
 
 module.exports = {
+  GIT_ARGS_PREFIX,
   MAX_DIFF_CHARS,
   MAX_LISTED_FILES,
   MAX_UNTRACKED_FILE_BYTES,
+  changeKind,
   countLines,
   createWorkspaceGitChangeSummary,
+  diffResult,
+  fileRow,
   isInside,
+  nowIso,
   parseNumstat,
   resolveContained,
+  summarizeFiles,
   synthesizeAdditionDiff,
 };

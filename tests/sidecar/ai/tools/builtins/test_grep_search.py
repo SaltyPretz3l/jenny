@@ -11,7 +11,8 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_OUTSIDE_WORKSPACE,
 )
 from sidecar.ai.tools.builtins import grep_search as grep_module
-from sidecar.ai.tools.builtins import grep_search_file
+from sidecar.ai.tools.builtins import grep_search_client, grep_search_file
+from sidecar.ai.tools.builtins.grep_search_worker import ScanOutcome
 from sidecar.ai.tools.builtins.regex_safety import looks_like_catastrophic_regex
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -81,7 +82,7 @@ def test_grep_worker_rejects_parent_swap_before_open(
     assert response["message"] == "resolved path escapes tools workspace root"
     assert response["retryable"] is False
     with pytest.raises(ToolExecutionFailure) as excinfo:
-        grep_module._response_to_search_result(response)
+        grep_search_client._response_to_search_result(response)
     assert excinfo.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
 
 
@@ -89,7 +90,7 @@ def test_grep_search_exposes_audited_bound_contract() -> None:
     assert grep_module.MAX_RESULTS == 500
     assert grep_module.MAX_OUTPUT_BYTES == 20_000
     assert grep_module.REGEX_SEARCH_TIMEOUT_SECONDS == 5.0
-    assert grep_module.REGEX_WORKER_STARTUP_TIMEOUT_SECONDS == 15.0
+    assert grep_search_client.REGEX_WORKER_STARTUP_TIMEOUT_SECONDS == 15.0
     assert grep_module.MAX_TOTAL_RUNTIME_SECONDS == 30.0
     assert grep_module.LARGE_FILE_HINT == (
         "Use paginated read_file with offset/limit to inspect large files."
@@ -340,6 +341,11 @@ def test_grep_search_rejects_unsafe_path(tmp_path: Path) -> None:
     assert exc_info.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
 
 
+def _every_file_times_out(_worker, paths, _compiled, **_kwargs):
+    for _ in paths:
+        yield ScanOutcome("timeout")
+
+
 def test_grep_search_returns_timeout_message_when_all_candidates_time_out(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -347,10 +353,7 @@ def test_grep_search_returns_timeout_message_when_all_candidates_time_out(
     target = tmp_path / "app.txt"
     target.write_text("needle\n", encoding="utf-8")
 
-    def _raise_timeout(*_args, **_kwargs):
-        raise grep_module.FutureTimeoutError()
-
-    monkeypatch.setattr(grep_module, "_search_file_with_timeout", _raise_timeout)
+    monkeypatch.setattr(grep_module, "_scan_text_batches", _every_file_times_out)
 
     result = grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))
 
@@ -377,10 +380,7 @@ def test_grep_search_aborts_after_timeout_cap(
     for index in range(5):
         (tmp_path / f"file_{index}.txt").write_text("needle\n", encoding="utf-8")
 
-    def _raise_timeout(*_args, **_kwargs):
-        raise grep_module.FutureTimeoutError()
-
-    monkeypatch.setattr(grep_module, "_search_file_with_timeout", _raise_timeout)
+    monkeypatch.setattr(grep_module, "_scan_text_batches", _every_file_times_out)
 
     result = grep_module.grep_search_tool({"pattern": "needle"}, _guard(tmp_path))
 
@@ -417,7 +417,7 @@ def test_grep_search_timeout_resets_worker_state_without_leaving_process_alive(
     assert process.poll() is None
     monkeypatch.setattr(worker, "_wait_for_response", lambda _timeout: None)
 
-    with pytest.raises(grep_module.FutureTimeoutError):
+    with pytest.raises(grep_search_client.FutureTimeoutError):
         worker.search(
             path=Path("example.txt"),
             compiled=grep_module.re.compile("needle"),
@@ -436,9 +436,7 @@ def test_grep_search_timeout_resets_worker_state_without_leaving_process_alive(
 def test_grep_search_startup_timeout_is_distinct_from_search_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        grep_module, "REGEX_WORKER_STARTUP_TIMEOUT_SECONDS", 0.05
-    )
+    monkeypatch.setattr(grep_search_client, "REGEX_WORKER_STARTUP_TIMEOUT_SECONDS", 0.05)
     worker = grep_module._RegexSearchWorker(
         command_factory=lambda: [
             sys.executable,
@@ -463,9 +461,9 @@ def test_grep_search_startup_timeout_is_distinct_from_search_timeout(
 
 
 def test_grep_worker_command_uses_source_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(grep_module.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(grep_search_client.sys, "frozen", False, raising=False)
 
-    assert grep_module._grep_worker_command() == [
+    assert grep_search_client._grep_worker_command() == [
         sys.executable,
         "-m",
         "sidecar",
@@ -474,9 +472,9 @@ def test_grep_worker_command_uses_source_entrypoint(monkeypatch: pytest.MonkeyPa
 
 
 def test_grep_worker_command_uses_packaged_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(grep_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(grep_search_client.sys, "frozen", True, raising=False)
 
-    assert grep_module._grep_worker_command() == [
+    assert grep_search_client._grep_worker_command() == [
         sys.executable,
         "--grep-search-worker",
     ]

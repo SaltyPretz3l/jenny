@@ -25,32 +25,9 @@
 }
 
 /* Light palettes: the production status tokens fall below 3:1 against the
- * light chat grounds, so the smallest essential stroke is re-toned per
- * palette. Dark palettes keep the defaults above. Jenny Day carries the
- * owner-approved mockup tones, darkened 2-7% to reach 3:1 on --bg-base. */
-:root[data-palette="jenny-day"] {
-  --sprite-dot-active: #2c8790;
-  --sprite-dot-warn: #9b7611;
-  --sprite-dot-error: #b53d34;
-  --sprite-dot-ok: rgba(32, 133, 76, 0.92);
-  --sprite-dot-muted: #6c7f85;
-}
-
-:root[data-palette="paper"] {
-  --sprite-dot-active: #157ec7;
-  --sprite-dot-warn: #b27512;
-  --sprite-dot-error: #c03848;
-  --sprite-dot-ok: rgba(30, 130, 72, 0.94);
-  --sprite-dot-muted: #5f6677;
-}
-
-:root[data-palette="woolly"] {
-  --sprite-dot-active: #3176b1;
-  --sprite-dot-warn: #956b0b;
-  --sprite-dot-error: #b03040;
-  --sprite-dot-ok: rgba(38, 112, 24, 0.96);
-  --sprite-dot-muted: #685c4b;
-}
+ * light chat grounds, so every light palette sheet (styles/palette-*.css) sets
+ * its own five --sprite-dot-* tokens at 3:1 or better on its --bg-base.
+ * Dark palettes keep the defaults above. */
 
 /* At the 22-24 px sprite breakpoint (chat-media-queries.css: --chat-sprite-size
  * is 24 px wherever the rail still shows) only the inner root scales, by

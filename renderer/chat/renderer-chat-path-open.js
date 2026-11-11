@@ -146,7 +146,7 @@
       return Promise.resolve().then(function writeClipboard() {
         return clipboard.writeText(text);
       }).then(function toastCopied() {
-        showToastMessage(jt('ide.pathMenu.copiedValue', 'Copied {value}', { value: text }), { dedupeKey: 'chat:path-copy' });
+        showToastMessage(jt('chat.pathOpen.pathCopied', 'Path copied'), { dedupeKey: 'chat:path-copy' });
       }).catch(function toastCopyFailed() {
         showToastMessage(jt('ide.pathMenu.copyFailed', 'Could not copy to the clipboard.'), { tone: 'danger', dedupeKey: 'chat:path-copy' });
       });
@@ -299,13 +299,13 @@
 
     // Path-shaped inline code in prose navigates like a chip: models reference written files this way
     // (GUI finding 2026-07-20). A separator is required so property access (`state.ui.followLatest`)
-    // stays inert; <pre> code is never a path; :line[:column] resolves.
+    // stays inert; <pre> and editable plan steps are never paths; :line[:column] resolves.
     function resolveInlineCodePath(target) {
       if (!target || typeof target.closest !== 'function') {
         return null;
       }
       var code = target.closest('code');
-      if (!code || code.closest('pre') || code.closest('[data-chat-path-open]')) {
+      if (!code || code.closest('pre, [data-chat-path-open], [data-plan-step-text]')) {
         return null;
       }
       var rel = shared.parseInlineCodeRelPath(code.textContent);
@@ -365,6 +365,8 @@
         dispatchOpenForChip(resolved.path, resolved.line, resolved.column, paneOf(target));
       } else if (resolved.mode === 'project') {
         projectLinks.open(resolved, false);
+      } else if (resolved.mode === 'copy') {
+        copyDisplayPath(resolved.display);
       }
     }
 

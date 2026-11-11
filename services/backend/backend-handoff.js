@@ -60,6 +60,7 @@ async function generateHandoffNote(service, sessionId, options = {}) {
     return await requestRuntimeInference(service, 'handoff.generate_note', {
       accept_version: API_VERSION, session_id: normalizedSessionId, messages: prepared.messages,
       ...(scope ? { focus_project: { name: scope.project.name } } : {}),
+      ...(options?.intent === 'orient' ? { intent: 'orient' } : {}),
     }, { sessionId: normalizedSessionId, timeoutMs: HANDOFF_TIMEOUT_MS, consumeResult });
   } catch (error) {
     const detail = String(error?.message || error || '').slice(0, 300);

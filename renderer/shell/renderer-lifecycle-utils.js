@@ -5,7 +5,6 @@
   }
   root.rendererLifecycleUtils = factory(root.rendererLoggingUtils || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (loggingUtils) {
-  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const attachmentQueueUtils = globalThis.rendererAttachmentQueueUtils || {};
   const sessionCacheUtils = globalThis.rendererSessionCacheUtils || {};
   const sessionLifecycleUtils = globalThis.rendererSessionLifecycleUtils || {};
@@ -39,6 +38,8 @@
   const asyncFenceUtils = resolveLifecycleModule('rendererAsyncFence', '../shared/async-fence') || {};
   // Pure value helpers live in a sibling module to keep this controller cohesive.
   const lifecycleFormatUtils = resolveLifecycleModule('rendererLifecycleFormatUtils', './renderer-lifecycle-format-utils') || {};
+  const lifecycleNavigationUtils = resolveLifecycleModule('rendererLifecycleNavigation', './renderer-lifecycle-navigation');
+  const lifecycleSessionActionsUtils = resolveLifecycleModule('rendererLifecycleSessionActions', './renderer-lifecycle-session-actions');
   const {
     escapeHtml,
     getSessionMonogram,
@@ -47,7 +48,6 @@
     buildModelOptionMarkup,
     mergeRequestedRuntimePreferences,
   } = lifecycleFormatUtils;
-  function createLocalDraftSessionId() { return `session_local_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`; }
   const activeViewPersistence = resolveLifecycleModule('rendererActiveViewPersistence', './renderer-active-view-persistence') || {};
   const readPersistedActiveView = typeof activeViewPersistence.readPersistedActiveView === 'function'
     ? activeViewPersistence.readPersistedActiveView
@@ -99,22 +99,6 @@
         globalThis.__jennyStartupAudit?.mark?.(name, details);
       } catch (_error) {
         // Best effort only.
-      }
-    }
-
-    async function enableStartupAuditIfNeeded() {
-      const diagnostics = globalThis?.jennyShell?.diagnostics;
-      if (!diagnostics?.getStartupAuditConfig) {
-        return null;
-      }
-      try {
-        const config = await diagnostics.getStartupAuditConfig();
-        if (config?.enabled === true) {
-          globalThis.__jennyStartupAudit?.enable?.(config);
-        }
-        return config || null;
-      } catch (_error) {
-        return null;
       }
     }
 
@@ -331,15 +315,6 @@
       if (homeViewHydrator) { homeViewHydrator.hydrateHomeView(options); }
     }
 
-    // One-shot first-open metrics for hidden surfaces.
-    const hiddenSurfaceFirstActivationMarked = new Set();
-    function markHiddenSurfaceFirstActivation(viewId) {
-      if (hiddenSurfaceFirstActivationMarked.has(viewId)) {
-        return;
-      }
-      hiddenSurfaceFirstActivationMarked.add(viewId);
-      markStartupAudit('hidden-surface-first-activation', { view: viewId });
-    }
     const diagnosticsWorkspaceRefresher = logsViewStateUtils.createDiagnosticsWorkspaceRefresher({
       state,
       getShell: () => window.jennyShell || {},
@@ -352,79 +327,6 @@
       }),
     });
     function refreshDiagnosticsWorkspace() { return diagnosticsWorkspaceRefresher.refresh(); }
-    function setActiveView(viewId) {
-      const previousViewId = state.ui.activeView;
-      state.ui.activeView = viewId;
-      persistActiveView(viewId);
-      if (previousViewId === 'settings' && viewId !== 'settings') {
-        fwd.syncUsageVisibility();
-        // Off-view, renderSettings skips the page pass and only releases the
-        // Appearance effect preview (renderAll no longer paints it here).
-        fwd.renderSettings();
-      }
-
-      if (typeof document !== 'undefined' && document.documentElement?.dataset) {
-        document.documentElement.dataset.activeView = String(viewId || '').trim() || 'chat';
-      }
-      fwd.applyViewChrome();
-      fwd.renderLayout();
-      fwd.renderHeader();
-      if (viewId === 'ide') {
-        markHiddenSurfaceFirstActivation('ide');
-        fwd.renderIde?.();
-        fwd.activateIde?.();
-      }
-      fwd.syncBackendNotice?.();
-      if (viewId === 'logs') {
-        markHiddenSurfaceFirstActivation('logs');
-        fwd.renderLogs();
-        refreshDiagnosticsWorkspace().catch(() => {});
-      }
-      if (viewId === 'settings') {
-        markHiddenSurfaceFirstActivation('settings');
-        fwd.renderSettings();
-        fwd.restoreSettingsNavSection();
-        const activeSection = String(state.ui.activeSettingsSection || 'models').trim() || 'models';
-        fwd.ensureSettingsSectionReady?.(activeSection);
-        fwd.refreshSettingsSection?.(activeSection).catch((error) => {
-          if (activeSection === 'personality') {
-            state.personality.loadStatus = jt('personality.workspaceRefreshFailed', 'Unable to refresh workspace: {message}', { message: error.message || String(error) });
-            fwd.renderPersonalityEditor();
-          }
-          appendClientLog('WARN', 'settings.refresh_section_failed', {
-            section: activeSection,
-            message: String(error?.message || error || ''),
-          });
-        });
-      }
-      if (viewId === 'home') {
-        hydrateHomeView();
-      }
-      if (viewId === 'chat') {
-        const catchup = fwd.flushPendingStreamCommitsForSession(state.currentSessionId);
-        fwd.renderMessages({ reason: catchup?.catchupRequired ? 'view_catchup' : 'view_activation' });
-        fwd.renderComposerState();
-        fwd.renderSessions();
-        const activatedSessionId = state.currentSessionId;
-        requestAnimationFrame(() => {
-          if (disposed || state.ui.activeView !== 'chat' || state.currentSessionId !== activatedSessionId) return;
-          // Split view: the focused pane's composer, not pane 0's #chatInput.
-          if (!globalThis.rendererAppPaneComposition?.getPaneComposition?.()?.focusComposer?.()) chatInput.focus();
-          fwd.updateComposerSafeOffset({
-            force: true,
-            syncViewport: true,
-          });
-          fwd.updateAssistantSpritePosition();
-
-          // The rail owns presence. Do not hide it behind a second, timed avatar.
-          delete state.ui.morphStartRect;
-        });
-      } else {
-        fwd.hideAssistantSprite();
-      }
-      fwd.applySurfaceEffect();
-      appendClientLog('INFO', 'ui.view_changed', { viewId });
-    }
 
     const appearanceController = lifecycleAppearanceUtils.createLifecycleAppearanceUtils({
       state,
@@ -564,149 +466,25 @@
       : { refreshSnapshots: async () => {} };
     const refreshSnapshots = (options = {}) => snapshotRefresh.refreshSnapshots(options);
 
-    async function bootstrap({ signalRendererReadyOnce = () => {} } = {}) {
-      attachGlobalErrorBoundary();
-      // The startup-audit probe buffers marks until this async config enables it.
-      void enableStartupAuditIfNeeded();
-      markStartupAudit('renderer-bootstrap-started', {
-        readyState: typeof document !== 'undefined' ? document.readyState : '',
-      });
-      appendClientLog('INFO', 'renderer.bootstrap_started', {
-        elapsedMs: getRendererElapsedMs(),
-      });
-      // Restore the last-active top-level view across launches. The render
-      // pipeline (renderViewChrome) branches on state.ui.activeView for every
-      // view, so seeding it before renderAll lands the user where they left off
-      // without forcing a setActiveView() (which would fire premature backend
-      // refreshes at cold boot). Fresh profiles read nothing here and keep the
-      // 'chat' default until first-run setup completion persists 'home'.
-      const restoredActiveView = readPersistedActiveView();
-      if (restoredActiveView) {
-        state.ui.activeView = restoredActiveView;
-      }
-      if (typeof document !== 'undefined' && document.documentElement?.dataset) {
-        document.documentElement.dataset.activeView = String(state.ui?.activeView || '').trim() || 'chat';
-      }
-      fwd.renderAll();
-      noteFirstRenderComplete();
-      markStartupAudit('first-render');
-      // The curtain lifts after shared shell hydration and the restored view's
-      // readiness; backend readiness is not a curtain gate, so the OS window
-      // can reveal while hydration is still pending.
-      signalRendererReadyOnce();
-      scheduleDeferredVisualStartup();
-
-      // The stored active tab, read alongside the status round trip, so the
-      // first conversation load opens the chat the user left (the workspace
-      // restore that follows then finds it loaded) instead of the newest one.
-      const storedWorkspaceActiveSessionIdPromise = Promise.resolve()
-        .then(() => window.jennyShell.workspace?.getState?.())
-        .then((snapshot) => String(snapshot?.activeSessionId || '').trim())
-        .catch(() => '');
-
-      try {
-        const [backendStatus, authState, systemStats] = await Promise.all([
-          window.jennyShell.backend.getStatus(),
-          window.jennyShell.auth.getState(),
-          window.jennyShell.system.getStats(),
-        ]);
-        const currentBackendPhase = String(state.backend?.phase || '').trim().toLowerCase();
-        const nextBackendPhase = String(backendStatus?.phase || '').trim().toLowerCase();
-        const currentBackendSettled = currentBackendPhase === 'ready' || currentBackendPhase === 'failed';
-        const nextBackendTransient = !nextBackendPhase
-          || nextBackendPhase === 'starting'
-          || nextBackendPhase === 'retrying';
-        if (!(currentBackendSettled && nextBackendTransient)) {
-          state.backend = backendStatus;
-        }
-        state.auth = authState;
-        state.systemStats = systemStats;
-        if (backendStatus && backendStatus.phase === 'ready') {
-          appendClientLog('INFO', 'renderer.backend_ready', {
-            elapsedMs: getRendererElapsedMs(),
-            startupStage: backendStatus.startupStage || '',
-            startupMs: Number(backendStatus.startupMs || 0),
-          });
-        }
-      } catch (error) {
-        appendClientLog('ERROR', 'bootstrap.failed', { message: error.message || String(error) });
-      }
-
-      fwd.renderAll();
-      fwd.syncStartupBackendStatus?.(state.backend);
-      if (state.ui.activeView === 'logs') {
-        // Fine: the refresher reports diagnostics.refresh_failed itself before rethrowing (mirrors :392).
-        refreshDiagnosticsWorkspace().catch(() => {});
-      }
-      if (state.ui.activeView !== 'home') {
-        Promise.resolve().then(() => fwd.refreshOfflineState()).catch((error) => {
-          appendClientLog('WARN', 'offline.bootstrap_failed', {
-            message: error?.message || String(error),
-          });
-          /* EH-W10: error-center-only intake route (no toast for pollers). */
-          fwd.reportError({ message: jt('shell.home.offlineRefreshFailed', 'Offline readiness could not be refreshed.'), dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
-        });
-      }
-
-      // History lives in the main-process store, not the sidecar, so the chat
-      // list and the last-open chat hydrate without waiting for the engine.
-      // Only the engine snapshots (status, models) wait for a usable backend
-      // (model_unavailable keeps the chat surface usable: send retries the
-      // model load); the ready transition reloads both (backendReadyLoadHandled).
-      if (state.auth.authenticated) {
-        const backendUsable = state.backend.phase === 'ready' || state.backend.phase === 'model_unavailable';
-        const storedActiveSessionId = await storedWorkspaceActiveSessionIdPromise;
-        const operations = backendUsable ? ['sessions', 'snapshots'] : ['sessions'];
-        const results = await Promise.allSettled(backendUsable
-          ? [loadSessions(storedActiveSessionId), refreshSnapshots()]
-          : [loadSessions(storedActiveSessionId)]);
-        operations.forEach((operation, index) => {
-          if (results[index].status !== 'rejected') { return; }
-          appendClientLog('WARN', 'renderer.bootstrap_session_hydration_failed', {
-            operation,
-            message: String(results[index].reason?.message || results[index].reason || '').slice(0, 500),
-          });
-        });
-      }
-
-      // Restoring the boot view above set state.ui.activeView directly (skipping
-      // setActiveView's refreshes), so Home never ran its activation hydration and
-      // would stay stuck on its loading skeleton — the reported "infinite loading".
-      // Backend is settled now, so back-fill Home, including its own offline pull.
-      if (state.ui.activeView === 'home') {
-        hydrateHomeView({ refreshOffline: true });
-      } else if (state.ui.activeView === 'ide') {
-        // Same latent bug as Home above: the boot path seeds state.ui.activeView
-        // directly, so renderAll() only calls renderIde() (chrome paint) and the
-        // IDE's one-time activation hydration — re-opening the persisted tabs and
-        // ide.activeTabPath — never fires. Without this the restored workspace
-        // shows no open files until the user navigates away and back. (Editor
-        // *settings* are separately re-applied by the Settings "Editor" section,
-        // so the open files are the piece this back-fill restores.) activateIde()
-        // is idempotent (guarded by the controller's activated/hydrated flags), so
-        // a later manual navigation won't re-hydrate.
-        try {
-          if (await fwd.ensureIdeLoaded?.() !== false) {
-            fwd.renderIde?.();
-            await Promise.resolve(fwd.activateIde?.());
-          }
-        } catch (_error) {
-          appendClientLog('WARN', 'ide.boot_activation_failed', { reason: 'persisted_tab_activation_failed' });
-        } finally {
-          fwd.notifyBootViewReady?.();
-        }
-      }
-
-      appendClientLog('INFO', 'renderer.bootstrap_complete', {
-        elapsedMs: getRendererElapsedMs(),
-        backendPhase: state.backend.phase,
-        authenticated: Boolean(state.auth && state.auth.authenticated),
-      });
-      markStartupAudit('renderer-bootstrap-complete', {
-        backendPhase: state.backend.phase,
-        authenticated: Boolean(state.auth && state.auth.authenticated),
-      });
-    }
+    const lifecycleNavigation = lifecycleNavigationUtils.createLifecycleNavigation({
+      state,
+      fwd,
+      chatInput,
+      isDisposed: () => disposed,
+      appendClientLog,
+      markStartupAudit,
+      getRendererElapsedMs,
+      noteFirstRenderComplete,
+      scheduleDeferredVisualStartup,
+      attachGlobalErrorBoundary,
+      readPersistedActiveView,
+      persistActiveView,
+      hydrateHomeView,
+      refreshDiagnosticsWorkspace,
+      loadSessions,
+      refreshSnapshots,
+    });
+    const { bootstrap, setActiveView } = lifecycleNavigation;
 
     function handleJumpToTop() {
       if (!fwd.getCurrentVisibleMessages().length) {
@@ -722,176 +500,26 @@
       fwd.scrollThreadToBottom();
     }
 
-    function handleJumpToLastPrompt() {
-      const latestUserMessageId = fwd.getLatestUserMessageId(fwd.getCurrentVisibleMessages());
-      if (!latestUserMessageId) {
-        return;
-      }
-      const didScroll = fwd.scrollMessageIntoView(latestUserMessageId, {
-        block: 'end',
-        followLatest: false,
-      });
-      if (didScroll) {
-        thinkingController.handleScroll(fwd.getScrollMetrics());
-      }
-    }
-
-    async function handleCreateSession(options = {}) {
-      const previousCurrentSessionId = String(state.currentSessionId || '').trim();
-      const knownSessionIds = new Set(
-        Array.isArray(state.sessions)
-          ? state.sessions.map((session) => String(session?.id || '').trim()).filter(Boolean)
-          : []
-      );
-      fwd.clearComposerStatusNotice();
-      if (fwd.isAnySendBusy() && typeof options.initialPrompt !== 'string' && options.requireRecord !== true) {
-        const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
-        const sessionId = createLocalDraftSessionId();
-        const timestamp = new Date().toISOString();
-        fwd.upsertSessionSummary({
-          id: sessionId, title: 'New Chat', session_type: 'chat',
-          created_at: timestamp, updated_at: timestamp, message_count: 0,
-          last_message_preview: '', last_model_used: '',
-          preferred_model: runtimePreferences.preferredModel,
-          reasoning_effort: runtimePreferences.reasoningEffort,
-          conversation_mode: 'chat',
-          pending_question_batch: null, interactive_sequence_state: INTERACTIVE_SEQUENCE_IDLE,
-          interactive_round_count: 0, plan_mode: runtimePreferences.planMode === true,
-          run_mode: runtimePreferences.runMode, pre_plan_run_mode: runtimePreferences.prePlanRunMode,
-          context_preferences: {
-            history_scope: runtimePreferences.contextPreferences.historyScope,
-            include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
-            include_memory: runtimePreferences.contextPreferences.includeMemory !== false,
-            memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
-          },
-          optimistic_local: true,
-          local_draft: true,
-        }, { prepend: true });
-        fwd.setSessionMessages(sessionId, [], `session_${sessionId}`);
-        state.currentSessionId = sessionId;
-        state.runtimeDraft = {
-          preferredModel: runtimePreferences.preferredModel,
-          reasoningEffort: runtimePreferences.reasoningEffort,
-          runMode: runtimePreferences.runMode,
-          prePlanRunMode: runtimePreferences.prePlanRunMode,
-          planMode: runtimePreferences.planMode,
-          contextPreferences: runtimePreferences.contextPreferences,
-        };
-        fwd.renderAll();
-        chatInput.focus();
-        appendClientLog('INFO', 'sessions.created_local_draft', { sessionId });
-        return sessionId;
-      }
-      const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
-      const payload = await window.jennyShell.sessions.create({
-        title: String(options.title || 'New Chat').trim(),
-        ...(typeof options.initialPrompt === 'string' ? { initialPrompt: options.initialPrompt } : {}), ...(typeof options.linkedTaskId === 'string' && options.linkedTaskId ? { linkedTaskId: options.linkedTaskId } : {}),
-        ...(typeof options.projectId === 'string' && /^project_[A-Za-z0-9_-]{1,128}$/u.test(options.projectId) ? { projectId: options.projectId } : {}),
-        // /handoff links the new chat to its source (row 60 W4); the backend refuses one from the primary chat.
-        ...(typeof options.handoffFromSessionId === 'string' && options.handoffFromSessionId && options.handoffFromSessionId.length <= 256
-          ? { handoffFromSessionId: options.handoffFromSessionId } : {}),
-        preferences: {
-          preferred_model: runtimePreferences.preferredModel,
-          reasoning_effort: runtimePreferences.reasoningEffort,
-          context_preferences: {
-            history_scope: runtimePreferences.contextPreferences.historyScope,
-            include_personality: runtimePreferences.contextPreferences.includePersonality,
-            include_memory: runtimePreferences.contextPreferences.includeMemory,
-            memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
-          },
-        },
-      });
-      const createdSessionId = String(payload?.data?.id || '').trim();
-      composerSessionStateController?.captureActive(previousCurrentSessionId, 'session_create');
-      state.currentSessionId = createdSessionId;
-      // Pane 0's follow intent; a chat created into another pane re-latches that pane's own (pane composition).
-      if (!(state.panes?.panes?.length > 1) || state.panes.focusedPaneId === 0) {
-        thinkingController.resumeAutoScroll();
-        fwd.setFollowLatest(true);
-      }
-      fwd.setSessionMessages(createdSessionId, [], `session_${createdSessionId}`);
-      await loadSessions(createdSessionId, { skipOpenCurrent: true });
-      if (state.currentSessionId === createdSessionId) { // navigation during the await: never restore over another session's composer
-        composerSessionStateController?.restoreForSession(createdSessionId);
-        if (createdSessionId && typeof options.initialPrompt === 'string') setActiveView('chat');
-        fwd.renderAll(); chatInput.focus();
-      }
-      appendClientLog('INFO', 'sessions.created', { sessionId: createdSessionId });
-      return createdSessionId
-        && createdSessionId !== previousCurrentSessionId
-        && !knownSessionIds.has(createdSessionId)
-        ? createdSessionId
-        : '';
-    }
+    const lifecycleSessionActions = lifecycleSessionActionsUtils.createLifecycleSessionActions({
+      state,
+      fwd,
+      call,
+      chatInput,
+      thinkingController,
+      INTERACTIVE_SEQUENCE_IDLE,
+      appendClientLog,
+      getCurrentRuntimePreferences,
+      mergeRequestedRuntimePreferences,
+      normalizeReasoningEffort,
+      getMultiStreamController,
+      loadSessions,
+      setActiveView,
+      clearSessionStreamState,
+      getComposerSessionStateController: () => composerSessionStateController,
+    });
+    const { handleCreateSession, handleRenameSession, handleDeleteSession, forgetDeletedSession } = lifecycleSessionActions;
     const taskSessionActions = { start: handleCreateSession }; window.rendererTaskSessionActions = taskSessionActions;
-
-    async function handleRenameSession(sessionId, nextTitleInput) {
-      const session = state.sessions.find((item) => item.id === sessionId);
-      const currentTitle = session && session.title ? session.title : 'New Chat';
-      const nextTitle = String(nextTitleInput == null ? '' : nextTitleInput).trim();
-      if (!nextTitle || nextTitle === currentTitle.trim()) {
-        return;
-      }
-      await window.jennyShell.sessions.rename(sessionId, nextTitle);
-      await loadSessions(sessionId, { skipOpenCurrent: true });
-      fwd.renderSessions();
-      fwd.renderHeader();
-      appendClientLog('INFO', 'sessions.renamed', { sessionId });
-    }
-
-    function discardSessionPreflight(id) {
-      const sp = state.sendPreflight;
-      const pending = getMultiStreamController()?.getPreflight?.(id);
-      if (pending) pending.discarded = true;
-      if (sp && [sp.sessionId, sp.optimisticSessionId].some((value) => String(value || '').trim() === id)) sp.discarded = true;
-    }
-    function dropSessionState(id) { fwd.removeSessionState(id, { tombstone: true }); call.invalidateSessionArtifacts?.(id); }
-    // Renderer teardown for a session the backend already deleted; Delete all chats (row 95) reuses it.
-    async function forgetDeletedSession(sessionId) {
-      const id = String(sessionId || '').trim();
-      if (id) { discardSessionPreflight(id); await clearSessionStreamState(id, { cancelActive: true }); dropSessionState(id); }
-    }
     window.rendererSessionTeardown = { forgetDeletedSession };
-
-    async function handleDeleteSession(sessionId, options = {}) {
-      // Confirmation moved to the undo window: renderer-session-actions defers
-      // this hard delete behind an Undo toast; callers reach it via that path.
-      const isOptimisticLocal = state.sessions.find((session) => session.id === sessionId)?.optimistic_local === true;
-      const normalizedSessionId = String(sessionId || '').trim();
-      const controllerPreflight = getMultiStreamController()?.getPreflight?.(normalizedSessionId) || null;
-      if (options.onlyIfIdle === true && (controllerPreflight
-        || getMultiStreamController()?.getActiveStreamIdForCancel?.(normalizedSessionId)
-        || state.sendOutboxBySession?.get?.(normalizedSessionId)?.length
-        || state.sendPreflight?.sessionId === normalizedSessionId
-        || state.sendPreflight?.optimisticSessionId === normalizedSessionId)) {
-        return { id: sessionId, deleted: false, reason: 'session_busy' };
-      }
-      discardSessionPreflight(normalizedSessionId);
-      if (options.onlyIfIdle !== true) await clearSessionStreamState(sessionId, { cancelActive: true });
-      let cleanup = {};
-      if (!isOptimisticLocal) {
-        const deleteResult = await window.jennyShell.sessions.delete(sessionId, options);
-        // The main-process cleanup outcome rides back for the delete toast.
-        if (deleteResult?.cleanup_status) cleanup = { cleanup_status: deleteResult.cleanup_status, freed: deleteResult.freed };
-        if (options.onlyIfIdle === true && (deleteResult?.id !== sessionId || deleteResult?.deleted !== true)) {
-          return { id: sessionId, deleted: false, reason: deleteResult?.reason || 'delete_unacknowledged' };
-        }
-        if (deleteResult && typeof deleteResult === 'object'
-          && Object.prototype.hasOwnProperty.call(deleteResult, 'deleted') && deleteResult.deleted !== true) {
-          if (options.onlyIfIdle === true) return deleteResult;
-          throw new Error('Session could not be deleted because the session store refused the delete request.');
-        }
-      }
-      // tombstone: the backend delete above succeeded (or the session was
-      // optimistic-local and never reached the backend), so a stale list
-      // snapshot must not resurrect the id (Audit A2).
-      if (options.onlyIfIdle === true) await clearSessionStreamState(sessionId, { cancelActive: false });
-      dropSessionState(normalizedSessionId);
-      await loadSessions();
-      fwd.renderAll();
-      appendClientLog('INFO', 'sessions.deleted', { sessionId });
-      return { id: sessionId, deleted: true, ...cleanup };
-    }
 
     const attachmentQueueController = attachmentQueueUtils.createAttachmentQueueController?.({ state, windowRef: window, constants: { TOAST_SOURCE }, callbacks: { clearAttachmentNotice: fwd.clearAttachmentNotice, buildAttachmentToastMessage: fwd.buildAttachmentToastMessage, showToastMessage: fwd.showToastMessage, renderAttachmentTray: fwd.renderAttachmentTray, renderComposerState: (...a) => fwd.renderComposerState(...a), closeComposerPopover, appendClientLog } }) || {};
     const { resetAttachmentQueue = () => {}, removeQueuedAttachment = () => {}, mergePreparedAttachments = () => {}, beginAttachmentToken = () => null, cancelAttachmentToken = () => false, handleAttachmentPicker = async () => {}, prepareDroppedAttachments = async () => {}, queueInlineImageAttachment = async () => null, setDropActive = () => {}, suppressFileDropNavigation = (event) => { event.preventDefault(); event.stopPropagation(); }, getDroppedFilePaths = () => [] } = attachmentQueueController;
@@ -913,7 +541,7 @@
     }) || null;
     window.rendererComposerSessionStateController = composerSessionStateController;
 
-    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleJumpToLastPrompt, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
+    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
   }
 
   return { createLifecycleController };

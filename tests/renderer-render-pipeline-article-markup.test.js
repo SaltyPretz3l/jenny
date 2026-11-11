@@ -540,3 +540,25 @@ test('source_citations: the per-message fallback strips settled [web:N] markers 
   assert.doesNotMatch(markupFor(true), /web:1/);
   assert.match(markupFor(false), /Built in 1889 \[web:1\]\./);
 });
+
+// Row 131, D5: the live turn's prediction overshoots, and under a followed reader the overshoot
+// is blank room the follow scrolls into.
+test('the live turn predicts no height while the reader follows the latest message', (t) => {
+  const { dom, predictions } = installPretextStubs(t);
+  global.rendererTurnPhase = { deriveTurnPhase() { return 'done'; } };
+  const ui = { followLatest: true };
+  const pipeline = createArticleMarkupPipeline({
+    state: { currentSessionId: 'session-42', ui, features: { featureFlags: { pretext_layout: true } } },
+    dom: { chatThreadColumn: dom.window.document.getElementById('thread-column') },
+    callbacks: {
+      buildTurnRowListMarkup: () => '<div class="turn-row-list" data-turn-row-list="true"><p>row</p></div>',
+      buildMessageShellArticle({ innerHtml, predictedHeight }) { return { innerHtml, predictedHeight }; },
+    },
+  });
+
+  assert.equal(buildAnswersTurnArticle(pipeline, 'thinking', 'turn-1').predictedHeight, null, 'live and followed');
+  assert.equal(predictions.length, 0);
+  assert.ok(buildAnswersTurnArticle(pipeline, 'thinking', '').predictedHeight > 0, 'a settled turn still predicts');
+  ui.followLatest = false;
+  assert.ok(buildAnswersTurnArticle(pipeline, 'thinking', 'turn-1').predictedHeight > 0, 'live, reader scrolled away');
+});

@@ -316,3 +316,28 @@ test('a turn that admitted queued mail is remembered (newest 256) so the rules t
   assert.equal(seen('t256'), true);
   assert.equal(holder._mailTurns.size, 256);
 });
+
+test('a mail turn knows whether every row it took is a report from a chat its destination started', () => {
+  const { ChatMessagingService } = require('../services/chat-messaging-service');
+  const summaries = { sess_child: { spawned_from: { parent_session_id: 'sess_p' } }, sess_other: { spawned_from: null } };
+  const holder = Object.create(ChatMessagingService.prototype);
+  holder._getSessionSummary = (id) => summaries[id] || null;
+  const row = (kind, source, destination = 'sess_p') => ({ session_message: { kind, source_session_id: source, destination_session_id: destination } });
+  holder.noteMailTurn('t_own', [row('terminal_report', 'sess_child')]);
+  holder.noteMailTurn('t_msg', [row('agent_message', 'sess_child')]);
+  holder.noteMailTurn('t_stranger', [row('terminal_report', 'sess_other')]);
+  holder.noteMailTurn('t_elsewhere', [row('terminal_report', 'sess_child', 'sess_x')]);
+  holder.noteMailTurn('t_mixed', [row('terminal_report', 'sess_child'), row('user_message', 'sess_other')]);
+  holder.noteMailTurn('t_bare');
+  assert.deepEqual(['t_own', 't_msg', 't_stranger', 't_elsewhere', 't_mixed', 't_bare', 't_none'].map((id) => holder.ownChildReportTurn(id)),
+    [true, false, false, false, false, false, false]);
+  assert.equal(holder.mailTurn('t_mixed'), true);
+  // Sticky: once other mail joined a turn (a later mid-turn push), its own reports no longer clear it.
+  holder.noteMailTurn('t_mixed', [row('terminal_report', 'sess_child')]);
+  assert.equal(holder.ownChildReportTurn('t_mixed'), false);
+  holder.noteMailTurn('t_own', [row('agent_message', 'sess_other')]);
+  assert.equal(holder.ownChildReportTurn('t_own'), false);
+  holder._getSessionSummary = () => { throw new Error('boom'); };
+  holder.noteMailTurn('t_throw', [row('terminal_report', 'sess_child')]);
+  assert.equal(holder.ownChildReportTurn('t_throw'), false, 'an unreadable summary fails closed');
+});

@@ -8,7 +8,7 @@ const {
   createStreamingAffordanceDom,
 } = require('./helpers/renderer-stream-handler-harness');
 
-test('stream handler keeps beforeunload listener cleanup symmetric across re-register and dispose', (t) => {
+test('stream handler keeps pagehide listener cleanup symmetric across re-register and dispose', (t) => {
   const fakeWindow = {
     added: [],
     removed: [],
@@ -34,7 +34,7 @@ test('stream handler keeps beforeunload listener cleanup symmetric across re-reg
   t.after(() => harness.restore());
 
   assert.equal(fakeWindow.added.length, 1);
-  assert.equal(fakeWindow.added[0].eventName, 'beforeunload');
+  assert.equal(fakeWindow.added[0].eventName, 'pagehide');
   assert.equal(fakeWindow.removed.length, 0);
 
   harness.handler.registerStreamHandler({
@@ -47,7 +47,7 @@ test('stream handler keeps beforeunload listener cleanup symmetric across re-reg
 
   assert.equal(fakeWindow.added.length, 2);
   assert.equal(fakeWindow.removed.length, 1);
-  assert.equal(fakeWindow.removed[0].eventName, 'beforeunload');
+  assert.equal(fakeWindow.removed[0].eventName, 'pagehide');
   assert.equal(fakeWindow.removed[0].handler, fakeWindow.added[0].handler);
 
   harness.handler.dispose();

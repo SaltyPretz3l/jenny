@@ -1,477 +1,211 @@
-/* renderer/shell/renderer-startup-starfield.js - The boot curtain's night sky.
+/* renderer/shell/renderer-startup-starfield.js - Starts the boot curtain's sky.
  *
- * A slow galactic swirl of dots around the wordmark while the shell hydrates;
- * on shell ready every star swoops into the wordmark, the wordmark flares once,
- * and the curtain fades out under the last stars. One 2D canvas, one
- * requestAnimationFrame loop that exists only while the curtain is mounted,
- * paused while the window is hidden, disposed on dismiss. Star state lives in a
- * plain array built once at mount: a frame makes no Array.prototype.push calls
- * and exactly three fill-style writes (per-star alpha rides globalAlpha).
+ * Runs synchronously inside #startupOverlay, before the app's styles and scripts
+ * load, and hands the curtain canvas to renderer-startup-starfield-worker.js so
+ * the stars keep their frames while the page thread is busy. The lifecycle
+ * controller adopts the handle published here and picks the exit from how much
+ * sky has appeared. If the worker cannot start the curtain simply stays plain.
  *
- * Reduced motion paints the stars once, still, and never starts a loop; the
- * lifecycle controller then dismisses the curtain with its plain fade.
+ * Reduced motion paints the stars once, still; the lifecycle controller then
+ * dismisses the curtain with its plain fade.
  */
 (function exposeStartupStarfield(root, factory) {
+  var api = factory(root);
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = api;
     return;
   }
-  root.rendererStartupStarfield = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function startupStarfieldFactory() {
+  root.rendererStartupStarfield = api;
+  api.startEarlySky();
+})(typeof globalThis !== 'undefined' ? globalThis : this, function startupStarfieldFactory(root) {
   'use strict';
 
-  // The sky is tuned on the default 1600x930 window. The disc, star size and
-  // star count scale from it so any window or display gets the same sky.
-  var REFERENCE_WIDTH_PX = 1600;
-  var REFERENCE_HEIGHT_PX = 930;
-  var STAR_COUNT_FULL = 220;
-  var STAR_COUNT_LIGHT = 120;
-  var STAR_COUNT_MAX = 440;
-  var STAR_SIZE_SCALE_MIN = 0.75;
-  var STAR_SIZE_SCALE_MAX = 1.5;
-  var DEVICE_PIXEL_RATIO_CAP = 2;
+  var WORKER_URL = './renderer/shell/renderer-startup-starfield-worker.js';
 
-  // Timing. The controller owns the minimum hold; the engine exports it so the
-  // two stay one number.
-  var MIN_HOLD_MS = 900;
-  var FADE_IN_MS = 700;
+  // Timing. The controller reads these so the two stay one number each.
+  var MIN_HOLD_MS = 900; // First-ever launch: the full sky is the first impression.
   var COLLAPSE_MS = 750;
-  // A returning launch (the profile has seen the full sky once) collapses fast.
-  var QUICK_COLLAPSE_MS = 250;
-  var MAX_FRAME_STEP_MS = 64;
+  var VISIBLE_FLOOR_MS = 260; // The name has finished arriving before it can leave.
+  var QUIET_SKY_MS = 430; // Younger than this, the stars have not really appeared.
+  var QUIET_DISSOLVE_MS = 220;
+  var EARNED_BASE_MS = 300;
+  var EARNED_SPAN_MS = 420;
+  var SKY_GRACE_MS = 180;
+  var SKY_FADE_MS = 900;
 
-  // The disc: an ellipse centred on the wordmark, inner sky turning faster. The
-  // inner edge hugs the wordmark (fixed px); the outer span scales per axis.
-  var STACK_CENTRE_OFFSET_PX = 20;
-  var DISC_Y_SCALE = 0.68;
-  var RADIUS_MIN_PX = 70;
-  var RADIUS_SPAN_PX = 640;
-  var RADIUS_EXPONENT = 0.75;
-  var ANGULAR_SPEED_BASE = 0.22;
-  var ANGULAR_SPEED_JITTER = 0.18;
-  var ANGULAR_REFERENCE_RADIUS_PX = 120;
-  var ANGULAR_SPEED_PER_MS = 0.00055;
-  var WOBBLE_PX = 8;
-  var WOBBLE_RATE = 0.0008;
-  var DRIFT_PX = 1.5;
-  var DRIFT_RATE_X = 0.0013;
-  var DRIFT_RATE_Y = 0.0011;
-  var PHASE_SPAN = 6.3;
-
-  // Each star.
-  var STAR_SIZE_MIN_PX = 0.7;
-  var STAR_SIZE_SPAN_PX = 1.5;
-  var STAR_ALPHA_MIN = 0.35;
-  var STAR_ALPHA_SPAN = 0.6;
-  var TWINKLE_RATE = 0.004;
-  var TWINKLE_DEPTH = 0.25;
-  var CYAN_SHARE = 0.14;
-  var ACCENT_SHARE = 0.1;
-  var FULL_CIRCLE = Math.PI * 2;
-
-  // The collapse into the wordmark.
-  var DESTINATION_HALF_WIDTH_PX = 100;
-  var DESTINATION_HALF_HEIGHT_PX = 13;
-  var BOW_SPAN_PX = 90;
-  var LANDING_SHRINK = 0.55;
-  var LANDING_FADE_START = 0.7;
-  var FLARE_PEAK_BLUR_PX = 28;
-  var FLARE_END = 0.85;
-  var WORDMARK_FADE_START = 0.8;
-  var CURTAIN_FADE_START = 0.5;
-
-  var COLOR_TOKENS = ['--text-primary', '--accent-cyan', '--accent'];
-  var FALLBACK_COLORS = ['#f3f4fc', '#16e9ff', '#6d82ff'];
-  var COLOR_WHITE = 0;
-  var COLOR_CYAN = 1;
-  var COLOR_ACCENT = 2;
-
-  function easeInOutCubic(p) {
-    return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-  }
+  // Where each exit starts the curtain and the name fading, as a share of it.
+  var FULL_CURTAIN_START = 0.5;
+  var FULL_NAME_START = 0.8;
+  var EARNED_CURTAIN_START = 0.4;
+  var EARNED_NAME_START = 0.72;
 
   function clamp01(value) {
     return value < 0 ? 0 : (value > 1 ? 1 : value);
   }
 
-  // Auto density keeps stars per area constant: the full count at the
-  // reference window, more on a bigger one, within [light, max].
-  function resolveStarCount(density, viewportWidth, viewportHeight) {
-    if (density === 'full') { return STAR_COUNT_FULL; }
-    if (density === 'light') { return STAR_COUNT_LIGHT; }
-    var count = Number(density);
-    if (Number.isFinite(count) && count > 0) { return Math.floor(count); }
-    var area = (Number(viewportWidth) || 0) * (Number(viewportHeight) || 0);
-    var scaled = Math.round(STAR_COUNT_FULL * area / (REFERENCE_WIDTH_PX * REFERENCE_HEIGHT_PX));
-    return Math.min(Math.max(scaled, STAR_COUNT_LIGHT), STAR_COUNT_MAX);
+  function nowMs() {
+    return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
   }
 
-  function readColor(style, token, fallback) {
+  function buildExit(kind, durationMs, curtainStart, nameStart) {
+    var duration = Math.round(durationMs);
+    var curtainDelay = Math.round(duration * curtainStart);
+    var nameDelay = Math.round(duration * nameStart);
+    return {
+      kind: kind,
+      durationMs: duration,
+      curtainDelayMs: curtainDelay,
+      curtainFadeMs: duration - curtainDelay,
+      nameDelayMs: nameDelay,
+      nameFadeMs: duration - nameDelay,
+    };
+  }
+
+  // How an animated curtain leaves: a first-ever launch gets the whole show, a
+  // launch that beat the stars dissolves quietly, and anything between collapses
+  // for as long as the sky has earned.
+  function resolveStartupExit(input) {
+    var source = input || {};
+    if (source.firstLaunch === true) {
+      return buildExit('full', COLLAPSE_MS, FULL_CURTAIN_START, FULL_NAME_START);
+    }
+    var skyElapsedMs = Math.max(Number(source.skyElapsedMs) || 0, 0);
+    if (skyElapsedMs < QUIET_SKY_MS) {
+      return buildExit('quiet', QUIET_DISSOLVE_MS, 0, 0);
+    }
+    var visibility = 1 - Math.pow(1 - clamp01((skyElapsedMs - SKY_GRACE_MS) / SKY_FADE_MS), 3);
+    return buildExit('earned', EARNED_BASE_MS + EARNED_SPAN_MS * visibility, EARNED_CURTAIN_START, EARNED_NAME_START);
+  }
+
+  function readRect(element) {
+    var rect = element && typeof element.getBoundingClientRect === 'function'
+      ? element.getBoundingClientRect()
+      : null;
+    return rect && rect.width > 0 && rect.height > 0
+      ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+      : null;
+  }
+
+  function readToken(style, token, fallback) {
     var value = style && typeof style.getPropertyValue === 'function'
       ? String(style.getPropertyValue(token) || '').trim()
       : '';
     return value || fallback;
   }
 
+  function hexToRgbTriplet(value) {
+    var match = /^#([0-9a-f]{6})$/i.exec(String(value || '').trim());
+    if (!match) { return ''; }
+    var number = parseInt(match[1], 16);
+    return ((number >> 16) & 255) + ', ' + ((number >> 8) & 255) + ', ' + (number & 255);
+  }
+
+  function defaultCreateWorker(win) {
+    var WorkerCtor = (win && win.Worker) || root.Worker;
+    return typeof WorkerCtor === 'function' ? new WorkerCtor(WORKER_URL) : null;
+  }
+
   function createStartupStarfield(options) {
     var opts = options || {};
     var canvas = opts.canvas || null;
-    var ctx = canvas && typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
-    if (!ctx) { return null; }
-    var doc = canvas.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    var win = opts.window || (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+    if (!canvas || typeof canvas.transferControlToOffscreen !== 'function') { return null; }
+    var doc = canvas.ownerDocument || null;
+    var win = opts.window || (doc && doc.defaultView) || null;
     var wordmark = opts.wordmark || null;
     var curtain = opts.curtain || null;
-    var random = typeof opts.random === 'function' ? opts.random : Math.random;
     var reducedMotion = opts.reducedMotion === true;
-    var raf = (win && typeof win.requestAnimationFrame === 'function')
-      ? win.requestAnimationFrame.bind(win)
-      : (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null);
-    var caf = (win && typeof win.cancelAnimationFrame === 'function')
-      ? win.cancelAnimationFrame.bind(win)
-      : (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : null);
+    var now = typeof opts.now === 'function' ? opts.now : nowMs;
+    var onFirstFrame = typeof opts.onFirstFrame === 'function' ? opts.onFirstFrame : null;
+    var onFrameReport = typeof opts.onFrameReport === 'function' ? opts.onFrameReport : null;
 
-    var width = 0;
-    var height = 0;
-    var centreX = 0;
-    var centreY = 0;
-    var spanX = 0;
-    var spanY = 0;
-    var viewScale = 0;
-    var starScale = 0;
-    var rafHandle = 0;
-    var lastNow = 0;
-    var elapsed = 0;
-    var collapseElapsed = 0;
-    var collapseDurationMs = COLLAPSE_MS;
-    var collapsing = false;
-    var running = false;
-    var paused = false;
-    // A caller hold (the fatal dialog) outlasts visibility: only resume() lifts it.
-    var held = false;
+    var worker = null;
+    var offscreen;
+    try {
+      worker = typeof opts.createWorker === 'function' ? opts.createWorker() : defaultCreateWorker(win);
+      if (!worker) { return null; }
+      offscreen = canvas.transferControlToOffscreen();
+    } catch (_error) {
+      if (worker && typeof worker.terminate === 'function') { worker.terminate(); }
+      return null;
+    }
+
+    var startedAt = now();
     var disposed = false;
-    var onCollapseDone = null;
-    var stars = [];
-    var colorStarts = [0, 0, 0, 0];
+    var failed = false;
+    var paused = false;
+    var held = false; // A caller hold (the fatal dialog) outlasts visibility.
 
-    var computed = win && typeof win.getComputedStyle === 'function'
-      ? win.getComputedStyle(curtain || canvas)
-      : null;
-    var fills = [
-      readColor(computed, COLOR_TOKENS[COLOR_WHITE], FALLBACK_COLORS[COLOR_WHITE]),
-      readColor(computed, COLOR_TOKENS[COLOR_CYAN], FALLBACK_COLORS[COLOR_CYAN]),
-      readColor(computed, COLOR_TOKENS[COLOR_ACCENT], FALLBACK_COLORS[COLOR_ACCENT]),
-    ];
-    var flareColor = fills[COLOR_CYAN];
+    function hideCanvas() {
+      if (canvas.style) { canvas.style.display = 'none'; }
+    }
+
+    function fail() {
+      if (failed || disposed) { return; }
+      failed = true;
+      hideCanvas();
+      try { worker.terminate(); } catch (_error) { /* already gone */ }
+    }
+
+    function post(message, transfer) {
+      if (disposed || failed) { return; }
+      try {
+        worker.postMessage(message, transfer || []);
+      } catch (_error) {
+        fail();
+      }
+    }
 
     function measureViewport() {
-      width = Math.max(1, Math.round(Number(win && win.innerWidth) || Number(canvas.clientWidth) || 1));
-      height = Math.max(1, Math.round(Number(win && win.innerHeight) || Number(canvas.clientHeight) || 1));
-      var rect = wordmark && typeof wordmark.getBoundingClientRect === 'function'
-        ? wordmark.getBoundingClientRect()
-        : null;
-      if (rect && rect.width > 0 && rect.height > 0) {
-        centreX = rect.left + rect.width / 2;
-        centreY = rect.top + rect.height / 2;
-      } else {
-        centreX = width / 2;
-        centreY = height / 2 - STACK_CENTRE_OFFSET_PX;
-      }
-      var scaleX = width / REFERENCE_WIDTH_PX;
-      var scaleY = height / REFERENCE_HEIGHT_PX;
-      spanX = RADIUS_SPAN_PX * scaleX;
-      spanY = RADIUS_SPAN_PX * scaleY;
-      viewScale = Math.sqrt(scaleX * scaleY);
-      starScale = Math.min(Math.max(viewScale, STAR_SIZE_SCALE_MIN), STAR_SIZE_SCALE_MAX);
-      var dpr = Math.min(Math.max(Number(win && win.devicePixelRatio) || 1, 1), DEVICE_PIXEL_RATIO_CAP);
-      canvas.width = Math.max(1, Math.round(width * dpr));
-      canvas.height = Math.max(1, Math.round(height * dpr));
-      if (canvas.style) {
-        canvas.style.width = width + 'px';
-        canvas.style.height = height + 'px';
-      }
-      if (typeof ctx.setTransform === 'function') { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
-    }
-
-    function pickColor() {
-      if (random() < CYAN_SHARE) { return COLOR_CYAN; }
-      return random() < ACCENT_SHARE ? COLOR_ACCENT : COLOR_WHITE;
-    }
-
-    function buildStars(count) {
-      var built = [];
-      for (var i = 0; i < count; i += 1) {
-        // reach: 0 at the inner edge, 1 at the outer; the speed keys on the
-        // reference-window radius so the swirl turns alike at every size.
-        var reach = Math.pow(random(), RADIUS_EXPONENT);
-        var referenceRadius = RADIUS_MIN_PX + reach * RADIUS_SPAN_PX;
-        built.push({
-          reach: reach,
-          theta: random() * FULL_CIRCLE,
-          speed: (ANGULAR_SPEED_BASE + random() * ANGULAR_SPEED_JITTER) / Math.sqrt(referenceRadius / ANGULAR_REFERENCE_RADIUS_PX),
-          size: STAR_SIZE_MIN_PX + random() * STAR_SIZE_SPAN_PX,
-          alpha: STAR_ALPHA_MIN + random() * STAR_ALPHA_SPAN,
-          twinkle: random() * PHASE_SPAN,
-          wobble: random() * PHASE_SPAN,
-          color: pickColor(),
-          bowFactor: random() - 0.5,
-          x: 0, y: 0, sx: 0, sy: 0, tx: 0, ty: 0, bowX: 0, bowY: 0,
-        });
-      }
-      // Group by colour so a frame switches fillStyle three times, not per star.
-      built.sort(function byColor(a, b) { return a.color - b.color; });
-      var counts = [0, 0, 0];
-      for (var j = 0; j < built.length; j += 1) { counts[built[j].color] += 1; }
-      colorStarts[0] = 0;
-      colorStarts[1] = counts[0];
-      colorStarts[2] = counts[0] + counts[1];
-      colorStarts[3] = built.length;
-      return built;
-    }
-
-    function place(star, t) {
-      var inner = RADIUS_MIN_PX + WOBBLE_PX * Math.sin(t * WOBBLE_RATE + star.wobble);
-      star.x = centreX + (inner + star.reach * spanX) * Math.cos(star.theta) + Math.sin(t * DRIFT_RATE_X + star.twinkle) * DRIFT_PX;
-      star.y = centreY + (inner + star.reach * spanY) * Math.sin(star.theta) * DISC_Y_SCALE + Math.cos(t * DRIFT_RATE_Y + star.twinkle) * DRIFT_PX;
-    }
-
-    function drawStill() {
-      ctx.clearRect(0, 0, width, height);
-      for (var c = 0; c < 3; c += 1) {
-        ctx.fillStyle = fills[c];
-        for (var i = colorStarts[c]; i < colorStarts[c + 1]; i += 1) {
-          var star = stars[i];
-          place(star, 0);
-          ctx.globalAlpha = star.alpha;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size * starScale, 0, FULL_CIRCLE);
-          ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    // One frame at elapsed time t; p is collapse progress (0 while swirling).
-    function drawFrame(t, stepMs, p) {
-      var fadeIn = clamp01(t / FADE_IN_MS);
-      var eased = collapsing ? easeInOutCubic(p) : 0;
-      var arc = collapsing ? Math.sin(p * Math.PI) : 0;
-      var landingFade = collapsing ? 1 - clamp01((p - LANDING_FADE_START) / (1 - LANDING_FADE_START)) : 1;
-      var sizeScale = starScale * (collapsing ? 1 - LANDING_SHRINK * eased : 1);
-      ctx.clearRect(0, 0, width, height);
-      for (var c = 0; c < 3; c += 1) {
-        ctx.fillStyle = fills[c];
-        for (var i = colorStarts[c]; i < colorStarts[c + 1]; i += 1) {
-          var star = stars[i];
-          var x;
-          var y;
-          if (!collapsing) {
-            star.theta += star.speed * ANGULAR_SPEED_PER_MS * stepMs;
-            place(star, t);
-            x = star.x;
-            y = star.y;
-          } else {
-            x = star.sx + (star.tx - star.sx) * eased + star.bowX * arc;
-            y = star.sy + (star.ty - star.sy) * eased + star.bowY * arc;
-          }
-          ctx.globalAlpha = star.alpha * fadeIn * (1 - TWINKLE_DEPTH + TWINKLE_DEPTH * Math.sin(t * TWINKLE_RATE + star.twinkle)) * landingFade;
-          ctx.beginPath();
-          ctx.arc(x, y, star.size * sizeScale, 0, FULL_CIRCLE);
-          ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-      applyChrome(fadeIn, p);
-    }
-
-    // Style writes only when a value moves, so a settled sky touches no style.
-    var appliedWordmarkOpacity = -1;
-    var appliedFlareBlur = -1;
-    var appliedCurtainOpacity = -1;
-
-    function setWordmarkOpacity(value) {
-      if (!wordmark || !wordmark.style || value === appliedWordmarkOpacity) { return; }
-      appliedWordmarkOpacity = value;
-      wordmark.style.opacity = String(value);
-    }
-
-    function applyChrome(fadeIn, p) {
-      if (!collapsing) {
-        setWordmarkOpacity(fadeIn);
-        return;
-      }
-      var blur = Math.round(FLARE_PEAK_BLUR_PX * Math.sin(clamp01(p / FLARE_END) * Math.PI));
-      if (wordmark && wordmark.style && blur !== appliedFlareBlur) {
-        appliedFlareBlur = blur;
-        wordmark.style.textShadow = blur > 0 ? '0 0 ' + blur + 'px ' + flareColor : 'none';
-      }
-      setWordmarkOpacity(1 - clamp01((p - WORDMARK_FADE_START) / (1 - WORDMARK_FADE_START)));
-      var curtainOpacity = 1 - clamp01((p - CURTAIN_FADE_START) / (1 - CURTAIN_FADE_START));
-      if (curtain && curtain.style && curtainOpacity !== appliedCurtainOpacity) {
-        appliedCurtainOpacity = curtainOpacity;
-        curtain.style.opacity = String(curtainOpacity);
-      }
-    }
-
-    function scheduleFrame() {
-      if (!rafHandle && raf && running && !paused && !disposed) { rafHandle = raf(tick); }
-    }
-
-    function tick(now) {
-      rafHandle = 0;
-      if (disposed || paused || !running) { return; }
-      var step = lastNow > 0 ? Math.min(Math.max(now - lastNow, 0), MAX_FRAME_STEP_MS) : 16;
-      lastNow = now;
-      elapsed += step;
-      var p = 0;
-      if (collapsing) {
-        collapseElapsed += step;
-        p = clamp01(collapseElapsed / collapseDurationMs);
-      }
-      drawFrame(elapsed, step, p);
-      if (collapsing && p >= 1) {
-        finishCollapse();
-        return;
-      }
-      scheduleFrame();
-    }
-
-    function finishCollapse() {
-      running = false;
-      var done = onCollapseDone;
-      onCollapseDone = null;
-      if (typeof done === 'function') { done(); }
-    }
-
-    function landCollapse() {
-      if (rafHandle && caf) { caf(rafHandle); }
-      rafHandle = 0;
-      collapseElapsed = collapseDurationMs;
-      drawFrame(elapsed, 0, 1);
-      finishCollapse();
-    }
-
-    function handleVisibilityChange() {
-      if (!doc) { return; }
-      if (doc.visibilityState === 'hidden') { suspend(); } else if (!held) { unsuspend(); }
-    }
-
-    function handleResize() {
-      if (disposed) { return; }
-      measureViewport();
-      if (collapsing && running) { landCollapse(); } else if (!running) { drawStill(); }
-    }
-
-    function start() {
-      if (disposed || running) { return api; }
-      if (reducedMotion) {
-        drawStill();
-        return api;
-      }
-      running = true;
-      setWordmarkOpacity(0);
-      if (doc && doc.visibilityState === 'hidden') { paused = true; }
-      scheduleFrame();
-      return api;
-    }
-
-    // Destination: inside the wordmark's box, measured once, now.
-    function assignDestinations() {
-      var rect = wordmark && typeof wordmark.getBoundingClientRect === 'function'
-        ? wordmark.getBoundingClientRect()
-        : null;
-      var cx = rect && rect.width > 0 ? rect.left + rect.width / 2 : centreX;
-      var cy = rect && rect.height > 0 ? rect.top + rect.height / 2 : centreY;
-      var halfWidth = rect && rect.width > 0 ? Math.min(DESTINATION_HALF_WIDTH_PX, rect.width / 2) : DESTINATION_HALF_WIDTH_PX;
-      var halfHeight = rect && rect.height > 0 ? Math.min(DESTINATION_HALF_HEIGHT_PX, rect.height / 2) : DESTINATION_HALF_HEIGHT_PX;
-      var bowSpan = BOW_SPAN_PX * viewScale;
-      for (var i = 0; i < stars.length; i += 1) {
-        var star = stars[i];
-        star.sx = star.x;
-        star.sy = star.y;
-        star.tx = cx + (random() - 0.5) * 2 * halfWidth;
-        star.ty = cy + (random() - 0.5) * 2 * halfHeight;
-        var nx = -(star.ty - star.sy);
-        var ny = star.tx - star.sx;
-        // The swoop bows sideways along the path's normal.
-        var bow = star.bowFactor * bowSpan / (Math.sqrt(nx * nx + ny * ny) || 1);
-        star.bowX = nx * bow;
-        star.bowY = ny * bow;
-      }
-    }
-
-    function collapse(collapseOptions) {
-      var done = collapseOptions && typeof collapseOptions.onDone === 'function' ? collapseOptions.onDone : null;
-      if (disposed || collapsing) { return false; }
-      if (!running || reducedMotion || !raf) {
-        if (done) { done(); }
-        return false;
-      }
-      assignDestinations();
-      if (curtain && curtain.style) { curtain.style.transition = 'none'; }
-      var requestedDurationMs = Number(collapseOptions && collapseOptions.durationMs);
-      collapseDurationMs = requestedDurationMs > 0 ? requestedDurationMs : COLLAPSE_MS;
-      collapsing = true;
-      collapseElapsed = 0;
-      onCollapseDone = done;
-      // A hidden window has no frames to show the collapse in: land at once.
-      if (paused) {
-        landCollapse();
-        return true;
-      }
-      scheduleFrame();
-      return true;
+      return {
+        width: Number(win && win.innerWidth) || Number(canvas.clientWidth) || 1,
+        height: Number(win && win.innerHeight) || Number(canvas.clientHeight) || 1,
+        dpr: Math.min(Math.max(Number(win && win.devicePixelRatio) || 1, 1), 2),
+        wordmark: readRect(wordmark),
+      };
     }
 
     function suspend() {
       if (paused) { return; }
       paused = true;
-      if (rafHandle && caf) { caf(rafHandle); }
-      rafHandle = 0;
+      post({ type: 'pause' });
     }
 
     function unsuspend() {
-      if (!paused || disposed) { return; }
+      if (!paused) { return; }
       paused = false;
-      lastNow = 0;
-      scheduleFrame();
+      post({ type: 'resume' });
     }
 
-    function pause() {
-      held = true;
-      suspend();
+    function handleVisibilityChange() {
+      if (doc.visibilityState === 'hidden') { suspend(); } else if (!held) { unsuspend(); }
     }
 
-    function resume() {
-      held = false;
-      if (!(doc && doc.visibilityState === 'hidden')) { unsuspend(); }
+    function handleResize() {
+      post({ type: 'resize', viewport: measureViewport() });
     }
 
-    function dispose() {
-      if (disposed) { return; }
-      disposed = true;
-      running = false;
-      onCollapseDone = null;
-      if (rafHandle && caf) { caf(rafHandle); }
-      rafHandle = 0;
-      // Retired mid-swirl, the curtain goes plain: no frozen stars, and the
-      // wordmark back under its stylesheet.
-      ctx.clearRect(0, 0, width, height);
-      if (wordmark && wordmark.style) {
-        wordmark.style.opacity = '';
-        wordmark.style.textShadow = '';
-      }
-      if (doc && typeof doc.removeEventListener === 'function') {
-        doc.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
-      if (win && typeof win.removeEventListener === 'function') {
-        win.removeEventListener('resize', handleResize);
-      }
-    }
+    worker.onerror = fail;
+    worker.onmessage = function handleWorkerMessage(event) {
+      var data = event && event.data;
+      if (!data) { return; }
+      if (data.type === 'first-frame' && onFirstFrame) { onFirstFrame(); }
+      if (data.type === 'frames' && onFrameReport) { onFrameReport(data); }
+    };
 
-    measureViewport();
-    // The count is fixed at mount; a resize rescales the disc, not the count.
-    stars = buildStars(resolveStarCount(opts.density, width, height));
+    var style = win && typeof win.getComputedStyle === 'function' ? win.getComputedStyle(curtain || canvas) : null;
+    var cyan = readToken(style, '--startup-cyan', '#16e9ff');
+    post({
+      type: 'init',
+      canvas: offscreen,
+      viewport: measureViewport(),
+      colors: [readToken(style, '--startup-text', '#f3f4fc'), cyan, readToken(style, '--startup-accent', '#6d82ff')],
+      flareRgb: hexToRgbTriplet(cyan),
+      density: opts.density,
+      still: reducedMotion,
+    }, [offscreen]);
+
     if (doc && typeof doc.addEventListener === 'function') {
       doc.addEventListener('visibilitychange', handleVisibilityChange);
     }
@@ -479,29 +213,83 @@
       win.addEventListener('resize', handleResize);
     }
 
-    var api = {
-      start: start,
-      collapse: collapse,
-      pause: pause,
-      resume: resume,
-      dispose: dispose,
-      isAnimated: function isAnimated() { return !reducedMotion && !!raf && !disposed; },
+    return {
+      startedAt: startedAt,
+      collapse: function collapse(request) {
+        post({ type: 'collapse', durationMs: Number(request && request.durationMs) || 0, wordmark: readRect(wordmark) });
+      },
+      pause: function pause() {
+        held = true;
+        suspend();
+      },
+      resume: function resume() {
+        held = false;
+        if (!(doc && doc.visibilityState === 'hidden')) { unsuspend(); }
+      },
+      reportFrames: function reportFrames() { post({ type: 'report' }); },
+      dispose: function dispose() {
+        if (disposed) { return; }
+        if (!failed) { hideCanvas(); }
+        disposed = true;
+        try { worker.terminate(); } catch (_error) { /* already gone */ }
+        if (doc && typeof doc.removeEventListener === 'function') {
+          doc.removeEventListener('visibilitychange', handleVisibilityChange);
+        }
+        if (win && typeof win.removeEventListener === 'function') {
+          win.removeEventListener('resize', handleResize);
+        }
+      },
+      isAnimated: function isAnimated() { return !reducedMotion && !disposed && !failed; },
       isPaused: function isPaused() { return paused; },
-      getStarCount: function getStarCount() { return stars.length; },
-      // Test and measurement seam: the live star records (read-only use) and
-      // one synchronous frame at a given elapsed time.
-      getStars: function getStars() { return stars; },
-      drawFrameForTest: function drawFrameForTest(t) { drawFrame(t, 16, collapsing ? clamp01(collapseElapsed / collapseDurationMs) : 0); },
     };
-    return api;
+  }
+
+  var earlySky = null;
+
+  function markAudit(name, details) {
+    try { root.__jennyStartupAudit?.markOnce?.(name, details || {}); } catch (_error) { /* audit is best effort */ }
+  }
+
+  function prefersReducedMotion() {
+    try {
+      return typeof root.matchMedia === 'function' && root.matchMedia('(prefers-reduced-motion: reduce)').matches === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // Started from this script's own tag, so the sky runs from the first frame.
+  function startEarlySky() {
+    var doc = root.document;
+    var dataset = doc && doc.documentElement && doc.documentElement.dataset;
+    if (!dataset || dataset.startupAnimation === 'off' || dataset.startupAnimationFlag === 'off') { return null; }
+    var overlay = doc.getElementById('startupOverlay');
+    var canvas = overlay && overlay.querySelector('#startupOverlaySky');
+    if (!canvas) { return null; }
+    var reducedMotion = prefersReducedMotion();
+    earlySky = createStartupStarfield({
+      canvas: canvas,
+      wordmark: overlay.querySelector('.startup-overlay-wordmark'),
+      curtain: overlay,
+      window: doc.defaultView || null,
+      reducedMotion: reducedMotion,
+      onFirstFrame: function onFirstFrame() { markAudit('sky-first-frame'); },
+      onFrameReport: function onFrameReport(report) { markAudit('sky-frame-gaps', report); },
+    });
+    return earlySky;
   }
 
   return {
     createStartupStarfield: createStartupStarfield,
-    resolveStarCount: resolveStarCount,
-    STAR_COUNT_FULL: STAR_COUNT_FULL,
+    getEarlySky: function getEarlySky() { return earlySky; },
+    resolveStartupExit: resolveStartupExit,
+    startEarlySky: startEarlySky,
     MIN_HOLD_MS: MIN_HOLD_MS,
     COLLAPSE_MS: COLLAPSE_MS,
-    QUICK_COLLAPSE_MS: QUICK_COLLAPSE_MS,
+    VISIBLE_FLOOR_MS: VISIBLE_FLOOR_MS,
+    QUIET_SKY_MS: QUIET_SKY_MS,
+    QUIET_DISSOLVE_MS: QUIET_DISSOLVE_MS,
+    SKY_GRACE_MS: SKY_GRACE_MS,
+    SKY_FADE_MS: SKY_FADE_MS,
   };
 });

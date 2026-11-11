@@ -16,7 +16,7 @@ const {
 } = require('./session-compaction-snapshot');
 const { buildPreparedMessages } = require('./chat-stream-reasoning');
 const { buildResumePayload } = require('../session-recovery-service');
-const { normalizeManagedToolPreferences } = require('./backend-service-utils');
+const { requestToolPreferences } = require('./backend-service-utils');
 const { withDirectoryToolGate } = require('./session-directory-tool-gate');
 const { withPrimarySettingsToolGate } = require('./primary-settings-tool-gate');
 const { APPLICATION_TURN_DIGEST, narrowDigestToolPreferences } = require('./application-turns');
@@ -381,7 +381,7 @@ const sameWireKinds = (a, b) => a.sessionMessages === b.sessionMessages && a.ses
 
 // The tool-preference input of a turn. The handoff-only preparation turn (cp5a) is restricted to
 // complete_session_handoff by its own path: a stored or requested preference can neither widen nor
-// narrow it, and normalizeManagedToolPreferences (which drops enabled_tools) is not involved.
+// narrow it, and requestToolPreferences (whose normalizer drops enabled_tools) is not involved.
 // With a `service`, any other turn also gets the session-directory tool gate (primary and linked chats only)
 // and the settings tool gate (primary chat only). A row 86 digest turn is then narrowed to the digest's read tools
 // (never an empty list, which the sidecar reads as "no restriction"); the execution authority enforces the same
@@ -390,7 +390,7 @@ function managedToolPreferenceInput(toolPreferences, {
   catalog, handoffPreparation = null, service = null, sessionId = '', session = null, applicationTurn = '',
 } = {}) {
   if (handoffPreparation) return { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] };
-  const normalized = normalizeManagedToolPreferences(toolPreferences, { catalog });
+  const normalized = requestToolPreferences(toolPreferences, { catalog, session, applicationTurn });
   const target = { sessionId, session };
   const gated = service ? withPrimarySettingsToolGate(service, target, withDirectoryToolGate(service, target, normalized)) : normalized;
   return applicationTurn === APPLICATION_TURN_DIGEST ? narrowDigestToolPreferences(gated) : gated;
@@ -414,7 +414,7 @@ function admitTurnContextRows(service, {
     service, sessionId, turnId, userMessageId, preparedMessages, lease,
   }) : null;
   // Row 87: another chat's words are in this turn now, so the Jenny chat's allow rules must not be spent in it.
-  if (mail?.rows.length) service.chatMessages?.noteMailTurn?.(turnId);
+  if (mail?.rows.length) service.chatMessages?.noteMailTurn?.(turnId, mail.rows);
   const kinds = wireContextKinds(service.sidecarClient);
   return { kinds, rebuild: Boolean(handoffRow || mail?.rows.length) || !sameWireKinds(kinds, previousKinds) };
 }

@@ -272,7 +272,7 @@ test('Jenny status reports the calling project and Plan gates instead of global 
   const { getJennyStatus } = require('../../services/backend/jenny-status-composer');
   const service = { currentStatus: source, getBackendStatus: () => ({ phase: 'ready' }) };
   let options;
-  const result = await require('../../services/tools/builtin/jenny-status-tool').execute({}, {
+  const result = await require('../../services/tools/builtin/jenny-status-tool').execute({ section: 'runtime' }, {
     executionAuthority: binding, sessionId: 'session-alpha',
     backendService: { getJennyStatus: value => { options = value; return getJennyStatus(service, value); } },
   });

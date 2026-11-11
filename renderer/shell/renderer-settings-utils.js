@@ -30,6 +30,67 @@
   } = load('rendererSettingsLazyRenderers', './renderer-settings-lazy-renderers');
   const { renderSettingsV2Surfaces, paintSlot } = load('rendererSettingsV2Surfaces', './renderer-settings-v2-surfaces');
 
+  /* Settings > Team (row 123, slice 1g-1). The flag state shows or hides the nav item and card; the
+   * page's scripts load only while the `team` flag is exactly true and Team is the section on screen,
+   * so with the flag off no team script loads and `jennyShell.team` is never touched. */
+  let teamScriptsLoad = null;
+  // A failed load waits for the next entry into Team instead of retrying on every render pass.
+  let teamLoadFailed = false;
+  let teamWasActive = false;
+  function loadTeamScripts(windowRef) {
+    if (teamScriptsLoad) return teamScriptsLoad;
+    const manifest = windowRef.rendererSettingsScriptManifest || (typeof require === 'function' ? require('./renderer-settings-script-manifest') : null);
+    const scripts = (manifest && manifest.teamSection) || [];
+    const loader = windowRef.scriptLoaderUtils;
+    if (!scripts.length || typeof loader?.ensureScript !== 'function') return Promise.resolve(false);
+    const doc = windowRef.document;
+    if (doc && typeof doc.createElement === 'function' && !doc.querySelector('link[data-team-settings-style]')) {
+      const sheet = doc.createElement('link');
+      sheet.rel = 'stylesheet';
+      sheet.href = 'styles/team-settings.css';
+      sheet.setAttribute('data-team-settings-style', '');
+      (doc.head || doc.documentElement).appendChild(sheet);
+    }
+    const loads = scripts.map(([src], index) => {
+      const isReady = () => scripts.slice(0, index + 1).every(([, name]) => Boolean(windowRef[name]));
+      return Promise.resolve(loader.ensureScript({ src, isReady })).then((loaded) => loaded === true, () => false);
+    });
+    teamScriptsLoad = Promise.all(loads).then((results) => {
+      const ok = results.every(Boolean) && scripts.every(([, name]) => Boolean(windowRef[name]));
+      if (!ok) { teamScriptsLoad = null; teamLoadFailed = true; }
+      return ok;
+    });
+    return teamScriptsLoad;
+  }
+
+  function syncTeamSettingsSection({ state, windowRef = globalThis, activeSection = '' } = {}) {
+    const doc = windowRef && windowRef.document;
+    const flags = (state && state.features && state.features.featureFlags) || {};
+    const navUtils = globalThis.rendererSettingsNavUtils || (typeof require === 'function' ? require('./renderer-settings-nav-utils') : null);
+    navUtils?.syncFeatureFlaggedSettings?.(doc, flags);
+    const team = windowRef.rendererSettingsTeamSection;
+    const active = flags.team === true && activeSection === 'team';
+    const entering = active && !teamWasActive;
+    teamWasActive = active;
+    if (!active) {
+      team?.leaveTeamSection?.();
+      return;
+    }
+    const container = doc?.getElementById?.('teamSettingsSection');
+    if (!container) return;
+    if (team) {
+      team.showTeamSection({ container });
+      return;
+    }
+    if (teamLoadFailed && !entering) return;
+    teamLoadFailed = false;
+    void loadTeamScripts(windowRef).then((ok) => {
+      const still = state.features?.featureFlags?.team === true && state.ui?.activeView === 'settings'
+        && sectionRegistry.normalizeSettingsSectionId(state.ui.activeSettingsSection) === 'team';
+      if (ok && still) windowRef.rendererSettingsTeamSection?.showTeamSection?.({ container });
+    });
+  }
+
   /* Settings > Jenny chat (row 86, picks S1 + Q1): the Digests group's "While you were away" switch (the
    * primary_digests flag) and one Quiet hours row holding the chatUi digestQuietStart / digestQuietEnd
    * selects, in its own group since row 89 (pick Q1: quiet hours also silence the Jenny chat's desktop
@@ -134,10 +195,17 @@
     Object.keys(optionSources).forEach((name) => fieldDescriptors?.registerOptionSource?.(name, optionSources[name]));
     // Rendered once into its [data-setting-mount] host, patched in place afterwards.
     // The binding module loads after this one, so it resolves at render time.
-    function mountSettingRow(section, id, value, extra) {
+    // `afterId` names the row a host missing from index.html is created after.
+    function mountSettingRow(section, id, value, { afterId, ...extra } = {}) {
       const fieldBinding = globalThis.rendererSettingsFieldBinding
         || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
-      const mount = section?.querySelector?.(`[data-setting-mount="${id}"]`);
+      let mount = section?.querySelector?.(`[data-setting-mount="${id}"]`);
+      const sibling = !mount && afterId ? section?.querySelector?.(`[data-setting-mount="${afterId}"]`) : null;
+      if (sibling) {
+        mount = sibling.ownerDocument.createElement('div');
+        mount.dataset.settingMount = id;
+        sibling.after(mount);
+      }
       const descriptor = fieldDescriptors?.getSettingDescriptor?.(id);
       if (!mount || !descriptor || typeof fieldBinding?.mountSettingRow !== 'function') return null;
       fieldBinding.mountSettingRow(mount, descriptor, value, { className: 'select-shell', ...extra });
@@ -226,6 +294,7 @@
       mountSettingRow(appearanceSettingsSection, 'appearanceAppZoomSelect', appZoomPercent);
       mountSettingRow(appearanceSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
       mountSettingRow(appearanceSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
+      mountSettingRow(appearanceSettingsSection, 'changePicturesToggle', state.features?.featureFlags?.change_pictures !== false, { afterId: 'appearanceArtifactAutoOpenToggle' });
       globalThis.rendererPerformanceSettings?.mountRows(appearanceSettingsSection, mountSettingRow);
       if (appearanceLanguageField && shouldPatchSection('appearanceLanguage')) {
         appearanceLanguageField.innerHTML = buildUiLanguageFieldMarkup({
@@ -411,6 +480,7 @@
       if (dictationSettingsSection) {
         globalThis.rendererSettingsDictationSection?.renderDictationSection?.({ container: dictationSettingsSection, state });
       }
+      syncTeamSettingsSection({ state, activeSection });
       if (toolsApprovalRulesList) {
         // Read over IPC, so only while Tools is the section on screen.
         settingsCoreRenderers.renderApprovalRules({
@@ -457,9 +527,12 @@
 
     return {
       renderSettings,
-      dispose: () => disposeSurfaceEffectPreview(),
+      dispose: () => {
+        disposeSurfaceEffectPreview();
+        globalThis.rendererSettingsTeamSection?.leaveTeamSection?.();
+      },
     };
   }
 
-  return { createSettingsRenderer, renderJennyChatDigests };
+  return { createSettingsRenderer, renderJennyChatDigests, syncTeamSettingsSection };
 });

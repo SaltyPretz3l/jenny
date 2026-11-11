@@ -102,7 +102,7 @@ def test_retry_dispositions_match_the_spec_table() -> None:
         "unavailable": "never",
         "limit_exceeded": "changed_args",
         "transient": "same_args",
-        "internal_error": "never",
+        "internal_error": "after_fix",
     }
 
 

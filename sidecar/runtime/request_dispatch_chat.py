@@ -50,7 +50,7 @@ from sidecar.ai.routing.plan_mode_transition import context_with_plan_decision
 from sidecar.ai.routing.route_policy_runtime import with_request_safety
 from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 from sidecar.protocol import CHAT_SEND_METHOD
-from sidecar.runtime.approval import ApprovalResolution
+from sidecar.runtime.approval import APP_REFUSED_DECISION, ApprovalResolution
 from sidecar.runtime.approval_plan import ApprovalPlanCacheCapacityError
 from sidecar.runtime.chat import (
     ChatRequestError,
@@ -249,8 +249,21 @@ def _with_stack_generation_lease(func: Callable[..., ProcessOutcome]) -> Callabl
     return wrapped
 
 
+def _with_route_token(func: Callable[..., ProcessOutcome]) -> Callable[..., ProcessOutcome]:
+    """``request_route.with_route_token``, loaded on the first request: off the startup import graph."""
+
+    @wraps(func)
+    def wrapped(*args: Any, **kwargs: Any) -> ProcessOutcome:
+        from sidecar.ai.engines.request_route import with_route_token
+
+        return with_route_token(func)(*args, **kwargs)
+
+    return wrapped
+
+
 @_with_stack_generation_lease
 @with_request_safety  # per-request safety_mode / auto_approve_streak_cap (owner D3)
+@_with_route_token  # optional opaque routing token for a loopback gateway
 def process_chat_send_request(
     *,
     message_id: Any,
@@ -724,7 +737,8 @@ def process_chat_send_request(
                         message="Decision checkpoint publication failed", logger=logger,
                     )
             approval_resolution = _normalize_approval_resolution(raw_approval_resolution)
-            if approval_resolution.status in {
+            app_refused = approval_resolution.decision == APP_REFUSED_DECISION  # nobody answered
+            if not app_refused and approval_resolution.status in {
                 "approved",
                 "approved_auto",
                 "accepted",
@@ -785,7 +799,7 @@ def process_chat_send_request(
                 session_id=session_id,
                 canonical_seq_state=canonical_seq_state,
             )
-            if not approval_resolution.approved:
+            if not approval_resolution.approved and not app_refused:
                 terminal_status = TURN_STATE_DENIED
                 terminal_subcode: str | None = TERMINAL_SUBCODE_DENIED_USER_EXPLICIT
                 if approval_resolution.status == TURN_STATE_TIMEOUT:
@@ -867,6 +881,8 @@ def process_chat_send_request(
                         retryable=False,
                     )
                 cached_plan = _credit_approval_wait(cached_plan, approval_wait_seconds)
+                if app_refused:
+                    cached_plan = replace(cached_plan, app_refusal=approval_resolution.feedback)
                 if approval_tool_name == "exit_plan_mode":
                     cached_plan = replace(
                         cached_plan,

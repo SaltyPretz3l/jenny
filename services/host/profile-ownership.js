@@ -8,6 +8,8 @@ const { spawnSync } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { readJson, writeJson } = require('./durable-json');
+const { assertSafeDirectory, assertSafeFile } = require('./path-guard');
+const { acquirePipeLock } = require('./profile-pipe-lock');
 
 const MARKER = 'profile-owner.json';
 // Every host mode that may own a profile. The desktop never opens a `cli` or
@@ -16,6 +18,7 @@ const MARKER = 'profile-owner.json';
 const HOST_MODES = Object.freeze(['desktop', 'server', 'cli']);
 const CLI_LOCK_FILE = '.cli.lock';
 const CLI_CONFIG_FILE = 'cli.json';
+const HOST_PIPE_PREFIX = '\\\\.\\pipe\\jenny-host-';
 const OWNER_TEMP_PATTERN = /^\.profile-owner-[a-f0-9]{32}\.tmp$/u;
 const STRICT_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
@@ -295,7 +298,8 @@ function acquireProfile({ userDataPath, pythonExecutable }) {
       stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 10_000, maxBuffer: 1024, windowsHide: true,
     });
     if (result.status === 2) {
-      throw Object.assign(new Error('Profile is locked or locking is unavailable.'), { code: HOST_ERROR_CODES.CONFLICT });
+      throw Object.assign(new Error('Profile is locked or locking is unavailable.'),
+        { code: HOST_ERROR_CODES.CONFLICT, reason: 'profile_locked' });
     }
     if (result.error || result.status !== 0 || result.stdout?.toString('utf8') !== `locked:${challenge}`) {
       throw Object.assign(new Error('Profile lock helper did not acknowledge acquisition.'), { code: HOST_ERROR_CODES.UNAVAILABLE });
@@ -308,4 +312,60 @@ function acquireProfile({ userDataPath, pythonExecutable }) {
   }
 }
 
-module.exports = { acquireProfile, assertDesktopProfile, claimCliProfile, claimDesktopProfile, claimProfileOwner };
+function hostedLockError(message, code, extra = {}) {
+  return Object.assign(new Error(message), { code, ...extra });
+}
+
+// The marker publish is a hard link; a file system without them (exFAT, some
+// network shares) fails closed with a clear error instead of a raw link error.
+function claimServerProfileOnWindows(userDataPath) {
+  try {
+    return claimProfileOwner(userDataPath, 'server');
+  } catch (error) {
+    if (error && error.syscall === 'link' && !Object.values(HOST_ERROR_CODES).includes(error.code)) {
+      throw hostedLockError('Profile ownership could not be published; the profile needs a file system with hard links.',
+        HOST_ERROR_CODES.UNAVAILABLE, { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function acquireWindowsProfile({ userDataPath, onLost }) {
+  // A profile that is a junction or link is refused before anything reads or
+  // writes through it; one that does not exist yet is checked after the claim.
+  // lstat, not existsSync: a dangling junction "does not exist" to existsSync.
+  if (fs.lstatSync(userDataPath, { throwIfNoEntry: false })) assertSafeDirectory(userDataPath);
+  readHostedProfile(userDataPath);
+  const directory = claimServerProfileOnWindows(userDataPath);
+  assertSafeDirectory(userDataPath);
+  let lock;
+  try {
+    lock = await acquirePipeLock({ prefix: HOST_PIPE_PREFIX, directory: fs.realpathSync.native(directory), onLost });
+  } catch (error) {
+    if (error && error.reason === 'busy') {
+      throw hostedLockError('Profile is locked or locking is unavailable.', HOST_ERROR_CODES.CONFLICT,
+        { reason: 'profile_locked' });
+    }
+    throw hostedLockError('Profile lock could not be created.', HOST_ERROR_CODES.UNAVAILABLE);
+  }
+  try {
+    // The empty file is evidence for the desktop's refusal, not the lock itself.
+    const lockFile = path.join(directory, '.host.lock');
+    assertSafeFile(lockFile);
+    fs.closeSync(fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_RDWR, 0o600));
+  } catch (error) {
+    await lock.release();
+    throw error;
+  }
+  return { directory, release: () => lock.release() };
+}
+
+// Same contract as `acquireProfile`, resolved asynchronously so Windows can
+// take its named-pipe lock. `acquireProfile` stays synchronous and Linux-only
+// for the commands that call it (`server/cli.js`, `server/setup.js`).
+async function acquireProfileAsync({ userDataPath, pythonExecutable, onLost = () => {} }) {
+  if (process.platform === 'win32') return acquireWindowsProfile({ userDataPath, onLost });
+  return acquireProfile({ userDataPath, pythonExecutable });
+}
+
+module.exports = { acquireProfile, acquireProfileAsync, assertDesktopProfile, claimCliProfile, claimDesktopProfile, claimProfileOwner };

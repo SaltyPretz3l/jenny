@@ -122,6 +122,11 @@
       const priorSteps = pendingStepsMessages && Array.isArray(pendingStepsMessages[pendingIndex]?.agent_status_steps)
         ? pendingStepsMessages[pendingIndex].agent_status_steps
         : [];
+      // A restored row never replaces what a live frame already put here.
+      const restoredChild = payload.restored === true ? (snapshot.childTaskId || snapshot.childAgentId) : '';
+      if (restoredChild && priorSteps.some((step) => (step?.childTaskId || step?.childAgentId) === restoredChild)) {
+        return { buffered: false, terminal: false };
+      }
       const nextSteps = appendAgentStatusStep(priorSteps, {
         taskId: snapshot.taskId,
         agentId: snapshot.agentId,
@@ -149,6 +154,7 @@
         summary: snapshot.summary,
         terminal: snapshot.terminal,
         success: snapshot.success,
+        ...(payload.restored === true ? { startedAt: payload.startedAt, updatedAt: payload.updatedAt } : {}),
       });
       // A rejected child frame must not replace the parallel summary snapshot.
       if (nextSteps.length === priorSteps.length && nextSteps.every((step, index) => step === priorSteps[index])) {

@@ -12,7 +12,6 @@ const {
 } = require('../services/chat-messaging-wake');
 
 const START_MS = Date.parse('2026-10-20T10:00:00.000Z');
-const TEN_MINUTES = 10 * 60 * 1000;
 const SRC = 'sess_source';
 const DST = 'sess_dest';
 
@@ -173,18 +172,14 @@ test('a message from a chat woken at the depth cap does not wake; one below the 
   assert.equal(ops.depthForTurn('turn_unknown'), 0);
 });
 
-test('at most six wakes per destination in ten minutes; the window rolls', async () => {
+test('no rate window: a destination is woken by every delivered message (owner, 2026-11-10)', async () => {
   const { ops, state, deliver } = harness();
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < 12; i += 1) {
     assert.equal((await ops.onDelivered(deliver())).outcome, 'submitted', `wake ${i + 1}`);
     state.clock += 1000;
   }
-  assert.equal((await ops.onDelivered(deliver())).outcome, 'rate_limited');
-  assert.equal(state.submits.length, 6);
-  assert.ok(state.logs.some(([, event]) => event === 'chat_messaging.wake_rate_limited'));
-  state.clock = START_MS + TEN_MINUTES + 1;
-  assert.equal((await ops.onDelivered(deliver())).outcome, 'submitted');
-  assert.equal(state.submits.length, 7);
+  assert.equal(state.submits.length, 12);
+  assert.ok(!state.logs.some(([, event]) => event === 'chat_messaging.wake_rate_limited'));
 });
 
 test('an operation that is not delivered, or a message already attempted, never submits', async () => {
@@ -395,15 +390,6 @@ test('a settle keeps entries whose mail is still reserved for the live turn, and
   assert.equal((await h.ops.onTurnSettled(DST)).outcome, 'submitted');
   assert.equal(h.ops.stats().deferred, 0);
 
-  const limited = harness();
-  limited.state.activeTurn.set(DST, { turn_id: 'turn_user' });
-  assert.deepEqual(await limited.ops.onDelivered(limited.deliver()), { outcome: 'deferred' });
-  limited.state.activeTurn.clear();
-  for (let n = 0; n < 6; n += 1) assert.equal((await limited.ops.onDelivered(limited.deliver())).outcome, 'submitted');
-  assert.deepEqual(await limited.ops.onTurnSettled(DST), { outcome: 'rate_limited' });
-  assert.equal(limited.ops.stats().deferred, 1, 'the entry survives the rate window');
-  limited.state.clock += 10 * 60 * 1000 + 1;
-  assert.equal((await limited.ops.onTurnSettled(DST)).outcome, 'submitted');
 });
 
 test('a message landing while the runtime still lists the settling work is re-checked and woken without another settle', async () => {

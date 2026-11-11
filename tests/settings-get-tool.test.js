@@ -21,7 +21,8 @@ function harness({ port, featureFlags } = {}) {
     backendService: featureFlags ? { featureFlags } : {} } };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('no keys reads every setting and the port answer passes through unchanged', async () => {
   const { context, calls } = harness();

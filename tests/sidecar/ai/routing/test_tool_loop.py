@@ -154,7 +154,6 @@ def _build_router(  # noqa: PLR0913 - compact test fixture builder.
     *,
     engine: _ToolLoopEngine,
     mcp_client: _StubMCPClient | None = None,
-    tools_mermaid_enabled: bool = False,
     web_tool_cap: int | None = None,
     max_tools_per_turn: int | None = None,
     extra_snapshot_tools: tuple[str, ...] = (),
@@ -164,7 +163,6 @@ def _build_router(  # noqa: PLR0913 - compact test fixture builder.
         engine_type=engine_type,
         model="qwen",
         tools_workspace_root="C:/workspace",
-        tools_mermaid_enabled=tools_mermaid_enabled,
     )
     if web_tool_cap is not None:
         config = replace(config, max_web_tool_calls_per_turn=web_tool_cap)
@@ -781,7 +779,7 @@ def test_sub_agent_budget_stop_uses_reserved_constrained_report_iteration(
     )
     tracker.charge_tool_schemas = lambda _payload, num_tools: setattr(tracker, "num_tools", num_tools)
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.apply_budget_check",
+        "sidecar.ai.routing.chat_decision_preflight.apply_budget_check",
         lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
@@ -927,7 +925,6 @@ def test_final_sub_agent_iteration_never_dispatches_unoffered_tool_calls() -> No
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
         extra_snapshot_tools=("mermaid_generate",),
     )
     request_context = ChatRequestContext(
@@ -1084,7 +1081,6 @@ def test_tool_bearing_generation_counts_parse_success(monkeypatch) -> None:
         router = _build_router(
             engine=engine,
             mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-            tools_mermaid_enabled=True,
         )
         router.build_chat_decision(
             request_id="req_parse_success",
@@ -1399,7 +1395,6 @@ def test_unknown_tool_recovery_uses_remaining_cap_after_valid_calls() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -1473,7 +1468,6 @@ def test_tool_call_budget_is_cumulative_across_generations() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
         max_tools_per_turn=2,
     )
     runtime = LoopRuntime(request_id="req-cumulative-tool-budget", max_iterations=4)
@@ -2821,92 +2815,6 @@ def _retired_duplicate_inspect_harness_calls_coalesce_before_snapshot_result() -
     assert result_events[0].metadata.get("result_kind") == "harness_snapshot"
 
 
-def test_mermaid_alias_duplicates_are_canonicalized_before_tool_events() -> None:
-    mermaid_args = {"prompt": "flowchart TD\n  tools --> inspect_harness"}
-    engine = _ToolLoopEngine(
-        plans=[
-            _ToolPlan(
-                result=GenerationResult(
-                    content="",
-                    finish_reason="tool_calls",
-                    tool_calls=(
-                        ToolCallRequest(
-                            tool_id="mermaid_generate",
-                            arguments=mermaid_args,
-                            call_id="call_mermaid_canonical",
-                        ),
-                        ToolCallRequest(
-                            tool_id="mermaid_gen",
-                            arguments=mermaid_args,
-                            call_id="call_mermaid_alias_a",
-                        ),
-                        ToolCallRequest(
-                            tool_id="mermaid_gen",
-                            arguments=mermaid_args,
-                            call_id="call_mermaid_alias_b",
-                        ),
-                    ),
-                )
-            ),
-            _ToolPlan(
-                result=GenerationResult(
-                    content=(
-                        "```mermaid\n"
-                        "flowchart TD\n"
-                        "  tools --> inspect_harness\n"
-                        "```\n"
-                        "The diagram was generated after the visible diagram tool ran."
-                    ),
-                    finish_reason="stop",
-                )
-            ),
-        ]
-    )
-    mcp_client = _StubMCPClient((_mermaid_descriptor(),))
-    router = _build_router(
-        engine=engine,
-        mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
-    )
-    events: list[object] = []
-    prompt = (
-        "Please inspect the tool harness, let me know which tools are available, "
-        "then show each available tool in a mermaid flowchart"
-    )
-
-    decision = router.build_chat_decision(
-        request_id="req_mermaid_alias_inventory",
-        messages=[{"role": "user", "content": prompt}],
-        latest_user_content=prompt,
-        mode="assist",
-        approvals_pre_granted=True,
-        runtime=LoopRuntime(
-            emit=events.append,
-            request_id="req_mermaid_alias_inventory",
-            max_iterations=4,
-            streaming=True,
-        ),
-    )
-
-    executing_events = [event for event in events if isinstance(event, ToolExecutingEvent)]
-    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
-    assert [(event.call_id, event.tool_name) for event in executing_events] == [
-        ("call_mermaid_canonical", "mermaid_generate"),
-    ]
-    assert {
-        (event.call_id, event.tool_name)
-        for event in result_events
-    } == {
-        ("call_mermaid_canonical", "mermaid_generate"),
-    }
-    assert "mermaid_gen" not in decision.response_text
-    assert "```mermaid" in decision.response_text
-    assert "inspect_harness" in decision.response_text
-    assert mcp_client.executions == [
-        ("mermaid_generate", {**mermaid_args, "_jenny_read_only": False})
-    ]
-
-
 def _retired_unknown_tool_in_mixed_batch_does_not_poison_hidden_harness_result() -> None:
     engine = _ToolLoopEngine(
         plans=[
@@ -3437,7 +3345,6 @@ def test_empty_post_tool_completion_retries_then_summarizes_success() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -3501,7 +3408,6 @@ def test_successful_tool_generic_curly_greeting_retries_then_falls_back() -> Non
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -3558,7 +3464,6 @@ def test_post_tool_continuation_retry_budget_shared_across_families() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -3608,7 +3513,6 @@ def test_post_tool_empty_at_final_iteration_skips_retry() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -3662,7 +3566,6 @@ def test_post_tool_greeting_at_final_iteration_skips_retry() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 

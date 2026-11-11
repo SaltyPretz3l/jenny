@@ -510,7 +510,7 @@ test('Settings memory page descriptors pin the W4 invoke channels', () => {
   }
 });
 
-test('primaryChat descriptors pin the thirteen invoke channels and the changed subscription', () => {
+test('primaryChat descriptors pin the sixteen invoke channels and the changed subscription', () => {
   const invoke = {
     getState: 'primary-chat:get-state',
     activity: 'primary-chat:activity',
@@ -525,13 +525,16 @@ test('primaryChat descriptors pin the thirteen invoke channels and the changed s
     forgetPreview: 'primary-chat:forget-preview',
     undoSettingChange: 'primary-chat:undo-setting-change',
     undoChatChange: 'primary-chat:undo-chat-change',
+    getFullAuto: 'primary-chat:get-full-auto',
+    armFullAuto: 'primary-chat:arm-full-auto',
+    disarmFullAuto: 'primary-chat:disarm-full-auto',
   };
   for (const [method, channel] of Object.entries(invoke)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel }, method);
   }
   assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onChanged'], { kind: 'subscribe', channel: 'primary-chat:changed' });
   const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('primaryChat.'));
-  assert.equal(keys.length, 14);
+  assert.equal(keys.length, 17);
 });
 
 test('row 94 descriptor pins the sessions changed subscription', () => {

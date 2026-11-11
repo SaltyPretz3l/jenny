@@ -8,9 +8,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createViewportControllerHarness } = require('./helpers/renderer-viewport-utils-helpers.js');
+const { spendOpenLanding } = require('./helpers/renderer-viewport-open-landing-helpers.js');
 
 test('viewport controller does not live-follow while a pending approval gap is visible', () => {
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -33,6 +35,7 @@ test('viewport controller keeps following a pending approval that is hidden unde
   // container runs behind the floating composer, so a prompt peeking in at its
   // bottom counted as "visible" and the brake froze follow before it was revealed.
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -53,6 +56,7 @@ test('viewport controller keeps following a pending approval that is hidden unde
 
 test('viewport controller brakes once the approval actions clear the composer', () => {
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -97,6 +101,7 @@ test('viewport controller keeps following while a pending plan card has its acti
   // scrolling as soon as its first pixel showed, leaving Build it / Keep
   // planning below the composer.
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -116,6 +121,7 @@ test('viewport controller keeps following while a pending plan card has its acti
 
 test('viewport controller brakes once the plan actions clear the composer', () => {
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -135,6 +141,7 @@ test('viewport controller brakes once the plan actions clear the composer', () =
 
 test('viewport controller holds position for one sync when a plan card is submitted', () => {
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -173,6 +180,7 @@ test('viewport controller holds the reader position on the sync that resolves an
   // approval-resolution render holds position, and the next genuine streaming
   // sync resumes normal follow.
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;
@@ -210,6 +218,7 @@ test('viewport controller still honours forceBottom on the sync that resolves an
   // The one-sync hold must not swallow an explicit jump-to-bottom - sending a new
   // message immediately after approving still has to land at the bottom.
   const harness = createViewportControllerHarness({ deferAnimationFrame: true, autoScrollThread: true });
+  spendOpenLanding(harness);
 
   try {
     harness.state.ui.followLatest = true;

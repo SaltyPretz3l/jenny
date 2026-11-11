@@ -50,6 +50,13 @@ class ValidatedUrl:
     pinned_ip: str = ""
 
 
+def fetch_failures() -> Any:
+    """The fetch failure wording, loaded on first use: server start has a module budget."""
+    from sidecar.ai.tools.builtins import web_fetch_failures
+
+    return web_fetch_failures
+
+
 @dataclass(frozen=True)
 class UrlReadResult:
     payload: bytes
@@ -405,14 +412,8 @@ def _read_response_payload(
     deadline: float,
 ) -> tuple[bytes, bool, str]:
     content_type = str(response.headers.get("Content-Type", "") or "").strip()
-    raw_cl = response.headers.get("Content-Length")
-    if raw_cl is not None:
-        try:
-            declared_length = int(raw_cl)
-            if declared_length > limit:
-                return b"", True, content_type
-        except (TypeError, ValueError):
-            pass
+    # A declared Content-Length over the limit is read up to the limit like a
+    # chunked body of the same size; it used to fail the whole fetch (row 129, B2).
     chunks: list[bytes] = []
     total = 0
     while total <= limit:

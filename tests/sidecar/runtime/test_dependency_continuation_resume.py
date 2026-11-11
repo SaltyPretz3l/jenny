@@ -15,7 +15,10 @@ from sidecar.runtime.chat_continuation_resume import (
 )
 from sidecar.runtime.continuation_checkpoint import _request_params
 from sidecar.runtime.continuation_codec import encode_continuation_checkpoint
-from tests.sidecar.ai.routing.test_tool_dependency_wait import Checkpoint
+from tests.sidecar.ai.routing.test_tool_dependency_wait import (
+    Checkpoint,
+    _offer_runtime_child_tools,  # noqa: F401  (autouse fixture)
+)
 from tests.sidecar.ai.routing.test_tool_loop import _build_router, _ToolLoopEngine, _ToolPlan
 from tests.sidecar.runtime.test_chat_continuation_resume import (
     _artifacts,

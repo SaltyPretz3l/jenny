@@ -58,62 +58,62 @@
   };
   var PALETTE_PRESETS = {
     midnight: {
-      id: 'midnight',
+      id: 'midnight', scheme: 'dark',
       label: jt('appearance.palette.midnight.name', 'Midnight'),
       description: jt('appearance.palette.midnight.description', 'Current dark Jenny shell baseline.'),
     },
     pewter: {
-      id: 'pewter',
+      id: 'pewter', scheme: 'dark',
       label: jt('appearance.palette.pewter.name', 'Pewter'),
       description: jt('appearance.palette.pewter.description', 'Tinted-charcoal monochrome with a quiet steel accent; vivid holo, syntax and live-cyan.'),
     },
     obsidian: {
-      id: 'obsidian',
+      id: 'obsidian', scheme: 'dark',
       label: jt('appearance.palette.obsidian.name', 'Obsidian'),
       description: jt('appearance.palette.obsidian.description', 'Deep rich-black surfaces with neutral seams and a single vivid cyan signal accent — high-contrast dark theme.'),
     },
     darkroom: {
-      id: 'darkroom',
+      id: 'darkroom', scheme: 'dark',
       label: jt('appearance.palette.darkroom.name', 'Darkroom'),
       description: jt('appearance.palette.darkroom.description', 'Matte warm near-black studio instrument — near-monochrome chalk-on-ink with a single muted lavender accent.'),
     },
     slate: {
-      id: 'slate',
+      id: 'slate', scheme: 'dark',
       label: jt('appearance.palette.slate.name', 'Slate'),
       description: jt('appearance.palette.slate.description', 'One solid slate canvas — no gradients, no background effect, no timeline shading; hairlines and spacing carry the structure, with a quiet ice-blue accent.'),
     },
+    chalk: {
+      id: 'chalk', scheme: 'light',
+      label: jt('appearance.palette.chalk.name', 'Chalk'),
+      description: jt('appearance.palette.chalk.description', 'One solid chalk-white canvas: Slate in daylight, with no gradients or background effect and a deep slate-blue accent.'),
+    },
     paper: {
-      id: 'paper',
+      id: 'paper', scheme: 'light',
       label: jt('appearance.palette.paper.name', 'Paper'),
       description: jt('appearance.palette.paper.description', 'Light neutral surfaces with softer accents.'),
     },
-    signal: {
-      id: 'signal',
-      label: jt('appearance.palette.signal.name', 'Signal'),
-      description: jt('appearance.palette.signal.description', 'Sharper contrast with brighter accent energy.'),
-    },
     woolly: {
-      id: 'woolly',
+      id: 'woolly', scheme: 'light',
       label: jt('appearance.palette.woolly.name', 'Woolly World'),
       description: jt('appearance.palette.woolly.description', 'Warm craft-paper tones with leaf green accents.'),
     },
     lexicon: {
-      id: 'lexicon',
+      id: 'lexicon', scheme: 'dark',
       label: jt('appearance.palette.lexicon.name', 'Lexicon'),
       description: jt('appearance.palette.lexicon.description', 'Dark editorial surfaces with text-forward glow accents.'),
     },
     rocko: {
-      id: 'rocko',
+      id: 'rocko', scheme: 'dark',
       label: jt('appearance.palette.rocko.name', 'Retro Teal'),
       description: jt('appearance.palette.rocko.description', 'Dark teal surfaces with orange and hot-pink 90s cartoon energy.'),
     },
     'jenny-day': {
-      id: 'jenny-day',
+      id: 'jenny-day', scheme: 'light',
       label: jt('appearance.palette.jennyDay.name', 'Jenny XJ-9 — Daytime'),
       description: jt('appearance.palette.jennyDay.description', 'Cool icy teal-slate panels with Jenny-cyan body brand, dark-teal ink lines, and pigtail-amber and Brad-red pops.'),
     },
     'jenny-night': {
-      id: 'jenny-night',
+      id: 'jenny-night', scheme: 'dark',
       label: jt('appearance.palette.jennyNight.name', 'Jenny XJ-9 — Night Patrol'),
       description: jt('appearance.palette.jennyNight.description', 'Deep blue-black combat sky with neon cyan eye-glow, hot pink, and pigtail yellow.'),
     },
@@ -430,6 +430,17 @@
         composerHoloId: 'on',
       },
     },
+    chalk: {
+      id: 'chalk',
+      label: jt('appearance.palette.chalkTheme.name', 'Chalk'),
+      description: jt('appearance.palette.chalkTheme.description', 'Blank-space reading surface in daylight: flat light canvas, no ambient background effect, deep slate-blue accents.'),
+      preferences: {
+        paletteId: 'chalk',
+        typographyId: 'system',
+        surfaceEffectId: 'none',
+        composerHoloId: 'on',
+      },
+    },
     lexicon: {
       id: 'lexicon',
       label: jt('appearance.palette.lexiconTheme.name', 'Lexicon'),
@@ -491,6 +502,22 @@
     return Object.prototype.hasOwnProperty.call(collection, token) ? token : fallback;
   }
 
+  // Retired palette ids and the palette they now load as (Signal -> Obsidian,
+  // 2026-11-09). Every palette id is normalised through here, so a stored,
+  // projected or boot-colour lookup of a retired id never meets a missing sheet.
+  var PALETTE_ALIASES = { signal: 'obsidian' };
+
+  function normalizePaletteId(value) {
+    var token = String(value || '').trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PALETTE_ALIASES, token)) token = PALETTE_ALIASES[token];
+    return normalizePresetId(token, PALETTE_PRESETS, DEFAULT_APPEARANCE.paletteId);
+  }
+
+  // 'light' or 'dark' for the data-scheme attribute; the preset's declared scheme.
+  function resolvePaletteScheme(paletteId) {
+    return PALETTE_PRESETS[normalizePaletteId(paletteId)].scheme;
+  }
+
   function normalizeChatWidthId(value) {
     var token = String(value || '').trim().toLowerCase();
     if (Object.prototype.hasOwnProperty.call(LEGACY_CHAT_WIDTH_IDS, token)) return LEGACY_CHAT_WIDTH_IDS[token];
@@ -507,7 +534,7 @@
     // sprite holo was retired 2026-10-02.
     var source = raw && typeof raw === 'object' ? raw : {};
     return {
-      paletteId: normalizePresetId(source.paletteId, PALETTE_PRESETS, DEFAULT_APPEARANCE.paletteId),
+      paletteId: normalizePaletteId(source.paletteId),
       typographyId: normalizePresetId(
         source.typographyId,
         TYPOGRAPHY_PRESETS,
@@ -560,6 +587,44 @@
 
   function getFontScalePresets() {
     return clonePresetCollection(FONT_SCALE_PRESETS);
+  }
+
+  // The curtain paints before the palette sheets load, so each palette's five
+  // curtain colours live here too. tests/appearance-boot-colors.test.js pins
+  // them to the palette files. Order: background, text, secondary, cyan, accent.
+  var PALETTE_BOOT_COLORS = {
+    midnight: ['#0b0d14', '#f3f4fc', '#b3b2c8', '#16e9ff', '#6d82ff'],
+    darkroom: ['#161517', '#f0efea', '#b4b1bb', '#9c8fbe', '#9c8fbe'],
+    'jenny-day': ['#d4e0e3', '#0a2329', '#3a5860', '#5fc6cd', '#4fa9b0'],
+    'jenny-night': ['#0a1230', '#f0e8ff', '#b4a8d6', '#29c0ff', '#ff3d8e'],
+    lexicon: ['#100d11', '#f3ede4', '#b7aa98', '#a6b8cf', '#c88f52'],
+    obsidian: ['#0a0a0c', '#f6f6f7', '#b0b0b6', '#3df0ff', '#1bd6ff'],
+    paper: ['#ebe6dc', '#1f2635', '#4d5465', '#157ec7', '#3568f0'],
+    pewter: ['#0c0e12', '#eef1f7', '#aab2c2', '#22e0ff', '#6a809f'],
+    rocko: ['#0c1e1b', '#f0e4cc', '#8db8b0', '#3dbfab', '#e8641a'],
+    slate: ['#15181c', '#f6f7f9', '#d0d5dc', '#86c3e4', '#7fb6dd'],
+    chalk: ['#f3f5f7', '#15181c', '#3d4651', '#0e7490', '#1f6fa8'],
+    woolly: ['#e4d8c2', '#2c2417', '#5e4f38', '#3888cc', '#388626'],
+  };
+
+  // Null for an unknown palette, so a caller keeps its own default.
+  function resolvePaletteBootColors(paletteId) {
+    var key = String(paletteId || '');
+    if (Object.prototype.hasOwnProperty.call(PALETTE_ALIASES, key)) { key = PALETTE_ALIASES[key]; }
+    if (!Object.prototype.hasOwnProperty.call(PALETTE_BOOT_COLORS, key)) { return null; }
+    var colors = PALETTE_BOOT_COLORS[key];
+    return { bg: colors[0], text: colors[1], textSecondary: colors[2], cyan: colors[3], accent: colors[4] };
+  }
+
+  function buildBootColorVariables(paletteId) {
+    var colors = resolvePaletteBootColors(paletteId);
+    return colors ? {
+      '--startup-bg': colors.bg,
+      '--startup-text': colors.text,
+      '--startup-text-secondary': colors.textSecondary,
+      '--startup-cyan': colors.cyan,
+      '--startup-accent': colors.accent,
+    } : null;
   }
 
   function resolveFontScaleValue(fontScaleId) {
@@ -693,6 +758,7 @@
       return normalized;
     }
     rootElement.dataset.palette = normalized.paletteId;
+    rootElement.dataset.scheme = resolvePaletteScheme(normalized.paletteId);
     rootElement.dataset.typography = normalized.typographyId;
     rootElement.dataset.motion = 'standard';
     rootElement.dataset.surfaceEffect = normalized.surfaceEffectId;
@@ -713,6 +779,7 @@
     }
     applyCssVariables(rootElement, COMPOSER_HOLO_CSS_VARIABLES[normalized.composerHoloId]);
     applyCssVariables(rootElement, buildThreadAppearanceVariables(normalized));
+    applyCssVariables(rootElement, buildBootColorVariables(normalized.paletteId));
     applyCssVariables(rootElement, {
       '--font-scale': String(resolveFontScaleValue(normalized.fontScaleId)),
     });
@@ -788,6 +855,8 @@
     STORAGE_KEY: STORAGE_KEY,
     LEGACY_STORAGE_KEY: LEGACY_STORAGE_KEY,
     applyAppearanceToDocument: applyAppearanceToDocument,
+    resolvePaletteBootColors: resolvePaletteBootColors,
+    resolvePaletteScheme: resolvePaletteScheme,
     getDefaultAppearancePreferences: getDefaultAppearancePreferences,
     getComposerHoloOptions: getComposerHoloOptions,
     getAppearanceToggleFields: getAppearanceToggleFields,

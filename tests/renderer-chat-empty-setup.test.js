@@ -191,7 +191,7 @@ function sidebarHarness(t, headerAction = true) {
   const page = new JSDOM(`<body><aside class="view-panel">
     <div class="sidebar-header">${headerAction ? actionButton({ label: 'New chat', className: 'new-chat-button' }) : ''}</div>
     <label class="search-shell"><input type="search"></label><div class="chats-project-row"></div>
-    <div class="chats-scope-row"><div class="chats-scope-slot"></div><div id="chatsSelectionEntry"></div></div>
+    <div class="chats-scope-row"><div class="chats-scope-slot"></div></div>
     <div class="conversation-groups"></div><div class="status"></div></aside></body>`);
   const document = page.window.document;
   const state = { sessions: [], ui: {} };

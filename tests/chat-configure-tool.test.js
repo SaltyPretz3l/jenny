@@ -40,7 +40,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('chat_configure is a closed schema: bad shapes and actions refuse before the port', async () => {
   const { context, calls } = harness();

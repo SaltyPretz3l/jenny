@@ -15,6 +15,7 @@
 # The generated ledger is compared byte-for-byte with its LF generator output.
 docs/i18n/STRING_LEDGER.md text eol=lf
 renderer/inventory/assets/*.svg text eol=lf
+assets/ad-filters/filters.bin binary
 # Shell entrypoints must stay LF on every platform (CRLF breaks bash: "/bin/bash^M").
 *.sh text eol=lf
 setup.command text eol=lf

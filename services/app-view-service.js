@@ -26,7 +26,7 @@ const ACTIONS = Object.freeze(['settings', 'chat', 'file', 'terminal', 'activity
 // tests/app-view-service.test.js; the renderer UMD and services cannot share an import).
 const SETTINGS_SECTIONS = Object.freeze(['readiness', 'models', 'offline', 'context', 'tools', 'skills', 'memories',
   'personality', 'appearance', 'editor', 'home', 'notifications', 'jennyChat', 'dictation', 'runtime', 'usage',
-  'extensions', 'account', 'dataPrivacy', 'aboutUpdates', 'advanced', 'runtimeLimits']);
+  'extensions', 'account', 'dataPrivacy', 'aboutUpdates', 'advanced', 'runtimeLimits', 'team']);
 // Mirrors the surfaces of renderer/features/renderer-chat-workspace-detail.js.
 const CHAT_PANEL_SURFACES = Object.freeze(['outputs', 'changes', 'background_tasks', 'context', 'environment']);
 const ACTIVITY_PANES = Object.freeze(['activity', 'permissions']);
@@ -185,6 +185,7 @@ function createAppViewService({
       sidebar_collapsed: p.sidebar_collapsed === true,
       chat_panel_open: p.chat_panel_open === true,
       preview_open: p.preview_open === true,
+      terminal_open: p.terminal_open === true,
     };
     return { ok: true };
   }

@@ -21,11 +21,23 @@ function text(value) {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 }
 
+// What a cause code means in words; the code stays in brackets for the logs (row 129, A9).
+const CAUSE_WORDS = Object.freeze({
+  path_not_changed: 'a listed path has no uncommitted change; call git_status and list only paths it shows',
+});
+
+function causeText(cause) {
+  if (!cause) return '';
+  if (Object.hasOwn(CAUSE_WORDS, cause)) return `: ${CAUSE_WORDS[cause]} (${cause})`;
+  if (cause.startsWith('field_')) return `: the '${cause.slice('field_'.length)}' argument is missing or not in the right form (${cause})`;
+  return ` (${cause})`;
+}
+
 function proposalFailure(toolName, reason, { cause = null } = {}) {
   const known = Object.hasOwn(PROPOSAL_ERROR_CODES, reason) ? reason : 'unavailable';
   const safeCause = typeof cause === 'string' && CAUSE_PATTERN.test(cause) ? cause : null;
   const detail = {
-    invalid_request: `The arguments were invalid${safeCause ? ` (${safeCause})` : ''}. Correct them and call ${toolName} again.`,
+    invalid_request: `The arguments were invalid${causeText(safeCause)}. Correct them and call ${toolName} again.`,
     capacity: 'Too many proposals are already waiting for the user. Continue your answer without proposing again.',
     authority_changed: 'The session or workspace changed while the call was running. Continue your answer without a proposal.',
     idempotency_conflict: 'A different proposal was already recorded for this call.',

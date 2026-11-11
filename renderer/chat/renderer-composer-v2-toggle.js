@@ -7,10 +7,11 @@
   root.rendererComposerV2Toggle = factory(root.rendererComposerV2Model);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (model) {
   'use strict';
-  const { SURFACE_FAMILY_UI, normalizeToolEntry, familyLabel, familyDescription } = model;
+  const { SURFACE_FAMILY_UI, DEFAULT_OFF_FAMILY_IDS, normalizeToolEntry, familyLabel, familyDescription } = model;
   const jt = (...args) => (globalThis.jennyI18n?.t || globalThis.jennyI18nFallback || ((key, fallback) => fallback))(...args);
   const lockdownTooltip = () => jt('composer.toggle.offlineLockdown', 'Offline lockdown is on for this session');
   const isMap = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+  const BROWSER_ROW = 'browser_use';
 
   function sessionToolOverrideEchoMatches(persisted, sessionId, requested = {}) {
     const equalMap = (actual, expected = {}) => isMap(actual) && isMap(expected)
@@ -26,7 +27,9 @@
     const rows = [...(vm?.sections || []).flatMap((section) => section.families), ...(vm?.connections || [])];
     const usable = rows.filter((row) => row.usable > 0);
     const on = usable.filter((row) => row.on).length;
-    return { on, off: usable.length - on, total: rows.length };
+    // A row that starts off and was left alone is not something this chat turned off.
+    const off = usable.filter((row) => !row.on && (row.overridden || !row.defaultOff)).length;
+    return { on, off, total: rows.length };
   }
 
   function createComposerV2ToggleController(deps = {}) {
@@ -38,6 +41,8 @@
     let generation = 0;
     let persistenceQueue = Promise.resolve(true);
     let context = makeContext(getSessionId());
+    let browserOnInNewChats = false;
+    Promise.resolve().then(() => deps.readBrowserDefault?.()).then((on) => { browserOnInNewChats = on === true; }, () => {});
 
     function committedMaps(categoryOverrides, connectionOverrides) {
       const categories = {};
@@ -89,7 +94,7 @@
 
     function hydrateFromToolSettings(settings) {
       for (const family of SURFACE_FAMILY_UI) {
-        defaults.set(family.id, family.configKey && typeof settings?.[family.configKey] === 'boolean' ? settings[family.configKey] : true);
+        defaults.set(family.id, !DEFAULT_OFF_FAMILY_IDS.has(family.id) && (family.configKey && typeof settings?.[family.configKey] === 'boolean' ? settings[family.configKey] : true));
       }
     }
 
@@ -115,6 +120,23 @@
       target.overrides = target.pending.reduce(applyOperation, target.committed);
     }
 
+    // New chats copy the Browser row's last choice; a reset counts as off.
+    function rememberBrowserChoice(operation) {
+      if (operation.id !== BROWSER_ROW && operation.id !== 'reset') return;
+      const on = operation.id === BROWSER_ROW && operation.enabled === true;
+      browserOnInNewChats = on;
+      Promise.resolve().then(() => deps.persistBrowserDefault?.(on))
+        .catch((error) => deps.onPersistError?.(error, 'browser_default', { isCurrent: false }));
+    }
+
+    // The backend seeds a chat when its record is created; until then the row and the first turn mirror that.
+    function unsavedChatSeed() {
+      if (!browserOnInNewChats) return {};
+      const id = getSessionId();
+      const session = id ? state.sessions?.find((item) => String(item?.id || '').trim() === id) : null;
+      return !id || session?.local_draft === true || session?.optimistic_local === true ? { [BROWSER_ROW]: true } : {};
+    }
+
     function enqueue(operation) {
       const target = context;
       const sessionId = getSessionId();
@@ -130,6 +152,7 @@
           await deps.persistSessionToolPreference?.(requested, sessionId);
           target.committed = requested;
           success = true;
+          rememberBrowserChoice(operation);
         } catch (error) {
           failure = error;
         }
@@ -162,13 +185,13 @@
       if (connection) return overrides[id] ?? true;
       // Legacy coverage: Files off also keeps Artifacts off unless the chat set Artifacts itself.
       if (id === 'artifacts' && !Object.hasOwn(overrides, id) && overrides.files === false) return false;
-      return overrides[id] ?? defaults.get(id) ?? true;
+      return overrides[id] ?? (id === BROWSER_ROW ? unsavedChatSeed()[id] : undefined) ?? defaults.get(id) ?? true;
     }
 
     // The send payload is this chat's stored overrides as they stand optimistically; the
     // resolver owns defaults and legacy coverage, and config gates own Settings-off tools.
     function getToggleStates() {
-      return { families: { ...context.overrides.tool_category_overrides },
+      return { families: { ...unsavedChatSeed(), ...context.overrides.tool_category_overrides },
         connections: { ...context.overrides.tool_connection_overrides } };
     }
 
@@ -191,6 +214,7 @@
         families: SURFACE_FAMILY_UI.filter((family) => family.section === id && families.has(family.id)).map((family) => ({
           ...describe(family.id, families.get(family.id), false, lockdown),
           label: familyLabel(family.id), description: familyDescription(family.id), icon: family.icon,
+          ...(DEFAULT_OFF_FAMILY_IDS.has(family.id) ? { defaultOff: true } : {}),
         })),
       })), connections: [...connections].map(([id, group]) => ({
         ...describe(id, group, true, lockdown), label: group.label, kind: group.kind,

@@ -133,7 +133,8 @@
       function resolveFile(rowEl) {
         const active = doc.activeElement;
         const anchor = rowEl || (active && pageEl.contains(active) ? active : null);
-        const working = pageEl.dataset.changesScope === 'working_tree';
+        // Working tree and Whole branch rows are both `wt:` rows; only This chat reads the ledger.
+        const working = pageEl.dataset.changesScope === 'working_tree' || pageEl.dataset.changesScope === 'branch';
         let fileEl = anchor ? anchor.closest(WORKING_TREE_FILE) : null;
         if (!fileEl && !rowEl && working) fileEl = pageEl.querySelector(WORKING_TREE_FILE);
         if (fileEl) return { source: 'working_tree', path: fileEl.getAttribute('data-diff-id').slice(3) };

@@ -4,8 +4,8 @@
 // openai-compatible endpoint right now. Both managers mint a per-launch api
 // key that must travel only to the endpoint that IS that server (same local
 // origin), and only that endpoint takes the server's alias as its model.
-// managed-sidecar-config.js is at its size ceiling, so the two-manager
-// resolution lives here.
+// The two-manager resolution lives here, apart from managed-sidecar-config.js,
+// so that file keeps one concern.
 
 const { sameLocalOrigin } = require('../local-origin');
 

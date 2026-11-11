@@ -187,10 +187,6 @@
   white-space: nowrap;
 }
 
-.session-row.sidebar-bulk-selecting .session-row__branch {
-  display: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .session-row__chevron,
   .session-row__chevron svg {

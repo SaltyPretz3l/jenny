@@ -141,6 +141,9 @@ test('a builtin image_generate result keeps its model image; other tools and fai
   assert.equal((await run('image_generate', { category: 'plugin' })).previewImage, undefined);
   assert.equal((await run('jenny_status')).previewImage, undefined);
   assert.equal((await run('preview_test', { input: { screenshot: true } })).previewImage, previewImage);
+  assert.equal((await run('browser', { input: { action: 'screenshot' } })).previewImage, previewImage);
+  assert.equal((await run('browser', { input: { action: 'read' } })).previewImage, undefined);
+  assert.equal((await run('browser', { input: { action: 'screenshot' }, isError: true })).previewImage, undefined);
 });
 
 test('producer start rechecks a policy that changes to deny during the handshake', async () => {

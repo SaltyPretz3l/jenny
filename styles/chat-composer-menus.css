@@ -155,3 +155,47 @@
   width: 320px;
   max-width: calc(100vw - 16px);
 }
+
+/* Full auto (row 111): Plan's chip recipe on the danger token. --text-danger is undefined in every palette, so the
+   rows colour their own labels. */
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-full_auto,
+.chat-pane[data-pane-id="1"] .composer-run-mode-slot .composer-run-mode-chip.composer-run-mode-full_auto {
+  color: var(--state-danger);
+  border-color: color-mix(in srgb, var(--state-danger) 56%, var(--widget-composer-rail-pill-border));
+  background: var(--widget-composer-mode-active-bg);
+}
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-full_auto:hover:not(.inv-chip--disabled),
+.chat-pane[data-pane-id="1"] .composer-run-mode-slot .composer-run-mode-chip.composer-run-mode-full_auto:hover:not(.inv-chip--disabled) {
+  color: var(--state-danger);
+  border-color: var(--state-danger);
+  background: color-mix(in srgb, var(--state-danger) 24%, var(--widget-composer-mode-active-bg));
+}
+.composer-run-mode-segment--full_auto.is-active {
+  color: var(--state-danger);
+}
+.inv-context-menu.composer-run-mode-menu .inv-context-menu-item--danger .inv-context-menu-text > span:first-child,
+.ide-confirm-answers .inv-context-menu-item--danger .inv-context-menu-text > span:first-child {
+  color: var(--state-danger);
+}
+.ide-confirm-list.ide-confirm-points {
+  max-height: none;
+  overflow: visible;
+  line-height: 1.5;
+}
+.ide-confirm-footnote {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+.ide-confirm-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-5);
+}
+.ide-confirm-answers .inv-context-menu-item {
+  width: 100%;
+}
+.ide-confirm-answers .inv-context-menu-item:focus {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}

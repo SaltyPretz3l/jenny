@@ -14,15 +14,13 @@ from pathlib import Path
 import pytest
 
 from sidecar.ai.config_models import ToolPolicySnapshot
+from sidecar.ai.tools.approval_presentation import approval_presentation_for_call
 from sidecar.ai.tools.assembly import (
     ToolAssemblyContext,
     assemble_tool_contract,
 )
 from sidecar.ai.tools.catalog import MANAGED_SIDECAR_SURFACE, build_tool_catalog
-from sidecar.ai.tools.policy import (
-    approval_presentation_for_call,
-    evaluate_tool_policy,
-)
+from sidecar.ai.tools.policy import evaluate_tool_policy
 from sidecar.ai.tools.tool_actions import (
     ToolActionSpec,
     has_any_non_side_effecting_action,

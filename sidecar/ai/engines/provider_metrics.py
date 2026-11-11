@@ -21,6 +21,9 @@ _TOKEN_LIMIT = 1_048_576
 _DURATION_LIMIT = 86_400_000
 _RATE_LIMIT = 10_000_000
 PROVIDER_KINDS = frozenset({"ninfer", "llama-server", "ollama", "other"})
+# Providers that stream cumulative per-token timings when asked (NInfer v0.9.1,
+# Jenny's own llama-server); Electron decides which request is live.
+LIVE_PROVIDER_KINDS = frozenset({"ninfer", "llama-server"})
 TERMINAL_PHASES = frozenset({"finished", "failed", "cancelled"})
 _NONSTREAM_METRICS: ContextVar[Any] = ContextVar("sidecar_nonstream_metrics", default=None)
 
@@ -61,7 +64,7 @@ def _rate(tokens: Any, elapsed: Any) -> float | None:
 
 
 def configure_metrics_request(engine: Any, payload: dict[str, Any]) -> None:
-    """Only the frozen per-request NInfer opt-in adds provider options."""
+    """Only the frozen per-request live opt-in (NInfer, managed llama-server) adds options."""
     try:
         context = engine._current_request_context() or {}
         options = context.get("inference_performance")
@@ -69,7 +72,9 @@ def configure_metrics_request(engine: Any, payload: dict[str, Any]) -> None:
             context.get("inference_performance_enabled", True) is not False
             and isinstance(options, dict)
             and options.get("live") is True
-            and options == {"live": True, "provider_kind": "ninfer"}
+            and set(options) == {"live", "provider_kind"}
+            and options["live"] is True
+            and options["provider_kind"] in LIVE_PROVIDER_KINDS
         ):
             payload.update(timings_per_token=True, return_progress=True)
     except Exception:  # noqa: BLE001 - optional telemetry must not break generation.
@@ -89,7 +94,7 @@ class ProviderMetrics:
         epoch: Callable[[], float] = time.time,
     ) -> None:
         self.provider_kind = provider_kind if provider_kind in PROVIDER_KINDS else "other"
-        self.live = live is True and self.provider_kind == "ninfer"
+        self.live = live is True and self.provider_kind in LIVE_PROVIDER_KINDS
         self.enabled = enabled
         self.clock, self.epoch = clock, epoch
         self.dispatched_at = clock()

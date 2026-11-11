@@ -15,7 +15,7 @@ const manifest = require('../services/tools/tool-manifest.json');
 
 const BUILTIN = path.join(__dirname, '..', 'services', 'tools', 'builtin');
 const MODULES = [
-  'ask-user-tool', 'automation-list-tool', 'automation-read-tool', 'complete-session-handoff-tool',
+  'ask-user-tool', 'automation-list-tool', 'complete-session-handoff-tool',
   'home-tool', 'image-generate-tool', 'jenny-status-tool', 'project-notes-tool',
   'propose-command-tool', 'propose-git-action-tool', 'propose-session-tool', 'session-message-tool',
   'task-board-tool', 'verify-tool', 'workspace-present-tool', 'worktree-create-tool',
@@ -44,7 +44,7 @@ test('fenced builtin modules serve the manifest description and schema', () => {
       checked += 1;
     }
   }
-  assert.equal(checked, 25);
+  assert.equal(checked, 24);
 });
 
 test('fenced builtin modules carry no description or parameters literal', () => {

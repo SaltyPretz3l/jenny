@@ -312,9 +312,9 @@ async function drawerSubtitle(diagnosticsSnapshot) {
 }
 
 test('the tune drawer labels the openai-compatible engine NInfer only when NInfer is the managed server', async () => {
-  assert.match(await drawerSubtitle({ runtime: { managed_server: { kind: 'ninfer', state: 'ready', alias: ALIAS } } }), / · NInfer · applies/);
+  assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'ninfer', state: 'ready', alias: ALIAS } } }), 'Runs on NInfer.');
   // NInfer serving another model does not relabel this llama-server row (Astra b2b F6).
-  assert.match(await drawerSubtitle({ runtime: { managed_server: { kind: 'ninfer', state: 'ready', alias: 'other-model' } } }), / · llama-server · applies/);
-  assert.match(await drawerSubtitle({ runtime: { managed_server: { kind: 'llama-server', state: 'ready' } } }), / · llama-server · applies/);
-  assert.match(await drawerSubtitle(undefined), / · llama-server · applies/);
+  assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'ninfer', state: 'ready', alias: 'other-model' } } }), 'Runs on llama-server.');
+  assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'llama-server', state: 'ready' } } }), 'Runs on llama-server.');
+  assert.equal(await drawerSubtitle(undefined), 'Runs on llama-server.');
 });

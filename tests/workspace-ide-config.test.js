@@ -205,6 +205,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
       'source-control': 'secondary',
     },
     showGenerated: false,
+    followJenny: true,
     explorerSortMode: 'name',
     wordWrap: 'off',
     fontSize: 0,
@@ -284,6 +285,9 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   assert.equal(normalizeWorkspaceIde({ scrollBeyondLastLine: true }).scrollBeyondLastLine, true);
   assert.equal(normalizeWorkspaceIde({ showGenerated: true }).showGenerated, true);
   assert.equal(normalizeWorkspaceIde({ showGenerated: 'yes' }).showGenerated, false);
+  // Follow Jenny is on unless it was switched off: only a literal false turns it off.
+  assert.equal(normalizeWorkspaceIde({ followJenny: false }).followJenny, false);
+  assert.equal(normalizeWorkspaceIde({ followJenny: 'no' }).followJenny, true);
   assert.equal(normalizeWorkspaceIde({ explorerSortMode: 'type' }).explorerSortMode, 'type');
   assert.equal(normalizeWorkspaceIde({ explorerSortMode: 'garbage' }).explorerSortMode, 'name');
   // column rulers: dedupe + sort + drop out-of-range; garbage -> []; bounded count.

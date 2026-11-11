@@ -3,11 +3,12 @@
 // Cross-language contract: every top-level key Electron's managed config
 // emits (buildManagedSidecarConfig) must be consumed by the sidecar's config
 // parser. There is no shared schema between the two runtimes, so this test
-// reads sidecar/ai/config.py as TEXT and collects the names it reads through
-// raw_config.get("...") / raw_config["..."]. Scanning production source is the
-// deliberate exception here: it is the only way to check a Python reader from
-// the Node lane. Keys consumed outside config.py are allowlisted below with
-// the file that reads them, and each allowlist entry is itself verified.
+// reads sidecar/ai/config.py and its section modules as TEXT and collects the
+// names they read through raw_config.get("...") / raw_config["..."]. Scanning
+// production source is the deliberate exception here: it is the only way to
+// check a Python reader from the Node lane. Keys consumed outside the parser
+// are allowlisted below with the file that reads them, and each allowlist
+// entry is itself verified.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -22,9 +23,14 @@ const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
 const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const CONFIG_PARSER = 'sidecar/ai/config.py';
+// parse_runtime_config (config.py) merges the engine and tool sections.
+const CONFIG_PARSER_FILES = Object.freeze([
+  'sidecar/ai/config.py',
+  'sidecar/ai/config_sections.py',
+]);
+const CONFIG_PARSER = CONFIG_PARSER_FILES.join(' + ');
 
-// Emitted keys read by a sidecar module other than config.py's raw_config reads.
+// Emitted keys read by a sidecar module other than the parser's raw_config reads.
 const CONSUMED_ELSEWHERE = Object.freeze({
   // parse_runtime_config calls desktop_policy_from_config(raw_config), which
   // reads DESKTOP_EXECUTION_POLICY_KEY = "desktop_execution_policy_version".
@@ -55,7 +61,7 @@ function emittedManagedConfigKeys() {
 }
 
 function configParserReadKeys() {
-  const source = readRepoFile(CONFIG_PARSER);
+  const source = CONFIG_PARSER_FILES.map(readRepoFile).join('\n');
   return new Set([...source.matchAll(/raw_config(?:\.get\(|\[)\s*"([^"]+)"/g)].map((match) => match[1]));
 }
 

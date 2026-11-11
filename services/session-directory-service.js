@@ -24,6 +24,7 @@ const D = require('./session-directory-digest');
 
 const RECENT_ROWS = 20;
 const MAX_LIST_ROWS = 50;
+const MAX_QUERY_CHARS = 200;
 const MAX_CHILDREN = 32;
 const STOPPABLE_WORK = new Set(['pending', 'paused']); // plus running work with no live stream (a resumed run)
 // A stream abort is a request: the sidecar drains the turn afterwards. `stop` confirms the stream only once
@@ -256,23 +257,32 @@ function createSessionDirectoryService({
     };
   }
 
+  // Title search and paging run on the sorted summaries after the scope rule and before any row is built;
+  // only the requested page (or, for `active`, every match, since status needs a row) costs a runtime fact.
   function list({ callerSessionId, scope: view = 'recent', project_id: projectId = null,
-    include_archived: includeArchived = false, limit = RECENT_ROWS } = {}) {
+    include_archived: includeArchived = false, limit = RECENT_ROWS, query = '', offset = 0 } = {}) {
     const scope = scopeFor(callerSessionId);
     if (!scope.ok) return { ok: false, reason: scope.reason };
     const fact = facts(scope);
     const bound = Number.isSafeInteger(limit) ? Math.max(1, Math.min(MAX_LIST_ROWS, limit)) : RECENT_ROWS;
-    let candidates = [...scope.byId.values()].filter((summary) => summary.id !== scope.caller.id
+    const start = Number.isSafeInteger(offset) && offset > 0 ? offset : 0;
+    const needle = typeof query === 'string' ? D.clip(query.trim(), MAX_QUERY_CHARS).toLowerCase() : '';
+    const candidates = [...scope.byId.values()].filter((summary) => summary.id !== scope.caller.id
       && scope.session_ids.has(summary.id) && (includeArchived === true || !summary.archived_at)
-      && (projectId === null || scopeRules.projectOf(summary) === projectId))
+      && (projectId === null || scopeRules.projectOf(summary) === projectId)
+      && (!needle || D.clip(summary.title, D.TITLE_CHARS).toLowerCase().includes(needle)))
       .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')));
     // `recent` is at most the 20 most recently active chats, whatever the limit.
     const cap = view === 'recent' ? Math.min(bound, RECENT_ROWS) : bound;
-    // Rows cost a runtime snapshot each: build the page plus one (for `truncated`), not every chat.
-    if (view !== 'active') candidates = candidates.slice(0, cap + 1);
-    let rows = candidates.map((summary) => row(scope, fact, summary));
-    if (view === 'active') rows = rows.filter((entry) => entry.status !== 'idle');
-    return { ok: true, scope_kind: scope.kind, rows: rows.slice(0, cap), truncated: rows.length > cap };
+    if (view === 'active') {
+      const live = candidates.map((summary) => row(scope, fact, summary)).filter((entry) => entry.status !== 'idle');
+      const rows = live.slice(start, start + cap);
+      return { ok: true, scope_kind: scope.kind, rows, total: live.length, truncated: start + rows.length < live.length };
+    }
+    const window = view === 'recent' ? candidates.slice(0, RECENT_ROWS) : candidates;
+    const rows = window.slice(start, start + cap).map((summary) => row(scope, fact, summary));
+    return { ok: true, scope_kind: scope.kind, rows, total: window.length,
+      ...(window.length < candidates.length ? { total_at_least: true } : {}), truncated: start + rows.length < candidates.length };
   }
 
   // Open tasks and the note only for a project the caller may see (its own, or every one for the primary).

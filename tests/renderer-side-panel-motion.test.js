@@ -102,6 +102,27 @@ describe('open', () => {
     assert.equal(f.motion.state(), 'idle');
   });
 
+  test('announces side-panel-measuring once on the host: end state applied, nothing measured or locked yet; a close or an instant open does not', (t) => {
+    const f = makeFixture(t);
+    f.chatView.addEventListener('side-panel-measuring', () => {
+      f.log.push(`measuring phase=${f.chatView.dataset.panelMotion} open=${f.chatView.classList.contains('open')} lock=${f.lockOf(f.paneEls[0]) || 'none'}`);
+    });
+    assert.equal(f.motion.open({ panel: f.panel, applyEnd: f.applyOpen }), true);
+    assert.deepEqual(f.log, [
+      'capture lock=none phase=none',
+      'apply open',
+      'measuring phase=measuring open=true lock=none',
+      'restore lock=700px phase=opening',
+    ], 'the same steps as without a listener, with one event between applying the end state and measuring it');
+    f.log.length = 0;
+    f.fireTimer();
+    f.motion.close({ panel: f.panel, applyEnd: f.applyClosed });
+    f.fireTimer();
+    f.options.reduced = true;
+    f.motion.open({ panel: f.panel, applyEnd: f.applyOpen });
+    assert.ok(f.log.every((line) => !line.startsWith('measuring')), 'only a gliding open announces');
+  });
+
   test('the panel\'s own animationend settles it; a child\'s does not, and the timer is cleared', (t) => {
     const f = makeFixture(t);
     f.motion.open({ panel: f.panel, applyEnd: f.applyOpen });
@@ -263,93 +284,6 @@ describe('no motion', () => {
     let applied = 0;
     motion.open({ panel: dom.window.document.body, applyEnd: () => { applied += 1; } });
     assert.equal(applied, 1);
-  });
-});
-
-// The chat context panel gets the same lock / anchor behaviour; its column is
-// driven by a CSS width transition, so the start state is restored after the
-// end state has been measured.
-describe('context panel column motion', () => {
-  const { createContextPanelController } = require('../renderer/features/renderer-context-panel-utils');
-
-  function makeContextFixture(t, duration = '220ms') {
-    const dom = new JSDOM('<!doctype html><div id="chatView" class="chat-view"><div class="chat-pane"><div data-chat-node="chatTimeline"></div><div class="composer"></div></div>'
-      + '<button id="toggle"></button><aside id="panel"></aside></div>');
-    t.after(() => dom.window.close());
-    const doc = dom.window.document;
-    const chatView = doc.getElementById('chatView');
-    const panel = doc.getElementById('panel');
-    chatView.style.setProperty('--motion-duration-regular', duration);
-    Object.defineProperty(panel, 'clientWidth', { value: 319, configurable: true });
-    const pane = doc.querySelector('.chat-pane');
-    doc.querySelector('[data-chat-node="chatTimeline"]').getBoundingClientRect = () => ({ width: panel.classList.contains('collapsed') ? 900 : 700 });
-    const calls = [];
-    const lock = () => pane.style.getPropertyValue('--chat-measure-lock');
-    const controller = createContextPanelController({
-      state: { ui: { activeView: 'chat' } },
-      dom: { chatContextPanel: panel, contextPanelToggle: doc.getElementById('toggle') },
-      callbacks: {
-        updateComposerSafeOffset() {}, escapeHtml: String,
-        getScrollCoordinators: () => [{
-          captureReaderAnchor: () => calls.push(`capture:${lock() || '-'}`),
-          restoreReaderAnchor: () => calls.push(`restore:${lock() || '-'}`),
-        }],
-      },
-      constants: {},
-    });
-    controller.bind();
-    t.after(() => controller.dispose());
-    const settle = () => panel.dispatchEvent(new dom.window.Event('transitionend'));
-    return { dom, chatView, panel, doc, calls, lock, settle, toggle: () => doc.getElementById('toggle').click(), phase: () => chatView.dataset.panelMotion };
-  }
-
-  test('expanding locks the open measure, starts from the collapsed state and releases when settled', (t) => {
-    const f = makeContextFixture(t);
-    assert.equal(f.panel.classList.contains('collapsed'), true, 'collapsed unless the user expanded it');
-    f.toggle();
-    assert.equal(f.panel.classList.contains('collapsed'), false);
-    assert.equal(f.phase(), 'opening');
-    assert.equal(f.lock(), '700px');
-    assert.deepEqual(f.calls, ['capture:-', 'restore:700px']);
-    f.calls.length = 0;
-    f.settle();
-    assert.equal(f.phase(), undefined);
-    assert.equal(f.lock(), '');
-    assert.deepEqual(f.calls, ['capture:700px', 'restore:-']);
-  });
-
-  test('collapsing locks the current measure and reflows once, when the column has collapsed', (t) => {
-    const f = makeContextFixture(t);
-    f.toggle();
-    f.settle();
-    f.calls.length = 0;
-    f.toggle();
-    assert.equal(f.panel.classList.contains('collapsed'), true, 'the transition runs from the collapsed class');
-    assert.equal(f.phase(), 'closing');
-    assert.equal(f.lock(), '700px');
-    assert.deepEqual(f.calls, []);
-    f.settle();
-    assert.equal(f.lock(), '');
-    assert.deepEqual(f.calls, ['capture:700px', 'restore:-']);
-  });
-
-  test('a re-toggle mid-motion releases the lock, and dispose leaves nothing behind', (t) => {
-    const f = makeContextFixture(t);
-    f.toggle();
-    f.toggle();
-    assert.equal(f.phase(), 'closing', 'the second toggle cancels the open and starts the close');
-    assert.equal(f.lock(), '700px');
-    f.toggle();
-    assert.equal(f.phase(), 'opening');
-  });
-
-  test('a zero-duration token applies the class at once with one anchored reflow', (t) => {
-    const f = makeContextFixture(t, '0ms');
-    f.toggle();
-    assert.equal(f.panel.classList.contains('collapsed'), false);
-    assert.equal(f.phase(), undefined);
-    assert.equal(f.lock(), '');
-    assert.deepEqual(f.calls, ['capture:-', 'restore:-']);
   });
 });
 

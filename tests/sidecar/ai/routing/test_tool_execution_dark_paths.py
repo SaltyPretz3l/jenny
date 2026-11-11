@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import sidecar.ai.routing.tool_execution as _te_mod
+import sidecar.ai.routing.tool_execution_admission as _te_admission
 from sidecar.ai.error_codes import (
     CMP_LOOP_INVALID_TOOL_CALL,
     CMP_MODE_TOOL_BLOCKED,
@@ -982,13 +983,14 @@ def test_descriptor_validation_outcome_returns_failure_for_invalid_args() -> Non
 
     kernel = SimpleNamespace(_route_counters={})
 
-    # Patch increment_counter_for_kernel so we can verify it was called
-    original = _te_mod.increment_counter_for_kernel
+    # Patch increment_counter_for_kernel so we can verify it was called; the
+    # validation outcome lives in (and reads the counter from) the admission module.
+    original = _te_admission.increment_counter_for_kernel
 
     def _fake_increment(k: Any, kind: str) -> None:
         counter_calls.append(kind)
 
-    _te_mod.increment_counter_for_kernel = _fake_increment
+    _te_admission.increment_counter_for_kernel = _fake_increment
     try:
         outcome = _descriptor_validation_outcome(
             kernel=kernel,
@@ -999,7 +1001,7 @@ def test_descriptor_validation_outcome_returns_failure_for_invalid_args() -> Non
             outcome_type=ToolExecutionOutcome,
         )
     finally:
-        _te_mod.increment_counter_for_kernel = original
+        _te_admission.increment_counter_for_kernel = original
 
     assert outcome is not None
     assert outcome.success is False

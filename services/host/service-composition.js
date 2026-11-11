@@ -1,5 +1,7 @@
 'use strict';
 
+const { EventEmitter } = require('node:events');
+
 const { HOST_ERROR_CODES } = require('../backend/error-codes');
 
 const { resolveExistingRealPath, assertWorkspaceSafe } = require('../../server/config');
@@ -73,6 +75,48 @@ function normalizeModelEndpoint(value) {
   };
 }
 
+// The sidecar manager of a host with no model (owner decision E19: a team host has none until
+// Phase 4). It never spawns: every start rejects, so a chat's preflight reconnect answers the
+// existing "unavailable after reconnect" failure at once, and a stop confirms an exit that
+// never had a process.
+class NoModelSidecarManager extends EventEmitter {
+  constructor() {
+    super();
+    this.process = null;
+    this.isStopping = false;
+    this.mode = 'server';
+    this.ownedProcessHandoff = null;
+  }
+
+  getStatus() {
+    return { phase: 'stopped', detail: '' };
+  }
+
+  start() {
+    return Promise.reject(new Error('This host has no model endpoint.'));
+  }
+
+  retryStart() {
+    return this.start();
+  }
+
+  async stop() {
+    this.isStopping = true;
+    return { exitConfirmed: true, forced: false };
+  }
+}
+
+const PACKAGED_LAUNCH_OPTIONS = Object.freeze(['resolvePackagedLaunch', 'pythonRuntimeBundleRoot', 'launchCommand', 'launchArgs']);
+
+// Only the options that were given, so a host without them composes exactly as before.
+function pickPackagedLaunch(options) {
+  const picked = {};
+  for (const name of PACKAGED_LAUNCH_OPTIONS) {
+    if (options[name] !== undefined && options[name] !== null) picked[name] = options[name];
+  }
+  return picked;
+}
+
 function normalizeWorkspaceRoot(value, options) {
   if (value === null) return null;
   if (typeof value !== 'string') {
@@ -110,7 +154,9 @@ function configureWorkspaceRoot(configService, options) {
  * credential port, and externally owned model endpoint.
  *
  * `modelEndpoint` is transient runtime input. It selects the sidecar engine
- * for this backend instance and is never written into shell config.
+ * for this backend instance and is never written into shell config. It may be
+ * null only with `modelOptional: true` (a team host, E19); that backend gets a
+ * sidecar manager that can never spawn, whatever manager was passed in.
  */
 function createHostedBackend(options = {}) {
   if (!isRecord(options)) {
@@ -133,7 +179,8 @@ function createHostedBackend(options = {}) {
     hostMode: options.hostMode,
     credentialService: options.credentialService,
   });
-  const modelEndpoint = normalizeModelEndpoint(options.modelEndpoint);
+  const noModel = options.modelOptional === true && options.modelEndpoint === null;
+  const modelEndpoint = noModel ? null : normalizeModelEndpoint(options.modelEndpoint);
   const configService = new ShellConfigService({
     userDataPath,
     // A hosted profile receives its root explicitly. Do not let an ambient
@@ -184,6 +231,9 @@ function createHostedBackend(options = {}) {
     repoRoot: options.repoRoot,
     runtimeHome: options.runtimeHome,
     pythonExecutable: options.pythonExecutable,
+    // The packaged one-file sidecar of a host started from the desktop app (slice 1f-2),
+    // the same option names the CLI host passes; absent for the Docker image.
+    ...pickPackagedLaunch(options),
     defaultModel: modelEndpoint?.model || options.defaultModel || '',
     preferredEngineType: modelEndpoint?.engine || options.preferredEngineType || '',
     modelEndpoint,
@@ -203,7 +253,8 @@ function createHostedBackend(options = {}) {
     featureFlags: { ...options.featureFlags,
       session_runtime: buildFeatureFlags(process.env, options.featureFlags).session_runtime,
       multiplexer: true, chat_cancel: true },
-    ...(options.sidecarManager ? { sidecarManager: options.sidecarManager } : {}),
+    ...(noModel ? { sidecarManager: new NoModelSidecarManager() }
+      : options.sidecarManager ? { sidecarManager: options.sidecarManager } : {}),
     ...(options.ollamaManager ? { ollamaManager: options.ollamaManager } : {}),
     ...(options.vllmManager ? { vllmManager: options.vllmManager } : {}),
   });

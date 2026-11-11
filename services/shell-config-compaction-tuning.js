@@ -12,9 +12,14 @@ const RATIO_MAX = 0.99;
 const CUSTOM_PROMPT_MAX_CHARS = 20_000;
 const MAX_MODEL_TUNING_ENTRIES = 128;
 const MAX_MODEL_ID_CHARS = 240;
+// The drawer's presets; any whole number in [MIN, MAX] is accepted too (a
+// custom window). MAX is the sidecar's context_length_override ceiling
+// (sidecar/ai/config_sections.py); MIN stays clear of llama-server's 1024 floor.
 const CONTEXT_LENGTH_STEPS = Object.freeze([
   4096, 8192, 16_384, 32_768, 65_536, 131_072, 262_144,
 ]);
+const CONTEXT_LENGTH_MIN = 2048;
+const CONTEXT_LENGTH_MAX = 262_144;
 
 function normalizeRatio(value) {
   const parsed = Number(value);
@@ -50,7 +55,7 @@ function normalizeRatioByModel(value = {}) {
 
 function normalizeContextLength(value) {
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || !CONTEXT_LENGTH_STEPS.includes(parsed)) return null;
+  if (!Number.isSafeInteger(parsed) || parsed < CONTEXT_LENGTH_MIN || parsed > CONTEXT_LENGTH_MAX) return null;
   return parsed;
 }
 
@@ -96,11 +101,62 @@ function normalizeCompactionTuning(value = {}, legacyState = {}) {
   };
 }
 
+// ShellConfigService methods, installed on its prototype (shell-config-service.js).
+const compactionTuningMethods = {
+  // Per-model Ollama context window and auto-compact ratio, plus the custom
+  // summarization prompt. Applies on the next sidecar (re)initialize.
+  getCompactionTuning() {
+    return normalizeCompactionTuning(this.state.compactionTuning);
+  },
+
+  setCompactionTuning(patch = {}) {
+    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const { modelId, ratio, contextLength, customPrompt } = source;
+    const current = this.getCompactionTuning();
+    const nextRatioByModel = { ...current.ratioByModel };
+    const nextContextLengthByModel = { ...current.contextLengthByModel };
+    const normalizedModelId = String(modelId || '').trim();
+    const hasRatio = Object.prototype.hasOwnProperty.call(source, 'ratio');
+    const hasContextLength = Object.prototype.hasOwnProperty.call(source, 'contextLength');
+    const normalizedRatio = ratio == null ? null : normalizeRatio(ratio);
+    if (normalizedModelId && hasRatio) {
+      if (normalizedRatio == null) delete nextRatioByModel[normalizedModelId];
+      else nextRatioByModel[normalizedModelId] = normalizedRatio;
+    }
+    if (normalizedModelId && hasContextLength) {
+      if (contextLength == null) delete nextContextLengthByModel[normalizedModelId];
+      else {
+        const normalizedContextLength = normalizeContextLength(contextLength);
+        if (normalizedContextLength != null) {
+          nextContextLengthByModel[normalizedModelId] = normalizedContextLength;
+        }
+      }
+    }
+    const nextTuning = normalizeCompactionTuning({
+      ratioByModel: nextRatioByModel,
+      contextLengthByModel: nextContextLengthByModel,
+      customPrompt: customPrompt === undefined ? current.customPrompt : customPrompt,
+    });
+    if (JSON.stringify(nextTuning) === JSON.stringify(current)) {
+      return current;
+    }
+    const contextLengthChanged = JSON.stringify(nextTuning.contextLengthByModel)
+      !== JSON.stringify(current.contextLengthByModel);
+    return this._writeState(
+      { ...this.state, compactionTuning: nextTuning },
+      contextLengthChanged ? 'context_length_tuning_updated' : 'compaction_tuning_updated'
+    ).compactionTuning;
+  },
+};
+
 module.exports = {
+  compactionTuningMethods,
   RATIO_MIN,
   RATIO_MAX,
   CUSTOM_PROMPT_MAX_CHARS,
   CONTEXT_LENGTH_STEPS,
+  CONTEXT_LENGTH_MIN,
+  CONTEXT_LENGTH_MAX,
   normalizeRatio,
   normalizeRatioByModel,
   normalizeContextLength,

@@ -76,7 +76,8 @@ test('two bare New chat clicks create one chat: the second reuses the untouched 
   assert.equal(second, first);
   assert.equal(state.sessions.length, 1);
   assert.equal(activations.at(-1).id, first);
-  assert.equal(activations.at(-1).options.mode, 'new-tab');
+  // New chat follows the open-in-new-tab preference, so it pins no mode.
+  assert.deepEqual(activations.map((entry) => entry.options.mode), [undefined, undefined]);
 });
 
 test('reuse activates the existing empty chat, focuses the composer and returns its id', async () => {

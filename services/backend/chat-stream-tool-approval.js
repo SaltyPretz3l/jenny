@@ -9,6 +9,7 @@ const {
   makeNoteTurnEvent, buildToolCallPayload, buildApprovalCanonicalEvent, approvalStateFromAbortSignal,
   approvalTerminalOutput,
   sessionMessageApprovalFields,
+  browserApprovalFields,
   findToolMessageId,
   peekToolLookupMessages,
 } = require('./chat-stream-tool-payload-utils');
@@ -20,18 +21,20 @@ const { TOOL_NAME: PROJECT_CREATE_TOOL, projectCreateRefusal } = require('./proj
 const { appControlCardStep, hasCardStep } = require('./app-control-card-refusals');
 const { deriveCommandScope } = require('../tools/command-prefix');
 const { actionRuleDenial } = require('./action-rule-gate');
+const { FULL_AUTO_SCOPE, fullAutoApproves } = require('./full-auto-gate');
 const { RULE_DENIED_MESSAGE } = require('../primary-action-rules');
+const { MID_TOOL_CONSENT_TOOLS } = require('../tools/mid-tool-consent');
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const UNATTENDED_PAUSE_APPROVAL_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const _setTimeout = setTimeout;
 const _clearTimeout = clearTimeout;
 // Only a tool's own consent executes it. A plan decision token (`accepted`,
 // `rejected`) consents to a plan, never to another tool; a message send is
-// consented only by an explicit `approved`; `exit_plan_mode` takes any plan
+// consented only by an explicit `approved` (so is a browser step); `exit_plan_mode` takes any plan
 // decision (resolvePlanApprovalState already fails unknown tokens closed).
 const EXECUTING_APPROVAL_STATES = new Set(['approved', 'approved_auto']);
 function approvalExecutes(toolName, state) {
-  if (toolName === 'session_message') return state === 'approved';
+  if (toolName === 'session_message' || toolName === 'browser') return state === 'approved';
   if (toolName === 'exit_plan_mode') return state !== 'denied';
   return EXECUTING_APPROVAL_STATES.has(state);
 }
@@ -125,6 +128,10 @@ function exactInputStillShown(toolName, params, displayedSha256) {
   }
 }
 
+// Nobody was asked, so this is not the user's Deny: the sidecar gives `feedback` to the model as the
+// call's result and the turn goes on. The row is already written; the call never runs.
+const appRefused = (feedback) => ({ approved: false, decision: 'app_refused', feedback });
+
 async function waitForApproval(service, streamId, sessionId, requestId, params, controller,
   turnEventCollector, executionAuthority, persistTerminalApprovalResult) {
   const toolName = String(params.tool_name || '').trim();
@@ -160,14 +167,26 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   const toolUseMessageId = buildToolUseMessageId(streamId, callId);
   const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
   const planApproval = planDocuments.preparePlanApproval({ toolName, service, sessionId, streamId, callId, input, approvalId, turnEventCollector });
+  // The sidecar's `tool_call_requested` may already have written this call's
+  // tool_use row; the pending state updates that row instead of appending a twin.
+  const existingToolUseId = findToolMessageId(peekToolLookupMessages(service, sessionId), {
+    kind: 'tool_use', callId, streamId, fallbackId: toolUseMessageId,
+  });
+  const rowMessageId = existingToolUseId || toolUseMessageId;
+  // A refusal before any card still names its call, or the sidecar's approval events project as orphans.
+  const noteRefusedToolUse = () => noteTurnEvent('tool_use', () => ({
+    primary_message_id: rowMessageId, source_message_ids: [rowMessageId], tool_call_id: callId, status: 'denied',
+    payload: { tool_name: toolName, input: persistedInputSnapshot.input, summary, parent_stream_id: streamId },
+  }));
   // Row 87: a user's deny rule refuses a Jenny-chat stop, settings change or scheduled-check change before any card.
   if (actionRuleDenial(service, { toolName, sessionId, turnId: turnEventCollector?.turnId || streamId, input })) {
+    noteRefusedToolUse();
     persistTerminalApprovalResult({
       service, sessionId, streamId, callId, toolName, summary, model: service.currentModel, approvalState: 'denied',
       inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: RULE_DENIED_MESSAGE,
       metadata: { rule_denied: true },
     });
-    return false;
+    return appRefused(RULE_DENIED_MESSAGE);
   }
   // Row 94 P2 / P4: a project, export or terminal command its port refuses ends here with its reason, before any card.
   const cardStep = hasCardStep(toolName) ? await appControlCardStep(service, toolName, sessionId, callId, input) : null;
@@ -175,14 +194,15 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   // The export's file name or the terminal's folder joins the reason, so the card names where the result lands.
   const reason = cardStep?.cardNote ? `${askedReason} ${sanitizeApprovalReason(cardStep.cardNote)}`.trim() : askedReason;
   if (projectRefusal) {
+    noteRefusedToolUse();
     persistTerminalApprovalResult({
       service, sessionId, streamId, callId, toolName, summary, model: service.currentModel, approvalState: 'denied',
       inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: projectRefusal,
       metadata: { app_refused: true },
     });
-    return false;
+    return appRefused(projectRefusal);
   }
-  const messageFields = sessionMessageApprovalFields(params);
+  const messageFields = { ...sessionMessageApprovalFields(params), ...browserApprovalFields(params) };
   // Only a stop, a settings change and a scheduled-check change await here (every other approval registers synchronously); read
   // before the duplicate check below, which stays synchronous with the waiter's registration. The
   // settings card's rows are the app's own reading (row 88 D3), remembered by the port under this call.
@@ -191,6 +211,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       : toolName === SCHEDULE_CHANGE_TOOL ? await scheduleChangeApprovalFields(service, sessionId, input) : {};
   // Missing exact-content presentation must fail closed; never ask over a clipped preview.
   if (toolName === 'session_message' && !messageFields.session_message_approval) return false;
+  if (toolName === 'browser' && !messageFields.browser_approval) return false;
   const rememberOffer = toolName === 'session_message' ? linkedChildrenOffer(service, sessionId, turnEventCollector?.turnId || streamId, messageFields) : '';
 
   if (planDocuments.denyUnrenderablePlan(planApproval, persistTerminalApprovalResult, {
@@ -205,13 +226,9 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     });
     return false;
   }
+  // Row 111: nobody is shown a card, and the same settlement as a person's Allow once runs below.
+  const answeredByFullAuto = fullAutoApproves(service, { toolName, sessionId, executionAuthority });
 
-  // The sidecar's `tool_call_requested` may already have written this call's
-  // tool_use row; the pending state updates that row instead of appending a twin.
-  const existingToolUseId = findToolMessageId(peekToolLookupMessages(service, sessionId), {
-    kind: 'tool_use', callId, streamId, fallbackId: toolUseMessageId,
-  });
-  const rowMessageId = existingToolUseId || toolUseMessageId;
   const pendingToolCall = buildToolCallPayload({
     callId,
     approvalId, policyDecisionId, reason, oneOffOnly,
@@ -239,7 +256,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     }, { updatePreview: false });
   }
 
-  service.emit('chat-stream', {
+  if (!answeredByFullAuto) service.emit('chat-stream', {
     type: 'tool_use',
     streamId,
     turnId: turnEventCollector?.turnId || streamId,
@@ -303,7 +320,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       ...stopFields,
     },
   }));
-  service.emit('chat-stream', {
+  if (!answeredByFullAuto) service.emit('chat-stream', {
     type: 'tool_approval_needed',
     streamId,
     turnId: turnEventCollector?.turnId || streamId,
@@ -360,7 +377,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
         && !exactInputStillShown(toolName, params, exactApprovalSha256);
       if (exactInputDenied) resolvedState = 'denied';
       let normalizedApproved = Boolean(approved) && resolvedState !== 'denied';
-      const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once') ? scope : '';
+      const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once' || scope === FULL_AUTO_SCOPE) ? scope : '';
       // The receipt names the saved command prefix (row 103); an exact grant quotes the command.
       const alwaysAllowPrefix = approvalScope === 'always' && alwaysAllowScope?.kind === 'prefix' ? alwaysAllowScope.prefix : '';
       let consentEventId = '';
@@ -400,7 +417,9 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
         });
         noteTurnEvent(null, () => resolutionEvent);
         consentEventId = resolutionEvent.event_id;
-        if (!normalizedApproved && toolName !== 'session_message') {
+        // Hosted commands keep their explicit one-off approval, so a wait there asks again.
+        if (normalizedApproved && service.hostMode !== 'server') service.approvedCallGrants?.noteApproved({ streamId, callId, toolName, input });
+        if (!normalizedApproved && !MID_TOOL_CONSENT_TOOLS.has(toolName)) {
           planDocuments.abandonPlanApproval({ toolName, service, sessionId, streamId, callId, turnEventCollector });
           persistTerminalApprovalResult({
             service, sessionId, streamId, callId, toolName, summary,
@@ -419,7 +438,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
           }
         }
       } catch (settlementError) {
-        if (toolName === 'session_message') normalizedApproved = false;
+        if (MID_TOOL_CONSENT_TOOLS.has(toolName)) normalizedApproved = false;
         service?._emitServiceLog?.('ERROR', 'chat.tool_approval_settlement_failed', {
           approvalId, sessionId, streamId, callId, toolName,
           approved: normalizedApproved, approvalState: resolvedState,
@@ -459,6 +478,10 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     });
     if (controller.signal.aborted) {
       finish(false, 'cancelled');
+      return;
+    }
+    if (answeredByFullAuto) {
+      finish(true, 'approved', '', null, FULL_AUTO_SCOPE);
       return;
     }
     controller.signal.addEventListener('abort', handleAbort, { once: true });

@@ -21,7 +21,9 @@ function readReceipt(filePath) {
 // Hosted compatibility adapter; all admission and settlement stays shared.
 class ExecutionBroker extends SharedBroker {
   constructor(options) {
-    super({ request: requestWorker, readReceiptImpl: readReceipt, writeReceiptImpl: writeJson, ...options });
+    // Row 106: the hosted bridge never syncs back; synced workspaces are desktop-only.
+    super({ request: requestWorker, readReceiptImpl: readReceipt, writeReceiptImpl: writeJson, ...options,
+      workspace: 'disposable_copy' });
   }
 }
 module.exports = { ExecutionBroker, validateCommand, readReceipt };

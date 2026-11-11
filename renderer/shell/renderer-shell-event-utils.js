@@ -149,9 +149,9 @@
       return element.ownerDocument?.documentElement?.dir === 'rtl';
     }
 
-    // Tree-style horizontal keys apply only to an unmodified key outside bulk-select mode.
+    // Tree-style horizontal keys apply only to an unmodified key.
     function isPlainTreeKey(event, card) {
-      return !(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || card.classList.contains('sidebar-bulk-selecting'));
+      return !(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey);
     }
 
     // Up/Down/Home/End over the shared button order (rows and project headers); false when not one of those keys.

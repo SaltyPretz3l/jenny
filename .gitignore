@@ -68,6 +68,8 @@ vendor/unsloth/
 *.so
 *.dylib
 *.bin
+# The compiled ad filter list ships with the app (row 119).
+!assets/ad-filters/filters.bin
 *.app/
 *.dmg
 *.pkg

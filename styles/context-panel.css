@@ -176,12 +176,6 @@
   box-shadow: -18px 0 42px color-mix(in srgb, black 34%, transparent);
 }
 
-/* Keep the launchers reachable above the narrow drawer. Its lower boundary
-   follows the measured composer, including a growing draft and attachments. */
-.chat-view:has(> .artifact-review-overlay:not(.hidden)) .chat-timeline-utility-cluster {
-  flex-direction: row;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .artifact-review-panel:not(.hidden) {
     animation: none;
@@ -239,83 +233,6 @@
 .context-panel-scroll::-webkit-scrollbar { width: 6px; }
 .context-panel-scroll::-webkit-scrollbar-thumb { background: var(--widget-scrollbar-color); border-radius: var(--radius-pill); }
 
-.context-section + .context-section { margin-top: var(--space-12); }
-
-.context-section-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: var(--sidebar-icon-button-size);
-  margin: 0 0 var(--space-3);
-  padding: 0;
-  padding-inline-start: var(--space-4);
-}
-.context-section-label,
-.orbit-section-count {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  line-height: 1.15;
-}
-.orbit-section-count { font-variant-numeric: tabular-nums; }
-.context-section-rule {
-  flex: 1 1 auto;
-  min-width: var(--space-4);
-  height: 1px;
-  margin-inline-start: var(--space-2);
-  background: var(--rail-divider);
-}
-
-.context-section-action {
-  display: grid; place-items: center; flex: 0 0 auto;
-  width: var(--sidebar-icon-button-size); height: var(--sidebar-icon-button-size);
-  padding: 0; border: 0; border-radius: var(--rail-item-radius);
-  background: transparent; color: var(--text-muted); cursor: pointer;
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.context-section-action:is(:hover, :focus-visible) { background: var(--rail-hover-bg); color: var(--text-primary); }
-.context-section-action svg {
-  width: 16px; height: 16px;
-  fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
-}
-/* Row 38 item 7: the two header actions carry a word beside their icon; two
-   similar panel glyphs side by side were not self-evident. */
-.context-section-action:has(.context-section-action-text) {
-  width: auto; grid-auto-flow: column; gap: var(--space-1);
-  padding-inline: var(--space-2) var(--space-3);
-}
-.context-section-action-text {
-  font-size: var(--font-size-caption); font-weight: 500; line-height: 1; white-space: nowrap;
-}
-
-/* Activity: the whole header row is the disclosure. */
-.context-section-disclosure {
-  width: 100%;
-  min-height: 28px;
-  border: 0;
-  border-radius: var(--rail-item-radius);
-  background: transparent;
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-  padding-inline-start: var(--space-2);
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.context-section-disclosure:hover { background: var(--rail-hover-bg); }
-.context-section-disclosure:hover .context-section-label { color: var(--text-secondary); }
-.context-disclosure-chevron {
-  flex: 0 0 auto;
-  width: 12px; height: 12px;
-  fill: none; stroke: var(--text-muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.context-section-disclosure[aria-expanded="true"] .context-disclosure-chevron { transform: rotate(90deg); }
-[dir="rtl"] .context-section-disclosure[aria-expanded="false"] .context-disclosure-chevron { transform: scaleX(-1); }
-
-.context-section-action:focus-visible,
-.context-section-disclosure:focus-visible,
 .orbit-card:focus-visible,
 .orbit-card-jump:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
@@ -404,13 +321,6 @@
   fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* ── Activity feed ── */
-.context-log-feed { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-4) 0; font-family: var(--font-family-mono); }
-.context-section.logs-collapsed .context-log-feed { display: none; }
-.context-log-line { display: flex; gap: var(--space-4); font-size: var(--font-size-sm); line-height: 1.5; color: var(--text-muted); }
-.context-log-timestamp { flex-shrink: 0; color: var(--text-secondary); }
-.context-log-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* The artifact review rail's detail sections still use the boxed empty state. */
 .context-empty-state {
   padding: var(--space-9) var(--space-6); border-radius: var(--radius-md);
@@ -434,7 +344,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .context-disclosure-chevron,
   .orbit-card-jump,
   .context-artifact-item { transition: none; }
 }

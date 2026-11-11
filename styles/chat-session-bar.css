@@ -1,0 +1,171 @@
+/* ── Session bar (row 115, slice 1) ──
+   The pane's utility cluster (#chatTimelineUtilityCluster in pane 0, the same node every button module
+   mounts into) is one 40px bar that never changes orientation, so a button does not move when the
+   rail docks or a side panel opens. Imported right after chat-session-rail.css.
+     one pane   .chat-pane is display: contents, so the cluster is a grid item of #chatView spanning
+                every column in row 1. The stage and the side panels start below it (margin), so
+                nothing floats over the reading column and the text gutters reserve nothing.
+     split      the pane kicker row (title, close) is the bar: the cluster shares its cell, the
+                close glyph sits at the far end, and the kicker leaves room for the buttons.
+     IDE dock   the dock's chat and a Workspace-hosted pane keep the floating column.
+   CSS `order` fixes the visual sequence, so the order the button modules mount in does not matter:
+     0 title, 10 diff control, 20 Artifacts, 30 Tasks, 40 Notes, 60 Session, 70 (reserved:
+     More), 80 everything else (until the consolidation slice moves it). Logical properties only. */
+
+.chat-view {
+  --session-bar-h: 40px;
+}
+
+/* The floating column: the base look, kept for the IDE dock and a hosted pane (and any cluster the
+   bar rules below do not match). The cluster floats in the upper-end gutter of its stage, always a
+   column, without reserving height. */
+.chat-timeline-utility-cluster {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  z-index: calc(var(--z-raised) + 1);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block: var(--space-4) 0;
+  margin-inline-start: 0;
+  margin-inline-end: var(--space-4);
+  pointer-events: none;
+}
+
+.session-bar-title {
+  display: none;
+}
+
+/* ── One pane: the bar ── */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-self: start;
+  justify-self: stretch;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  block-size: var(--session-bar-h);
+  box-sizing: border-box;
+  padding-inline: var(--space-8) var(--space-6);
+  margin: 0;
+  pointer-events: none;
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > * {
+  order: 80;
+  pointer-events: auto;
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > [data-chat-node="artifactSplitViewToggle"] { order: 20; }
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > #chatTimelineTasksToggle { order: 30; }
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > #chatTimelineNotesToggle { order: 40; }
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .session-rail-toggle {
+  order: 60;
+  margin-inline-start: var(--space-4);
+}
+
+/* The title: the session's name, muted, one line; it takes the room the buttons leave. */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .session-bar-title {
+  display: block;
+  order: 0;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Empty chat: the title hides, the buttons stay at the end. */
+.chat-view.chat-empty > .chat-pane[data-pane-id="0"] > .chat-timeline-utility-cluster > .session-bar-title,
+.chat-view > .chat-pane.chat-empty > .chat-timeline-utility-cluster > .session-bar-title {
+  display: none;
+}
+
+/* Below the bar: the stage and the side panels. The panels keep their grid placement. */
+.chat-view:not([data-pane-count="2"]) > :is(.hero-stage, .chat-thread-stage, .chat-context-panel, .artifact-review-resizer, .artifact-review-panel:not(.artifact-review-overlay)),
+.chat-view:not([data-pane-count="2"]) > .chat-pane:not(.ide-chat-dock-body) > :is(.hero-stage, .chat-thread-stage) {
+  margin-block-start: var(--session-bar-h);
+}
+
+/* The rail sheet (undocked) hangs from the Session button. The rail controller measures its offset from
+   the stage's top, and the stage now starts below the bar, so the sheet adds the bar's height back. */
+.chat-view:not([data-pane-count="2"]) > .chat-pane:not(.ide-chat-dock-body) > .session-rail-sheet {
+  margin-block-start: calc(var(--session-rail-sheet-top, 40px) + var(--session-bar-h));
+  max-block-size: calc(100% - var(--session-rail-sheet-top, 40px) - var(--session-bar-h) - 100px);
+}
+
+/* ── Split view: the kicker row is the bar ── */
+.chat-view[data-pane-count="2"] {
+  --split-bar-close-room: calc(var(--space-4) + 22px + var(--space-2));
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker {
+  box-sizing: border-box;
+  min-block-size: var(--session-bar-h);
+  padding-inline-end: var(--split-bar-reserve, 200px);
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker > .chat-pane-close {
+  position: absolute;
+  inset-block-start: calc((var(--session-bar-h) - 22px) / 2);
+  inset-inline-end: var(--space-4);
+  margin-inline-start: 0;
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  align-self: center;
+  block-size: auto;
+  padding-inline: 0;
+  margin-inline-end: var(--split-bar-close-room);
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster > .session-bar-title {
+  display: none;
+}
+
+/* ── Diff control: branch glyph, branch name, then the uncommitted +N −M (renderer-session-bar.js) ──
+   One plain utility button: no border or fill at rest, the shared hover and pressed states apply. The
+   branch name truncates; the numbers never do. Split view and a compact bar (data-session-bar-compact on
+   the cluster) give the name less room. */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .session-bar-diff {
+  order: 10;
+  min-inline-size: 0;
+}
+
+.session-bar-diff .session-bar-diff-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  font-weight: 400;
+}
+
+.session-bar-diff-branch {
+  max-inline-size: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.session-bar-diff-counts {
+  display: inline-flex;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-view[data-pane-count="2"] .session-bar-diff-branch,
+.chat-timeline-utility-cluster[data-session-bar-compact] .session-bar-diff-branch {
+  max-inline-size: 88px;
+}

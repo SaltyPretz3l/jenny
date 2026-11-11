@@ -283,8 +283,6 @@
   .interactive-option-button,
   .interactive-action-button,
   .interactive-other-confirm,
-  .context-panel-collapse,
-  .context-section-action,
   .context-artifact-item {
     transition: none;
   }

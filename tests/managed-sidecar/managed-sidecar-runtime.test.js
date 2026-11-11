@@ -86,15 +86,15 @@ test('managed sidecar refreshManagedConfig updates web tool availability from sh
   await service.stop();
 });
 
-// Mermaid generation is forced on and hidden from config; a stale persisted
-// `tools.mermaid` value must never gate the tool.
-test('managed sidecar keeps mermaid tool availability forced on across shell config refreshes', async () => {
+// The mermaid_generate tool is gone; a stale persisted `tools.mermaid` value
+// must neither bring it back nor break a config refresh.
+test('managed sidecar ignores a stale persisted tools.mermaid value across shell config refreshes', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-mermaid-tools-'));
   trackDirectory(userDataPath);
 
   const configState = {
     toolsWorkspaceRoot: '',
-    tools: { web: false, mermaid: false, pythonRuntime: false },
+    tools: { web: false, mermaid: true, pythonRuntime: false },
   };
   const configService = {
     getState() {
@@ -106,21 +106,14 @@ test('managed sidecar keeps mermaid tool availability forced on across shell con
   await service.start();
 
   assert.ok(Array.isArray(service.currentStatus.tools_available));
-  assert.equal(service.currentStatus.tools_status.mermaid_generate.available, true);
-  assert.equal(service.currentStatus.tools_status.mermaid_generate.reason, null);
-  assert.equal(service.currentStatus.tools_available.includes('mermaid_generate'), true);
-
-  configState.tools = { ...configState.tools, mermaid: true };
-  await service.refreshManagedConfig('feature_settings_updated');
-
-  assert.equal(service.currentStatus.tools_status.mermaid_generate.available, true);
-  assert.equal(service.currentStatus.tools_available.includes('mermaid_generate'), true);
+  assert.equal(service.currentStatus.tools_available.includes('mermaid_generate'), false);
+  assert.equal(Object.hasOwn(service.currentStatus.tools_status, 'mermaid_generate'), false);
 
   configState.tools = { ...configState.tools, mermaid: false };
   await service.refreshManagedConfig('feature_settings_updated');
 
-  assert.equal(service.currentStatus.tools_status.mermaid_generate.available, true);
-  assert.equal(service.currentStatus.tools_available.includes('mermaid_generate'), true);
+  assert.equal(service.currentStatus.tools_available.includes('mermaid_generate'), false);
+  assert.equal(Object.hasOwn(service.currentStatus.tools_status, 'mermaid_generate'), false);
 
   await service.stop();
 });

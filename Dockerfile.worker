@@ -6,11 +6,14 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y python3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10003 jenny-control \
+    && groupadd --gid 10002 jenny-sync \
     && groupadd --gid 10001 jenny \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin jenny \
     && install -d -m 0770 -o 0 -g 10003 /run/jenny-worker \
     && install -d -m 0755 /inputs \
-    && install -d -m 0700 -o 10001 -g 10001 /workspace
+    && install -d -m 0700 -o 10001 -g 10001 /workspace \
+    && install -d -m 0750 -o 0 -g 10002 /run/jenny-sync \
+    && install -d -m 0700 -o 10001 -g 10001 /run/jenny-sync/outbox
 COPY server/worker /app/server/worker
 USER 0:10003
 ENTRYPOINT ["python3", "-I", "-c", "import sys; sys.path.insert(0, '/app'); from server.worker.supervisor import main; main()"]

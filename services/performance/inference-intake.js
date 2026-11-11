@@ -16,7 +16,7 @@
 
 const { createAttemptMetrics } = require('./inference-metrics');
 const {
-  MAX_SUMMARIES, TERMINAL_PHASES, boundInferencePerformance, normalizeObservation,
+  LIVE_PROVIDER_KINDS, MAX_SUMMARIES, TERMINAL_PHASES, boundInferencePerformance, normalizeObservation,
 } = require('./performance-contract');
 
 const MAX_SESSIONS = 256;
@@ -120,7 +120,7 @@ function createInferenceIntake({ now = Date.now } = {}) {
   // turning the counter on never restarts the request.
   function applyMark(projected, mark, providerKind) {
     if (!mark || mark.live_requested !== false) return projected;
-    const next = mark.live_capable !== false && (providerKind === null || providerKind === 'ninfer')
+    const next = mark.live_capable !== false && (providerKind === null || LIVE_PROVIDER_KINDS.has(providerKind))
       ? { value: null, state: 'available_next_request', sampled_at: null }
       : unavailable();
     return { ...projected, live_decode: next, live_prefill: { ...next } };

@@ -7,6 +7,7 @@ const { registerPdfAddonIpc } = require('./pdf-addon-ipc-registration');
 const { registerImageEngineIpc } = require('./image-engine-ipc-registration');
 const { registerNinferIpc } = require('./ninfer-ipc-registration');
 const { registerDictationIpc } = require('./dictation-ipc-registration');
+const { registerAppSoundIpc, registerBrowserUseIpc } = require('./browser-use-ipc-registration');
 
 function registerToolsSettingsIpc(ipcMain, {
   backendService, authorization, dialog = null, getMainWindow = () => null, userDataPath = '',
@@ -26,6 +27,13 @@ function registerToolsSettingsIpc(ipcMain, {
     openExternal: (url) => require('electron').shell.openExternal(url),
     log: (level, event, fields) => backendService._emitServiceLog?.(level, event, fields),
   });
+  // The browser panel (row 114). The service and the flag are read per call.
+  registerBrowserUseIpc(ipcMain, {
+    authorization,
+    getService: () => backendService.toolExecutor?.browserUse?.get?.() || null,
+    isEnabled: () => backendService.featureFlags?.tools_browser_use_enabled === true,
+  });
+  registerAppSoundIpc(ipcMain, { authorization, getHolder: () => backendService.toolExecutor?.browserUse || null });
 }
 
 module.exports = { registerToolsSettingsIpc };

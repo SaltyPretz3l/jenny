@@ -272,10 +272,6 @@ def _add_runtime_feature_bindings(
         )
 
         bindings["connections_list"] = build_connections_tool(config)
-    if bool_config_flag(config, "tools_mermaid_enabled", default=False):
-        from sidecar.ai.tools.builtins.mermaid import mermaid_generate_tool
-
-        bindings["mermaid_generate"] = mermaid_generate_tool
     if bool_config_flag(config, "tools_workspace_manifest_enabled", default=False):
         from sidecar.ai.tools.builtins.workspace_manifest_tool import (
             workspace_manifest_read_tool,

@@ -9,12 +9,15 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./tool-call-utils'));
     return;
   }
-  root.rendererTurnRowProjectorTools = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererTurnRowProjectorTools = factory(root.toolCallUtils || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (toolCallUtils) {
   'use strict';
+
+  const APPROVAL_PRESENTATION_KEYS = toolCallUtils.APPROVAL_PRESENTATION_KEYS || [];
+  const isPresentation = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
   function createTurnRowProjectorTools(deps) {
     const {
@@ -235,17 +238,10 @@
         if (policyConsequence) payload.policy_consequence = policyConsequence;
         if (reason) payload.reason = reason;
         if (toolUsePayload.one_off_only === true) payload.one_off_only = true;
-        // The exact message presentation (with its full body) rides the tool_use projection.
-        const fullMessageApproval = toolUsePayload.session_message_approval;
-        if (fullMessageApproval && typeof fullMessageApproval === 'object' && !Array.isArray(fullMessageApproval)) {
-          payload.session_message_approval = fullMessageApproval;
+        // The exact presentation (a message's full body, say) rides the tool_use projection.
+        for (const key of APPROVAL_PRESENTATION_KEYS) {
+          if (isPresentation(toolUsePayload[key])) payload[key] = toolUsePayload[key];
         }
-        const stopApproval = toolUsePayload.session_stop_approval;
-        if (stopApproval && typeof stopApproval === 'object' && !Array.isArray(stopApproval)) payload.session_stop_approval = stopApproval;
-        const settingsApproval = toolUsePayload.settings_change_approval;
-        if (settingsApproval && typeof settingsApproval === 'object' && !Array.isArray(settingsApproval)) payload.settings_change_approval = settingsApproval;
-        const scheduleApproval = toolUsePayload.schedule_change_approval;
-        if (scheduleApproval && typeof scheduleApproval === 'object' && !Array.isArray(scheduleApproval)) payload.schedule_change_approval = scheduleApproval;
       }
       for (const event of events) {
         if (event.kind !== 'approval_requested') {
@@ -267,25 +263,9 @@
         if (reason) payload.reason = reason;
         if (event.payload && event.payload.one_off_only === true) payload.one_off_only = true;
         // The canonical request carries no body; never let it replace the full presentation.
-        const sessionMessageApproval = event.payload && event.payload.session_message_approval;
-        if (!payload.session_message_approval && sessionMessageApproval && typeof sessionMessageApproval === 'object'
-          && !Array.isArray(sessionMessageApproval)) {
-          payload.session_message_approval = sessionMessageApproval;
-        }
-        const sessionStopApproval = event.payload && event.payload.session_stop_approval;
-        if (!payload.session_stop_approval && sessionStopApproval && typeof sessionStopApproval === 'object'
-          && !Array.isArray(sessionStopApproval)) {
-          payload.session_stop_approval = sessionStopApproval;
-        }
-        const settingsChangeApproval = event.payload && event.payload.settings_change_approval;
-        if (!payload.settings_change_approval && settingsChangeApproval && typeof settingsChangeApproval === 'object'
-          && !Array.isArray(settingsChangeApproval)) {
-          payload.settings_change_approval = settingsChangeApproval;
-        }
-        const scheduleChangeApproval = event.payload && event.payload.schedule_change_approval;
-        if (!payload.schedule_change_approval && scheduleChangeApproval && typeof scheduleChangeApproval === 'object'
-          && !Array.isArray(scheduleChangeApproval)) {
-          payload.schedule_change_approval = scheduleChangeApproval;
+        for (const key of APPROVAL_PRESENTATION_KEYS) {
+          const presentation = event.payload && event.payload[key];
+          if (!payload[key] && isPresentation(presentation)) payload[key] = presentation;
         }
       }
       row.tool_call_id = payload.tool_call_id;

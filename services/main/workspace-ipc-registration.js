@@ -1,3 +1,5 @@
+// Per-area workspace handler registrars (fs, root, git, pty, file map, test runner, terminal
+// shutdown). ./ipc-registration/workspace-ipc.js builds the workspace services and calls them.
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const {
   isWorkspaceIdeRecord,

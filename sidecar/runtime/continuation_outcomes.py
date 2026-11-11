@@ -7,8 +7,15 @@ import json
 from typing import Any
 
 from sidecar.ai.routing.router import ToolExecutionOutcome
+from sidecar.ai.tools.tool_families import saved_tool_output
 
 _MAX_OUTCOMES = 255
+
+
+def saved_output_sha256(item: Any) -> str:
+    """Hash of what the turn log keeps: a browser page is saved as its step summary."""
+    saved = saved_tool_output(item.tool_name, item.output, getattr(item, "metadata", None))
+    return hashlib.sha256(saved.encode()).hexdigest()
 
 
 def outcome_refs(outcomes: Any, mutation_ref: dict | None = None) -> list[dict]:
@@ -31,7 +38,7 @@ def outcome_refs(outcomes: Any, mutation_ref: dict | None = None) -> list[dict]:
                 "call_id": item.call_id,
                 "tool_id": item.tool_name,
                 "success": item.success,
-                "result_sha256": hashlib.sha256(item.output.encode()).hexdigest(),
+                "result_sha256": saved_output_sha256(item),
             }
         )
     if len(refs) > _MAX_OUTCOMES or len({ref["call_id"] for ref in refs}) != len(refs):

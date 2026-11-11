@@ -31,7 +31,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = (result) => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('the kill switch refuses; Plan mode and read-only chats may read', async () => {
   const off = harness({ featureFlags: { terminal_tools: false } });

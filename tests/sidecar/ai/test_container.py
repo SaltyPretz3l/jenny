@@ -20,7 +20,6 @@ from sidecar.ai.mcp.transport_base import MCPTransport
 def test_default_mcp_servers_forward_web_configuration(tmp_path: Path) -> None:
     config = RuntimeConfig(
         tools_web_enabled=True,
-        tools_mermaid_enabled=True,
         tools_workspace_manifest_enabled=True,
         tools_rich_files_enabled=True,
         tools_web_rate_limit_per_min=17,
@@ -39,8 +38,7 @@ def test_default_mcp_servers_forward_web_configuration(tmp_path: Path) -> None:
     assert args[args.index("--web-max-fetch-bytes") + 1] == "8192"
     assert args[args.index("--web-allow-private-addresses") + 1] == "1"
     assert args[args.index("--web-search-provider") + 1] == "bing"
-    assert "--mermaid-enabled" in args
-    assert args[args.index("--mermaid-enabled") + 1] == "1"
+    assert "--mermaid-enabled" not in args
     assert "--workspace-manifest-enabled" in args
     assert args[args.index("--workspace-manifest-enabled") + 1] == "1"
     assert "--rich-files-enabled" in args

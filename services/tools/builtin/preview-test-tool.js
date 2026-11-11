@@ -22,7 +22,8 @@ const { normalizeString } = require('../../shared/normalize');
 const {
   extensionOf,
   realpathSafe,
-  toRelativePosix,
+  resolveWorkspaceRelative,
+  unsafePathMessage,
 } = require('../../shared/workspace-tool-helpers');
 const { toolFailure } = require('./tool-result');
 const {
@@ -208,12 +209,12 @@ function createPreviewTestTool({
           summary: 'Preview test needs a path',
         });
       }
-      const relPath = toRelativePosix(rawPath);
+      const relPath = await resolveWorkspaceRelative(rawPath, { root: workingDirectory, fsLike });
       if (!relPath) {
         return failure({
           reason: 'unsafe_path',
           errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-          message: 'The requested file is not identified by a safe workspace-relative path.',
+          message: unsafePathMessage(),
           summary: 'Unsafe preview path',
         });
       }

@@ -42,6 +42,36 @@
       return Number.isInteger(version) && version >= 1 && version <= SUPPORTED_TURN_EVENT_LOG_VERSION;
     }
 
+    // Where each event sorts: [message position, order within that message].
+    // An event whose message is not in the list has no message position, and
+    // its sequence number is not one: sorting the two together once put a final
+    // answer in the middle of its turn. Such an event sorts just after the
+    // latest message its turn had reached when it was recorded (the list is in
+    // recorded order). A turn that has reached no message keeps the sequence.
+    function resolveSortPositions(normalizedEvents, messageIndexById, intraOrderByEventId) {
+      const positions = new Map();
+      const latestByTurnId = new Map();
+      for (const entry of normalizedEvents) {
+        const intraOrder = Number(intraOrderByEventId.get(entry.eventId)) || 0;
+        const latest = latestByTurnId.get(entry.turnId);
+        if (messageIndexById.has(entry.anchorMessageId)) {
+          const messageIndex = Number(messageIndexById.get(entry.anchorMessageId));
+          positions.set(entry, [messageIndex, intraOrder]);
+          if (!latest || messageIndex > latest.messageIndex
+            || (messageIndex === latest.messageIndex && intraOrder > latest.intraOrder)) {
+            latestByTurnId.set(entry.turnId, { messageIndex, intraOrder, followers: 0 });
+          }
+        } else if (latest) {
+          // Strictly between that message's event and its next one, in recorded order.
+          latest.followers += 1;
+          positions.set(entry, [latest.messageIndex, latest.intraOrder + 1 - 1 / (latest.followers + 1)]);
+        } else {
+          positions.set(entry, [entry.eventSeq, intraOrder]);
+        }
+      }
+      return positions;
+    }
+
     function buildTurnTreeFromPersistedEvents(payload, threadTree) {
       const rawEvents = Array.isArray(payload.turn_events || payload.turnEvents)
         ? (payload.turn_events || payload.turnEvents)
@@ -84,6 +114,7 @@
         const normalizedEvent = {
           sourceEvent,
           index,
+          eventId: normalizeId(sourceEvent.event_id || sourceEvent.eventId) || `${turnId}:${kind}:${index}`,
           turnId,
           kind,
           primaryMessageId,
@@ -107,11 +138,10 @@
           return left.index - right.index;
         });
         for (let position = 0; position < bucket.length; position += 1) {
-          const eventId = normalizeId(bucket[position].sourceEvent?.event_id || bucket[position].sourceEvent?.eventId)
-            || `${bucket[position].turnId}:${bucket[position].kind}:${bucket[position].index}`;
-          intraOrderByEventId.set(eventId, position);
+          intraOrderByEventId.set(bucket[position].eventId, position);
         }
       }
+      const sortPositions = resolveSortPositions(normalizedEvents, messageIndexById, intraOrderByEventId);
       const turnById = Object.create(null);
       const byMessageId = Object.create(null);
       const turns = [];
@@ -165,14 +195,8 @@
             try { payloadValue.trusted_attachment_refs = deepCloneJsonValue(messageRefs); } catch (_error) { /* keep the event's */ }
           }
         }
-        const eventId = normalizeId(sourceEvent.event_id || sourceEvent.eventId) || `${turnId}:${kind}:${index}`;
-        const anchorMessageId = normalizedSourceEvent.anchorMessageId;
-        const messageIndex = messageIndexById.has(anchorMessageId)
-          ? Number(messageIndexById.get(anchorMessageId))
-          : eventSeq;
-        const intraMessageOrder = intraOrderByEventId.has(eventId)
-          ? Number(intraOrderByEventId.get(eventId))
-          : 0;
+        const eventId = normalizedSourceEvent.eventId;
+        const [messageIndex, intraMessageOrder] = sortPositions.get(normalizedSourceEvent);
         const event = {
           event_id: eventId,
           event_seq: eventSeq,

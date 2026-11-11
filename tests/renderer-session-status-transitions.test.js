@@ -36,6 +36,8 @@ test('request events refresh list, compact strip and tabs through waiting, resum
   };
   await emit({ type: 'started' });
   await emit({ type: 'tool_use', callId: 'setup', toolName: 'read_file', status: 'running', input: {} });
+  // A plain switch replaces the active tab even mid-stream; this test needs both on the rail.
+  window.sessionOpenPrefUtils.setOpenSessionsInNewTab(true);
   doc.querySelector('[data-session-open="background-session"]').click();
   await waitForUi(window, 70);
   doc.querySelector(`[data-session-open="${sessionId}"]`).click();

@@ -93,7 +93,7 @@ test('sender receipts: sending, failed with Retry and Cancel send, delivered wit
   const outbox = [
     outboxItem({ operation_id: 'op-pending', state: 'pending', send_requested_at: '2026-10-15T15:50:00.000Z', destination: { title: 'Pending chat' } }),
     outboxItem({ operation_id: 'op-failed', state: 'failed', send_requested_at: '2026-10-15T15:40:00.000Z', destination: { title: 'Startup curtain timing' }, last_error: { code: 'CMP-MESSAGE-0006', reason: 'recipient_archived', retryable: true } }),
-    outboxItem({ operation_id: 'op-done', state: 'delivered', delivered_at: '2026-10-15T15:45:00.000Z', destination: { title: 'Review the sidebar nesting copy' } }),
+    outboxItem({ operation_id: 'op-done', state: 'delivered', delivered_at: '2026-10-15T15:55:00.000Z', destination: { title: 'Review the sidebar nesting copy' } }),
   ];
   const h = harness(t, { data: { 'session-1': { outbox, inbox: [], counts: { pending_delivery: 1, failed_delivery: 1 } } } });
   await flush();
@@ -130,11 +130,38 @@ test('a failure that cannot be retried offers only Cancel send, and a deleted de
   assert.match(h.text(), /that chat was deleted/u);
 });
 
-test('deliveries older than 24 hours drop out; only the newest shows until "N earlier" opens the rest in place', () => {
+test('a delivery leaves the strip after 10 minutes or at the next send, whichever is first', () => {
   const outbox = [
-    outboxItem({ operation_id: 'old', state: 'delivered', delivered_at: '2026-10-14T15:00:00.000Z' }),
-    ...[1, 2, 3, 4].map((n) => outboxItem({ operation_id: `d${n}`, state: 'delivered', delivered_at: `2026-10-15T15:0${n}:00.000Z` })),
+    outboxItem({ operation_id: 'gone', state: 'delivered', delivered_at: '2026-10-15T15:49:59.000Z' }),
+    outboxItem({ operation_id: 'older', state: 'delivered', delivered_at: '2026-10-15T15:52:00.000Z' }),
+    outboxItem({ operation_id: 'newer', state: 'delivered', delivered_at: '2026-10-15T15:58:00.000Z' }),
   ];
+  const timed = buildStripView({ counts: {}, outbox }, NOW);
+  assert.deepEqual(timed.receipts.map((receipt) => receipt.id), ['newer']);
+  assert.equal(timed.earlier, 1, 'the expired one is not counted');
+  assert.equal(timed.expiresAt, Date.parse('2026-10-15T16:02:00.000Z'), 'the next repaint is due when the oldest shown expires');
+  const sent = buildStripView({ counts: {}, outbox }, NOW, { lastSendMs: Date.parse('2026-10-15T15:55:00.000Z') });
+  assert.deepEqual(sent.receipts.map((receipt) => receipt.id), ['newer'], 'a delivery after the send still shows');
+  assert.equal(sent.earlier, 0);
+  const none = buildStripView({ counts: {}, outbox }, NOW, { lastSendMs: NOW });
+  assert.deepEqual(none.receipts, []);
+  assert.equal(none.expiresAt, 0);
+});
+
+test('an accepted send in this chat clears its Delivered line; another chat\'s send does not', async (t) => {
+  const outbox = [outboxItem({ operation_id: 'op-done', state: 'delivered', delivered_at: '2026-10-15T15:59:00.000Z' })];
+  const h = harness(t, { data: { 'session-1': { outbox, inbox: [], counts: {} } } });
+  await flush();
+  const send = (sessionId) => h.dom.window.dispatchEvent(new h.dom.window.CustomEvent('jenny:chat-sent', { detail: { sessionId } }));
+  send('session-2');
+  assert.match(h.text(), /Delivered/u);
+  send('session-1');
+  assert.equal(h.text(), '');
+  assert.equal(h.host.classList.contains('hidden'), true);
+});
+
+test('only the newest delivery shows until "N earlier" opens the rest in place', () => {
+  const outbox = [1, 2, 3, 4].map((n) => outboxItem({ operation_id: `d${n}`, state: 'delivered', delivered_at: `2026-10-15T15:5${n}:00.000Z` }));
   const view = buildStripView({ counts: {}, outbox }, NOW);
   assert.deepEqual(view.receipts.map((receipt) => receipt.id), ['d4']);
   assert.equal(view.earlier, 3);
@@ -331,8 +358,8 @@ test('a pending or failed report reads "Report to {parent}" with Retry and "Disc
 
 test('a delivered report reads "Report to {parent}" and an ordinary send still reads "Sent to"', async (t) => {
   const outbox = [
-    reportOp({ operation_id: 'op-r-done', state: 'delivered', delivered_at: '2026-10-15T15:45:00.000Z' }),
-    outboxItem({ operation_id: 'op-plain', state: 'delivered', delivered_at: '2026-10-15T15:44:00.000Z' }),
+    reportOp({ operation_id: 'op-r-done', state: 'delivered', delivered_at: '2026-10-15T15:55:00.000Z' }),
+    outboxItem({ operation_id: 'op-plain', state: 'delivered', delivered_at: '2026-10-15T15:54:00.000Z' }),
   ];
   const h = harness(t, { data: { 'session-1': { outbox, inbox: [], counts: {} } } });
   await flush();

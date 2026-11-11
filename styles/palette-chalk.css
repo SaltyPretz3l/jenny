@@ -1,0 +1,311 @@
+:root[data-palette="chalk"] {
+  --widget-context-weave-line-color: rgba(61, 70, 81, 0.32);
+  --widget-context-weave-spacing: 90;
+  --widget-context-weave-pointer-radius: 162;
+  --widget-context-weave-interlace: 3;
+  --widget-context-weave-weft-alpha: 0.72;
+  --widget-context-weave-lit-gain: 2;
+  --widget-context-weave-density: 1.12;
+  color-scheme: light;
+
+  /* ── Base palette ── quiet chalk structural ladder: one cool off-white canvas, white cards, grey rails ── */
+  --bg-base: #f3f5f7;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #e9edf1;
+  --bg-sidebar: #e8ecf0;
+  --bg-panel: #e8ecf0;
+  --line: rgba(21, 24, 28, 0.12);
+  --line-strong: rgba(21, 24, 28, 0.16);
+
+  /* ── Text ── crisp ink-led reading ramp on the flat chalk canvas ── */
+  --text-primary: #15181c;
+  --text-secondary: #3d4651;
+  --text-muted: #56606c; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #6b7581;
+  --text-bright: #000000;
+  --text-link: #1f6fa8;
+  --text-active: #15181c;
+  --text-accent-soft: color-mix(in srgb, #1f6fa8 52%, var(--text-primary));
+  --text-danger-soft: #a8372f;
+  --text-success-soft: #1a7447;
+  --text-danger-emphasis: #b3261e;
+
+  /* ── Accents — a single deep slate-blue signal owns chrome; the chalk canvas itself never gets a blue wash ── */
+  --accent: #1f6fa8;
+  --accent-primary: var(--accent);
+  --accent-strong: #17598a;
+  --accent-cyan: #0e7490;
+  --accent-amber: #8a5a00;
+  /* File-map language tints: darker inks for a light canvas. */
+  --atlas-lang-js: #8a6d00;
+  --atlas-lang-ts: #2f6aa3;
+  --atlas-lang-py: #1f7a70;
+  --atlas-lang-css: #6a4fa8;
+  --atlas-lang-html: #a8456e;
+  --atlas-lang-md: #6b7581;
+  --atlas-lang-data: #8a5a1c;
+  --atlas-lang-other: #6b7581;
+
+  /* ── Holo palette — slate-blue and lavender ink on chalk ── */
+  --holo-periwinkle: #4f6a9c;
+  --holo-lavender: #6d5fa0;
+
+  /* ── Syntax tokens — quiet slate-blue daylight set read by the Monaco theme bridge (scoped to Chalk) ── */
+  --syntax-keyword: #1f6fa8;
+  --syntax-string: #2c6e2f;
+  --syntax-comment: #6b7581;
+  --syntax-number: #8f5200;
+  --syntax-function: #6d4fa0;
+  --syntax-type: #0e6f7a;
+  --syntax-variable: #3d4651;
+  --syntax-constant: #a82a48;
+
+  /* ── Atomic burst — deep slate blue / muted lavender / rose on chalk ── */
+  --widget-atomic-burst-color-a: rgba(31, 111, 168, 0.90);
+  --widget-atomic-burst-color-b: rgba(109, 95, 160, 0.86);
+  --widget-atomic-burst-color-c: rgba(168, 72, 110, 0.84);
+  --widget-atomic-burst-flare-color: rgba(23, 89, 138, 1);
+  --widget-atomic-burst-link-color: rgba(86, 96, 108, 0.50);
+  --widget-atomic-burst-wave-color: rgba(23, 89, 138, 0.80);
+
+  /* ── Circuit trace — slate-blue grid with rose accents ── */
+  --widget-circuit-trace-grid-color: rgba(86, 96, 108, 0.30);
+  --widget-circuit-trace-line-color: rgba(31, 111, 168, 0.94);
+  --widget-circuit-trace-glow-color: rgba(168, 72, 110, 0.88);
+  --widget-circuit-trace-accent-color: rgba(61, 70, 81, 0.60);
+  --widget-circuit-trace-inner-color: rgba(61, 70, 81, 0.08);
+  --widget-circuit-trace-shadow-color: rgba(21, 24, 28, 0.08);
+  --widget-circuit-trace-density: 1.0;
+
+  /* ── Reactive grid: achromatic idle, quiet slate-blue active ── */
+  --widget-reactive-grid-dot-idle: rgba(61, 70, 81, 0.26);
+  --widget-reactive-grid-dot-active: rgba(31, 111, 168, 0.98);
+  --reactive-grid-wave-contrast: 1.75;
+
+  /* ── Playlist scroll ── */
+  --playlist-scroll-line-color: rgba(61, 70, 81, 0.5);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-ghost-color: rgba(61, 70, 81, 0.18);
+  --playlist-scroll-accent-color: rgba(31, 111, 168, 0.60);
+  --playlist-scroll-contrast: 1.5;
+
+  /* ── Shadows — soft cool ink drops and neutral hairline rings, without sheen ── */
+  --shadow-soft: 0 12px 30px rgba(21, 24, 28, 0.12);
+  --shadow-accent: 0 8px 20px rgba(31, 111, 168, 0.14);
+  --shadow-elevation-1: 0 0 0 1px rgba(21, 24, 28, 0.08);
+  --shadow-elevation-2: 0 2px 10px rgba(21, 24, 28, 0.08), 0 0 0 1px rgba(21, 24, 28, 0.08);
+  --shadow-elevation-3: 0 6px 22px rgba(21, 24, 28, 0.12), 0 0 0 1px rgba(21, 24, 28, 0.10);
+
+  /* ── Borders — neutral ink seams, with slate blue reserved for explicit focus states ── */
+  --border-subtle: rgba(21, 24, 28, 0.08);
+  --border-default: rgba(21, 24, 28, 0.12);
+  --border-strong: rgba(21, 24, 28, 0.20);
+  --border-focus: rgba(31, 111, 168, 0.75);
+  --focus-outline: rgba(31, 111, 168, 0.80);
+
+  /* ── Surface backgrounds — solid chalk fields; no washes, glows, or vignettes ── */
+  --surface-body-background:
+    #f3f5f7;
+
+  --surface-shell-background:
+    #f3f5f7;
+
+  --surface-titlebar-background:
+    #e8ecf0;
+
+  --surface-sidebar-background:
+    #e8ecf0;
+
+  --surface-main-stage-background:
+    #f3f5f7;
+
+  --surface-main-stage-overlay:
+    none;
+
+  --surface-main-stage-glow:
+    none;
+
+  --surface-card-background:
+    #ffffff;
+
+  --surface-input-background: #f8fafb;
+  --surface-input-background-strong: #eef1f4;
+  --surface-toolbar-background: #f8fafb;
+
+  --surface-interactive-card-background:
+    #ffffff;
+
+  --surface-composer-inner:
+    #ffffff;
+  --surface-composer-signal-background: #f8fafb;
+  --surface-composer-mode-background: #f8fafb;
+
+  --surface-auth-overlay: rgba(232, 236, 240, 0.82);
+
+  --surface-popover-background: #ffffff;
+  --surface-popover-row: #f3f5f7;
+  --surface-popover-row-hover: #e9edf1;
+
+  /* ── Material hierarchy ── */
+  --mat-chrome-bg: #e8ecf0;
+  --mat-work-bg:
+    #f3f5f7;
+  --mat-work-text: var(--text-primary);
+  --mat-live-bg: #e8ecf0;
+  --mat-live-accent: var(--accent-cyan);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(21, 24, 28, 0.12), 0 2px 6px rgba(21, 24, 28, 0.06);
+
+  /* ── Widget tokens ── */
+
+  /* Buttons — slate-blue primary, white label */
+  --widget-button-primary-bg: #1f6fa8;
+  --widget-button-primary-color: #ffffff;
+  --widget-button-primary-shadow: rgba(31, 111, 168, 0.22);
+  --widget-button-secondary-bg: #ffffff;
+  --widget-button-secondary-border: rgba(21, 24, 28, 0.16);
+  --widget-button-secondary-color: #283039;
+  --widget-button-danger-bg: rgba(179, 38, 30, 0.08);
+  --widget-button-danger-border: rgba(179, 38, 30, 0.24);
+  --widget-button-danger-color: #b3261e;
+  --widget-close-hover-bg: #b3261e;
+  --widget-hero-avatar-bg: #1f6fa8;
+
+  /* Sidebar & item states */
+  --widget-item-active-bg: #dce2e8;
+  --widget-item-active-border: rgba(21, 24, 28, 0.14);
+  --widget-badge-bg: rgba(21, 24, 28, 0.05);
+  --widget-action-bg: rgba(21, 24, 28, 0.05);
+  --widget-action-hover-bg: rgba(31, 111, 168, 0.10);
+  --widget-action-hover-border: rgba(31, 111, 168, 0.32);
+  --widget-action-hover-color: #15181c;
+  --widget-scrollbar-color: rgba(21, 24, 28, 0.24);
+
+  /* Chat & copy */
+  --widget-chat-meta-error-color: #b3261e;
+  --widget-copy-chip-bg: #ffffff;
+  --widget-copy-chip-border: rgba(21, 24, 28, 0.16);
+  --widget-copy-chip-color: #283039;
+
+  /* Rail J glyph */
+  --widget-sprite-color: rgba(21, 24, 28, 0.92);
+
+  /* Home orbit */
+  --widget-face-glow-color: var(--accent-cyan);
+  --widget-face-shine-color: rgba(255, 255, 255, 0.84);
+  --widget-face-aura-primary: rgba(31, 111, 168, 0.10);
+  --widget-face-aura-secondary: rgba(21, 24, 28, 0.06);
+  /* Tool calls — slate-blue running and approval signals */
+  --widget-tool-bg:
+    #ffffff;
+  --widget-tool-border: rgba(21, 24, 28, 0.12);
+  --widget-tool-color: var(--text-secondary);
+  --widget-tool-success-color: #1a7447;
+  --widget-tool-error-color: #b3261e;
+  --widget-tool-denied-color: #8a5a00;
+  --widget-tool-code-bg: #eef1f4;
+  --widget-tool-code-color: #47505b;
+  --widget-approve-bg: #1f6fa8;
+  --widget-approve-border: rgba(23, 89, 138, 0.34);
+  --widget-approve-color: #ffffff;
+  --widget-approve-hover-border: rgba(23, 89, 138, 0.48);
+  --widget-deny-bg: rgba(21, 24, 28, 0.05);
+  --widget-deny-border: rgba(21, 24, 28, 0.16);
+  --widget-deny-color: rgba(21, 24, 28, 0.84);
+
+  /* Composer — send uses the reserved slate-blue accent */
+  --widget-placeholder-color: #67717d;
+  --widget-placeholder-focus-color: #56606c;
+  --widget-composer-mode-active-bg: rgba(31, 111, 168, 0.12);
+  --widget-send-bg: #1f6fa8;
+  --widget-send-border: rgba(31, 111, 168, 0.40);
+  --widget-send-color: #ffffff;
+  --widget-send-hover-bg: #17598a;
+  --widget-send-hover-color: #ffffff;
+  --widget-composer-signal-border: rgba(21, 24, 28, 0.16);
+  --widget-select-caret-color: #67717d;
+  --widget-select-hover-color: #15181c;
+  --widget-select-option-bg: var(--bg-surface);
+  --widget-select-option-color: #283039;
+  --widget-composer-meta-color: #67717d;
+  --widget-composer-scrollbar-color: rgba(21, 24, 28, 0.36);
+  --widget-token-pill-bg: rgba(21, 24, 28, 0.06);
+  --widget-token-pill-color: #47505b;
+
+  /* Interactive mode — slate-blue for explicit active selection */
+  --widget-interactive-card-border: rgba(21, 24, 28, 0.18);
+  --widget-interactive-intro-color: rgba(21, 24, 28, 0.92);
+  --widget-interactive-option-bg: rgba(21, 24, 28, 0.03);
+  --widget-interactive-option-border: rgba(21, 24, 28, 0.14);
+  --widget-interactive-option-color: rgba(21, 24, 28, 0.92);
+  --widget-interactive-option-hover-bg: rgba(21, 24, 28, 0.06);
+  --widget-interactive-option-hover-border: rgba(21, 24, 28, 0.26);
+  --widget-interactive-option-selected-bg: rgba(31, 111, 168, 0.12);
+  --widget-interactive-option-selected-border: rgba(31, 111, 168, 0.50);
+  --widget-interactive-option-selected-color: #17598a;
+  --widget-interactive-input-bg: #f8fafb;
+  --widget-interactive-input-color: rgba(21, 24, 28, 0.94);
+  --widget-interactive-label-color: rgba(61, 70, 81, 0.90);
+  --widget-interactive-prompt-color: rgba(21, 24, 28, 0.94);
+  --widget-interactive-note-color: rgba(61, 70, 81, 0.84);
+  --widget-interactive-disabled-color: rgba(61, 70, 81, 0.5);
+  --widget-input-focus-border: rgba(31, 111, 168, 0.75);
+  --widget-input-focus-glow: rgba(31, 111, 168, 0.16);
+
+  /* Settings shell — restrained slate-blue accents */
+  --widget-settings-badge-bg: rgba(31, 111, 168, 0.12);
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+
+  /* Activity states */
+  --widget-activity-pending-glow: rgba(31, 111, 168, 0.08);
+  --widget-activity-pending-border: rgba(31, 111, 168, 0.44);
+  --widget-activity-pending-color: #17598a;
+  --widget-activity-success-color: rgba(26, 116, 71, 0.94);
+  --widget-activity-error-color: #b3261e;
+  --widget-activity-pulse-color: rgba(31, 111, 168, 0.12);
+
+  /* Sprite activity dot — light-ground inks (light sheets only) */
+  --sprite-dot-active: #1f6fa8;
+  --sprite-dot-warn: #8a5a00;
+  --sprite-dot-error: #b3261e;
+  --sprite-dot-ok: rgba(26, 116, 71, 0.94);
+  --sprite-dot-muted: #56606c;
+
+  /* Attachments */
+  --widget-attachment-bg: rgba(233, 237, 241, 0.88);
+  --widget-attachment-border: rgba(21, 24, 28, 0.12);
+  --widget-attachment-color: #283039;
+  --widget-attachment-meta-color: #616b77;
+  --widget-attachment-remove-color: #47505b;
+  --widget-attachment-clear-color: #616b77;
+
+  /* Popover badge & stop */
+  --widget-stop-bg: rgba(179, 38, 30, 0.10);
+  --widget-stop-color: #b3261e;
+
+  /* Composer holo draw — muted for users who override the bundle default */
+  --composer-holo-opacity-active: 0.62;
+  --composer-holo-opacity-streaming: 0.54;
+  --composer-holo-draw-glow-alpha-scale: 1.6;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-palette="chalk"] .composer { background: #ffffff; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-palette="chalk"] .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  :root[data-palette="chalk"] .composer { background: #ffffff; }
+}

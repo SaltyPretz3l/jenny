@@ -1,4 +1,4 @@
-"""The gate scripts re-run under the repo venv when the invoking python lacks their deps."""
+"""The gate scripts re-run under the repo venv whenever the checkout has one."""
 
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.checks import repo_venv  # noqa: E402
-
-MISSING = "jenny_module_that_does_not_exist"
 
 
 class Recorder:
@@ -35,34 +33,27 @@ def fake_venv(root: Path) -> Path:
     return target
 
 
-def test_present_modules_never_re_run(tmp_path: Path) -> None:
-    fake_venv(tmp_path)
-    run = Recorder()
-    repo_venv.ensure_repo_venv(("json",), root=tmp_path, run=run)
-    assert run.calls == []
-
-
-def test_missing_module_re_runs_under_the_venv_with_the_same_arguments(
+def test_a_foreign_interpreter_re_runs_under_the_venv_with_the_same_arguments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The 2026-11-04 failure: the system python had psutil, so the old module probe
+    # never re-ran, and check_sidecar_packaging then died importing httpx.
     monkeypatch.delenv(repo_venv.REEXEC_ENV, raising=False)
     monkeypatch.setattr(sys, "argv", ["scripts/checks/run_all.py", "--flag"])
     target = fake_venv(tmp_path)
     run = Recorder(code=3)
     with pytest.raises(SystemExit) as exit_info:
-        repo_venv.ensure_repo_venv((MISSING,), root=tmp_path, run=run)
+        repo_venv.ensure_repo_venv(root=tmp_path, run=run)
     assert exit_info.value.code == 3
     [(args, env)] = run.calls
     assert args == [str(target), "scripts/checks/run_all.py", "--flag"]
     assert env[repo_venv.REEXEC_ENV] == "1"
 
 
-def test_no_venv_leaves_the_import_to_fail_on_its_own(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_venv_runs_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(repo_venv.REEXEC_ENV, raising=False)
     run = Recorder()
-    repo_venv.ensure_repo_venv((MISSING,), root=tmp_path, run=run)
+    repo_venv.ensure_repo_venv(root=tmp_path, run=run)
     assert run.calls == []
 
 
@@ -70,7 +61,7 @@ def test_a_re_run_never_re_runs_again(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv(repo_venv.REEXEC_ENV, "1")
     fake_venv(tmp_path)
     run = Recorder()
-    repo_venv.ensure_repo_venv((MISSING,), root=tmp_path, run=run)
+    repo_venv.ensure_repo_venv(root=tmp_path, run=run)
     assert run.calls == []
 
 
@@ -81,5 +72,5 @@ def test_already_the_venv_interpreter_does_not_re_run(
     target = fake_venv(tmp_path)
     monkeypatch.setattr(sys, "executable", str(target))
     run = Recorder()
-    repo_venv.ensure_repo_venv((MISSING,), root=tmp_path, run=run)
+    repo_venv.ensure_repo_venv(root=tmp_path, run=run)
     assert run.calls == []

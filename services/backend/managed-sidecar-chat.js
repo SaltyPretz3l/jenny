@@ -1,108 +1,65 @@
-const { applyRuntimeChildSendFields } = require('../session-runtime/child-capabilities');
 const {
   buildRecallQuery,
   inferEngineTypeFromModel,
 } = require('./backend-service-utils');
 const { resolveSessionLockdownRequest } = require('./session-lockdown-gate');
 const { inspectContextPreferences } = require('./context-preferences');
-const { buildPreparedMessages } = require('./chat-stream-reasoning');
 const { resolveSessionTranscriptAnswer } = require('./session-transcript-queries');
 const { applySessionTitleAtSend, prepareManagedSession } = require('./managed-sidecar-session-preflight');
 const { validateImageAttachmentsForManagedSend } = require('./managed-sidecar-attachments');
-const { API_VERSION } = require('./sidecar-client');
-const { buildRequestReasoningEffortField } = require('./backend-managed-reasoning');
-const {
-  waitForToolApproval,
-  handleToolNotification,
-} = require('./chat-stream-tool-handling');
+const { waitForToolApproval } = require('./chat-stream-tool-handling');
 const {
   createManagedChatStreamRuntime,
 } = require('./chat-stream-managed-runtime');
-const {
-  dumpTurnDiagnostic,
-  fetchTurnProviderDiagnostics,
-} = require('./turn-diagnostic-dump');
-const {
-  normalizePhaseClientTiming,
-  recordServicePhasePercentile,
-} = require('./phase-percentiles-aggregator');
+const { fetchTurnProviderDiagnostics } = require('./turn-diagnostic-dump');
+const { normalizePhaseClientTiming } = require('./phase-percentiles-aggregator');
 const {
   CANCEL_REASON_SESSION_DELETE,
   CANCEL_REASON_TIMEOUT, CANCEL_REASON_USER,
-  buildTerminalErrorPayload,
   createCancellationError,
-  enrichTerminalErrorPayloadForEmit,
-  isExpectedLifecycleCancellation,
-  resolveTerminalRouting,
   TERMINAL_STATUS_COMPLETED,
-  streamErrorDetailsFromAbortSignal,
 } = require('./chat-stream-terminal-utils');
-const { inferencePerformanceRequestField } = require('../performance/provider-identity');
 const {
   assembleContextForChat,
 } = require('./chat-stream-context-assembly');
-const {
-  ensureManagedEngineNotFallbackForChat,
-  ensureManagedLlamaServerReadyForChat,
-  ensureManagedNinferReadyForChat,
-  ensureManagedOllamaReadyForChat,
-  ensureManagedSidecarReadyForChat,
-  waitForManagedInitialization,
-  scheduleManagedSidecarReconnectAfterFailure,
-} = require('./managed-sidecar-chat-reconnect');
 const { CanonicalTurnEventCollector } = require('./canonical-turn-event-collector');
-const { dumpFailedTurnDiagnostic } = require('./managed-sidecar-chat-turn-seams');
 const {
   finishManagedRuntimeCompletion,
-  noteRuntimeInferenceSettlement,
   reportManagedContinuationAttention,
 } = require('./managed-sidecar-terminal-cleanup');
 const { settleHostedExecution } = require('./hosted-execution-settlement');
 const {
   noteToolObservationPromotions,
 } = require('./tool-observation-promotion');
-const {
-  abortImageBridgeExecutions, buildManagedSidecarChatSendOptions, releaseImageBridgeExecutions,
-} = require('./electron-tool-bridge');
-const {
-  createTurnEffectProbe,
-  sendManagedChatWithProviderAuthRetry,
-} = require('./provider-auth-turn-retry');
-const {
-  fitChatSendParamsToFrameBudgetWithOutcome,
-  projectCanonicalSessionMessagesForSend,
-} = require('./chat-send-frame-budget');
+const { releaseImageBridgeExecutions } = require('./electron-tool-bridge');
 const {
   admitTurnContextRows, managedToolPreferenceInput, wireContextKinds,
-  buildImageAttachmentSendParams,
-  buildAutomaticCompactionSendContext,
   buildLeanContextPreferences,
   captureManagedExecutionAuthority,
   createChatStreamWatchdog,
   deriveManagedTurnHistory,
-  emitManagedHistoryScopeNarrowing,
-  emitManagedTurnPerformanceSummary,
   normalizeDebugOptions,
   recordProviderDiagnosticPhases,
   summarizePromptMessages,
 } = require('./managed-sidecar-chat-helpers');
 const { resolveConfiguredLocalMaxLoopWallSeconds } = require('./chat-stream-admission');
 const { APPLICATION_TURN_HANDOFF_PREPARATION } = require('./session-handoff-context'); const { APPLICATION_TURN_DIGEST } = require('./application-turns');
-const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
+const { acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
 const { admitReportReservation } = require('./session-report-admission');
 const { isProposeRunMode } = require('./propose-mode');
-const { buildChatSendOptionalFields } = require('./chat-send-optional-fields');
-const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
+const { prepareManagedCheckpointHistory } = require('./managed-sidecar-continuation');
+// The turn's stages beyond orchestration: request shaping/sending, the failure
+// path and the telemetry around them.
 const {
-  assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol,
-} = require('../session-runtime/inference-protocol');
-const { prepareManagedCheckpointHistory, createManagedContinuationSend } = require('./managed-sidecar-continuation');
-// Idle watchdog + absolute backstop are engine-keyed (cloud engines get wider
-// ceilings than local ones) — see resolveChatStreamCeilings in
-// managed-sidecar-chat-helpers.js for the values and rationale.
-const CHAT_STREAM_REQUEST_SETTLE_GRACE_MS = 1_000;
+  buildManagedChatSendParams, ensureManagedEnginesReadyForChat, sendManagedChatTurnRequest,
+} = require('./managed-sidecar-chat-request');
+const { settleManagedTurnFailure } = require('./managed-sidecar-chat-failure');
+const {
+  createManagedTurnTiming, dumpTurnDiagnosticSafely, emitManagedTurnPreSendTelemetry,
+  noteManagedContextAssemblyCompleted, noteManagedContextAssemblyStarted,
+} = require('./managed-sidecar-chat-telemetry');
 async function startManagedSidecarChatStream(service, {
   sessionId,
   prompt,
@@ -118,7 +75,7 @@ async function startManagedSidecarChatStream(service, {
   approvalMode,
   debugOptions,
   clientTiming,
-  skillInvocation, imagePromptPin,
+  skillInvocation, imagePromptPin, author = null,
   editedMessageId,
   failureRetry,
   turnLease = null,
@@ -164,11 +121,12 @@ async function startManagedSidecarChatStream(service, {
   const pendingRun = (async () => {
     await new Promise((resolve) => setImmediate(resolve));
     let model = '';
-    let streamTimeoutError = null;
-    let managedSidecarRestartReason = '';
+    // The watchdog's timeout error and the terminal bookkeeping the finally block
+    // reads; settleManagedTurnFailure writes it in place.
+    const turnState = {
+      streamTimeoutError: null, restartReason: '', terminalStatus: 'cancelled', terminalSettledAt: undefined,
+    };
     let deferredQuestionBatchEvent = null;
-    let approvalCleanupTerminalState = 'cancelled';
-    let terminalSettledAt;
     let executionAuthority = null;
     let continuationPausePending = false;
     let providerDiagnosticsPromise;
@@ -222,7 +180,7 @@ async function startManagedSidecarChatStream(service, {
       normalizedInteractiveResponse,
       normalizedAttachments,
       transcriptPrompt,
-      userMessageId, skillInvocation, imagePromptPin, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
+      userMessageId, skillInvocation, imagePromptPin, author, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
       reuseExistingUserMessage: Boolean(editedAnchorMessageId), failureRetry,
       turnLease: activeTurnLease, runtimeAdmission,
       getSuspendedDecision: () => controller._runtimeDecisionControl?.suspendedDecision(),
@@ -237,38 +195,12 @@ async function startManagedSidecarChatStream(service, {
     const toolSummaries = new Map();
     function ensureNotAborted() {
       if (controller.signal.aborted) {
-        throw streamTimeoutError || new Error('Stream cancelled.');
+        throw turnState.streamTimeoutError || new Error('Stream cancelled.');
       }
     }
-    const timingMarkers = [];
-    timingMarkers.push({ name: 'send_initiated', ts_ms: Date.now() });
-    // Emit chat.send_initiated with renderer timing deltas (if provided). The renderer captures
-    // send_started_at_ms (keystroke/click time) and optimistic_rendered_at_ms; the ipc_latency_ms
-    // field below is the backend's view of how long the send took to reach the managed chat entry.
-    service._emitServiceLog('DEBUG', 'chat.send_initiated', {
-      sessionId: resolvedSessionId,
-      streamId,
-      traceId: requestTraceId,
-      // Unmeasured markers are null; Number(null) === 0 once logged the epoch here.
-      ipc_latency_ms: normalizedClientTiming.sendStartedAtMs != null
-        ? Math.max(Date.now() - normalizedClientTiming.sendStartedAtMs, 0) : null,
-      local_render_latency_ms: normalizedClientTiming.localRenderLatencyMs,
+    const { timingMarkers, logTiming, recordTiming, recordTimingMarker } = createManagedTurnTiming(service, {
+      sessionId: resolvedSessionId, streamId, traceId: requestTraceId, clientTiming: normalizedClientTiming,
     });
-    function logTiming(event, startedAt, details = {}) {
-      service._emitServiceLog('DEBUG', event, {
-        sessionId: resolvedSessionId,
-        streamId,
-        elapsedMs: Math.max(Date.now() - Number(startedAt || Date.now()), 0),
-        ...details,
-      });
-    }
-    function recordTiming(event, startedAt, markerName, details = {}) {
-      logTiming(event, startedAt, details);
-      timingMarkers.push({ name: String(markerName), ts_ms: Date.now() });
-    }
-    function recordTimingMarker(name) {
-      timingMarkers.push({ name: String(name), ts_ms: Date.now() });
-    }
     function fetchAndRecordProviderDiagnosticPhases() {
       providerDiagnosticsPromise ||= fetchTurnProviderDiagnostics({
         service,
@@ -283,8 +215,8 @@ async function startManagedSidecarChatStream(service, {
       if (controller.signal.aborted) {
         return;
       }
-      streamTimeoutError = createCancellationError(CANCEL_REASON_TIMEOUT, message);
-      controller.abort(streamTimeoutError);
+      turnState.streamTimeoutError = createCancellationError(CANCEL_REASON_TIMEOUT, message);
+      controller.abort(turnState.streamTimeoutError);
     }
     // Idle watchdog + absolute backstop, engine-keyed; starts on local
     // ceilings until the turn's engine is known (applyEngineType below).
@@ -342,14 +274,14 @@ async function startManagedSidecarChatStream(service, {
         });
         await runtime.emitDeterministicCompletion(transcriptAnswer);
         recordTimingMarker('deterministic_transcript_answer_completed');
-        terminalSettledAt = Date.now();
-        approvalCleanupTerminalState = TERMINAL_STATUS_COMPLETED;
+        turnState.terminalSettledAt = Date.now();
+        turnState.terminalStatus = TERMINAL_STATUS_COMPLETED;
         service._emitServiceLog('INFO', 'chat.deterministic_transcript_answer_completed', {
           sessionId: resolvedSessionId,
           streamId,
           traceId: requestTraceId,
         });
-        Promise.resolve(dumpTurnDiagnostic({
+        dumpTurnDiagnosticSafely({
           service,
           sessionId: resolvedSessionId,
           streamId,
@@ -367,15 +299,6 @@ async function startManagedSidecarChatStream(service, {
           mode: 'deterministic_transcript',
           counts: null,
           clientTiming: normalizedClientTiming,
-        })).catch((dumpError) => {
-          if (typeof service._emitServiceLog === 'function') {
-            service._emitServiceLog('WARN', 'chat.turn_diagnostic_dump_unexpected_error', {
-              sessionId: resolvedSessionId,
-              streamId,
-              traceId: requestTraceId,
-              message: String(dumpError?.message || dumpError),
-            });
-          }
         });
         return;
       }
@@ -460,33 +383,8 @@ async function startManagedSidecarChatStream(service, {
       turnDiagnosticState.promptContributions = promptContributions;
       // Server before sidecar: a sidecar initialized against a dead endpoint
       // falls back and throws, so the restart below would never be reached.
-      await ensureManagedLlamaServerReadyForChat(service, {
-        engineType,
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-      });
-      await ensureManagedNinferReadyForChat(service, {
-        engineType,
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-      });
-      await ensureManagedSidecarReadyForChat(service, {
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-      });
-      await ensureManagedOllamaReadyForChat(service, {
-        engineType,
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-      });
-      await ensureManagedEngineNotFallbackForChat(service, {
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
+      await ensureManagedEnginesReadyForChat(service, {
+        engineType, sessionId: resolvedSessionId, streamId, traceId: requestTraceId,
       });
 
       // The first turn's handoff row (fail-closed) joins only a brand-new model turn; queued mail also joins a failure
@@ -507,29 +405,9 @@ async function startManagedSidecarChatStream(service, {
         }));
       }
 
-      const contextAssemblyStartedAt = Date.now();
-      recordTimingMarker('context_assembly_started');
-      if (normalizedClientTiming.localRenderLatencyMs != null) {
-        recordServicePhasePercentile(service, 'click_to_optimistic_render', normalizedClientTiming.localRenderLatencyMs);
-      }
-      if (normalizedClientTiming.optimisticRenderedAtMs != null) {
-        recordServicePhasePercentile(
-          service,
-          'optimistic_render_to_context_assembly_started',
-          Math.max(contextAssemblyStartedAt - normalizedClientTiming.optimisticRenderedAtMs, 0)
-        );
-      }
-      service._emitServiceLog('INFO', 'chat.context_assembly_started', {
-        sessionId: resolvedSessionId,
-        streamId,
-        engineType,
-        model,
-        history_scope: contextPreferences.history_scope,
-        include_personality: contextPreferences.include_personality !== false,
-        include_memory: contextPreferences.include_memory !== false,
-        include_git_context: contextPreferences.include_git_context !== false,
-        include_codebase_context: contextPreferences.include_codebase_context !== false,
-        include_active_file_context: contextPreferences.include_active_file_context !== false,
+      const contextAssemblyStartedAt = noteManagedContextAssemblyStarted(service, {
+        recordTimingMarker, clientTiming: normalizedClientTiming,
+        sessionId: resolvedSessionId, streamId, engineType, model, contextPreferences,
       });
       const {
         memoryPolicy,
@@ -556,19 +434,9 @@ async function startManagedSidecarChatStream(service, {
       Object.assign(promptContributions, assembledPromptContributions || {});
       turnDiagnosticState.promptContributions = promptContributions;
       turnDiagnosticState.contextAssemblyBreakdown = contextAssemblyBreakdown || null;
-      const contextAssemblyCompletedAt = Date.now();
-      recordTimingMarker('context_assembly_completed');
-      service._emitServiceLog('INFO', 'chat.context_assembly_completed', {
-        sessionId: resolvedSessionId,
-        streamId,
-        engineType,
-        model,
-        elapsedMs: Math.max(contextAssemblyCompletedAt - contextAssemblyStartedAt, 0),
-        included_personality: contextAssemblyBreakdown?.includedPersonality === true,
-        included_memory: contextPreferences.include_memory !== false,
-        included_git_context: contextPreferences.include_git_context !== false,
-        included_codebase_context: contextPreferences.include_codebase_context !== false,
-        memory_policy_enabled: memoryPolicy?.enabled === true,
+      const contextAssemblyCompletedAt = noteManagedContextAssemblyCompleted(service, {
+        recordTimingMarker, sessionId: resolvedSessionId, streamId, engineType, model,
+        contextAssemblyStartedAt, contextAssemblyBreakdown, contextPreferences, memoryPolicy,
       });
 
       if (!runtimeAdmission) service.emit('chat-stream', {
@@ -600,170 +468,34 @@ async function startManagedSidecarChatStream(service, {
         });
       }
 
-      const performanceSummaryEmittedAt = Date.now();
-      recordTimingMarker('performance_summary_emitted');
-      emitManagedTurnPerformanceSummary(service, {
-        resolvedSessionId,
-        streamId,
-        requestTraceId,
-        canonicalSessionMessages,
-        effectiveMode,
-        engineType,
-        model,
-        contextPreferences,
-        contextAssemblyBreakdown,
-        preparedMessages,
-        textAttachments,
-        imageAttachments,
-        requestToolPreferences,
-        normalizedDebugOptions,
-        sessionTimingStartedAt,
-        contextAssemblyStartedAt,
-        contextAssemblyCompletedAt,
-        performanceSummaryEmittedAt,
+      const sidecarRequestStartedAt = emitManagedTurnPreSendTelemetry(service, {
+        recordTimingMarker, resolvedSessionId, streamId, requestTraceId, canonicalSessionMessages,
+        effectiveMode, engineType, model, contextPreferences, contextAssemblyBreakdown, preparedMessages,
+        textAttachments, imageAttachments, requestToolPreferences, normalizedDebugOptions,
+        sessionTimingStartedAt, contextAssemblyStartedAt, contextAssemblyCompletedAt, promptContributions,
       });
-      service._emitServiceLog('INFO', 'chat.prompt_contributions', {
-        sessionId: resolvedSessionId,
-        streamId,
-        contributions: promptContributions,
+      const chatSendParams = buildManagedChatSendParams(service, {
+        resolvedSessionId, requestId, turnId, requestTraceId, promotionLogger, lockdownRequest,
+        sessionSummary, sessionMessages, normalizedPreferences, toolContext, safetyPolicy, activeTurnLease,
+        sessionStartDate, effectiveMode, normalizedInteractiveResponse, preparedMessages, canonicalSessionMessages,
+        exchangeTitle, requestedModel, requestedEngine, imageAttachments, memoryPolicy, contextBlocks,
+        requestToolPreferences, sessionHandoffPreparation, requestApprovalMode, engineType, normalizedDebugOptions,
+        skillInvocation, executionAuthority,
       });
-
-      const sidecarRequestStartedAt = Date.now();
-      recordTimingMarker('sidecar_request_sent');
-      recordServicePhasePercentile(
-        service,
-        'context_assembly_completed_to_sidecar_request_sent',
-        Math.max(sidecarRequestStartedAt - contextAssemblyCompletedAt, 0)
-      );
-      service._emitServiceLog('INFO', 'chat.sidecar_request_sent', {
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-        mode: effectiveMode,
-        engineType,
-        model,
-        message_count: preparedMessages.length,
-        canonical_message_count: canonicalSessionMessages.length,
-      });
-      // W7: attach a truthful per-tool ledger for a hard-interrupted prior turn
-      // (surviving journal partition), so the model gets ground truth over its
-      // own last narration. null on every clean or approval-paused turn.
-      const interruptedTurnReceipts = computeInterruptedTurnReceipts({
-        journal: service.turnEventJournal,
-        sessionId: resolvedSessionId,
-        currentTurnId: requestId,
-        logger: promotionLogger,
-      });
-      const chatSendParams = {
-        subagent_routing: require('../subagent-routing-settings').normalizeSubagentRouting(
-          service.configService?.getState?.()?.subagentRouting
-        ),
-        accept_version: API_VERSION,
-        request_id: requestId, logical_turn_id: turnId,
-        trace_id: requestTraceId,
-        session_id: resolvedSessionId,
-        session_offline_lockdown: lockdownRequest.active,
-        // Workspace active use, approved plan, propose mode, primary role (row 69), safety policy.
-        ...buildChatSendOptionalFields(service, { sessionId: resolvedSessionId, sessionSummary, sessionMessages,
-          planMode: normalizedPreferences.plan_mode, workspaceRoot: toolContext.workspaceRoot, safetyPolicy }),
-        session_incarnation: activeTurnLease.identity.sessionIncarnation,
-        generation: activeTurnLease.identity.generation,
-        session_start_date: sessionStartDate,
-        mode: effectiveMode,
-        interactive_response: normalizedInteractiveResponse,
-        interactive_round_count: normalizedPreferences.interactive_round_count,
-        messages: preparedMessages,
-        canonical_session_messages: projectCanonicalSessionMessagesForSend(canonicalSessionMessages), // Wire-only: keep local full for transcript queries, recall, compaction, and telemetry.
-        session_title: String(sessionSummary?.title || exchangeTitle || '').trim(),
-        ...buildRequestReasoningEffortField(service, normalizedPreferences.reasoning_effort, requestedModel, requestedEngine),
-        ...buildImageAttachmentSendParams(imageAttachments),
-        ...(interruptedTurnReceipts ? { interrupted_turn_receipts: interruptedTurnReceipts } : {}),
-        memory_policy: memoryPolicy, ...require('./session-context-usage').contextCalibrationSendField(sessionSummary),
-        ...(contextBlocks?.length ? { context_blocks: contextBlocks } : {}),
-        ...(requestToolPreferences ? { tool_preferences: requestToolPreferences } : {}), ...(sessionHandoffPreparation ? { handoff_preparation: sessionHandoffPreparation } : {}),
-        approval_mode: requestApprovalMode,
-        ...inferencePerformanceRequestField(service, { engineType, sessionId: resolvedSessionId, requestId }),
-        ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}), ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
-        execution_context: service.sessionExecutionAuthority.toExecutionContext(executionAuthority),
-      };
-      await waitForManagedInitialization(service, controller.signal);
-      const continuationSend = createManagedContinuationSend({ service, runtimeContinuation, controller, activateCanonical: runtime.activateCanonicalContinuation,
-        gateway: runtimeOperationGateway, collector: turnEventCollector, canonicalSessionMessages,
-        contextPreferences, compactedHistory, sessionSummary, traceId: requestTraceId });
-      applyRuntimeChildSendFields(chatSendParams, executionAuthority, runtimeOperationGateway, continuationSend, runtimeBudgetRequired);
-      // Frame fitting trims canonical history first, then whole history rounds.
-      const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
-        rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
-          attachments: textAttachments, skillInvocation, imagePromptPin, ...wireKinds,
-          contextPreferences: { ...contextPreferences, history_scope: historyScope },
-        }),
-        // The helper reports an irreducible frame at ERROR.
-        log: (level, event, payload) => service._emitServiceLog(level, event, {
-          sessionId: resolvedSessionId,
-          streamId,
-          traceId: requestTraceId,
-          ...payload,
-        }),
-      });
-      const boundedChatSendParams = frameFit.params;
-      const continuationBoundary = continuationSend?.bindFrame(frameFit);
-      runtime.setAutomaticCompactionContext(buildAutomaticCompactionSendContext({
-        contextPreferences,
-        featureFlags: service.featureFlags,
-        frameOutcome: frameFit.outcome,
-        canonicalSessionMessages,
-        userMessageId,
-      }));
-      emitManagedHistoryScopeNarrowing(service, frameFit.outcome, runtime.getEventBase());
-      // Request-time auth retry remains legal only before any turn effect.
-      const turnEffectProbe = createTurnEffectProbe();
-      const chatSendOptions = () => buildManagedSidecarChatSendOptions({
-          service, controller, streamId, resolvedSessionId, requestId, requestTraceId,
-          runtime, toolContext, handleToolNotification, waitForToolApproval,
-          turnEventCollector, normalizedPreferences,
-          noteStreamActivity: streamWatchdog.noteActivity,
-          pauseStreamIdleTimer: streamWatchdog.pauseForApproval,
-          onNotificationObserved: turnEffectProbe.note,
-          onApprovalObserved: turnEffectProbe.noteApproval,
-          executionAuthority, turnIdentity: activeTurnLease.identity,
-          // The idle watchdog handles progress; transport follows the absolute cap.
-          timeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs
-            + CHAT_STREAM_REQUEST_SETTLE_GRACE_MS,
-      });
-      const runtimeOperationHandler = (params) => {
-        if (params?.kind === 'continuation' && continuationBoundary) return continuationBoundary.handleOperation(params);
-        const result = ['inference', 'tool'].includes(params?.kind) && runtimeOperationGateway
-          ? runtimeOperationGateway.handle(params)
-          : service.sessionExecutionAuthority.checkRuntimeOperation(executionAuthority, params);
-        return noteRuntimeInferenceSettlement(params, result, runtimeOnInferenceSettlement);
-      };
-      if (runtimeOperationGateway) {
-        (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
-        controller._runtimeSettlementUnregister = retainRuntimeSettlementHandler(service.sidecarClient,
-          requestId, runtimeOperationHandler);
-      }
-      runtimeAssertCurrent?.();
-      const providerOptions = () => ({
-        ...chatSendOptions(),
-        onRuntimeOperation: runtimeOperationHandler,
-      });
-      const result = await sendManagedChatWithProviderAuthRetry({
-        service, engineType, runtime, controller, probe: turnEffectProbe,
-        params: boundedChatSendParams,
-        options: providerOptions(),
-        assertBeforeSend: () => {
-          runtimeAssertCurrent?.(); continuationSend?.assertProtocol();
-          if (runtimeOperationGateway) (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
-        },
-        log: service._emitServiceLog.bind(service),
-        ids: { sessionId: resolvedSessionId, streamId, traceId: requestTraceId },
+      const { result, boundedChatSendParams, continuationBoundary } = await sendManagedChatTurnRequest(service, {
+        controller, runtime, runtimeContinuation, runtimeOperationGateway, runtimeBudgetRequired,
+        runtimeAssertCurrent, runtimeOnInferenceSettlement, turnEventCollector, chatSendParams,
+        executionAuthority, checkpointHistory, canonicalSessionMessages, compactedHistory, preparedHistoryMessages,
+        contextPreferences, sessionSummary, prompt, textAttachments, skillInvocation, imagePromptPin, wireKinds,
+        resolvedSessionId, streamId, requestId, requestTraceId, userMessageId, toolContext, normalizedPreferences,
+        streamWatchdog, activeTurnLease, engineType,
       });
       recordTiming('chat.sidecar_request_settled', sidecarRequestStartedAt, 'sidecar_request_settled', {
         status: String(result?.status || ''),
       });
 
       if (controller.signal.aborted) {
-        throw streamTimeoutError || new Error('Stream cancelled.');
+        throw turnState.streamTimeoutError || new Error('Stream cancelled.');
       }
       if (result?.status === 'paused') {
         continuationPausePending = true;
@@ -783,13 +515,13 @@ async function startManagedSidecarChatStream(service, {
         runtime.emitQuestionBatchEvent(deferredQuestionBatchEvent);
         deferredQuestionBatchEvent = null;
       }
-      approvalCleanupTerminalState = String(settledTerminal?.status || '').trim()
+      turnState.terminalStatus = String(settledTerminal?.status || '').trim()
         || TERMINAL_STATUS_COMPLETED;
-      terminalSettledAt = Date.now();
+      turnState.terminalSettledAt = Date.now();
       recordTimingMarker('terminal_settled');
       const providerDiagnostics = await fetchAndRecordProviderDiagnosticPhases();
       // Record the actual non-throwing terminal status, including denial.
-      Promise.resolve(dumpTurnDiagnostic({
+      dumpTurnDiagnosticSafely({
         service,
         sessionId: resolvedSessionId,
         streamId,
@@ -808,185 +540,18 @@ async function startManagedSidecarChatStream(service, {
         counts: null,
         clientTiming: normalizedClientTiming,
         providerDiagnostics,
-      })).catch((dumpError) => {
-        if (typeof service._emitServiceLog === 'function') {
-          service._emitServiceLog('WARN', 'chat.turn_diagnostic_dump_unexpected_error', {
-            sessionId: resolvedSessionId,
-            streamId,
-            traceId: requestTraceId,
-            message: String(dumpError?.message || dumpError),
-          });
-        }
       });
     } catch (error) {
       if (continuationPausePending) {
         reportManagedContinuationAttention(service, runtime, error, { traceId: requestTraceId, timingMarkers, turnDiagnosticState, model, clientTiming: normalizedClientTiming });
         return;
       }
-      const effectiveError = streamTimeoutError || (
-        controller.signal.aborted
-          ? streamErrorDetailsFromAbortSignal(controller.signal).error
-          : error
-      );
-      // F-01 containment: the synchronous re-check-before-claim in
-      // persistUserMessage() lost the admission race to a concurrent send on
-      // this session. No user message was persisted and no active_turn was
-      // claimed for THIS turn -- it never started one, so it is not a failed
-      // turn and must not run the generic failed-turn machinery below (no
-      // phantom assistant-failure row with no matching user message, no
-      // sidecar restart consideration, no provider-diagnostics fetch). Reuse
-      // the existing chat-stream 'error' event shape (same shape the
-      // external path's session_busy rejection carries) so the renderer's
-      // existing error handling surfaces the busy state with no new wiring.
-      if (effectiveError && effectiveError.code === 'session_busy') {
-        service._emitServiceLog('WARN', 'chat.session_busy_rejected', {
-          sessionId: resolvedSessionId,
-          streamId,
-          traceId: requestTraceId,
-        });
-        service.emit('chat-stream', {
-          type: 'error',
-          message: String(effectiveError.message || 'a turn is already running'),
-          error_code: 'session_busy',
-          category: 'session_busy',
-          retryable: true,
-          status: 'runtime_error',
-          ...runtime.getEventBase(),
-        });
-        return;
-      }
-      if (streamTimeoutError) {
-        managedSidecarRestartReason = 'chat.timeout';
-        service._emitServiceLog('WARN', 'chat.stream_timeout', {
-          sessionId: resolvedSessionId,
-          streamId,
-          model,
-          idleTimeoutMs: streamWatchdog.getCeilings().idleTimeoutMs,
-          absoluteTimeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs,
-          message: String(streamTimeoutError.message || streamTimeoutError),
-        });
-      }
-      // Keep active_turn until persistence so crash recovery can reconcile it.
-      runtime.emitThinkingStatus('');
-      const {
-        sidecarErrorCode,
-        sidecarErrorRetryable,
-        sidecarErrorCategory,
-        sidecarTerminalSubcode,
-        sidecarErrorType,
-        sidecarErrorMessage,
-      } = runtime.getErrorState();
-      const normalizedErrorPayload = buildTerminalErrorPayload(
-        effectiveError,
-        streamTimeoutError
-          ? 'timeout'
-          : (controller.signal.aborted ? 'cancelled' : sidecarErrorCategory)
-      );
-      await abortImageBridgeExecutions(service, streamId); // A lost transport cannot carry the render's result.
-      await settleHostedExecution(service, streamId, normalizedErrorPayload);
-      if (sidecarErrorCode && !normalizedErrorPayload.error_code) {
-        normalizedErrorPayload.error_code = sidecarErrorCode;
-      }
-      if (sidecarErrorRetryable === false) {
-        normalizedErrorPayload.retryable = false;
-      }
-      if (sidecarTerminalSubcode && !normalizedErrorPayload.terminal_subcode) {
-        normalizedErrorPayload.terminal_subcode = sidecarTerminalSubcode;
-      }
-      if (sidecarErrorType && !normalizedErrorPayload.error_type) {
-        normalizedErrorPayload.error_type = sidecarErrorType;
-      }
-      if (sidecarErrorMessage && !normalizedErrorPayload.error_message) {
-        normalizedErrorPayload.error_message = sidecarErrorMessage;
-      }
-      noteToolObservationPayload(effectiveError?.rpc?.data?.tool_observations);
-      const visibleCompletionEmitted = runtime.isVisibleCompletionEmitted();
-      const reconnectReason = scheduleManagedSidecarReconnectAfterFailure(
-        service,
-        normalizedErrorPayload,
-        {
-          streamTimeout: Boolean(streamTimeoutError),
-          visibleCompletionEmitted,
-          sessionId: resolvedSessionId,
-          streamId,
-          traceId: requestTraceId,
-        }
-      );
-      if (reconnectReason) {
-        managedSidecarRestartReason = reconnectReason;
-      }
-      await require('../execution/execution-settlement').settleExecution(service, streamId, normalizedErrorPayload);
-      const terminal = resolveTerminalRouting({
-        status: normalizedErrorPayload.status,
-        terminalSubcode: normalizedErrorPayload.terminal_subcode,
-        visibleCompletionEmitted,
+      await settleManagedTurnFailure(service, {
+        error, turnState, controller, runtime, streamWatchdog, model,
+        resolvedSessionId, streamId, requestTraceId,
+        timingMarkers, recordTimingMarker, turnDiagnosticState, normalizedClientTiming,
+        fetchAndRecordProviderDiagnosticPhases, noteToolObservationPayload,
       });
-      approvalCleanupTerminalState = terminal.status;
-      recordTimingMarker('terminal_settled');
-      terminalSettledAt = Date.now();
-      // A failed phase recording yields undefined, so the dump still runs and fetches for itself.
-      fetchAndRecordProviderDiagnosticPhases().catch((providerDiagnosticError) => {
-        if (typeof service._emitServiceLog === 'function') {
-          service._emitServiceLog('WARN', 'chat.provider_phase_percentiles_failed', {
-            sessionId: resolvedSessionId,
-            streamId,
-            traceId: requestTraceId,
-            message: String(providerDiagnosticError?.message || providerDiagnosticError),
-          });
-        }
-      }).then((providerDiagnostics) => dumpFailedTurnDiagnostic({
-        service,
-        sessionId: resolvedSessionId,
-        streamId,
-        traceId: requestTraceId,
-        terminal,
-        timingMarkers,
-        turnDiagnosticState,
-        runtime,
-        normalizedErrorPayload,
-        sidecarErrorType,
-        sidecarErrorMessage,
-        model,
-        clientTiming: normalizedClientTiming,
-        providerDiagnostics,
-      }));
-      if (terminal.logOnlyLateFailure) {
-        const expectedLifecycleCancellation = isExpectedLifecycleCancellation(normalizedErrorPayload);
-        const settlementEvent = expectedLifecycleCancellation ? 'cancelled' : 'failed';
-        service._emitServiceLog(expectedLifecycleCancellation ? 'INFO' : 'WARN',
-          `chat.stream_late_settlement_${settlementEvent}`, {
-          sessionId: resolvedSessionId, streamId, model,
-          message: String(effectiveError && effectiveError.message || effectiveError),
-          timedOut: Boolean(streamTimeoutError), status: terminal.status,
-          terminalSubcode: terminal.terminalSubcode,
-          cancelReason: normalizedErrorPayload.cancel_reason || '',
-        });
-        if (!runtime.isTerminalCoordinatorHandled()) {
-          runtime.clearReconnectStateOnFailure();
-        }
-        return;
-      }
-      const coordinatedFailure = await runtime.settleFailureTerminal(
-        normalizedErrorPayload,
-        terminal
-      );
-      if (!coordinatedFailure.handled) {
-        if (runtime.shouldPersistFailureMessage() && terminal.persistAssistantFailure) {
-          runtime.persistFailureMessage(normalizedErrorPayload);
-        } else {
-          runtime.clearReconnectStateOnFailure();
-        }
-        if (terminal.emitErrorEvent) {
-          service.emit('chat-stream', {
-            type: 'error',
-            ...enrichTerminalErrorPayloadForEmit(normalizedErrorPayload, {
-              terminalStatus: terminal.status,
-              terminalSubcode: terminal.terminalSubcode,
-            }),
-            ...runtime.getEventBase(),
-          });
-        }
-      }
     } finally {
       streamWatchdog.clear();
       releaseImageBridgeExecutions(service, streamId);
@@ -994,9 +559,9 @@ async function startManagedSidecarChatStream(service, {
       if (!continuationPausePending) runtimeCompletion = await finishManagedRuntimeCompletion({
         service, runtime, actorRegistry, lease: activeTurnLease, turnEventCollector,
         sessionId: resolvedSessionId, streamId,
-        terminalStatus: approvalCleanupTerminalState,
-        deferredQuestionBatchEvent, runtimeOperationGateway, terminalSettledAt,
-        managedSidecarRestartReason, requestTraceId,
+        terminalStatus: turnState.terminalStatus,
+        deferredQuestionBatchEvent, runtimeOperationGateway, terminalSettledAt: turnState.terminalSettledAt,
+        managedSidecarRestartReason: turnState.restartReason, requestTraceId,
       });
     }
   })();

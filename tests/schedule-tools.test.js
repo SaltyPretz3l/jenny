@@ -44,7 +44,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('schedule_change refuses bad top-level shapes before the port and strips purpose from what it forwards', async () => {
   const { context, calls } = harness();

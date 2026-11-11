@@ -9,7 +9,6 @@ const assert = require('node:assert/strict');
 const { GENERAL_PROJECT_ID } = require('../../services/projects/project-schema');
 const {
   ElectronSessionStore,
-  STORE_SCHEMA_VERSION,
   normalizeSession,
 } = require('../../services/backend/electron-session-store');
 const { migrateStorePayload } = require('../../services/backend/session-store-migrations');
@@ -56,7 +55,6 @@ for (const failMigration of [false, true]) test(`legacy split summaries have pro
 });
 
 test('session schema 21 migration defaults missing and malformed attribution to General', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 26);
   const migrated = migrateStorePayload({
     schema_version: 20,
     sessions: {

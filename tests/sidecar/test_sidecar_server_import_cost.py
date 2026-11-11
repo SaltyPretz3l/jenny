@@ -91,7 +91,14 @@ import sys
 # pending_todos, skill_mentions, executable_lookup, exact_secret_redaction, and row 103's
 # verify_after_write (tool_loop hub, with verification_gate) and web_url_policy (split out
 # of web_http, no new eager code). 412: row 103 item 2's command_prefix (with tools/policy).
-_MEASURED_SIDECAR_MODULES = 412
+# 2026-11-03: 420. Row 104 S6 size split: config_sections, tools/policy_rules,
+# tools/approval_presentation, tool_loop_replies, tool_loop_result, tool_loop_run_lifecycle,
+# tool_execution_admission and tool_execution_outcomes were extracted from modules already on
+# the path (config, tools/policy, tool_loop, tool_loop_run, tool_execution); no new eager code.
+# 2026-11-03: 423. Row 105 W2-G size split: chat_decision_preflight, tool_loop_call_state and
+# tool_loop_wind_down were extracted from modules already on the path (chat_decision,
+# tool_loop_calls, tool_loop_recovery); no new eager code.
+_MEASURED_SIDECAR_MODULES = 423
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to

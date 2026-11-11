@@ -96,7 +96,6 @@ def test_blocked_shell_call_recovers_and_siblings_execute() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -146,7 +145,6 @@ def test_chat_mode_tool_calls_recover_to_graceful_final_response() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -226,7 +224,6 @@ def test_degraded_tool_transport_surfaces_status_once() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -475,7 +472,6 @@ def test_malformed_tool_arguments_fail_one_call_and_siblings_execute() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
     )
     events: list[object] = []
 
@@ -502,7 +498,7 @@ def test_malformed_tool_arguments_fail_one_call_and_siblings_execute() -> None:
     assert blocked[0].call_id == "call_bad_args"
     assert len(succeeded) == 1, "the sibling call must still execute"
     assert mcp_client.executions == [
-        ("mermaid_generate", {"prompt": "flowchart TD\n  a --> b", "_jenny_read_only": False})
+        ("mermaid_generate", {"prompt": "flowchart TD\n  a --> b"})
     ], "the malformed call must never be dispatched"
     # The turn survived: a normal final response, not a turn-fatal chat.error.
     assert decision.response_text == "One call was malformed; here is the diagram."

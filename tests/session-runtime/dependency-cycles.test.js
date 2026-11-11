@@ -92,7 +92,8 @@ for (const announcements of [true, false]) test(`repeated dependency retains pro
     const root = path.resolve(__dirname, '../..');
     const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
     const run = spawnSync(python, ['tests/helpers/session-runtime-python-resume.py'], {
-      cwd: root, input: JSON.stringify(payload), encoding: 'utf8', timeout: 90000, maxBuffer: 1024 * 1024 });
+      cwd: root, input: JSON.stringify(payload), encoding: 'utf8', timeout: 90000, maxBuffer: 1024 * 1024,
+      env: { ...process.env, JENNY_ENABLE_RUNTIME_CHILD_TOOLS: '1' } });
     assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
     const observed = JSON.parse(run.stdout);
     assert.equal(observed.status, 'completed');

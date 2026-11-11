@@ -325,7 +325,6 @@
       contextPanelController,
       workspaceChromeController,
       workspaceStateController,
-      pinToTopController,
       chatWayfinderController,
       thinkingIndicator,
       lifecycleController,
@@ -446,8 +445,6 @@
     registerCleanup(() => workspaceStateController?.dispose?.());
     registerCleanup(() => modules.contextUsageModule?.clearAllUsage?.());
     registerCleanup(() => disposeViewportController?.());
-    pinToTopController?.bind();
-    registerCleanup(() => pinToTopController?.dispose?.());
     chatWayfinderController?.bind?.();
     registerCleanup(() => chatWayfinderController?.dispose?.());
     registerCleanup(() => {

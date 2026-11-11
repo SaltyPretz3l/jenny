@@ -94,7 +94,7 @@ async function createToolPreferenceService(title, tempPrefix) {
   return { created, service, capturedRequests, completed };
 }
 
-test('backend service omits tool_preferences when toolPreferences are absent', async () => {
+test('backend service sends only the default-off tools when toolPreferences are absent', async () => {
   const { created, service, capturedRequests, completed } = await createToolPreferenceService(
     'Tool Preferences Absent Session',
     'jenny-shell-userdata-tool-prefs-absent-'
@@ -108,7 +108,7 @@ test('backend service omits tool_preferences when toolPreferences are absent', a
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
-  assert.equal(Object.prototype.hasOwnProperty.call(chatSendRequest.params, 'tool_preferences'), false);
+  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser'] });
 });
 
 test('backend service forwards known false toolPreferences toggles and ignores unknown keys', async () => {
@@ -132,11 +132,11 @@ test('backend service forwards known false toolPreferences toggles and ignores u
   assert.ok(chatSendRequest);
   // Composer Chat panel (2026-09-30): per-chat switches travel as a deny-list only.
   assert.deepEqual(chatSendRequest.params.tool_preferences, {
-    disabled_tools: ['fetch_url', 'web_search'],
+    disabled_tools: ['browser', 'fetch_url', 'web_search'], // row 114: browser is off until a chat switches it on
   });
 });
 
-test('backend service omits tool_preferences when toolPreferences payload has no known boolean toggles', async () => {
+test('backend service sends only the default-off browser deny when toolPreferences has no known boolean toggles', async () => {
   const { created, service, capturedRequests, completed } = await createToolPreferenceService(
     'Tool Preferences Invalid Session',
     'jenny-shell-userdata-tool-prefs-invalid-'
@@ -155,5 +155,5 @@ test('backend service omits tool_preferences when toolPreferences payload has no
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
-  assert.equal(Object.prototype.hasOwnProperty.call(chatSendRequest.params, 'tool_preferences'), false);
+  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser'] });
 });

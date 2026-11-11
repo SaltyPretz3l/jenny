@@ -80,7 +80,6 @@ function createHarness(t) {
       factories: {
         scrollCoordinatorUtils,
         viewportUtils,
-        pinToTopUtils: {},
       },
       controllers: { thinkingController, reducedMotionQuery: { matches: true } },
       callbacks: {
@@ -95,7 +94,6 @@ function createHarness(t) {
         buildInteractiveRecapViewModel: () => ({}),
         renderMessages: () => {},
         updateAssistantSpritePosition: () => {},
-        getWayfinderController: () => null,
       },
       ...extra,
     });

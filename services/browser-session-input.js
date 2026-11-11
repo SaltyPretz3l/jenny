@@ -106,13 +106,14 @@ async function pageScriptOrNull(service, session, script, signal) {
       session, script, INPUT_ACK_NODE_TIMEOUT_MS, 'Browser input acknowledgement timed out.'
     ), signal);
   } catch (error) {
-    if (error?.name === 'AbortError') throw error;
+    if (isAbort(error)) throw error;
     return null;
   }
 }
 
 // keyDown, then char for Enter/Space (button activation and implicit form
 // submit run on the keypress), then keyUp; returns once the page handled it.
+// Answers false when the page ran and never saw the key, null when it cannot tell.
 async function sendKeyPress(service, session, signal, keyCode, { withChar }) {
   const sendInputEvent = session.webContents?.sendInputEvent;
   if (typeof sendInputEvent !== 'function') {
@@ -123,8 +124,9 @@ async function sendKeyPress(service, session, signal, keyCode, { withChar }) {
   sendInputEvent.call(session.webContents, { type: 'keyDown', keyCode });
   if (withChar) sendInputEvent.call(session.webContents, { type: 'char', keyCode });
   sendInputEvent.call(session.webContents, { type: 'keyUp', keyCode });
-  if (armed) await pageScriptOrNull(service, session, INPUT_ACK_WAIT_SCRIPT, signal);
+  const seen = armed ? await pageScriptOrNull(service, session, INPUT_ACK_WAIT_SCRIPT, signal) : null;
   throwIfAborted(signal);
+  return seen;
 }
 
 // A never-shown window composites nothing on its own: rAF stays parked and
@@ -164,7 +166,7 @@ async function waitForFreshFrame(service, session, signal) {
       signal
     );
   } catch (error) {
-    if (error?.name === 'AbortError') throw error;
+    if (isAbort(error)) throw error;
   }
   throwIfAborted(signal);
 }
@@ -225,10 +227,15 @@ async function pressKey(service, session, signal, options) {
   return service._browserActionResult(session, 'pressed', { selector, key });
 }
 
+function isAbort(error) {
+  return error?.name === 'AbortError';
+}
+
 module.exports = {
   focusSelector,
   holdFrameProduction,
   hoverSelector,
+  isAbort,
   pressKey,
   sendKeyPress,
   throwIfAborted,

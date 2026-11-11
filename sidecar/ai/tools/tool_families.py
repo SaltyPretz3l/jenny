@@ -6,13 +6,14 @@ import re
 # - "other": the catalog's fallback family for MCP, plugin and unknown tools.
 #   It must stay known, or a sub-agent's "disable every ungranted family"
 #   preference would leave those tools enabled.
-# - "browser", "rich_files": families of retired tools (see
+# - "browser", "diagram", "rich_files": families of retired tools (see
 #   RETIRED_TOOL_FAMILY_NAMES). Kept so stored preferences and grant requests
 #   naming them still validate instead of failing as malformed.
 KNOWN_TOOL_FAMILIES: frozenset[str] = frozenset(
     {
         "artifact",
         "browser",
+        "browser_use",
         "code_intelligence",
         "diagram",
         "discovery",
@@ -36,8 +37,9 @@ KNOWN_TOOL_FAMILIES: frozenset[str] = frozenset(
 # declares it (pinned by tests/sidecar/ai/tools/test_tool_families_manifest.py).
 TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
     "artifact": ("create_artifact",),
+    # The model-driven browser (row 114), not the retired "browser" family named below.
+    "browser_use": ("browser",),
     "code_intelligence": ("lsp",),
-    "diagram": ("mermaid_generate",),
     "discovery": ("tool_search",),
     "filesystem": (
         "read_file",
@@ -75,7 +77,6 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "session_result",
         "operation_status",
         "automation_list",
-        "automation_read",
         "delegate",
         "connections_list",
         "exit_plan_mode",
@@ -123,6 +124,8 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
 # Retired tool names that can still appear in persisted transcripts. They only
 # classify old statuses by name; no manifest or runtime surface offers them.
 RETIRED_TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
+    # mermaid_generate was removed 2026-11-10: a fenced mermaid block draws the chart.
+    "diagram": ("mermaid_generate",),
     "browser": (
         "browser_open",
         "browser_screenshot",
@@ -271,7 +274,6 @@ TOOL_ALIASES: dict[str, tuple[str, ...]] = {
     "conversations_recent": ("earlier chat", "last chat", "past chats"),
     "conversation_open": ("previous conversation", "open earlier chat"),
     "conversations_search": ("search past chats", "find in earlier chats", "which chat did we"),
-    "mermaid_generate": ("diagram", "mermaid", "mermaid syntax", "zoomable diagram"),
     "python_execute": ("python", "python runtime", "python sandbox", "execute python"),
     "read_file": ("read file", "file reader"),
     "report_findings": ("code review", "review findings", "findings", "review my changes"),
@@ -286,7 +288,6 @@ TOOL_ALIASES: dict[str, tuple[str, ...]] = {
     "worktree_list": ("worktree list", "list worktrees", "git worktrees"),
     "worktree_create": ("worktree create", "create worktree", "new worktree"),
     "automation_list": ("automation list", "list automations", "scheduled tasks"),
-    "automation_read": ("automation read", "read automation", "automation details"),
     "delegate": (
         "delegate",
         "subagent",
@@ -458,3 +459,24 @@ def aliases_for_tool(tool_name: str) -> tuple[str, ...]:
     aliases.update(TOOL_ALIASES.get(normalized, ()))
     aliases.discard("")
     return tuple(sorted(aliases, key=len, reverse=True))
+
+
+BROWSER_STEP_FALLBACK = "Browser step finished."
+BROWSER_STEP_FAILED = "Browser step failed."
+
+
+def saved_tool_output(tool_name: str, output: str, metadata: object) -> str:
+    """The output a finished tool call keeps in saved turn events (roadmap row 114).
+
+    The model reads a browser page in full during the turn. Anything stored keeps only the
+    step summary the tool put in its metadata, so exports, transcripts and memory search never
+    hold page text. Mirrors ``savedToolOutput`` in ``chat-stream-tool-payload-utils.js``.
+    """
+    if tool_name != "browser":
+        return output
+    summary = metadata.get("step_summary") if isinstance(metadata, dict) else None
+    if isinstance(summary, str) and summary.strip():
+        return summary
+    # A failed call carries its failure class; "finished" misreported it (row 129, B12).
+    failed = isinstance(metadata, dict) and bool(metadata.get("failure_class"))
+    return BROWSER_STEP_FAILED if failed else BROWSER_STEP_FALLBACK

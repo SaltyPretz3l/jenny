@@ -174,6 +174,15 @@ test('row 73: a named project scopes the sidecar note and the reply carries the 
   assert.deepEqual(calls[0].params.focus_project, { name: 'Atlas' });
 });
 
+test('only the read-only intent reaches the sidecar', async () => {
+  const { service, calls } = createMockService();
+  service.sessionStore.getSessionSummary = () => ({ id: 'sess_a', session_role: null });
+  await generateHandoffNote(service, 'sess_a', { intent: 'orient' });
+  await generateHandoffNote(service, 'sess_a', { intent: 'continue' });
+  assert.equal(calls[0].params.intent, 'orient');
+  assert.equal(Object.hasOwn(calls[1].params, 'intent'), false);
+});
+
 test('row 73: an ordinary chat ignores a project id and sends no focus', async () => {
   const { service, calls } = createMockService();
   service.sessionStore.getSessionSummary = () => ({ id: 'sess_a', session_role: null });

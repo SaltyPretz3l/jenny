@@ -68,7 +68,7 @@ function createBridge({ respond } = {}) {
   return bridge;
 }
 
-function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBridge(), bridgeMissing = false, paneAttrs = '', performance = null } = {}) {
+function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBridge(), bridgeMissing = false, paneAttrs = '', performance = null, mountOptions = {} } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div class="chat-view" id="chatView" data-pane-count="1">
       <div class="chat-pane" id="chatPane0" data-pane-id="0" ${paneAttrs}>
@@ -101,6 +101,7 @@ function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBrid
     detail,
     windowRef: window,
     signal: controller.signal,
+    ...mountOptions,
   });
   const doc = window.document;
   return {

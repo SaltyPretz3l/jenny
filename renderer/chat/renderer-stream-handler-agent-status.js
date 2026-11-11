@@ -139,7 +139,7 @@
       };
       return prior;
     }
-    const startedAt = incoming.updatedAt;
+    const startedAt = Number(next?.startedAt) > 0 ? Number(next.startedAt) : incoming.updatedAt;
     prior.push({ ...incoming, startedAt });
     if (prior.length > AGENT_STATUS_STEPS_MAX) {
       prior.splice(evictionIndex(prior), 1);

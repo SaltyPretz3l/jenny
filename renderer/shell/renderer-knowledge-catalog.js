@@ -353,8 +353,8 @@
         + '</details>';
     }
 
-    function blockHtml() {
-      if (!isEnabled() || !view.settings) return '';
+    function blockHtml(options) {
+      if (!isEnabled() || !view.settings || (options && options.hasFolders === false && !view.settings.modelPath)) return '';
       var settings = view.settings;
       var status = view.status;
       var line = statusLine(status, settings);

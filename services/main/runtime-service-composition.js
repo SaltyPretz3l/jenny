@@ -368,10 +368,9 @@ function createRuntimeServicesWithDeps({
     },
     logger: log,
   });
-  const browserSessionService = new BrowserSessionService({
-    browserWindowFactory: (options) => new (require('electron').BrowserWindow)(options),
-    logger: log,
-  });
+  const browserSessionService = new BrowserSessionService({ browserWindowFactory: (options) => new (require('electron').BrowserWindow)(options), logger: log });
+  // Row 114: the model-driven browser; its modules and Electron's view classes load on first use.
+  const browserUse = require('./browser-use-composition').createLazyBrowserUse({ getMainWindow, sendBridgeEvent, getBackendService, logger: log, getSafetyMode: () => shellConfigService.getState()?.safetyMode });
   // NOTE: worktreeService is injected into BackendService at construction time
   // (see backend-service-wiring.js) rather than wired here -- the backend service
   // does not exist yet during this composition pass, so a post-hoc assignment guard
@@ -401,7 +400,7 @@ function createRuntimeServicesWithDeps({
   unattendedGuard.start();
   systemStats.unattendedGuard = unattendedGuard;
   const reminderNotifier = createReminderNotifier({
-    getShellConfigService: () => shellConfigService,
+    getShellConfigService: () => shellConfigService, isAppMuted: () => browserUse.isAppMuted(),
     getMainWindow,
     notificationFactory: (options) => new (require('electron').Notification)(options),
     isSupported: () => require('electron').Notification.isSupported(),
@@ -416,7 +415,7 @@ function createRuntimeServicesWithDeps({
   // questions. start() registers the notifications.notify send channel here
   // (main.js is at its line cap); runtime-stop stops it via systemStats.
   const desktopNotifier = createDesktopNotifier({
-    getShellConfigService: () => shellConfigService,
+    getShellConfigService: () => shellConfigService, isAppMuted: () => browserUse.isAppMuted(),
     getMainWindow,
     notificationFactory: (options) => new (require('electron').Notification)(options),
     isSupported: () => require('electron').Notification.isSupported(),
@@ -469,7 +468,7 @@ function createRuntimeServicesWithDeps({
     toolsAutomationsEnabled = buildEffectiveFeatureFlags().tools_automations_enabled === true,
     toolsWorkspacePresentEnabled = buildEffectiveFeatureFlags().tools_workspace_present_enabled === true,
     toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true,
-    toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true,
+    toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true, toolsBrowserUseEnabled = buildEffectiveFeatureFlags().tools_browser_use_enabled === true,
     toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true,
     toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true, toolsNextStepEnabled = buildEffectiveFeatureFlags().tools_next_step_enabled === true,
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
@@ -483,7 +482,7 @@ function createRuntimeServicesWithDeps({
       toolsAutomationsEnabled,
       toolsWorkspacePresentEnabled,
       toolsPreviewTestEnabled,
-      toolsVerifyEnabled,
+      toolsVerifyEnabled, toolsBrowserUseEnabled,
       toolsImageGenerateEnabled,
       toolsHomeEnabled, toolsNextStepEnabled,
       toolsTaskBoardEnabled,
@@ -523,7 +522,7 @@ function createRuntimeServicesWithDeps({
     worktreeService,
     automationService,
     workspacePresentationService,
-    browserSessionService,
+    browserSessionService, browserUse,
     // Home is constructed alongside the calendar service in
     // backend-service-wiring, which runs AFTER this composition pass — hence a
     // live getter, the same reason refreshManagedConfig below uses one.

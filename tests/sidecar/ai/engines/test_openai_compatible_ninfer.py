@@ -129,12 +129,13 @@ def _event_text(items: list[Any], kind: str) -> str:
 @pytest.mark.parametrize("options,enabled", [
     ({"live": True, "provider_kind": "ninfer"}, True),
     ({"live": False, "provider_kind": "ninfer"}, False),
-    ({"live": True, "provider_kind": "llama-server"}, False),
+    ({"live": True, "provider_kind": "llama-server"}, True),
+    ({"live": False, "provider_kind": "llama-server"}, False),
     ({"live": True, "provider_kind": "ollama"}, False),
     ({"live": True, "provider_kind": "other"}, False),
     (None, False),
 ])
-def test_payload_metrics_options_only_for_live_ninfer(make_engine, monkeypatch, options, enabled):
+def test_payload_metrics_options_only_for_live_providers(make_engine, monkeypatch, options, enabled):
     engine, sent = make_engine("think_off.sse")
     monkeypatch.setattr(engine, "_current_request_context", lambda: {"inference_performance": options})
     list(engine.stream("Hi", max_tokens=64))

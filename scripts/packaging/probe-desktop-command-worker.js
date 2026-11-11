@@ -13,7 +13,9 @@ async function probe() {
  await fs.writeFile(path.join(workspace, 'source.txt'), 'immutable input');
  const config = new EventEmitter();
  config.getState = () => ({ commandSandbox: { enabled: true }, toolsWorkspaceRoot: workspace });
- const service = new DesktopSandboxService({ userDataPath: profile, sourceRoot: path.resolve(__dirname, '../..'), configService: config, launcherFactory: options => new DockerLauncher(options) });
+ const authority = Object.freeze({ project_id: 'probe', root_path: workspace, root_id: 'root', root_revision: 0, device_id: null, inode: null });
+ const service = new DesktopSandboxService({ userDataPath: profile, sourceRoot: path.resolve(__dirname, '../..'), configService: config, launcherFactory: options => new DockerLauncher(options),
+  getBackend: () => ({ projectAuthority: { captureSession: () => authority, requireCurrent: () => {} } }) });
  service.on('changed', state => console.log(JSON.stringify({ state })));
  console.log(JSON.stringify({ probeDirectory: directory }));
  try {
@@ -22,7 +24,7 @@ async function probe() {
   let sequence = 0;
   const run = async (name, command, timeoutSeconds = 10, signal = null, authorize = async () => ({ approved: true, digest: 'qualification', validate() {} })) => {
    const result = await service.execute({ command, cwd: '.', timeoutSeconds },
-    { sessionId: 'qualification', streamId: name, callId: String(++sequence), isLive: () => true, signal }, authorize);
+    { sessionId: 'qualification', streamId: name, callId: String(++sequence), isLive: () => true, signal, projectAuthority: authority }, authorize);
    console.log(JSON.stringify({ case: name, status: result.status, exit_code: result.exit_code,
     cleanup_confirmed: result.cleanup_confirmed, output_bytes: Buffer.byteLength(result.stdout + result.stderr), stdout: result.stdout.slice(0, 2000) }));
    if (!result.cleanup_confirmed) throw new Error(name + ': cleanup unconfirmed');
@@ -138,10 +140,64 @@ async function probeWire() {
   worker?.transport.dispose(); await service.close();
  }
 }
+// Row 106 S5 (`--synced`): Synced workspace round trip on a disposable git workspace (edit/create/delete,
+// protected aliases and links refused, a conflict kept, the restore point pinned, delta timing).
+async function probeSynced() {
+ const assert = require('node:assert/strict');
+ const { execFileSync } = require('node:child_process');
+ const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-worker-synced-'));
+ const workspace = path.join(directory, 'workspace'); await fs.mkdir(workspace);
+ const git = (...args) => execFileSync('git', ['-C', workspace, '-c', 'user.name=probe', '-c', 'user.email=probe@invalid', ...args], { encoding: 'utf8' });
+ await fs.writeFile(path.join(workspace, 'a.txt'), 'one');
+ await fs.writeFile(path.join(workspace, 'del.txt'), 'bye');
+ git('init', '-q'); git('add', '.'); git('commit', '-q', '-m', 'probe');
+ const gitConfig = await fs.readFile(path.join(workspace, '.git', 'config'));
+ const config = new EventEmitter();
+ config.getState = () => ({ commandSandbox: { enabled: true, mode: 'synced' }, toolsWorkspaceRoot: workspace });
+ // A fixed project authority stands in for the chat's canonical capture (the root never changes here).
+ const authority = Object.freeze({ project_id: 'probe', root_path: workspace, root_id: 'root', root_revision: 0, device_id: null, inode: null });
+ const projectAuthority = { captureSession: () => authority, requireCurrent: () => {} };
+ const service = new DesktopSandboxService({ userDataPath: path.join(directory, 'profile'), sourceRoot: path.resolve(__dirname, '../..'), configService: config,
+  getBackend: () => ({ projectAuthority }) });
+ const approve = async () => ({ approved: true, digest: 'qualification', validate() {} });
+ let sequence = 0;
+ const run = async (name, command, authorize = approve) => {
+  const started = Date.now();
+  const result = await service.execute({ command, cwd: '.', timeoutSeconds: 30 },
+   { sessionId: 'qualification', streamId: name, callId: String(++sequence), isLive: () => true, projectAuthority: authority }, authorize);
+  const writeBack = result.synced?.write_back || {};
+  console.log(JSON.stringify({ case: name, ms: Date.now() - started, status: result.status, exit_code: result.exit_code,
+   write_back: writeBack.status, applied: (writeBack.applied || []).map(e => e.path), refused: writeBack.refused, restore_point: result.synced?.restore_point?.ref }));
+  assert.equal(result.cleanup_confirmed, true, name);
+  return { result, writeBack };
+ };
+ try {
+  await service.start(); assert.equal(service.state, 'ready', service.reason);
+  assert.equal(service.getState().mode, 'synced');
+  const edit = await run('round_trip', 'printf two > a.txt; printf new > new.txt; rm del.txt; mkdir -p sub && printf y > sub/y.txt');
+  assert.equal(await fs.readFile(path.join(workspace, 'a.txt'), 'utf8'), 'two');
+  assert.equal(await fs.readFile(path.join(workspace, 'sub', 'y.txt'), 'utf8'), 'y');
+  assert.equal(await fs.stat(path.join(workspace, 'del.txt')).then(() => true, () => false), false);
+  assert.match(git('show-ref', edit.result.synced.restore_point.ref), /refs\/jenny\/sandbox\//);
+  const refused = await run('refusals', "mkdir -p .GIT && printf evil > .GIT/config; ln -s /etc/passwd link; printf x > 'NUL.txt'; mkdir -p node_modules/x && printf x > node_modules/x/i.js");
+  assert.deepEqual(await fs.readFile(path.join(workspace, '.git', 'config')), gitConfig);
+  for (const name of ['link', 'NUL.txt', 'node_modules']) assert.equal(await fs.lstat(path.join(workspace, name)).then(() => true, () => false), false, name);
+  assert.ok(refused.writeBack.refused.length >= 3);
+  const conflict = await run('conflict', 'sleep 8; printf sandbox > a.txt', async () => {
+   setTimeout(() => { fs.writeFile(path.join(workspace, 'a.txt'), 'host').catch(() => {}); }, 4000);
+   return approve();
+  });
+  assert.equal(await fs.readFile(path.join(workspace, 'a.txt'), 'utf8'), 'host');
+  assert.ok(conflict.writeBack.refused.some(e => e.path === 'a.txt' && e.reason === 'conflict'));
+  await run('delta_noop', 'true');
+  console.log(JSON.stringify({ synced: 'passed', probeDirectory: directory }));
+ } finally { await service.close(); }
+}
 if (require.main === module) {
  const operation = process.argv[2] === '--crash-child' ? recoveryChild(process.argv[3])
   : process.argv[2] === '--recovery' ? probeRecovery()
-    : process.argv[2] === '--wire' ? probeWire() : probe();
+    : process.argv[2] === '--wire' ? probeWire()
+      : process.argv[2] === '--synced' ? probeSynced() : probe();
  operation.catch(error => { console.error(error); process.exitCode = 1; });
 }
-module.exports = { probe, probeRecovery };
+module.exports = { probe, probeRecovery, probeSynced };

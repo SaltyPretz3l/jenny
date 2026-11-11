@@ -453,11 +453,11 @@ describe('automation tool registry', () => {
 
     const enabledRegistry = createDefaultRegistry({ toolsAutomationsEnabled: true });
     assert.equal(enabledRegistry.getTool('automation_list').readOnly, true);
-    assert.equal(enabledRegistry.getTool('automation_read').readOnly, true);
+    assert.equal(enabledRegistry.getTool('automation_read'), undefined, 'merged into automation_list');
   });
 });
 
-describe('automation_list and automation_read tools', () => {
+describe('automation_list tool', () => {
   test('automation_list delegates to the Electron-owned AutomationService', async () => {
     const registry = createDefaultRegistry({ toolsAutomationsEnabled: true });
     const tool = registry.getTool('automation_list');
@@ -488,66 +488,6 @@ describe('automation_list and automation_read tools', () => {
     assert.equal(result.metadata.result_kind, 'automation_list');
     assert.equal(result.metadata.count, 1);
     assert.equal(result.metadata.automations[0].id, 'automation:project_health');
-  });
-
-  test('automation_read delegates by id and returns not_found as a tool error', async () => {
-    const registry = createDefaultRegistry({ toolsAutomationsEnabled: true });
-    const tool = registry.getTool('automation_read');
-    let readId = '';
-
-    const result = await tool.execute({ automation_id: 'automation:missing' }, {
-      automationService: {
-        async readAutomation(id) {
-          readId = id;
-          return {
-            success: false,
-            reason: 'not_found',
-            message: 'Automation "automation:missing" was not found.',
-          };
-        },
-      },
-    });
-
-    assert.equal(readId, 'automation:missing');
-    assert.equal(result.isError, true);
-    assert.equal(result.errorCode, TOOL_ERROR_CODES.EXECUTION_FAILED, 'not CMP-TOOL-0005 Unknown tool');
-    assert.equal(result.metadata.result_kind, 'automation_read');
-    assert.equal(result.metadata.reason, 'not_found');
-  });
-
-  test('automation_read rejects a non-string id without calling the service', async () => {
-    const registry = createDefaultRegistry({ toolsAutomationsEnabled: true });
-    const tool = registry.getTool('automation_read');
-    let calls = 0;
-    const result = await tool.execute({ automation_id: { id: 'automation:x' } }, {
-      automationService: { async readAutomation() { calls += 1; return { success: true }; } },
-    });
-    assert.equal(result.isError, true);
-    assert.equal(result.metadata.reason, 'invalid_arguments');
-    assert.equal(calls, 0);
-    assert.equal(tool.summarize({ automation_id: { id: 'x' } }), 'Read automation details');
-  });
-
-  test('automation_read includes the bounded definition and run history in model-visible content', async () => {
-    const registry = createDefaultRegistry({ toolsAutomationsEnabled: true });
-    const tool = registry.getTool('automation_read');
-    const automation = {
-      id: 'automation:project_health',
-      task: 'project_health',
-      task_spec: 'Run project checks.',
-      automation_runs: [{ id: 'run-1', status: 'completed', artifacts: ['report.json'] }],
-    };
-
-    const result = await tool.execute({ automation_id: automation.id }, {
-      automationService: {
-        async readAutomation() {
-          return { success: true, automation };
-        },
-      },
-    });
-
-    assert.equal(result.isError, false);
-    assert.deepEqual(JSON.parse(result.content), { automation });
   });
 });
 

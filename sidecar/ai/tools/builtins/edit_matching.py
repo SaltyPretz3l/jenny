@@ -219,9 +219,14 @@ def _batch_failure_result(
         )
     all_cap = all(code == CMP_TOOL_CAP_EXCEEDED for _, _, code, _ in failures)
     lines = "\n".join(message for _, message, _, _ in failures)
+    # Lead with the file state: a model read "no changes were applied" as "the
+    # others already landed" and resent only the failing edits (2026-11-03).
     return failure_result(
         message=(
-            f"{len(failures)} of {total} edits failed; no changes were applied.\n{lines}"
+            f"Nothing was written: {context.relative_path} is unchanged. "
+            f"{len(failures)} of {total} edits failed, so none of the {total} were applied "
+            "(a batch applies all of its edits or none). Fix the failing edits against the "
+            f"current file and resend the whole batch.\n{lines}"
         ),
         error_code=CMP_TOOL_CAP_EXCEEDED if all_cap else CMP_TOOL_EXECUTION_FAILED,
         metadata={"path": context.relative_path, "failed_edits": failed_indexes},

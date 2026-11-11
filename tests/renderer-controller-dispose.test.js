@@ -605,7 +605,7 @@ test('renderer app dispose is safe after lazy surfaces initialize once', async (
   await app.dispose();
 });
 
-// Split view W0-1: the scroll coordinator, viewport controller and pin-to-top
+// Split view W0-1: the scroll coordinator, viewport controller and (then) pin-to-top
 // observer for one chat pane are built as a cluster by
 // renderer/chat/renderer-chat-pane-surface-controllers.js. The extraction is
 // only invisible if the shell still builds exactly one of them and still tears
@@ -638,7 +638,6 @@ test('the chat pane surface cluster is built once and disposed with the renderer
   assert.equal(built[0].paneId, 0, 'the single chat surface is pane 0 until split view lands');
   assert.ok(built[0].scrollCoordinator, 'the cluster owns the live scroll coordinator');
   assert.ok(built[0].viewport, 'the cluster owns the live viewport controller');
-  assert.ok(built[0].pinToTop, 'the cluster owns the live pin-to-top observer');
   assert.deepEqual(disposedPaneIds, [], 'nothing is disposed while the shell is up');
 
   await window.__disposeRenderer();

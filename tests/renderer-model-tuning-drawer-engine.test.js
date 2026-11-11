@@ -115,7 +115,7 @@ test('engine section obeys the feature and engine gates', async () => {
   assert.equal(host.querySelector('[data-model-tuning-gguf]').textContent, 'Not found for this tag');
   // A greyed-out llama-server option must say what unlocks it.
   assert.equal(host.querySelector('[data-value="llama-server"]').disabled, true);
-  assert.equal(host.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-range').textContent,
+  assert.equal(host.querySelector('[data-model-tuning-engine] [data-model-tuning-section-status]').textContent,
     'Choose… the .gguf for this model, then Apply, then Use');
   ollama.controller.dispose();
 });
@@ -162,7 +162,7 @@ test('an Ollama blob copy enables llama-server and explains the missing adjacent
   host.querySelector('[data-inv-segmented="modelTuningEngine"]')
     .dispatchEvent(engineEvent(harness.dom.window, 'modelTuningEngine', 'llama-server'));
   assert.equal(
-    host.querySelector('[data-model-tuning-row="mtp"] .model-tuning-row-range').textContent,
+    host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent,
     "MTP drafter not found beside Ollama's copy · add its folder under GGUF folders"
   );
   harness.controller.dispose();
@@ -197,8 +197,8 @@ test('engine selection updates the drawer in place and exposes eligible MTP', as
   assert.equal(harness.dom.window.document.getElementById('modelTuningDrawer'), host);
   assert.equal(harness.dom.window.document.activeElement, active);
   assert.equal(host.querySelector('[data-model-tuning-row="mtp"]').hidden, false);
-  assert.equal(host.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-range').textContent, 'Starts when you press Use');
-  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] .model-tuning-row-range').textContent, 'MTP uses about 0.5 GB more VRAM');
+  assert.equal(host.querySelector('[data-model-tuning-engine] [data-model-tuning-section-status]').textContent, 'Starts when you press Use');
+  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent, 'MTP uses about 0.5 GB more VRAM');
   assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 1 change');
   harness.controller.dispose();
 });
@@ -240,7 +240,7 @@ test('ineligible family notes distinguish unverified MTP from unsupported MTP', 
     await harness.controller.open('gemma3:latest');
     const host = harness.dom.window.document.getElementById('modelTuningDrawer');
     assert.equal(host.querySelector('[data-inv-toggle="modelTuningMtp"]').disabled, true);
-    assert.equal(host.querySelector('[data-model-tuning-row="mtp"] .model-tuning-row-range').textContent, expected);
+    assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent, expected);
     harness.controller.dispose();
   }
 });
@@ -280,11 +280,11 @@ test('GGUF picker enables llama-server and cancellation is a no-op', async () =>
   // from the "Choose a GGUF" hint to the Use hint, and Apply counts the change.
   assert.equal(host.querySelector('[data-value="llama-server"]').getAttribute('aria-checked'), 'true');
   assert.equal(host.querySelector('[data-model-tuning-row="mtp"]').hidden, false);
-  assert.equal(host.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-range').textContent,
+  assert.equal(host.querySelector('[data-model-tuning-engine] [data-model-tuning-section-status]').textContent,
     'Starts when you press Use');
   assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 2 changes');
   // The picked folder has no mtp-* drafter: the MTP note must say so now.
-  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] .model-tuning-row-range').textContent,
+  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent,
     'Drafter file missing \u00b7 falls back to plain decoding');
   host.querySelector('[data-action="choose-model-gguf"]').click();
   await flush();
@@ -321,8 +321,8 @@ test('persisted serving engine state renders selected and clean', async () => {
   const host = harness.dom.window.document.getElementById('modelTuningDrawer');
   assert.equal(host.querySelector('[data-value="llama-server"]').getAttribute('aria-checked'), 'true');
   assert.equal(host.querySelector('[data-inv-toggle="modelTuningMtp"]').getAttribute('aria-checked'), 'true');
-  assert.equal(host.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-range').textContent, 'Serving on :8033 · MTP on');
-  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 0 changes');
+  assert.equal(host.querySelector('[data-model-tuning-engine] [data-model-tuning-section-status]').textContent, 'Serving on :8033 · MTP on');
+  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'No changes');
   assert.equal(host.querySelector('[data-action="save-model-tuning"]').disabled, true);
   harness.controller.dispose();
 });
@@ -534,7 +534,7 @@ test('the card engine facts seed Ollama availability and a served model opens cl
   assert.equal(host.querySelector('[data-value="llama-server"]').getAttribute('aria-checked'), 'true');
   assert.equal(host.querySelector('[data-value="llama-server"]').disabled, false);
   assert.equal(host.querySelector('[data-value="ollama"]').disabled, false);
-  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 0 changes');
+  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'No changes');
   served.controller.dispose();
 
   const noOllama = createHarness();
@@ -563,7 +563,7 @@ test('a persisted path outside the scanned directory owns the drafter verdict', 
     engineSettings: settings, localGgufs: { entries: [gguf] }, serverStatus: null,
   });
   assert.equal(view.ggufEntry.source, '');
-  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] .model-tuning-row-range').textContent,
+  assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent,
     'Drafter file missing \u00b7 falls back to plain decoding');
   harness.controller.dispose();
 });
@@ -577,7 +577,7 @@ test('a rejected picker file is reported as not a GGUF and leaves the draft alon
   host = harness.dom.window.document.getElementById('modelTuningDrawer');
   assert.match(host.textContent, /That file is not a GGUF model\./);
   assert.equal(host.querySelector('[data-model-tuning-gguf]').textContent, 'Not found for this tag');
-  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 0 changes');
+  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'No changes');
   harness.controller.dispose();
 });
 

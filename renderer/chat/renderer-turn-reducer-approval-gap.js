@@ -18,12 +18,14 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-approval-block'));
+    module.exports = factory(require('./renderer-approval-block'), require('./tool-call-utils'));
     return;
   }
-  root.rendererTurnReducerApprovalGap = factory(root.rendererApprovalBlock);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (approvalBlock) {
+  root.rendererTurnReducerApprovalGap = factory(root.rendererApprovalBlock, root.toolCallUtils || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (approvalBlock, toolCallUtils) {
   'use strict';
+
+  const APPROVAL_PRESENTATION_KEYS = toolCallUtils.APPROVAL_PRESENTATION_KEYS || [];
 
   const deriveApprovalReceipt = approvalBlock && typeof approvalBlock.deriveApprovalReceipt === 'function'
     ? approvalBlock.deriveApprovalReceipt : function noReceipt() { return null; };
@@ -119,10 +121,9 @@
       if (initialPolicyConsequence) payload.policy_consequence = initialPolicyConsequence;
       if (initialReason) payload.reason = initialReason;
       if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) payload.one_off_only = true;
-      if (isPlainObject(body.session_message_approval)) payload.session_message_approval = body.session_message_approval;
-      if (isPlainObject(body.session_stop_approval)) payload.session_stop_approval = body.session_stop_approval;
-      if (isPlainObject(body.settings_change_approval)) payload.settings_change_approval = body.settings_change_approval;
-      if (isPlainObject(body.schedule_change_approval)) payload.schedule_change_approval = body.schedule_change_approval;
+      for (const key of APPROVAL_PRESENTATION_KEYS) {
+        if (isPlainObject(body[key])) payload[key] = body[key];
+      }
       const toolName = normalizeId(body.tool_name) || normalizeId(callPayload.tool_name);
       if (toolName) {
         payload.tool_name = toolName;
@@ -309,17 +310,8 @@
       if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) {
         gapRow.payload.one_off_only = true;
       }
-      if (!gapRow.payload.session_message_approval && isPlainObject(body.session_message_approval)) {
-        gapRow.payload.session_message_approval = body.session_message_approval;
-      }
-      if (!gapRow.payload.session_stop_approval && isPlainObject(body.session_stop_approval)) {
-        gapRow.payload.session_stop_approval = body.session_stop_approval;
-      }
-      if (!gapRow.payload.settings_change_approval && isPlainObject(body.settings_change_approval)) {
-        gapRow.payload.settings_change_approval = body.settings_change_approval;
-      }
-      if (!gapRow.payload.schedule_change_approval && isPlainObject(body.schedule_change_approval)) {
-        gapRow.payload.schedule_change_approval = body.schedule_change_approval;
+      for (const key of APPROVAL_PRESENTATION_KEYS) {
+        if (!gapRow.payload[key] && isPlainObject(body[key])) gapRow.payload[key] = body[key];
       }
       // The plan variant usually arrives on the tool_approval_needed event
       // AFTER the pending tool_use created the gap row — stamp it on sync too

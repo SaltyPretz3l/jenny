@@ -106,7 +106,7 @@ def append_mode_runtime_overlays(
     from sidecar.ai.context.primary_chat_overlay import build_primary_chat_overlay
 
     # Static, so it leads: toggling Plan or Propose mode never moves it.
-    runtime_system_messages.extend(build_primary_chat_overlay(request_context))
+    runtime_system_messages.extend(build_primary_chat_overlay(request_context, config))
     append_plan_mode_runtime_overlay(
         runtime_system_messages,
         plan_mode_active=bool(getattr(request_context, "plan_mode", False)),

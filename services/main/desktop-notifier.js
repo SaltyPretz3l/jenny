@@ -84,6 +84,7 @@ function isWindowFocused(mainWindow) {
 }
 
 function createDesktopNotifier({
+  isAppMuted = () => false,
   getShellConfigService,
   getMainWindow,
   notificationFactory,
@@ -303,7 +304,7 @@ function createDesktopNotifier({
       const notification = notificationFactory({
         title,
         body,
-        silent: settings.sound !== true,
+        silent: settings.sound !== true || isAppMuted(),
       });
       const forget = () => {
         if (liveNotifications.get(liveKey) === notification) liveNotifications.delete(liveKey);

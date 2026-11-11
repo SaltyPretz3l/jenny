@@ -45,32 +45,78 @@
   // The Working tree page (row 59 checkpoint 2) loads lazily with the Changes view; the IDE never uses it.
   const WORKING_TREE_SCRIPTS = Object.freeze([
     Object.freeze(['renderer/chat/renderer-unified-diff-parse.js', 'rendererUnifiedDiffParse']),
+    Object.freeze(['renderer/features/renderer-changes-scope-data.js', 'rendererChangesScopeData']),
     Object.freeze(['renderer/features/renderer-changes-working-tree-render.js', 'rendererChangesWorkingTreeRender']),
     Object.freeze(['renderer/features/renderer-changes-working-tree.js', 'rendererChangesWorkingTree']),
   ]);
 
+  // Before and after pictures (row 122) load lazily too: with the Changes view, and from the
+  // transcript the first time a chat shows a change. The IDE dock shows none.
+  const CHANGE_PICTURES_SCRIPTS = Object.freeze([
+    Object.freeze(['renderer/inventory/compare-slider.js', 'inventoryCompareSlider']),
+    Object.freeze(['renderer/features/renderer-change-pictures-model.js', 'rendererChangePicturesModel']),
+    Object.freeze(['renderer/features/renderer-change-pictures.js', 'rendererChangePictures']),
+  ]);
+
   const SCOPES = new Set(['change', 'turn', 'file', 'session', 'suggested']);
+
+  // Loads [src, global] pairs in order; false at the first script that did not arrive.
+  async function loadScriptList(list, { ensureScript, windowRef, log } = {}) {
+    const globalRef = windowRef || globalThis;
+    for (const [src, globalName] of list) {
+      const isReady = () => Boolean(globalRef[globalName]);
+      if (isReady()) continue;
+      const ok = typeof ensureScript === 'function' ? await ensureScript({ src, isReady, log }) : false;
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  /** Resolves to the pictures module, or null when a script failed (the caller shows no pictures). */
+  async function loadChangePictures(options = {}) {
+    const globalRef = options.windowRef || globalThis;
+    const ensureScript = options.ensureScript || globalRef.scriptLoaderUtils?.ensureScript;
+    const ok = await loadScriptList(CHANGE_PICTURES_SCRIPTS, { ensureScript, windowRef: globalRef, log: options.log });
+    return ok ? globalRef.rendererChangePictures || null : null;
+  }
+
+  // One load per window for the transcript: a failed load is not retried on every chat render.
+  const chatPicturesLoads = new WeakMap();
+
+  /**
+   * The transcript's pictures, called after every chat render. `root` is the timeline or one article.
+   * The modules load the first time a chat shows a change; until then this only looks for one.
+   */
+  function decorateChatPictures({ root, timeline, getSessionId, getTurns, isEnabled, windowRef, log } = {}) {
+    const globalRef = windowRef || globalThis;
+    const enabled = () => typeof isEnabled !== 'function' || isEnabled() !== false;
+    const decorate = (module, target) => {
+      const sessionId = normalizeId(getSessionId());
+      module.decorateChat({ root: target, sessionId, getTurns: () => getTurns(sessionId) || [], enabled: enabled() });
+    };
+    const ready = globalRef.rendererChangePictures;
+    if (ready && typeof ready.decorateChat === 'function') {
+      if (root) decorate(ready, root);
+      return;
+    }
+    if (chatPicturesLoads.has(globalRef) || !enabled() || !root || typeof root.querySelector !== 'function' || !root.querySelector('[data-jenny-code-review]')) return;
+    chatPicturesLoads.set(globalRef, loadChangePictures({ windowRef: globalRef, log }).then((module) => {
+      const target = timeline || root;
+      if (module && typeof module.decorateChat === 'function' && target.isConnected) decorate(module, target);
+    }).catch(() => {}));
+  }
 
   /**
    * Loads the Changes view modules in order. Resolves to the view module, or
    * null when a script failed (the caller shows an error instead of a blank panel).
    */
-  async function loadChangesViewModules({ ensureScript, windowRef, log } = {}) {
-    const globalRef = windowRef || globalThis;
-    for (const [src, globalName] of CHANGES_VIEW_SCRIPTS) {
-      const isReady = () => Boolean(globalRef[globalName]);
-      if (isReady()) continue;
-      const ok = typeof ensureScript === 'function' ? await ensureScript({ src, isReady, log }) : false;
-      if (!ok) return null;
-    }
-    // Best effort: without the Working tree page the panel keeps the ledger view only.
-    for (const [src, globalName] of WORKING_TREE_SCRIPTS) {
-      const isReady = () => Boolean(globalRef[globalName]);
-      if (isReady()) continue;
-      const ok = typeof ensureScript === 'function' ? await ensureScript({ src, isReady, log }) : false;
-      if (!ok) break;
-    }
-    return globalRef.rendererChangesView || null;
+  async function loadChangesViewModules(options = {}) {
+    if (!await loadScriptList(CHANGES_VIEW_SCRIPTS, options)) return null;
+    // Best effort: without the Working tree page the panel keeps the ledger view only,
+    // and without the pictures modules it shows the text diff only.
+    await loadScriptList(WORKING_TREE_SCRIPTS, options);
+    await loadChangePictures(options);
+    return (options.windowRef || globalThis).rendererChangesView || null;
   }
 
   function createCodeReviewRail(deps) {
@@ -103,6 +149,11 @@
       openInGit = function defaultOpenInGit() { return globalThis.rendererChatWorkspaceDetail?.openInGit?.(); },
       // Text actions and find on the page (row 99): code copy, Ask Jenny, body menu, `[` / `]`.
       getPageActionsModule = function defaultPageActionsModule() { return globalThis.rendererChangesViewActions || null; },
+      // The suggested-changes client and model: a suggestion this chat applied is a change it made too.
+      getSuggestedClient = function defaultSuggestedClient() { return globalThis.rendererSuggestedChangesClient?.getSharedClient?.() || null; },
+      getSuggestedModel = function defaultSuggestedModel() { return globalThis.rendererSuggestedChangesModel || null; },
+      // Before and after pictures (row 122): the module fills the page's picture slots.
+      getChangePicturesModule = function defaultChangePicturesModule() { return globalThis.rendererChangePictures || null; },
     } = deps || {};
 
     if (!state) {
@@ -116,13 +167,14 @@
     let viewLoad = null;
     let hostEl = null;
     let pendingReveal = null;
-    // 'working_tree' only when opened from the session rail; a transcript "Review changes" keeps the ledger.
+    // 'working_tree' (or 'branch' once picked) only when opened from the session rail; a transcript "Review changes" keeps the ledger.
     let pageScope = 'this_chat';
     let ownerSessionId = '';
     let workingTree = null;
     let pageEl = null;
     let workingTreeEl = null;
     let pageActions = null;
+    let pictures = null;
     let pendingFocus = false;
     // A chat findings list's Show in diff (row 64): handed to the Working tree page on the next render.
     let pendingFindings = null;
@@ -300,6 +352,8 @@
         const doc = panel.ownerDocument;
         if (workingTree) workingTree.unmount();
         pageActions?.dispose();
+        pictures?.dispose();
+        pictures = null;
         pageEl?.remove();
         pageEl = doc.createElement('div');
         pageEl.className = 'changes-detail-page';
@@ -322,6 +376,29 @@
       return hostEl;
     }
 
+    // The paths this chat changed, from the ledger the "This chat" page reads plus the suggestions it applied.
+    // null while any part is unknown (no turns loaded, suggestions still loading, notices that omitted paths):
+    // the Working tree page then says nothing instead of guessing which files are not this chat's.
+    function collectChatChangedPaths() {
+      const sessionId = normalizeId(getActiveSessionId()) || ownerSessionId;
+      const client = getSuggestedClient();
+      const model = getSuggestedModel();
+      if (!sessionId || typeof buildJennyChangeLedgerFromTurnViewModels !== 'function' || !client || !model || typeof model.buildAppliedHistory !== 'function') return null;
+      const turns = getTurnViewModelsForActiveSession(sessionId) || [];
+      const list = client.get(sessionId); // starts the one load when the list is not there yet
+      if (!turns.length || !list) return null;
+      const workspaceId = normalizeId(getWorkspaceId()) || 'default';
+      const ledger = buildJennyChangeLedgerFromTurnViewModels(turns, { sessionId, workspaceId });
+      const skipped = Array.isArray(ledger && ledger.skipped) ? ledger.skipped : [];
+      const notices = Array.isArray(ledger && ledger.notices) ? ledger.notices : [];
+      if (skipped.some((skip) => skip.reason === 'invalid_path' || skip.reason === 'invalid_turn')) return null;
+      if (notices.some((notice) => notice.omittedCount > 0 || notice.state === 'unavailable' || notice.reason)) return null;
+      const paths = new Set();
+      for (const change of Array.isArray(ledger.changes) ? ledger.changes : []) if (change && change.path) paths.add(change.path);
+      for (const change of model.buildAppliedHistory(list, { workspaceId }).changes || []) if (change && change.path) paths.add(change.path);
+      return paths;
+    }
+
     function ensureWorkingTree() {
       if (workingTree) return workingTree;
       const module = getWorkingTreeModule();
@@ -333,7 +410,11 @@
         getBridge: getChatWorkspace,
         openInWorkspace: (path) => openWorkingTreeFile(path),
         openInGit: () => openInGit(),
-        onScopeChange: (next) => { pageScope = next === 'working_tree' ? 'working_tree' : 'this_chat'; applyScope(); },
+        onScopeChange: (next) => { pageScope = next === 'working_tree' || next === 'branch' ? next : 'this_chat'; applyScope(); },
+        getChatChangedPaths: collectChatChangedPaths,
+        subscribeChatChanges: (callback) => getSuggestedClient()?.subscribe?.((changedSessionId) => {
+          if (normalizeId(changedSessionId) === (normalizeId(getActiveSessionId()) || ownerSessionId)) callback();
+        }) || null,
         log: appendClientLog,
         escapeHtml,
       });
@@ -344,6 +425,8 @@
     function applyScope() {
       if (!pageEl || !hostEl || !workingTreeEl) return;
       const page = ensureWorkingTree();
+      // Working tree and Whole branch share the git page; only This chat shows the ledger.
+      const gitPage = pageScope === 'working_tree' || pageScope === 'branch';
       pageEl.dataset.changesScope = page ? pageScope : 'this_chat';
       if (!page) {
         workingTreeEl.hidden = true;
@@ -359,12 +442,30 @@
         pendingFindings = null;
         page.setReviewFindings(findings);
       }
-      hostEl.hidden = pageScope === 'working_tree';
-      if (pageScope === 'working_tree') view?.unmount();
+      hostEl.hidden = gitPage;
+      if (gitPage) view?.unmount();
       else view?.mount(hostEl);
       if (pendingFocus && pageScope === 'working_tree') {
         pendingFocus = false;
         workingTreeEl.querySelector('.inv-segmented-option[aria-checked="true"]')?.focus?.({ preventScroll: true });
+      }
+    }
+
+    // Watches the page for the picture slots both pages emit and fills them. The module arrives with the
+    // view's scripts, so this attaches on the first render that has a view, before either page mounts.
+    function ensurePictures() {
+      if (pictures || !pageEl) return;
+      const module = getChangePicturesModule();
+      if (!module || typeof module.attachPanel !== 'function') return;
+      try {
+        pictures = module.attachPanel(pageEl, {
+          getSessionId: () => normalizeId(getActiveSessionId()) || ownerSessionId,
+          getTurnViewModels: (sessionId) => getTurnViewModelsForActiveSession(sessionId) || [],
+          getWorkspaceId: () => normalizeId(getWorkspaceId()) || 'default',
+          isEnabled: () => state.features?.featureFlags?.change_pictures !== false,
+        }) || null;
+      } catch (error) {
+        appendClientLog('WARN', 'code_review.change_pictures_attach_failed', { message: String(error && error.message || error) });
       }
     }
 
@@ -375,6 +476,7 @@
         ensureView().then((ready) => { if (ready && !disposed) renderArtifactReviewPanel(); });
         return;
       }
+      ensurePictures();
       applyScope();
       if (pageScope !== 'this_chat') return;
       if (pendingReveal) {
@@ -408,6 +510,8 @@
       workingTree = null;
       pageActions?.dispose();
       pageActions = null;
+      pictures?.dispose();
+      pictures = null;
       hostEl = null;
       pageEl = null;
       workingTreeEl = null;
@@ -429,5 +533,8 @@
     };
   }
 
-  return { CHANGES_VIEW_SCRIPTS, WORKING_TREE_SCRIPTS, createCodeReviewRail, loadChangesViewModules };
+  return {
+    CHANGES_VIEW_SCRIPTS, WORKING_TREE_SCRIPTS, CHANGE_PICTURES_SCRIPTS,
+    createCodeReviewRail, loadChangesViewModules, loadChangePictures, decorateChatPictures,
+  };
 });

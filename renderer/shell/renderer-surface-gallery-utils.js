@@ -36,7 +36,7 @@
   ];
   // Foundation/Midnight + the 11 palette files; fallback if appearanceUtils isn't reachable.
   var FALLBACK_PALETTE_IDS = [
-    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'paper', 'signal',
+    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'paper',
     'woolly', 'lexicon', 'rocko', 'jenny-day', 'jenny-night',
   ];
   var SWEEP_STEPS = 24;
@@ -132,6 +132,7 @@
     var controls = {};
     var trackedListeners = [];
     var savedPaletteValue;
+    var savedSchemeValue;
     var savedMotionValue;
     var fakeMql = null;
     var activeController = null;
@@ -427,6 +428,10 @@
 
     function handlePaletteChange(value) {
       documentRef.documentElement.dataset.palette = value;
+      var appearance = windowRef.appearanceUtils;
+      if (appearance && typeof appearance.resolvePaletteScheme === 'function') {
+        documentRef.documentElement.dataset.scheme = appearance.resolvePaletteScheme(value);
+      }
       republishTokens();
     }
 
@@ -573,6 +578,7 @@
       fakeMql = createFakeMediaQueryList(initialReducedMotion);
 
       savedPaletteValue = documentRef.documentElement.dataset.palette;
+      savedSchemeValue = documentRef.documentElement.dataset.scheme;
       savedMotionValue = documentRef.documentElement.dataset.motion;
 
       buildOverlay();
@@ -597,6 +603,7 @@
       cancelPointerSweep();
       cancelPressHold();
       restoreDatasetValue('palette', savedPaletteValue);
+      restoreDatasetValue('scheme', savedSchemeValue);
       restoreDatasetValue('motion', savedMotionValue);
       removeAllTrackedListeners();
       if (overlayEl && overlayEl.parentNode) overlayEl.parentNode.removeChild(overlayEl);

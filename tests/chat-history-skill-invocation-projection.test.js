@@ -95,6 +95,7 @@ test('the current prompt projects before its text attachments and ignores invali
 test('the projection helpers are pure: one command pattern, plain user rows only', () => {
   assert.equal(withSkillCommand('please', invocation('insight')), '/insight please');
   assert.equal(withSkillCommand('', invocation('insight')), '/insight');
+  assert.equal(withSkillCommand('/insight', invocation('insight')), '/insight', 'a bare send stores its command as the text');
   assert.equal(withSkillCommand('please', null), 'please');
   assert.equal(withSkillCommand('please', invocation('in sight')), 'please');
   const row = userRow('please', invocation('insight'));

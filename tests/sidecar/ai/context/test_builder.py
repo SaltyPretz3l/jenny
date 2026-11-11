@@ -909,6 +909,34 @@ def test_context_builder_reports_requested_python_tool_blocker(tmp_path) -> None
     assert "Do not mentally run, simulate, pretend, or describe using unavailable tools." in prompt
 
 
+_DIAGRAM_REPLY_SENTENCE = (
+    "To show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; "
+    "the chat draws it as a chart."
+)
+
+
+def test_context_builder_tells_the_model_to_draw_diagrams_in_fenced_mermaid(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    builder = ContextBuilder(workspace)
+
+    no_tools = builder.build_system_prompt("Base system prompt.")
+    with_tools = builder.build_system_prompt(
+        "Base system prompt.",
+        tool_statuses=[
+            RuntimeToolStatus(
+                name="read_file",
+                display_name="Read File",
+                available=True,
+                description="Reads files.",
+            ),
+        ],
+    )
+
+    assert no_tools.count(_DIAGRAM_REPLY_SENTENCE) == 1
+    assert with_tools.count(_DIAGRAM_REPLY_SENTENCE) == 1
+
+
 def test_context_builder_reports_requested_diagram_tool_blocker(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)

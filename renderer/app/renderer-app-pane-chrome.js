@@ -27,6 +27,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var ICON_JUMP_LATEST = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.25v9.25"></path><path d="M4 8.75 8 12.75l4-4"></path></svg>';
   var ICON_STOP = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1" /></svg>';
   var ICON_ATTACH = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2.5 2.5 0 013.5 3.5L7 12.5a1.5 1.5 0 01-2-2L10.5 5"/></svg>';
   var BACKEND_PREPARING = ['sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying'];
@@ -196,6 +197,16 @@
       return host.lastElementChild;
     }
 
+    // Pane 1's "Latest" circle; it has no wayfinder, so it never offers another jump.
+    function buildPaneJumpControl(stage) {
+      var button = insertButton(stage, { className: 'chat-jump-latest', trustedHtml: ICON_JUMP_LATEST });
+      if (!button) return null;
+      button.dataset.visible = 'false';
+      button.dataset.jumpLatestOnly = 'true';
+      button.setAttribute('inert', '');
+      return button;
+    }
+
     function buildPaneDom(rootEl, paneDom, pane) {
       var q = function (selector) { return rootEl.querySelector(selector); };
       return Object.assign({}, paneDom, {
@@ -211,8 +222,7 @@
         attachmentTray: paneDom.attachmentTray || null,
         composerAttachShortcut: pane.attachButton || null,
         jumpToTopButton: null,
-        jumpToLastPromptButton: null,
-        jumpToBottomButton: null,
+        jumpToBottomButton: buildPaneJumpControl(q('.chat-thread-stage')),
         artifactReviewResizer: null,
         artifactReviewPanel: null,
         chatContextPanel: null,

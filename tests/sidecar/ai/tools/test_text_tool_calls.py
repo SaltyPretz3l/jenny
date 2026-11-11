@@ -9,6 +9,7 @@ from sidecar.ai.tools.text_tool_calls import (
     contract_tool_names,
     find_text_tool_calls,
     is_tool_call_only,
+    recognized_tool_names,
     strip_text_tool_calls,
 )
 
@@ -252,3 +253,15 @@ def test_json_envelope_with_unusable_arguments_is_stripped_but_incomplete() -> N
 
     assert prose == "Writing."
     assert (call.name, call.arguments, call.complete) == ("write_file", {}, False)
+
+
+def test_recognized_names_cover_a_builtin_the_contract_never_registered() -> None:
+    # 2026-11-03: the command sandbox's allowlist dropped sessions_list, yet the model wrote it.
+    contract = SimpleNamespace(entries=(SimpleNamespace(descriptor=SimpleNamespace(name="read_file")),))
+    text = "Checking.\n<tool_call><function=sessions_list><parameter=limit>5</parameter></function></tool_call>"
+
+    assert strip_text_tool_calls(text, contract_tool_names(contract))[1] == ()
+    prose, (call,) = strip_text_tool_calls(text, recognized_tool_names(contract))
+
+    assert {"read_file", "sessions_list"} <= recognized_tool_names(contract)
+    assert (prose, call.name, call.complete) == ("Checking.", "sessions_list", True)

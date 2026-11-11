@@ -42,7 +42,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('project_create is a closed schema: bad shapes refuse before the port', async () => {
   const { context, calls } = harness();
@@ -145,7 +146,9 @@ test('approval path: a refused folder ends the call before any card, with the re
   const approved = await waitForToolApproval(service, 'stream-1', 'sess_primary', 'req-1', {
     tool_name: 'project_create', tool_call_id: 'call-1', tool_input: { ...GOOD, folder: 'G:\\keys\\.ssh' },
   }, new AbortController(), new CanonicalTurnEventCollector({ turnId: 'turn-1', sessionId: 'sess_primary' }));
-  assert.equal(approved, false);
+  assert.equal(approved.approved, false);
+  assert.equal(approved.decision, 'app_refused', 'not the user\'s Deny: the turn goes on with the reason');
+  assert.equal(JSON.parse(approved.feedback).reason, 'credential_folder');
   assert.equal(service.pendingToolApprovals.size, 0);
   assert.equal(emitted.some((event) => event.type === 'tool_approval_needed'), false, 'no card');
   const result = emitted.find((event) => event.type === 'tool_result');

@@ -34,50 +34,68 @@ test('chat session rows do not restore per-row bottom dividers', () => {
   assert.doesNotMatch(ruleBody('.session-row'), /border-bottom\s*:/);
 });
 
-test('the dot column is rendered for every runtime state but yields to bulk selection', t => {
-  const dom = new JSDOM('<!doctype html><head></head><body><div class="sidebar-bulk-actions" hidden></div></body>');
+test('the dot column is rendered for every runtime state, selected or not', t => {
+  const dom = new JSDOM('<!doctype html><head></head><body></body>');
   t.after(() => dom.window.close());
   const style = dom.window.document.createElement('style');
   // jsdom does not parse container queries; keep the real stylesheet order.
   style.textContent = panelCss.slice(0, panelCss.indexOf('@container')) + selectionCss;
   dom.window.document.head.append(style);
   for (const state of ['idle', 'streaming', 'approval']) {
-    dom.window.document.body.insertAdjacentHTML('beforeend', `<li class="session-row active sidebar-bulk-selected" data-session-dominant-state="${state}"><button class="session-row__open" role="checkbox" aria-checked="true"><span class="session-row__selection"></span><span class="session-row__dot"></span></button><button class="session-row__menu" hidden></button></li>`);
-    const row = dom.window.document.body.lastElementChild;
-    const computed = node => dom.window.getComputedStyle(node);
-    assert.match(computed(row.querySelector('.session-row__dot')).display, /^(?:block|inline-block)$/, state);
-    if (state === 'idle') {
-      assert.equal(computed(row.querySelector('.session-row__dot')).backgroundColor, 'rgba(0, 0, 0, 0)');
+    for (const cls of ['active sidebar-bulk-selected', 'sidebar-bulk-selected']) {
+      dom.window.document.body.insertAdjacentHTML('beforeend', `<li class="session-row ${cls}" data-session-dominant-state="${state}"><button class="session-row__open"><span class="session-row__dot"></span></button><button class="session-row__menu" hidden></button></li>`);
+      const row = dom.window.document.body.lastElementChild;
+      const dot = dom.window.getComputedStyle(row.querySelector('.session-row__dot'));
+      assert.match(dot.display, /^(?:block|inline-block)$/, `${state} ${cls}`);
+      if (state === 'idle') assert.equal(dot.backgroundColor, 'rgba(0, 0, 0, 0)');
     }
-    row.classList.add('sidebar-bulk-selecting');
-    assert.equal(computed(row.querySelector('.session-row__selection')).display, 'block', state);
-    assert.equal(computed(row.querySelector('.session-row__menu')).display, 'none', state);
-    assert.equal(computed(row.querySelector('.session-row__dot')).display, 'none', state);
-    assert.equal(computed(row.querySelector('.session-row__selection')).animationName, 'none');
   }
-  assert.equal(dom.window.getComputedStyle(dom.window.document.querySelector('.sidebar-bulk-actions')).display, 'none');
 });
 
-test('bulk selection background wins over current-chat styling without changing status-dot styles', () => {
-  const selector = '.session-row.sidebar-bulk-selected:is(:hover, :focus-within)';
-  assert.match(ruleBody(selector), /background:\s*color-mix\(in srgb, var\(--accent\)/);
-  assert.ok(css.indexOf(selector) > css.indexOf('.session-row.active:is(:hover, :focus-within)'));
-  const shellCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'sidebar.css'), 'utf8');
-  assert.doesNotMatch(shellCss, /sidebar-bulk|\[aria-checked/);
-  assert.doesNotMatch(css, /\[aria-checked[^\n]+session-row__dot/);
+test('selected rows are highlighted, and an open selected row reads stronger than either alone', () => {
+  const selectedHover = '.session-row.sidebar-bulk-selected:is(:hover, :focus-within)';
+  const bothHover = '.session-row.active.sidebar-bulk-selected:is(:hover, :focus-within)';
+  assert.match(ruleBody(selectedHover), /background:\s*color-mix\(in srgb, var\(--accent\) 14%, transparent\)/);
+  assert.match(ruleBody(bothHover), /background:\s*color-mix\(in srgb, var\(--accent\) 22%, transparent\)/);
+  assert.match(css, /\.session-row\.sidebar-bulk-selected,\s*\.session-row\.sidebar-bulk-selected:is\(/, 'the resting selected row shares the hover rule');
+  assert.match(css, /\.session-row\.active\.sidebar-bulk-selected,\s*\.session-row\.active\.sidebar-bulk-selected:is\(/, 'the resting open selected row shares the hover rule');
+  // Three classes beat .session-row.active (two) whatever the import order; the hover form beats its :is() twin.
+  assert.ok(css.indexOf(bothHover) > css.indexOf('.session-row.active:is(:hover, :focus-within)'));
+  assert.ok(css.indexOf(bothHover) > css.indexOf(selectedHover), 'the stronger mix wins over the plain selected mix');
   const imports = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
   assert.ok(imports.indexOf('chats-panel-selection.css') > imports.indexOf('chats-panel.css'));
 });
 
-test('selection layout permits wrapping and confirmation overlays within the sidebar bounds', () => {
-  assert.match(ruleBody('.sidebar-bulk-actions'), /flex-wrap:\s*wrap/);
-  assert.match(ruleBody('.sidebar-bulk-control'), /min-height:\s*32px/);
-  const dialog = ruleBody('.sidebar-bulk-actions .sidebar-bulk-confirm');
-  assert.match(dialog, /inset-block-start:\s*100%/);
-  assert.match(dialog, /inset-inline:\s*0/);
-  assert.match(dialog, /min-width:\s*0/);
-  assert.match(dialog, /overflow-y:\s*auto/);
-  assert.match(dialog, /animation:\s*none/);
+test('forced colours: a selected row is outlined because backgrounds are dropped', () => {
+  const forced = selectionCss.match(/@media \(forced-colors: active\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(forced, 'selection css has a forced-colors block');
+  const rule = forced[1].match(/\.session-row\.sidebar-bulk-selected\s*\{([^}]*)\}/);
+  assert.ok(rule, 'the selected row has a forced-colors rule');
+  assert.match(rule[1], /outline:\s*1px solid Highlight/);
+  assert.match(rule[1], /outline-offset:\s*-1px/);
+});
+
+test('selection has no mode: its toolbar, entry, confirm and checkbox styles are gone', () => {
+  const stylesDir = path.join(__dirname, '..', 'styles');
+  const files = fs.readdirSync(stylesDir).filter(name => name.endsWith('.css'));
+  assert.ok(files.includes('chats-panel-selection.css'));
+  const banned = [
+    /sidebar-bulk-selecting/,
+    /#chatsSelectionEntry/,
+    /\.sidebar-bulk-actions/,
+    /\.sidebar-bulk-summary/,
+    /\.sidebar-bulk-buttons/,
+    /\.sidebar-bulk-control/,
+    /\.sidebar-bulk-confirm/,
+    /\.session-row__selection/,
+  ];
+  for (const name of files) {
+    const text = fs.readFileSync(path.join(stylesDir, name), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const pattern of banned) assert.doesNotMatch(text, pattern, `${name} has no ${pattern}`);
+  }
+  const shellCss = fs.readFileSync(path.join(stylesDir, 'sidebar.css'), 'utf8');
+  assert.doesNotMatch(shellCss, /sidebar-bulk|\[aria-checked/);
+  assert.doesNotMatch(css, /\[aria-checked/, 'rows are no longer checkboxes');
 });
 
 test('linked-chat tree styles use logical properties, keep the row height and leave chats-panel.css under the ratchet', () => {

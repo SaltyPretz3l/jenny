@@ -21,7 +21,7 @@ test('artifactAutoOpen defaults off for fresh, partial and garbled records', () 
     assert.equal(appearance.normalizeAppearancePreferences({ artifactAutoOpen: value }).artifactAutoOpen, false);
   }
   assert.equal(appearance.normalizeAppearancePreferences({ artifactAutoOpen: true }).artifactAutoOpen, true);
-  for (const raw of ['{garbled', '{}', JSON.stringify({ paletteId: 'signal' })]) {
+  for (const raw of ['{garbled', '{}', JSON.stringify({ paletteId: 'pewter' })]) {
     assert.equal(appearance.loadAppearancePreferences(createStorage({ [appearance.STORAGE_KEY]: raw })).artifactAutoOpen, false);
   }
 });
@@ -40,7 +40,7 @@ test('artifactAutoOpen saves and loads both choices and stamps the root dataset'
 });
 
 test('artifactAutoOpen is portable but never a theme-bundle axis', () => {
-  assert.equal(Object.hasOwn(appearance.pickThemeBundleAxes({ artifactAutoOpen: true, paletteId: 'signal' }), 'artifactAutoOpen'), false);
+  assert.equal(Object.hasOwn(appearance.pickThemeBundleAxes({ artifactAutoOpen: true, paletteId: 'pewter' }), 'artifactAutoOpen'), false);
   for (const enabled of [true, false]) {
     assert.equal(normalizePortablePreferences({ appearance: { artifactAutoOpen: enabled } }).appearance.artifactAutoOpen, enabled);
   }

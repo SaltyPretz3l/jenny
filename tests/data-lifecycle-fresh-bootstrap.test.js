@@ -9,6 +9,7 @@ const { createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { PersonalityWorkspaceService } = require('../services/personality-workspace-service');
 const { isMeaningfullyFresh } = require('../services/data-lifecycle/restore-service');
+const { STORE_SCHEMA_VERSION } = require('../services/backend/session-store-migrations');
 
 const MEMORY_ROW_TABLES = ['memories', 'pending_memory_candidates', 'memory_suppressions', 'memory_quarantine',
   'memory_operations', 'memory_reflection_cursor', 'memory_project_state', 'memory_session_markers'];
@@ -152,9 +153,9 @@ test('without a store, the sessions directory of an untouched primary chat is fr
   fs.mkdirSync(dir);
   const id = 'sess_1_primary';
   const write = (name, value) => fs.writeFileSync(path.join(dir, name), JSON.stringify(value));
-  write('_index.json', { journal_epoch: 1, schema_version: 26, sessions: { [id]: { id, session_role: 'primary', message_count: 0 } } });
-  write('_active_turns.state', { version: 1, schema_version: 26, session_ids: [] });
-  write(`${id}.json`, { journal_epoch: 1, schema_version: 26, session: { id, session_role: 'primary', messages: [] } });
+  write('_index.json', { journal_epoch: 1, schema_version: STORE_SCHEMA_VERSION, sessions: { [id]: { id, session_role: 'primary', message_count: 0 } } });
+  write('_active_turns.state', { version: 1, schema_version: STORE_SCHEMA_VERSION, session_ids: [] });
+  write(`${id}.json`, { journal_epoch: 1, schema_version: STORE_SCHEMA_VERSION, session: { id, session_role: 'primary', messages: [] } });
   assert.equal(isMeaningfullyFresh({ userDataPath: root }), true);
 
   write(`${id}.json`, { session: { id, session_role: 'primary', messages: [{ role: 'user', content: 'hi' }] } });

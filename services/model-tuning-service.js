@@ -7,6 +7,8 @@ const {
   normalizeStreamInactivitySeconds,
 } = require('./shell-config-model-tuning');
 const {
+  CONTEXT_LENGTH_MAX,
+  CONTEXT_LENGTH_MIN,
   CONTEXT_LENGTH_STEPS,
   CUSTOM_PROMPT_MAX_CHARS,
   RATIO_MAX,
@@ -86,6 +88,7 @@ class ModelTuningService {
       contextLengthByModel: { ...(compaction.contextLengthByModel || {}) },
       customPrompt: String(compaction.customPrompt || ''),
       contextLengthSteps: [...CONTEXT_LENGTH_STEPS],
+      contextLengthBounds: { min: CONTEXT_LENGTH_MIN, max: CONTEXT_LENGTH_MAX },
       generationProfileBounds: GENERATION_PROFILE_BOUNDS,
       ratioBounds: { min: RATIO_MIN, max: RATIO_MAX },
       pending: this.pending,

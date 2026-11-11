@@ -207,6 +207,9 @@ def schema_from_descriptor(descriptor: CanonicalToolDescriptor) -> dict[str, Any
     }
 
 
+model_facing_parameters = _plan_artifact_policy.model_facing_parameters
+
+
 def mode_only_tool(descriptor: object) -> bool:
     """Plan's and Propose's mode-only tools never ride the one-send auto-run grant."""
     availability = getattr(descriptor, "availability", None)
@@ -359,6 +362,8 @@ def _strict_safety_mode_blocks(
     context: ToolAssemblyContext,
 ) -> bool:
     mode = _safety_mode(context.safety_mode) if context.safety_mode else _safety_mode(context.config)
+    if descriptor.tool_family == "browser_use":
+        return mode in {"strict", "paranoid"}
     return mode == "strict" and descriptor.tool_family == "web"
 
 

@@ -85,6 +85,17 @@ test('wiring starts the image engine, attaches shutdown and handoff, and forward
   } finally { dispose(f); }
 });
 
+test('wiring attaches the ComfyUI process owner without loading it at boot', () => {
+  const loaded = () => Object.keys(require.cache).some((file) => /comfyui-process\.js$/.test(file));
+  const f = fixture();
+  try {
+    assert.equal(loaded(), false);
+    for (const name of ['start', 'stop', 'missingNodes', 'loaderValues']) {
+      assert.equal(typeof f.backendService.comfyui[name], 'function', name);
+    }
+  } finally { dispose(f); }
+});
+
 test('wiring reuses an existing coordinator for the handoff', async () => {
   const coordinator = new ExclusiveGpuCoordinator();
   const owner = { kind: 'builtin', tool_name: 'test_tool', call_id: 'test_call', stream_id: 'test_stream' };

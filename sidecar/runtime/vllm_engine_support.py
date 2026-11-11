@@ -39,6 +39,7 @@ from sidecar.runtime.local_engine.messages import (
     demote_non_leading_system_messages,
     merge_consecutive_system_messages,
 )
+from sidecar.runtime.local_engine.ninfer_prefix_cache import mark_history_boundary
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +398,7 @@ def _parse_tool_calls(raw_calls: Any, *, request_id: str | None = None) -> list[
 
 
 __all__ = [
+    "mark_history_boundary",
     "DelimitedReasoningParser",
     "EngineConnectionError",
     "GenerationError",

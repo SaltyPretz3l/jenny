@@ -15,6 +15,7 @@ const { isLocalEngine, openAiCompatibleUrlFromService } = require('./session-loc
 
 const METHODS = new Set([
   'suggestions.generate', 'commit.generate_message', 'chat.compact', 'memory.reflect', 'handoff.generate_note',
+  'session.generate_title',
 ]);
 // Session-scoped methods hold the session's turn lease and captured authority.
 const SCOPED_METHODS = new Set(['chat.compact', 'memory.reflect', 'handoff.generate_note']);
@@ -38,14 +39,17 @@ async function requestRuntimeInference(service, method, params, {
   const scoped = SCOPED_METHODS.has(method);
   // Reflection is the only caller that pins its route to a captured engine.
   const reflect = method === 'memory.reflect';
+  // Background reflection and chat naming read a chat's text: it never leaves the machine.
+  const localOnly = reflect || method === 'session.generate_title';
   if (typeof consumeResult !== 'function' || (engineType !== null && !reflect) || (scoped
     ? typeof sessionId !== 'string' || !sessionId.trim() || params?.session_id !== sessionId
     : sessionId !== null)) throw new TypeError('runtime_auxiliary_scope_invalid');
   const runtime = service?.sessionRuntime;
   const client = service?.sidecarClient;
   if (!runtime) {
-    // Reflection's consent re-check needs the session lease only the runtime grants.
-    if (reflect || Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) {
+    // Reflection's consent re-check needs the session lease only the runtime grants,
+    // and a local-only request needs the route check only the runtime can make.
+    if (localOnly || Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) {
       throw admissionError('runtime_unavailable');
     }
     // Embedded legacy adapters without application composition retain their
@@ -63,8 +67,7 @@ async function requestRuntimeInference(service, method, params, {
   unsettledRequests.set(service, pending);
   if (pending.size >= 64) throw admissionError('runtime_unresolved_capacity');
   const route = captureSessionRuntimeProviderRoute(service, engineType === null ? {} : { engineType });
-  // Background reflection reads a chat's history: it never leaves the machine.
-  if (reflect && (route.resource_class !== 'local'
+  if (localOnly && (route.resource_class !== 'local'
     || !isLocalEngine(route.engine_type, openAiCompatibleUrlFromService(service)))) {
     throw admissionError('runtime_route_not_local');
   }

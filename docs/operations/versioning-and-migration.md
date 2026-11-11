@@ -623,7 +623,10 @@ registered as `electron.terminal_repair_store` with forward policy
 For the 1.1 candidate, v52 adds `uiLanguage`, `safetyMode` and
 `unattendedGuardMinutes`. V53 adds normalized `commandSandbox` configuration,
 defaulting off for existing profiles. The additive `use24HourTime` preference
-defaults false and does not require another schema bump. V54 introduces runtime defaults, v55 the automatic-approval streak cap, v56
+defaults false and does not require another schema bump. The additive
+`commandSandbox.mode` (`copy | synced`, row 106) needs none either: a missing
+key reads `copy` for a profile that already had the sandbox on and `synced`
+otherwise. V54 introduces runtime defaults, v55 the automatic-approval streak cap, v56
 workspace split-pane state, v57 the default-zoom migration, v58 retires hidden
 token-budget/compaction tuning overrides, and v59 drops retired Home weather
 coordinates. Older schema notes below explain earlier transitions rather than

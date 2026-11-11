@@ -19,7 +19,6 @@ const TOOL_IDS = new Set([
   'glob_files',
   'grep_search',
   'edit_file',
-  'mermaid_generate',
   'home',
 ]);
 const INTERNAL_COPY = /\b(?:replay|smoke|deterministic)\b/i;

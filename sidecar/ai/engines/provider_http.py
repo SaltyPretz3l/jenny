@@ -149,12 +149,20 @@ class ProviderHttpService:
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         import httpx
+
+        # Lazy, like httpx: request_route stays off the sidecar startup import graph.
+        from sidecar.ai.engines.request_route import is_loopback_ip_literal
+
         self._provider = provider
+        # A loopback-literal endpoint never goes through an environment proxy
+        # (HTTP_PROXY / ALL_PROXY): prompts and per-request headers stay local.
+        self._trust_env = not is_loopback_ip_literal(base_url)
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,
             headers=headers,
             verify=_shared_ssl_context(),
+            trust_env=self._trust_env,
         )
 
     @property
@@ -175,14 +183,19 @@ class ProviderHttpService:
         *,
         json: dict[str, Any] | None = None,
         timeout: float | None = None,
+        headers: dict[str, str] | None = None,
     ) -> AbstractContextManager[httpx.Response]:
         """Open a live response stream.
 
         Callers own status checks, error handling, and response consumption.
+        ``headers`` are merged over the client's own for this one request.
         """
-        if timeout is None:
-            return self._client.stream(method, path, json=json)
-        return self._client.stream(method, path, json=json, timeout=timeout)
+        kwargs: dict[str, Any] = {"json": json}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if headers is not None:
+            kwargs["headers"] = headers
+        return self._client.stream(method, path, **kwargs)
 
     def get_json(
         self,
@@ -217,13 +230,15 @@ class ProviderHttpService:
         query: dict[str, str] | None = None,
         cancel_handle: Any = None,
         timeout: float | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST JSON and parse the response. When ``cancel_handle`` is supplied,
         cancellation is honored during the bounded request. The handle is duck-typed:
         it only needs ``cancelled: bool`` and ``wait(timeout_seconds) -> bool``
         (True if cancelled).
 
-        ``timeout`` overrides the configured client timeout for one call.
+        ``timeout`` overrides the configured client timeout for one call, and
+        ``headers`` are merged over the client's own for that call.
         """
         return self._request_json(
             "POST",
@@ -232,6 +247,7 @@ class ProviderHttpService:
             query=query,
             cancel_handle=cancel_handle,
             timeout=timeout,
+            headers=headers,
         )
 
     def post_json_interruptible(
@@ -241,6 +257,7 @@ class ProviderHttpService:
         *,
         cancel_handle: Any,
         timeout: float | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST JSON over a one-shot connection that a cancel severs at any point.
 
@@ -259,6 +276,7 @@ class ProviderHttpService:
             timeout=self._client.timeout,
             headers=self._client.headers,
             verify=_shared_ssl_context(),
+            trust_env=self._trust_env,
         )
         unregister_cancel = register_cancel_callback(cancel_handle, severer.sever)
         try:
@@ -271,6 +289,7 @@ class ProviderHttpService:
                 timeout=timeout,
                 client=client,
                 extensions={"trace": severer.trace},
+                headers=headers,
             )
         finally:
             unregister_cancel()
@@ -287,6 +306,7 @@ class ProviderHttpService:
         timeout: float | None = None,
         client: httpx.Client | None = None,
         extensions: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         import httpx
         _raise_if_cancelled(cancel_handle, self._provider)
@@ -300,6 +320,7 @@ class ProviderHttpService:
                 timeout=timeout,
                 client=client,
                 extensions=extensions,
+                headers=headers,
             )
         except (httpx.TimeoutException, httpx.TransportError) as error:
             _raise_if_cancelled(cancel_handle, self._provider)
@@ -321,6 +342,7 @@ class ProviderHttpService:
         timeout: float | None = None,
         client: httpx.Client | None = None,
         extensions: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         import httpx
         request_kwargs: dict[str, Any] = {"params": query}
@@ -330,6 +352,8 @@ class ProviderHttpService:
             request_kwargs["timeout"] = timeout
         if extensions is not None:
             request_kwargs["extensions"] = extensions
+        if headers is not None:
+            request_kwargs["headers"] = headers
         http_client = self._client if client is None else client
         try:
             _raise_if_cancelled(cancel_handle, self._provider)
@@ -559,7 +583,10 @@ def _parse_body(response: httpx.Response) -> Any:
 
 
 def _sanitize_secret_text(value: str) -> str:
-    sanitized = _SECRET_TOKEN_RE.sub("<redacted-token>", redact_exact_secrets(value))
+    from sidecar.ai.engines.request_route import redact_route_token
+
+    sanitized = redact_route_token(redact_exact_secrets(value))
+    sanitized = _SECRET_TOKEN_RE.sub("<redacted-token>", sanitized)
     return _AUTH_VALUE_RE.sub(lambda match: f"{match.group(1)}=<redacted-token>", sanitized)
 
 

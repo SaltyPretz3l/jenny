@@ -45,6 +45,7 @@
     ['artifacts', 'create', () => jt('composer.toolFamily.artifacts.label', 'Artifacts and diagrams'), () => jt('composer.toolFamily.artifacts.description', 'Pages, charts and diagrams'), '', '<rect x="1" y="2" width="5" height="4" rx="1"/><rect x="10" y="10" width="5" height="4" rx="1"/><path d="M4 6v6h6"/>'],
     ['images', 'create', () => jt('composer.toolFamily.images.label', 'Images'), () => jt('composer.toolFamily.images.description', 'Generate images locally'), '', '<rect x="2" y="2" width="12" height="12" rx="2"/><circle cx="6" cy="6" r="1"/><path d="m2 12 4-4 3 3 2-2 3 3"/>'],
     ['web', 'reach', () => jt('composer.toolFamily.web.label', 'Web'), () => jt('composer.toolFamily.web.description', 'Search and read pages'), 'web', 0],
+    ['browser_use', 'reach', () => jt('composer.toolFamily.browser.label', 'Browser'), () => jt('composer.toolFamily.browser.description', 'Open and use web pages beside this chat'), '', '<circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c2 2 2.6 4 2.6 6.2s-.6 4.2-2.6 6.2c-2-2-2.6-4-2.6-6.2S6 3.8 8 1.8Z"/>'],
     ['knowledge', 'reach', () => jt('composer.toolFamily.knowledge.label', 'Knowledge'), () => jt('composer.toolFamily.knowledge.description', 'Search your knowledge folders'), '', '<path d="M8 4C6 2 3 2 1 3v10c2-1 5-1 7 1 2-2 5-2 7-1V3c-2-1-5-1-7 1Zm0 0v10"/>'],
     ['home', 'reach', () => jt('composer.toolFamily.home.label', 'Home and tasks'), () => jt('composer.toolFamily.home.description', 'Calendar, reminders, tasks and automations'), '', '<path d="m1 7 7-6 7 6M3 6v8h10V6M6 14V9h4v5"/>'],
     ['helpers', 'reach', () => jt('composer.toolFamily.helpers.label', 'Helpers'), () => jt('composer.toolFamily.helpers.description', 'Delegate read-only research'), 'subagents', '<circle cx="5" cy="5" r="2"/><circle cx="12" cy="6" r="2"/><path d="M1 14v-2a4 4 0 0 1 8 0v2m1-4a3 3 0 0 1 5 2v2"/>'],
@@ -54,6 +55,9 @@
     icon: typeof icon === 'number' ? TOOL_TOGGLE_CATEGORIES[icon].icon
       : '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">' + icon + '</svg>',
   })));
+
+  // Off until a chat turns them on; mirrors DEFAULT_OFF_FAMILIES in services/tools/tool-surface-families.js.
+  const DEFAULT_OFF_FAMILY_IDS = new Set(['browser_use']);
 
   function familyLabel(id) {
     return SURFACE_FAMILY_UI.find((entry) => entry.id === id)?.label() ?? '';
@@ -114,6 +118,7 @@
 
   return {
     SURFACE_FAMILY_UI,
+    DEFAULT_OFF_FAMILY_IDS,
     familyLabel,
     familyDescription,
     PASTE_REJECT_BYTES,

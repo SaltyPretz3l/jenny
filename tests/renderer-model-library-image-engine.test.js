@@ -238,7 +238,8 @@ test('a retained lease shows Clean up now instead of the engine actions and call
   const h = createHarness(t, { state: { status: 'installed', source: 'managed', handoff: { active: false, retained: true, closing: false } } });
   h.controller.bind();
   await flush();
-  assert.match(h.text(), /did not finish cleanly/);
+  assert.equal(h.document.querySelector('.model-library-image-engine-status').textContent,
+    'StatusThe last image did not finish cleanly. Chat models stay paused until it is cleaned up.');
   assert.ok(h.button('reconcile'));
   assert.equal(h.button('remove'), null);
   h.click('reconcile');
@@ -366,6 +367,9 @@ test('quantOf reads the quant token from a file name', () => {
   assert.equal(quantOf('qwen-image-2.1-Q4_K_M.gguf'), 'Q4_K_M');
   assert.equal(quantOf('model-bf16.safetensors'), 'BF16');
   assert.equal(quantOf('plain.safetensors'), '');
+  assert.equal(quantOf('minimax_h3_image_pruned_int8_convrot.safetensors'), 'INT8');
+  assert.equal(quantOf('qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors'), 'NVFP4');
+  assert.equal(quantOf('model_w4a8.safetensors'), 'W4A8');
 });
 
 
@@ -402,7 +406,7 @@ test('Clear anyway… is absent before a clean-up attempt and offered after an u
   h.click('reconcile');
   await flush();
   assert.equal(statusTone(h), 'danger');
-  assert.match(h.text(), /Installed · the last render may still be running\. Chat models stay paused\./);
+  assert.equal(h.document.querySelector('.model-library-image-engine-status').textContent, 'StatusThe last render may still be running. Chat models stay paused.');
   assert.match(h.text(), new RegExp(`Jenny could not check 2 helper processes from ${shortTime(STARTED_AT)}\\.`));
   assert.equal(h.button('reconcile').textContent, 'Try again');
   assert.equal(h.button('force-clear-ask').textContent, 'Clear anyway…');
@@ -425,7 +429,7 @@ test('Clear anyway… asks inline, Keep waiting backs out, and a cleared record 
   await flush();
   h.click('force-clear-ask');
   const confirm = h.document.querySelector('.model-library-image-engine-confirm');
-  assert.equal(confirm.textContent, 'Clear without proof? Chat resumes now. A stray sd-cli helper would keep its GPU memory until it exits.');
+  assert.equal(confirm.textContent, 'Clear without proof? Chat resumes now. A stray image helper would keep its GPU memory until it exits.');
   assert.doesNotMatch(h.text(), /could not check/);
   assert.match(h.button('force-clear').className, /btn--danger/);
   assert.equal(h.button('force-clear').textContent, 'Clear anyway');

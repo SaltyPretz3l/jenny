@@ -24,6 +24,8 @@ from sidecar.ai.routing.tool_budget_filter import count_full_tool_schemas
 from sidecar.ai.tools.models import GenerationResult, GenerationUsage, ToolCallRequest
 from sidecar.protocol import API_VERSION, CONTEXT_PREVIEW_METHOD
 from sidecar.runtime import request_dispatch_context as dispatch_module
+from sidecar.runtime.chat_models import ChatRequestContext
+from sidecar.runtime.execution_context import execution_context_from_params
 from sidecar.runtime.request_dispatch_context import process_context_preview
 from sidecar.runtime.server_auxiliary_workers import AUXILIARY_FAMILY_BY_METHOD
 from tests.sidecar.runtime.test_execution_context import _payload
@@ -271,10 +273,15 @@ def test_capacity_is_the_window_requests_are_budgeted_with(preview, monkeypatch)
 def test_the_send_meter_reads_on_the_preview_scale(preview, monkeypatch):
     # The ring shows this preview between turns and the send's context.usage during
     # one: the same prompt must read the same used tokens and auto-compact point.
-    kernel, run, _root = preview
+    kernel, run, root = preview
     kernel._config = replace(kernel._config, tools_enabled=True, feature_flags=_COMPACTION_ON)
     history = [{"role": "user", "content": "A long conversation. " * 1500}]
-    result = run(messages=history)["result"]
+    # Both sides carry the same execution context, as Electron sends it to both. Without
+    # it the send falls back to the builder's root while the preview is unbound, and the
+    # gap grows with the temp path's length.
+    rooted = _payload(root.resolve())
+    execution = execution_context_from_params({"execution_context": rooted})
+    result = run(execution_context=rooted, messages=history)["result"]
     monkeypatch.setattr(kernel._engine, "generate", lambda **_kwargs: "Done.")
     # One tool iteration whose provider reports a prompt far below the real one (a
     # replay engine's fixed usage): the meter still counts the assembled prompt.
@@ -290,6 +297,15 @@ def test_the_send_meter_reads_on_the_preview_scale(preview, monkeypatch):
     ]
     events = []
     kernel.build_chat_decision(
+        request_context=ChatRequestContext(
+            request_id="send_1",
+            trace_id=None,
+            session_id="session_1",
+            mode="assist",
+            approvals_pre_granted=False,
+            execution_context=execution,
+            workspace_root_present=execution.workspace_root_present,
+        ),
         request_id="send_1",
         messages=history,
         latest_user_content=history[-1]["content"],

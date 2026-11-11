@@ -36,7 +36,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = (result) => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('the kill switch refuses first; Plan mode and read-only chats refuse a write', async () => {
   const off = harness({ featureFlags: { primary_chat_export: false } });

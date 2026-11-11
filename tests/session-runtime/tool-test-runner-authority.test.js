@@ -65,7 +65,7 @@ test('the verify facade passes only a branded request authority port', async () 
 test('the captured verify identity observes policy revocation and cancellation', async () => {
   const revoked = fixture();
   revoked.revoke();
-  assert.throws(() => revoked.facade.run({ configId: 'unit' }), /does not authorize/);
+  assert.throws(() => revoked.facade.run({ configId: 'unit' }), /tool permissions do not allow this call/);
 
   const cancelled = fixture();
   cancelled.controller.abort(new Error('cancelled by model'));

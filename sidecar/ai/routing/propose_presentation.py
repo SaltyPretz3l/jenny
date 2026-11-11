@@ -12,6 +12,7 @@ suggestion. A sibling of ``plan_presentation``: the same
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from sidecar.ai.config import read_environment_value
@@ -32,6 +33,12 @@ PROPOSE_NUDGE = (
 )
 _PROPOSE_TOOL = "propose_change"
 _MAX_REPLY_CHARS = 16_000
+# A request that only asks for an answer has no change to record: asking anyway only earns a
+# reply to the nudge. A miss here costs one generation; the prose stays either way.
+_ANSWER_ONLY_REQUEST = re.compile(
+    r"\s*(?:please\s+)?(?:summari[sz]e|list|explain|describe|tell|what|why|how|which|who|where|when)\b",
+    re.IGNORECASE,
+)
 
 
 def _assist_enabled() -> bool:
@@ -91,12 +98,13 @@ def final_propose_nudge(loop: Any, result: Any, iteration: int) -> bool:
     reply = sanitize_assistant_output(str(result.content or ""), max_chars=_MAX_REPLY_CHARS)
     if not reply.strip() or "?" in reply:
         return False
+    if _ANSWER_ONLY_REQUEST.match(str(getattr(loop, "latest_user_content", "") or "")):
+        return False
     loop._propose_nudged = True
     emit_heuristic_fire(loop.runtime, "propose_nudge")
-    # nudge_retry, not post_tool_restart: the draft described its changes as
-    # prose instead of calling propose_change, so the fold reads "it skipped a
-    # tool it needed" (2026-10-05 recheck, same cause as gate F5).
-    emit_stream_reset_for_retry(loop.runtime, loop.streamed_event_types, reason="nudge_retry")
+    # propose_nudge keeps the prose: it may be a complete answer (owner gate
+    # 2026-11-07), and on a real change it reads as commentary before the calls.
+    emit_stream_reset_for_retry(loop.runtime, loop.streamed_event_types, reason="propose_nudge")
     loop.working_messages.append({"role": "assistant", "content": reply.strip()})
     loop.working_messages.append({"role": "user", "content": PROPOSE_NUDGE})
     log_event(

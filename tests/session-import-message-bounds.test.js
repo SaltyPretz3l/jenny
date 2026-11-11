@@ -254,10 +254,16 @@ describe('session import message bounds', () => {
     assert.ok(Object.isFrozen(IMPORTED_MESSAGE_KEY_ALLOWLIST));
     const entries = collectFixtureMessages(FIXTURES_ROOT);
     assert.ok(entries.length > 20);
+    // Team slice 3-5: a stored member `author` is deliberately never imported or restored.
+    const NEVER_IMPORTED = new Set(['author']);
+    let strippedAuthors = 0;
     for (const { file, message } of entries) {
       const { strippedKeys } = stripUnknownImportedMessageKeys(message);
-      assert.deepEqual(strippedKeys, [], `${path.relative(FIXTURES_ROOT, file)} ${message.id}`);
+      strippedAuthors += strippedKeys.filter((key) => NEVER_IMPORTED.has(key)).length;
+      assert.deepEqual(strippedKeys.filter((key) => !NEVER_IMPORTED.has(key)), [],
+        `${path.relative(FIXTURES_ROOT, file)} ${message.id}`);
     }
+    assert.ok(strippedAuthors > 0, 'the v27 fixture author is present and stripped');
   });
 });
 

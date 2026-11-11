@@ -124,6 +124,7 @@ def test_release_workflow_same_step_preload_must_precede_builder(
         "jobs:\n"
         "  build:\n"
         "    steps:\n"
+        "      - run: python scripts/packaging/build_team_bridge.py\n"
         "      - run: npm exec -- electron-builder && npm run build:preload\n",
         encoding="utf-8",
     )

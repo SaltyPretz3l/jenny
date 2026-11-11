@@ -16,6 +16,8 @@ const {
   buildStreamToolUseMessageId,
 } = require('./tool-message-id');
 
+const BROWSER_WAIT_STOPPED_DETAIL = 'This browser step was waiting for the user to hand the browser back, so it may not have finished.';
+
 function clearInteractiveStateOnFailure(ctx) {
   if (ctx.normalizedInteractiveResponse) {
     clearInteractivePendingState(ctx.adapter, ctx.normalizedPreferences);
@@ -96,6 +98,14 @@ function noteDiagnosticToolEvent(ctx, { callId, toolName, phase } = {}) {
   });
 }
 
+// Without this the model only hears that it was stopped, and can tell the user nothing was stuck.
+function noteStoppedBrowserWaits(ctx, repairs) {
+  const browserUse = ctx.service?.toolExecutor?.browserUse;
+  for (const repair of repairs) {
+    if (browserUse?.waitedOnUser?.(ctx.resolvedSessionId, repair.callId)) repair.stoppedDetail = BROWSER_WAIT_STOPPED_DETAIL;
+  }
+}
+
 function settleUnfinishedToolRows(ctx, reason) {
   if (!ctx.latestToolContext || ctx.unfinishedToolsSettled) {
     return 0;
@@ -127,6 +137,7 @@ function settleUnfinishedToolRows(ctx, reason) {
     return 0;
   }
   const settlements = plan.repairs;
+  noteStoppedBrowserWaits(ctx, coordinated ? settlements : []);
   const suspended = ctx.getSuspendedDecision?.();
   if (coordinated && suspended?.kind === 'user_questions') {
     for (const repair of settlements) {

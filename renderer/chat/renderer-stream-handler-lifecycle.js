@@ -71,7 +71,7 @@
 
     let streamUnsubscribe = null;
     let lastShellRef = null;
-    let beforeUnloadRegistered = false;
+    let pageHideRegistered = false;
 
     function safeUnsubscribeStream(reason) {
       if (typeof streamUnsubscribe !== 'function') {
@@ -92,14 +92,14 @@
       }
     }
 
-    function removeBeforeUnloadListener() {
-      if (!beforeUnloadRegistered) {
+    function removePageHideListener() {
+      if (!pageHideRegistered) {
         return;
       }
       if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-        window.removeEventListener('beforeunload', dispose);
+        window.removeEventListener('pagehide', dispose);
       }
-      beforeUnloadRegistered = false;
+      pageHideRegistered = false;
     }
 
     function registerStreamHandler(jennyShell) {
@@ -109,7 +109,7 @@
       // the next one so they cannot mutate the new handler generation.
       streamMailbox.beginEpoch();
       safeUnsubscribeStream('resubscribe');
-      removeBeforeUnloadListener();
+      removePageHideListener();
       const chatBridge = lastShellRef?.chat || null;
       if (typeof chatBridge?.onStream !== 'function') {
         appendClientLog('WARN', 'stream.listener_unavailable', {
@@ -118,8 +118,9 @@
         return null;
       }
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-        window.addEventListener('beforeunload', dispose);
-        beforeUnloadRegistered = true;
+        // Not beforeunload: a link the window guard blocks fires it, and the page lives on.
+        window.addEventListener('pagehide', dispose);
+        pageHideRegistered = true;
       }
       const listener = (payload) => streamMailbox.enqueue(payload, async ({ guard, signal, rendererEpoch }) => {
         try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
@@ -146,7 +147,7 @@
           message: String(error?.message || error).slice(0, 300),
         });
         streamUnsubscribe = null;
-        removeBeforeUnloadListener();
+        removePageHideListener();
         return null;
       }
       return streamUnsubscribe;
@@ -156,7 +157,7 @@
       // Invalidate in-flight listener continuations before owned maps/queues
       // are cleared; late awaits then observe an aborted renderer epoch.
       streamMailbox.dispose();
-      removeBeforeUnloadListener();
+      removePageHideListener();
       safeUnsubscribeStream('dispose');
       lastShellRef = null;
       pendingStreamCommitQueue.dispose();
@@ -185,9 +186,9 @@
     // pendingPayloads are live events the backend still waits on for an
     // in-flight turn (an ask_user question after a renderer reload). They
     // re-enter through normal dispatch once the persisted log is seeded.
-    function rehydrateSessionFromPersistedTurnEvents(sessionId, { pendingPayloads = [] } = {}) {
+    function rehydrateSessionFromPersistedTurnEvents(sessionId, { pendingPayloads = [], skipSeed = false } = {}) {
       const payloads = Array.isArray(pendingPayloads) ? pendingPayloads : [];
-      const seeded = seedSessionFromPersistedTurnEvents(sessionId, normalizeId(payloads[0]?.turnId));
+      const seeded = skipSeed ? null : seedSessionFromPersistedTurnEvents(sessionId, normalizeId(payloads[0]?.turnId));
       for (const payload of payloads) {
         Promise.resolve(handleStreamPayload(payload)).catch((error) => {
           appendClientLog('WARN', 'stream.rehydrate_pending_payload_failed', {

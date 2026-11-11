@@ -96,7 +96,7 @@ test('the chat find pill ends inside the conversation utility cluster', () => {
   const host = parseRules('styles/chat-search-v2.css').find((rule) => rule.selector === '.chat-search-overlay-host');
   assert.equal(host.style.getPropertyValue('position'), 'absolute', 'the pill floats instead of spanning the stage');
   const orientation = parseRules('styles/chat-timeline-orientation-v2.css');
-  const cluster = orientation.find((rule) => rule.selector === '.chat-timeline-utility-cluster');
+  const cluster = parseRules('styles/chat-session-bar.css').find((rule) => rule.selector === '.chat-timeline-utility-cluster');
   const button = orientation.find((rule) => rule.selector === '.chat-timeline-utility-button');
   const footprint = px(button.style.getPropertyValue('width')) + px(cluster.style.getPropertyValue('margin-inline-end'));
   assert.ok(px(host.style.getPropertyValue('inset-inline-end')) > footprint, 'Close clears the utility cluster');

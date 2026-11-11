@@ -211,7 +211,8 @@ test('File Map atlas factories load before the controller without CommonJS', () 
 
   const browserContext = vm.createContext({});
   // string-utils and ide-state load from index.html before the IDE group.
-  const preloaded = ['renderer/shared/string-utils.js', 'renderer/features/renderer-ide-state.js'];
+  const preloaded = ['renderer/shared/string-utils.js', 'renderer/features/renderer-ide-state-normalizers.js',
+    'renderer/features/renderer-ide-state-layout.js', 'renderer/features/renderer-ide-state.js'];
   for (const src of [...preloaded, ...dependencies, controller]) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, src), 'utf8'), browserContext, { filename: src });
   }

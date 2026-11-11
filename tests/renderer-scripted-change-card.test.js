@@ -284,3 +284,57 @@ test('both header render paths show "{n} files changed · +a −d" for a scripte
     assert.equal(doc.querySelector('.tool-call-line-add'), null);
   }
 });
+
+test('a synced-workspace run lists paths not copied back, host-run files and a missing undo', (t) => {
+  const synced = (overrides = {}) => review({
+    coverage: 'synced_write_back', refused_paths: [], refused_count: 0, host_run_paths: [], host_run_count: 0,
+    restore_point: { kind: 'git_checkpoint', ref: 'refs/jenny/sandbox/s1/2', created_at: '2026-11-03T10:00:00.000Z' }, ...overrides,
+  });
+  for (const [label, render] of renderers(t)) {
+    const clean = render(SCRIPTED_MODELS.run_command({ diffs: [fullDiff()], scripted_change_review: synced() }));
+    assert.deepEqual(noticeTexts(clean), [], `${label}: an applied run with a restore point adds no notice`);
+
+    const doc = render(SCRIPTED_MODELS.run_command({
+      diffs: [fullDiff('package.json')],
+      scripted_change_review: synced({
+        state: 'partial', changed_paths: ['package.json'], restore_point: { kind: 'none', reason: 'not_git' },
+        host_run_paths: ['package.json', '.vscode/tasks.json'], host_run_count: 2,
+        refused_paths: [{ path: 'src/a.py', reason: 'conflict' }, { path: '.git/hooks/pre-commit', reason: 'protected' },
+          { path: 'link', reason: 'symlink' }, { path: 'x', reason: 'outbox_invalid' }], refused_count: 4,
+      }),
+    }));
+    assert.deepEqual(noticeTexts(doc), [
+      'No undo for this run',
+      'These files run on this computer later: package.json, .vscode/tasks.json',
+      '4 changes were not copied back',
+      'src/a.py: changed in your folder while it ran',
+      '.git/hooks/pre-commit: protected location',
+      'link: link or special file',
+      "x: couldn't be written",
+    ], label);
+    assert.equal(changedFilesSection(doc).querySelectorAll('.file-diff').length, 1);
+
+    const many = render(SCRIPTED_MODELS.run_command({
+      scripted_change_review: synced({
+        state: 'partial', changed_paths: [], changed_path_count: 0, refused_count: 12,
+        refused_paths: Array.from({ length: 12 }, (_, index) => ({ path: `f${index}`, reason: 'path_reserved_name' })),
+      }),
+    }));
+    const texts = noticeTexts(many);
+    assert.equal(texts[0], '12 changes were not copied back');
+    assert.equal(texts[1], 'f0: name not allowed on Windows');
+    assert.equal(texts.at(-1), '(+2 more)');
+    assert.equal(texts.length, 12, `${label}: no undo line when nothing was copied back`);
+  }
+});
+
+test('a synced write-back that failed or was too large says what happened to the folder', (t) => {
+  const base = { coverage: 'synced_write_back', refused_paths: [], refused_count: 0, host_run_paths: [], host_run_count: 0,
+    changed_paths: [], changed_path_count: 0, diff_count: 0 };
+  for (const [label, render] of renderers(t)) {
+    const large = render(SCRIPTED_MODELS.run_command({ scripted_change_review: review({ ...base, state: 'unavailable', reason: 'write_back_too_large' }) }));
+    assert.deepEqual(noticeTexts(large), ['Too many changes to copy back; your folder was not changed'], label);
+    const failed = render(SCRIPTED_MODELS.run_command({ scripted_change_review: review({ ...base, state: 'unavailable', reason: 'write_back_failed' }) }));
+    assert.deepEqual(noticeTexts(failed), ["Changes couldn't be copied back to your folder"], label);
+  }
+});

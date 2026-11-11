@@ -205,3 +205,48 @@ test('summaries pluralise the question count', () => {
   assert.equal(tool.summarize({ questions: [question('a')] }), 'Ask user 1 question');
   assert.equal(tool.summarize({ questions: [question('a'), question('b')] }), 'Ask user 2 questions');
 });
+
+test('questions without an id get q1, q2 by position and the call proceeds', async () => {
+  const { context, backendService, events } = buildContext();
+  const pending = tool.execute({
+    questions: [{ prompt: 'First?', options: ['A'] }, { prompt: 'Second?' }],
+  }, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events[0].payload.questions.map((question) => question.id), ['q1', 'q2']);
+  const [questionRef] = backendService.pendingUserQuestions.keys();
+  answerUserQuestions(backendService, questionRef, { answers: [{ id: 'q1', value: 'A' }] });
+  const result = await pending;
+  assert.equal(result.isError, false);
+  assert.deepEqual(result.metadata.answers, [{ id: 'q1', value: 'A' }]);
+});
+
+test('an option given as an object is read from its label, text or value', () => {
+  const [question] = tool.normalizeQuestions({
+    questions: [{
+      prompt: 'Proceed?',
+      options: ['Plain', { label: 'Yes' }, { text: 'No' }, { value: 'Maybe' }, { label: 'Pick', value: 'ignored' }],
+    }],
+  });
+  assert.deepEqual(question.options, ['Plain', 'Yes', 'No', 'Maybe', 'Pick']);
+});
+
+test('an option that cannot be read as text fails the call and names the question and the option', async () => {
+  const { context, backendService, events } = buildContext();
+  for (const bad of [7, null, { name: 'Yes' }, { label: 5 }, ['Yes'], true]) {
+    const result = await tool.execute({
+      questions: [{ id: 'go', prompt: 'Proceed?', options: ['Yes', bad] }],
+    }, context);
+    assert.equal(result.isError, true, JSON.stringify(bad));
+    assert.equal(result.metadata.result_kind, 'user_questions');
+    assert.match(result.content, /question "go"/);
+    assert.match(result.content, /option 2/);
+    assert.match(result.content, /text such as "Yes"/);
+  }
+  assert.equal(backendService.pendingUserQuestions.size, 0, 'nothing was left waiting');
+  assert.equal(events.length, 0, 'no question card was shown');
+});
+
+test('a blank text option is still dropped and the question without options is fine', () => {
+  const [question] = tool.normalizeQuestions({ questions: [{ prompt: 'Proceed?', options: ['  ', 'Yes'] }] });
+  assert.deepEqual(question.options, ['Yes']);
+});

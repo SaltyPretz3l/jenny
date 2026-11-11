@@ -111,6 +111,8 @@ class OpenAICompatibleEngine(VLLMEngine):
     _ENGINE_TYPE = "openai-compatible"
     _DISPLAY_NAME = "OpenAI-compatible server"
     _START_COMMAND_HINT = "your OpenAI-compatible server (e.g. llama-server, vllm, tgi)"
+    # Chat-completion calls carry the request's routing token to a loopback gateway.
+    _SENDS_ROUTE_TOKEN = True
     # ``_fit_output_to_window`` clamps max_tokens to the room the prompt leaves,
     # so the budget may hold back only the answer floor (token_budget.py).
     fits_output_to_window = True

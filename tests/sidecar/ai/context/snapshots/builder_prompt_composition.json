@@ -12,6 +12,10 @@
     "content": "## Current Date\nThe effective `current_date` for this request is `2026-05-07`. Use this value consistently unless the user provides a different explicit date."
   },
   {
+    "heading": "## Diagrams",
+    "content": "## Diagrams\nTo show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; the chat draws it as a chart."
+  },
+  {
     "heading": "## Executable Tools",
     "content": "## Executable Tools\nThis is the current capability digest for this request. If the user asks what tools or capabilities are available, answer from this block; do not call diagnostic or harness-inspection tools to inventory capabilities.\nSkills are guidance only. Only tools listed as available in this block may be called.\nTool names in this block are Jenny tool IDs, not shell commands. Do not use `run_command` with `which`, `where`, or `Get-Command` to check a listed tool; call the listed tool directly when needed.\nAvailable now:\n- `read_file`: Read files.\nAny tool not listed as available in this block is unavailable for this request."
   },

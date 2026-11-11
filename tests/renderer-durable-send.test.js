@@ -56,6 +56,30 @@ test('an idle durable Send is a direct send: its pending row is not queued', asy
   [row] = h.state.runtimeSendController.listPending('session-1');
   assert.equal(row.queued, false); assert.equal(row.status, 'pending');
 });
+test('an idle durable Send follows the new turn, as a direct send does (owner gate 2026-11-07)', async t => {
+  const h = createControllerHarness([], { durableRuntime: true,
+    shell: { sessionRuntime: { submit: async payload => receipt(payload) } } });
+  t.after(h.restore); t.after(() => h.controller.dispose());
+  await h.controller.startPromptSend('hello');
+  assert.deepEqual(h.calls.followArms, [['resume'], ['follow', true]]);
+});
+test('a queue drain and a send to another chat leave the reader where they scrolled', async t => {
+  const h = createControllerHarness([], { durableRuntime: true,
+    shell: { sessionRuntime: { submit: async payload => receipt(payload) } } });
+  t.after(h.restore); t.after(() => h.controller.dispose());
+  await h.controller.startPromptSend('drained', { outboxDispatch: true });
+  h.state.sessions.push({ id: 'session-2', title: 'Other' });
+  await h.controller.startPromptSend('elsewhere', { sessionIdOverride: 'session-2', preserveComposerDraft: true });
+  assert.deepEqual(h.calls.followArms, []);
+});
+test('a durable Send behind an active stream leaves the reader where they scrolled', async t => {
+  const h = createControllerHarness([], { durableRuntime: true, isSessionStreaming: true,
+    shell: { sessionRuntime: { submit: async payload => receipt(payload) } } });
+  t.after(h.restore); t.after(() => h.controller.dispose());
+  h.multiStreamController.registerStream('session-1', 'existing_stream');
+  await h.controller.startPromptSend('hello');
+  assert.deepEqual(h.calls.followArms, []);
+});
 test('a Send behind an active stream is queued', async t => {
   const ack = deferred();
   const h = createControllerHarness([], { durableRuntime: true, isSessionStreaming: true,

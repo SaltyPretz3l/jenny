@@ -275,7 +275,6 @@ def _default_mcp_servers(
     args.extend(
         [
             "--python-runtime-enabled", "1" if config.tools_python_runtime_enabled else "0",
-            "--mermaid-enabled", "1" if config.tools_mermaid_enabled else "0",
             "--todo-enabled", "1" if config.tools_todo_enabled else "0",
             "--connections-enabled", "1" if config.tools_connections_enabled else "0",
             "--connections-engine-type", config.engine_type,

@@ -79,6 +79,7 @@
 }
 
 .ide-preview-stage-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -116,6 +117,13 @@
 
 .ide-preview-frame-host {
   padding: 10px 12px;
+}
+
+/* The incoming page loads hidden, on top of the old one, until it is ready. */
+.ide-preview-frame-host--pending {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
 }
 
 /* Fill-height HTML preview: the stage body stops scrolling and hands its full
@@ -240,3 +248,11 @@
 .ide-preview-content svg {
   max-width: 100%;
 }
+
+/* Preview bar tools: Live cue + Reload, and the card action row. */
+.ide-preview-stage-tools { flex: none; margin-inline-start: auto; padding-inline: 0; }
+.ide-preview-stage-tools .ide-editor-action { width: 22px; height: 22px; }
+.ide-preview-stage-live { display: inline-flex; align-items: center; gap: 6px; margin-inline-end: 6px; color: var(--text-muted); font-size: var(--font-size-caption); white-space: nowrap; }
+.ide-preview-stage-live .status-dot--active { animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate; }
+.ide-preview-stage-state-actions { display: flex; gap: var(--space-2); margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) { .ide-preview-stage-live .status-dot--active { animation: none; } }

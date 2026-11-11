@@ -1,32 +1,20 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
-      require('./renderer-composer-v2-state'),
-      require('./renderer-composer-v2-render'),
-      require('./renderer-turn-elapsed-clock'), require('./renderer-hero-model-state')
+      require('./renderer-render-pipeline-chrome-composer'),
+      require('./renderer-render-pipeline-chrome-hero')
     );
     return;
   }
   root.rendererRenderPipelineChromeUtils = factory(
-    root.rendererComposerV2State,
-    root.rendererComposerV2Render,
-    root.rendererTurnElapsedClock, root.rendererHeroModelState
+    root.rendererRenderPipelineChromeComposer,
+    root.rendererRenderPipelineChromeHero
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, composerV2Render, turnElapsedClock, heroModelState) {
-  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (composerChromeUtils, heroChromeUtils) {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-  const { resolveDefaultTitle } = globalRef.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
   const windowRef = globalRef.window || globalRef;
   const documentRef = windowRef.document || null;
-  const { formatElapsedLabel } = turnElapsedClock;
-  function syncDisabledReason(control, reasonNode, reason) {
-    if (!control || !reasonNode) return;
-    const locked = control.disabled === true || control.getAttribute?.('aria-disabled') === 'true';
-    const message = locked ? String(reason || '').trim() : '';
-    reasonNode.textContent = message;
-    if (message) control.setAttribute('aria-describedby', reasonNode.id);
-    else control.removeAttribute('aria-describedby');
-  }
+  const { syncDisabledReason } = composerChromeUtils;
   // Split view W2-2a: the runtime preferences of the session a pane shows. One
   // pane (or no reader, or a session not in the list): the current preferences,
   // the same shape and values the composer read before panes.
@@ -45,7 +33,7 @@
       controllers = {},
       callbacks = {},
     } = deps || {};
-    const { ACTIVITY_SCOPE = {}, MESSAGE_STATUS = {} } = constants;
+    const { MESSAGE_STATUS = {} } = constants;
     const {
       homeView = null,
       chatView = null,
@@ -63,16 +51,6 @@
       heroRuntimeHint = null,
       chatInput = null,
       composer = null,
-      composerModelSelect = null,
-      composerEffortSelect = null,
-      jumpToTopButton = null,
-      jumpToBottomButton = null,
-      jumpToLastPromptButton = null,
-      stopStreamButton = null,
-      sendButton = null,
-      composerModelSelectShell = null,
-      composerEffortSelectShell = null,
-      chatTimeline = null,
     } = dom;
     const {
       logRenderer = null,
@@ -88,8 +66,6 @@
       layoutIdeEditor = () => {},
       renderAttachmentTray = () => {},
       renderComposerStatusNotice = () => {},
-      setComposerStatusNotice = () => {},
-      clearComposerStatusNotice = () => {},
       renderToastViewport = () => {},
       renderComposerPopover = () => {},
       renderHomePanel = () => {},
@@ -113,27 +89,11 @@
       getPaneRuntimePreferences = () => resolvePaneRuntimePreferences({
         state, sessionId: getPaneSessionId(), fromSession: getRuntimePreferencesFromSession, current: getCurrentRuntimePreferences,
       }),
-      isSendBusy = () => false,
       isSessionStreaming = () => false,
       hasPendingToolApprovalForSession = () => false,
-      getPendingQuestionBatch = () => null,
-      hasStalePendingQuestionBatch = () => false,
-      getActivitySnapshot = () => null,
-      getMostRecentActivity = () => null,
-      isActivityBusy = () => false,
-      applyActivityAttributes = () => {},
-      renderComposerInteractivePanel = () => {},
-      closeComposerPopover = () => {},
-      syncComposerInputHeight = () => {},
       setComposerHoloState = () => {},
-      updateComposerSafeOffset = () => {},
-      renderLiveThinkingChip = () => {},
-      renderComposerEnhancements = null,
       resolveChatSendLifecycle = () => 'idle',
       syncStableChatSurfaceState = () => {},
-      getLatestUserMessageId = () => '',
-      isSendPreflightPending = () => false,
-      syncTurnElapsedClock = () => {},
       // Chat-dock host reconcile (ide_chat_dock): re-homes the chat subtree
       // between #chatView and the Workspace dock; returns true on a real move.
       reconcileChatDockHost = () => false,
@@ -141,12 +101,7 @@
     } = callbacks;
 
     const sessionOriginMap = new Map();
-    let visionNoticeShown = false;
     let pendingOriginLabel = '';
-
-    function isSendLifecycleInflight(lifecycle) {
-      return lifecycle === 'preflight' || lifecycle === 'streaming' || lifecycle === 'settling';
-    }
 
     function setDatasetIfChanged(node, key, value) {
       if (!node || !node.dataset) return;
@@ -388,146 +343,19 @@
       }
     }
 
-    let resumeSetupButton = null;
-    let setupFootnote = null;
-    let heroActions = null;
-    let heroActionsHtml = '';
-    const setHeroText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
-    function handleResumeSetup() {
-      if (typeof globalRef.jennySetupResume === 'function') globalRef.jennySetupResume();
-    }
-
-    function syncHeroSetupAction(show, footnote) {
-      const canResume = show && typeof globalRef.jennySetupResume === 'function';
-      const actionButton = globalRef.inventoryActionButton;
-      const ownerDocument = heroSubtitle?.ownerDocument;
-      if (canResume && !resumeSetupButton && ownerDocument && typeof actionButton === 'function') {
-        const template = ownerDocument.createElement('template');
-        template.innerHTML = actionButton({
-          id: 'chat-resume-setup', variant: 'primary', className: 'hero-resume-setup',
-          label: jt('chat.pipelineChrome.resumeSetup', 'Resume setup'),
-        });
-        resumeSetupButton = template.content.firstElementChild;
-        resumeSetupButton.addEventListener('click', handleResumeSetup);
-        heroSubtitle.after(resumeSetupButton);
-      }
-      if (show && !setupFootnote && ownerDocument) {
-        setupFootnote = ownerDocument.createElement('p');
-        setupFootnote.className = 'hero-setup-footnote';
-        (resumeSetupButton || heroSubtitle).after(setupFootnote);
-      }
-      resumeSetupButton?.classList.toggle('hidden', !canResume);
-      setHeroText(setupFootnote, footnote);
-      setupFootnote?.classList.toggle('hidden', !show || !footnote);
-    }
-
-    function setupHeroSubtitle(snapshot) {
-      const steps = snapshot.steps;
-      if (!steps || typeof steps.workspaceRoot !== 'string'
-        || (typeof steps.localModel !== 'string' && typeof steps.endpoint !== 'string')) {
-        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
-      }
-      const modelMissing = steps.localModel !== 'done' && steps.endpoint !== 'done';
-      const folderMissing = steps.workspaceRoot !== 'done';
-      if (modelMissing && folderMissing) {
-        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
-      }
-      if (modelMissing) return jt('chat.pipelineChrome.setupModel', 'Choose a model route to finish.');
-      if (folderMissing) return jt('chat.pipelineChrome.setupFolder', 'Choose a workspace folder so file tools can work.');
-      return jt('chat.pipelineChrome.setupOptionalSteps', 'A few optional steps are left.');
-    }
-
-    function renderHero() {
-      const paneSessionId = getPaneSessionId();
-      const activeSession = state.sessions.find((session) => session.id === paneSessionId);
-      const sessionMessages = activeSession ? getVisibleSessionMessages(activeSession.id) : [];
-      const hasMessages = sessionMessages.length > 0;
-      const heroStage = heroTitle ? heroTitle.closest('.hero-stage') : null;
-      const pluginSession = activeSession?.session_type === 'plugin';
-      const setupSnapshot = state.setup || {};
-      const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
-      const showSetup = !pluginSession && !hasMessages && setupIncomplete;
-      heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
-      const view = !pluginSession && !hasMessages ? heroModelState.deriveHeroView(state) : null;
-      syncHeroSetupAction(showSetup, showSetup ? heroModelState.setupFootnote(view) : '');
-      const copy = view && !showSetup ? heroModelState.heroCopy(view) : null;
-      if (copy?.actionsHtml && !heroActions && heroSubtitle) {
-        heroActions = heroSubtitle.ownerDocument.createElement('div');
-        heroActions.className = 'hero-actions';
-        heroSubtitle.after(heroActions);
-      }
-      const actionsHtml = copy?.actionsHtml || '';
-      if (heroActions && heroActionsHtml !== actionsHtml) {
-        heroActions.innerHTML = actionsHtml;
-        heroActionsHtml = actionsHtml;
-      }
-      heroActions?.classList.toggle('hidden', !actionsHtml);
-      if (heroStage && copy) setDatasetIfChanged(heroStage, 'modelState', view.kind);
-      else if (heroStage?.hasAttribute('data-model-state')) heroStage.removeAttribute('data-model-state');
-      if (heroStage) heroStage.classList.toggle('hero-plugin-session', pluginSession);
-      if (pluginSession) {
-        if (heroStage) heroStage.classList.toggle('hidden', false);
-        setHeroText(heroAvatar, 'J');
-        heroAvatar.classList.toggle('hidden', !hasMessages);
-        setHeroText(heroTitle, activeSession?.title || jt('chat.chrome.pluginSession', 'Plugin session'));
-        setHeroText(heroSubtitle, hasMessages
-          ? jt('chat.pipelineChrome.pluginTranscriptReadOnly', 'This saved plugin transcript is read-only in Jenny.')
-          : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.'));
-        if (heroRuntimeHint) {
-          setHeroText(heroRuntimeHint, '');
-          heroRuntimeHint.classList.toggle('hidden', true);
-        }
-        return;
-      }
-      if (heroStage) heroStage.classList.toggle('hidden', false);
-      setHeroText(heroAvatar, 'J');
-      heroAvatar.classList.toggle('hidden', !hasMessages);
-      if (hasMessages) {
-        setHeroText(heroTitle, resolveDefaultTitle(activeSession?.title));
-        setHeroText(heroSubtitle, jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.'));
-      } else if (setupIncomplete) {
-        setHeroText(heroTitle, jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny"));
-        setHeroText(heroSubtitle, setupHeroSubtitle(setupSnapshot));
-      } else {
-        setHeroText(heroTitle, copy.title);
-        setHeroText(heroSubtitle, copy.subtitle);
-      }
-      if (heroRuntimeHint) {
-        setHeroText(heroRuntimeHint, copy?.hint || '');
-        heroRuntimeHint.classList.toggle('hidden', !copy?.hint);
-      }
-    }
+    const heroChrome = heroChromeUtils.createHeroChrome({
+      state,
+      dom: { heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint },
+      getPaneSessionId,
+      getVisibleSessionMessages,
+      setDatasetIfChanged,
+    });
+    const { renderHero } = heroChrome;
 
     function renderLogs() {
       if (logRenderer) {
         logRenderer.renderLogs();
       }
-    }
-
-    function renderComposerJumpControls() {
-      const messages = getVisibleSessionMessages(getPaneSessionId());
-      const hasMessages = messages.length > 0;
-      const latestUserMessageId = getLatestUserMessageId(messages);
-      const anyJumpButton = jumpToTopButton || jumpToLastPromptButton || jumpToBottomButton;
-      const jumpTools = anyJumpButton?.closest('.composer-jump-tools') || null;
-      const wayfinderActive = state.ui?.chatWayfinderVisible === true;
-      const showJumpTools = hasMessages && !isFollowingLatest() && !wayfinderActive;
-      const wayfinderHost = documentRef?.getElementById('composerWayfinderHost') || null;
-
-      if (jumpTools) {
-        jumpTools.classList.toggle('hidden', !showJumpTools);
-        jumpTools.setAttribute('aria-hidden', showJumpTools ? 'false' : 'true');
-      }
-      if (wayfinderHost) {
-        wayfinderHost.hidden = !wayfinderActive;
-      }
-      if (jumpToTopButton) jumpToTopButton.disabled = !hasMessages;
-      if (jumpToBottomButton) jumpToBottomButton.disabled = !hasMessages;
-      if (jumpToLastPromptButton) jumpToLastPromptButton.disabled = !latestUserMessageId;
-    }
-
-    function syncComposerAccessoryVisibility() {
-      renderComposerJumpControls();
     }
 
     function syncComposerVisualState() {
@@ -548,354 +376,20 @@
       syncComposerAccessoryVisibility();
     }
 
-    function syncComposerTurnTimer() {
-      const timer = documentRef?.getElementById?.('composerTurnTimer');
-      if (!timer) return;
-      const currentSessionId = getPaneSessionId();
-      const entry = state.turnClockBySession?.get(currentSessionId) || null;
-      const sendBusy = isSendBusy();
-      if (entry && entry.endedAt == null && !sendBusy) entry.endedAt = Date.now();
-      if (entry && entry.endedAt == null && sendBusy) {
-        timer.setAttribute('data-turn-elapsed', 'true');
-        timer.setAttribute('data-elapsed-started-at', String(entry.startedAt));
-        timer.dataset.turnTimerState = 'running';
-        timer.textContent = formatElapsedLabel(Date.now() - entry.startedAt);
-        syncTurnElapsedClock();
-        return;
-      }
-      timer.removeAttribute('data-turn-elapsed');
-      timer.removeAttribute('data-elapsed-started-at');
-      if (entry && entry.endedAt != null) {
-        timer.dataset.turnTimerState = 'done';
-        timer.textContent = formatElapsedLabel(entry.endedAt - entry.startedAt);
-        return;
-      }
-      timer.dataset.turnTimerState = 'idle';
-      timer.textContent = '';
-    }
-
-    /* Stable identity: the queue strip short-circuits an unchanged render by
-     * comparing its handlers, so a fresh literal per frame would rebuild it. */
-    let runtimeQueueActions = null;
-    function getRuntimeQueueActions() {
-      runtimeQueueActions = runtimeQueueActions || {
-        withdraw: (row) => state.runtimeSendController?.withdraw?.(row.key),
-        resume: (row) => state.runtimeSendController?.resume?.(row.key),
-        restartEngine: (row) => state.runtimeSendController?.restartEngine?.(row.key),
-        openChat: (row) => state.runtimeSendController?.openChat?.(row.wait?.blockingSessionId),
-        putDraft: (texts) => globalRef.rendererRuntimeQueueView?.putBackInComposer?.(chatInput, texts),
-      };
-      return runtimeQueueActions;
-    }
-
-    /* Rows for paused work come from a session-scoped snapshot the poller only
-     * reads while something is pending. A conversation whose reply is already
-     * paused has nothing pending, so the chrome asks once when the conversation
-     * is activated -- never on a keystroke's render, never as a standing poll;
-     * the controller's own reads keep the rows fresh while work is in flight. */
-    let rowsReadFor = '';
-    /* Pause is built beside Stop at boot by renderer-turn-pause-interaction.js
-     * through the inventory primitive, after this pipeline exists, so it is
-     * resolved on demand and re-resolved if it ever leaves the document. */
-    let pauseTurnButton = null;
-    function resolvePauseTurnButton() {
-      if (pauseTurnButton?.isConnected) return pauseTurnButton;
-      pauseTurnButton = stopStreamButton?.parentElement?.querySelector?.('.composer-pause-button') || null;
-      return pauseTurnButton;
-    }
-    function syncPauseTurnButton(currentSessionId, showStop, pauseState) {
-      const controller = state.runtimeSendController;
-      const runtimeOwnsSends = state.features?.featureFlags?.session_runtime === true
-        && typeof controller?.pauseSession === 'function';
-      if (runtimeOwnsSends && currentSessionId && currentSessionId !== rowsReadFor
-        && typeof controller.refreshSessionRows === 'function') {
-        rowsReadFor = currentSessionId;
-        Promise.resolve(controller.refreshSessionRows(currentSessionId)).catch(() => {});
-      }
-      const button = resolvePauseTurnButton();
-      if (!button) return;
-      // Only a reply the runtime admitted can be paused: an edit, a retry or a
-      // legacy stream has no running work behind it, so Pause stays hidden.
-      // Nor can a reply that is waiting by itself behind another chat: it is
-      // not running, and Stop (which stays) is its way out.
-      const show = showStop && runtimeOwnsSends && typeof controller.ownsStream === 'function'
-        && controller.ownsStream(state.activeStreamId) === true
-        && state.streamWaits?.isWaitingStream?.(state.activeStreamId) !== true;
-      button.classList.toggle('hidden', !show);
-      if (!show) return;
-      // A requested pause is not a pause: the control says only that it was asked for.
-      const requested = pauseState?.status === 'requested';
-      const label = requested
-        ? jt('composer.pauseRequested', 'Pause requested…')
-        : jt('composer.pauseReply', 'Pause this reply');
-      button.disabled = requested;
-      button.title = requested ? label : jt('composer.pauseReplyTitle', 'Pause at the next approval');
-      button.setAttribute('aria-label', label);
-      if (requested) button.dataset.pauseState = 'requested';
-      else delete button.dataset.pauseState;
-    }
-
-    // Split view W3-1: a preference save is keyed by the session it saves
-    // (activity-utils sessionScope); read this pane's, reported under the bare
-    // scope so the shell's data-activity-scope keeps the scope name.
-    function getSessionActivitySnapshot(scope, sessionId) {
-      const utils = globalRef.activityUtils || (typeof require === 'function' ? require('../shared/activity-utils') : null);
-      const snapshot = getActivitySnapshot(typeof utils?.sessionScope === 'function' ? utils.sessionScope(scope, sessionId) : scope);
-      return snapshot && snapshot.scope !== scope ? { ...snapshot, scope } : snapshot;
-    }
-
-    function renderComposerState() {
-      const currentSessionId = getPaneSessionId();
-      const activeSession = (Array.isArray(state.sessions) ? state.sessions : [])
-        .find((session) => session?.id === currentSessionId) || null;
-      const pluginSessionReadOnly = activeSession?.session_type === 'plugin';
-      const sendBusy = isSendBusy();
-      const runtimePreferences = getPaneRuntimePreferences();
-      const runModeProjection = composerState.projectRunMode(runtimePreferences.runMode, {
-        planModeFallback: runtimePreferences.planMode === true,
-      });
-      const runModeLabel = runModeProjection.runMode[0].toUpperCase() + runModeProjection.runMode.slice(1);
-      const interactiveBatchActive = Boolean(getPendingQuestionBatch() && !hasStalePendingQuestionBatch());
-      const ownsActiveStream = isSessionStreaming(currentSessionId);
-      const activeApprovalPending = hasPendingToolApprovalForSession(currentSessionId);
-      // Dock-scoped approval-steer (ide_chat_dock, plan §17 decision 7): while
-      // the Workspace dock is the live chat surface, a pending approval keeps
-      // the composer LIVE (steer while she waits) and a typed send becomes
-      // queue-eligible one-deep. Main chat (activeView==='chat') keeps the
-      // pre-dock hard lock — this term is false there by construction.
-      const dockApprovalSteer = activeApprovalPending
-        && state.ui.activeView === 'ide'
-        && (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) === true;
-      const currentQueuedSend = state.queuedSendBySession?.get(currentSessionId) || null;
-      // Durable Send owns its own pending list; the composer must read as
-      // "queued" from either model, never only the legacy one-deep queue.
-      const durablePending = state.runtimeSendController?.listPending?.(currentSessionId) || [];
-      const runtimeSessionState = state.runtimeSendController?.getSessionRuntimeState?.(currentSessionId) || null;
-      const queueEligible =
-        ownsActiveStream
-        && (!activeApprovalPending || dockApprovalSteer)
-        && !interactiveBatchActive;
-      const hasComposerDraft = Boolean(String(chatInput.value || '').trim())
-        || Boolean(Array.isArray(state.attachments?.queued) && state.attachments.queued.length);
-      const composerPreferredModelActivity = getSessionActivitySnapshot(ACTIVITY_SCOPE.composerPreferredModel, currentSessionId);
-      const composerReasoningEffortActivity = getSessionActivitySnapshot(ACTIVITY_SCOPE.composerReasoningEffort, currentSessionId);
-      const composerRunModeActivity = getActivitySnapshot(ACTIVITY_SCOPE.composerRunMode);
-      const composerPrimaryActivity = getMostRecentActivity([ACTIVITY_SCOPE.composerRunMode]);
-      // model_unavailable keeps the composer usable: sending IS the retry —
-      // the backend re-attempts the configured default model on the next
-      // turn (resolveModel), so a failed lazy load never demands a manual
-      // model load from Settings. Mirrored in renderer-send-utils.js gates.
-      const backendComposerUsable =
-        state.backend.phase === 'ready' || state.backend.phase === 'model_unavailable';
-      const backendComposerPreparing = [
-        'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying',
-      ].includes(state.backend.phase);
-      const backendComposerOffline = !backendComposerUsable && !backendComposerPreparing;
-      const view = heroModelState.deriveHeroView(state);
-      const copy = heroModelState.heroCopy(view);
-      // The hero shows in a pane whose conversation is empty; a split pane may hold a
-      // populated chat while pane 0's is empty, so each pane decides for itself.
-      const setupBlocksHero = state.setup?.loaded === true && state.setup.setupComplete === false;
-      const heroShowingFor = (sessionId) => {
-        const id = String(sessionId || '');
-        const session = (state.sessions || []).find((entry) => entry.id === id);
-        return session?.session_type !== 'plugin' && !setupBlocksHero && getVisibleSessionMessages(id).length === 0;
-      };
-      const paneVisibility = globalRef.rendererPaneVisibilityUtils
-        || (typeof require === 'function' ? require('./renderer-pane-visibility-utils') : null);
-      const paneSession = (paneId) => paneVisibility?.resolvePaneSessionId?.(state, paneId) ?? (paneId === 0 ? state.currentSessionId : '');
-      const modelLoadingLine = composerV2Render?.describeModelLoading?.(state.backend) || '';
-      chatInput.disabled =
-        interactiveBatchActive
-        || isSendPreflightPending()
-        || pluginSessionReadOnly
-        || backendComposerOffline
-        || !state.auth.authenticated
-        || (activeApprovalPending && !dockApprovalSteer)
-        || (sendBusy && !queueEligible);
-      sendButton.disabled =
-        interactiveBatchActive
-        || isSendPreflightPending()
-        || pluginSessionReadOnly
-        || !state.auth.authenticated
-        // While the engine starts, Send queues into the outbox (renderer-send-utils.js).
-        || !(backendComposerUsable || (backendComposerPreparing && Boolean(currentSessionId)))
-        || (!modelLoadingLine && (view.kind === 'noModel' || view.kind === 'downloading'))
-        || (sendBusy && !queueEligible)
-        || !hasComposerDraft;
-      // Status loader F6: the load is told under the input; Send's tooltip
-      // re-reads its reason when the flag flips.
-      const composerRender = globalThis.rendererComposerV2Render;
-      const failureLine = !modelLoadingLine && composerRender?.describeModelFailure?.(state.backend) || '';
-      const failureActions = failureLine ? composerRender?.buildModelFailureActions?.(state.backend) || '' : '';
-      composerRender?.syncComposerLoadingLines?.(documentRef, (paneId) => (
-        copy.composerLine && heroShowingFor(paneSession(paneId)) ? [copy.composerLine, '']
-          : failureLine ? [failureLine, failureActions]
-            : [modelLoadingLine, ''])); // the load is app-wide; the hero's words only where the hero shows
-      setDatasetIfChanged(sendButton, 'modelLoading', modelLoadingLine ? 'true' : 'false');
-      const visionGate = (globalThis.rendererComposerVisionGate || {}).syncComposerVisionGate?.({
-        state, runtimePreferences, sendButton,
-        reasonNode: documentRef?.getElementById?.('composerSendDisabledReason'),
-        syncDisabledReason, setComposerStatusNotice, clearComposerStatusNotice,
-      }) || null;
-      if (queueEligible) {
-        const queued = !hasComposerDraft && (currentQueuedSend || durablePending.length > 0);
-        sendButton.textContent = queued ? jt('chat.pipelineChrome.queuedRunsIn', 'Queued — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueRunsIn', 'Queue — runs in {runMode}', { runMode: runModeLabel });
-        sendButton.setAttribute(
-          'aria-label',
-          queued ? jt('chat.pipelineChrome.queuedFollowUpRunsIn', 'Queued follow-up — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueFollowUpRunsIn', 'Queue follow-up prompt — runs in {runMode}', { runMode: runModeLabel })
-        );
-      } else {
-        sendButton.textContent = '\u2191';
-        sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.send', 'Send'));
-      }
-      sendButton.classList.toggle('composer-send-queue', queueEligible);
-      sendButton.classList.toggle('composer-stop', false);
-      chatInput.classList.toggle('hidden', interactiveBatchActive);
-      sendButton.classList.toggle('hidden', interactiveBatchActive && !sendBusy);
-      const currentSendLifecycle = resolveChatSendLifecycle(currentSessionId);
-      const showStopButton = ownsActiveStream || isSendLifecycleInflight(currentSendLifecycle);
-      if (stopStreamButton) {
-        stopStreamButton.classList.toggle('hidden', !showStopButton);
-        stopStreamButton.disabled = !ownsActiveStream || isSendPreflightPending();
-        setDatasetIfChanged(stopStreamButton, 'sendLifecycle', currentSendLifecycle);
-      }
-      // Pause lives beside Stop and shares its visibility: there is nothing to
-      // pause when no reply of this conversation's is in flight.
-      syncPauseTurnButton(currentSessionId, showStopButton && !pluginSessionReadOnly, runtimeSessionState?.pause);
-      if (composerWrap) composerWrap.classList.toggle('composer-plugin-read-only', pluginSessionReadOnly);
-      if (pluginSessionReadOnly) {
-        sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.pluginSendingUnavailable', 'Chat sending is unavailable in a plugin transcript'));
-        if (stopStreamButton) stopStreamButton.classList.add('hidden');
-      }
-      globalThis.rendererPluginSessions?.instance?.syncFallbackNotice?.();
-      const composerModelLocked =
-        pluginSessionReadOnly
-        || !state.auth.authenticated
-        || backendComposerOffline
-        || isActivityBusy(composerPreferredModelActivity);
-      const reasoningEffortUnsupported = composerEffortSelect.dataset.reasoningSupported === 'false';
-      if (composerEffortSelectShell) composerEffortSelectShell.hidden = reasoningEffortUnsupported;
-      const composerEffortLocked =
-        pluginSessionReadOnly
-        || !state.auth.authenticated
-        || backendComposerOffline
-        || reasoningEffortUnsupported
-        || isActivityBusy(composerReasoningEffortActivity);
-      for (const [control, locked] of [
-        [composerModelSelect, composerModelLocked],
-        [composerEffortSelect, composerEffortLocked],
-      ]) {
-        control.disabled = false;
-        control.classList.toggle('composer-control-inert', locked);
-        // A wrapping <label> shell forwards clicks to the control even through
-        // the control's own pointer-events: none — lock the shell with it.
-        control.closest?.('.composer-select-shell')?.classList.toggle('composer-control-inert', locked);
-        if (locked) {
-          control.setAttribute('aria-disabled', 'true');
-          control.setAttribute('tabindex', '-1');
-        } else {
-          control.removeAttribute('aria-disabled');
-          control.removeAttribute('tabindex');
-        }
-      }
-      const sharedConfigReason = pluginSessionReadOnly
-        ? jt('chat.chrome.controlsUnavailablePlugin', 'Session controls are unavailable in a plugin transcript.')
-        : !state.auth.authenticated
-          ? jt('chat.chrome.signInForControls', 'Sign in to change session controls.')
-          : backendComposerOffline
-            ? jt('chat.chrome.controlsUnavailableOffline', 'Session controls are unavailable while the local backend is offline.')
-            : '';
-      syncDisabledReason(
-        composerModelSelect,
-        documentRef?.getElementById?.('composerModelDisabledReason'),
-      isActivityBusy(composerPreferredModelActivity) ? jt('chat.chrome.modelSelectionSaving', 'The model selection is being saved.') : sharedConfigReason
-      );
-      syncDisabledReason(
-        composerEffortSelect,
-        documentRef?.getElementById?.('composerEffortDisabledReason'),
-        reasoningEffortUnsupported
-        ? jt('chat.chrome.reasoningUnsupported', 'Reasoning effort is not supported by the selected model.')
-        : isActivityBusy(composerReasoningEffortActivity) ? jt('chat.chrome.reasoningEffortSaving', 'The reasoning effort is being saved.') : sharedConfigReason
-      );
-      composerModelSelect.value = runtimePreferences.preferredModel;
-      composerEffortSelect.dataset.requestedEffort = String(runtimePreferences.reasoningEffort || '');
-      composerEffortSelect.value = runtimePreferences.reasoningEffort;
-      // No matching option (a conversation switch onto a model without that
-      // effort): let the effort control normalize and save it now, not at the
-      // next popover open, so a stale effort never rides a send. Once per
-      // effort/model pair: a failed save rolls back and re-renders, and must not
-      // retry on every render.
-      const effortReconcileKey = `${composerEffortSelect.dataset.requestedEffort}\u0000${composerModelSelect.value}`;
-      if (composerEffortSelect.value === '' && composerEffortSelect.dataset.reconciledFor !== effortReconcileKey) {
-        composerEffortSelect.dataset.reconciledFor = effortReconcileKey;
-        globalRef.reasoningEffortControls?.reconcile?.();
-      }
-      globalRef.rendererComposerModelPicker?.instance?.renderIfOpen?.();
-      composerV2Render.syncRunModeChip(runModeProjection.runMode, documentRef);
-      syncComposerTurnTimer();
-      const runModeChip = documentRef?.getElementById?.('composerRunModeChip');
-      if (runModeChip) {
-        runModeChip.disabled = pluginSessionReadOnly;
-        runModeChip.classList.toggle('inv-chip--disabled', pluginSessionReadOnly);
-        applyActivityAttributes(runModeChip, composerRunModeActivity);
-      }
-      composer.classList.toggle('composer-plan-active', runModeProjection.planMode);
-      applyActivityAttributes(composerModelSelectShell, composerPreferredModelActivity, { setAriaBusy: true });
-      applyActivityAttributes(composerEffortSelectShell, composerReasoningEffortActivity, { setAriaBusy: true });
-      applyActivityAttributes(composer, composerPrimaryActivity, { setAriaBusy: true });
-
-      renderComposerInteractivePanel();
-      globalRef.rendererSendOutboxRender?.renderSendOutbox?.({
-        state,
-        host: documentRef?.getElementById('sendOutbox'),
-        actions: controllers.getSendOutboxActions?.(),
-      });
-      // Option C: a queued send is its own greyed bubble in the conversation;
-      // the strip keeps only what has no bubble there.
-      const inBubbles = globalRef.rendererRuntimeQueueView?.syncQueuedBubbles?.({
-        timeline: chatTimeline,
-        rows: durablePending,
-        actions: getRuntimeQueueActions(),
-        closing: runtimeSessionState?.closing === true,
-      }) || new Set();
-      globalRef.rendererRuntimeQueueView?.renderRuntimeQueue?.({
-        state,
-        host: documentRef?.getElementById('runtimeQueue'),
-        // Idle direct Sends retain pending ownership without entering the queue strip.
-        rows: durablePending.filter(row => row.queued !== false && !inBubbles.has(row.key)),
-        actions: getRuntimeQueueActions(),
-        closing: runtimeSessionState?.closing === true,
-      });
-      // F20: a send held behind another chat says so where its reply will appear.
-      globalRef.rendererAdmissionWaitLine?.syncAdmissionWaitLine?.({
-        timeline: chatTimeline,
-        state,
-        rows: durablePending,
-        onOpenChat: (sessionId) => state.runtimeSendController?.openChat?.(sessionId),
-        onStopChat: (sessionId) => state.runtimeSendController?.stopChat?.(sessionId),
-      });
-      syncComposerAccessoryVisibility();
-      renderComposerEnhancements?.();
-      if ((pluginSessionReadOnly || !state.auth.authenticated) && state.ui.composerPopoverOpen) {
-        closeComposerPopover();
-      }
-      syncComposerInputHeight();
-      syncComposerVisualState();
-      updateComposerSafeOffset();
-      renderLiveThinkingChip();
-      const shouldRenderVisionNotice = Boolean(visionGate?.notice || visionNoticeShown);
-      visionNoticeShown = Boolean(visionGate?.notice);
-      if (shouldRenderVisionNotice) renderComposerStatusNotice();
-      // Sibling composer surfaces (the workspace-root nudge) follow the chat
-      // switch and busy/idle transitions off this one bubbling event instead
-      // of each polling state on its own cadence.
-      const CustomEventCtor = chatInput?.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
-      if (typeof CustomEventCtor === 'function' && typeof chatInput?.dispatchEvent === 'function') {
-        chatInput.dispatchEvent(new CustomEventCtor('composer-state-rendered', { bubbles: true, detail: { sessionId: state.currentSessionId || '' } }));
-      }
-    }
-
+    const composerChrome = composerChromeUtils.createComposerChrome({
+      state,
+      constants,
+      dom,
+      controllers,
+      callbacks,
+      documentRef,
+      getPaneSessionId,
+      isFollowingLatest,
+      getPaneRuntimePreferences,
+      setDatasetIfChanged,
+      syncComposerVisualState,
+    });
+    const { renderComposerState, renderComposerJumpControls, syncComposerAccessoryVisibility } = composerChrome;
 
     function renderAll(options) {
       renderLayout();
@@ -937,10 +431,7 @@
     }
 
     function dispose() {
-      resumeSetupButton?.removeEventListener('click', handleResumeSetup);
-      resumeSetupButton?.remove();
-      setupFootnote?.remove();
-      heroActions?.remove();
+      heroChrome.dispose();
     }
 
     return {

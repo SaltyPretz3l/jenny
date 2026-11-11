@@ -1,0 +1,111 @@
+/* styles/change-pictures.css
+ * Before-and-after pictures of a web page: the block in the Changes panel
+ * (.cp), the empty slot the Changes view leaves for it, and the two small
+ * pictures under a chat reply (.chat-pics). The compare slider itself is the
+ * inventory primitive (inventory-compare-slider.css). Tokens only, logical
+ * properties only, no motion.
+ */
+.cp-slot:empty { display: none; }
+
+.cp-pending {
+  margin: 0;
+  padding-block: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.cp { min-width: 0; }
+.cp-head { display: flex; align-items: center; min-height: 40px; }
+.cp-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-block: var(--space-2);
+  padding-inline: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.cp-toggle .file-diff-chevron { align-self: center; }
+.cp[data-expanded="true"] .file-diff-chevron { transform: rotate(90deg); }
+.cp-toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+.cp-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+.cp-sub {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+.cp-body { padding-block-end: var(--space-6); }
+.cp-caps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-block-start: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+.cp-caps .changes-wt-link { font-size: var(--font-size-caption); }
+.changes-history-turn .cp { padding-inline: var(--space-8); }
+
+/* One picture of the page, as wide as the block. */
+.cp-shot {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* In the chat: Before and After, small, under the reply. */
+.chat-pics-row { margin-block-start: var(--space-4); }
+.chat-pics {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  text-align: start;
+}
+.chat-pics figure { margin: 0; inline-size: 168px; }
+.chat-pics figcaption { margin-block-start: var(--space-2); }
+.chat-pic {
+  display: block;
+  inline-size: 168px;
+  block-size: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.chat-pics:hover .chat-pic { border-color: var(--border-strong); }
+.chat-pics:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+.chat-line {
+  margin: 0;
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}

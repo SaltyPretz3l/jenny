@@ -31,7 +31,8 @@ function harness({ port, featureFlags } = {}) {
   return { context, calls };
 }
 
-const output = (result) => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 test('the kill switch refuses first; Plan mode and read-only chats refuse a write', async () => {
   const off = harness({ featureFlags: { terminal_tools: false } });
@@ -113,12 +114,12 @@ function approvalService(prepareRun, extra = {}) {
   return { service, emitted };
 }
 
-async function askFor(service, callId, command) {
+async function askFor(service, callId, command, collector = null) {
   const { waitForToolApproval } = require('../services/backend/chat-stream-tool-handling');
   const { CanonicalTurnEventCollector } = require('../services/backend/canonical-turn-event-collector');
   return waitForToolApproval(service, `stream-${callId}`, 'sess_primary', `req-${callId}`, {
     tool_name: 'terminal_run', tool_call_id: callId, tool_input: { command, purpose: 'x' }, reason: 'A command runs in your terminal only with your approval.',
-  }, new AbortController(), new CanonicalTurnEventCollector({ turnId: `turn-${callId}`, sessionId: 'sess_primary' }));
+  }, new AbortController(), collector || new CanonicalTurnEventCollector({ turnId: `turn-${callId}`, sessionId: 'sess_primary' }));
 }
 
 test('approval path: the card shows the whole command and the folder it runs in, one-off only', async () => {
@@ -150,10 +151,20 @@ test('the rendered card shows a 2000-character command whole, never the clipped 
   assert.equal(field.textContent, command);
 });
 
+test('a refusal before any card still records its call, so its approval events have a row to join', async () => {
+  const { service } = approvalService(() => ({ ok: true }), { commandSandbox: { enabled: true } });
+  const noted = [];
+  await askFor(service, 'call-3', 'npm test', { turnId: 'turn-3', noteEvent: (event) => { noted.push(event); return event; } });
+  const use = noted.find((event) => event.kind === 'tool_use');
+  assert.deepEqual([use?.tool_call_id, use?.status, use?.payload.tool_name], ['call-3', 'denied', 'terminal_run']);
+  assert.ok(noted.indexOf(use) < noted.findIndex((event) => event.kind === 'tool_result'), 'the call comes before its result');
+});
+
 test('approval path: Docker sandbox mode ends the call before any card and never asks the port', async () => {
   const asked = [];
   const { service, emitted } = approvalService((args) => { asked.push(args); return { ok: true }; }, { commandSandbox: { enabled: true } });
-  assert.equal(await askFor(service, 'call-2', 'npm test'), false);
+  const answer = await askFor(service, 'call-2', 'npm test');
+  assert.deepEqual([answer.approved, answer.decision, JSON.parse(answer.feedback).reason], [false, 'app_refused', 'sandbox_mode']);
   assert.equal(emitted.some((event) => event.type === 'tool_approval_needed'), false, 'no card');
   assert.equal(JSON.parse(emitted.find((event) => event.type === 'tool_result').content).reason, 'sandbox_mode');
   assert.deepEqual(asked, []);

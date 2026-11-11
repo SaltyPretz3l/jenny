@@ -32,9 +32,7 @@
       className: 'composer-skill-chip', ariaLabel, title: jt('composer.skills.removeTitle', 'Remove skill') });
   }
 
-  // Renders the composer chip for the pending skill (host #composerSkillChip).
-  // Called from the send-path dispatch and from renderComposerState so a
-  // session switch (which drops the pending skill) also drops the chip.
+  // The composer chip for the pending skill; renderComposerState calls it too, so a session switch drops it.
   function renderSkillChip(deps) {
     const state = deps?.state;
     const doc = deps?.document || (typeof document !== 'undefined' ? document : null);
@@ -179,10 +177,7 @@
       }
     }
 
-    // Refetch when the focused chat changed, or when the last read is older
-    // than maxAgeMs: the chat's project can be re-bound under the same session
-    // id (projects.assignSession), which no renderer key observes reliably.
-    // Null when the registry already reflects a fresh read.
+    // Refetch on a chat change or a read older than maxAgeMs (a project re-bind keeps the session id); null when fresh.
     function ensureScope({ maxAgeMs = Infinity } = {}) {
       if (disposed || !getScopeKey) return null;
       if (getScopeKey() === requestedScope && now() - requestedAt <= maxAgeMs) return null;
@@ -236,9 +231,7 @@
       log: options.log,
       now: options.now,
     });
-    // Composer focus and opening the "/" menu re-read this chat's skills (at
-    // most once per freshness window), so a chat switch or a project re-bind
-    // of the same chat reaches the picker before it is read.
+    // Composer focus and the "/" menu re-read this chat's skills, so the picker sees a switch or re-bind.
     const SKILLS_FRESH_MS = 1000;
     const syncSkillsScope = (event) => {
       if (event?.type === 'input' && !/^\/[a-z0-9_-]*$/i.test(String(chatInput?.value || ''))) {
@@ -308,8 +301,7 @@
         ? imagePrompt.peek(state, composerSessionId()) : null;
       if (armedImage && !settings.imagePromptPin) settings = { ...settings, imagePromptPin: armedImage };
       const pending = getPending();
-      // A queued (outbox) replay already carries the skill captured at queue
-      // time in its meta; the skill pending *now* must not override it.
+      // A queued replay already carries its skill; the one pending now must not override it.
       let nextSettings = pending && !settings.skillInvocation && !settings.outboxDispatch
         ? { ...settings, skillInvocation: pending }
         : settings;
@@ -318,6 +310,7 @@
       if (!trimmed.startsWith('/') || !registry) {
         return { handled: false, prompt, settings: nextSettings };
       }
+      if (settings.skillInvocation) return { handled: false, prompt, settings: nextSettings }; // a replayed bare skill
       // A command typed right after a chat switch matches THAT chat's skills.
       const scopeSync = skillCommands.ensureScope({ maxAgeMs: SKILLS_FRESH_MS });
       if (scopeSync) return scopeSync.then(() => dispatch(prompt, rawSettings));
@@ -327,14 +320,17 @@
         : { matched: registry.tryExecute?.(trimmed) === true, accepted: true, clearPolicy: 'on_success', completion: Promise.resolve({ ok: true }) };
       if (!receipt?.matched) return { handled: false, prompt, settings: nextSettings };
       if (receipt.status === 'attached' && receipt.skill) {
+        const remainder = String(receipt.prompt || '');
+        // A bare skill runs now, its command as the message, and nothing stays armed.
+        if (!remainder.trim()) {
+          stateUtilsRef()?.clearPendingSkillInvocation?.(state);
+          paintChip();
+          return { handled: false, prompt: trimmed, settings: { ...settings, skillInvocation: receipt.skill } };
+        }
         const skill = attachSkillInvocation({ state, skill: receipt.skill, document: chatInput?.ownerDocument })
           || receipt.skill;
-        const remainder = String(receipt.prompt || '');
-        repaintInput(remainder, !remainder.trim());
-        nextSettings = { ...settings, skillInvocation: skill };
-        return remainder.trim()
-          ? { handled: false, prompt: remainder, settings: nextSettings }
-          : { handled: true, prompt: remainder, settings: nextSettings };
+        repaintInput(remainder);
+        return { handled: false, prompt: remainder, settings: { ...settings, skillInvocation: skill } };
       }
       const completion = receipt.accepted === true
         ? Promise.resolve(receipt.completion).catch(() => ({ ok: false }))
@@ -357,6 +353,7 @@
       // accepted receipt (work_id, snake_case) consumes the chip too, admitted or not.
       const accepted = Boolean(result?.streamId)
         || (result?.durable === true && result?.ok === true && Boolean(result?.work_id));
+      if (accepted) globalThis.dispatchEvent?.(new CustomEvent('jenny:chat-sent', { detail: { sessionId: composerSessionId() } }));
       if (!accepted || settings?.editedMessageId || !invocation?.id) return false;
       // By id, not focus (split view W3-1): the send may settle after focus moved to the other pane.
       const pending = stateUtilsRef()?.ensureComposerV2State?.(state)?.pendingSkillInvocation || null;

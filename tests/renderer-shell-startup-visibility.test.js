@@ -109,11 +109,8 @@ test('a late pane composition failure settles the mounted startup sky', async (t
   const curtain = app.window.document.getElementById('startupOverlay');
   assert.equal(curtain.getAttribute('role'), 'alertdialog');
   assert.ok(curtain.querySelector('#startupOverlayRetryButton'));
-  const wordmark = curtain.querySelector('.startup-overlay-wordmark');
-  const opacity = wordmark.style.opacity;
   await waitForUi(app.window, 120);
-  assert.equal(wordmark.style.opacity, opacity, 'fatal composition failure must stop animation frames');
-  assert.equal(curtain.__jennyStartupSky.isPaused(), true);
+  assert.equal(curtain.__jennyStartupSky.isPaused(), true, 'fatal composition failure must stop animation frames');
 });
 
 test('app shortcuts stay inert while the startup curtain is mounted', async (t) => {

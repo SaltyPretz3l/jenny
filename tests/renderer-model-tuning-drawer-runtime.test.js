@@ -37,7 +37,7 @@ const FORK_VALUE = 'llama-prism-b10683-cuda13.3 \u00b7 build 10683';
 const FORK_PICK = Object.freeze({ ok: true, picked: true, path: FORK, build: 10683, supportsMtp: false });
 const BONSAI = Object.freeze({ engine: 'llama-server', tag: TAG, modelPath: MODEL_PATH, mtp: { mode: 'off' } });
 const NO_OLLAMA_HINT = "Ollama doesn't have this model, so it runs on Jenny's own llama-server.";
-const ENGINE_HINT = "Ollama or Jenny's own llama-server. llama-server can speed up verified models with multi-token prediction.";
+const ENGINE_HINT = "Ollama, or Jenny's own llama-server.";
 
 function tuningState() {
   return {
@@ -158,7 +158,7 @@ test('Tune on an unserved Local GGUF card resolves its engine from the hint and 
   const host = await openBonsai(h);
   assert.doesNotMatch(host.textContent, /can't verify this model's engine/);
   assert.ok(host.querySelector('[data-model-tuning-engine]'), 'the Engine section renders');
-  assert.match(host.querySelector('.model-tuning-drawer-subtitle').textContent, /\u00b7 llama-server /);
+  assert.equal(host.querySelector('.model-tuning-drawer-subtitle'), null, 'the Engine section names the engine');
   assert.equal(host.querySelector('[data-value="llama-server"]').getAttribute('aria-checked'), 'true');
   assert.equal(host.querySelector('[data-value="ollama"]').disabled, true);
   const temperature = setField(host, '#modelTuningTemperature', '0.4');
@@ -179,14 +179,14 @@ test('the engine hint is reset on every open and ranks after the model list and 
 
   h.state.status = { model: TAG, engine: 'vllm' };
   host = await openBonsai(h);
-  assert.match(host.querySelector('.model-tuning-drawer-subtitle').textContent, /\u00b7 vLLM /, 'the served status wins');
+  assert.equal(host.querySelector('.model-tuning-drawer-subtitle').textContent, 'Runs on vLLM.', 'the served status wins');
   h.state.status = { model: TAG };
   host = await openBonsai(h);
-  assert.match(host.querySelector('.model-tuning-drawer-subtitle').textContent, /\u00b7 llama-server /,
-    'a served status without an engine falls through to the hint');
+  const engineType = (node) => node.querySelector('.model-tuning-drawer-grid').dataset.engineType;
+  assert.equal(engineType(host), 'openai-compatible', 'a served status without an engine falls through to the hint');
   h.state.modelList.data.push({ id: TAG, engine_type: 'ollama' });
   host = await openBonsai(h);
-  assert.match(host.querySelector('.model-tuning-drawer-subtitle').textContent, /\u00b7 Ollama /, 'the model list wins');
+  assert.equal(engineType(host), 'ollama', 'the model list wins');
 });
 
 test('the Engine hint says why Ollama is greyed out only when Ollama lacks the model', async (t) => {
@@ -200,15 +200,15 @@ test('the Engine hint says why Ollama is greyed out only when Ollama lacks the m
       view, draft: view.draft, pending: false, statusText: '', escapeHtml: actionButton.escapeHtml,
       segmentedControl, toggleSwitch: toggleSwitch.toggleSwitch, actionButton,
     });
-    return document.querySelector('.model-tuning-section-hint').textContent;
+    return document.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent;
   };
   assert.equal(hintFor(false), NO_OLLAMA_HINT);
   assert.equal(hintFor(true), ENGINE_HINT);
 
   const h = createHarness(t);
-  assert.equal((await openBonsai(h)).querySelector('.model-tuning-section-hint').textContent, NO_OLLAMA_HINT);
+  assert.equal((await openBonsai(h)).querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent, NO_OLLAMA_HINT);
   const withOllama = await openBonsai(h, { engines: { ollama: { available: true } } });
-  assert.equal(withOllama.querySelector('.model-tuning-section-hint').textContent, ENGINE_HINT);
+  assert.equal(withOllama.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent, ENGINE_HINT);
 
   // No card facts (Quick Settings, the older model list): the model-list scan
   // can't prove Ollama lacks the model (a served llama-server alias hides
@@ -222,16 +222,16 @@ test('the Engine hint says why Ollama is greyed out only when Ollama lacks the m
     view: scanned, draft: scanned.draft, pending: false, statusText: '', escapeHtml: actionButton.escapeHtml,
     segmentedControl, toggleSwitch: toggleSwitch.toggleSwitch, actionButton,
   });
-  assert.equal(document.querySelector('.model-tuning-section-hint').textContent, ENGINE_HINT);
+  assert.equal(document.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent, ENGINE_HINT);
   const quick = createHarness(t, { modelList: listed });
   await quick.controller.open(TAG, null);
   const quickHost = quick.dom.window.document.getElementById('modelTuningDrawer');
-  assert.equal(quickHost.querySelector('.model-tuning-section-hint').textContent, ENGINE_HINT);
+  assert.equal(quickHost.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent, ENGINE_HINT);
   assert.equal(quickHost.querySelector('[data-value="ollama"]').disabled, true,
     'the Ollama option keeps its verdict from before this slice (the scan found no Ollama entry)');
 });
 
-test('the build row follows the GGUF-row grammar under GGUF file, escaped, and only with the bridge', () => {
+test('the build row follows the Model-file row grammar under Model file, escaped, and only with the bridge', () => {
   const { document } = new JSDOM('<!doctype html><body></body>').window;
   const odd = RUNTIMES + SEP + 'a"<b>&c' + SEP + (WIN32 ? 'llama-server.exe' : 'llama-server');
   const render = (draft, extra = {}) => {
@@ -246,16 +246,17 @@ test('the build row follows the GGUF-row grammar under GGUF file, escaped, and o
 
   const row = render({ runtimePath: FORK, runtimeBuild: 10683 });
   assert.ok(row, 'the row renders with the bridge');
-  assert.equal(row.previousElementSibling.dataset.modelTuningRow, 'modelPath', 'placed right after GGUF file');
-  assert.equal(row.className, 'model-tuning-row model-tuning-row--gguf');
+  assert.equal(row.previousElementSibling.dataset.modelTuningRow, 'modelPath', 'placed right after Model file');
+  assert.equal(row.className, 'model-tuning-row model-tuning-row--wide');
   assert.equal(row.hidden, false);
   assert.deepEqual(Array.from(row.children, (child) => child.className),
-    ['model-tuning-row-label', 'model-tuning-row-control', 'model-tuning-row-actions']);
+    ['model-tuning-row-text', 'model-tuning-row-control']);
   assert.equal(row.querySelector('.model-tuning-row-label').textContent, 'llama-server build');
+  assert.match(row.querySelector('.model-tuning-row-label').getAttribute('data-tooltip'), /Bundled ships with Jenny/);
   const code = row.querySelector('.model-tuning-row-control > code.model-tuning-gguf-path[data-model-tuning-runtime]');
   assert.equal(code.textContent, FORK_VALUE);
   assert.equal(code.title, FORK);
-  const buttons = Array.from(row.querySelectorAll('.model-tuning-row-actions > button'));
+  const buttons = Array.from(row.querySelectorAll('.model-tuning-row-control > .model-tuning-row-actions > button'));
   assert.deepEqual(buttons.map((node) => [node.dataset.action, node.textContent, node.className, node.hidden]), [
     ['choose-llama-server-runtime', 'Choose…', 'btn btn--ghost btn--sm', false],
     ['use-bundled-llama-server', 'Use bundled', 'btn btn--ghost btn--sm', false],
@@ -272,7 +273,7 @@ test('the build row follows the GGUF-row grammar under GGUF file, escaped, and o
   assert.equal(new Set(names).size, names.length, names.join(' | '));
 
   const bundled = render({});
-  assert.equal(bundled.querySelector('[data-model-tuning-runtime]').textContent, 'Bundled');
+  assert.equal(bundled.querySelector('[data-model-tuning-runtime]').textContent, 'Bundled with Jenny');
   assert.equal(bundled.querySelector('[data-model-tuning-runtime]').title, '');
   assert.equal(bundled.querySelector('[data-action="use-bundled-llama-server"]').hidden, true,
     'Use bundled is rendered but hidden while unused');
@@ -322,7 +323,7 @@ test('engine utils carry the build through the draft, dirty set, pick, value tex
   assert.deepEqual(engineUtils.engineDirtyFields(view, { ...draft, engine: 'ollama' }), ['engine'],
     'the build is not a change while the model runs on Ollama');
 
-  assert.equal(engineUtils.runtimeValueText({ runtimePath: '', runtimeBuild: 0 }), 'Bundled');
+  assert.equal(engineUtils.runtimeValueText({ runtimePath: '', runtimeBuild: 0 }), 'Bundled with Jenny');
   assert.equal(engineUtils.runtimeValueText({ runtimePath: FORK, runtimeBuild: 10683 }), FORK_VALUE);
   assert.equal(engineUtils.runtimeValueText({ runtimePath: FORK, runtimeBuild: 0 }), 'llama-prism-b10683-cuda13.3');
 
@@ -413,7 +414,7 @@ test('a missing bridge hides the row, and the row follows the engine choice', as
 test('Choose then Apply saves the pick; Use bundled then Apply clears it', async (t) => {
   const h = createHarness(t, { picks: [FORK_PICK] });
   const host = await openBonsai(h);
-  assert.equal(runtimeCode(host)?.textContent, 'Bundled');
+  assert.equal(runtimeCode(host)?.textContent, 'Bundled with Jenny');
   assert.equal(button(host, 'use-bundled-llama-server').hidden, true);
   button(host, 'choose-llama-server-runtime').click();
   await flush();
@@ -429,7 +430,7 @@ test('Choose then Apply saves the pick; Use bundled then Apply clears it', async
   assert.deepEqual([h.store.saved().runtimePath, h.store.saved().runtimeBuild], [FORK, 10683]);
   assert.equal(statusText(host), 'Applied. Press Use on this model to run it with these settings.');
   assert.equal(runtimeCode(host).textContent, FORK_VALUE, 're-derived from what main saved');
-  assert.equal(applyLabel(host), 'Apply 0 changes');
+  assert.equal(applyLabel(host), 'No changes');
 
   button(host, 'choose-llama-server-runtime').click();
   await flush();
@@ -438,7 +439,7 @@ test('Choose then Apply saves the pick; Use bundled then Apply clears it', async
   const useBundled = button(host, 'use-bundled-llama-server');
   useBundled.focus();
   useBundled.click();
-  assert.equal(runtimeCode(host).textContent, 'Bundled');
+  assert.equal(runtimeCode(host).textContent, 'Bundled with Jenny');
   assert.equal(runtimeCode(host).title, '');
   assert.equal(useBundled.hidden, true);
   assert.equal(h.dom.window.document.activeElement, button(host, 'choose-llama-server-runtime'),
@@ -447,7 +448,7 @@ test('Choose then Apply saves the pick; Use bundled then Apply clears it', async
   await apply(host);
   assert.equal(h.calls.engine[1].managed.perModel[KEY].runtimePath, '');
   assert.equal('runtimePath' in h.store.saved(), false);
-  assert.equal(runtimeCode(host).textContent, 'Bundled');
+  assert.equal(runtimeCode(host).textContent, 'Bundled with Jenny');
 });
 
 test('an untouched Apply sends no runtimePath key and keeps the saved build', async (t) => {
@@ -483,8 +484,8 @@ test('a stale pick is dropped when the model switches or the drawer closes mid-d
   host = h.dom.window.document.getElementById('modelTuningDrawer');
   release(FORK_PICK);
   await flush();
-  assert.equal(runtimeCode(host).textContent, 'Bundled', 'the other model never sees the pick');
-  assert.equal(applyLabel(host), 'Apply 0 changes');
+  assert.equal(runtimeCode(host).textContent, 'Bundled with Jenny', 'the other model never sees the pick');
+  assert.equal(applyLabel(host), 'No changes');
 
   let releaseClosed;
   const closedGate = new Promise((resolve) => { releaseClosed = resolve; });
@@ -495,8 +496,8 @@ test('a stale pick is dropped when the model switches or the drawer closes mid-d
   releaseClosed(FORK_PICK);
   await flush();
   const reopened = await openBonsai(closed);
-  assert.equal(runtimeCode(reopened).textContent, 'Bundled');
-  assert.equal(applyLabel(reopened), 'Apply 0 changes');
+  assert.equal(runtimeCode(reopened).textContent, 'Bundled with Jenny');
+  assert.equal(applyLabel(reopened), 'No changes');
 });
 
 test('a pick patches the row in place, so unapplied tuning inputs survive', async (t) => {
@@ -554,7 +555,7 @@ test('picker failures show their copy in place and leave the draft and unapplied
     assert.equal(statusText(host), text, action);
     assert.equal(host.querySelector('#modelTuningTemperature'), temperature, `${action}: no re-render`);
     assert.deepEqual([temperature.value, context.value], ['0.4', '8192']);
-    assert.equal(runtimeCode(host).textContent, 'Bundled');
+    assert.equal(runtimeCode(host).textContent, 'Bundled with Jenny');
     assert.equal(applyLabel(host), 'Apply 2 changes', `${action}: the dirty count survives`);
   }
 });
@@ -566,7 +567,7 @@ test('re-picking the saved build after new files were copied over it saves the n
   const host = await openBonsai(h);
   button(host, 'choose-llama-server-runtime').click();
   await flush();
-  assert.equal(applyLabel(host), 'Apply 0 changes', 'the same file with the same build is no change');
+  assert.equal(applyLabel(host), 'No changes', 'the same file with the same build is no change');
   button(host, 'choose-llama-server-runtime').click();
   await flush();
   assert.equal(runtimeCode(host).textContent, 'llama-prism-b10683-cuda13.3 · build 10700');
@@ -577,7 +578,7 @@ test('re-picking the saved build after new files were copied over it saves the n
   assert.deepEqual([h.store.saved().runtimePath, h.store.saved().runtimeBuild], [FORK, 10700]);
   assert.equal(statusText(host), 'Applied. Press Use on this model to run it with these settings.');
   assert.equal(runtimeCode(host).textContent, 'llama-prism-b10683-cuda13.3 · build 10700', 're-derived from what main saved');
-  assert.equal(applyLabel(host), 'Apply 0 changes');
+  assert.equal(applyLabel(host), 'No changes');
 
   // A pick main no longer holds is an echo it keeps the old build for: the drawer says so.
   const stale = createHarness(t, { entry: onFork, picks: [upgraded] });

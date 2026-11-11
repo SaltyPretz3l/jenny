@@ -647,15 +647,20 @@ def _duckduckgo_search(
                 max_chars=_DEFAULT_SEARCH_MAX_CHARS,
                 tool_name="web_search",
             )
-    elif filters_requested:
-        answer = "Search completed, but no results matched the requested domain filters."
     else:
         # Instant answer returned nothing useful — scrape DuckDuckGo's HTML/lite
-        # endpoints for real web results.
+        # endpoints for real web results. A domain filter used to skip this and
+        # report "no results" without ever searching (row 129, B1).
         html_results: list[dict[str, str]] = []
+        scrape_query = (
+            f"{query} site:{allowed_domains[0]}"
+            if len(allowed_domains) == 1 and allowed_domains[0].isascii()
+            and not any(char.isspace() for char in allowed_domains[0])
+            else query
+        )
         try:
             html_results = _ddg_html_search(
-                query, timeout_s=timeout_s, deadline=deadline
+                scrape_query, timeout_s=timeout_s, deadline=deadline
             )
         except _DdgBlockedError as exc:
             blocked = True
@@ -678,6 +683,16 @@ def _duckduckgo_search(
                 _answer_from_sources(sources, query=query),
                 max_chars=_DEFAULT_SEARCH_MAX_CHARS,
                 tool_name="web_search",
+            )
+        elif filters_requested:
+            # Never fall back to the unfiltered instant answer under a domain filter.
+            found = f"{len(html_results)} result(s) came back and none" if html_results else (
+                "The search did not complete, so no result" if blocked or scrape_failed
+                else "No result"
+            )
+            answer = (
+                f"{found} passed the domain filters. Search again without allowed_domains "
+                "or blocked_domains."
             )
         else:
             answer = sanitize_tool_output(

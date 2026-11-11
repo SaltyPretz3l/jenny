@@ -35,6 +35,11 @@ async function assertMemoryRefreshReports(t, omitReport = false, eventName = 'ba
     rendererEnterKeydownUtils: require('../renderer/chat/renderer-enter-keydown-utils'),
     rendererChatCtrlWheelGate: require('../renderer/chat/renderer-chat-ctrl-wheel-gate'),
   };
+  context.rendererChatWayfinderUtils = require('../renderer/chat/renderer-chat-wayfinder-utils');
+  // renderer-chat-event-utils.js resolves its split siblings from the same browser-shaped context.
+  for (const sibling of ['renderer-chat-tool-row-toggles.js', 'renderer-chat-shell-subscriptions.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', sibling), 'utf8'), context);
+  }
   vm.runInNewContext(readSource('renderer/chat/renderer-chat-event-utils.js'), context);
   const callbacks = new Proxy({
     reportError: omitReport ? null : (...args) => reports.push(args),
@@ -80,10 +85,12 @@ test('settings-refresh failures report with origin settings-refresh and keep the
 test('offline/companion refresh failures report with origin offline-refresh', () => {
   // The home-view hydration catches (companion refresh + the home-view
   // activation offline catch) were extracted to renderer-home-view-hydrate.js;
-  // the bootstrap offline catch stays in renderer-lifecycle-utils.js. Read both
+  // the bootstrap offline catch lives in renderer-lifecycle-navigation.js (split from
+  // renderer-lifecycle-utils.js, which keeps the FWD_KEYS list). Read all three
   // so the silent-path wiring is pinned wherever the catch-site now lives.
   const source = [
     readSource('renderer/shell/renderer-lifecycle-utils.js'),
+    readSource('renderer/shell/renderer-lifecycle-navigation.js'),
     readSource('renderer/shell/renderer-home-view-hydrate.js'),
   ].join('\n');
 

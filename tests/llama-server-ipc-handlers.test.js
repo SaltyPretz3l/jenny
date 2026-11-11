@@ -448,4 +448,36 @@ describe('registerLlamaServerIpcHandlers', () => {
     const status = await ipc.invoke.get(invokeChannel('llamaServer.getStatus'))({ sender: webContents, senderFrame: mainFrame });
     assert.equal(status.state, 'stopped', 'the trusted main frame still reaches the manager');
   });
+
+  // Row 107: Move and add only moves a file main's own picker returned.
+  test('planGgufImport and importGguf refuse a path the picker never returned, then move a picked one', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-import-ipc-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const downloads = path.join(root, 'Downloads');
+    fs.mkdirSync(downloads);
+    const modelPath = path.join(downloads, 'Model-Q4_K_M.gguf');
+    fs.writeFileSync(modelPath, 'GGUF');
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: () => ({ getStatus: () => ({ state: 'stopped' }) }),
+      userDataPath: path.join(root, 'userData'),
+      repoRoot: path.join(root, 'repo'),
+      dialogImpl: { showOpenDialog: async () => ({ canceled: false, filePaths: [modelPath] }) },
+      platform: process.platform,
+    });
+    const call = (method, payload) => ipc.invoke.get(invokeChannel(method))({}, payload);
+    assert.deepEqual(await call('llamaServer.planGgufImport', { path: modelPath }), { ok: false, reason: 'not_picked' });
+    assert.deepEqual(await call('llamaServer.importGguf', { path: modelPath }), { ok: false, reason: 'not_picked' });
+
+    assert.equal((await call('llamaServer.chooseGguf', {})).path, modelPath);
+    const planned = await call('llamaServer.planGgufImport', { path: modelPath });
+    assert.equal(planned.inside, false);
+    assert.equal(planned.destDir, path.join(root, 'userData', 'models', 'Model'));
+    const moved = await call('llamaServer.importGguf', { path: modelPath });
+    assert.equal(moved.ok, true);
+    assert.equal(fs.existsSync(moved.modelPath), true);
+    assert.equal(fs.existsSync(modelPath), false);
+    assert.deepEqual(await call('llamaServer.ggufImportStatus'), { ok: true, active: false });
+    assert.deepEqual(await call('llamaServer.cancelGgufImport'), { ok: true, cancelled: false });
+  });
 });

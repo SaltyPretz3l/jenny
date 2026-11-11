@@ -368,3 +368,211 @@ test('a pushed state that changes nothing on screen keeps the row and its alert 
   controller.dispose();
   dom.window.close();
 });
+
+// Row 106: "Where commands run" (Isolated copy | Synced workspace) under the sandbox switch.
+const GIB = 1024 ** 3;
+const COPY_LIMITS = { bytes: 64 * 1024 * 1024, entries: 2048, depth: 32 };
+const SYNCED_LIMITS = { bytes: 4 * GIB, entries: 200000, depth: 64 };
+const modeState = (overrides = {}) => {
+  const mode = overrides.mode || 'copy';
+  return { enabled: false, state: 'disabled', platform: 'windows', qualified: true, mode, modes: ['copy', 'synced'],
+    workspace: mode === 'synced' ? 'synced' : 'disposable_copy', network: 'none', limits: mode === 'synced' ? SYNCED_LIMITS : COPY_LIMITS, ...overrides };
+};
+const modeRow = (host) => host.querySelector('[data-settings-field="commandSandboxMode"]');
+const modeOption = (host, value) => host.querySelector(`[data-inv-segmented="commandSandboxMode"] .inv-segmented-option[data-value="${value}"]`);
+const modeChecked = (host) => ['copy', 'synced'].find((value) => modeOption(host, value)?.getAttribute('aria-checked') === 'true');
+function chooseMode(dom, host, value) {
+  host.dispatchEvent(new dom.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'commandSandboxMode', value } }));
+}
+
+test('normalizeState reads the mode, choices, workspace and limits defensively', () => {
+  const { normalizeState } = require('../renderer/shell/renderer-settings-command-sandbox.js');
+  const bare = normalizeState({ enabled: true, state: 'ready' });
+  assert.equal(bare.mode, 'copy');
+  assert.deepEqual(bare.modes, ['copy']);
+  assert.equal(bare.workspace, 'disposable_copy');
+  assert.equal(bare.network, 'none');
+  assert.deepEqual(bare.limits, COPY_LIMITS);
+  const synced = normalizeState(modeState({ mode: 'synced' }));
+  assert.equal(synced.mode, 'synced');
+  assert.deepEqual(synced.modes, ['copy', 'synced']);
+  assert.equal(synced.workspace, 'synced');
+  assert.deepEqual(synced.limits, SYNCED_LIMITS);
+  const odd = normalizeState({ mode: 'host', modes: ['copy', 'synced', 'host'], workspace: '/etc', network: 'bridge', limits: { bytes: -1, entries: 1.5, depth: Infinity } });
+  assert.equal(odd.mode, 'copy');
+  assert.deepEqual(odd.modes, ['copy', 'synced']);
+  assert.equal(odd.workspace, 'disposable_copy');
+  assert.equal(odd.network, 'none');
+  assert.deepEqual(odd.limits, COPY_LIMITS);
+  const killSwitch = normalizeState({ mode: 'synced', modes: ['copy'], workspace: 'synced' });
+  assert.equal(killSwitch.mode, 'copy', 'a mode the main process does not offer reads as copy');
+});
+
+test('the mode row is hidden when only the isolated copy is offered', async () => {
+  for (const state of [modeState({ modes: ['copy'] }), { enabled: true, state: 'ready', platform: 'windows', qualified: true }]) {
+    const { dom, host, controller } = harness({ async getState() { return state; } });
+    controller.bind();
+    await settle();
+    assert.ok(host.querySelector('[data-settings-field="commandSandboxEnabled"]'));
+    assert.equal(modeRow(host), null);
+    assert.equal(host.querySelector('[data-inv-segmented="commandSandboxMode"]'), null);
+    controller.dispose();
+    dom.window.close();
+  }
+});
+
+test('the mode row shows under the switch whether or not the sandbox is on', async () => {
+  for (const enabled of [false, true]) {
+    const state = modeState({ enabled, state: enabled ? 'ready' : 'disabled', mode: enabled ? 'synced' : 'copy' });
+    const { dom, host, controller } = harness({ async getState() { return state; }, async setMode() { return state; } });
+    controller.bind();
+    await settle();
+    const row = modeRow(host);
+    assert.ok(row, `enabled=${enabled}`);
+    assert.equal(host.querySelector('[data-settings-field="commandSandboxEnabled"]').nextElementSibling, row);
+    assert.match(row.textContent, /Where commands run/);
+    assert.match(modeOption(host, 'copy').textContent, /Isolated copy/);
+    assert.match(modeOption(host, 'synced').textContent, /Synced workspace/);
+    assert.equal(modeChecked(host), enabled ? 'synced' : 'copy');
+    assert.match(row.querySelector('.settings-field-help').textContent,
+      enabled ? /change your files offline; Jenny copies changes back after a restore point/ : /throwaway copy; nothing they change is kept/);
+    assert.equal(modeOption(host, 'synced').disabled, false);
+    controller.dispose();
+    dom.window.close();
+  }
+});
+
+test('choosing Synced workspace writes setMode once, locks both controls, and adopts the returned state', async () => {
+  const calls = [];
+  let resolveSetMode;
+  const bridge = {
+    async getState() { return modeState(); },
+    setMode(payload) {
+      calls.push(payload);
+      return new Promise((resolve) => { resolveSetMode = resolve; });
+    },
+  };
+  const { dom, host, controller } = harness(bridge);
+  controller.bind();
+  await settle();
+  chooseMode(dom, host, 'synced');
+  await settle();
+  assert.deepEqual(calls, [{ mode: 'synced' }]);
+  assert.equal(modeOption(host, 'synced').disabled, true, 'locked while the write is in flight');
+  assert.equal(modeOption(host, 'copy').disabled, true);
+  assert.equal(host.querySelector('[data-inv-toggle="commandSandboxEnabled"]').disabled, true);
+  chooseMode(dom, host, 'synced');
+  await settle();
+  assert.equal(calls.length, 1, 'a second pick while in flight does not write again');
+  resolveSetMode(modeState({ mode: 'synced' }));
+  await settle();
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(modeChecked(host), 'synced');
+  assert.equal(controller.getState().mode, 'synced');
+  assert.equal(controller.getState().workspace, 'synced');
+  assert.equal(modeOption(host, 'copy').disabled, false);
+  assert.equal(host.querySelector('[data-inv-toggle="commandSandboxEnabled"]').disabled, false);
+  assert.equal(host.dataset.commandSandboxState, 'disabled');
+  controller.dispose();
+  dom.window.close();
+});
+
+test('a refused mode change shows its reason on the mode row and keeps the old choice', async () => {
+  const refusal = (reason) => Object.assign(new Error(reason), { reason });
+  const scenarios = [
+    { name: 'rejected: active chats', setMode: async () => { throw refusal('sandbox_wait_for_active_chats'); }, message: /Wait for running chats and commands to finish/ },
+    { name: 'answered ok:false: busy', setMode: async () => ({ ...modeState(), ok: false, reason: 'sandbox_busy' }), message: /A sandbox command is running/ },
+    { name: 'rejected: invalid', setMode: async () => { throw refusal('sandbox_settings_invalid'); }, message: /not available/ },
+    { name: 'rejected: plain error', setMode: async () => { throw new Error('ipc closed'); }, message: /ipc closed/ },
+  ];
+  for (const scenario of scenarios) {
+    const bridge = { async getState() { return modeState(); }, setMode: scenario.setMode };
+    const { dom, host, controller } = harness(bridge);
+    controller.bind();
+    await settle();
+    chooseMode(dom, host, 'synced');
+    await settle();
+    await settle();
+    assert.equal(modeChecked(host), 'copy', `${scenario.name}: selection reverts`);
+    assert.equal(controller.getState().mode, 'copy', scenario.name);
+    assert.equal(host.dataset.commandSandboxState, 'disabled', `${scenario.name}: the sandbox state is not marked failed`);
+    const alert = modeRow(host).querySelector('.settings-field-error[role="alert"]');
+    assert.equal(alert.hidden, false, scenario.name);
+    assert.match(alert.textContent, scenario.message, scenario.name);
+    assert.equal(modeOption(host, 'synced').disabled, false, `${scenario.name}: not left busy`);
+    assert.equal(host.querySelector('[data-inv-toggle="commandSandboxEnabled"]').disabled, false, scenario.name);
+    controller.dispose();
+    dom.window.close();
+  }
+});
+
+test('the mode row follows the switch locks: transition, busy and Terminal commands off', async () => {
+  for (const state of ['preparing', 'busy']) {
+    const { dom, host, controller } = harness({ async getState() { return modeState({ enabled: true, state }); }, async setMode() { return modeState(); } });
+    controller.bind();
+    await settle();
+    assert.equal(modeOption(host, 'copy').disabled, true, state);
+    assert.equal(modeOption(host, 'synced').disabled, true, state);
+    controller.dispose();
+    dom.window.close();
+  }
+  const { dom, host, controller } = harness({ async getState() { return modeState({ enabled: true, state: 'ready' }); }, async setMode() { return modeState(); } });
+  controller.bind();
+  await settle();
+  assert.equal(modeOption(host, 'synced').disabled, false);
+  controller.setParentOn(false);
+  assert.equal(modeRow(host).dataset.settingParentOff, 'true');
+  assert.equal(modeOption(host, 'synced').disabled, true);
+  assert.equal(modeOption(host, 'copy').disabled, true);
+  controller.setParentOn(true);
+  assert.equal(modeRow(host).hasAttribute('data-setting-parent-off'), false);
+  assert.equal(modeOption(host, 'synced').disabled, false);
+  controller.setParentOn(false);
+  const patched = [modeRow(host).dataset.settingParentOff, modeOption(host, 'synced').disabled];
+  controller.render();
+  assert.deepEqual([modeRow(host).dataset.settingParentOff, modeOption(host, 'synced').disabled], patched, 'a full render agrees with the in-place patch');
+  controller.dispose();
+  dom.window.close();
+});
+
+test('the row copy follows the active mode', async () => {
+  const { stateMessage } = require('../renderer/shell/renderer-settings-command-sandbox.js');
+  assert.match(stateMessage('ready', '', { mode: 'synced' }), /Commands run offline in a Linux copy of this workspace; changed files are copied back .* can be undone/);
+  assert.match(stateMessage('ready', '', { mode: 'copy' }), /Docker sandbox is ready for foreground Linux shell commands/);
+  assert.match(stateMessage('ready'), /Docker sandbox is ready for foreground Linux shell commands/);
+  for (const mode of ['copy', 'synced']) {
+    const { dom, host, controller } = harness({ async getState() { return modeState({ enabled: true, state: 'ready', mode }); } });
+    controller.bind();
+    await settle();
+    const detail = host.querySelector('[data-settings-field="commandSandboxEnabled"] .settings-field-detail').dataset.tooltip;
+    if (mode === 'synced') {
+      assert.match(detail, /changed files are copied back/i);
+      assert.match(detail, /Workspace: synced/);
+      assert.doesNotMatch(detail, /discarded/);
+      assert.match(host.querySelector('[data-settings-field="commandSandboxEnabled"] .settings-field-help').textContent, /synced copy/i);
+    } else {
+      assert.match(detail, /Files are discarded after each run/);
+      assert.match(detail, /Workspace: disposable copy/);
+      assert.match(host.querySelector('[data-settings-field="commandSandboxEnabled"] .settings-field-help').textContent, /A disposable copy with no network/);
+    }
+    controller.dispose();
+    dom.window.close();
+  }
+});
+
+test('the snapshot limit message names the active mode limits', async () => {
+  const cases = [
+    { state: modeState({ enabled: true, state: 'unavailable', reason: 'snapshot_limit', mode: 'synced' }), message: /within 4 GiB, 200,000 entries and 64 levels/ },
+    { state: modeState({ enabled: true, state: 'unavailable', reason: 'snapshot_limit' }), message: /within 64 MiB, 2,048 entries and 32 levels/ },
+    { state: { enabled: true, state: 'unavailable', reason: 'snapshot_limit', platform: 'windows' }, message: /within 64 MiB, 2,048 entries and 32 levels/ },
+  ];
+  for (const { state, message } of cases) {
+    const { dom, host, controller } = harness({ async getState() { return state; } });
+    controller.bind();
+    await settle();
+    assert.match(host.querySelector('[data-settings-field="commandSandboxEnabled"] .settings-field-error').textContent, message);
+    controller.dispose();
+    dom.window.close();
+  }
+});

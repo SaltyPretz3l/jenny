@@ -204,6 +204,7 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
     'source-control': 'secondary',
   }),
   showGenerated: false,
+  followJenny: true,
   explorerSortMode: 'name',
   wordWrap: 'off',
   fontSize: WORKSPACE_IDE_FONT_SIZE_DEFAULT,
@@ -484,6 +485,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     ? Math.min(WORKSPACE_IDE_CHAT_DOCK_WIDTH_MAX, Math.max(WORKSPACE_IDE_CHAT_DOCK_WIDTH_MIN, Math.trunc(chatDockWidthRaw)))
     : DEFAULT_WORKSPACE_IDE.chatDockWidth;
   const showGenerated = source.showGenerated === true;
+  const followJenny = source.followJenny !== false;
   const explorerSortMode = WORKSPACE_IDE_EXPLORER_SORT_MODES.includes(source.explorerSortMode)
     ? source.explorerSortMode
     : DEFAULT_WORKSPACE_IDE.explorerSortMode;
@@ -543,6 +545,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     chatDockWidth,
     panelLocations,
     showGenerated,
+    followJenny,
     explorerSortMode,
     wordWrap: source.wordWrap === 'on' ? 'on' : 'off',
     fontSize,

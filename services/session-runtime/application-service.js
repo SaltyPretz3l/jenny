@@ -5,6 +5,7 @@ const { projectWorkCoordination, projectCanonicalResult, projectRunItems } = req
 
 const { normalizeSubmission, normalizeStartSubmission, normalizeResumeRequest } = require('./submission-contract');
 const { RUNTIME_ERROR_CODES } = require('../backend/error-codes');
+const { normalizeMessageAuthor } = require('../backend/message-author');
 const {
   RuntimeProjectionError,
   normalizeSnapshotRequest,
@@ -58,6 +59,15 @@ function submissionRefusalReason(error) {
     if (typeof value === 'string' && PASSTHROUGH_SUBMISSION_REASONS.has(value)) return value;
   }
   return 'runtime_submission_refused';
+}
+
+/* Team slice 3-5: the author is a trusted option beside the payload, passed only
+ * by the host's chat.send and sessionRuntime.start from the authenticated actor.
+ * The payload stays a closed field set, so a renderer or IPC payload that names
+ * `author` is refused, and the desktop IPC handlers pass no options at all. */
+function withTrustedAuthor(request, author) {
+  const trusted = normalizeMessageAuthor(author);
+  return trusted ? { ...request, author: trusted } : request;
 }
 
 function runtimeOwner(getRuntime, operation) {
@@ -122,14 +132,15 @@ class RuntimeApplicationService {
     this.getRuntime = getRuntime;
   }
 
-  async submit(payload, { beforeCommit } = {}) {
+  async submit(payload, { beforeCommit, author } = {}) {
     const normalized = normalizeSubmission(payload);
     if (!normalized) return { ...invalid('runtime_submission_request_invalid'), acceptance: 'rejected' };
     const runtime = runtimeOwner(this.getRuntime, 'submit');
     if (typeof runtime?.submit !== 'function') return { ...unavailable('runtime_unavailable'), acceptance: 'rejected' };
     const guard = controls.createCommitGuard(beforeCommit);
     try {
-      return await runtime.submit(normalized.request, { idempotencyKey: normalized.idempotencyKey, beforeCommit: guard.check });
+      return await runtime.submit(withTrustedAuthor(normalized.request, author),
+        { idempotencyKey: normalized.idempotencyKey, beforeCommit: guard.check });
     } catch (error) {
       guard.rethrow(error);
       if (error?.code === 'idempotency_conflict') return { ...failure(RUNTIME_ERROR_CODES.STALE, 'idempotency_conflict'), acceptance: 'unknown' };
@@ -138,14 +149,14 @@ class RuntimeApplicationService {
     }
   }
 
-  async start(payload, { beforeCommit } = {}) {
+  async start(payload, { beforeCommit, author } = {}) {
     const normalized = normalizeStartSubmission(payload);
     if (!normalized) return invalid('runtime_start_request_invalid');
     const runtime = runtimeOwner(this.getRuntime, 'start');
     if (typeof runtime?.start !== 'function') return unavailable('runtime_unavailable');
     const { request, ...options } = normalized;
     const guard = controls.createCommitGuard(beforeCommit);
-    try { return await runtime.start(request, { ...options, beforeCommit: guard.check }); }
+    try { return await runtime.start(withTrustedAuthor(request, author), { ...options, beforeCommit: guard.check }); }
     catch (error) {
       guard.rethrow(error);
       if (error?.code === 'idempotency_conflict') return failure(RUNTIME_ERROR_CODES.STALE, 'idempotency_conflict');
@@ -193,7 +204,15 @@ class RuntimeApplicationService {
 
   cancel(payload) { return controls.cancel(runtimeOwner(this.getRuntime, 'cancel'), payload); }
 
-  updatePending(payload, options) { return controls.updatePending(runtimeOwner(this.getRuntime, 'update'), payload, options); }
+  updatePending(payload, { beforeCommit, author } = {}) {
+    // `author` is the trusted editor (team host only); the runtime refuses another member's queued prompt.
+    const runtime = runtimeOwner(this.getRuntime, 'update');
+    const editing = runtime && { updatePending: async (workId, options) => {
+      try { return await runtime.updatePending(workId, { ...options, editor: author }); }
+      catch (error) { if (error?.code === 'pending_update_forbidden') return failure(RUNTIME_ERROR_CODES.ADMISSION_REJECTED, error.code); throw error; }
+    } };
+    return controls.updatePending(editing, payload, { beforeCommit });
+  }
 
   updateLimits(payload) { return controls.updateLimits(runtimeOwner(this.getRuntime, 'limits'), payload); }
 

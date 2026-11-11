@@ -178,7 +178,7 @@ def test_worktree_tools_require_worktree_flag_and_electron_bridge(tmp_path) -> N
 
 
 def test_automation_tools_require_automation_flag_and_electron_bridge(tmp_path) -> None:
-    automation_tool_names = {"automation_list", "automation_read"}
+    automation_tool_names = {"automation_list"}
     without_flag = _kernel(
         RuntimeConfig(
             tools_automations_enabled=False,
@@ -227,7 +227,6 @@ def test_automation_tools_require_automation_flag_and_electron_bridge(tmp_path) 
     assert automation_tool_names <= set(available.available_names)
     assert available.entry("automation_list").descriptor.server_name == "electron_tool_bridge"
     assert available.entry("automation_list").descriptor.tool_family == "runtime"
-    assert available.entry("automation_read").descriptor.tool_family == "runtime"
 
 
 def test_workspace_present_tool_requires_flag_and_electron_bridge(tmp_path) -> None:

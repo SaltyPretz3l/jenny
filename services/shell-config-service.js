@@ -1,24 +1,16 @@
-const { CONFIG_ERROR_CODES } = require('./backend/error-codes');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { preserveCorruptFile, readWithRetry } = require('./backend/corrupt-file-preserve');
 const { FileJsonStore } = require('./backend/file-json-store');
 const { normalizeString } = require('./backend/path-utils');
 const { logNewerSchemaDetected, logWriteFailed, safeEmitLog } = require('./backend/session-store-logging');
-const { FEATURE_OVERRIDE_KEYS, TOOL_SETTING_KEYS } = require('./feature-flags');
-const { normalizeLastChatgptModel, normalizeLocalEngines } = require('./shell-config-engines');
-const { applySessionRuntimePatch } = require('./shell-config-session-runtime');
-const { applyPerformanceTelemetryPatch } = require('./shell-config-performance');
-const { applyPrimaryChatPatch } = require('./shell-config-primary-chat');
-const { normalizeApiProvidersConfig } = require('./backend/api-provider-config');
-const { applySubagentRoutingPatch } = require('./subagent-routing-settings');
-const { applyMemorySettingsPatch, mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
+const { normalizeLocalEngines } = require('./shell-config-engines');
+const { mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
 const {
   CONFIG_VERSION,
   DEFAULT_CHAT_UI,
   DEFAULT_CODEX_CLI,
   DEFAULT_COMPANION,
-  DEFAULT_ASSISTANT_IDENTITY,
   DEFAULT_FEATURE_OVERRIDES,
   DEFAULT_OFFLINE_INTELLIGENCE,
   DEFAULT_SETUP,
@@ -39,9 +31,7 @@ const {
   normalizeCompanion,
   normalizeCompanionMode,
   normalizeFollowUp,
-  normalizeHomeConfig,
   normalizeOfflineIntelligence,
-  normalizePreferredEngineType,
   normalizeRunMode,
   normalizeSafetyMode,
   normalizeSetupState,
@@ -60,7 +50,6 @@ const {
   normalizeWorkspaceState,
   serializeState,
 } = require('./shell-config-state');
-const { normalizeFeatureOverrides } = require('./feature-flags');
 const {
   calculateDeferredUntilForPreset,
   cloneNow,
@@ -77,11 +66,10 @@ const { agentQuietLaunchMethods } = require('./agent-quiet-launch');
 const { modelTuningMethods } = require('./shell-config-model-tuning');
 const { engineTuningMethods } = require('./shell-config-engine-tuning');
 const { collectWorkspaceIdeDropCounts } = require('./shell-config-workspace-ide-migration');
-const {
-  normalizeContextLength,
-  normalizeRatio: normalizeCompactionRatio,
-  normalizeCompactionTuning,
-} = require('./shell-config-compaction-tuning');
+const { compactionTuningMethods } = require('./shell-config-compaction-tuning');
+const { setupActionMethods } = require('./shell-config-setup-actions');
+const { settingsBlockMethods } = require('./shell-config-settings-blocks');
+const { localEngineActionMethods } = require('./shell-config-local-engine-actions');
 const getAvailableFollowUpDeferPresets = (now = new Date(), scheduleOptions = {}) =>
   listAvailableFollowUpDeferPresets(now, FOLLOW_UP_DEFER_PRESETS, scheduleOptions);
 // Top-level chat UI scalars updateChatUiSettings owns: [key, normalize, changed reason].
@@ -95,32 +83,17 @@ const CHAT_UI_TOP_LEVEL_FIELDS = [
   // Row 86 digest quiet hours: read by main (primary-digest-wiring.js); no reason of their own.
   ['digestQuietStart', normalizeDigestQuietStart, 'chat_ui_settings_updated'],
   ['digestQuietEnd', normalizeDigestQuietEnd, 'chat_ui_settings_updated'],
+  // Row 117: written only by the composer's Browser row; read at the sessions.create IPC entry.
+  ['browserOnInNewChats', (value) => value === true, 'chat_ui_settings_updated'],
 ];
 
-function cloneSetupState(setup) {
-  return {
-    ...setup,
-    steps: {
-      ...setup.steps,
-    },
-  };
-}
 
-function cloneAssistantIdentity(identity) {
-  return {
-    ...identity,
-  };
-}
 
 function normalizeConfigVersion(value) {
   const version = Number(value ?? 1);
   return Number.isSafeInteger(version) && version >= 1 ? version : 1;
 }
 
-function commitBlock(service, key, next, reason, failure) {
-  if (JSON.stringify(next) !== JSON.stringify(service.state[key]) && !service._commitState({ ...service.state, [key]: next }, reason).persisted) throw Object.assign(new Error(failure), { reason: failure });
-  return service.getState()[key];
-}
 
 class ShellConfigService extends EventEmitter {
   constructor({
@@ -380,231 +353,21 @@ class ShellConfigService extends EventEmitter {
     return normalizeWindowUiSettings(this.state.windowUi);
   }
 
-  getHomeConfig() {
-    return normalizeHomeConfig(this.state.home);
-  }
 
-  updateHomeConfig(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const current = normalizeHomeConfig(this.state.home);
-    // Object-valued home sections merge shallowly so a partial patch (e.g.
-    // {scratchpad:{text}} or {widgets:{hidden}}) keeps its sibling fields. Every
-    // object-valued key of the home config MUST be listed here: the merge is
-    // one level deep, so an unlisted section is overwritten wholesale by the
-    // patch instead of merged, silently dropping its untouched fields.
-    const mergeHomeSection = (key) => [key, {
-      ...current[key],
-      ...(source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
-        ? source[key]
-        : {}),
-    }];
-    const nextHome = normalizeHomeConfig({
-      ...current,
-      ...source,
-      ...Object.fromEntries(['widgets', 'scratchpad', 'calendar', 'layout', 'usageStats'].map(mergeHomeSection)),
-    });
-    if (JSON.stringify(nextHome) === JSON.stringify(current)) {
-      return this.getHomeConfig();
-    }
-    const committed = this._commitState(
-      {
-        ...this.state,
-        home: nextHome,
-      },
-      'home_config_updated'
-    );
-    if (!committed.persisted) {
-      throw Object.assign(new Error('Home preferences could not be persisted.'), { code: 'home_config_write_failed' });
-    }
-    return committed.snapshot.home;
-  }
 
-  getSetupState() {
-    return cloneSetupState(this.state.setup);
-  }
 
-  getAssistantIdentity() {
-    return cloneAssistantIdentity(this.state.assistantIdentity);
-  }
 
   replaceState(nextState, reason = 'state_replaced') {
     return this._writeState(nextState, reason);
   }
 
-  updateSetupState(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const nowIso = this._getNow().toISOString();
-    const nextSetup = normalizeSetupState({
-      ...this.state.setup,
-      ...source,
-      updatedAt: normalizeString(source.updatedAt ?? source.updated_at) || nowIso,
-      // Callers send snake_case step keys (workspace_root); stored steps are
-      // camelCase, which normalizeSetupSteps reads first, so camel-case the patch.
-      steps: {
-        ...this.state.setup.steps,
-        ...(source.steps && typeof source.steps === 'object' && !Array.isArray(source.steps)
-          ? Object.fromEntries(Object.entries(source.steps).map(([key, value]) => [
-            key.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase()), value,
-          ]))
-          : {}),
-      },
-    });
-    if (JSON.stringify(nextSetup) === JSON.stringify(this.state.setup)) {
-      return this.getSetupState();
-    }
-    const snapshot = this._writeState(
-      {
-        ...this.state,
-        setup: nextSetup,
-      },
-      'setup_state_updated'
-    );
-    return cloneSetupState(snapshot.setup);
-  }
 
-  markSetupComplete() {
-    const nowIso = this._getNow().toISOString();
-    const snapshot = this._writeState(
-      {
-        ...this.state,
-        setup: normalizeSetupState({
-          ...this.state.setup,
-          seen: true,
-          setupComplete: true,
-          completedAt: nowIso,
-          updatedAt: nowIso,
-        }),
-      },
-      'setup_completed'
-    );
-    return cloneSetupState(snapshot.setup);
-  }
 
-  resetSetupState() {
-    const nowIso = this._getNow().toISOString();
-    const snapshot = this._writeState(
-      {
-        ...this.state,
-        setup: normalizeSetupState({
-          updatedAt: nowIso,
-        }),
-      },
-      'setup_reset'
-    );
-    return cloneSetupState(snapshot.setup);
-  }
 
-  updateAssistantIdentity(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const nowIso = this._getNow().toISOString();
-    const nextIdentity = normalizeAssistantIdentity({
-      ...this.state.assistantIdentity,
-      ...source,
-      updatedAt: normalizeString(source.updatedAt ?? source.updated_at) || nowIso,
-    });
-    if (JSON.stringify(nextIdentity) === JSON.stringify(this.state.assistantIdentity)) {
-      return this.getAssistantIdentity();
-    }
-    const committed = this._commitState(
-      {
-        ...this.state,
-        assistantIdentity: nextIdentity,
-      },
-      'assistant_identity_updated'
-    );
-    if (!committed.persisted) {
-      throw Object.assign(new Error('Assistant identity could not be persisted.'), { code: 'assistant_identity_write_failed' });
-    }
-    return cloneAssistantIdentity(committed.snapshot.assistantIdentity);
-  }
 
-  resetOnboarding() {
-    const nowIso = this._getNow().toISOString();
-    const nextSetup = normalizeSetupState({ updatedAt: nowIso });
-    const nextIdentity = normalizeAssistantIdentity({
-      ...DEFAULT_ASSISTANT_IDENTITY,
-      updatedAt: nowIso,
-    });
-    const committed = this._commitState(
-      {
-        ...this.state,
-        setup: nextSetup,
-        assistantIdentity: nextIdentity,
-      },
-      'onboarding_reset'
-    );
-    if (!committed.persisted) {
-      const error = new Error('Onboarding reset could not be persisted.');
-      error.code = 'onboarding_reset_write_failed';
-      throw error;
-    }
-    const { snapshot } = committed;
-    return {
-      setup: cloneSetupState(snapshot.setup),
-      assistantIdentity: cloneAssistantIdentity(snapshot.assistantIdentity),
-    };
-  }
 
-  setCompanionMode(mode) {
-    const normalizedMode = normalizeCompanionMode(mode);
-    if (normalizedMode === this.state.companion.mode) {
-      return this.getState();
-    }
-    return this._writeState(
-      {
-        ...this.state,
-        companion: {
-          mode: normalizedMode,
-        },
-      },
-      'companion_mode_updated'
-    );
-  }
 
-  // Per-model Ollama context window and auto-compact ratio, plus the custom
-  // summarization prompt. Applies on the next sidecar (re)initialize.
-  getCompactionTuning() {
-    return normalizeCompactionTuning(this.state.compactionTuning);
-  }
 
-  setCompactionTuning(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const { modelId, ratio, contextLength, customPrompt } = source;
-    const current = this.getCompactionTuning();
-    const nextRatioByModel = { ...current.ratioByModel };
-    const nextContextLengthByModel = { ...current.contextLengthByModel };
-    const normalizedModelId = String(modelId || '').trim();
-    const hasRatio = Object.prototype.hasOwnProperty.call(source, 'ratio');
-    const hasContextLength = Object.prototype.hasOwnProperty.call(source, 'contextLength');
-    const normalizedRatio = ratio == null ? null : normalizeCompactionRatio(ratio);
-    if (normalizedModelId && hasRatio) {
-      if (normalizedRatio == null) delete nextRatioByModel[normalizedModelId];
-      else nextRatioByModel[normalizedModelId] = normalizedRatio;
-    }
-    if (normalizedModelId && hasContextLength) {
-      if (contextLength == null) delete nextContextLengthByModel[normalizedModelId];
-      else {
-        const normalizedContextLength = normalizeContextLength(contextLength);
-        if (normalizedContextLength != null) {
-          nextContextLengthByModel[normalizedModelId] = normalizedContextLength;
-        }
-      }
-    }
-    const nextTuning = normalizeCompactionTuning({
-      ratioByModel: nextRatioByModel,
-      contextLengthByModel: nextContextLengthByModel,
-      customPrompt: customPrompt === undefined ? current.customPrompt : customPrompt,
-    });
-    if (JSON.stringify(nextTuning) === JSON.stringify(current)) {
-      return current;
-    }
-    const contextLengthChanged = JSON.stringify(nextTuning.contextLengthByModel)
-      !== JSON.stringify(current.contextLengthByModel);
-    return this._writeState(
-      { ...this.state, compactionTuning: nextTuning },
-      contextLengthChanged ? 'context_length_tuning_updated' : 'compaction_tuning_updated'
-    ).compactionTuning;
-  }
 
   _updateNormalizedSection(patch, sectionKey, normalizeSection, reason) {
     const currentSection = this.state[sectionKey];
@@ -711,214 +474,19 @@ class ShellConfigService extends EventEmitter {
     return this.getWorkspaceState();
   }
 
-  updateCommandSandbox(patch) {
-    if (!patch || Object.keys(patch).length !== 1 || typeof patch.enabled !== 'boolean') {
-      throw Object.assign(new Error('sandbox_settings_invalid'), { reason: 'sandbox_settings_invalid' });
-    }
-    const result = this._commitState({ ...this.state, commandSandbox: { enabled: patch.enabled } }, 'command_sandbox_updated');
-    if (!result.persisted) throw Object.assign(new Error('sandbox_config_write_failed'), { reason: 'sandbox_config_write_failed' });
-    return result.snapshot.commandSandbox;
-  }
 
-  updateSessionRuntime(patch) {
-    const sessionRuntime = applySessionRuntimePatch(this.state.sessionRuntime, patch);
-    const result = this._commitState({ ...this.state, sessionRuntime }, 'session_runtime_updated');
-    if (!result.persisted) throw Object.assign(new Error('session_runtime_config_write_failed'), { reason: 'session_runtime_config_write_failed' });
-    return result.snapshot.sessionRuntime;
-  }
 
-  // Non-feature blocks (performance telemetry, row 76 primaryChat, row 78 apiProviders): a changed block commits under a reason the managed-config refresh and feature broadcast ignore.
-  updatePerformanceTelemetry(patch) { return commitBlock(this, 'performanceTelemetry', applyPerformanceTelemetryPatch(this.state.performanceTelemetry, patch), 'performance_telemetry_updated', 'performance_config_write_failed'); }
-  updateApiProviders(next) { return commitBlock(this, 'apiProviders', normalizeApiProvidersConfig(next), 'api_providers_updated', 'api_providers_config_write_failed'); }
-  updatePrimaryChat(patch) { return commitBlock(this, 'primaryChat', applyPrimaryChatPatch(this.state.primaryChat, patch), 'primary_chat_updated', 'primary_chat_config_write_failed'); }
 
-  updateFeatureSettings(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const nextRouting = Object.hasOwn(source, 'subagentRouting')
-      ? applySubagentRoutingPatch(this.state.subagentRouting, source.subagentRouting)
-      : this.state.subagentRouting;
-    const routingChanged = JSON.stringify(nextRouting) !== JSON.stringify(this.state.subagentRouting);
-    const nextTools = normalizeToolsSettings({
-      ...this.state.tools,
-      ...(source.tools && typeof source.tools === 'object' && !Array.isArray(source.tools)
-        ? source.tools
-        : {}),
-    });
-    const nextFeatureOverrides = normalizeFeatureOverrides({
-      ...this.state.featureOverrides,
-      ...(source.featureOverrides
-      && typeof source.featureOverrides === 'object'
-      && !Array.isArray(source.featureOverrides)
-        ? source.featureOverrides
-        : {}),
-    });
-    const nextWebSearch = normalizeWebSearchSettings({
-      ...this.state.webSearch,
-      ...(source.webSearch && typeof source.webSearch === 'object' && !Array.isArray(source.webSearch)
-        ? source.webSearch
-        : {}),
-    });
-    const toolsChanged = JSON.stringify(nextTools) !== JSON.stringify(this.state.tools);
-    const overridesChanged =
-      JSON.stringify(nextFeatureOverrides) !== JSON.stringify(this.state.featureOverrides);
-    const webSearchChanged =
-      JSON.stringify(nextWebSearch) !== JSON.stringify(this.state.webSearch);
-    const nextMemory = applyMemorySettingsPatch(this.state.memory, source.memory, this._getNow());
-    const memoryChanged = JSON.stringify(nextMemory) !== JSON.stringify(this.state.memory);
-    if (!toolsChanged && !overridesChanged && !webSearchChanged && !routingChanged && !memoryChanged) {
-      return this.getState();
-    }
 
-    const nextState = {
-      ...this.state,
-      tools: nextTools,
-      toolsWorktreeEnabled: nextTools.worktree === true,
-      webSearch: nextWebSearch,
-      featureOverrides: nextFeatureOverrides,
-      memory: nextMemory,
-      subagentRouting: nextRouting,
-    };
-    let reason = 'feature_settings_updated';
-    if (toolsChanged && !overridesChanged) {
-      const changedTool = TOOL_SETTING_KEYS.find((key) => nextTools[key] !== this.state.tools[key]);
-      if (changedTool === 'web') {
-        reason = 'tools_web_enabled_updated';
-      } else if (changedTool === 'imageRead') {
-        reason = 'tools_image_read_enabled_updated';
-      } else if (changedTool === 'pythonRuntime') {
-        reason = 'tools_python_runtime_enabled_updated';
-      } else if (changedTool === 'todo') {
-        reason = 'tools_todo_enabled_updated';
-      } else if (changedTool === 'mermaid') {
-        reason = 'tools_mermaid_enabled_updated';
-      } else if (changedTool === 'worktree') {
-        reason = 'tools_worktree_enabled_updated';
-      }
-    }
-    if (overridesChanged && !toolsChanged) {
-      const changedFeature = FEATURE_OVERRIDE_KEYS.find(
-        (key) => nextFeatureOverrides[key] !== this.state.featureOverrides[key]
-      );
-      if (changedFeature) {
-        reason = `feature_override_${changedFeature}_updated`;
-      }
-    }
-    if (webSearchChanged && !toolsChanged && !overridesChanged) {
-      reason = 'web_search_settings_updated';
-    }
-    if (memoryChanged && !toolsChanged && !overridesChanged && !webSearchChanged) reason = 'memory_settings_updated';
-    const committed = this._commitState(nextState, reason);
-    if (!committed.persisted) throw Object.assign(new Error('Feature settings could not be saved.'), { code: CONFIG_ERROR_CODES.PERSISTENCE });
-    return committed.snapshot;
-  }
 
-  updateOfflineIntelligence(patch = {}) {
-    const nextOffline = {
-      ...this.state.offlineIntelligence,
-      ...(patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}),
-    };
-    return this._writeState(
-      {
-        ...this.state,
-        offlineIntelligence: normalizeOfflineIntelligence(nextOffline),
-      },
-      'offline_intelligence_updated'
-    );
-  }
 
-  getLocalEngines() { return normalizeLocalEngines(this.state.localEngines); }
-  updateStartupModelLoad(enabled) {
-    const current = this.getLocalEngines();
-    const startupModelLoad = Boolean(enabled);
-    if (startupModelLoad === current.startupModelLoad) return current;
-    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, startupModelLoad });
-    return this._writeState({ ...this.state, localEngines }, 'startup_model_load_updated').localEngines;
-  }
 
-  updateLocalEngineAcceleration(patch) {
-    const localEngines = normalizeLocalEngines({
-      ...this.state.localEngines,
-      openaiCompatible: { ...this.state.localEngines?.openaiCompatible, acceleration: patch },
-    });
-    const current = this.getLocalEngines().openaiCompatible.acceleration;
-    if (JSON.stringify(localEngines.openaiCompatible.acceleration) === JSON.stringify(current)) return this.getState();
-    return this._writeState({ ...this.state, localEngines }, 'local_engine_acceleration_updated');
-  }
 
-  // Semantic catalog embedding model choice (row 41). The normalizer drops a
-  // path that is not a local absolute .gguf, so the result is the source of truth.
-  updateEmbeddingSettings(patch) { return this._updateLocalEngineSlice('embedding', patch, 'embedding_settings_updated'); }
 
-  // NInfer (row 54): `watchdog` merges one level deeper so a toggle write cannot drop the thresholds.
-  updateNinferSettings(patch) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const watchdog = { ...this.getLocalEngines().ninfer.watchdog, ...(source.watchdog || {}) };
-    return this._updateLocalEngineSlice('ninfer', { ...source, watchdog }, 'ninfer_settings_updated');
-  }
 
-  _updateLocalEngineSlice(key, patch, reason) {
-    const current = this.getLocalEngines()[key];
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, [key]: { ...current, ...source } });
-    if (JSON.stringify(localEngines[key]) === JSON.stringify(current)) return current;
-    return this._writeState({ ...this.state, localEngines }, reason).localEngines[key];
-  }
 
-  updateManagedLlamaServer(patch) {
-    const current = this.getLocalEngines().openaiCompatible.managed;
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const perModel = { ...current.perModel };
-    if (source.perModel && typeof source.perModel === 'object' && !Array.isArray(source.perModel)) {
-      for (const [key, value] of Object.entries(source.perModel)) {
-        if (value === null) {
-          delete perModel[key];
-        } else {
-          perModel[key] = value;
-        }
-      }
-    }
-    const openaiCompatible = {
-      ...this.state.localEngines?.openaiCompatible,
-      managed: { ...current, ...source, perModel },
-    };
-    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, openaiCompatible });
-    if (JSON.stringify(localEngines.openaiCompatible.managed) === JSON.stringify(current)) {
-      return this.getState();
-    }
-    return this._writeState({ ...this.state, localEngines }, 'managed_llama_server_updated');
-  }
 
-  updatePreferredEngineType(value) {
-    const preferredEngineType = normalizePreferredEngineType(value);
-    if (preferredEngineType === this.state.preferredEngineType) {
-      return this.getState();
-    }
-    return this._writeState(
-      {
-        ...this.state,
-        preferredEngineType,
-      },
-      'preferred_engine_type_updated'
-    );
-  }
 
-  // Written by a successful ChatGPT model load only; startup reads it back.
-  updateLastChatgptModel(value) {
-    const lastChatgptModel = normalizeLastChatgptModel(value);
-    if (!lastChatgptModel || lastChatgptModel === this.state.lastChatgptModel) {
-      return this.getState();
-    }
-    return this._writeState({ ...this.state, lastChatgptModel }, 'last_chatgpt_model_updated');
-  }
-
-  // Cloud models group: the user's "Show ChatGPT models in Composer" choice.
-  updateChatgptModelsEnabled(value) {
-    if (typeof value !== 'boolean' || value === this.state.chatgptModelsEnabled) {
-      return this.getState();
-    }
-    return this._writeState({ ...this.state, chatgptModelsEnabled: value },
-      'chatgpt_models_enabled_updated');
-  }
 
   updateDefaultRunMode(value) {
     this.updateChatUiSettings({ defaultRunMode: value });
@@ -930,29 +498,6 @@ class ShellConfigService extends EventEmitter {
     return this.getState();
   }
 
-  getPreferredEngineType() { return this.state.preferredEngineType; }
-  saveSetupEndpoint({ engineType, port, apiUrl } = {}) {
-    const preferredEngineType = normalizePreferredEngineType(engineType);
-    if (!['ollama', 'vllm', 'openai-compatible'].includes(preferredEngineType)) {
-      return { saved: false, reason: 'unsupported_engine' };
-    }
-    const localEngines = normalizeLocalEngines({
-      ...this.state.localEngines,
-      ...(preferredEngineType === 'vllm' ? {
-        vllm: { ...this.state.localEngines?.vllm, port },
-      } : {}),
-      ...(preferredEngineType === 'openai-compatible' ? {
-        openaiCompatible: { ...this.state.localEngines?.openaiCompatible, port, apiUrl },
-      } : {}),
-    });
-    const nextState = {
-      ...this.state,
-      preferredEngineType,
-      localEngines,
-    };
-    const committed = this._commitState(nextState, 'setup_endpoint_saved');
-    return { saved: committed.persisted, state: committed.snapshot };
-  }
 
 }
 
@@ -968,7 +513,8 @@ function installPrototypeMethods(target, methods) {
 }
 
 for (const methods of [followUpActionMethods, proactiveActionMethods, workspaceRootMethods,
-  workspaceIdeMethods, modelTuningMethods, engineTuningMethods, agentQuietLaunchMethods]) {
+  workspaceIdeMethods, modelTuningMethods, engineTuningMethods, agentQuietLaunchMethods,
+  setupActionMethods, settingsBlockMethods, localEngineActionMethods, compactionTuningMethods]) {
   installPrototypeMethods(ShellConfigService.prototype, methods);
 }
 

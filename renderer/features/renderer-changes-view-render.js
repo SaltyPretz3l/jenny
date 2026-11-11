@@ -227,12 +227,16 @@
         ? `<li class="changes-history-notice">${escape(jtn('changes.history.moreFiles', turn.omittedCount, { count: turn.omittedCount }, '{count} more file', '{count} more files'))}</li>`
         : '';
       const titleId = `changes-turn-${escape(turn.turnId)}`;
-      return `<section class="changes-history-turn${undoState && undoState.status === 'undone' ? ' changes-history-turn--undone' : ''}" data-changes-turn-block="${escape(turn.turnId)}" aria-labelledby="${titleId}">`
+      const undone = Boolean(undoState && undoState.status === 'undone');
+      return `<section class="changes-history-turn${undone ? ' changes-history-turn--undone' : ''}" data-changes-turn-block="${escape(turn.turnId)}" aria-labelledby="${titleId}">`
         + '<div class="changes-history-turn-head">'
         + `<span class="changes-history-title" id="${titleId}">${escape(title)}</span>`
-        + (time && !(undoState && undoState.status === 'undone') ? `<span class="changes-history-time">${escape(time)}</span>` : '')
+        + (time && !undone ? `<span class="changes-history-time">${escape(time)}</span>` : '')
         + buildTurnActions(turn, view)
         + '</div>'
+        // Row 122: renderer-change-pictures.js fills this with the turn's before
+        // and after pictures; an undone turn has none.
+        + (undone ? '' : `<div class="cp-slot" data-cp-turn="${escape(turn.turnId)}"></div>`)
         + `<ul class="changes-history-files" role="listbox" aria-labelledby="${titleId}">`
         + turn.files.map((file) => buildFileHtml(file, turn, view)).join('')
         + '</ul>'

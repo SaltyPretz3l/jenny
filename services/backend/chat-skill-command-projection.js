@@ -12,6 +12,8 @@ const SKILL_COMMAND_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function withSkillCommand(content, skillInvocation) {
   const command = skillInvocation?.command;
   if (typeof command !== 'string' || !SKILL_COMMAND_PATTERN.test(command)) return content;
+  // A bare /skill send stores its command as the text: it already reads right.
+  if (content === `/${command}`) return content;
   return content ? `/${command} ${content}` : `/${command}`;
 }
 

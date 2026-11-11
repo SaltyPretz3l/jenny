@@ -31,8 +31,9 @@ function gitBinding(paths = ['a.js']) {
   return { ...commonBinding(), git: { ref: 'refs/heads/main', head: 'd'.repeat(40), paths: paths.map(gitFact), fingerprint: HEX }, command: null };
 }
 
-function commandBinding(command, { backend = 'native', shell = '/bin/sh', cwd = '.' } = {}) {
-  return { ...commonBinding(), git: null, command: { backend, shell, cwd, command_sha256: R.sha256Hex(command) } };
+function commandBinding(command, { backend = 'native', shell = '/bin/sh', cwd = '.', workspace } = {}) {
+  return { ...commonBinding(), git: null, command: { backend, shell, cwd, command_sha256: R.sha256Hex(command),
+    ...(workspace ? { workspace } : {}) } };
 }
 
 function identity(n = 1) {

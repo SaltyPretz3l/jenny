@@ -7,7 +7,15 @@
   root.rendererSettingsScriptManifest = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-  return Object.freeze([
+  // Settings > Team (row 123, slice 1g-1): loaded on its own, only while the `team` flag is on and the
+  // Team section is shown (renderer-settings-utils.js `syncTeamSettingsSection`), never with the group below.
+  const teamSection = Object.freeze([
+    Object.freeze(['renderer/shell/renderer-settings-team-strings.js', 'rendererSettingsTeamStrings']),
+    Object.freeze(['renderer/shell/renderer-settings-team-view.js', 'rendererSettingsTeamView']),
+    Object.freeze(['renderer/shell/renderer-settings-team-owner-view.js', 'rendererSettingsTeamOwnerView']),
+    Object.freeze(['renderer/shell/renderer-settings-team-section.js', 'rendererSettingsTeamSection']),
+  ]);
+  return Object.freeze(Object.assign([
     // Page renderers, in dependency order.
     Object.freeze(['renderer/shell/renderer-settings-control-tower-utils.js', 'rendererSettingsControlTowerUtils']),
     Object.freeze(['renderer/shell/renderer-settings-core-renderers.js', 'rendererSettingsCoreRenderers']),
@@ -32,5 +40,9 @@
     Object.freeze(['renderer/shell/renderer-settings-api-providers.js', 'rendererSettingsApiProviders']),
     Object.freeze(['renderer/shell/renderer-settings-pdf-addon.js', 'rendererSettingsPdfAddonUtils']),
     Object.freeze(['renderer/shell/renderer-settings-cli-path.js', 'rendererSettingsCliPath']),
-  ]);
+    // GGUF folders ▸ Move and add (row 107); the folders row adds in place until it loads.
+    Object.freeze(['renderer/shell/model-library/model-library-add-move.js', 'modelLibraryAddMove']),
+    // Image engine ▸ ComfyUI block and Model sets (row 127); kept out of the eager byte budget.
+    Object.freeze(['renderer/shell/model-library/model-library-image-engine-comfyui.js', 'modelLibraryImageEngineComfyui']),
+  ], { teamSection }));
 });

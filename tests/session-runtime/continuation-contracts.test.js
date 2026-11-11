@@ -121,7 +121,7 @@ test('normalization is fresh and encoding is canonical and deterministic', () =>
   assert.equal(normalized.wait.dependency_id, null);
 });
 
-for (const kind of ['resource', 'resource_progress', 'explicit_pause', 'dependency', 'repeated_dependency', 'approval', 'user_questions', 'repeated_decision', 'unexecuted_failure', 'approval_bundle', 'mixed_dependency']) for (const withQuota of [false, true]) test(`${kind} (quota=${withQuota}) canonical bytes round-trip through the Python continuation codec`, () => {
+for (const kind of ['resource', 'resource_progress', 'approved_resource', 'explicit_pause', 'dependency', 'repeated_dependency', 'approval', 'user_questions', 'repeated_decision', 'unexecuted_failure', 'approval_bundle', 'mixed_dependency']) for (const withQuota of [false, true]) test(`${kind} (quota=${withQuota}) canonical bytes round-trip through the Python continuation codec`, () => {
   const python = path.join(process.cwd(), '.venv', process.platform === 'win32'
     ? path.join('Scripts', 'python.exe') : path.join('bin', 'python'));
   const probe = [
@@ -139,6 +139,8 @@ for (const kind of ['resource', 'resource_progress', 'explicit_pause', 'dependen
     Object.assign(value.position, { current_iteration: 2, completed_iterations: 2, tool_calls_consumed: 3 });
     Object.assign(value.eligibility, { prior_outcome_count: 1, emitted_tool_execution_count: 1 });
   }
+  // A person approved the turn's first tool: nothing has completed yet.
+  if (kind === 'approved_resource') Object.assign(value, { schema_version: 8, completed_effect_refs: [], prior_checkpoint_ref: null, prior_effect_count: 0 });
   if (kind === 'approval_bundle') {
     value.schema_version = 4;
     value.approval_inputs_ref = ref('approval_inputs_1');

@@ -251,12 +251,59 @@ def is_plan_artifact_write_eligible(
         return False
     normalized_name = str(tool_name or "").strip()
     # The todo list is in-memory session state, never a workspace write.
-    if normalized_name in {"mermaid_generate", "todo_write"}:
+    if normalized_name == "todo_write":
         return True
     # Plan Mode may add a memory; correcting or forgetting one waits for the build.
     if normalized_name == "memory":
         return isinstance(arguments, dict) and arguments.get("action") == "remember"
     return normalized_name == "create_artifact" and is_safe_plan_document(arguments)
+
+
+# Arguments a model should never fill (row 129): old spellings the argument check still
+# accepts, and the read snapshot the runtime attaches itself. They stay in the descriptor
+# schema, so a call that sends one is still valid; only the model-facing copy drops them.
+MODEL_HIDDEN_ARGUMENTS: dict[str, frozenset[str]] = {
+    "write_file": frozenset({"file_path", "file_content", "expected_read_snapshot"}),
+    "edit_file": frozenset({"expected_read_snapshot"}),
+}
+
+
+def hide_runtime_arguments(name: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    """Drop *name*'s hidden arguments from an already-copied schema."""
+
+    hidden = MODEL_HIDDEN_ARGUMENTS.get(name)
+    properties = parameters.get("properties")
+    if not hidden or not isinstance(properties, dict):
+        return parameters
+    parameters["properties"] = {
+        key: value for key, value in properties.items() if key not in hidden
+    }
+    required = [key for key in parameters.get("required") or [] if key not in hidden]
+    branches = parameters.get("anyOf")
+    if isinstance(branches, list):
+        kept = [
+            branch
+            for branch in branches
+            if not (isinstance(branch, dict) and hidden.intersection(branch.get("required") or []))
+        ]
+        if len(kept) == 1 and isinstance(kept[0], dict) and set(kept[0]) == {"required"}:
+            # One way left to satisfy the call: say it as plain required arguments.
+            required += [key for key in kept[0]["required"] if key not in required]
+            del parameters["anyOf"]
+        elif kept:
+            parameters["anyOf"] = kept
+        else:
+            del parameters["anyOf"]
+    if required or "required" in parameters:
+        parameters["required"] = required
+    return parameters
+
+
+def model_facing_parameters(descriptor: Any) -> dict[str, Any]:
+    """A copy of the descriptor's schema without the arguments the model is not shown."""
+
+    parameters = deepcopy(getattr(descriptor, "input_schema", None) or {})
+    return hide_runtime_arguments(str(getattr(descriptor, "name", "") or ""), parameters)
 
 
 def prompt_schema_for_context(
@@ -267,7 +314,7 @@ def prompt_schema_for_context(
 ) -> dict[str, Any]:
     """Return the model-facing schema, narrowed before token-budget filtering."""
 
-    parameters = deepcopy(getattr(descriptor, "input_schema", {}))
+    parameters = model_facing_parameters(descriptor)
     description = str(getattr(descriptor, "description", "") or "")
     if (
         str(getattr(descriptor, "name", "") or "") == "create_artifact"
@@ -336,8 +383,10 @@ __all__ = (
     "PLAN_ARTIFACT_WRITE_ARG",
     "SAFE_PLAN_ARTIFACT_EXTENSIONS",
     "descriptor_allows_plan_artifact_write",
+    "hide_runtime_arguments",
     "is_plan_artifact_write_eligible",
     "is_safe_plan_document",
+    "model_facing_parameters",
     "plan_artifact_mode_exemption",
     "prompt_schema_for_context",
     "strip_plan_artifact_write_arg",

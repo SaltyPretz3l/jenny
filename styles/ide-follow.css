@@ -1,0 +1,128 @@
+/* styles/ide-follow.css - Follow Jenny (row 121): the draft of a file Jenny is
+ * writing, shown in the Workspace editor (renderer/features/renderer-ide-follow-controller.js).
+ * The strip is one line above the editor; the tab rules extend ide-tabs.css; the
+ * line tints, gutter signs and caret are Monaco decoration classes. */
+
+/* == Draft strip: one line above the editor, only while a draft tab is on stage.
+   Same grammar as .ide-preview-stage-bar (30 px, hairline, surface-2). == */
+.ide-follow-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-surface-2);
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.ide-follow-strip > .status-dot {
+  flex: none;
+}
+
+.ide-follow-strip > .status-dot--active {
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.ide-follow-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.ide-follow-strip-meta {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ide-follow-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
+}
+
+/* Quiet text actions, the same weight as the presentation chip's Dismiss. */
+.ide-follow-strip-action {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ide-follow-strip-action:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-follow-strip-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* == Draft tab: italic name (the preview-tab voice) plus the word "draft" in the
+   .ide-tab-dir suffix. While text is arriving the mark slot carries a breathing
+   accent dot, which gives way to the cross on hover like any other mark. == */
+.ide-tab--draft .ide-tab-name {
+  font-style: italic;
+}
+
+.ide-tab--draft-live .ide-tab-mark {
+  background: var(--accent);
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.ide-tab--draft-live:not(:hover):not(:focus-within) .ide-tab-close {
+  opacity: 0;
+}
+
+/* == A change to an existing file, in place and in one column: the lines Jenny
+   takes out stay visible above the lines that replace them. == */
+.ide-follow-line--removed {
+  background: color-mix(in srgb, var(--state-danger) 14%, transparent);
+}
+
+.ide-follow-line--added {
+  background: color-mix(in srgb, var(--state-success) 15%, transparent);
+}
+
+.ide-follow-sign--removed::before,
+.ide-follow-sign--added::before {
+  display: block;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.ide-follow-sign--removed::before {
+  content: "\2212";
+}
+
+.ide-follow-sign--added::before {
+  content: "+";
+}
+
+/* == Jenny's caret: where the text is arriving. Steady, never blinks. == */
+.ide-follow-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.15em;
+  margin-inline-start: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-follow-strip > .status-dot--active,
+  .ide-tab--draft-live .ide-tab-mark {
+    animation: none;
+  }
+}

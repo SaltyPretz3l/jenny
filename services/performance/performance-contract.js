@@ -27,6 +27,8 @@ const PHASES = Object.freeze(['waiting', 'loading', 'prefill', 'decode', 'finish
 const TERMINAL_PHASES = Object.freeze(['finished', 'failed', 'cancelled']);
 const SOURCES = Object.freeze(['provider', 'unavailable']);
 const PROVIDER_KINDS = Object.freeze(['ninfer', 'llama-server', 'ollama', 'other']);
+// Providers that stream live per-token timings (NInfer v0.9.1, Jenny's own llama-server).
+const LIVE_PROVIDER_KINDS = Object.freeze(new Set(['ninfer', 'llama-server']));
 const METRIC_STATES = Object.freeze(['available', 'warming', 'stale', 'unavailable', 'not_applicable', 'available_next_request']);
 
 // Nullable measured fields of a notification and the range each must satisfy.
@@ -188,6 +190,7 @@ module.exports = {
   MAX_TOKENS,
   METRIC_FIELDS,
   METRIC_STATES,
+  LIVE_PROVIDER_KINDS,
   PHASES,
   PROVIDER_KINDS,
   SCHEMA_VERSION,

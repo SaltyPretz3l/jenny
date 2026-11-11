@@ -42,6 +42,8 @@ const DELEGATE_COMPATIBILITY_TOOL_IDS = Object.freeze([
 const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // Exact-content consent is owned by the Electron tool, even in Auto mode.
   session_message: 'auto',
+  // Consent is asked inside the tool, so per-call policy stays out of the way.
+  browser: 'auto',
   exit_plan_mode: 'ask',
   // Draws a card under the reply and nothing else; the user's click is an ordinary chat message.
   suggest_next_step: 'auto',

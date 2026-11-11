@@ -3,6 +3,7 @@
 const http = require('node:http');
 const path = require('node:path');
 const { loadHostConfig } = require('./config');
+const { isReadyMarkerLive } = require('./team/ready-marker');
 
 function parseArgs(argv) {
   if (argv.length < 2 || argv[0] !== '--config' || !path.isAbsolute(argv[1])
@@ -28,13 +29,26 @@ function probe(config, route, { requestImpl = http.request, timeoutMs = 2_000 } 
   });
 }
 
-async function main(argv = process.argv.slice(2)) {
+// A team host answers no network health check: it is healthy while the
+// readiness marker in its profile names a live process. No request is made.
+async function checkTeam(config, { isProcessAlive } = {}) {
+  if (!isReadyMarkerLive({ userDataPath: config.userDataPath, isProcessAlive })) {
+    throw new Error('host_unhealthy');
+  }
+}
+
+async function main(argv = process.argv.slice(2), { requestImpl, isProcessAlive } = {}) {
   const { configPath, route } = parseArgs(argv);
-  await probe(loadHostConfig(configPath), route);
+  const config = loadHostConfig(configPath);
+  if (config.team) {
+    await checkTeam(config, { isProcessAlive });
+    return;
+  }
+  await probe(config, route, requestImpl ? { requestImpl } : {});
 }
 
 if (require.main === module) {
   main().catch(() => { process.exitCode = 1; });
 }
 
-module.exports = { main, parseArgs, probe };
+module.exports = { checkTeam, main, parseArgs, probe };

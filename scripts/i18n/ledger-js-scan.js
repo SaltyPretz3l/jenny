@@ -250,7 +250,7 @@ function scanJavaScript({ source, file, addCatalog, errors = [], remainders = []
   const occurrences = [];
   const handledProperties = new WeakSet();
   const emittedNodes = new WeakSet();
-  const modelToolFile = file.startsWith('services/tools/');
+  const modelToolFile = file.startsWith('services/tools/') || file.startsWith('services/browser-use/');
   const remainderTexts = new Set(
     remainders.filter((entry) => entry.file === file).map((entry) => entry.text)
   );

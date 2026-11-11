@@ -24,7 +24,6 @@ const SHARED_SEMANTIC_TOKENS = [
   '--widget-face-shine-color',
   '--surface-composer-signal-background',
   '--widget-composer-signal-border',
-  '--artifact-surface-focus-ring',
   /* --mermaid-node-label-* retired from the mandatory set (Artifact WS1):
    * Mermaid node colors are formula-derived from the palette accent in
    * renderer-mermaid-theme-utils.js; the tokens remain optional overrides. */

@@ -13,7 +13,7 @@ const { JSDOM } = require('jsdom');
 const { createSessionActionsController } = require('../renderer/shell/renderer-session-actions');
 const { createSidebarBulkActions } = require('../renderer/shell/renderer-sidebar-bulk-actions');
 const actionButton = require('../renderer/inventory/action-button');
-const popover = require('../renderer/inventory/popover');
+const bulkContextMenu = require('../renderer/inventory/context-menu');
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -107,54 +107,51 @@ test('row menu: no "Send to chat…" for plugin, archived or unaddressable chats
 });
 
 function bulkHarness(t, { switcher, wired = true } = {}) {
-  const dom = new JSDOM('<section id="sidebarHistorySection"><div id="chatsSelectionEntry"></div><input id="conversationSearch"><div><ul id="conversationGroups"></ul></div></section>');
+  const dom = new JSDOM('<section id="sidebarHistorySection"><input id="conversationSearch"><div><ul id="conversationGroups"></ul></div></section>');
   const doc = dom.window.document;
   const state = { sessions: ['a', 'b', 'c'].map((id) => ({ id, title: id, updated_at: 'old', message_count: 1 })), ui: {}, sendOutboxBySession: new Map() };
   const groups = doc.getElementById('conversationGroups');
   for (const id of ['a', 'b', 'c']) groups.insertAdjacentHTML('beforeend', `<li class="conversation-item session-row" data-session-id="${id}"><button class="session-row__open" data-session-open="${id}">${id}</button><button data-session-action="menu">Menu</button></li>`);
   const cleanups = [];
   const controller = createSidebarBulkActions({
-    state, windowRef: dom.window, actionButton, popover,
+    state, windowRef: dom.window, contextMenu: bulkContextMenu,
     scheduler: { schedule: () => true },
     callbacks: {
       registerCleanup: (fn) => cleanups.push(fn), renderSessions() {}, showToastMessage() {}, showSessionActionError() {},
       ...(wired ? { getProjectSwitcher: async () => switcher } : {}),
     },
   });
-  t.after(() => { cleanups.forEach((fn) => fn()); dom.window.close(); });
-  const control = (id) => doc.querySelector(`[data-action="sidebar-bulk-${id}"]`);
-  return { doc, controller, control };
+  t.after(() => { bulkContextMenu.hide({ restoreFocus: false }); cleanups.forEach((fn) => fn()); dom.window.close(); });
+  const open = (id) => groups.querySelector(`[data-session-id="${id}"] [data-session-open]`);
+  const ctrlClick = (id) => open(id).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }));
+  const rightClick = (id) => open(id).dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  const items = () => [...doc.querySelectorAll('.inv-context-menu-item')];
+  return { doc, controller, open, ctrlClick, rightClick, items };
 }
 
-test('bulk bar: "Move to project" is disabled without a selection and opens the move menu with the selected ids', async (t) => {
+test('bulk menu: "Move N chats to project…" opens the move menu with the selected ids and drops moved ones', async (t) => {
   const switcher = fakeSwitcher();
   const h = bulkHarness(t, { switcher });
-  h.controller.act('select');
-  const move = h.control('move');
-  assert.ok(move, 'the bulk bar has Move');
-  assert.equal(move.getAttribute('aria-label'), 'Move to project');
-  assert.equal(move.getAttribute('aria-haspopup'), 'menu');
-  assert.equal(move.disabled, true, 'nothing selected yet');
-  const order = [...h.doc.querySelectorAll('.sidebar-bulk-buttons [data-action]')].map((node) => node.dataset.action.replace('sidebar-bulk-', ''));
-  assert.deepEqual(order, ['move', 'archive', 'delete', 'done']);
-  h.controller.act('all');
-  assert.equal(move.disabled, false);
-  h.controller.act('move');
+  h.ctrlClick('a'); h.ctrlClick('b'); h.ctrlClick('c');
+  h.rightClick('b');
+  assert.equal(h.items()[0].textContent, 'Move 3 chats to project…', 'Move leads the bulk menu');
+  h.items()[0].click();
   await settle();
   assert.equal(switcher.opened.length, 1);
   assert.deepEqual(switcher.opened[0].ids, ['a', 'b', 'c']);
-  assert.equal(switcher.opened[0].anchor, move);
+  assert.equal(switcher.opened[0].anchor, h.open('b'), 'anchored on the row button that opened the menu');
+  assert.equal(switcher.opened[0].options.source, 'bulk');
 
   // The switcher reports what moved (busy chats are skipped): those leave the selection.
   switcher.opened[0].options.onMoved({ moved: ['a', 'c'], skipped: ['b'], failed: [], unchanged: [] });
   assert.deepEqual([...h.controller.selected], ['b'], 'a skipped chat stays selected');
 });
 
-test('bulk bar: no Move without a project switcher', (t) => {
+test('bulk menu: no Move without a project switcher', (t) => {
   const h = bulkHarness(t, { wired: false });
-  h.controller.act('select');
-  assert.equal(h.control('move'), null);
-  assert.ok(h.control('archive'));
+  h.ctrlClick('a'); h.ctrlClick('b');
+  h.rightClick('a');
+  assert.deepEqual(h.items().map((item) => item.textContent), ['Archive 2 chats', 'Delete 2 chats…', 'Clear selection']);
 });
 
 test('row menu: "Link sessions…" sits after Rename, carries the linked count, and opens the popover anchored on the row', async () => {

@@ -183,8 +183,7 @@
   border-radius: calc(var(--composer-radius) + var(--composer-holo-border-width));
 }
 
-:root[data-palette="paper"] .composer-holo,
-:root[data-palette="woolly"] .composer-holo {
+:root[data-scheme="light"] .composer-holo {
   mix-blend-mode: multiply;
 }
 
@@ -819,8 +818,7 @@
   transform: translateY(calc(-1 * var(--empty-composer-lift)));
 }
 
-.chat-view.chat-empty .composer-jump-tools,
-.chat-view.chat-empty .composer-wayfinder-host {
+.chat-view.chat-empty .composer-jump-tools {
   display: none;
 }
 

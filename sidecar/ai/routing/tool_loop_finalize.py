@@ -527,6 +527,7 @@ class _FinalResponseMixin:
                         # TR-015: "write your draft now" only in an approved-plan
                         # build with write tools; never in Plan Mode or a review.
                         allow_write_draft=_tl_hub.write_progress.nudge_applies(self),
+                        write_tools_available=_tl_hub.write_progress.write_tools_available(self),
                     )
                 )
                 terminal = _tl_hub.tool_loop_compaction.check_checkpoint_context(

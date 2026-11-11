@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from server.worker.job import JobResult
-from server.worker.supervisor import StartupError, Supervisor
+from server.worker.supervisor import READY_DELAY_SECONDS, StartupError, Supervisor, main
 
 
 def request(op, **fields):
@@ -16,13 +16,12 @@ def request(op, **fields):
 
 
 class SupervisorTests(unittest.TestCase):
-    def _supervisor(self, root):
+    def _supervisor(self, root, **options):
         control = Path(root) / "control"
         inputs = Path(root) / "inputs"
         workspace = Path(root) / "workspace"
-        control.mkdir()
-        inputs.mkdir()
-        workspace.mkdir()
+        for directory in (control, inputs, workspace):
+            directory.mkdir(exist_ok=True)
         return Supervisor(
             str(control),
             str(inputs),
@@ -31,7 +30,98 @@ class SupervisorTests(unittest.TestCase):
             ready_delay=0,
             exit_func=lambda code: None,
             enforce_identity=False,
+            **options,
         )
+
+    def test_synced_pre_step_records_the_manifest_before_the_command(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            calls = []
+
+            def runner(operation, payload):
+                calls.append(operation)
+                return b'{"a.txt":["f",1,2,3,4,1]}'
+
+            supervisor = self._supervisor(root, mode="synced", mirror_runner=runner)
+            supervisor.post_step_done.wait(5)
+            fields = dict(incarnation=supervisor.incarnation, job_id=str(uuid.uuid4()),
+                          command="true", cwd=".", input_root=".", timeout_seconds=1)
+            with patch("server.worker.supervisor.run_command",
+                       return_value=JobResult("completed", 0, "", "", False)) as run:
+                supervisor._run_current(fields)
+            self.assertEqual(calls, ["apply"])
+            self.assertEqual(run.call_args.kwargs["mode"], "synced")
+            pending = json.loads(supervisor.sync_pending_path.read_text(encoding="utf-8"))
+            self.assertEqual(pending["job_id"], fields["job_id"])
+            self.assertEqual(pending["manifest"], {"a.txt": ["f", 1, 2, 3, 4, 1]})
+            supervisor.close()
+
+    def test_failed_pre_step_never_runs_the_command(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            def runner(operation, payload):
+                raise OSError("helper failed")
+
+            supervisor = self._supervisor(root, mode="synced", mirror_runner=runner)
+            fields = dict(incarnation=supervisor.incarnation, job_id=str(uuid.uuid4()),
+                          command="true", cwd=".", input_root=".", timeout_seconds=1)
+            with patch("server.worker.supervisor.run_command") as run:
+                supervisor._run_current(fields)
+            run.assert_not_called()
+            self.assertEqual(supervisor.previous_result, None)
+            metadata = json.loads(supervisor.metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["result"]["reason"], "mirror_apply_failed")
+            self.assertFalse(supervisor.sync_pending_path.exists())
+            supervisor.close()
+
+    def test_successor_collects_once_for_the_same_job_and_container_before_ready(self):
+        for case in ("match", "other_job", "other_host"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(dir=".") as root:
+                first = self._supervisor(root, mode="synced", mirror_runner=lambda *_: b"{}")
+                first.post_step_done.wait(5)
+                fields = dict(incarnation=first.incarnation, job_id=str(uuid.uuid4()),
+                              command="true", cwd=".", input_root=".", timeout_seconds=1)
+                with patch("server.worker.supervisor.run_command",
+                           return_value=JobResult("completed", 0, "", "", False)):
+                    first._run_current(fields)
+                first.close()
+                pending = json.loads(first.sync_pending_path.read_text(encoding="utf-8"))
+                if case == "other_job":
+                    pending["job_id"] = str(uuid.uuid4())
+                if case == "other_host":
+                    pending["host"] = "another-container"
+                first.sync_pending_path.write_text(json.dumps(pending), encoding="utf-8")
+                calls = []
+                gate = __import__("threading").Event()
+
+                def runner(operation, payload, calls=calls, gate=gate):
+                    gate.wait(5)
+                    calls.append((operation, json.loads(payload)))
+                    return b"ok"
+
+                second = self._supervisor(root, mode="synced", mirror_runner=runner)
+                if case == "match":
+                    self.assertEqual(second.handle_request(request("status"))["phase"], "starting")
+                gate.set()
+                second.post_step_done.wait(5)
+                self.assertEqual(second.handle_request(request("status"))["phase"], "ready")
+                expected = [("collect", {"manifest": {}, "job_id": fields["job_id"]})]
+                self.assertEqual(calls, expected if case == "match" else [])
+                self.assertFalse(second.sync_pending_path.exists())
+                second.close()
+
+    def test_copy_mode_never_runs_mirror_steps(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            def runner(*_):
+                raise AssertionError("copy mode ran a mirror step")
+
+            supervisor = self._supervisor(root, mirror_runner=runner)
+            self.assertTrue(supervisor.post_step_done.is_set())
+            fields = dict(incarnation=supervisor.incarnation, job_id=str(uuid.uuid4()),
+                          command="true", cwd=".", input_root=".", timeout_seconds=1)
+            with patch("server.worker.supervisor.run_command",
+                       return_value=JobResult("completed", 0, "", "", False)) as run:
+                supervisor._run_current(fields)
+            self.assertEqual(run.call_args.kwargs["mode"], "copy")
+            supervisor.close()
 
     def test_cancel_before_admission_consumes_incarnation(self):
         with tempfile.TemporaryDirectory() as root:
@@ -145,6 +235,21 @@ class SupervisorTests(unittest.TestCase):
                         self.assertEqual(supervisor.previous_result["status"], "interrupted")
                         self.assertEqual(supervisor.previous_result["job_id"], fields["job_id"])
                     run.assert_not_called()
+
+    def test_main_takes_a_bounded_ready_delay_before_touching_the_runtime(self):
+        # Per-run desktop containers pass 0; the hosted long-lived worker keeps the default.
+        for bad in (-1, READY_DELAY_SECONDS + 1, "0", None):
+            runtime_patch = patch("server.worker.supervisor.validate_runtime")
+            with self.subTest(bad=bad), runtime_patch as runtime:
+                with self.assertRaises(SystemExit) as raised:
+                    main(ready_delay=bad)
+                self.assertEqual(raised.exception.code, 78)
+                runtime.assert_not_called()
+        with patch("server.worker.supervisor.validate_runtime", return_value="copy"), \
+                patch("server.worker.supervisor.Supervisor") as built:
+            main(ready_delay=0.0)
+        built.assert_called_once_with(mode="copy", ready_delay=0.0)
+        built.return_value.serve_forever.assert_called_once_with()
 
 
 if __name__ == "__main__":

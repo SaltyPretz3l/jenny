@@ -223,11 +223,15 @@ test('lifecycle composition installs live flag-gated error wrappers', async () =
     }) },
   };
   const ctx = new Proxy(bag, {
-    has(_target, key) { return key !== 'result' && key !== Symbol.unscopables; },
+    // `ctx` stays the composition's own parameter: it hands `{ __proto__: ctx }` to its sections.
+    has(_target, key) { return key !== 'result' && key !== 'ctx' && key !== Symbol.unscopables; },
     get(target, key) { return key === Symbol.unscopables ? undefined : key in target ? target[key] : placeholder; },
   });
   const sandbox = { window, console };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer/app/renderer-app-lifecycle-composition.js'), 'utf8'), sandbox);
+  // The lifecycle composition and the with(ctx) sections it calls (the error wrappers live in the notices section).
+  for (const file of ['boot-preferences', 'shell-services', 'notices', 'navigation', 'lifecycle']) {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', `renderer/app/renderer-app-${file}-composition.js`), 'utf8'), sandbox);
+  }
   const composed = await window.rendererAppLifecycleComposition.createLifecycleComposition(ctx);
   assert.equal(composed.showShellErrorToast('off'), 'legacy');
   state.features.featureFlags.error_intake_routing = true;

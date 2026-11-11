@@ -41,6 +41,9 @@ test('counts deltas and render kinds per stream and derives first-paint latency'
     row_list_rows_reused: 0,
     row_list_rows_rebuilt: 0,
     row_list_morph_reasons: Object.create(null),
+    scroll_snaps: 0,
+    scroll_snap_max_px: 0,
+    scroll_snap_reasons: {},
   });
   // take() removes the entry — a second take yields nothing.
   assert.strictEqual(metrics.take('stream-1'), null);
@@ -376,4 +379,50 @@ test('row-list morph counters name the bail-out and the rows it rebuilt, bounded
   // Intra-patch cost marker: not a paint.
   assert.strictEqual(snapshot.first_paint_at_ms, null);
   assert.strictEqual(snapshot.stream_reveal_patches_applied, 0);
+});
+
+// Row 131 S0b: the coordinator reports each upward snap of a followed reader.
+test('scroll snaps are counted per stream with the largest and a bounded reason tally', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteDelta('stream-snap', 'session-snap');
+  metrics.noteScrollSnapForSession('session-snap', { px: 218, reason: 'tail_cushion:reply_end' });
+  metrics.noteScrollSnapForSession('session-snap', { px: -24.4, reason: 'marker_absent' });
+  metrics.noteScrollSnapForSession('session-snap', { px: 96.6, reason: 'tail_cushion:reply_end' });
+  metrics.noteScrollSnapForSession('session-snap', { px: 10 });
+  for (let index = 0; index < 40; index += 1) {
+    metrics.noteScrollSnapForSession('session-snap', { px: 9, reason: `overflow_${index}`.padEnd(70, 'z') });
+  }
+
+  const snapshot = metrics.take('stream-snap');
+  assert.strictEqual(snapshot.scroll_snaps, 44);
+  assert.strictEqual(snapshot.scroll_snap_max_px, 218);
+  assert.strictEqual(snapshot.scroll_snap_reasons['tail_cushion:reply_end'], 2);
+  assert.strictEqual(snapshot.scroll_snap_reasons.marker_absent, 1);
+  assert.strictEqual(Object.keys(snapshot.scroll_snap_reasons).length, 32, 'histogram bounded to 32 reasons');
+  assert.ok(Object.keys(snapshot.scroll_snap_reasons).every((key) => key.length <= 64), 'keys bounded to 64 chars');
+  // A snap is an observation, never a paint.
+  assert.strictEqual(snapshot.first_paint_at_ms, null);
+  assert.strictEqual(snapshot.stream_reveal_patches_applied, 0);
+});
+
+test('the largest snap is an integer and a stream with no snaps reports zeros', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteDelta('stream-int', 'session-int');
+  metrics.noteDelta('stream-none', 'session-none');
+  metrics.noteScrollSnapForSession('session-int', { px: 41.6, reason: 'live_follow' });
+  assert.strictEqual(metrics.take('stream-int').scroll_snap_max_px, 42);
+  const none = metrics.take('stream-none');
+  assert.strictEqual(none.scroll_snaps, 0);
+  assert.strictEqual(none.scroll_snap_max_px, 0);
+  assert.deepStrictEqual(none.scroll_snap_reasons, {});
+});
+
+test('a snap for a session with no live stream is ignored and never creates an entry', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteScrollSnapForSession('session-none', { px: 50, reason: 'live_follow' });
+  metrics.noteScrollSnapForSession('', { px: 50, reason: 'live_follow' });
+  metrics.noteScrollSnapForSession(undefined, undefined);
+  assert.strictEqual(metrics.take('stream-none'), null);
+  metrics.noteDelta('stream-late', 'session-late');
+  assert.strictEqual(metrics.take('stream-late').scroll_snaps, 0, 'an earlier snap is not retained');
 });

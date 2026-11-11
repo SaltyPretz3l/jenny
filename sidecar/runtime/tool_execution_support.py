@@ -23,9 +23,11 @@ from sidecar.ai.tools.builtins.shell_path_scope import escalate_out_of_root
 from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
 from sidecar.ai.tools.contracts import (
     ToolExecutionFailure,
+    ignored_argument_note,
     strip_private_arguments,
     validate_descriptor_arguments,
     validate_tool_arguments,
+    validation_detail,
 )
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.ai.tools.sanitization import (
@@ -63,8 +65,10 @@ __all__ = [
     "read_snapshot_from_metadata",
     "sanitize_tool_output",
     "scan_tool_arguments",
+    "ignored_argument_note",
     "strip_private_arguments",
     "validate_descriptor_arguments",
     "validate_tool_arguments",
+    "validation_detail",
     "wrap_untrusted_tool_output",
 ]

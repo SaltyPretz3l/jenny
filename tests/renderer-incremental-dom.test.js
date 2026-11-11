@@ -279,6 +279,9 @@ test('pretext stream patches keep predicted-height metadata on the streaming ass
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
   await waitForUi(window, 20);
+  // The reader scrolled away: a live turn under a reader following it gets no reservation
+  // (row 131, D5), so the prediction path is exercised with follow released.
+  window.__rendererState.ui.followLatest = false;
 
   await window.jennyShell.__emitChat({
     type: 'delta',
@@ -325,6 +328,9 @@ test('pretext stream patches still predict height when content appears after rea
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
   await waitForUi(window, 20);
+  // The reader scrolled away: a live turn under a reader following it gets no reservation
+  // (row 131, D5), so the prediction path is exercised with follow released.
+  window.__rendererState.ui.followLatest = false;
 
   await shell.__emitChat({
     type: 'delta',
@@ -389,6 +395,10 @@ test('pretext streaming predictions exclude collapsed tool bodies from timeline 
     content: 'Working through the tool calls.',
     aggregate: 'Working through the tool calls.',
   });
+  await waitForUi(window, 30);
+  // The reader scrolled away: a live turn under a reader following it gets no reservation
+  // (row 131, D5), so the prediction path is exercised with follow released.
+  window.__rendererState.ui.followLatest = false;
 
   const observedPredictedHeights = [];
   for (let index = 1; index <= 3; index += 1) {

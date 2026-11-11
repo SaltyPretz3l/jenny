@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "companion-sidecar"
-version = "1.6.1"
+version = "1.7.0"
 description = "Python AI sidecar for the Companion desktop app"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -199,7 +199,6 @@ known-first-party = ["sidecar"]
 "sidecar/ai/tools/builtins/git_ops.py" = ["E501"]
 "sidecar/ai/tools/builtins/git_tracking.py" = ["PLR0911", "PLR2004"]
 "sidecar/ai/tools/builtins/grep_search.py" = ["PLR0913"]
-"sidecar/ai/tools/builtins/mermaid.py" = ["C901", "PLR0911"]
 "sidecar/ai/tools/builtins/python_runtime/_exec_wrapper.py" = ["PLW0603"]
 "sidecar/ai/tools/builtins/python_runtime/interpreter.py" = ["E501"]
 "sidecar/ai/tools/builtins/python_runtime/sandbox.py" = ["PLW1509"]

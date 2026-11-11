@@ -11,13 +11,12 @@
 // holds `.cli.lock` through an inherited descriptor for the same reason.
 
 const fs = require('node:fs');
-const net = require('node:net');
-const os = require('node:os');
 const path = require('node:path');
-const { createHash, randomBytes } = require('node:crypto');
+const { randomBytes } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { CLI_ERROR_CODES } = require('../backend/error-codes');
 const { claimCliProfile } = require('../host/profile-ownership');
+const { acquirePipeLock: acquireSharedPipeLock, pipeLockName } = require('../host/profile-pipe-lock');
 
 const CLI_PROFILE_ERROR_CODES = Object.freeze({
   BUSY: CLI_ERROR_CODES.PROFILE_BUSY,
@@ -33,60 +32,29 @@ function lockError(code, reason, message) {
   return Object.assign(new Error(message), { code, reason });
 }
 
-function userName() {
-  try { return String(os.userInfo().username || ''); } catch (_error) { return ''; }
-}
-
-// One pipe per (profile, user): the real path, case-folded where the file
-// system is, so two spellings of one directory share a lock; the user so two
-// accounts never collide on a name.
+// One pipe per (profile, user); the shared module owns the naming and the
+// listen (`services/host/profile-pipe-lock.js`), this keeps the CLI prefix.
 function cliLockName(directory) {
-  const key = process.platform === 'win32' ? String(directory).toLowerCase() : String(directory);
-  const digest = createHash('sha256').update(`${key}\0${userName()}`).digest('hex').slice(0, 32);
-  return `${PIPE_PREFIX}${digest}`;
-}
-
-function listenExclusive(name) {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer((socket) => socket.destroy());
-    server.once('error', reject);
-    server.listen({ path: name, exclusive: true }, () => {
-      server.off('error', reject);
-      resolve(server);
-    });
-  });
+  return pipeLockName(PIPE_PREFIX, directory);
 }
 
 async function acquirePipeLock(directory, onLost) {
-  let server;
+  let lock;
   try {
-    server = await listenExclusive(cliLockName(directory));
+    lock = await acquireSharedPipeLock({
+      prefix: PIPE_PREFIX,
+      directory,
+      onLost: (error) => onLost(lockError(CLI_PROFILE_ERROR_CODES.LOCK_LOST, 'lock_lost',
+        `The profile lock was lost (${error && error.code ? error.code : 'closed'}).`)),
+    });
   } catch (error) {
-    if (error && error.code === 'EADDRINUSE') {
+    if (error && error.reason === 'busy') {
       throw lockError(CLI_PROFILE_ERROR_CODES.BUSY, 'profile_busy', 'Another Jenny CLI holds this profile.');
     }
     throw lockError(CLI_PROFILE_ERROR_CODES.LOCK_UNAVAILABLE, 'lock_unavailable',
-      `The profile lock could not be created (${error && error.code ? error.code : 'unknown'}).`);
+      `The profile lock could not be created (${error && error.osCode ? error.osCode : 'unknown'}).`);
   }
-  // Holding the lock must not keep an otherwise finished CLI alive.
-  server.unref();
-  let released = false;
-  const lost = (error) => {
-    if (released) return;
-    released = true;
-    onLost(lockError(CLI_PROFILE_ERROR_CODES.LOCK_LOST, 'lock_lost',
-      `The profile lock was lost (${error && error.code ? error.code : 'closed'}).`));
-  };
-  server.on('error', lost);
-  server.on('close', () => lost(null));
-  return {
-    kind: 'pipe',
-    release() {
-      if (released) return;
-      released = true;
-      server.close();
-    },
-  };
+  return lock;
 }
 
 // Refuses before the lock file is opened when either half of the helper is

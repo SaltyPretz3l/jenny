@@ -86,6 +86,9 @@ const _CLIENT_TIMING_NUMERIC_FIELDS = Object.freeze([
   'row_list_morphs',
   'row_list_rows_reused',
   'row_list_rows_rebuilt',
+  // Upward snaps of a followed reader, counted per reply (row 131).
+  'scroll_snaps',
+  'scroll_snap_max_px',
 ]);
 
 // The three send-phase markers reach this serializer in camelCase when they come
@@ -128,6 +131,22 @@ const _CLIENT_TIMING_REASONS = Object.freeze([
   ...['helper_unavailable', 'scope_not_reasoning_row', 'scope_names_other_segment',
     'segment_row_not_rendered', 'segment_row_state_mismatch', 'scope_stack_missing']
     .flatMap((live) => _ROW_LIST_REASONS.map((reason) => `live:${live}>${reason}`)),
+  // scroll_snap_reasons (row 131): the scroll coordinator's write reasons.
+  'marker_absent',
+  'live_follow',
+  'tail_cushion',
+  'tail_cushion:session',
+  'tail_cushion:offscreen',
+  'tail_cushion:force_bottom',
+  'tail_cushion:resize',
+  'tail_cushion:reply_end',
+  'virtualizer',
+  'structural_rewrite',
+  'anchor_restore',
+  'focus_reveal',
+  'message_jump',
+  'unread_jump',
+  'empty_transcript_reset',
   'other',
 ]);
 const _CLIENT_TIMING_REASON_KEYS = new Set(_CLIENT_TIMING_REASONS);
@@ -181,6 +200,10 @@ function _normalizeClientTiming(clientTiming) {
     clientTiming.row_list_morph_reasons ?? clientTiming.rowListMorphReasons,
   );
   if (rowListReasons) out.row_list_morph_reasons = rowListReasons;
+  const scrollSnapReasons = _normalizeFullRenderReasons(
+    clientTiming.scroll_snap_reasons ?? clientTiming.scrollSnapReasons,
+  );
+  if (scrollSnapReasons) out.scroll_snap_reasons = scrollSnapReasons;
   return Object.keys(out).length === 0 ? null : out;
 }
 

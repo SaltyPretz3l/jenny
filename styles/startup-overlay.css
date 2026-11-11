@@ -1,11 +1,20 @@
+/* The --startup-* colours are stamped on the root inline before first paint
+ * (appearance-utils.js), because this file loads ahead of the palette sheets. */
 :root {
   --startup-bg: var(--bg-base);
+  --startup-text: var(--text-primary);
+  --startup-text-secondary: var(--text-secondary);
+  --startup-cyan: var(--accent-cyan);
+  --startup-accent: var(--accent);
   --startup-fade-ms: 240ms;
+  --startup-arrive-ms: 240ms;
 }
 
-/* The boot curtain: opaque from first paint, a night sky behind one line.
- * The starfield (renderer/shell/renderer-startup-starfield.js) paints the
- * canvas and, when animated, drives the curtain's own fade inline. */
+/* The boot curtain: opaque from first paint, a night sky behind one line. The
+ * sky is drawn off the page thread (renderer-startup-starfield-worker.js); the
+ * name's arrival and every fade run on the compositor, so a busy page thread
+ * cannot stall them. The lifecycle controller sets the --startup-exit-* values
+ * for the exit it picks. */
 .startup-overlay {
   position: fixed;
   inset: 0;
@@ -15,8 +24,10 @@
   justify-content: center;
   overflow: hidden;
   background: var(--startup-bg);
+  font-family: var(--font-family-body);
   opacity: 1;
-  transition: opacity var(--startup-fade-ms) var(--motion-ease-standard);
+  will-change: opacity;
+  transition: opacity var(--startup-exit-fade-ms, var(--startup-fade-ms)) var(--motion-ease-standard) var(--startup-exit-delay-ms, 0ms);
 }
 
 .startup-overlay.hidden {
@@ -42,27 +53,40 @@
   text-align: center;
 }
 
+@keyframes startup-arrive {
+  from { opacity: 0; }
+}
+
 /* The brand mark, not body text: a fixed multiple of the title role so it
  * still follows the Text size setting (--font-scale). */
 .startup-overlay-wordmark {
-  color: var(--text-primary);
+  color: var(--startup-text);
   font-family: var(--font-family-brand);
   font-size: calc(var(--font-size-title) * 1.9);
   font-weight: 400;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+  animation: startup-arrive var(--startup-arrive-ms) ease-out backwards;
 }
 
+/* The name holds until the stars have landed in it. */
+.startup-overlay[data-exit="collapse"].hidden .startup-overlay-wordmark {
+  opacity: 0;
+  transition: opacity var(--startup-name-fade-ms) var(--motion-ease-standard) var(--startup-name-delay-ms);
+}
+
+/* Held back so a fast launch never flickers it. */
 .startup-overlay-sublabel {
   min-height: 1.5em;
   margin-top: var(--space-7);
   max-width: 100%;
   overflow: hidden;
-  color: var(--text-secondary);
+  color: var(--startup-text-secondary);
   font-size: var(--font-size-footnote);
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
+  animation: startup-arrive var(--startup-arrive-ms) ease-out 200ms backwards;
 }
 
 /* Reserved from first paint so the slow line never re-centres the stack. */
@@ -88,9 +112,22 @@
   gap: var(--space-4);
 }
 
+/* Animation off shows a plain curtain: nothing arrives, it is simply there. */
+:root[data-startup-animation="off"] .startup-overlay-wordmark,
+:root[data-startup-animation="off"] .startup-overlay-sublabel,
+:root[data-startup-animation-flag="off"] .startup-overlay-wordmark,
+:root[data-startup-animation-flag="off"] .startup-overlay-sublabel {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* A still sky (painted once) and a plain fade: opacity only, nothing moves. */
   .startup-overlay {
     transition: opacity var(--startup-fade-ms) linear;
+  }
+
+  .startup-overlay-wordmark,
+  .startup-overlay-sublabel {
+    animation: none;
   }
 }

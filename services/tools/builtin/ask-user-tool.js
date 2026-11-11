@@ -34,23 +34,52 @@ function uniqueQuestionId(value, index, seen) {
   }
 }
 
-function normalizeQuestions(input) {
+// An option is text, or an object carrying its text as `label`, `text` or `value`.
+// Returns undefined for a blank option (dropped) and null for one that cannot be read.
+function readOption(option) {
+  if (typeof option === 'string') return boundedString(option, LIMITS.option, { required: true }) || undefined;
+  if (option && typeof option === 'object' && !Array.isArray(option)) {
+    const text = [option.label, option.text, option.value].find((entry) => typeof entry === 'string');
+    return text === undefined ? null : readOption(text);
+  }
+  return null;
+}
+
+function unreadableOption(questionId, position, option) {
+  let shown;
+  try { shown = JSON.stringify(option); } catch (_error) { shown = undefined; }
+  shown = String(shown ?? option).slice(0, 40);
+  return `ask_user did not ask: option ${position} of question "${questionId}" (${shown}) must be text such as "Yes", `
+    + 'or an object with a text label such as {"label": "Yes"}. Correct it and call ask_user again.';
+}
+
+function readOptions(candidate, questionId) {
+  if (!Array.isArray(candidate.options)) return { options: [] };
+  const options = [];
+  for (const [index, raw] of candidate.options.slice(0, LIMITS.options).entries()) {
+    const option = readOption(raw);
+    if (option === null) return { options, error: unreadableOption(questionId, index + 1, raw) };
+    if (option) options.push(option);
+  }
+  return { options };
+}
+
+// `error` names the first option that could not be read; the questions before it are still returned.
+function parseQuestions(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)
     || !Array.isArray(input.questions)) {
-    return [];
+    return { questions: [] };
   }
   const seen = new Set();
   const questions = [];
+  let error = '';
   for (const candidate of input.questions.slice(0, LIMITS.questions)) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
     const prompt = boundedString(candidate.prompt, LIMITS.prompt, { required: true });
     if (!prompt) continue;
     const id = uniqueQuestionId(candidate.id, questions.length, seen);
-    const options = Array.isArray(candidate.options)
-      ? candidate.options.slice(0, LIMITS.options)
-        .map((option) => boundedString(option, LIMITS.option, { required: true }))
-        .filter(Boolean)
-      : [];
+    const { options, error: optionError } = readOptions(candidate, id);
+    error = error || optionError || '';
     questions.push({
       id,
       prompt,
@@ -59,7 +88,11 @@ function normalizeQuestions(input) {
       multi_select: candidate.multi_select === true,
     });
   }
-  return questions;
+  return { questions, error };
+}
+
+function normalizeQuestions(input) {
+  return parseQuestions(input).questions;
 }
 
 function failure(content) {
@@ -147,7 +180,8 @@ module.exports = {
   },
 
   async execute(input, context = {}) {
-    const questions = normalizeQuestions(input);
+    const { questions, error } = parseQuestions(input);
+    if (error) return failure(error);
     if (!questions.length) return failure('No usable question was provided.');
 
     const service = context.backendService;

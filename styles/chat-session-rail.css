@@ -23,7 +23,7 @@
   /* Rail width plus one space-8 of air between the reading column and the rail. */
   --session-rail-reserve: calc(var(--session-rail-width) + var(--space-8));
   --chat-room: calc(100% - var(--session-rail-reserve));
-  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(var(--chat-room) - 2 * max(clamp(var(--chat-gutter-min), calc(0.03 * var(--chat-room)), 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (var(--chat-room) - var(--chat-reading-floor)) / 2)))));
+  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(var(--chat-room) - 2 * max(clamp(var(--chat-gutter-min), calc(0.03 * var(--chat-room)), 40px), var(--chat-sprite-rail-offset)))));
 }
 
 /* ── Docked: room for the rail ── */
@@ -46,16 +46,10 @@
   inset-inline-start: max(0px, calc((100% - var(--session-rail-reserve) - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
 }
 
-/* Docked, the utility cluster (with the Session toggle) is one row over the rail's head, on the
-   tray's end edge, so nothing floats over the reading column and its gutters reserve nothing
-   (observeUtilityReserve measures no reach into the stage). The rail's tray starts below it. */
-.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster {
-  flex-direction: row;
-  margin-inline-end: var(--space-8);
-}
-
+/* The session bar (chat-session-bar.css) spans the pane's head whether or not the rail is docked,
+   so the rail's tray starts below it. */
 .chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .session-rail {
-  padding-block-start: calc(var(--space-4) + 28px + var(--space-4));
+  padding-block-start: calc(var(--session-bar-h) + var(--space-2));
 }
 
 /* ── The rail ── */
@@ -499,6 +493,70 @@ button.session-rail-fact:hover {
 .session-rail-sheet .session-rail-tray {
   padding: 0;
   background: none;
+}
+
+/* ── The glide and the resize handle (row 115 slice 3) ──
+   renderer-session-rail-motion.js sets data-session-rail-glide on the pane under #chatView[data-panel-motion];
+   nothing here runs without both. opening/closing: the rail's column and the room it holds grow from or shrink
+   to 0 (the pane stays docked until the column has collapsed). leaving: a side panel opening forced the rail
+   out; the room it held eases to 0 with the panel. The text keeps --chat-measure-lock and the tray its full
+   width, so nothing re-wraps or squashes. Reduced motion never starts the motion. */
+@keyframes session-rail-open { from { inline-size: 0; padding-inline: 0; opacity: 0; } }
+@keyframes session-rail-close { to { inline-size: 0; padding-inline: 0; opacity: 0; } }
+@keyframes session-rail-room-open { from { margin-inline-end: 0; } }
+@keyframes session-rail-room-close { to { margin-inline-end: 0; } }
+@keyframes session-rail-room-leave { from { margin-inline-end: calc(var(--session-rail-width) + var(--space-8)); } }
+@keyframes session-rail-hero-open { from { padding-inline-end: 0; } }
+@keyframes session-rail-hero-close { to { padding-inline-end: 0; } }
+@keyframes session-rail-hero-leave { from { padding-inline-end: calc(var(--session-rail-width) + var(--space-8)); } }
+
+.chat-view[data-panel-motion] > .chat-pane[data-session-rail-glide] > .session-rail > .session-rail-tray {
+  inline-size: calc(var(--session-rail-width) - 2 * var(--space-8));
+}
+
+.chat-view[data-panel-motion="opening"] > .chat-pane[data-session-rail-glide="opening"] > .session-rail {
+  overflow: hidden;
+  animation: session-rail-open var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
+}
+.chat-view[data-panel-motion="opening"] > .chat-pane[data-session-rail-glide="opening"] > :is(.chat-thread-stage, .composer-wrap) {
+  animation: session-rail-room-open var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
+}
+.chat-view[data-panel-motion="opening"] > .chat-pane[data-session-rail-glide="opening"] > .hero-stage {
+  animation: session-rail-hero-open var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
+}
+
+.chat-view[data-panel-motion="closing"] > .chat-pane[data-session-rail-glide="closing"] > .session-rail {
+  overflow: hidden;
+  animation: session-rail-close var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
+}
+.chat-view[data-panel-motion="closing"] > .chat-pane[data-session-rail-glide="closing"] > :is(.chat-thread-stage, .composer-wrap) {
+  animation: session-rail-room-close var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
+}
+.chat-view[data-panel-motion="closing"] > .chat-pane[data-session-rail-glide="closing"] > .hero-stage {
+  animation: session-rail-hero-close var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
+}
+
+.chat-view[data-panel-motion="opening"] > .chat-pane[data-session-rail-glide="leaving"] > :is(.chat-thread-stage, .composer-wrap) {
+  animation: session-rail-room-leave var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
+}
+.chat-view[data-panel-motion="opening"] > .chat-pane[data-session-rail-glide="leaving"] > .hero-stage {
+  animation: session-rail-hero-leave var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
+}
+
+/* The resize handle: the artifact panel's separator (context-panel.css) centred on the rail's start edge, in
+   the air between the rail and the stage, below the bar (the split kicker row is the bar's height too). Docked
+   only (the controller hides it otherwise); the line shows on hover, focus and drag, as there. */
+.chat-pane > .artifact-review-resizer.session-rail-resizer {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  justify-self: end;
+  margin-inline-end: calc(var(--session-rail-width) - var(--artifact-review-resizer-width, 10px) / 2);
+  margin-block-start: var(--session-bar-h);
+  z-index: calc(var(--z-raised) + 1);
+}
+
+.artifact-review-resizer.session-rail-resizer:not(:hover, :focus-visible, .dragging)::before {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

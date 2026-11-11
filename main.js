@@ -87,6 +87,7 @@ let systemStats;
 let toolExecutor;
 let toolPermissionStore;
 let workspaceIdeSnapshotStore;
+let browserSessionService;
 // Workspace child-process services (piped terminal, ConPTY, and test runner),
 // created inside registerMainIpcHandlers and surfaced here for awaited quit.
 let workspaceProcessServices = {};
@@ -365,6 +366,7 @@ const createRuntimeServices = () => {
   toolExecutor = created.toolExecutor;
   toolPermissionStore = created.toolPermissionStore;
   workspaceIdeSnapshotStore = created.workspaceIdeSnapshotStore;
+  browserSessionService = created.browserSessionService;
   usageHistory = created.usageHistory;
   refreshElectronToolRegistry = created.refreshElectronToolRegistry;
 };
@@ -437,6 +439,7 @@ const registerIpcHandlers = () => require('./services/main/ipc-handler-registrat
   openPathImpl: (targetPath) => shell.openPath(targetPath),
   sendBridgeEvent,
   workspaceSnapshotStore: workspaceIdeSnapshotStore,
+  browserSessionService, // row 122: before and after pictures render in its hidden windows
   getDisplayMediaSourceHandler: () => displayMediaSourceHandler,
   getDiagnosticLogService: () => logStore,
   getLogRedactionPrefixes,

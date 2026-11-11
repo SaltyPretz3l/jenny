@@ -41,6 +41,16 @@ function placementRefusal(reason) {
   return { ...failure, content: `${NAME} did not record a proposal. ${CONTENT[reason]}` };
 }
 
+// Row 129 C11: the reason a chat other than the Jenny chat is refused when its raw input carries a
+// primary-only argument, whatever the argument's value (a malformed one must not read as "fix project_id").
+// Null when the input carries none.
+function primaryOnlyReason(input) {
+  if (!input || typeof input !== 'object') return null;
+  const sent = (key) => input[key] !== undefined && input[key] !== null;
+  if (sent('fork_of_session_id')) return 'fork_not_allowed';
+  return sent('project_id') ? 'project_not_allowed' : null;
+}
+
 // The refusal reason for the primary's fork_of_session_id (the caller is already known to be the
 // primary), or null when the chat can be forked.
 async function forkRefusalReason(value, context, live) {
@@ -135,6 +145,8 @@ module.exports = {
     const deps = resolveSessionProposalDeps(context);
     if (!deps?.records || !deps.binding) return proposalFailure(NAME, 'unavailable');
     if (!producerToolSupported(deps, context, NAME)) return proposalFailure(NAME, 'unsupported_capability');
+    const primaryOnly = primaryOnlyReason(input);
+    if (primaryOnly && !isPrimarySession(context.backendService?.sessionStore, context.sessionId)) return placementRefusal(primaryOnly);
     const validated = deps.records.normalizeSessionProposalInput(input);
     if (!validated?.ok) return proposalFailure(NAME, 'invalid_request', { cause: validated?.cause_code });
     const live = checkLiveCall(context);

@@ -21,6 +21,9 @@ Fixture user profile. Snapshot-friendly: short, generic, no real PII.
 ## Current Date
 The effective `current_date` for this request is `2026-01-01`. Use this value consistently unless the user provides a different explicit date.
 
+## Diagrams
+To show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; the chat draws it as a chart.
+
 <!-- CACHE_BOUNDARY -->
 
 ## Executable Tools

@@ -1,0 +1,83 @@
+{
+  "description": "Team preamble vectors shared by server/team/transport/preamble.js and native/jenny-team-bridge. Hex strings. host: 72 bytes = JNYT | 01 | 000000 | boot secret (32) | remote public key (32). member: 40 bytes = JNYT | 01 | 000000 | launch secret (32).",
+  "version": 1,
+  "host": [
+    {
+      "name": "sequential",
+      "boot_secret": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9",
+      "remote_key": "646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d",
+      "preamble": "4a4e59540100000000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d"
+    },
+    {
+      "name": "all_ff",
+      "boot_secret": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "remote_key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "preamble": "4a4e595401000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "host_invalid": [
+    {
+      "name": "wrong_magic",
+      "bytes": "4b4e59540100000000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d"
+    },
+    {
+      "name": "wrong_version",
+      "bytes": "4a4e59540200000000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d"
+    },
+    {
+      "name": "reserved_not_zero",
+      "bytes": "4a4e59540100010000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d"
+    },
+    {
+      "name": "short",
+      "bytes": "4a4e59540100000000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f36"
+    },
+    {
+      "name": "long",
+      "bytes": "4a4e59540100000000070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d00"
+    },
+    {
+      "name": "empty",
+      "bytes": ""
+    }
+  ],
+  "member": [
+    {
+      "name": "sequential",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "preamble": "4a4e595401000000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    },
+    {
+      "name": "zeros",
+      "launch_secret": "0000000000000000000000000000000000000000000000000000000000000000",
+      "preamble": "4a4e5954010000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "member_invalid": [
+    {
+      "name": "wrong_secret",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "bytes": "4a4e595401000000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dd"
+    },
+    {
+      "name": "wrong_magic",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "bytes": "4a00595401000000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    },
+    {
+      "name": "wrong_version",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "bytes": "4a4e595400000000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    },
+    {
+      "name": "reserved_not_zero",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "bytes": "4a4e595401000009030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+    },
+    {
+      "name": "short",
+      "launch_secret": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "bytes": "4a4e595401000000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5"
+    }
+  ]
+}

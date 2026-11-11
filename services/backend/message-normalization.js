@@ -4,9 +4,7 @@
  * Shared message and metadata normalization functions used by both
  * SessionShadowStore and ElectronSessionStore.
  */
-const {
-  normalizeAttachmentMetadataList,
-} = require('../attachment-service');
+const { normalizeAttachmentMetadataList } = require('../attachment-service');
 const {
   normalizeGeneratedArtifactMetadataList,
 } = require('../artifact-metadata-utils');
@@ -16,6 +14,7 @@ const { normalizeDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 const { validateAnyContextRow } = require('./session-handoff-context');
 const { normalizeImagePromptPin } = require('./image-prompt-pin');
+const { messageAuthorFor } = require('./message-author');
 
 const VALID_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'tool', 'context']);
 const VALID_EXTERNAL_PAYLOAD_ROOT_KINDS = new Set([
@@ -808,11 +807,12 @@ function normalizeMessageFields(rawInput, fallbackModel = '') {
     context_compacted: _contextCompacted,
     discarded_drafts: _discardedDrafts,
     memory_notes: _memoryNotes,
-    image_prompt_pin: _imagePromptPin,
+    image_prompt_pin: _imagePromptPin, author: _author,
     ...sourceFields
   } = input;
   const memoryNotes = normalizeMemoryNotes(input.memory_notes);
   const imagePromptPin = normalizeMessageRole(input.role) === 'user' ? normalizeImagePromptPin(input.image_prompt_pin) : null;
+  const author = messageAuthorFor(normalizeMessageRole(input.role), input.author);
   const discardedDrafts = normalizeDiscardedDrafts(input.discarded_drafts);
   const toolCall = normalizeToolCallMetadata(input.tool_call);
   const toolResult = normalizeToolResultMetadata(input.tool_result);
@@ -863,7 +863,7 @@ function normalizeMessageFields(rawInput, fallbackModel = '') {
     proactive_suggestion: proactiveSuggestion,
     ...(memoryNotes ? { memory_notes: memoryNotes } : {}),
     skill_invocation: normalizeSkillInvocationMetadata(input.skill_invocation),
-    ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}),
+    ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}), ...(author ? { author } : {}),
     plugin_operation: normalizePluginOperationMetadata(input.plugin_operation),
     message_reactions: normalizeMessageReactions(
       input.message_reactions || input.messageReactions

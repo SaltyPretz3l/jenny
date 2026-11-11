@@ -513,3 +513,70 @@ test('Ctrl+Alt+W toggles Wide from the page and a chat composer, not from other 
   pressCtrl(window, 'W', { ...chord, shiftKey: true });
   assert.deepEqual(calls, ['wide', 'wide'], 'AltGr, Ctrl+W and Ctrl+Alt+Shift+W are not the chord');
 });
+
+/* Row 115 slice 3: Ctrl+\ closes the open side panel, else hides the focused pane's docked Session rail. */
+
+test('Ctrl+Backslash closes through closeFocusedPanel, claims the key only when something closed, and stands down in editors, the Workspace and behind an overlay (unit)', (t) => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body>'
+    + '<textarea class="composer-input" id="composer"></textarea>'
+    + '<textarea class="inputarea" id="editor"></textarea>'
+    + '<div id="ideView"><div class="monaco-editor" id="monaco"></div></div></body></html>');
+  const { window } = dom;
+  const doc = window.document;
+  const calls = [];
+  const logs = [];
+  let overlayOpen = false;
+  let closed = true;
+  const controller = createGlobalShortcutsController({
+    windowRef: window,
+    isOverlayOpen: () => overlayOpen,
+    callbacks: {
+      closeFocusedPanel: () => { calls.push('close'); return closed; },
+      togglePaneSplit: () => { calls.push('split'); return true; },
+      appendClientLog: (...args) => logs.push(args),
+    },
+  });
+  controller.bind();
+  t.after(() => { controller.dispose(); window.close(); });
+  const chord = { code: 'Backslash' };
+
+  const fromPage = pressCtrl(window, '\\', chord);
+  assert.deepEqual(calls, ['close'], 'the chord closes from the page');
+  assert.equal(fromPage.defaultPrevented, true, 'it claims the key when it closed something');
+  assert.equal(logs.at(-1)[1], 'shortcuts.panel_close');
+
+  closed = false;
+  const nothing = pressCtrl(window, '\\', chord);
+  assert.deepEqual(calls, ['close', 'close'], 'the callback is asked');
+  assert.equal(nothing.defaultPrevented, false, 'nothing to close: the key keeps its default');
+  closed = true;
+
+  pressCtrl(window, '\\', { ...chord, repeat: true });
+  assert.deepEqual(calls, ['close', 'close'], 'a held chord acts once');
+
+  doc.getElementById('composer').focus();
+  pressCtrl(window, '\\', chord);
+  assert.deepEqual(calls, ['close', 'close', 'close'], 'a chat composer does not own the chord');
+
+  doc.getElementById('editor').focus();
+  const fromEditor = pressCtrl(window, '\\', chord);
+  assert.deepEqual(calls, ['close', 'close', 'close'], 'any other text-editing surface keeps its own Ctrl+Backslash');
+  assert.equal(fromEditor.defaultPrevented, false);
+  doc.getElementById('editor').blur();
+
+  const inWorkspace = new window.KeyboardEvent('keydown', { key: '\\', code: 'Backslash', ctrlKey: true, bubbles: true, cancelable: true });
+  doc.getElementById('monaco').dispatchEvent(inWorkspace);
+  assert.deepEqual(calls, ['close', 'close', 'close'], 'the Workspace view (Monaco) keeps the chord');
+  assert.equal(inWorkspace.defaultPrevented, false);
+
+  overlayOpen = true;
+  pressCtrl(window, '\\', chord);
+  assert.deepEqual(calls, ['close', 'close', 'close'], 'a managed overlay stands the chord down');
+  overlayOpen = false;
+
+  pressCtrl(window, '|', { code: 'Backslash', shiftKey: true });
+  assert.deepEqual(calls, ['close', 'close', 'close', 'split'], 'Ctrl+Shift+Backslash stays the split chord');
+  pressCtrl(window, '\\', { ...chord, altKey: true });
+  pressCtrl(window, '\\', { ...chord, metaKey: true });
+  assert.deepEqual(calls, ['close', 'close', 'close', 'split'], 'Alt or Meta make it a different chord');
+});

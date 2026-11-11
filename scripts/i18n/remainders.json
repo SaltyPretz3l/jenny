@@ -1,7 +1,7 @@
 [
   {
     "name": "session-default-titles",
-    "file": "renderer/shell/renderer-lifecycle-utils.js",
+    "file": "renderer/shell/renderer-lifecycle-session-actions.js",
     "text": "New Chat",
     "reason": "persisted session title; translated at display time"
   },
@@ -32,7 +32,7 @@
   {
     "name": "image-edit-model-context",
     "file": "renderer/features/renderer-image-edit-draft.js",
-    "text": "Copy source_artifact_id and region exactly; if region is absent, omit region. Omit width and height to keep the source size. Give the edited variant a short descriptive title.",
+    "text": "Copy source_artifact_id and region exactly; if region is absent, omit region. Omit size to keep the source size. Give the edited variant a short descriptive title.",
     "reason": "Model-facing selection instructions appended only to the provider prompt; visiblePrompt retains the human message. Tool parameter vocabulary must remain stable."
   },
   {

@@ -436,7 +436,7 @@
       renderMathAfterTimelinePatch();
       decorateCodeAfterTimelinePatch();
 
-      schedulePredictedHeightCleanup();
+      schedulePredictedHeightCleanup({ beforePaint: state.ui?.followLatest === true });
       // Finding 2: attach first so its cancel clears the PREVIOUS render's
       // pending debounce timer/rAF, then measure synchronously so
       // --_rail-top/--_rail-height are set before paint (no height:0 ->
@@ -604,8 +604,8 @@
     }
 
     // B5: one decorator channel resolves the patched root once per render/patch and
-    // drives the post-render decorators. The follow-up decorator subscribes here; the pin
-    // re-scan reuses the same scope.patchedRoot (passed to the viewport sync below).
+    // drives the post-render decorators. The follow-up decorator subscribes here; the
+    // viewport sync below reuses the same scope.patchedRoot.
     const decoratorChannel = (decoratorChannelUtils
       && typeof decoratorChannelUtils.createTimelineDecoratorChannel === 'function')
       ? decoratorChannelUtils.createTimelineDecoratorChannel({ chatTimeline })
@@ -678,6 +678,33 @@
       try {
         decorateTranscriptFollowUpButtonsIn(containerEl);
       } catch (_decorateErr) { /* best-effort */ }
+      try {
+        resyncQueuedBubbles();
+      } catch (_queuedErr) { /* best-effort */ }
+      resyncChangePictures(containerEl);
+    }
+
+    // A queued send's greyed bubble and its line are applied by the composer
+    // render, not the article markup, so every timeline write re-applies them.
+    function resyncQueuedBubbles() {
+      globalThis.rendererRuntimeQueueView?.resyncQueuedBubbles?.(chatTimeline);
+    }
+
+    // Row 122: the before and after pictures under a settled reply are not article
+    // markup either, so every timeline write puts them back (best-effort).
+    function resyncChangePictures(root) {
+      try {
+        globalThis.rendererCodeReviewRail?.decorateChatPictures?.({
+          root: root || chatTimeline,
+          timeline: chatTimeline,
+          getSessionId: getPaneSessionId,
+          isEnabled: () => state.features?.featureFlags?.change_pictures !== false,
+          getTurns: (sessionId) => {
+            const turns = uiRuntime.projectionContextBySession?.get?.(sessionId)?.currentContext?.viewModelByTurnId;
+            return turns instanceof Map ? Array.from(turns.values()) : [];
+          },
+        });
+      } catch (_picturesErr) { /* best-effort */ }
     }
 
     function buildVirtualizedEntryInnerHtml(entryEl) {
@@ -707,7 +734,7 @@
       const opts = options || {};
       syncTimelineBusyState();
       // Resolve the patched root once and run the follow-up decorator through the channel;
-      // the same scope.patchedRoot drives the scoped pin re-scan in the viewport sync below.
+      // the viewport sync below reuses the same scope.patchedRoot.
       const decoratorScope = decoratorChannel
         ? decoratorChannel.dispatch({
           patchedMessageId: opts.patchedMessageId || '',
@@ -727,6 +754,8 @@
           decorateTranscriptFollowUpButtons();
         }
       }
+      resyncQueuedBubbles();
+      resyncChangePictures(patchedRoot);
       if (opts.patchedMessageId && patchedRoot && typeof patchedRoot.closest === 'function') {
         const patchedRailRoot = patchedRoot.closest('.chat-thread-root');
         if (patchedRailRoot) scheduleRailResizeUpdate(patchedRailRoot);
@@ -738,7 +767,7 @@
         syncPatchedArticlePrediction(opts.patchedMessageId, opts.predictedHeight);
       }
       if (opts.cleanupPredictedHeights) {
-        schedulePredictedHeightCleanup();
+        schedulePredictedHeightCleanup({ beforePaint: state.ui?.followLatest === true });
       }
       if (opts.liveThinking !== false) {
         renderLiveThinkingChip();

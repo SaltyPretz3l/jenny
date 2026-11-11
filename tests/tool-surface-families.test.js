@@ -10,7 +10,7 @@ test('surface registry has the ordered sections and frozen public arrays', () =>
   assert.deepEqual(SURFACE_FAMILIES.map(({ id, section }) => [id, section]), [
     ['files', 'project'], ['terminal', 'project'], ['git', 'project'], ['python', 'project'],
     ['code', 'project'], ['checks', 'project'], ['artifacts', 'create'], ['images', 'create'],
-    ['web', 'reach'], ['knowledge', 'reach'], ['home', 'reach'], ['helpers', 'reach'],
+    ['web', 'reach'], ['browser_use', 'reach'], ['knowledge', 'reach'], ['home', 'reach'], ['helpers', 'reach'],
   ]);
   assert.ok(Object.isFrozen(SURFACE_FAMILIES));
   assert.ok(Object.isFrozen(ALWAYS_ON_TOOL_NAMES));
@@ -44,8 +44,9 @@ test('explicit tool names win and manifest families provide the fallback', () =>
 });
 
 test('terminal off disables all six shell tools including monitors', () => {
+  // Row 114: browser is off until a chat says true, so every resolution lists it.
   assert.deepEqual(resolveRequestToolPreferences({ families: { terminal: false } }), {
-    disabled_tools: ['check_background_job', 'check_monitor', 'monitor',
+    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
       'run_command', 'run_temp_script', 'stop_background_job'],
   });
 });
@@ -56,13 +57,11 @@ test('files off also disables artifacts unless an explicit artifact boolean over
     assert.ok(result.disabled_tools.includes('read_file'));
     assert.ok(result.disabled_tools.includes('workspace_manifest_read'));
     assert.ok(result.disabled_tools.includes('create_artifact'));
-    assert.ok(result.disabled_tools.includes('mermaid_generate'));
     assert.equal(result.enabled_tools, undefined);
   }
   const result = resolveRequestToolPreferences({ families: { files: false, artifacts: true } });
   assert.ok(result.disabled_tools.includes('read_file'));
   assert.equal(result.disabled_tools.includes('create_artifact'), false);
-  assert.equal(result.disabled_tools.includes('mermaid_generate'), false);
 });
 
 test('connection identity prefers explicit ids then MCP server names', () => {
@@ -84,10 +83,10 @@ test('MCP connection off disables only matching catalog tools', () => {
     read_file: { available: true },
   };
   assert.deepEqual(resolveRequestToolPreferences({ connections: { 'mcp:github': false } }, catalog), {
-    disabled_tools: ['mcp__github__search'],
+    disabled_tools: ['browser', 'mcp__github__search'],
   });
   assert.deepEqual(resolveRequestToolPreferences({ connections: { 'plugin:render': false } }, catalog), {
-    disabled_tools: ['plugin_render'],
+    disabled_tools: ['browser', 'plugin_render'],
   });
 });
 
@@ -99,15 +98,17 @@ test('catalog family members join manifest tools and always-on names cannot be d
   };
   const result = resolveRequestToolPreferences({ families: { terminal: false },
     connections: { 'plugin:shell': false } }, catalog);
-  assert.deepEqual(result, { disabled_tools: ['check_background_job', 'check_monitor', 'monitor',
+  assert.deepEqual(result, { disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
     'plugin_shell', 'run_command', 'run_temp_script', 'stop_background_job'] });
 });
 
 test('all-on, empty, unknown and non-boolean preferences emit no request arrays', () => {
   const allOn = Object.fromEntries(SURFACE_FAMILIES.map(family => [family.id, true]));
-  for (const raw of [undefined, {}, { families: {} }, { families: allOn },
+  assert.equal(resolveRequestToolPreferences({ families: allOn }), undefined);
+  // Row 114: anything short of an explicit browser_use true still lists the browser, and nothing else.
+  for (const raw of [undefined, {}, { families: {} },
     { families: { unknown: false, files: 'false', terminal: 0 }, connections: { unknown: false } },
     { families: [], connections: [] }, { connections: { 'mcp:github': true } }]) {
-    assert.equal(resolveRequestToolPreferences(raw), undefined);
+    assert.deepEqual(resolveRequestToolPreferences(raw), { disabled_tools: ['browser'] });
   }
 });

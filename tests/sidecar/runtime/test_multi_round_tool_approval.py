@@ -19,6 +19,7 @@ missing coverage: the loop, at the layer that drives it.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -164,6 +165,57 @@ def test_a_turn_needing_two_approvals_is_asked_twice_and_completes(monkeypatch) 
     assert outcome.response["result"]["status"] == "completed", (
         "the turn must finish, not settle on the unconsumed awaiting_approval status"
     )
+
+
+@dataclass(frozen=True)
+class _RefusablePlan:
+    approval_plan_hash: str = "hash"
+    app_refusal: str = ""
+
+
+def test_an_app_refusal_resumes_the_turn_with_the_reason_instead_of_ending_it(monkeypatch) -> None:
+    """Row 94: a refusal the user never saw is the tool's answer, not "User rejected approval"."""
+    legs: list[dict[str, Any]] = []
+    cache = _StubApprovalPlanCache()
+
+    def _fake_build_chat_response(**kwargs: Any):
+        legs.append(kwargs)
+        if len(legs) > 1:
+            return _response(approval_request=None, status="completed")
+        first = _response(approval_request=_approval_request("call-1", "project_create"), status="awaiting_approval")
+        first.approval_plan = _RefusablePlan()
+        return first
+
+    monkeypatch.setattr(rd, "_build_chat_response", _fake_build_chat_response)
+    monkeypatch.setattr(rd, "request_tool_approval", lambda *_a, **_k: ApprovalResolution(
+        approved=False, status="denied", decision="app_refused", feedback='{"ok":false}'))
+    monkeypatch.setattr(rd, "_APPROVAL_PLAN_CACHE", cache)
+    monkeypatch.setattr(
+        "sidecar.runtime.request_dispatch_chat._effective_approval_wait_timeout", lambda *_a, **_k: 30.0)
+    pause_updates: list[dict[str, Any]] = []
+    monkeypatch.setattr(dispatch_chat, "current_live_run_mode_state", lambda: SimpleNamespace(
+        snapshot=lambda: ("auto_run", False), is_paused_unattended=lambda: True,
+        update=lambda **kwargs: pause_updates.append(kwargs), reset_auto_approvals=lambda: None))
+    cache.plan = _RefusablePlan()
+    config = SimpleNamespace(
+        tools_workspace_root="/ws", agent_workspace_root=None, tools_enabled=True, feature_flags={},
+        max_tools_per_turn=20, cloud_max_tools_per_turn=200,
+    )
+    brain = SimpleNamespace(
+        stack=SimpleNamespace(config=config, engine=None, tool_observations=None),
+        request_boundary=lambda *_a, **_k: _NullContextManager(),
+    )
+
+    outcome = rd.process_chat_send_request(
+        message_id=1, params={"accept_version": API_VERSION, "request_id": "rq-two-approvals"}, initialized=True,
+        interactive_approval=True, brain_container=brain,  # type: ignore[arg-type]
+        logger=LOGGER, write_message=lambda _msg: None, read_message=lambda: {},
+    )
+
+    assert outcome.response["result"]["status"] == "completed"
+    assert outcome.notifications == []
+    assert legs[1]["approval_plan"].app_refusal == '{"ok":false}'
+    assert pause_updates == [], "nobody answered, so an unattended pause stays on"
 
 
 def test_approval_rounds_are_bounded_by_the_turn_tool_budget(monkeypatch) -> None:

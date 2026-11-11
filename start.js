@@ -179,13 +179,47 @@ function launch() {
     );
   }
 
+  // A person at a terminal gets the readable console; an agent, a pipe or
+  // JENNY_DEV_CONSOLE=raw keeps the JSON lines exactly as Electron wrote them.
+  const {
+    createDevConsoleFormatter, resolveDevConsoleMode, resolveHiddenEventPrefixes,
+  } = require('./scripts/dev/dev-console-formatter');
+  const consoleMode = resolveDevConsoleMode({
+    env: process.env, agentMode, stdoutIsTTY: process.stdout.isTTY === true,
+  });
+  const formatter = consoleMode === 'raw' ? null : createDevConsoleFormatter({
+    write: (text) => process.stdout.write(text),
+    getColumns: () => process.stdout.columns,
+    color: !process.env.NO_COLOR,
+    verbose: consoleMode === 'verbose',
+    hiddenEventPrefixes: resolveHiddenEventPrefixes(process.env),
+  });
+
   // Keep the attached-parent spawn pattern: a detached Electron child gets
   // reaped when the launching terminal/agent session ends mid-test.
   const child = spawn(electronPath, ['.', ...forwardedArgs], {
-    stdio: 'inherit',
+    stdio: formatter ? ['inherit', 'pipe', 'pipe'] : 'inherit',
     env,
     cwd: __dirname,
   });
+
+  if (formatter) {
+    formatter.notice(
+      'Readable dev console: repeats fold into a count, quiet events are hidden. '
+        + 'JENNY_DEV_CONSOLE=verbose shows everything, =raw prints the JSON lines.'
+    );
+    child.stdout.on('data', (chunk) => formatter.push(chunk, 'stdout'));
+    child.stderr.on('data', (chunk) => formatter.push(chunk, 'stderr'));
+    // Ctrl+C reaches Electron through the shared console. The launcher holds
+    // the other end of its output pipes, so it stays to print the shutdown;
+    // a second Ctrl+C closes the launcher without waiting.
+    let interrupts = 0;
+    process.on('SIGINT', () => {
+      interrupts += 1;
+      if (interrupts > 1) process.exit(130);
+      formatter.notice('Stopping Jenny... (Ctrl+C again closes this window without waiting)');
+    });
+  }
 
   child.on('error', (error) => {
     console.error(`Jenny launcher failed to start Electron: ${String((error && error.message) || error)}`);
@@ -193,6 +227,7 @@ function launch() {
   });
 
   child.on('close', (code, signal) => {
+    if (formatter) formatter.end();
     process.exit(resolveChildExitCode(code, signal));
   });
 }

@@ -79,4 +79,6 @@ test('image_generate hands its bounded model image through the bridge; failures 
   assert.equal((await run('jenny_status', { isError: false, previewImage })).preview_image, undefined);
   assert.equal((await run('preview_test', { isError: false, previewImage })).preview_image, undefined);
   assert.equal((await run('preview_test', { isError: false, previewImage }, { screenshot: true })).preview_image.call_id, 'image_1');
+  assert.equal((await run('browser', { isError: false, previewImage }, { action: 'screenshot' })).preview_image.call_id, 'image_1');
+  assert.equal((await run('browser', { isError: false, previewImage }, { action: 'read' })).preview_image, undefined);
 });

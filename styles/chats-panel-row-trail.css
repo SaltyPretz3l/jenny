@@ -50,6 +50,26 @@
   text-overflow: ellipsis;
 }
 .session-row__menu { inset-inline-end: var(--space-2); }
+
+/* Where a chat's sound is coming from. A sibling of the open button, like the menu, so it stays clickable. */
+.session-row:has(.session-row__sound) .session-row__open { padding-inline-end: calc(var(--session-row-end-reserve) + 26px); }
+.session-row__sound {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: calc(var(--session-row-dot-col-end) + var(--session-row-dot-size) + var(--space-2));
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  transform: translateY(-50%);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+.session-row__sound svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.session-row__sound:not(:disabled):hover { background: var(--toprail-item-hover-bg); color: var(--text-primary); }
+.session-row__sound:disabled { color: var(--text-muted); cursor: default; }
+.session-row__sound:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: -2px; }
 .session-row__chevron { inset-inline-end: calc(var(--space-2) + 32px); }
 .session-row__children-chip {
   inset-inline-end: calc(var(--session-row-dot-col-end) + var(--session-row-dot-size) + var(--space-4));
@@ -70,7 +90,7 @@
 }
 
 .session-row:is(:hover, :focus-within) :is(.session-row__chevron, .session-row__menu) { opacity: 1; }
-.session-row:is(:hover, :focus-within):not(.sidebar-bulk-selecting) .session-row__time { opacity: 0; }
+.session-row:is(:hover, :focus-within) .session-row__time { opacity: 0; }
 
 /* Narrow panel: the time is hidden, so the dot column moves to the end margin. */
 @container viewpanel (max-width: 279px) {
@@ -85,7 +105,7 @@
 
   /* The chevron and menu take the end margin on hover, so the dot and the chip step aside there. */
   /* visibility, not opacity: the working dot's pulse animates opacity and would win. */
-  .session-row:is(:hover, :focus-within):not(.sidebar-bulk-selecting) :is(.session-row__dot, .session-row__unread-dot, .session-row__children-chip) { visibility: hidden; }
+  .session-row:is(:hover, :focus-within) :is(.session-row__dot, .session-row__unread-dot, .session-row__children-chip) { visibility: hidden; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -575,6 +575,24 @@ def test_background_lifetime_is_not_the_foreground_cap(monkeypatch, tmp_path, se
                           "timeout_seconds": 86401}, _guard(tmp_path))
 
 
+def test_background_job_defaults_to_the_background_limit(monkeypatch, tmp_path):
+    captured = {}
+
+    def start(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(job_id="123456abcdef", pid=123)
+
+    monkeypatch.setattr(shell_module, "start_background_job", start)
+    result = run_command_tool({"command": "npm start", "run_in_background": True}, _guard(tmp_path))
+    assert captured["timeout_seconds"] == 86400
+    assert json.loads(result.output)["timeout_seconds"] == 86400
+
+
+@pytest.mark.parametrize("arguments", [{}, {"run_in_background": False}])
+def test_foreground_default_stays_short(arguments):
+    assert shell_module._parse_timeout(arguments) == 10
+
+
 def test_timeout_returns_bounded_partial_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

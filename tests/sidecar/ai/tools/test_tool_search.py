@@ -8,6 +8,8 @@ import pytest
 
 from sidecar.ai.tools.tool_search import (
     JENNY_HELP_DEFER_FLAG,
+    RARE_TOOL_DEFER_FLAG,
+    RARELY_USED_DEFERRED_TOOL_NAMES,
     TOOL_SEARCH_RESULT_KIND,
     TOOL_SEARCH_TOOL_NAME,
     DeferralMode,
@@ -320,6 +322,37 @@ class TestComputeDeferralSet:
             == frozenset()
         )
 
+    def test_rarely_used_tools_are_deferred_when_eligible_until_switched_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        descriptors = [_descriptor("monitor"), _descriptor("lsp"), _descriptor("read_file")]
+        kwargs = {"context_window": 100000, "tool_token_threshold_pct": 10}
+        not_eligible = BUILTIN_NAMES | {"read_file", "lsp"}
+        assert compute_deferral_set(
+            DeferralMode.TST_AUTO, descriptors, not_eligible, **kwargs
+        ) == frozenset({"monitor"})
+        monkeypatch.setenv(RARE_TOOL_DEFER_FLAG, "0")
+        assert (
+            compute_deferral_set(DeferralMode.TST_AUTO, descriptors, not_eligible, **kwargs)
+            == frozenset()
+        )
+
+    def test_every_rarely_used_name_is_a_defer_eligible_manifest_tool(self) -> None:
+        import json
+        from pathlib import Path
+
+        manifest = json.loads(
+            (Path(__file__).parents[4] / "services" / "tools" / "tool-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        eligible = {
+            tool["name"]
+            for tool in manifest["tools"]
+            if (tool.get("availability") or {}).get("defer_eligible") is True
+        }
+        assert RARELY_USED_DEFERRED_TOOL_NAMES <= eligible
+
 
 def test_normalize_deferral_mode_defaults_to_tst() -> None:
     assert normalize_deferral_mode("tst-auto") is DeferralMode.TST_AUTO
@@ -503,6 +536,72 @@ class TestHandleToolSearch:
         assert "mcp__db__query" in result.output
         assert "mcp__db__query" in un_deferred
 
+    def test_a_word_only_in_another_description_does_not_ride_along(self) -> None:
+        from sidecar.ai.tools.tool_search import _IndexEntry
+
+        index = ToolSearchIndex(
+            [
+                _IndexEntry(name="mcp__git__commit", description="Commit", search_hint="", is_mcp=True),
+                _IndexEntry(
+                    name="worktree_create",
+                    description="Create a local Git worktree.",
+                    search_hint="",
+                    is_mcp=False,
+                ),
+                _IndexEntry(
+                    name="workspace_change_baseline",
+                    description="Capture a Git worktree baseline.",
+                    search_hint="",
+                    is_mcp=False,
+                ),
+            ]
+        )
+        assert [match.name for match in index.search("git commit")] == ["mcp__git__commit"]
+        # A weaker name match is kept beside a stronger one.
+        assert {match.name for match in index.search("worktree baseline")} == {
+            "worktree_create",
+            "workspace_change_baseline",
+        }
+        # With no name match at all, the description matches are the answer.
+        assert {match.name for match in index.search("local capture")} == {
+            "worktree_create",
+            "workspace_change_baseline",
+        }
+
+    def test_loading_a_tool_also_loads_its_follow_up_tool(self) -> None:
+        from sidecar.ai.tools.tool_search import _IndexEntry
+
+        index = ToolSearchIndex(
+            [
+                _IndexEntry(name="monitor", description="Watch a command", search_hint="", is_mcp=False),
+                _IndexEntry(name="check_monitor", description="Read a watch", search_hint="", is_mcp=False),
+            ]
+        )
+        schemas = {
+            "monitor": {"name": "monitor", "description": "Watch a command", "parameters": {}},
+            "check_monitor": {"name": "check_monitor", "description": "Read a watch", "parameters": {}},
+        }
+        un_deferred: set[str] = set()
+        result = handle_tool_search(
+            {"query": "select:monitor"},
+            search_index=index,
+            schema_for=schemas.get,
+            un_deferred_set=un_deferred,
+        )
+        assert un_deferred == {"monitor", "check_monitor"}
+        assert result.metadata["discovered_tools"] == ["monitor", "check_monitor"]
+        assert result.output.startswith("Found 2 tool(s):")
+
+        excluded: set[str] = set()
+        handle_tool_search(
+            {"query": "select:monitor"},
+            search_index=index,
+            schema_for=schemas.get,
+            un_deferred_set=excluded,
+            excluded_names={"check_monitor"},
+        )
+        assert excluded == {"monitor"}
+
     def test_empty_query_returns_error(self) -> None:
         index, schemas, un_deferred = self._setup()
         result = handle_tool_search(
@@ -656,9 +755,9 @@ class TestHandleToolSearch:
         assert un_deferred == set()
 
 
-def test_manifest_descriptors_defer_only_jenny_help_under_the_threshold() -> None:
-    # The manifest's defer_eligible reaches the canonical descriptor, and no other
-    # manifest tool joins the always-deferred set.
+def test_manifest_descriptors_defer_the_named_sets_under_the_threshold() -> None:
+    # The manifest's defer_eligible reaches the canonical descriptor. Under the threshold
+    # only the two named sets are deferred: preview_test and verify stay offered.
     from sidecar.ai.tools.catalog import manifest_descriptors
 
     descriptors = manifest_descriptors()
@@ -674,4 +773,5 @@ def test_manifest_descriptors_defer_only_jenny_help_under_the_threshold() -> Non
         context_window=10_000_000,
         tool_token_threshold_pct=10,
     )
-    assert result == frozenset({"jenny_help"})
+    assert result == frozenset({"jenny_help"}) | RARELY_USED_DEFERRED_TOOL_NAMES
+    assert not {"preview_test", "verify"} & result

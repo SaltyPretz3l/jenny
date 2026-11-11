@@ -67,22 +67,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* B2 — lower the visual weight of the wayfinder so it stops reading
- * as a third composer row. Discoverability is preserved (button
- * remains visible when triggered) but it recedes into the chrome. */
-.composer-wayfinder-host .chat-wayfinder-button {
-  min-height: calc(var(--composer-secondary-control-size) - 4px);
-  font-size: var(--font-size-caption);
-  border-color: color-mix(in srgb, var(--composer-wayfinder-accent) 18%, var(--composer-secondary-control-border));
-}
-
-.composer-wayfinder-host .chat-wayfinder-icon {
-  flex-basis: 14px;
-  width: 14px;
-  height: 14px;
-  font-size: var(--font-size-caption);
-}
-
 .composer-skill-chip {
   max-width: min(260px, 70vw);
   border-color: color-mix(in srgb, var(--accent) 36%, var(--widget-attachment-border));

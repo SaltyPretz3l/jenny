@@ -8,7 +8,7 @@ const { buildCanonicalTurnEvent } = require('../services/backend/canonical-turn-
 const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
 const { redactTranscriptPaths } = require('../services/backend/transcript-export-redaction');
 
-function fixture() {
+function fixture(traceId = 'stream_physical') {
   const collector = new CanonicalTurnEventCollector({
     turnId: 'turn_logical', attemptId: 'stream_physical', canonicalPrimary: true,
   });
@@ -28,7 +28,7 @@ function fixture() {
   const final = collector.noteEvent(buildCanonicalTurnEvent({
     type: 'text_part_completed', turn_id: 'turn_logical', seq: 12,
     event_id: 'stream_physical:canonical:12',
-    payload: { text: content, trace_id: 'stream_physical', assistant_phase: 'final_answer' },
+    payload: { text: content, trace_id: traceId, assistant_phase: 'final_answer' },
   }));
   assert.equal(final.payload.text, content, 'HB-012: canonical text keeps real paths');
   return { collector, messages, final };
@@ -64,6 +64,18 @@ test('session reads repair old missing-base text ownership without rewriting the
   assert.equal(tree.byMessageId[messages[2].id], 'turn_logical', 'the final response must not fall through to a second legacy article');
   assert.equal(response.turn_events.find(event => event.event_id === final.event_id).primary_message_id, messages[2].id);
   assert.equal(JSON.stringify(session), before);
+});
+
+// A composer send carries its own trace token; only a send without one reuses the
+// stream id. The attempt is named by the base message id either way.
+test('ownership follows the attempt in the base message id, not the request trace token', async () => {
+  const { collector, messages, final } = fixture('trace_1794255413598_30ddd8e1fd1a');
+  assert.equal(final.primary_message_id, 'assistant_stream_physical');
+  const events = collector.buildFinalizedTurnEvents('turn_logical', messages);
+  assert.equal(events.find(event => event.event_id === final.event_id).primary_message_id, messages[2].id);
+  const session = { messages, turn_event_log_version: 4, turn_events: [final] };
+  const response = await getSessionMessages({ sessionStore: { getSession: () => session } }, 'session');
+  assert.equal(response.turn_events[0].primary_message_id, messages[2].id);
 });
 
 for (const shape of ['different_text', 'different_attempt', 'different_turn', 'ambiguous', 'existing_base']) {

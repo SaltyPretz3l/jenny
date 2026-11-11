@@ -231,3 +231,16 @@ test('F10: unread orientation reports state changes for the Wayfinder', () => {
 
   controller.dispose();
 });
+
+test('jump reaches a reply segment whose id sits on a row inside the turn entry', () => {
+  const harness = buildHarness({ messages: [{ id: 'a1', role: 'assistant' }, { id: 'seg4', role: 'assistant' }] });
+  const doc = harness.dom.window.document;
+  const row = doc.createElement('div');
+  row.setAttribute('data-message-id', 'seg4');
+  doc.querySelector('[data-message-id="a1"]').appendChild(row);
+  harness.controller.noteTimelineMessageCreated({ sessionId: 's1', messageId: 'seg4', role: 'assistant', visible: true });
+
+  assert.equal(harness.controller.jumpToFirstUnread(), true);
+  assert.ok(harness.calls.some((entry) => entry[0] === 'scroll' && entry[1] === 'seg4'));
+  assert.equal(harness.state.ui.firstUnreadMessageIdBySession.has('s1'), false);
+});

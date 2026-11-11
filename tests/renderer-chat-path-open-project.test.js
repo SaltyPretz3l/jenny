@@ -74,6 +74,20 @@ test('clicking inline code for a project file opens the read-only preview with i
   assert.equal(JSON.stringify(h.calls.logs).includes('plan.md'), false, 'logs never carry the path');
 });
 
+test('a path in an editable plan step is left to the step editor, and a decided step keeps its link', async (t) => {
+  const pending = harness('<ol><li><span data-plan-step-text><code>D:\\notes\\2026\\plan.md</code></span></li></ol>');
+  t.after(pending.dispose);
+  const event = click(pending.dom, 'code');
+  await flush();
+  assert.equal(event.defaultPrevented, false);
+  assert.deepEqual(pending.calls.preview, []);
+  const decided = harness('<ol><li><span class="plan-document__step-text"><code>D:\\notes\\2026\\plan.md</code></span></li></ol>');
+  t.after(decided.dispose);
+  click(decided.dom, 'code');
+  await flush();
+  assert.equal(decided.calls.preview.length, 1);
+});
+
 test('a prose chip carrying the absolute text opens the same preview', async (t) => {
   const h = harness('<p><span class="chat-inline-path" role="link" tabindex="0" data-chat-path-open="/home/dev/site/src/a.js" data-chat-path="/home/dev/site/src/a.js" data-chat-path-line="9">/home/dev/site/src/a.js:9</span></p>');
   t.after(h.dispose);

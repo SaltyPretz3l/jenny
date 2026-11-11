@@ -13,11 +13,12 @@ function submissionKey(deviceId, requestId) {
 }
 function applicationFailure(value, command) {
   const reason = value?.error?.reason || 'runtime_unavailable';
-  return hostFailure(reason.endsWith('_invalid') ? 'invalid'
+  return hostFailure(reason.endsWith('_invalid') ? 'invalid' : reason.endsWith('_forbidden') ? 'forbidden'
     : /stale|conflict|not_found/.test(reason) ? 'conflict' : 'unavailable', reason, command.request_id);
 }
 function createRuntimeCommandDispatcher({ applicationService: app, authorization, transaction, result } = {}) {
-  const { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity } = authorization;
+  const { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity,
+    trustedAuthor = () => undefined } = authorization;
   const { runReceipt } = transaction;
   const { bumpRevision, publish, trustedChatOptions } = result;
   function ownedWork(command) {
@@ -45,6 +46,8 @@ function createRuntimeCommandDispatcher({ applicationService: app, authorization
     const global = RUNTIME_GLOBAL_MUTATIONS.has(command.operation);
     const initial = global ? identity(command, context) : mutationGuard(command, context);
     if (initial) return initial;
+    // Slice 3-5: a team actor with no valid member id cannot start a turn (its words would have no author).
+    if (method === 'start' && trustedAuthor(context) === null) return hostFailure('forbidden', 'member_author_required', command.request_id);
     return runReceipt(command, context, async () => {
       const beforeCommit = () => {
         if (global) {
@@ -65,7 +68,9 @@ function createRuntimeCommandDispatcher({ applicationService: app, authorization
           plan_mode: options.planMode, context_preferences: options.contextPreferences,
           tool_preferences: options.toolPreferences, approval_mode: options.approvalMode };
       }
-      const value = await app[method](params, { beforeCommit });
+      // Slice 3-5: the author (start) or editor (updatePending) is a trusted option from the actor, never a params field.
+      const authored = method === 'start' || method === 'updatePending';
+      const value = await app[method](params, { beforeCommit, ...(authored ? { author: trustedAuthor(context) } : {}) });
       if (!global) assertPostAwaitAuthority(command, context);
       else assertPostAwaitIdentity(command, context);
       if (!value?.ok) return applicationFailure(value, command);

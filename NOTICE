@@ -64,6 +64,21 @@ Settings > Dictation downloads these pinned files into the user profile:
 The push-to-talk interaction is modelled on Handy (MIT,
 https://github.com/cjpais/Handy); no Handy code is included.
 
+## Browser ad blocking
+
+The in-app browser's ad blocker uses the following, unmodified, under the
+Mozilla Public License 2.0 (https://www.mozilla.org/MPL/2.0/); source is at
+https://github.com/ghostery/adblocker and https://github.com/remusao:
+@ghostery/adblocker, @ghostery/adblocker-content,
+@ghostery/adblocker-extended-selectors, @ghostery/url-parser, @remusao/smaz,
+@remusao/small and @remusao/guess-url-type.
+
+`assets/ad-filters/filters.bin` is compiled from EasyList and EasyPrivacy by
+The EasyList authors (https://easylist.to/), dual licensed under GPL-3.0 and
+CC BY-SA 3.0, used here under CC BY-SA 3.0
+(https://easylist.to/pages/licence.html). The versions are recorded in
+`assets/ad-filters/filters.json`.
+
 ## Optional PDF reading add-on (not bundled)
 
 PyMuPDF 1.27.2.2 (AGPL-3.0, or Artifex commercial licence) is not distributed

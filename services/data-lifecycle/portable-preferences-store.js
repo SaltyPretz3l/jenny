@@ -96,6 +96,7 @@ const SHELL_CONFIG_PORTABILITY = deepFreeze({
     codexCli: 'CLI command path and install-dependent enablement.',
     followUps: 'Follow-up records with free-form source metadata, not preferences.',
     workspace: 'Open chat tabs and split panes of this window.',
+    browserOnInNewChats: 'Remembered Browser switch for new chats; only the composer here may turn it on.',
   },
   excludedSubkeys: {
     'windowUi.appZoomPercent': 'Display scaling chosen for this monitor.',

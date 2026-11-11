@@ -5,188 +5,68 @@
   }
   root.rendererStreamHandlerUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  function resolveDependencyModule(globalName, modulePath) {
-    if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
-      return globalThis[globalName];
-    }
-    if (typeof require === 'function') {
-      try { return require(modulePath); } catch (_error) { /* unavailable in browser script mode */ }
-    }
-    return null;
+  const streamDeps = globalThis.rendererStreamHandlerDeps
+    || (typeof require === 'function' ? require('./renderer-stream-handler-deps') : null);
+  if (!streamDeps || typeof streamDeps.resolveDependencyModule !== 'function') {
+    throw new Error('renderer-stream-handler-deps must load before renderer/chat/renderer-stream-handler.js');
   }
-
-  const _stringUtils = resolveDependencyModule('stringUtils', '../shared/string-utils');
-  if (!_stringUtils || typeof _stringUtils.normalizeString !== 'function' || typeof _stringUtils.normalizeId !== 'function') {
-    throw new Error('string-utils must load before renderer/chat/renderer-stream-handler.js');
+  const wiringUtils = globalThis.rendererStreamHandlerWiring
+    || (typeof require === 'function' ? require('./renderer-stream-handler-wiring') : null);
+  if (!wiringUtils || typeof wiringUtils.createLiveTurnReducerWiring !== 'function') {
+    throw new Error('renderer-stream-handler-wiring must load before renderer/chat/renderer-stream-handler.js');
   }
-  const { normalizeString, normalizeId } = _stringUtils;
-  const _renderFrameUtils = resolveDependencyModule('rendererStreamHandlerRenderFrame', './renderer-stream-handler-render-frame');
-  if (!_renderFrameUtils
-    || typeof _renderFrameUtils.isRenderableBufferedStreamEvent !== 'function'
-    || typeof _renderFrameUtils.waitForRenderFrame !== 'function') {
-    throw new Error('renderer-stream-handler-render-frame must load before renderer/chat/renderer-stream-handler.js');
-  }
+  const { createLiveTurnReducerWiring, createStreamEphemeralSurfaces, createMultiStreamAdapters } = wiringUtils;
   const {
+    normalizeString,
+    normalizeId,
     FLUSH_RENDERABLE_BATCH_SIZE,
     isRenderableBufferedStreamEvent,
     waitForRenderFrame,
-  } = _renderFrameUtils;
-  const _agentStatusUtils = resolveDependencyModule('rendererStreamHandlerAgentStatus', './renderer-stream-handler-agent-status');
-  if (!_agentStatusUtils
-    || typeof _agentStatusUtils.normalizePhaseSummary !== 'function'
-    || typeof _agentStatusUtils.appendAgentStatusStep !== 'function') {
-    throw new Error('renderer-stream-handler-agent-status must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { normalizePhaseSummary, appendAgentStatusStep } = _agentStatusUtils;
-  const _rowModelUtils = resolveDependencyModule('rendererStreamHandlerRowModel', './renderer-stream-handler-row-model');
-  if (!_rowModelUtils || typeof _rowModelUtils.createRowModelStateUtils !== 'function') {
-    throw new Error('renderer-stream-handler-row-model must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createRowModelStateUtils } = _rowModelUtils;
-  const _reducerWiringUtils = resolveDependencyModule('rendererStreamHandlerReducerWiring', './renderer-stream-handler-reducer-wiring');
-  if (!_reducerWiringUtils || typeof _reducerWiringUtils.createReducerWiring !== 'function') {
-    throw new Error('renderer-stream-handler-reducer-wiring must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createReducerWiring } = _reducerWiringUtils;
-  const _phaseStateUtils = resolveDependencyModule('rendererStreamHandlerPhaseState', './renderer-stream-handler-phase-state');
-  if (!_phaseStateUtils || typeof _phaseStateUtils.createStreamPhaseStateUtils !== 'function') {
-    throw new Error('renderer-stream-handler-phase-state must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamPhaseStateUtils } = _phaseStateUtils;
-  const _dispatchUtils = resolveDependencyModule('rendererStreamHandlerDispatch', './renderer-stream-handler-dispatch');
-  if (!_dispatchUtils || typeof _dispatchUtils.createStreamDispatchRouter !== 'function') {
-    throw new Error('renderer-stream-handler-dispatch must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamDispatchRouter } = _dispatchUtils;
-  const _liveTailUtils = resolveDependencyModule('rendererStreamToolLiveTail', './renderer-stream-tool-live-tail');
-  if (!_liveTailUtils || typeof _liveTailUtils.createToolLiveTail !== 'function') {
-    throw new Error('renderer-stream-tool-live-tail must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createToolLiveTail } = _liveTailUtils;
-  const _imageRenderUtils = resolveDependencyModule('rendererStreamImageRenderProgress', './renderer-stream-image-render-progress');
-  if (!_imageRenderUtils || typeof _imageRenderUtils.createImageRenderProgress !== 'function') {
-    throw new Error('renderer-stream-image-render-progress must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createImageRenderProgress } = _imageRenderUtils;
-  const _testProgressUtils = resolveDependencyModule('rendererStreamTestProgress', './renderer-stream-test-progress');
-  if (!_testProgressUtils || typeof _testProgressUtils.createToolTestProgress !== 'function') {
-    throw new Error('renderer-stream-test-progress must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createToolTestProgress } = _testProgressUtils;
-  const _terminalSettleUtils = resolveDependencyModule('rendererStreamHandlerTerminalSettle', './renderer-stream-handler-terminal-settle');
-  if (!_terminalSettleUtils || typeof _terminalSettleUtils.createTerminalSettleHandlers !== 'function') {
-    throw new Error('renderer-stream-handler-terminal-settle must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createTerminalSettleHandlers } = _terminalSettleUtils;
-  // Optional: phantom activity row for silent arg-generation phases. Absence
-  // degrades to the pre-existing dead-air behavior, never a load failure.
-  const _activityRowUtils = resolveDependencyModule('rendererStreamActivityRow', './renderer-stream-activity-row');
-  const createStreamActivityRow = typeof _activityRowUtils?.createStreamActivityRow === 'function'
-    ? _activityRowUtils.createStreamActivityRow
-    : function noopCreateStreamActivityRow() {
-      return { noteStreamEvent() {}, tick() {}, reset() {}, dispose() {} };
-    };
-  const createWaitingRowWiring = resolveDependencyModule('rendererStreamWaitingLine', './renderer-stream-waiting-line')?.createWaitingRowWiring
-    || (() => ({ rowOptions: {} }));
-  // Optional (UIUX-029): the shared live-announcer factory. Absence degrades to
-  // silent tool-status transitions, never a load failure.
-  const _liveAnnouncerUtils = resolveDependencyModule('rendererLiveAnnouncer', '../shared/renderer-live-announcer');
-  const _sessionHelpersUtils = resolveDependencyModule('rendererStreamHandlerSessionHelpers', './renderer-stream-handler-session-helpers');
-  if (!_sessionHelpersUtils || typeof _sessionHelpersUtils.createStreamSessionHelpers !== 'function') {
-    throw new Error('renderer-stream-handler-session-helpers must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamSessionHelpers } = _sessionHelpersUtils;
-  const _streamBufferUtils = resolveDependencyModule('rendererStreamBufferUtils', './renderer-stream-buffer-utils');
-  if (!_streamBufferUtils || typeof _streamBufferUtils.createDegradedStreamRecovery !== 'function') {
-    throw new Error('renderer-stream-buffer-utils must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createDegradedStreamRecovery } = _streamBufferUtils;
-  const _reasoningMergeUtils = resolveDependencyModule('rendererStreamHandlerReasoningMerge', './renderer-stream-handler-reasoning-merge');
-  if (!_reasoningMergeUtils
-    || typeof _reasoningMergeUtils.createReasoningStreamMerger !== 'function') {
-    throw new Error('renderer-stream-handler-reasoning-merge must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createReasoningStreamMerger } = _reasoningMergeUtils;
-  const _reasoningPhaseStatusUtils = resolveDependencyModule('rendererStreamHandlerReasoningPhaseStatus', './renderer-stream-handler-reasoning-phase-status');
-  if (!_reasoningPhaseStatusUtils || typeof _reasoningPhaseStatusUtils.createStreamReasoningPhaseStatusHandlers !== 'function') {
-    throw new Error('renderer-stream-handler-reasoning-phase-status must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamReasoningPhaseStatusHandlers } = _reasoningPhaseStatusUtils;
-  const _pendingMessageUtils = resolveDependencyModule('rendererStreamHandlerPendingMessage', './renderer-stream-handler-pending-message');
-  if (!_pendingMessageUtils || typeof _pendingMessageUtils.createPendingMessageUtils !== 'function') {
-    throw new Error('renderer-stream-handler-pending-message must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createPendingMessageUtils } = _pendingMessageUtils;
-  const _lifecycleUtils = resolveDependencyModule('rendererStreamHandlerLifecycle', './renderer-stream-handler-lifecycle');
-  if (!_lifecycleUtils || typeof _lifecycleUtils.createStreamHandlerLifecycle !== 'function') {
-    throw new Error('renderer-stream-handler-lifecycle must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamHandlerLifecycle } = _lifecycleUtils;
-  const _liveEventsUtils = resolveDependencyModule('rendererStreamHandlerLiveEvents', './renderer-stream-handler-live-events');
-  if (!_liveEventsUtils || typeof _liveEventsUtils.createStreamLiveEventHandlers !== 'function') {
-    throw new Error('renderer-stream-handler-live-events must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamLiveEventHandlers } = _liveEventsUtils;
-  const streamHandlerRuntime = resolveDependencyModule('rendererStreamHandlerRuntime', './renderer-stream-handler-runtime');
-  const createStreamHandlerRuntime = streamHandlerRuntime?.createStreamHandlerRuntime || function missingStreamHandlerRuntime() { return {}; };
-  const streamRevealUtils = resolveDependencyModule('rendererStreamRevealUtils', './renderer-stream-reveal-utils');
-  const settleVisibleStreamAffordances = streamRevealUtils?.settleVisibleStreamAffordances || function noopSettleVisibleStreamAffordances() {
-    return { cleared: false, roots: 0 };
-  };
-  const streamToolPatchUtils = resolveDependencyModule('rendererStreamToolPatchUtils', './renderer-stream-tool-patch-utils');
-  const createLiveToolPatchController = streamToolPatchUtils?.createLiveToolPatchController || function missingLiveToolPatchController() {
-    return { queueToolPatch() { return false; }, dispose() {} };
-  };
-  const streamHandlerTools = resolveDependencyModule('rendererStreamHandlerTools', './renderer-stream-handler-tools');
-  const createStreamToolHandlers = streamHandlerTools?.createStreamToolHandlers || function missingStreamToolHandlers() { return {}; };
-  const streamHandlerTerminal = resolveDependencyModule('rendererStreamHandlerTerminal', './renderer-stream-handler-terminal');
-  const createStreamTerminalHandlers = streamHandlerTerminal?.createStreamTerminalHandlers || function missingStreamTerminalHandlers() { return {}; };
-  const streamPendingCommitUtils = resolveDependencyModule('rendererStreamPendingCommitUtils', './renderer-stream-pending-commit-utils');
-  const timelineVisibilityUtils = resolveDependencyModule('rendererTimelineVisibilityUtils', './renderer-timeline-visibility-utils');
-  const createPendingStreamCommitQueue = streamPendingCommitUtils?.createPendingStreamCommitQueue
-    || function missingPendingStreamCommitQueue(options) {
-      return {
-        stage(_key, value) { return options?.commit?.(value); },
-        commitNow(value) { return options?.commit?.(value); },
-        flush() { return null; },
-        flushWhere() { return []; },
-        drop() {},
-        dispose() {},
-        pendingCount() { return 0; },
-      };
-    };
-  const getTimelineVisibilityTracker = timelineVisibilityUtils?.getTimelineVisibilityTracker
-    || function fallbackGetTimelineVisibilityTracker() {
-      return {
-        markRenderableEvent() { return null; },
-        hasHiddenCatchup() { return false; },
-      };
-    };
-  // UIUX-029: build (once) the shared live-announcer over the persistent
-  // #srAnnounce* regions from index.html. Returns null when the factory or the
-  // regions are absent (stripped-down harness DOMs) — callers treat that as
-  // "announcements off", never an error.
-  function resolveSharedLiveAnnouncer() {
-    const windowRef = globalThis.window || globalThis;
-    if (windowRef.rendererLiveAnnouncerInstance) return windowRef.rendererLiveAnnouncerInstance;
-    const factory = _liveAnnouncerUtils && typeof _liveAnnouncerUtils.createLiveAnnouncer === 'function'
-      ? _liveAnnouncerUtils.createLiveAnnouncer
-      : null;
-    const doc = windowRef.document;
-    if (!factory || !doc || typeof doc.getElementById !== 'function') return null;
-    const politeRegion = doc.getElementById('srAnnouncePolite');
-    const assertiveRegion = doc.getElementById('srAnnounceAssertive');
-    if (!politeRegion && !assertiveRegion) return null;
-    const announcer = factory({ dom: { politeRegion, assertiveRegion } });
-    windowRef.rendererLiveAnnouncerInstance = announcer;
-    return announcer;
-  }
+    normalizePhaseSummary,
+    appendAgentStatusStep,
+    createStreamPhaseStateUtils,
+    createStreamDispatchRouter,
+    createTerminalSettleHandlers,
+    createStreamSessionHelpers,
+    createDegradedStreamRecovery,
+    createReasoningStreamMerger,
+    createStreamReasoningPhaseStatusHandlers,
+    createPendingMessageUtils,
+    createStreamHandlerLifecycle,
+    createStreamLiveEventHandlers,
+    createStreamActivityRow,
+    createWaitingRowWiring,
+    createFollowWiring,
+    createStreamHandlerRuntime,
+    settleVisibleStreamAffordances,
+    createStreamToolHandlers,
+    createStreamTerminalHandlers,
+    createPendingStreamCommitQueue,
+    getTimelineVisibilityTracker,
+    noopStreamHandler,
+  } = streamDeps;
 
   function createStreamHandler(deps) {
     const { state } = deps;
     const thinkingIndicator = deps.thinkingIndicator || null;
     const timelineVirtualizer = deps.timelineVirtualizer || null;
     const multiStreamController = deps.multiStreamController || globalThis.rendererMultiStreamController || null;
+    const {
+      isStreamFinalized,
+      isStreamTerminalSettled,
+      markStreamTerminalSettled,
+      getStreamTerminalCommitState,
+      beginStreamTerminalCommit,
+      finishStreamTerminalCommit,
+      isStreamCurrentForSession,
+      isSessionStreaming,
+      clearTerminalPostwork,
+      finishTerminalPostwork,
+      beginTerminalPostworkGeneration,
+      isTerminalPostworkGenerationCurrent,
+      captureStreamGeneration,
+      isStreamGenerationCurrent,
+    } = createMultiStreamAdapters(multiStreamController);
     const {
       MESSAGE_STATUS,
       MAX_INTERACTIVE_QUESTIONS,
@@ -268,72 +148,23 @@
         // Best effort only.
       }
     }
-    const turnReducerUtils = resolveDependencyModule('rendererTurnReducer', './renderer-turn-reducer');
-    const turnTreeProjectorUtils = resolveDependencyModule('rendererTurnTreeProjector', './renderer-turn-tree-projector');
-    const turnRowProjectorUtils = resolveDependencyModule('rendererTurnRowProjector', './renderer-turn-row-projector');
-    const streamRehydrateUtils = resolveDependencyModule('rendererStreamRehydrate', './renderer-stream-rehydrate');
-    const createTurnReducerState = turnReducerUtils?.createTurnReducerState
-      || function missingCreateTurnReducerState() { return { active_turn_id: '', turns_by_id: Object.create(null), reconciled_rows_by_turn_id: Object.create(null) }; };
-    const buildTurnEventFromStreamPayload = turnReducerUtils?.buildTurnEventFromStreamPayload
-      || function missingBuildTurnEventFromStreamPayload() { return null; };
-    const applyTurnStreamEvent = turnReducerUtils?.applyTurnStreamEvent
-      || function missingApplyTurnStreamEvent(currentState) { return currentState; };
-    const reconcileTurnRows = turnReducerUtils?.reconcileTurnRows
-      || function missingReconcileTurnRows(_provisionalRows, hydratedRows) { return { finalRows: Array.isArray(hydratedRows) ? hydratedRows.slice() : [], staleRows: [] }; };
-    // Per-stream text segmentation state; aggregateOffset = cursor already projected into live row-model
-    // text, segmentBaseOffset = where the current segment began (W3.6 mixed text+tool bubble slice base).
-    const streamSegmentState = new Map();
-    // Per-stream semantic phase state retained only for live renderer grouping.
-    const streamPhaseState = new Map();
-    const rowModelStateUtils = createRowModelStateUtils({
-      state,
-      normalizeId,
-      getChatTimelineRowModelEnabled,
-      createTurnReducerState,
-    });
     const {
-      getLiveStateStore,
-      buildRolloutRowKey,
-      isRowModelEnabled,
-      isDeterministicRowIdEnabled,
-      getSessionLiveTurnState,
-      clearSessionLiveTurnState,
-      pruneEmptySessionLiveState,
-    } = rowModelStateUtils;
-    const reducerWiring = createReducerWiring({
       streamSegmentState,
-      normalizeId,
-      normalizeString,
-      getSessionMessages,
-      isRowModelEnabled,
-      getSessionLiveTurnState,
-      pruneEmptySessionLiveState,
-      buildRolloutRowKey,
-      buildTurnEventFromStreamPayload,
-      applyTurnStreamEvent,
-      reconcileTurnRows,
-      turnTreeProjectorUtils,
-      turnRowProjectorUtils,
+      streamPhaseState,
       streamRehydrateUtils,
-      isCanonicalRendererProjectionEnabled(sessionId) {
-        return state?.features?.featureFlags?.canonical_renderer_projection === true
-          && isRowModelEnabled(sessionId);
-      },
-      isDeterministicRowIdEnabled,
-      recordChatTimelineRolloutSignal,
-      // Render-path telemetry (Track A): local-only diagnostics for the
-      // streaming-flicker investigation. The affirmative "clean reconcile"
-      // signal fires for row-model sessions.
-      isRenderTelemetryEnabled(sessionId) {
-        return isRowModelEnabled(sessionId);
-      },
-      appendClientLog,
-    });
-    const {
+      getLiveStateStore,
+      isRowModelEnabled,
+      clearSessionLiveTurnState,
       buildAssistantShellMessageId,
       applyLiveTurnPayload,
       reconcileLiveTurnWithHydratedRows,
-    } = reducerWiring;
+    } = createLiveTurnReducerWiring({
+      state,
+      appendClientLog,
+      getSessionMessages,
+      getChatTimelineRowModelEnabled,
+      recordChatTimelineRolloutSignal,
+    });
     function isCurrentSession(sessionId) { return normalizeId(sessionId) === normalizeId(state.currentSessionId); }
     // Widened render gate: the chat subtree is live when EITHER the Chat view or
     // the open Workspace dock is showing it (ide_chat_dock), and split view W0-3
@@ -431,32 +262,27 @@
     const releaseApprovalToastSessions = runtime.releaseApprovalToastSessions
       ? (sessionIds) => runtime.releaseApprovalToastSessions(approvalToastSessionIds, sessionIds)
       : function noopReleaseApprovalToastSessions() {};
-    // W2-1: live output tail for running tool rows (ephemeral DOM patches).
-    const toolLiveTail = createToolLiveTail({
-      getChatTimeline: () => chatTimeline,
-      isSessionVisible: isPaneZeroSession,
+    const {
+      toolLiveTail,
+      imageRenderProgress,
+      toolTestProgress,
+      handleToolTestProgress,
+      handleToolProgress,
+      clearTerminalStreamState,
+      liveToolPatchController,
+    } = createStreamEphemeralSurfaces({
+      state,
+      chatTimeline,
+      timelineVirtualizer,
+      announcer: deps.announcer,
+      isPaneZeroSession,
+      appendClientLog,
+      queueSessionRender,
+      runtime,
+      approvalToastSessionIds,
+      streamSegmentState,
+      streamPhaseState,
     });
-    // Live image render progress (ephemeral DOM patches of the pending figure).
-    // Like the live tail, only the visible session's figure is patched.
-    const imageRenderProgress = createImageRenderProgress({ getChatTimeline: () => chatTimeline });
-    // Live test-run progress (row 96): bar, counts, grid and failures under a running test command.
-    const toolTestProgress = createToolTestProgress({ getChatTimeline: () => chatTimeline });
-    const handleToolTestProgress = async (payload) => {
-      if (!isPaneZeroSession(payload?.sessionId)) return { buffered: false, terminal: false };
-      try { toolTestProgress.apply(payload); } catch (_error) { /* ephemeral UI only */ }
-      return { buffered: false, terminal: false };
-    };
-    const handleToolProgress = async (payload) => {
-      if (!isPaneZeroSession(payload?.sessionId)) return { buffered: false, terminal: false };
-      try { imageRenderProgress.apply(payload); } catch (_error) { /* ephemeral UI only */ }
-      return { buffered: false, terminal: false };
-    };
-    const clearTerminalStreamState = (streamId) => {
-      toolLiveTail.settleStream(streamId);
-      imageRenderProgress.settleStream(streamId);
-      toolTestProgress.settleStream(streamId);
-      runtime.clearTerminalStreamState?.(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
-    };
     const finalizeTerminalStream = runtime.finalizeTerminalStream
       ? (payload, options) => runtime.finalizeTerminalStream(
         approvalToastSessionIds,
@@ -467,34 +293,6 @@
       )
       : function noopFinalizeTerminalStream() {};
     const resetLifecycleIfSettling = runtime.resetLifecycleIfSettling || function noopResetLifecycleIfSettling() {};
-    // UIUX-029: tool-activity terminal statuses route through the one shared
-    // live-announcer channel. Injectable for tests (pass announcer: null to
-    // disable); otherwise built once from the persistent #srAnnounce* regions
-    // and stashed on the window so future consumers reuse the same throttled
-    // channel instead of growing another bespoke live region.
-    const liveAnnouncer = deps.announcer !== undefined
-      ? deps.announcer
-      : resolveSharedLiveAnnouncer();
-    const liveToolPatchController = createLiveToolPatchController({
-      windowRef: globalThis.window || globalThis,
-      announcer: liveAnnouncer,
-      chatTimeline,
-      timelineVirtualizer,
-      appendClientLog,
-      isVisibleChatSession: isPaneZeroSession,
-      shouldBlockLivePatch() {
-        return state.ui?.editCommitting === true || state.ui?.bulkTruncateCommitting === true;
-      },
-      onFallback(sessionId) {
-        // A tool row repaint: no sessions render (see queueToolSessionRender).
-        queueSessionRender(sessionId, {
-          messages: true,
-          composerStatus: true,
-          composer: true,
-          header: true,
-        });
-      },
-    });
 
     const phaseStateUtils = createStreamPhaseStateUtils({
       streamPhaseState,
@@ -527,7 +325,7 @@
       queueRender,
       timelineVisibilityTracker,
       noteTimelineMessageCreated,
-      isStreamFinalized: (streamId) => multiStreamController?.isStreamFinalized?.(streamId) === true,
+      isStreamFinalized,
     });
     const {
       optimisticAppend,
@@ -569,6 +367,7 @@
     // generates tool-call arguments (no provider events exist to render).
     // Ephemeral DOM only — never enters the row model or persistence.
     const waitingRowWiring = createWaitingRowWiring({ state, queueSessionRender });
+    const followWiring = createFollowWiring({ state, setActiveView: deps.callbacks.setActiveView, getChatTimeline: () => chatTimeline });
     const streamActivityRow = createStreamActivityRow({
       ...waitingRowWiring.rowOptions,
       getChatTimeline: () => chatTimeline,
@@ -633,21 +432,11 @@
         toolTestProgress.settle(identity);
       },
     });
-    const handleToolUse = toolHandlers.handleToolUse || (async function noopHandleToolUse() {
-      return { buffered: false, terminal: false };
-    });
-    const handleToolOutputChunk = toolHandlers.handleToolOutputChunk || (async function noopHandleToolOutputChunk() {
-      return { buffered: false, terminal: false };
-    });
-    const handleApprovalNeeded = toolHandlers.handleApprovalNeeded || (async function noopHandleApprovalNeeded() {
-      return { buffered: false, terminal: false };
-    });
-    const handleUserQuestionsRequested = toolHandlers.handleUserQuestionsRequested || (async function noopHandleUserQuestionsRequested() {
-      return { buffered: false, terminal: false };
-    });
-    const handleToolResult = toolHandlers.handleToolResult || (async function noopHandleToolResult() {
-      return { buffered: false, terminal: false };
-    });
+    const handleToolUse = toolHandlers.handleToolUse || noopStreamHandler;
+    const handleToolOutputChunk = toolHandlers.handleToolOutputChunk || noopStreamHandler;
+    const handleApprovalNeeded = toolHandlers.handleApprovalNeeded || noopStreamHandler;
+    const handleUserQuestionsRequested = toolHandlers.handleUserQuestionsRequested || noopStreamHandler;
+    const handleToolResult = toolHandlers.handleToolResult || noopStreamHandler;
     const terminalHandlers = createStreamTerminalHandlers({
       state,
       chatInput,
@@ -697,40 +486,18 @@
       showToastMessage,
       isRowModelEnabled,
       reconcileLiveTurnWithHydratedRows, clearSessionLiveTurnState,
-      isSessionStreaming: (sessionId) => multiStreamController?.isSessionStreaming?.(sessionId) === true,
-      clearTerminalPostwork: (sessionId) => multiStreamController?.clearTerminalPostwork?.(sessionId),
-      // Audit A5: compare-and-clear close of the postwork window; falls back
-      // to the unconditional clear when the controller predates the token API.
-      finishTerminalPostwork: (sessionId, token) => (
-        typeof multiStreamController?.finishTerminalPostwork === 'function'
-          ? multiStreamController.finishTerminalPostwork(sessionId, token)
-          : multiStreamController?.clearTerminalPostwork?.(sessionId)
-      ),
-      // CTL-013: generation/abort token for the postwork window. A late
-      // continuation validates its captured token against the CURRENT
-      // generation (bumped by every new beginTerminalPostworkGeneration call
-      // and invalidated by clearTerminalPostwork) before mutating state.
-      beginTerminalPostworkGeneration: (sessionId) => multiStreamController?.beginTerminalPostworkGeneration?.(sessionId) ?? null,
-      isTerminalPostworkGenerationCurrent: (sessionId, token) => (
-        typeof multiStreamController?.isTerminalPostworkGenerationCurrent === 'function'
-          ? multiStreamController.isTerminalPostworkGenerationCurrent(sessionId, token) === true
-          : true
-      ),
-      captureStreamGeneration: (sessionId, streamId) => multiStreamController?.captureStreamGeneration?.(sessionId, streamId) || null,
-      isStreamGenerationCurrent: (token) => multiStreamController?.isStreamGenerationCurrent?.(token) === true,
+      isSessionStreaming,
+      clearTerminalPostwork,
+      finishTerminalPostwork,
+      beginTerminalPostworkGeneration,
+      isTerminalPostworkGenerationCurrent,
+      captureStreamGeneration,
+      isStreamGenerationCurrent,
     });
-    const handleQuestionBatch = terminalHandlers.handleQuestionBatch || (async function noopHandleQuestionBatch() {
-      return { buffered: false, terminal: false };
-    });
-    const handleMessageUpdated = terminalHandlers.handleMessageUpdated || (async function noopHandleMessageUpdated() {
-      return { buffered: false, terminal: false };
-    });
-    const rawHandleComplete = terminalHandlers.handleComplete || (async function noopHandleComplete() {
-      return { buffered: false, terminal: false };
-    });
-    const rawHandleError = terminalHandlers.handleError || (async function noopHandleError() {
-      return { buffered: false, terminal: false };
-    });
+    const handleQuestionBatch = terminalHandlers.handleQuestionBatch || noopStreamHandler;
+    const handleMessageUpdated = terminalHandlers.handleMessageUpdated || noopStreamHandler;
+    const rawHandleComplete = terminalHandlers.handleComplete || noopStreamHandler;
+    const rawHandleError = terminalHandlers.handleError || noopStreamHandler;
     // Terminal settle wrappers extracted to renderer-stream-handler-terminal-settle.js
     // (file-size ceiling); behavior is unchanged.
     const { handleComplete, handleError } = createTerminalSettleHandlers({
@@ -848,20 +615,13 @@
         startupAuditFirstStreamEventMarked = true;
         return true;
       },
-      // Terminal-absorbing gate (CTL-003): the multi-stream controller's
-      // bounded finalized registry is the single source of truth for "this
-      // stream is done"; dispatch consults it before any handler runs. The
-      // settled registry additionally distinguishes "terminal handler ran"
-      // from "finalized by a stop/preempt clearStream", so the one genuine
-      // late terminal for a preempted stream can still reconcile its partial
-      // bubble (preempt-retry ordering contract).
-      isStreamFinalized: (streamId) => multiStreamController?.isStreamFinalized?.(streamId) === true,
-      isStreamTerminalSettled: (streamId) => multiStreamController?.isStreamTerminalSettled?.(streamId) === true,
-      markStreamTerminalSettled: (streamId) => multiStreamController?.markStreamTerminalSettled?.(streamId),
-      getStreamTerminalCommitState: (streamId, sessionId) => multiStreamController?.getStreamTerminalCommitState?.(streamId, sessionId) || '',
-      beginStreamTerminalCommit: (streamId, sessionId) => multiStreamController?.beginStreamTerminalCommit?.(streamId, sessionId),
-      finishStreamTerminalCommit: (streamId, committed, sessionId) => multiStreamController?.finishStreamTerminalCommit?.(streamId, committed, sessionId),
-      isStreamCurrentForSession: (sessionId, streamId) => multiStreamController?.isStreamCurrentForSession?.(sessionId, streamId) !== false,
+      isStreamFinalized,
+      isStreamTerminalSettled,
+      markStreamTerminalSettled,
+      getStreamTerminalCommitState,
+      beginStreamTerminalCommit,
+      finishStreamTerminalCommit,
+      isStreamCurrentForSession,
     });
     const {
       handleStreamPayload: dispatchStreamPayload,
@@ -875,6 +635,7 @@
       try {
         streamActivityRow.noteStreamEvent(payload);
       } catch (_error) { /* affordance only — never blocks dispatch */ }
+      followWiring.noteStreamEvent(payload); // after the row: the tail hangs under it; never throws
       return dispatchStreamPayload(payload, callOptions);
     }
 
@@ -909,6 +670,7 @@
       dispose() {
         if (state.streamWaits === streamActivityRow) state.streamWaits = null;
         streamActivityRow.dispose?.();
+        followWiring.dispose();
         liveToolPatchController.dispose?.();
         toolLiveTail.dispose();
         imageRenderProgress.dispose();

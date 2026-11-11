@@ -127,6 +127,13 @@ def test_the_window_stops_at_the_first_side_effecting_call() -> None:
     assert _window(plan, _kernel(RuntimeConfig())) == (["c1", "c2"], ["c3", "c4"])
 
 
+def test_a_refused_call_never_runs_and_takes_its_trailing_calls_with_it() -> None:
+    plan = _plan("read_file", "edit_file", "read_file", approved="c2")
+    plan.app_refusal = "refused"
+
+    assert _window(plan, _kernel(RuntimeConfig())) == (["c1"], ["c3"])
+
+
 def test_paranoid_mode_keeps_every_trailing_call_out_of_the_window() -> None:
     plan = _plan("edit_file", "workspace_present")
 

@@ -50,6 +50,8 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     path.join(rootDir, 'styles', 'chat-timeline-orientation-v2.css'),
     'utf8'
   );
+  const sessionBarCss = fs.readFileSync(path.join(rootDir, 'styles', 'chat-session-bar.css'), 'utf8');
+  const sessionBarMenuCss = fs.readFileSync(path.join(rootDir, 'styles', 'chat-session-bar-menu.css'), 'utf8');
   const taskRailCss = fs.readFileSync(path.join(rootDir, 'styles', 'task-rail.css'), 'utf8');
   const chatToolsCss = fs.readFileSync(
     path.join(rootDir, 'styles', 'chat-tools.css'),
@@ -271,11 +273,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /\.tool-approve-btn,\s*[\s\S]*?\.tool-deny-btn\s*\{[\s\S]*?min-height:\s*var\(--tool-approval-button-min-height\);[\s\S]*?border:\s*1px solid var\(--tool-approval-button-border\);[\s\S]*?transition:\s*var\(--tool-approval-button-transition\);/,
     'tool approve and deny buttons should share one pill button contract while preserving semantic colors'
   );
-  assert.match(
-    contextPanelCss,
-    /\.context-section-disclosure\s*\{[\s\S]*?min-height:\s*28px;/,
-    'context logs should expose a proper disclosure control'
-  );
+  assert.doesNotMatch(contextPanelCss, /context-section|context-log|context-disclosure/, 'the retired diagnostic log and its bar button leave no styling behind');
   assert.match(
     chatComposerCss,
     /\.chat-view\s+\.hero-stage\s*\{[\s\S]*?grid-row:\s*1;/,
@@ -307,9 +305,14 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     'artifact panel should align to the top edge and span both chat rows'
   );
   assert.match(
-    timelineOrientationCss,
-    /\.chat-timeline-utility-cluster\s*\{[\s\S]*?grid-row:\s*1;[\s\S]*?align-self:\s*start;[\s\S]*?justify-self:\s*end;/,
-    'timeline utilities should overlay the upper-right content gutter without creating a row'
+    sessionBarCss,
+    /\n\.chat-timeline-utility-cluster\s*\{[\s\S]*?grid-row:\s*1;[\s\S]*?align-self:\s*start;[\s\S]*?justify-self:\s*end;/,
+    'the IDE dock and a hosted pane keep the utilities floating in the upper-right content gutter without creating a row'
+  );
+  assert.match(
+    sessionBarCss,
+    /\.chat-view > \.chat-pane:not\(\.ide-chat-dock-body\) > \.chat-timeline-utility-cluster\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;[^}]*grid-row:\s*1;[^}]*flex-direction:\s*row;[^}]*block-size:\s*var\(--session-bar-h\);/,
+    'in the chat view the utilities are one bar spanning the grid columns in the first row'
   );
   assert.match(
     timelineOrientationCss,
@@ -317,9 +320,9 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     'every pane thread stage exposes its actual inline width (the reading measure resolves its cqi against it)'
   );
   assert.match(
-    timelineOrientationCss,
-    /\.chat-timeline-utility-cluster\s*\{[^}]*flex-direction:\s*column;/,
-    'the utility cluster is always a column (it is the stage\'s sibling, so no container rule can reach it)'
+    sessionBarCss,
+    /\n\.chat-timeline-utility-cluster\s*\{[^}]*flex-direction:\s*column;/,
+    'the floating utility cluster (dock, hosted pane) is always a column (it is the stage\'s sibling, so no container rule can reach it)'
   );
   assert.doesNotMatch(
     timelineOrientationCss,
@@ -375,76 +378,33 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /width:\s*16px;[\s\S]*?height:\s*16px;[\s\S]*?stroke:\s*currentColor;[\s\S]*?stroke-width:\s*1\.4;/,
     'collapse/expand should use the same 16px, 1.4px-stroke icon contract as top-rail controls'
   );
-  const wayfinderButtonSelector = '.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-button';
-  assert.match(
-    readCssRuleBlock(timelineOrientationCss, wayfinderButtonSelector),
-    /width:\s*28px;[\s\S]*?height:\s*28px;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*var\(--toprail-item-radius\);[\s\S]*?background:\s*transparent;[\s\S]*?color:\s*var\(--toprail-item-color\);[\s\S]*?box-shadow:\s*none;/,
-    'wayfinder should share the flat 28px top-rail utility contract'
-  );
-  assert.match(
-    readCssRuleBlock(timelineOrientationCss, `${wayfinderButtonSelector}:hover:not(:disabled)`),
-    /border:\s*0;[\s\S]*?background:\s*var\(--toprail-item-hover-bg\);[\s\S]*?color:\s*var\(--toprail-item-hover-color\);[\s\S]*?box-shadow:\s*none;[\s\S]*?transform:\s*none;/,
-    'wayfinder hover should remain flat and neutral'
-  );
-  assert.match(
-    readCssRuleBlock(timelineOrientationCss, `${wayfinderButtonSelector}:focus-visible`),
-    /outline:\s*2px solid var\(--focus-outline\);[\s\S]*?outline-offset:\s*2px;/,
-    'wayfinder should retain a visible keyboard focus ring'
-  );
-  assert.match(
-    readCssRuleBlock(
-      timelineOrientationCss,
-      '.chat-timeline-utility-cluster .chat-timeline-wayfinder-host .chat-wayfinder-icon'
-    ),
-    /width:\s*16px;[\s\S]*?height:\s*16px;[\s\S]*?background:\s*transparent;[\s\S]*?stroke:\s*currentColor;[\s\S]*?stroke-width:\s*1\.4;/,
-    'wayfinder should use a neutral 16px line icon without a circular badge'
-  );
-  assert.match(
-    readCssRuleBlock(
-      timelineOrientationCss,
-      '.chat-timeline-utility-cluster .chat-wayfinder-button[data-chat-wayfinder-state="prompt"] .chat-wayfinder-icon'
-    ),
-    /transform:\s*rotate\(180deg\);/,
-    'prompt state should rotate the shared jump arrow upward'
-  );
+  const jumpPill = readCssRuleBlock(timelineOrientationCss, '.chat-jump-latest');
+  assert.match(jumpPill, /width:\s*30px;[\s\S]*?height:\s*30px;/, 'the one jump control is a 30px circle');
+  assert.match(jumpPill, /border:\s*1px solid var\(--border-default\);[\s\S]*?border-radius:\s*var\(--radius-pill\);[\s\S]*?background:\s*var\(--bg-surface\);/, 'the circle uses the default border, pill radius and surface background');
+  assert.doesNotMatch(timelineOrientationCss, /chat-jump-latest-label/, 'the control has no label');
+  assert.doesNotMatch(timelineOrientationCss, /data-jump-state="prompt"/, 'Back to prompt lives in the More menu now');
+  assert.doesNotMatch(timelineOrientationCss, /\.chat-jump-latest(?:\[[^\]]*\])?\s+svg\s*\{/, 'arrow rules are child-scoped so they never touch the dot\'s done check');
   assert.match(
     timelineOrientationCss,
-    /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.chat-timeline-utility-button,[\s\S]*?\.chat-timeline-utility-cluster \.chat-timeline-wayfinder-host \.chat-wayfinder-button\s*\{[\s\S]*?transition:\s*none;/,
+    /\.chat-jump-latest > \.chat-sprite-dot:not\(\[data-activity="rest"\]\) ~ svg\s*\{\s*opacity:\s*0;/,
+    'the arrow yields to the dot while Jenny works'
+  );
+  assert.doesNotMatch(timelineOrientationCss, /chat-wayfinder|chat-timeline-wayfinder-host/, 'the top-bar wayfinder styling is gone with the merged jump control');
+  assert.match(
+    timelineOrientationCss,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.chat-timeline-utility-button\s*\{[\s\S]*?transition:\s*none;/,
     'timeline utilities should suppress their color transitions under reduced motion'
   );
+  // Row 115: the view control became the More button, the overflow target of a short bar. Nothing hides it
+  // in a narrow window or an empty chat, and the three-icon switching rules are gone.
+  assert.doesNotMatch(timelineOrientationCss, /chat-timeline-view-toggle|chat-timeline-more-button|data-transcript-view/, 'no rule hides or swaps the More button');
+  assert.match(sessionBarMenuCss, /> \.chat-timeline-more-button\s*\{\s*order:\s*70;/, 'More takes the reserved order slot');
+  assert.match(sessionBarMenuCss, /\.chat-timeline-utility-button\.activity-open-button\s*\{\s*display:\s*none;/, 'Activity keeps its node but leaves the bar');
   assert.match(
-    timelineOrientationCss,
-    /@media \(max-width:\s*719px\)\s*\{[\s\S]*?\.chat-timeline-utility-cluster \.chat-timeline-view-toggle\s*\{[\s\S]*?display:\s*none;/,
-    'narrow layouts should suppress the transcript view control (the palette item covers it)'
+    sessionBarMenuCss,
+    /\.chat-timeline-utility-cluster\[data-session-bar-compact\] > :is\(#chatTimelineTasksToggle, #chatTimelineNotesToggle\)\s*\{\s*display:\s*none;/,
+    'a compact bar hands Tasks and Notes to the More menu'
   );
-  assert.match(
-    timelineOrientationCss,
-    /\.chat-view\.chat-empty > \.chat-pane\[data-pane-id="0"\] \.chat-timeline-view-toggle,[\s\S]*?\.chat-view\.chat-empty \.chat-timeline-wayfinder-host\s*\{[\s\S]*?display:\s*none;/,
-    'empty chats should hide transcript-only utilities without hiding the artifact viewer toggle'
-  );
-  // #chatView's chat-empty follows pane 0 only: an unscoped view-level rule
-  // would also hide pane 1's cloned view control while pane 0 is empty.
-  assert.doesNotMatch(
-    timelineOrientationCss,
-    /\.chat-view\.chat-empty \.chat-timeline-view-toggle/,
-    "no view-level empty rule may reach every pane's view control"
-  );
-  {
-    const selectorList = /([^{}]*\.chat-timeline-view-toggle[^{}]*)\{\s*display:\s*none;\s*\}/.exec(
-      timelineOrientationCss.replace(/\/\*[\s\S]*?\*\//g, '')
-    )[1].trim();
-    const { document } = new JSDOM(`
-      <section class="chat-view chat-empty" id="chatView">
-        <div class="chat-pane" id="chatPane0" data-pane-id="0"><button class="chat-timeline-view-toggle" id="t0"></button></div>
-        <div class="chat-pane" data-pane-id="1"><button class="chat-timeline-view-toggle" id="t1"></button></div>
-      </section>`).window;
-    const hiddenIds = () => [...document.querySelectorAll(selectorList)]
-      .filter((node) => node.classList.contains('chat-timeline-view-toggle'))
-      .map((node) => node.id);
-    assert.deepEqual(hiddenIds(), ['t0'], "an empty pane 0 hides only its own view control, not pane 1's");
-    document.querySelector('[data-pane-id="1"]').classList.add('chat-empty');
-    assert.deepEqual(hiddenIds(), ['t0', 't1'], 'an empty pane 1 hides its own view control');
-  }
   assert.doesNotMatch(
     timelineOrientationCss,
     /\.chat-view\.chat-empty \.chat-timeline-utility-cluster\s*\{[\s\S]*?display:\s*none;/,
@@ -706,22 +666,21 @@ test('chat width tokens are a line-length cap resolved once; the measure is pane
   assert.match(fullRule, /--chat-user-bubble-max-width:\s*min\(72%,\s*1200px\);/);
 
   // The per-pane measure: min(cap, pane - 2 * gutter), gutter = 3% of the pane (16..40px), never
-  // narrower than the avatar rail, and (one pane) wide enough to clear the floating utilities while
-  // the measure keeps the 320px reading floor; --chat-measure-lock replaces both tokens. The
+  // narrower than the avatar rail (the utilities sit in the session bar above the stage and reserve
+  // nothing); --chat-measure-lock replaces both tokens. The
   // geometry itself is gated in headless Chromium by tests/renderer-chat-reading-layout.test.js.
   // Scoped off the Workspace-hosted pane (.chat-pane.ide-chat-dock-body), whose dock tokens must keep applying.
   const paneRule = readCssRuleBlock(panesCss, '.chat-pane:not(.ide-chat-dock-body)');
   for (const [token, whole, share] of [['--content-column-width', '100cqi', '3cqi'], ['--composer-width', '100%', '3%']]) {
     const value = (paneRule.match(new RegExp(`${token}:([^;]+);`))?.[1] || '').trim();
     assert.match(value, /^var\(--chat-measure-lock,\s*min\(var\(--chat-measure-cap\),/, `${token} honours the lock and the cap`);
-    assert.ok(value.includes(`calc(${whole} - 2 * max(clamp(var(--chat-gutter-min), ${share}, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (${whole} - var(--chat-reading-floor)) / 2))`), `${token} is pane-relative in ${whole}: ${value}`);
+    assert.ok(value.includes(`calc(${whole} - 2 * max(clamp(var(--chat-gutter-min), ${share}, 40px), var(--chat-sprite-rail-offset))`), `${token} is pane-relative in ${whole}: ${value}`);
   }
   assert.match(paneRule, /--chat-gutter-min:\s*16px;/);
   assert.match(paneRule, /--chat-reading-floor:\s*320px;/);
-  assert.match(paneRule, /--chat-utility-room:\s*var\(--chat-utility-reserve,\s*0px\);/);
+  assert.doesNotMatch(panesCss, /--chat-utility-(?:room|reserve)/, 'the gutter reserves nothing for the utilities');
   const splitPaneRule = readCssRuleBlock(panesCss, '.chat-view[data-pane-count="2"] .chat-pane');
   assert.match(splitPaneRule, /--chat-gutter-min:\s*var\(--space-6\);/);
-  assert.match(splitPaneRule, /--chat-utility-room:\s*0px;/);
   // The scroller reserves its scrollbar gutter on both edges, so the column centres like the composer.
   assert.match(readCssRuleBlock(panesCss, '.chat-pane .chat-thread-scroll'), /scrollbar-gutter:\s*stable both-edges;/);
 

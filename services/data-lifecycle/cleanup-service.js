@@ -30,6 +30,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'background-memory',
   'blob_storage',
   'Cache',
+  // Before and after pictures of changed pages (change-pictures/picture-store.js).
+  'change-pictures',
   'Code Cache',
   // V8 compile cache for the main-process module graph (main.js).
   'compile-cache',

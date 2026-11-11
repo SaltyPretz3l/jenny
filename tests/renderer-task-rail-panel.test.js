@@ -451,7 +451,5 @@ test('the strip Artifacts toggle is named Artifacts with its own glyph', async (
   const artifacts = doc.getElementById('artifactSplitViewToggle');
   assert.equal(artifacts.getAttribute('aria-label'), 'Artifacts panel');
   assert.equal(artifacts.getAttribute('title'), 'Artifacts');
-  const context = doc.getElementById('contextPanelToggle');
-  if (context) assert.notEqual(artifacts.querySelector('svg').innerHTML, context.querySelector('svg')?.innerHTML, 'distinct from the context toggle');
   assert.equal(artifacts.querySelector('svg rect'), null, 'not a split rectangle');
 });

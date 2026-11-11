@@ -130,7 +130,7 @@ test('uses explicit user-data children for memory and logs', () => withFixture((
 test('rejects unknown, future, null, and out-of-range config values', () => withFixture(({ configPath, write }) => {
   write({ unexpected: true });
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_unknown_field');
-  write({ schema_version: 3 });
+  write({ schema_version: 4 });
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_schema_future');
   write({ host_execution_policy_version: 2 });
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'host_execution_policy_future');
@@ -142,6 +142,17 @@ test('rejects unknown, future, null, and out-of-range config values', () => with
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'model_endpoint_invalid');
   write({ resource_limits: { max_concurrent_requests: 65 } });
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'invalid_host_limit');
+}));
+
+test('a team field needs schema three and earlier schemas return no team key', () => withFixture(({ configPath, write }) => {
+  assert.equal('team' in loadHostConfig(configPath), false);
+  const team = { name: 'Core team', key_source: 'secret_file', direct_port: null };
+  for (const schemaVersion of [1, 2]) {
+    write({ schema_version: schemaVersion, team });
+    assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_unknown_field', `schema ${schemaVersion}`);
+  }
+  write({ schema_version: 4, team });
+  assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_schema_future');
 }));
 
 test('rejects replay, malformed origins, and unsafe model URLs', () => withFixture(({ configPath, write }) => {

@@ -31,18 +31,14 @@ test('advertised complete size pairs and defaults match every installed family p
   const manifest = require('../../services/tools/tool-manifest.json');
   const families = require('../../config/sdcpp-families.json').families;
   const descriptor = manifest.tools.find(({ name }) => name === 'image_generate');
-  const advertised = [...new Set(descriptor.description.match(/\d+x\d+/g))];
-  assert.equal(advertised.length, 8);
+  const { size } = descriptor.parameters.properties;
+  assert.equal(size.enum.length, 8);
   for (const family of Object.values(families)) {
-    assert.deepEqual(advertised, family.resolutions);
+    assert.deepEqual(size.enum, family.resolutions);
   }
-  const { width, height } = descriptor.parameters.properties;
-  assert.deepEqual([width.default, height.default], [1024, 1024]);
-  assert.deepEqual(width.enum, advertised.map((pair) => Number(pair.split('x')[0])));
-  assert.deepEqual(height.enum, advertised.map((pair) => Number(pair.split('x')[1])));
-  assert.ok(descriptor.description.includes('portrait example: 1120x1472'));
-  assert.ok(descriptor.description.includes('landscape example: 1472x1120'));
-  assert.ok(descriptor.description.includes('do not combine dimensions from different pairs'));
+  assert.equal(size.default, '1024x1024');
+  assert.ok(descriptor.description.includes('portrait example 1120x1472'));
+  assert.ok(descriptor.description.includes('landscape example 1472x1120'));
 });
 
 test('collaborators are checked before the engine or model set', async (t) => {
@@ -57,13 +53,14 @@ test('collaborators are checked before the engine or model set', async (t) => {
   }
 });
 
-test('engine missing stops before model resolution', async (t) => {
+test('engine missing on an sd.cpp set stops before any GPU work', async (t) => {
+  // Row 127: the set is resolved first, since only sd.cpp sets need the installed engine.
   const f = fixture(t);
   f.context.backendService.imageEngine.resolveExecutable = () => ({ ok: false, reason: 'image_engine_missing' });
   const result = await f.tool.execute(f.input, f.context);
   failed(result, 'image_engine_missing');
   assert.equal(result.content, 'No image engine is installed. Install it in Settings > Models > Image engine.');
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.calls.map(([kind]) => kind), ['list', 'resolve']);
 });
 
 test('missing, stale, store-error and unknown-family sets fail before handoff', async (t) => {
@@ -80,7 +77,7 @@ test('every parameter violation names the parameter and stops before suspend', a
   const invalid = [
     ['prompt', undefined], ['prompt', ' \0 '], ['prompt', 'x'.repeat(2001)], ['prompt', 12],
     ['negative_prompt', 'x'.repeat(2001)], ['negative_prompt', 12],
-    ['width', 512], ['width', '1024'], ['height', 0], ['height', 1024.5],
+    ['size', 'wide'], ['size', 1024], ['width', 512], ['width', '1024'], ['height', 0], ['height', 1024.5],
     ['steps', 0], ['steps', 101], ['steps', 1.5], ['steps', '20'],
     ['seed', -1], ['seed', 4294967296], ['seed', 0.5], ['seed', '42'],
     ['cfg_scale', 0], ['cfg_scale', 21], ['cfg_scale', NaN], ['cfg_scale', '2'],
@@ -93,9 +90,9 @@ test('every parameter violation names the parameter and stops before suspend', a
     assert.equal(result.metadata.failure_class, 'bad_arguments');
     assert.equal(result.metadata.effects, 'none');
     assert.ok(result.metadata.remediation.includes('image_generate'));
-    assert.ok(result.content.includes(parameter), result.content);
+    assert.ok(result.content.includes(['width', 'height'].includes(parameter) ? 'size' : parameter), result.content);
     assert.equal(result.content.includes('\n'), false);
-    if (parameter === 'width' || parameter === 'height') {
+    if (parameter === 'width' || parameter === 'height' || parameter === 'size') {
       for (const size of FAMILY.resolutions) assert.ok(result.content.includes(size));
     }
     assert.equal(f.calls.some(([kind]) => kind === 'suspend'), false);
@@ -110,8 +107,8 @@ test('mismatched size pairs and invalid dimension types carry repair advice with
     failed(result, 'image_invalid_params');
     assert.equal(result.metadata.failure_class, 'bad_arguments');
     assert.equal(result.metadata.effects, 'none');
-    assert.ok(result.metadata.remediation.includes('matching width/height pair'));
-    assert.ok(result.metadata.remediation.includes('omit both dimensions'));
+    assert.ok(result.metadata.remediation.includes('size set to one of'));
+    assert.ok(result.metadata.remediation.includes('omit size'));
     for (const size of FAMILY.resolutions) assert.ok(result.metadata.remediation.includes(size));
     assert.equal(f.calls.some(([kind]) => ['suspend', 'register', 'run', 'artifact', 'restore'].includes(kind)), false);
   }

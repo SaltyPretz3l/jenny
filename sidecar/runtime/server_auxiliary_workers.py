@@ -35,6 +35,7 @@ from sidecar.protocol import (
     MODELS_OLLAMA_BLOB_METHOD,
     MODELS_RESIDENT_METHOD,
     MODELS_UNLOAD_METHOD,
+    SESSION_GENERATE_TITLE_METHOD,
     SPEECH_PREPARE_METHOD,
     SPEECH_TRANSCRIBE_METHOD,
     SUGGESTIONS_GENERATE_METHOD,
@@ -92,6 +93,8 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     HARDWARE_VRAM_USAGE_METHOD: "probe",
     SUGGESTIONS_GENERATE_METHOD: "inference",
     COMMIT_GENERATE_MESSAGE_METHOD: "inference",
+    # Row 112 model-written chat name: preemptible through chat.cancel.
+    SESSION_GENERATE_TITLE_METHOD: "inference",
     # Row 60 W4 /handoff note: one generation, preemptible through chat.cancel.
     HANDOFF_GENERATE_NOTE_METHOD: "inference",
     # Background reflection (row 58 W2): preemptible through chat.cancel.

@@ -54,7 +54,7 @@ test('timeline typography and bubble radius use the --tl-* token contract', () =
   // The brand glyph retains the explicitly excluded heading-size treatment.
   // Remove only these exact declarations, leaving every other use guarded.
   const preservedSizes = {
-    'styles/chat-machinery.css': [
+    'styles/chat-plan-document.css': [
       /^(\.plan-document__title\s*\{[^}]*?)font-size:\s*var\(--font-size-title\);/m,
     ],
     'styles/chat-tools.css': [
@@ -66,6 +66,7 @@ test('timeline typography and bubble radius use the --tl-* token contract', () =
   };
   for (const relativePath of [
     'styles/chat-machinery.css',
+    'styles/chat-plan-document.css',
     'styles/chat-tools.css',
     'styles/chat-tool-block-v2.css',
     'styles/chat-thread.css',
@@ -119,10 +120,6 @@ test('timeline diff CSS is flat while the legacy artifact hunk layout stays scop
 
 test('broken CSS token references use canonical foundation tokens', () => {
   const repairs = {
-    'styles/chat-composer-meta-affordances.css': [
-      ['var(--accent-pink)', 'var(--accent)'],
-      ['var(--accent-green)', 'var(--state-success)'],
-    ],
     'styles/chat-interactive.css': [['var(--font-mono)', 'var(--font-family-mono)']],
     'styles/ide-explode-view.css': [['var(--font-mono)', 'var(--font-family-mono)']],
     'styles/data-lifecycle.css': [
@@ -192,6 +189,8 @@ test('retired feature and dead utility selectors stay removed', () => {
     'styles/chat-composer-meta-affordances.css': [
       '.composer-signal-group',
       '.composer-meta-signal',
+      '.composer-wayfinder-host',
+      '.chat-wayfinder-',
     ],
     // The Workspace dock's composer has no meta row, mode toggle or icon tools.
     'styles/ide-chat-dock.css': [

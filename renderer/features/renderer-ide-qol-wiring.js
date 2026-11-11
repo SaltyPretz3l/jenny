@@ -158,7 +158,7 @@
     previewStage = resolveModule('rendererIdePreviewStage', './renderer-ide-preview-stage')
       .createIdePreviewStage?.({
         getDom, getIde, ideStateUtils, editorHost, getWorkspaceFsApi, getFileOperations,
-        escapeHtml, appendClientLog, windowRef,
+        escapeHtml, appendClientLog, windowRef, isWatchActive: d.isWatchActive,
         activateStage: (surface) => stageSurface?.activate(surface),
         schedulePersist: typeof d.schedulePersist === 'function' ? d.schedulePersist : noop,
       }) || null;
@@ -173,9 +173,8 @@
         openPreview: (path, options) => previewStage?.open(path, options),
         openFileMap: () => mapController?.openFileMap(),
         revealInMap: (path) => mapController?.revealInMap?.(path),
-        // view="file" re-enters the shared cancelable ide:open-file-at-line seam
-        // (renderer-chat-path-open → the IDE's open-then-revealPosition path),
-        // preferIde so it never lands in the chat preview rail. Claimed = taken.
+        // view="file": the shared ide:open-file-at-line seam; preferIde keeps it
+        // out of the chat preview rail. Claimed = taken.
         openFileAtLine: (path, line) => {
           try {
             const event = new windowRef.CustomEvent('ide:open-file-at-line', {
@@ -204,6 +203,19 @@
     // IDE in the background just to deliver a request it held, and the view
     // may never activate. bindEvents() is idempotent, so bindAll() is a no-op.
     presentation?.bindEvents();
+
+    // Follow Jenny (row 121): the draft tab of a file Jenny is writing. It subscribes to the
+    // chat side's follow store at construction, like the presentation policy above.
+    const follow = resolveModule('rendererIdeFollowController', './renderer-ide-follow-controller')
+      .createIdeFollowController?.({
+        getIde, ideStateUtils, editorHost, getDom, escapeHtml, windowRef, getActiveView, getFeatureFlags,
+        getWorkspaceRootContext: () => getWorkspaceRootContext?.() || null, getFileOperations, getWorkspaceFsApi,
+        getPresentation: () => presentation, activateTab,
+        openFile: typeof d.onOpenWritten === 'function' ? d.onOpenWritten : onOpenFile,
+        closeTab: typeof d.onCloseTab === 'function' ? d.onCloseTab : noop,
+        renderTabs: typeof d.renderTabs === 'function' ? d.renderTabs : noop,
+        schedulePersist: typeof d.schedulePersist === 'function' ? d.schedulePersist : noop, appendClientLog,
+      }) || null;
 
     // Palette-facing nav helpers: both act on the ACTIVE FILE tab (review
     // surfaces like map://, diff://, preview:// have no node in the graph).
@@ -247,6 +259,7 @@
       stageSurface?.dispose();
       previewStage?.dispose?.();
       presentation?.dispose();
+      follow?.dispose();
     }
 
     // payload carries the transition's committed { context } (WIDE-030): the
@@ -264,6 +277,7 @@
       // path@altVersion, which a new root can collide with at the identical
       // key; drop it on every root commit (see explode-controller.resetForRoot).
       explodeController?.resetForRoot?.();
+      follow?.closeAll(); // a draft belongs to the folder it was opened in
     }
 
     // The controller calls this after each hydrate: restore backed-up dirty buffers.
@@ -271,7 +285,7 @@
       return hotExit?.restore?.();
     }
 
-    return { breadcrumbs, mruSwitcher, saveHygiene, hotExit, outline, noteHydrated, mapController, explodeController, stageSurface, previewStage, presentation, revealActiveFileInMap, blastActiveFileInMap, bindAll, disposeAll, handleWorkspaceRootCommitted };
+    return { breadcrumbs, mruSwitcher, saveHygiene, hotExit, outline, noteHydrated, mapController, explodeController, stageSurface, previewStage, presentation, follow, revealActiveFileInMap, blastActiveFileInMap, bindAll, disposeAll, handleWorkspaceRootCommitted };
   }
 
   return { createIdeQolWiring };

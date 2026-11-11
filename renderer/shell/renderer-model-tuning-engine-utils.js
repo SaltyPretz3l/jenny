@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./model-library/model-library-merge'));
+    module.exports = factory(require('./model-library/model-library-merge'), require('./renderer-model-tuning-rows'));
     return;
   }
-  root.rendererModelTuningEngineUtils = factory(root.modelLibraryMerge);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (mergeUtils) {
+  root.rendererModelTuningEngineUtils = factory(root.modelLibraryMerge, root.rendererModelTuningRows);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (mergeUtils, rows) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -95,6 +95,9 @@
       ollamaFromScan: !ollamaFacts,
       effectiveModelPath: effectiveModelPath,
       serving: servesModel(source.serverStatus, source.activeModelId),
+      // No drafter file, yet MTP runs: the server drafts with the GGUF's own head.
+      servingEmbeddedHead: servesModel(source.serverStatus, source.activeModelId)
+        && source.serverStatus.accelerationReason === 'mtp_embedded',
       runtimeBuild: draft.runtimeBuild,
       draft: draft,
       baseline: {
@@ -131,6 +134,7 @@
   // directory decides whether MTP has a drafter file.
   function applyPickedGguf(view, draft, result) {
     draft.modelPath = result.path;
+    view.servingEmbeddedHead = false;
     view.effectiveModelPath = result.path;
     view.ggufEntry = {
       dir: String(result.dir || ''),
@@ -184,7 +188,7 @@
   // build ("llama-prism-b10683-cuda13.3 · build 10683"); the full path is the title.
   function runtimeValueText(draft) {
     var path = String(draft && draft.runtimePath || '');
-    if (!path) return jt('models.library.tuning.bundledBuild', 'Bundled');
+    if (!path) return jt('models.library.tuning.bundledWithJenny', 'Bundled with Jenny');
     var folder = modelPathName(runtimeDir(path)) || path;
     var build = Number(draft.runtimeBuild);
     return Number.isSafeInteger(build) && build > 0
@@ -268,12 +272,24 @@
     return view && !view.effectiveModelPath ? jt('models.library.tuning.chooseGgufThenApply', 'Choose… the .gguf for this model, then Apply, then Use') : '';
   }
 
+  // The memory plan caps llama-server's context where every layer stays on
+  // the GPU; the Context window row says so while this model is served.
+  function servedContextNote(view, serverStatus, formatContext) {
+    if (!view || !view.serving || !serverStatus) return '';
+    var served = Number(serverStatus.servedContextSize) || 0;
+    var requested = Number(serverStatus.contextSize) || 0;
+    if (!(served > 0 && requested > served)) return '';
+    var format = typeof formatContext === 'function' ? formatContext : String;
+    return jt('models.tuning.servedContextNote', 'llama-server runs {served} so every layer fits on the GPU.', { served: format(served) });
+  }
+
   function engineNote(view) {
     if (!view.eligible) {
       if (view.familyMtp === 'unverified') return jt('models.library.tuning.mtpFamilyUnverified', 'MTP not verified for this family yet (no separate file needed)');
       if (view.familyMtp === 'no') return jt('models.library.tuning.mtpFamilyUnsupported', 'MTP not supported for this family');
       return jt('models.library.tuning.modelUnverified', 'Not verified for this model');
     }
+    if (view.servingEmbeddedHead) return jt('models.library.tuning.mtpEmbeddedHead', 'Uses the MTP head built into this model');
     if (view.ggufEntry && !view.ggufEntry.drafterGguf) {
       if (view.ggufEntry.source === 'ollama' || view.ggufEntry.ollamaBlob === true) {
         return jt('models.library.tuning.ollamaDrafterMissing', 'MTP drafter not found beside Ollama\'s copy · add its folder under GGUF folders');
@@ -299,15 +315,15 @@
       || /^sha256-[0-9a-f]{64}$/i.test(modelPathName(path));
     var pathLabel = ollamaCopy ? 'Ollama\'s copy' : (modelPathName(path) || jt('models.library.tuning.notFoundForTag', 'Not found for this tag'));
     var chooseGgufText = jt('models.library.tuning.chooseGgufAria', 'Choose a GGUF file');
-    return '<section class="model-tuning-section model-tuning-engine" data-model-tuning-engine>'
-      + '<h4 class="model-tuning-section-title">Engine</h4>'
-      + '<p class="model-tuning-section-hint">' + escapeHtml(view.ollamaAvailable || view.ollamaFromScan
-        ? jt('models.library.tuning.engineHint', 'Ollama or Jenny\'s own llama-server. llama-server can speed up verified models with multi-token prediction.')
-        : jt('models.library.tuning.engineHintNoOllama', 'Ollama doesn\'t have this model, so it runs on Jenny\'s own llama-server.')) + '</p>'
-      + '<div class="model-tuning-row" data-model-tuning-row="engine">'
-      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.runWith', 'Run with')) + '</span>'
-      + '<div class="model-tuning-row-control">'
-      + ctx.segmentedControl({
+    var row = function (o) { return rows.rowHtml(Object.assign({ escapeHtml: escapeHtml }, o)); };
+    var mtpLabel = jt('models.library.tuning.mtpLabel', 'Multi-token prediction');
+    var body = row({
+      key: 'engine', label: jt('models.library.tuning.runWith', 'Run with'),
+      desc: view.ollamaAvailable || view.ollamaFromScan
+        ? jt('models.library.tuning.engineHintShort', 'Ollama, or Jenny\'s own llama-server.')
+        : jt('models.library.tuning.engineHintNoOllama', 'Ollama doesn\'t have this model, so it runs on Jenny\'s own llama-server.'),
+      tip: jt('models.library.tuning.tip.engine', 'Which program runs this model. Ollama is the shared engine; llama-server is Jenny\'s own copy, which can run multi-token prediction.'),
+      controlHtml: ctx.segmentedControl({
         id: 'modelTuningEngine',
         ariaLabel: jt('models.library.tuning.engineLabel', 'Inference engine'),
         value: draft.engine,
@@ -317,40 +333,33 @@
         ],
         disabled: ctx.pending,
         dataset: { 'model-tuning-field': 'engine' },
+      }),
+    })
+      + row({
+        key: 'mtp', label: mtpLabel, labelId: 'modelTuningLabelMtp', hidden: !llamaServer,
+        desc: jt('models.library.tuning.desc.mtp', 'Faster replies, same answers.'),
+        tip: jt('models.library.tuning.tip.mtp', 'The model drafts several tokens at once and checks them in one pass. Replies come out the same, usually much faster. Uses about {memory} more VRAM.', { memory: formatGb(view.headroomMb) }),
+        note: engineNote(view),
+        controlHtml: ctx.toggleSwitch({
+          id: 'modelTuningMtp', label: mtpLabel, bare: true, labelledBy: 'modelTuningLabelMtp',
+          checked: Boolean(draft.mtp && view.eligible),
+          disabled: ctx.pending || !view.eligible,
+        }),
       })
-      + '</div>'
-      + '<span class="model-tuning-row-range" data-dirty="false">' + escapeHtml(ctx.statusText) + '</span>'
-      + '</div>'
-      + '<div class="model-tuning-row model-tuning-row--mtp" data-model-tuning-row="mtp"' + (llamaServer ? '' : ' hidden') + '>'
-      + '<span class="model-tuning-row-label"></span>'
-      + '<div class="model-tuning-row-control">'
-      + ctx.toggleSwitch({
-        id: 'modelTuningMtp',
-        label: jt('models.library.tuning.mtpLabel', 'Multi-token prediction'),
-        checked: Boolean(draft.mtp && view.eligible),
-        disabled: ctx.pending || !view.eligible,
+      + row({
+        key: 'modelPath', wide: true, label: jt('models.library.tuning.modelFile', 'Model file'),
+        desc: jt('models.library.tuning.desc.modelFile', 'The GGUF file llama-server loads.'),
+        tip: jt('models.library.tuning.tip.modelFile', 'The model file llama-server loads. Choose another .gguf to run a different copy or quantization.'),
+        controlHtml: '<code class="model-tuning-gguf-path" data-model-tuning-gguf title="' + escapeHtml(path) + '">'
+          + escapeHtml(pathLabel) + '</code>'
+          + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseGgufText, title: chooseGgufText, variant: 'ghost', size: 'sm', disabled: ctx.pending }),
       })
-      + '</div>'
-      + '<span class="model-tuning-row-range" data-dirty="false">' + escapeHtml(engineNote(view)) + '</span>'
-      + '</div>'
-      + '<div class="model-tuning-row model-tuning-row--gguf" data-model-tuning-row="modelPath">'
-      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.ggufFile', 'GGUF file')) + '</span>'
-      + '<div class="model-tuning-row-control">'
-      + '<code class="model-tuning-gguf-path" data-model-tuning-gguf title="' + escapeHtml(path) + '">'
-      + escapeHtml(pathLabel) + '</code>'
-      + '</div>'
-      + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseGgufText, title: chooseGgufText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
-      + '</div>'
-      + buildRuntimeRowHtml(ctx)
-      + '</section>';
+      + buildRuntimeRowHtml(ctx);
+    return rows.sectionHtml(escapeHtml, jt('models.library.tuning.engineTitle', 'Engine'), ctx.statusText, body,
+      ' data-model-tuning-engine');
   }
 
-  // actionButton has no `hidden` option: the attribute goes on the button's own tag.
-  function hiddenButtonHtml(html) {
-    return String(html).replace(/^<(\w+)/, '<$1 hidden');
-  }
-
-  // Tune drawer > Engine > "llama-server build", under GGUF file with the same
+  // Tune drawer > Engine > "llama-server build", under Model file with the same
   // row grammar; only when the bridge can pick a build. "Use bundled" is always
   // rendered (hidden while unused) so a pick can toggle it without a re-render.
   function buildRuntimeRowHtml(ctx) {
@@ -360,18 +369,18 @@
     var path = String(draft.runtimePath || '');
     var chooseBuildText = jt('models.library.tuning.chooseBuildAria', 'Choose a llama-server build');
     var useBundled = ctx.actionButton({ id: 'use-bundled-llama-server', label: jt('models.library.tuning.useBundled', 'Use bundled'), variant: 'ghost', size: 'sm', disabled: ctx.pending });
-    return '<div class="model-tuning-row model-tuning-row--gguf" data-model-tuning-row="runtimePath"'
-      + (draft.engine === 'llama-server' ? '' : ' hidden') + '>'
-      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.llamaServerBuild', 'llama-server build')) + '</span>'
-      + '<div class="model-tuning-row-control">'
-      + '<code class="model-tuning-gguf-path" data-model-tuning-runtime title="' + escapeHtml(path) + '">'
-      + escapeHtml(runtimeValueText(draft)) + '</code>'
-      + '</div>'
-      + '<div class="model-tuning-row-actions">'
-      + ctx.actionButton({ id: 'choose-llama-server-runtime', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseBuildText, title: chooseBuildText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
-      + (path ? useBundled : hiddenButtonHtml(useBundled))
-      + '</div>'
-      + '</div>';
+    return rows.rowHtml({
+      escapeHtml: escapeHtml, key: 'runtimePath', wide: true, hidden: draft.engine !== 'llama-server',
+      label: jt('models.library.tuning.llamaServerBuild', 'llama-server build'),
+      desc: jt('models.library.tuning.desc.build', 'Which llama-server program runs it.'),
+      tip: jt('models.library.tuning.tip.build', 'Which llama-server program runs this model. Bundled ships with Jenny; choose another build to try a newer llama.cpp.'),
+      controlHtml: '<code class="model-tuning-gguf-path' + (path ? '' : ' model-tuning-gguf-path--plain') + '" data-model-tuning-runtime title="' + escapeHtml(path) + '">'
+        + escapeHtml(runtimeValueText(draft)) + '</code>'
+        + '<span class="model-tuning-row-actions">'
+        + ctx.actionButton({ id: 'choose-llama-server-runtime', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseBuildText, title: chooseBuildText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
+        + (path ? useBundled : rows.hiddenHtml(useBundled))
+        + '</span>',
+    });
   }
 
   // Status line after the drawer applies a patch. Preflight warnings refine
@@ -421,6 +430,7 @@
     runtimePickerDefaultDir: runtimePickerDefaultDir,
     runtimePickerFailureText: runtimePickerFailureText,
     runtimeValueText: runtimeValueText,
+    servedContextNote: servedContextNote,
     servesModel: servesModel,
   };
 });

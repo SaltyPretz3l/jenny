@@ -6,7 +6,7 @@
   const jt=(globalThis.jennyI18n&&globalThis.jennyI18n.t)||globalThis.jennyI18nFallback||((key,fallback)=>fallback);
   function createChatActivity(deps){
     const panel=deps.panel,doc=panel?.ownerDocument;let host=null,opened=false,bound=false,count=0,attention=false,wasCollapsed=true;
-    let restore=false;const storage=doc?.defaultView?.localStorage;
+    let restore=false,opener=null;const storage=doc?.defaultView?.localStorage;
     const enabled=()=>deps.state.features?.featureFlags?.activity_monitor===true;
     try{restore=JSON.parse(storage?.getItem('jenny.contextPanel.v1')||'{}').destination==='activity';}catch{/* preferences unavailable */}
     function save(){try{const prefs=JSON.parse(storage?.getItem('jenny.contextPanel.v1')||'{}');storage?.setItem('jenny.contextPanel.v1',JSON.stringify({...prefs,destination:opened?'activity':'context'}));}catch{/* preferences unavailable */}}
@@ -47,11 +47,11 @@
     }
     function click(event){
       const button=event.target.closest?.('[data-activity-open]');
-      if(button){if(opened&&deps.state.currentSessionId===context().sessionId)close();else open();return;}
+      if(button){opener=button;if(opened&&deps.state.currentSessionId===context().sessionId)close();else open();return;}
       if(host?.contains(event.target)&&event.target.closest?.('[data-activity-action="close"]')){close();buttonFocus();}
     }
     function keydown(event){if(opened&&event.key==='Escape'&&host?.contains(event.target)){event.preventDefault();close();buttonFocus();}}
-    function buttonFocus(){doc.querySelector('[data-activity-open]:not([hidden])')?.focus();}
+    function buttonFocus(){/* The Activity button leaves the bar (row 115): focus goes to the More button beside it. */const button=opener?.isConnected&&!opener.hidden?opener:doc.querySelector('[data-activity-open]:not([hidden])');(button?.closest('[data-chat-node="chatTimelineUtilityCluster"]')?.querySelector('[data-transcript-view-toggle]')||button)?.focus();}
     function bind(){
       if(bound||!panel)return;bound=true;host=doc.createElement('section');host.className='chat-activity-host';host.hidden=true;
       host.setAttribute('aria-label',jt('activity.title','Activity'));host.innerHTML=inventory.panelFrame();panel.appendChild(host);
@@ -64,5 +64,39 @@
     }
     return {bind,render,open,close,isOpen:()=>opened,dispose(){view.dispose();doc?.removeEventListener('click',click);doc?.removeEventListener('keydown',keydown);host?.remove();for(const button of doc?.querySelectorAll('[data-activity-open]')||[])button.remove();bound=false;}};
   }
-  return {createChatActivity};
+  /* Row 115 slice 2a: the chat context panel is Activity's host and nothing else. Its diagnostic log (Diagnostics
+     has it) and the bar button that opened it are gone, so the panel is collapsed unless Activity is open, whatever
+     an older version stored in `jenny.contextPanel.v1` (`collapsed: false` would otherwise leave an empty column
+     with no way to close it). Activity still keeps its `destination` in that key. */
+  function createContextPanelController(deps){
+    const {state,dom,callbacks}=deps;
+    const activity=(deps.createActivity||createChatActivity)({state,panel:dom.chatContextPanel,sidePanel:callbacks.sidePanel,
+      closeArtifact:callbacks.closeArtifact,onOutput:callbacks.openActivityOutput,onDiagnostics:()=>callbacks.setActiveView?.('logs'),
+      updateLayout:()=>callbacks.updateComposerSafeOffset?.({force:true,syncViewport:true})});
+    let bound=false;
+    // Activity names its owner in one-pane view too (the context list stays split-only), so it syncs as its own mode.
+    function syncPanelOwnerLine(){
+      if(callbacks.sidePanel)callbacks.sidePanel.syncOwnerLine(dom.chatContextPanel,activity?.isOpen()?'activity':'context');
+    }
+    function renderContextPanel(){
+      activity?.render();
+      if(!dom.chatContextPanel||(state.ui&&state.ui.activeView!=='chat'))return;
+      syncPanelOwnerLine();
+    }
+    // With the Activity flag off nothing here can open, so a "View activity" row (the Session rail) goes to Diagnostics.
+    function openActivity(){
+      if(activity?.open()){syncPanelOwnerLine();return true;}
+      if(callbacks.setActiveView){callbacks.setActiveView('logs');return true;}
+      return false;
+    }
+    function bind(){
+      if(bound||!dom.chatContextPanel)return;
+      bound=true;activity?.bind();dom.chatContextPanel.classList.add('collapsed');
+    }
+    return {openActivity,renderContextPanel,bind,
+      dispose(){activity?.dispose();bound=false;},
+      // Split view: the pane that owned the side panel closed. Close Activity (it restores the collapsed column).
+      collapseForOwnerClose:()=>Boolean(activity?.close())};
+  }
+  return {createChatActivity,createContextPanelController};
 });

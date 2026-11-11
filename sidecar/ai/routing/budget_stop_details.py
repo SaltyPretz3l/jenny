@@ -3,6 +3,8 @@
 import re
 from typing import Any
 
+from sidecar.ai.tools.tool_families import saved_tool_output
+
 # Mirrors token_budget._DIMINISHING_RETURNS_WINDOW; pinned by the tests.
 _NO_PROGRESS_WINDOW = 3
 # The named refusal is user-visible footer text: one line, bounded.
@@ -35,7 +37,13 @@ def _shared_failure(loop: Any) -> tuple[str, str] | None:
     codes = {str(getattr(outcome, "error_code", "") or "").strip() for outcome in window}
     if len(codes) != 1 or "" in codes:
         return None
-    return codes.pop(), _failure_message(getattr(window[-1], "output", ""))
+    last = window[-1]
+    saved = saved_tool_output(
+        str(getattr(last, "tool_name", "") or ""),
+        getattr(last, "output", ""),
+        getattr(last, "metadata", None),
+    )
+    return codes.pop(), _failure_message(saved)
 
 
 def budget_stop_details(

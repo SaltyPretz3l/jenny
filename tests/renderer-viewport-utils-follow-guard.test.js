@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   createViewportControllerHarness,
 } = require('./helpers/renderer-viewport-utils-helpers.js');
+const { spendOpenLanding } = require('./helpers/renderer-viewport-open-landing-helpers.js');
 const { deriveFollowLatestFromScroll } = require('../renderer/chat/chat-scroll-utils.js');
 
 // Scroll-program W0 red suite for the follow-latch guard (fixed in W1b).
@@ -135,6 +136,7 @@ test('real auto-scroll gate follows an expanded live tail but cancels for histor
     useRealAutoScrollGate: true,
   });
   try {
+    spendOpenLanding(liveHarness);
     liveHarness.state.ui.followLatest = true;
     liveHarness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1400, clientHeight: 400 });
     liveHarness.thinkingController.togglePhaseExpanded(
@@ -161,6 +163,7 @@ test('real auto-scroll gate follows an expanded live tail but cancels for histor
     useRealAutoScrollGate: true,
   });
   try {
+    spendOpenLanding(historicalHarness);
     historicalHarness.state.ui.followLatest = true;
     historicalHarness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1400, clientHeight: 400 });
     historicalHarness.thinkingController.togglePhaseExpanded('assistant_1', 'think_hist');

@@ -768,13 +768,15 @@ test('a decorated absolute chip carries the shared chip contract and opens in ro
   assert.deepEqual(h.calls.openIdeFileAtLine, [{ path: 'src/a.js', line: 42, column: 7 }]);
 });
 
-test('an out-of-root absolute path never opens; its menu offers Copy Path only, copying the path', async () => {
+test('an out-of-root absolute path never opens; a click or its Copy Path menu copies it and says so', async () => {
   const h = absHarness('<p><code>C:\\Users\\me\\secret.txt</code></p>');
   clickCode(h.dom, 'C:\\Users\\me\\secret.txt');
   await flush();
   assert.deepEqual(h.calls.openIdeFileAtLine, []);
   assert.deepEqual(h.calls.setActiveView, []);
-  assert.deepEqual(h.calls.toasts, []);
+  assert.deepEqual(h.copied, ['C:\\Users\\me\\secret.txt']);
+  assert.deepEqual(h.calls.toasts.map((toast) => toast.message), ['Path copied']);
+  h.copied.length = 0;
   assert.equal(openContextMenu(h.dom, 'code').defaultPrevented, true);
   assert.deepEqual(menuLabels(h), ['Copy Path']);
   const copy = h.calls.menus[0].items.find((item) => item.label === 'Copy Path');

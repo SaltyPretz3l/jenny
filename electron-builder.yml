@@ -28,11 +28,20 @@ win:
   signtoolOptions:
     signingHashAlgorithms:
       - sha256
-  # Unsigned update channel: the NSIS updater rejects unsigned updates when
-  # this is true, and releases currently ship without Authenticode (no signing
-  # secrets configured). Update integrity still rests on the latest.yml SHA512
-  # over HTTPS, and UpdateService refuses updates lacking SHA512. Flip back to
-  # true when signing lands (see docs/BUILDING.md "Auto-update
+  # Azure Artifact Signing is added only by the release workflow's generated
+  # overlay config (scripts/packaging/windows_signing.py); local builds stay
+  # unsigned. build/afterPack.js re-records the signed sidecar.exe hash.
+  # Vendor-signed executables keep their signature (CPython: PSF; node-pty's
+  # ConPTY host: Microsoft); every other .exe is signed as Jenny.
+  signExts:
+    - "!python.exe"
+    - "!pythonw.exe"
+    - "!OpenConsole.exe"
+  # Unsigned builds keep this false. A signed release build overrides it to
+  # true, so signed installs accept only updates signed by the same publisher.
+  # Installs from unsigned releases have no publisher recorded and still update.
+  # Update integrity also rests on the latest.yml SHA512 over HTTPS, and
+  # UpdateService refuses updates lacking SHA512 (docs/BUILDING.md "Auto-update
   # notes").
   verifyUpdateCodeSignature: false
   # Windows v1 ships the verified CPython 3.13 runtime bundle. The package
@@ -228,6 +237,10 @@ files:
   - services/**/*
   # The `jenny` command-line tool, run by resources/bin/jenny(.cmd) with ELECTRON_RUN_AS_NODE=1.
   - cli/**/*
+  # The hosted application host. Desktop Jenny starts it as a team host (row 123), so the
+  # whole closure of server/main.js must be inside the asar
+  # (tests/electron-builder-cli-require-graph.test.js walks it).
+  - server/**/*
   - scripts/packaging/build-command-worker-context.js
   - renderer/**/*
   - styles/**/*
@@ -235,6 +248,7 @@ files:
   # (Fraunces, Anastasia). Without this glob they 404 in packaged builds and
   # the renderer silently falls back to system serif.
   - assets/fonts/**/*
+  - assets/ad-filters/**/*
   # UI catalogs (locales/<tag>.catalog.js + .json) loaded by renderer/shared/i18n-bootstrap.js and services/i18n-main.js.
   - locales/**/*
   - config/**/*

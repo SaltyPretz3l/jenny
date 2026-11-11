@@ -175,6 +175,36 @@ profile) refuses acceleration because its allocation has zero slack.
   `openai_compatible_api_key` in its secrets only when the engine's `api_url`
   shares the managed server's local origin; profiles cannot override
   `--api-key*`/`--slots`.
+- **GPU memory plan** (`services/backend/llama-server-memory-fit.js`, 2026-11-04):
+  llama.cpp's built-in `--fit` adjusts only unset arguments, so an explicit
+  `-c` that does not fit spills layers to the CPU (a Qwen3.8-27B Q6_K at 256K
+  with f16 KV held 35 GB of system RAM and decoded on the CPU). Each launch
+  therefore adds one slot (`-np 1`; llama.cpp's auto gives a hybrid model four
+  recurrent states, ~3 GB on Qwen3.8-27B) and a q8_0 KV cache (`-ctk`/`-ctv`),
+  each unless the profile names it, runs the build's sibling `llama-fit-params`
+  (~1-3 s) with a margin of 1024 MiB + the acceleration's `vramHeadroomMb` + the
+  projector size, and caps the context at the largest one that keeps every layer
+  on the GPU (never below 32K). The server gets `--fit-target` of 1024 MiB + the
+  projector only: its own fit already counts the MTP draft context, which
+  `llama-fit-params` cannot see (it rejects `--spec-type`). Measured 2026-11-04
+  on the RTX 5090 (Qwen3.8-27B Q6_K finetune, embedded head, b10749): the old
+  launch (256K f16, 4 slots, ngram) put 17 of 66 layers on the CPU and decoded
+  ~30 tok/s; the plan (166K q8_0, 1 slot, MTP) keeps 66/66 on the GPU and
+  decodes 128-133 tok/s at ~80% draft acceptance (peak 506 W). INFO/WARN
+  `llama.server.memory_plan` records `reason` (`fits`, `context_reduced`,
+  `spill`, `profile_owns_placement`, `fit_tool_missing`, `fit_failed`,
+  `fit_unparsed`) with the requested and served context. The status keeps the
+  requested `contextSize` (relaunch comparison); the sidecar reads the served
+  window from `/props`. A profile with `-ngl`, `-ot`, `-ts`, `--fit` or similar
+  owns placement and skips the plan. A failed accelerated spawn retries once
+  without the acceleration args but keeps the memory args the fitted context
+  assumes; the dry run is killed if the launch is stopped.
+- **Embedded MTP heads**: a `separate`-shape family with no drafter file beside
+  the model drafts with the GGUF's own head when its header declares
+  `<arch>.nextn_predict_layers > 0` (`draft-mtp` without `--model-draft`,
+  reason `mtp_embedded`); a `native`-shape family whose header declares no
+  head falls back with `mtp_head_missing`. An unreadable header keeps the
+  previous behavior.
 - **Crash policy = surface + restart on next chat** (Ollama parity, no respawn
   loop): a child exit while ready -> `crashed` (WARN
   `llama.server.crashed_pending_recovery`), the health pill shows the server row
@@ -189,10 +219,46 @@ profile) refuses acceleration because its allocation has zero slack.
   Tune (even while its Use is still launching), clears it, so an earlier model
   never starts in its place. The Diagnostics runtime facet carries
   `runtime.llama_server`.
-- IPC: `llamaServer.{getStatus,start,stop,restart,listLocalGgufs,chooseGguf,chooseLibraryFolder,chooseRuntime}`
+- IPC: `llamaServer.{getStatus,start,stop,restart,listLocalGgufs,chooseGguf,chooseLibraryFolder,chooseRuntime,planGgufImport,importGguf,ggufImportStatus,cancelGgufImport}`
   (`services/main/llama-server-ipc-handlers.js`, fail-soft `{ok:false,
   reason}`; `start`/`restart` report `ok:false` when the launch resolves short
   of ready; `chooseRuntime` answers only a trusted sender, see below).
+
+## Adding a downloaded model (Move and add)
+
+Settings > Models > GGUF folders > **Add GGUF model…** (row 107). When the
+picked file already sits inside a scanned folder (`{userData}/models`,
+`{repoRoot}/.jenny/models` or a GGUF folder) it is added in place. Otherwise a
+note under the folder list offers **Move and add**, **Add where it is**,
+**Cancel** and **Another folder…**.
+
+- The destination is `<first GGUF folder>\<family>\`, or
+  `{userData}\models\<family>\` with no GGUF folder; `<family>` is the file
+  name without its quant and shard suffix (`LFM3-Omni-2B-F16.gguf` ->
+  `LFM3-Omni-2B`).
+- What moves with the model: the other parts of a split set, the projector the
+  shared pairing rule gives it, and `mtp-*` drafters that name its family (or
+  the one drafter beside a lone model). A generic projector beside several
+  models stays.
+- `services/llama-server-gguf-import.js` owns the move. It moves only a file
+  `chooseGguf` returned, into Jenny's models folder, a GGUF folder or a folder
+  `chooseLibraryFolder` returned; links are never followed and nothing is
+  replaced. Each file is first renamed aside (`<name>.jenny-moving`), which a
+  program holding it open refuses (`in_use`) before anything is linked; then
+  it is hard-linked into place and unlinked (rename only where the volume has
+  no hard links and the target is absent). Across volumes: copy to
+  `<name>.jenny-partial`, fsync, compare sizes, place, then delete the
+  originals. Cancel, closing Settings mid-move, or a failure removes the partial
+  copies and leaves the sources. A companion a model left behind still pairs
+  with stays (a sibling quant keeps its projector and drafter). Reasons:
+  `not_picked`, `network_path`, `not_a_file`, `not_main_model`, `inside`,
+  `destination_not_allowed`, `busy`, `exists`, `in_use`, `no_space`,
+  `cancelled`, `io`.
+- The plan also reads the file's architecture and checks the bundled build's
+  llama library for that name (NUL-delimited). Only a sure `no` (Windows)
+  shows "The bundled llama-server can't run <arch> models" after the add; any
+  doubt shows nothing and the launch-time `llama_server_model_unsupported`
+  copy still applies.
 
 ## Per-model llama-server builds
 
@@ -311,7 +377,9 @@ prefill 1,306 tok/s on a 4,752-token prompt, decode 53.8-58.8 tok/s. Thinking
 on and off, streamed reasoning, a tool call and an image description all
 worked. The 64K relaunch was not measured; at PrismML's 64 KiB of FP16 KV per
 token, 64K should need about 12 GiB and fit, while 131K needs about 16 GiB and
-does not fit without a quantized KV cache (not offered yet). Jenny launches at
+does not fit without a quantized KV cache (q8_0 is the default since
+2026-11-04, and the fork ships `llama-fit-params`, so the memory plan caps the
+context the same way). Jenny launches at
 32K unless Tune sets a context.
 
 In-app checks (owner-run; PENDING):

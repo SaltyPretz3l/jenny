@@ -4,6 +4,7 @@ const { hostFailure } = require('./api-contract');
 const { json, sendHostFailure } = require('./http-server');
 const { downloadDisposition } = require('./download-headers');
 const { projectMessage } = require('./session-snapshots');
+const { createRouteDenier } = require('./team/route-guard');
 
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_UPLOAD_BYTES = 1_000_000;
@@ -14,6 +15,7 @@ const ID_PATTERN_BODY = '[A-Za-z0-9_-]{1,128}';
 function authorized(ctx) {
   return typeof ctx.authorized === 'function' ? ctx.authorized() === true : ctx.authorized === true;
 }
+
 
 function contentType(request) {
   return String(request?.headers?.['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
@@ -48,11 +50,12 @@ function routeIds(pathname, suffix) {
  * Handle the bounded attachment and canonical message routes.
  * Returns false when `pathname` is outside this route family.
  */
-function createAssetRoutes({ commands } = {}) {
+function createAssetRoutes({ commands, guardRequired = false } = {}) {
   if (!commands || typeof commands.upload !== 'function'
     || typeof commands.readAttachment !== 'function' || typeof commands.readMessage !== 'function') {
     throw new TypeError('Asset routes require the asset command surface.');
   }
+  const denied = createRouteDenier({ guardRequired, send: sendHostFailure });
 
   return async function assetRoutes(ctx = {}) {
     const method = String(ctx.request?.method || '').toUpperCase();
@@ -66,6 +69,7 @@ function createAssetRoutes({ commands } = {}) {
       return true;
     }
     if (isUpload) {
+      if (denied(ctx, 'asset.upload', { kind: 'session', id: '' })) return true;
       const type = contentType(ctx.request);
       if (!UPLOAD_TYPES.has(type)) {
         sendHostFailure(ctx.response, hostFailure('invalid', 'mime_type_unsupported'), ctx.requestId);
@@ -81,6 +85,7 @@ function createAssetRoutes({ commands } = {}) {
         sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId);
         return true;
       }
+      if (denied(ctx, 'asset.upload', { kind: 'session', id: '' })) return true;
       const displayName = decodeDisplayName(ctx.request?.headers?.['x-file-name']);
       if (displayName === null) {
         sendHostFailure(ctx.response, hostFailure('invalid', 'display_name_invalid'), ctx.requestId);
@@ -88,6 +93,7 @@ function createAssetRoutes({ commands } = {}) {
       }
       const result = await commands.upload({ deviceId: ctx.deviceId, bytes, displayName, mimeType: type });
       if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+      if (denied(ctx, 'asset.upload', { kind: 'session', id: '' })) return true;
       if (!result.ok) sendHostFailure(ctx.response, result, ctx.requestId);
       else json(ctx.response, 201, result);
       return true;
@@ -98,9 +104,12 @@ function createAssetRoutes({ commands } = {}) {
       sendHostFailure(ctx.response, hostFailure('invalid', 'reference_invalid'), ctx.requestId);
       return true;
     }
+    const readResource = { kind: 'session', id: sessionId };
+    if (denied(ctx, 'session.read', readResource)) return true;
     if (attachmentMatch) {
       const result = await commands.readAttachment(sessionId, valueId);
       if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+      if (denied(ctx, 'session.read', readResource)) return true;
       if (!result.ok) { sendHostFailure(ctx.response, result, ctx.requestId); return true; }
       const type = String(result.attachment?.mime_type || '').toLowerCase();
       if (!UPLOAD_TYPES.has(type)) {
@@ -118,6 +127,7 @@ function createAssetRoutes({ commands } = {}) {
     }
     const result = await commands.readMessage(sessionId, valueId);
       if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+    if (denied(ctx, 'session.read', readResource)) return true;
     if (!result.ok) { sendHostFailure(ctx.response, result, ctx.requestId); return true; }
     const message = projectMessage(result.message);
     if (!message) {

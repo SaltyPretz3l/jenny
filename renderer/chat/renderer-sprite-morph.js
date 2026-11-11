@@ -189,6 +189,7 @@
       }
       void dot.offsetWidth;
       for (const el of els) el.style.transition = '';
+      options.onLoopsReleased?.(); // CSS loops just restarted: a mirror re-aligns its phase here
     }
 
     function readTiming(urgent) {

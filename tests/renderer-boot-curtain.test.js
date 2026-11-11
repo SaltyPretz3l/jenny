@@ -84,6 +84,39 @@ test('index composes one first-child boot surface and removes the auth overlay s
   dom.window.close();
 });
 
+test('only the curtain\'s own needs block first paint, and its sky starts from its own tag', () => {
+  const markup = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const dom = new JSDOM(markup);
+  const documentRef = dom.window.document;
+  const headSheets = Array.from(documentRef.head.querySelectorAll('link[rel="stylesheet"]')).map((node) => node.getAttribute('href'));
+  assert.deepEqual(headSheets, ['styles/foundation.css', 'styles/startup-overlay.css']);
+
+  const appSheet = documentRef.body.querySelector('link[href="styles.css"]');
+  assert.ok(appSheet, 'the app stylesheet still loads');
+  const curtain = documentRef.getElementById('startupOverlay');
+  assert.ok(curtain.compareDocumentPosition(appSheet) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING, 'app styles come after the curtain');
+  assert.ok(appSheet.compareDocumentPosition(documentRef.getElementById('appShell')) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING, 'and before the shell they style');
+  assert.ok(documentRef.body.querySelector('link[href="styles/settings-data-storage.css"]'));
+
+  const starter = curtain.querySelector('script[src="renderer/shell/renderer-startup-starfield.js"]');
+  assert.ok(starter, 'the sky starts inside the curtain');
+  assert.equal(starter.hasAttribute('defer'), false, 'the sky cannot wait for every deferred script');
+  dom.window.close();
+});
+
+test('curtain styling never drives a frame from the page thread', () => {
+  const curtain = fs.readFileSync(path.join(__dirname, '..', 'styles', 'startup-overlay.css'), 'utf8');
+  const foundation = fs.readFileSync(path.join(__dirname, '..', 'styles', 'foundation.css'), 'utf8');
+  const sky = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shell', 'renderer-startup-starfield.js'), 'utf8');
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shell', 'renderer-startup-starfield-worker.js'), 'utf8');
+  assert.match(curtain, /will-change:\s*opacity/);
+  assert.match(curtain, /@keyframes startup-arrive\s*\{\s*from\s*\{\s*opacity:\s*0;\s*\}\s*\}/, 'the name arrives on opacity alone');
+  assert.doesNotMatch(curtain, /animation:[^;]*\bboth\b/, 'a held fill would block the exit transition');
+  assert.doesNotMatch(sky, /wordmark\.style\.opacity|textShadow|requestAnimationFrame/, 'the page side never animates the name');
+  assert.doesNotMatch(worker, /wordmark\.style|textShadow/, 'the flare is drawn on the canvas');
+  assert.match(foundation, /anastasia\.woff2[\s\S]{0,120}font-display:\s*block/, 'the name does not swap fonts mid-entrance');
+});
+
 test('curtain line is renderer-owned: detail never reaches it', (t) => {
   const previousActionButton = global.inventoryActionButton;
   global.inventoryActionButton = actionButton;

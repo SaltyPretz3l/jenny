@@ -590,7 +590,7 @@ test('the Engine hint says why Ollama is greyed out, and only then', () => {
     toggleSwitch: toggleSwitch.toggleSwitch || toggleSwitch,
     actionButton,
     escapeHtml: actionButton.escapeHtml,
-  })).querySelector('.model-tuning-section-hint').textContent;
+  })).querySelector('[data-model-tuning-row="engine"] .model-tuning-row-desc').textContent;
   assert.equal(hint(false), "Ollama doesn't have this model, so it runs on Jenny's own llama-server.");
-  assert.equal(hint(true), "Ollama or Jenny's own llama-server. llama-server can speed up verified models with multi-token prediction.");
+  assert.equal(hint(true), "Ollama, or Jenny's own llama-server.");
 });

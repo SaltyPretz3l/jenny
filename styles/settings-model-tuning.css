@@ -1,0 +1,352 @@
+/* styles/settings-model-tuning.css
+ *
+ * The Tune drawer (Settings > Models > Tune): row grammar, sections, the
+ * Advanced sampling fold and the sticky footer. Imported at the top of
+ * settings-model-library.css, where these rules used to sit.
+ */
+
+.model-tuning-drawer-copy {
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Tune drawer: one line naming the engine when no Engine section does. */
+.model-tuning-drawer-subtitle {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.model-tuning-drawer-warning {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--state-warning);
+  font-size: var(--font-size-caption);
+}
+
+.model-tuning-drawer-grid[data-disabled="true"] {
+  opacity: 0.65;
+}
+
+/* The title is one line; its tooltip holds the full model name. */
+#modelTuningDrawer .inv-drawer-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sections: titles, whitespace and alignment carry the hierarchy (no boxes). */
+.model-tuning-section + .model-tuning-section {
+  margin-top: 18px;
+}
+
+.model-tuning-section-title {
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.model-tuning-section-status,
+.model-tuning-section-hint {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.model-tuning-section-hint {
+  color: var(--text-muted);
+}
+
+.model-tuning-section-status:empty {
+  display: none;
+}
+
+.model-tuning-section-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 0;
+}
+
+/* Row: label, description and note on the left; a fixed-width control on the
+   right, so every control shares one right edge. */
+.model-tuning-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 168px;
+  gap: 4px 16px;
+  align-items: start;
+  padding: 8px 0;
+}
+
+/* display:grid outranks the UA [hidden] rule; the MTP and build rows toggle it. */
+.model-tuning-row[hidden] {
+  display: none;
+}
+
+.model-tuning-row--wide,
+.model-tuning-row[data-model-tuning-row="engine"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.model-tuning-row--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.model-tuning-row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.model-tuning-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.model-tuning-row-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.model-tuning-row-label[data-tooltip] {
+  cursor: help;
+}
+
+.model-tuning-row-desc,
+.model-tuning-row-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.model-tuning-row-desc {
+  color: var(--text-muted);
+}
+
+.model-tuning-row-note {
+  color: var(--text-secondary);
+}
+
+.model-tuning-row-note:empty {
+  display: none;
+}
+
+.model-tuning-row-note[data-invalid="true"] {
+  color: var(--state-warning);
+}
+
+/* "Changed" and the revert sit on the title line and never move the row. */
+.model-tuning-row-changed {
+  color: var(--text-link);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.model-tuning-row-changed[hidden],
+.model-tuning-row-revert[hidden],
+.model-tuning-context-custom[hidden],
+.model-tuning-row-actions > [hidden],
+.model-tuning-drawer-actions > [hidden] {
+  display: none;
+}
+
+.model-tuning-row-revert {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-link);
+  font-size: var(--font-size-footnote);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* The glyph is small on purpose; the hit area is not. */
+.model-tuning-row-revert::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+
+.model-tuning-row-revert:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-link) 16%, transparent);
+}
+
+.model-tuning-row-revert:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.model-tuning-row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.model-tuning-row--wide .model-tuning-row-control {
+  justify-content: flex-start;
+}
+
+.model-tuning-row-control--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.model-tuning-context-custom {
+  display: block;
+}
+
+.model-tuning-row-control .inv-number-input,
+.model-tuning-row-control .inv-number-input-control,
+.model-tuning-row-control .inv-number-input input,
+.model-tuning-row-control .inv-select-field,
+.model-tuning-row-control .inv-select-field-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-tuning-row-control .inv-number-input input {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-tuning-row-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.model-tuning-gguf-path {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+}
+
+.model-tuning-gguf-path--plain {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Advanced sampling: a plain text disclosure, no box. */
+.model-tuning-fold-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--text-secondary);
+  list-style: none;
+  cursor: pointer;
+}
+
+.model-tuning-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-tuning-fold-summary::before {
+  content: "\203A";
+  display: inline-block;
+  width: 10px;
+  transition: transform var(--motion-duration-fast, 120ms) ease;
+}
+
+.model-tuning-fold[open] > .model-tuning-fold-summary::before {
+  transform: rotate(90deg);
+}
+
+.model-tuning-fold-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.model-tuning-fold-count {
+  color: var(--text-link);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-tuning-fold-summary::before {
+    transition: none;
+  }
+}
+
+/* Footer: the status sits above the buttons so it never squeezes them. */
+.model-tuning-drawer-footer {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  background: var(--bg-surface);
+}
+
+.model-tuning-drawer-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.model-tuning-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-tuning-drawer-actions .model-tuning-reset {
+  margin-inline-start: auto;
+}
+
+/* Block-level wrapper so the sticky footer has travel inside the grid drawer
+   body; also the container-query root for the narrow-drawer row collapse. */
+.model-tuning-drawer-scroll {
+  display: block;
+  container-type: inline-size;
+}
+
+@container (max-width: 400px) {
+  .model-tuning-row,
+  .model-tuning-row[data-model-tuning-row="engine"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-tuning-row-control {
+    justify-content: flex-start;
+  }
+
+  .model-tuning-row-control .inv-number-input,
+  .model-tuning-row-control .inv-select-field,
+  .model-tuning-context-custom {
+    max-width: 220px;
+  }
+}

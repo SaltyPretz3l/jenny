@@ -221,6 +221,9 @@ function resolveAccelerationArgs({
   capabilities,
   profileExtraArgs,
   modelDir,
+  // The model GGUF's `<arch>.nextn_predict_layers` (null: unread). A count
+  // above zero is an MTP head inside the model itself.
+  embeddedMtpLayers = null,
   fsImpl = fs,
 } = {}) {
   if (!mode || mode === 'off') {
@@ -260,18 +263,27 @@ function resolveAccelerationArgs({
     return offResult(fallbackReason);
   }
 
+  const hasEmbeddedHead = Number.isInteger(embeddedMtpLayers) && embeddedMtpLayers > 0;
   let drafterPath = '';
+  let missingReason = '';
   if (family.mtpShape === 'separate') {
     drafterPath = findDrafterFile({
       modelDir,
       drafterPattern: family.drafterPattern,
       fsImpl,
     });
-    if (!drafterPath) {
-      return family.ngram === true
-        ? ngramResult(capabilities, 'drafter_missing')
-        : offResult('drafter_missing');
+    // No drafter beside the model: a head inside the GGUF drafts instead
+    // (llama.cpp builds an MTP context against the target model).
+    if (!drafterPath && !hasEmbeddedHead) {
+      missingReason = 'drafter_missing';
     }
+  } else if (embeddedMtpLayers === 0) {
+    missingReason = 'mtp_head_missing';
+  }
+  if (missingReason) {
+    return family.ngram === true
+      ? ngramResult(capabilities, missingReason)
+      : offResult(missingReason);
   }
 
   const defaults = sanitizeDefaults(isPlainObject(catalog && catalog.defaults)
@@ -299,7 +311,7 @@ function resolveAccelerationArgs({
       family.vramHeadroomMb,
       defaults.vramHeadroomMb
     ),
-    reason: 'mtp',
+    reason: drafterPath || !hasEmbeddedHead ? 'mtp' : 'mtp_embedded',
     drafter: drafterPath ? path.basename(drafterPath) : '',
   });
 }

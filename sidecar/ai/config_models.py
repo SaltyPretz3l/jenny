@@ -246,6 +246,9 @@ class RuntimeConfig:
     # ordinary desktop surface; version 1 delegates foreground commands to the
     # Electron sandbox bridge and closes every other executable route.
     desktop_execution_policy_version: int | None = None
+    # Row 106: where a sandboxed command runs ("copy" or "synced"); only the run_command
+    # description reads it. Policy stays version 1 either way.
+    desktop_command_workspace: str = "copy"
     context_length: int | None = None
     # Explicit user choice, applied after model-family profile defaults.
     context_length_override: int | None = None
@@ -341,6 +344,7 @@ class RuntimeConfig:
     tools_automations_enabled: bool = False
     tools_workspace_present_enabled: bool = False
     tools_preview_test_enabled: bool = False
+    tools_browser_use_enabled: bool = False
     tools_verify_enabled: bool = False
     tools_image_generate_enabled: bool = False
     tools_home_enabled: bool = False
@@ -374,7 +378,6 @@ class RuntimeConfig:
     tools_web_enabled: bool = False
     tools_image_read_enabled: bool = False
     tools_todo_enabled: bool = False
-    tools_mermaid_enabled: bool = True
     tools_workspace_manifest_enabled: bool = False
     repo_delta_resume_enabled: bool = False
     model_identity_overlay_enabled: bool = True

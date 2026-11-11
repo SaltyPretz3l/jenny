@@ -3,7 +3,7 @@ const { stableJson } = require('../session-runtime/contracts');
 const { normalizeCompletedEffects } = require('../session-runtime/continuation-contracts');
 const { completedEffectRefs } = require('../session-runtime/continuation-effect-refs');
 const { isContinuationEvent } = require('../session-runtime/continuation-events');
-const { decisionProjection } = require('./runtime-continuation-effects');
+const { allowedPendingDecisionEvent, approvedPendingDecision, decisionProjection } = require('./runtime-continuation-effects');
 const { assertQuotaCoverage } = require('../session-runtime/quota-state');
 const { assertDecisionProgress, readDecisionPredecessor } = require('./runtime-decision-proof');
 const { assertPredecessorWaitOrder } = require('../session-runtime/dependency-mixed-proof');
@@ -28,7 +28,10 @@ function proveResourcePrefix({ work, completedRefs, pendingCalls, position, even
     || position.tool_calls_consumed < pendingCalls.length + charged.size) fail();
   const executed = new Set();
   const announced = new Set();
-  const context = { sessionId: work.session_id, turnId: work.turn_id,
+  const decision = approvedPendingDecision({ events, pendingCalls, streamId: work.attempt.stream_id });
+  // With nothing completed, only an answered card can justify this checkpoint.
+  if (!refs.length && !decision) fail();
+  const context = { decision, sessionId: work.session_id, turnId: work.turn_id,
     streamId: work.attempt.stream_id, pendingCalls, events };
   for (const event of events) {
     const projection = decisionProjection(event, context);
@@ -40,6 +43,8 @@ function proveResourcePrefix({ work, completedRefs, pendingCalls, position, even
     const call = pendingCalls.find(item => item.call_id === event.tool_call_id);
     if (!call && !completed.has(event.tool_call_id)) fail();
     if (call) {
+      if (decision && event.payload?.canonical_event_type !== 'tool_call_requested'
+        && allowedPendingDecisionEvent(event, context)) continue;
       if (event.kind !== 'tool_use' || event.payload?.canonical_event_type !== 'tool_call_requested'
         || event.payload.tool_name !== call.tool_id || announced.has(call.call_id)
         || stableJson(event.payload.tool_input) !== stableJson(call.arguments)) fail();

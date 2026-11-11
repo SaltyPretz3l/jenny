@@ -88,14 +88,14 @@ for (const entryPoint of ['inline', 'button']) {
   }
 }
 
-test('skill selection neither attaches nor submits until explicit send', (t) => {
+test('skill selection neither attaches nor submits until Enter, which runs it with nothing armed', (t) => {
   const h = harness(t);
   h.type('/ver'); h.key('Tab');
   assert.equal(h.input.value, '/verify ');
   assert.equal(composerState.getPendingSkillInvocation(h.state), null);
   assert.equal(h.counts().submits, 0);
   h.key('Enter');
-  assert.equal(composerState.getPendingSkillInvocation(h.state).command, 'verify');
+  assert.equal(composerState.getPendingSkillInvocation(h.state), null);
 });
 
 test('caret completion preserves arguments and does not trigger in prose or arguments', (t) => {

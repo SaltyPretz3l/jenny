@@ -347,36 +347,6 @@ def test_freeze_effective_execution_inputs_injects_session_marker_without_mutati
     assert frozen.injected_arg_keys == ("_jenny_session_id",)
 
 
-def test_freeze_effective_execution_inputs_injects_turn_context_for_mermaid() -> None:
-    kernel = SimpleNamespace(
-        _normalize_snapshot_lookup_path=lambda raw_path: str(raw_path or "").strip(),
-    )
-    call = ToolCallRequest(
-        tool_id="mermaid_generate",
-        arguments={"diagram_type": "flowchart", "prompt": "graph TD\nA --> B"},
-        call_id="call-mermaid-1",
-    )
-
-    frozen = freeze_effective_execution_inputs(
-        kernel,
-        call,
-        session_id="session-xyz",
-        read_snapshot_cache={},
-        read_only=True,
-    )
-
-    assert frozen.visible_tool_arguments == {
-        "diagram_type": "flowchart",
-        "prompt": "graph TD\nA --> B",
-    }
-    assert "_jenny_session_id" not in frozen.visible_tool_arguments
-    assert "_jenny_read_only" not in frozen.visible_tool_arguments
-    assert frozen.effective_tool_arguments["_jenny_session_id"] == "session-xyz"
-    assert frozen.effective_tool_arguments["_jenny_read_only"] is True
-    assert frozen.injected_arg_keys == ("_jenny_read_only", "_jenny_session_id")
-    assert frozen.execution_context_payload["read_only"] is True
-
-
 def test_build_approval_plan_uses_explicit_approved_call_id() -> None:
     class _MockEngine:
         pass

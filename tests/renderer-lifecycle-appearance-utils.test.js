@@ -183,7 +183,7 @@ test('appearance projection remains unchanged when atomic persistence fails', ()
   });
   const previous = harness.state.ui.appearance;
 
-  const applied = harness.utils.applyAppearancePreferences({ paletteId: 'signal' });
+  const applied = harness.utils.applyAppearancePreferences({ paletteId: 'pewter' });
 
   assert.equal(applied, previous);
   assert.equal(harness.state.ui.appearance, previous);

@@ -188,8 +188,10 @@
       if (!id || !chatTimeline || typeof chatTimeline.querySelector !== 'function') {
         return null;
       }
+      // A reply segment (reasoning, tool row) carries its id on a row inside the turn's one entry.
       try {
-        return chatTimeline.querySelector('.chat-entry[data-message-id="' + cssStringEscape(id) + '"]');
+        return chatTimeline.querySelector('.chat-entry[data-message-id="' + cssStringEscape(id) + '"]')
+          || chatTimeline.querySelector('[data-message-id="' + cssStringEscape(id) + '"]');
       } catch (_error) {
         return null;
       }

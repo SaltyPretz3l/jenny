@@ -186,7 +186,7 @@ def test_ask_mode_read_only_command_needs_no_approval(command: str, root: Path) 
 
 @pytest.mark.parametrize(
     "command",
-    ["sed -i s/a/b/ x.txt", "cat ../secret.txt", "npm test", "python -c 1"],
+    ["sed -i s/a/b/ x.txt", "cat ../secret.txt", "npm test", "python -c 1", "git log\u202e -5", "rg fo\u200bo src"],
 )
 def test_ask_mode_non_read_only_command_still_asks(command: str, root: Path) -> None:
     approval = _gate(command, root)
@@ -572,6 +572,10 @@ def test_dispatch_admission_carries_the_grant_for_a_read_only_command(root: Path
 @pytest.mark.parametrize("command", ["npm test", "sed -i s/a/b/ x.txt", "cat ../secret.txt"])
 def test_dispatch_admission_has_no_grant_for_other_commands(command: str, root: Path) -> None:
     assert _dispatch_grants(root, command) == [None]
+
+
+def test_dispatch_admission_has_no_grant_for_a_disguised_command(root: Path) -> None:
+    test_dispatch_admission_has_no_grant_for_other_commands("git log\u202e -5", root)
 
 
 def test_dispatch_admission_has_no_grant_for_other_tools_or_with_the_flag_off(root: Path) -> None:

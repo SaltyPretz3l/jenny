@@ -36,6 +36,11 @@ _sub_agent_response_format = _subagent_finalization.response_format
 # The tool reserves the last 160 s for the chat-engine restore.
 IMAGE_GENERATE_TIMEOUT_SECONDS = 900.0
 
+# The Electron-owned browsing tool. MCP tools merely named *browser* are not it.
+BROWSER_USE_TOOL_ID = "browser"
+BROWSER_USE_TURN_STEPS = 30  # maxStepsPerTurn in services/browser-use/browser-use-service.js
+_MAX_CHECKPOINTED_TOOL_CALLS = 256  # continuation_checkpoint refuses a larger limit
+
 LOOP_PROFILE_CLOUD = "cloud"
 LOOP_PROFILE_LOCAL = "local"
 
@@ -162,6 +167,20 @@ def effective_max_tools_per_turn(config: Any) -> int:
         cloud_default=200,
         local_default=20,
     )
+
+
+def turn_tool_call_limit(config: Any, tool_contract: Any) -> int:
+    """The cumulative tool budget for one turn, read by the loop and by an approval resume.
+
+    A chat that can browse gets the browser's own step budget on top, so pages do not use up
+    the budget for its other tools. Every call still counts: checkpoints and approval plans
+    require the counter to equal the calls made.
+    """
+    limit = effective_max_tools_per_turn(config)
+    lookup = getattr(tool_contract, "executable_descriptor", None)
+    if not callable(lookup) or lookup(BROWSER_USE_TOOL_ID) is None:
+        return limit
+    return max(limit, min(limit + BROWSER_USE_TURN_STEPS, _MAX_CHECKPOINTED_TOOL_CALLS))
 
 
 def effective_max_tool_calls_per_session(config: Any) -> int:

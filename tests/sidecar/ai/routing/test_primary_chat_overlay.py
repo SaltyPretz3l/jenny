@@ -17,6 +17,7 @@ from sidecar.ai.context import turn_context as tc
 from sidecar.ai.context.builder import ContextBuilder
 from sidecar.ai.context.primary_chat_overlay import (
     PRIMARY_CHAT_OVERLAY,
+    PRIMARY_CHAT_SANDBOX_OVERLAY,
     build_primary_chat_overlay,
 )
 from sidecar.ai.context.prompt_modes import append_mode_runtime_overlays
@@ -166,3 +167,30 @@ def test_the_overlay_is_prefix_stable_across_turns(engine_type: str) -> None:
         # Local template engines keep per-turn text trailing, so the whole
         # leading run through the overlay is byte-identical.
         assert first[: first_index + 1] == second[: second_index + 1]
+
+
+def test_the_command_sandbox_gets_an_overlay_naming_only_its_tools() -> None:
+    """2026-11-03: with the sandbox on, the full overlay named sessions_list and friends,
+    which the allowlist had not registered, so the model wrote their calls as text."""
+    import re
+
+    from sidecar.ai.execution_policy import DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES
+    from sidecar.ai.tools.catalog import builtin_tool_names
+
+    primary = SimpleNamespace(session_role="primary")
+    sandbox = {"desktop_execution_policy_version": 1}
+    [overlay] = build_primary_chat_overlay(primary, sandbox)
+    assert overlay == PRIMARY_CHAT_SANDBOX_OVERLAY != PRIMARY_CHAT_OVERLAY
+    assert overlay.startswith(PRIMARY_CHAT_OVERLAY_HEADING + "\n")
+    assert not any(char.isdigit() for char in overlay), "no per-turn values in a static overlay"
+    named = set(re.findall(r"[a-z]+(?:_[a-z]+)+", overlay)) & builtin_tool_names()
+    assert named, "the overlay names its tools"
+    assert named <= DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES, named - DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES
+    assert {"sessions_list", "session_status", "session_transcript"} <= named
+    assert "command sandbox is on" in overlay and "Settings" in overlay
+    # No policy declaration, or the legacy desktop default, keeps the full overlay.
+    assert build_primary_chat_overlay(primary, {}) == [PRIMARY_CHAT_OVERLAY]
+    assert build_primary_chat_overlay(primary) == [PRIMARY_CHAT_OVERLAY]
+    overlays: list[str] = []
+    append_mode_runtime_overlays(overlays, request_context=primary, config=sandbox)
+    assert overlays[0] == PRIMARY_CHAT_SANDBOX_OVERLAY

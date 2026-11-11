@@ -89,9 +89,9 @@ test('managed sidecar refreshManagedConfig forwards hidden image read config', a
   await service.stop();
 });
 
-// The Mermaid preference is retired: the flag is forwarded as force-enabled and
-// a stale persisted `tools.mermaid` value must not turn it off.
-test('managed sidecar refreshManagedConfig forwards mermaid tool config as force-enabled', async () => {
+// The Mermaid tool and its flag are gone: a stale persisted `tools.mermaid` value
+// must not put the flag back in the sidecar config.
+test('managed sidecar refreshManagedConfig never forwards a mermaid tool flag', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-mermaid-config-'));
   trackDirectory(userDataPath);
 
@@ -111,7 +111,7 @@ test('managed sidecar refreshManagedConfig forwards mermaid tool config as force
   const originalInitialize = service.sidecarClient.initialize.bind(service.sidecarClient);
   const capturedFlags = [];
   service.sidecarClient.initialize = async (payload) => {
-    capturedFlags.push(payload?.config?.tools_mermaid_enabled === true);
+    capturedFlags.push(Object.hasOwn(payload?.config || {}, 'tools_mermaid_enabled'));
     return originalInitialize(payload);
   };
 
@@ -121,7 +121,7 @@ test('managed sidecar refreshManagedConfig forwards mermaid tool config as force
   configState.tools = { ...configState.tools, mermaid: false };
   await service.refreshManagedConfig('feature_settings_updated');
 
-  assert.deepEqual(capturedFlags.slice(-2), [true, true]);
+  assert.deepEqual(capturedFlags.slice(-2), [false, false]);
 
   await service.stop();
 });

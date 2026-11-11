@@ -13,6 +13,7 @@ from sidecar.ai.context.preview import _compact_at_tokens
 from sidecar.ai.context.token_budget import CharEstimationBackend, estimate_messages_tokens
 from sidecar.ai.feature_flags import FEATURE_CONTEXT_COMPACTION, FEATURE_TOKEN_BUDGET
 from sidecar.ai.routing import chat_decision as _chat_decision
+from sidecar.ai.routing import chat_decision_preflight as _chat_decision_preflight
 from sidecar.ai.routing.loop_events import ContextCompactedEvent
 
 
@@ -114,8 +115,8 @@ def _long_history(turns: int = 20) -> list[dict[str, object]]:
 
 @pytest.fixture
 def _quiet_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_chat_decision, "_emit_preflight_context_usage", lambda *_a, **_k: None)
-    monkeypatch.setattr(_chat_decision, "resolve_compaction_prompt", lambda _config: "compact")
+    monkeypatch.setattr(_chat_decision_preflight, "_emit_preflight_context_usage", lambda *_a, **_k: None)
+    monkeypatch.setattr(_chat_decision_preflight, "resolve_compaction_prompt", lambda _config: "compact")
 
 
 def _prepare(context: Any, history: list[dict[str, object]], **kwargs: Any) -> Any:

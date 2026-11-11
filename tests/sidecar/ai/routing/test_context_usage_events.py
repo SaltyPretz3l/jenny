@@ -85,7 +85,7 @@ def _tracker() -> BudgetTracker:
 def _install_budget(monkeypatch: pytest.MonkeyPatch, tracker: BudgetTracker) -> None:
     """Hand the routing lane a deterministic budget instead of a real tokenizer."""
     monkeypatch.setattr(
-        "sidecar.ai.routing.chat_decision.apply_budget_check",
+        "sidecar.ai.routing.chat_decision_preflight.apply_budget_check",
         lambda messages, _config, _engine, **_kwargs: (
             messages,
             tracker.budget,

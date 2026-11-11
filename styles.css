@@ -2,7 +2,6 @@
 @import url("./styles/foundation-widget-tokens.css");
 @import url("./styles/motion.css");
 @import url("./styles/palette-paper.css");
-@import url("./styles/palette-signal.css");
 @import url("./styles/palette-woolly.css");
 @import url("./styles/palette-lexicon.css");
 @import url("./styles/palette-rocko.css");
@@ -12,6 +11,7 @@
 @import url("./styles/palette-obsidian.css");
 @import url("./styles/palette-darkroom.css");
 @import url("./styles/palette-slate.css");
+@import url("./styles/palette-chalk.css");
 /* Third-party: KaTeX typeset base. Fonts resolve relative to the
    imported file inside node_modules/katex/dist/ — covered by font-src 'self'. */
 @import url("./node_modules/katex/dist/katex.min.css");
@@ -19,7 +19,6 @@
 @import url("./styles/components/skeleton.css");
 @import url("./styles/shell-chrome.css");
 @import url("./styles/toprail.css");
-@import url("./styles/startup-overlay.css");
 @import url("./styles/sidebar.css");
 @import url("./styles/view-panel.css");
 @import url("./styles/chats-panel.css");
@@ -59,6 +58,7 @@
 @import url("./styles/chat-tool-block-v2.css");
 @import url("./styles/chat-machinery.css");
 @import url("./styles/chat-activity-row.css");
+@import url("./styles/chat-plan-document.css");
 @import url("./styles/chat-test-progress.css");
 @import url("./styles/chat-hover-actions-v2.css");
 /* Mid-turn commentary rows and the settled-turn intermediate de-emphasis. */
@@ -70,6 +70,7 @@
 @import url("./renderer/inventory/inventory-segmented.css");
 @import url("./renderer/inventory/inventory-heatmap.css");
 @import url("./renderer/inventory/inventory-anchored-listbox.css");
+@import url("./renderer/inventory/inventory-compare-slider.css");
 @import url("./styles/chat-help-overlay-v2.css");
 @import url("./styles/capture-source-picker.css");
 @import url("./styles/chat-search-v2.css");
@@ -110,6 +111,7 @@
 @import url("./styles/ide-test-runner.css");
 @import url("./styles/ide-preview.css");
 @import url("./styles/ide-presentation.css");
+@import url("./styles/ide-follow.css");
 @import url("./styles/ide-file-map.css");
 @import url("./styles/ide-file-map-atlas-fit.css");
 @import url("./styles/ide-file-map-components.css");
@@ -132,6 +134,7 @@
 @import url("./styles/chat-subagent-transcript.css");
 @import url("./styles/ide-chat-dock.css");
 @import url("./styles/changes-view.css");
+@import url("./styles/change-pictures.css");
 @import url("./styles/chat-changes-detail.css");
 @import url("./styles/suggestion-bar.css");
 @import url("./styles/ide-chat-session-picker.css");
@@ -141,10 +144,13 @@
 @import url("./styles/chat-panes.css");
 @import url("./styles/artifact-panel-text.css");
 @import url("./styles/chat-session-rail.css");
+@import url("./styles/chat-session-bar.css");
+@import url("./styles/chat-session-bar-menu.css");
 @import url("./styles/chat-session-rail-performance.css");
 @import url("./styles/image-viewer.css");
 @import url("./styles/task-rail.css");
 @import url("./styles/project-notes-rail.css");
+@import url("./styles/browser-use-panel.css");
 @import url("./styles/workbench-health-pill.css");
 @import url("./styles/surface-states.css");
 @import url("./styles/origin-chip.css");

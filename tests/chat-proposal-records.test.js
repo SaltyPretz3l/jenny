@@ -38,6 +38,37 @@ test('dispatch keys and the runtime idempotency key follow C1', () => {
   assert.equal(R.sha256Hex(Buffer.from('abc')), R.sha256Hex('abc'));
 });
 
+test('near-miss spellings of a relative path are normalised to the forward-slash form', () => {
+  const BS = String.fromCharCode(92);
+  for (const [given, expected] of [
+    ['./src/app.js', 'src/app.js'], ['src/', 'src'], [`src${BS}app.js`, 'src/app.js'], [`.${BS}src${BS}app.js`, 'src/app.js'],
+  ]) {
+    assert.deepEqual(git({ paths: [given] }).value.paths, [expected], `git path ${given}`);
+    assert.equal(cmd({ cwd: given }).value.cwd, expected, `cwd ${given}`);
+  }
+  assert.equal(cmd({ cwd: './' }).value.cwd, '.');
+  assert.deepEqual(git({ paths: ['./a.js', 'a.js'] }), { ok: false, reason: 'invalid_request', cause_code: 'field_paths' }, 'two spellings of one path are still a duplicate');
+  // Still refused after normalising.
+  for (const bad of ['../x', 'a/../b', `..${BS}x`, '/abs', `${BS}abs`, 'C:/x', `C:${BS}x`, 'a//b', '', '.', './']) {
+    assert.equal(causeOf(git({ paths: [bad] })), 'field_paths', JSON.stringify(bad));
+  }
+  for (const bad of ['../x', `..${BS}x`, '/abs', 'C:/x', `C:${BS}x`, 'a//b', '']) {
+    assert.equal(causeOf(cmd({ cwd: bad })), 'field_cwd', JSON.stringify(bad));
+  }
+});
+
+test('a timeout outside the supported range is clamped; a non-number is still rejected', () => {
+  assert.equal(cmd({ timeout_seconds: 0 }).value.timeout_seconds, 1);
+  assert.equal(cmd({ timeout_seconds: -5 }).value.timeout_seconds, 1);
+  assert.equal(cmd({ timeout_seconds: 301 }).value.timeout_seconds, 300);
+  assert.equal(cmd({ timeout_seconds: 86400 }).value.timeout_seconds, 300);
+  assert.equal(cmd({ timeout_seconds: 1.4 }).value.timeout_seconds, 1);
+  assert.equal(cmd({ timeout_seconds: 200 }, { backend: 'docker' }).value.timeout_seconds, 120, 'the sandbox limit clamps too');
+  for (const bad of ['30', Number.NaN, null, Infinity, {}, [30], true]) {
+    assert.equal(causeOf(cmd({ timeout_seconds: bad })), 'field_timeout_seconds', String(bad));
+  }
+});
+
 test('git input: defaults, D3 schema_version, unknown keys and sorted distinct paths', () => {
   const ok = git({ paths: ['z/b.js', 'a.js', 'z/a.js'], schema_version: 1 });
   assert.deepEqual(ok, { ok: true, value: { schema_version: 1, summary: 'S', question: 'Q', paths: ['a.js', 'z/a.js', 'z/b.js'] } });
@@ -73,7 +104,7 @@ test('git paths: count boundary and path shape rules', () => {
   assert.equal(causeOf(git({ paths: many(201) })), 'field_paths');
   assert.equal(causeOf(git({ paths: [] })), 'field_paths');
   assert.equal(causeOf(git({ paths: 'a' })), 'field_paths');
-  for (const bad of ['', '/abs', 'C:/x', 'c:x', '../x', 'a/../b', './a', 'a/./b', 'a//b', 'a/', '.', '..', 'a\\b', 'a\nb', 'a\rb', 'a\0b', 5]) {
+  for (const bad of ['', '/abs', 'C:/x', 'c:x', '../x', 'a/../b', 'a/./b', 'a//b', '.', '..', 'a\nb', 'a\rb', 'a\0b', 5]) {
     assert.equal(causeOf(git({ paths: [bad] })), 'field_paths', JSON.stringify(bad));
   }
   assert.equal(git({ paths: ['a'.repeat(4096)] }).ok, true);
@@ -108,7 +139,7 @@ test('command text limits: bytes, NUL, whitespace-only', () => {
 
 test('command cwd, purpose and precondition limits', () => {
   assert.equal(cmd({ cwd: '.' }).ok, true);
-  for (const bad of ['', '/x', '..', 'a/../b', 'a\\b', 'C:\\x', './', 5]) assert.equal(causeOf(cmd({ cwd: bad })), 'field_cwd', JSON.stringify(bad));
+  for (const bad of ['', '/x', '..', 'a/../b', 'a\\..\\b', 'C:\\x', 5]) assert.equal(causeOf(cmd({ cwd: bad })), 'field_cwd', JSON.stringify(bad));
   assert.equal(cmd({ purpose: 'p'.repeat(1024) }).ok, true);
   assert.equal(causeOf(cmd({ purpose: 'p'.repeat(1025) })), 'field_purpose');
   assert.equal(causeOf(cmd({ purpose: '  ' })), 'field_purpose');
@@ -127,7 +158,7 @@ test('command cwd, purpose and precondition limits', () => {
 test('command timeout and exit-code boundaries', () => {
   assert.equal(cmd({ timeout_seconds: 1 }).value.timeout_seconds, 1);
   assert.equal(cmd({ timeout_seconds: 300 }).value.timeout_seconds, 300);
-  for (const bad of [0, 301, 1.5, '30', Number.NaN, null]) assert.equal(causeOf(cmd({ timeout_seconds: bad })), 'field_timeout_seconds');
+  for (const bad of ['30', Number.NaN, null]) assert.equal(causeOf(cmd({ timeout_seconds: bad })), 'field_timeout_seconds');
   assert.equal(cmd({ expected_exit_codes: [0, 255] }).ok, true);
   assert.deepEqual(cmd({ expected_exit_codes: [2, 1] }).value.expected_exit_codes, [2, 1], 'order is kept');
   const codes = (n) => Array.from({ length: n }, (_, i) => i);
@@ -137,11 +168,11 @@ test('command timeout and exit-code boundaries', () => {
 
 test('docker backend caps the timeout at 120 seconds, native keeps 300', () => {
   assert.equal(cmd({ timeout_seconds: 120 }, { backend: 'docker' }).value.timeout_seconds, 120);
-  assert.deepEqual(cmd({ timeout_seconds: 121 }, { backend: 'docker' }), { ok: false, reason: 'invalid_request', cause_code: 'timeout_sandbox_limit' });
+  assert.equal(cmd({ timeout_seconds: 121 }, { backend: 'docker' }).value.timeout_seconds, 120, 'above the sandbox limit is clamped');
   assert.equal(cmd({ timeout_seconds: 300 }, { backend: 'native' }).value.timeout_seconds, 300);
   assert.equal(cmd({ timeout_seconds: 300 }).value.timeout_seconds, 300, 'no backend -> native range');
   assert.equal(cmd({}, { backend: 'docker' }).value.timeout_seconds, 30);
-  assert.equal(causeOf(cmd({ timeout_seconds: 301 }, { backend: 'docker' })), 'field_timeout_seconds', 'out of the global range is still a range error');
+  assert.equal(cmd({ timeout_seconds: 301 }, { backend: 'docker' }).value.timeout_seconds, 120);
 });
 
 test('D4: cmd.exe refuses multi-line commands, /bin/sh accepts them', () => {

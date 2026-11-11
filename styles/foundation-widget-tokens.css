@@ -3,7 +3,7 @@
 
   /* Buttons & Primary Actions */
   --widget-button-primary-bg: linear-gradient(180deg, #7189ff, #6176f0);
-  --widget-button-primary-color: #ffffff;
+  --widget-button-primary-color: #070b24;
   --widget-button-primary-shadow: rgba(109, 130, 255, 0.24);
   --widget-button-secondary-bg: rgba(40, 43, 58, 0.92);
   --widget-button-secondary-border: rgba(112, 118, 147, 0.22);
@@ -11,8 +11,6 @@
   --widget-button-danger-bg: rgba(242, 92, 110, 0.14);
   --widget-button-danger-border: rgba(242, 92, 110, 0.22);
   --widget-button-danger-color: #ffb1bc;
-  --widget-button-session-bg: linear-gradient(180deg, #f8c942, #efae23);
-  --widget-button-session-color: #271600;
   --widget-close-hover-bg: #d54a4a;
 
   --widget-error-border: color-mix(in srgb, var(--text-danger-emphasis) 28%, transparent);
@@ -23,32 +21,21 @@
   --widget-item-active-bg: linear-gradient(180deg, rgba(109, 130, 255, 0.1), rgba(109, 130, 255, 0.04));
   --widget-item-active-border: rgba(129, 145, 214, 0.16);
   --widget-badge-bg: rgba(255, 255, 255, 0.05);
-  --widget-badge-border: rgba(141, 147, 181, 0.08);
-  --widget-badge-color: #a2a1b8;
-  --widget-badge-secondary-color: #8a89a3;
-  --widget-action-color: #a2a1b8;
   --widget-action-bg: rgba(255, 255, 255, 0.04);
-  --widget-action-border: rgba(126, 136, 176, 0.14);
   --widget-action-hover-bg: rgba(109, 130, 255, 0.12);
   --widget-action-hover-border: rgba(123, 138, 214, 0.24);
   --widget-action-hover-color: #f3f4fc;
-  --widget-action-delete-hover-bg: rgba(242, 92, 110, 0.14);
-  --widget-action-delete-hover-border: rgba(242, 92, 110, 0.24);
-  --widget-action-delete-hover-color: #ffb1bc;
   --widget-scrollbar-color: rgba(115, 123, 153, 0.28);
-  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(99, 116, 198, 0.18), rgba(75, 88, 158, 0.26));
   --widget-collapsed-item-color: #f3f4fc;
-  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(120, 144, 255, 0.9), rgba(90, 109, 222, 0.88));
 
   /* Chat Meta */
-  --widget-chat-meta-color: #8d96be;
   --widget-chat-meta-error-color: #ffb3c0;
   --widget-copy-chip-bg: linear-gradient(180deg, rgba(25, 31, 47, 0.98), rgba(16, 21, 34, 0.98));
   --widget-copy-chip-border: rgba(126, 136, 176, 0.18);
   --widget-copy-chip-color: #dce5ff;
 
   /* Composer */
-  --widget-placeholder-color: #7f87a8;
+  --widget-placeholder-color: #8a92b3;
   --widget-placeholder-focus-color: #949dcc;
   --widget-composer-mode-active-bg: rgba(86, 99, 145, 0.38);
   --widget-notice-border: color-mix(in srgb, var(--accent-amber) 28%, var(--border-default));
@@ -62,12 +49,10 @@
   --widget-select-hover-color: #eef2ff;
   --widget-select-option-bg: #202434;
   --widget-select-option-color: #eef2ff;
-  --widget-composer-meta-color: #6c7391;
+  --widget-composer-meta-color: #8a92b3;
   --widget-composer-signal-border: rgba(95, 108, 150, 0.18);
   --widget-token-pill-bg: rgba(22, 26, 39, 0.54);
   --widget-token-pill-color: #7f88ab;
-  --widget-jump-color: rgba(176, 186, 221, 0.82);
-  --widget-jump-hover-color: #edf2ff;
   --widget-composer-scrollbar-color: rgba(121, 136, 196, 0.62);
 
   /* Hero / Sprites */
@@ -83,11 +68,7 @@
     linear-gradient(180deg, rgba(18, 24, 37, 0.84), rgba(12, 17, 28, 0.9)),
     radial-gradient(circle at left center, rgba(100, 176, 255, 0.08), transparent 55%);
   --widget-tool-border: rgba(124, 136, 184, 0.18);
-  --widget-tool-pending-border: rgba(243, 181, 55, 0.34);
-  --widget-tool-running-border: rgba(22, 233, 255, 0.26);
-  --widget-tool-error-border: rgba(255, 100, 100, 0.22);
   --widget-tool-color: #d8dffb;
-  --widget-tool-name-color: var(--widget-action-hover-color);
   --widget-tool-success-color: rgba(100, 220, 140, 0.9);
   --widget-tool-error-color: rgba(255, 110, 110, 0.9);
   --widget-tool-denied-color: rgba(180, 170, 190, 0.7);
@@ -105,7 +86,6 @@
 
   /* Interactive Mode */
   --widget-interactive-card-border: rgba(108, 124, 190, 0.22);
-  --widget-interactive-pending-border: rgba(120, 174, 255, 0.3);
   --widget-interactive-intro-color: rgba(233, 238, 255, 0.94);
   --widget-interactive-option-bg: rgba(39, 46, 68, 0.36);
   --widget-interactive-option-border: rgba(121, 136, 188, 0.18);
@@ -144,11 +124,8 @@
 
   /* Settings / Personality */
   --widget-settings-badge-bg: rgba(109, 130, 255, 0.16);
-  --widget-personality-preview-color: rgba(223, 230, 255, 0.9);
   --widget-input-focus-border: rgba(142, 176, 255, 0.36);
   --widget-input-focus-glow: rgba(142, 176, 255, 0.18);
-  --widget-popover-badge-active-bg: rgba(217, 164, 56, 0.3);
-  --widget-popover-badge-active-color: #e8c468;
   --widget-stop-bg: rgba(242, 92, 110, 0.22);
   --widget-stop-color: #ffd7dc;
 

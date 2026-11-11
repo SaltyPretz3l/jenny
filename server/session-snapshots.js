@@ -1,6 +1,7 @@
 'use strict';
 
 const { API_VERSION } = require('./api-contract');
+const { messageAuthorFor } = require('../services/backend/message-author');
 
 const DEFAULT_MAX_MESSAGES = 40;
 const MAX_MESSAGES = 100;
@@ -42,6 +43,9 @@ function projectMessage(value) {
   for (const key of MESSAGE_FIELDS) {
     if (Object.hasOwn(value, key)) result[key] = structuredClone(value[key]);
   }
+  // Team slice 3-5: the member who wrote a user row; clients resolve the name.
+  const author = messageAuthorFor(value.role, value.author);
+  if (author) result.author = author;
   result.attachments = (Array.isArray(value.attachments) ? value.attachments : []).map((attachment) => ({
     id: text(attachment?.id, 128), kind: text(attachment?.kind, 32),
     display_name: text(attachment?.displayName || attachment?.display_name, 240),

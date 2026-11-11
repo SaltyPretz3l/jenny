@@ -56,6 +56,8 @@
   // Upper clamp on frame-reported heights: the child is untrusted, so a
   // hostile artifact must not be able to grow the iframe without bound.
   const MAX_HEIGHT_PX = 10000;
+  // Same untrusted-child bound for scroll offsets (reported and restored).
+  const MAX_SCROLL_Y = 10_000_000;
   const DEFAULT_TIMEOUT_MS = 8000;
   const disconnectRegistries = new WeakMap();
   let requestSequence = 0;
@@ -90,7 +92,7 @@
     return null;
   }
 
-  function buildHtmlArtifactDocument(htmlBody, requestId) {
+  function buildHtmlArtifactDocument(htmlBody, requestId, documentOptions) {
     const frameInit = resolveFrameInit();
     const initFn = frameInit && typeof frameInit.initHtmlArtifactFrame === 'function'
       ? frameInit.initHtmlArtifactFrame
@@ -103,10 +105,17 @@
     // [a-z0-9_-] rather than trusting the caller — an unsanitized id could
     // otherwise close the inline init script tag.
     const safeRequestId = String(requestId || '').replace(/[^a-zA-Z0-9_-]+/g, '-');
+    const restoreRaw = documentOptions && documentOptions.restoreScrollY;
+    const restoreY = typeof restoreRaw === 'number' && Number.isFinite(restoreRaw) && restoreRaw > 0
+      ? Math.min(Math.floor(restoreRaw), MAX_SCROLL_Y)
+      : 0;
+    const initArgs = restoreY
+      ? `${JSON.stringify(safeRequestId)}, ${JSON.stringify({ restoreScrollY: restoreY })}`
+      : JSON.stringify(safeRequestId);
     return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="UTF-8">\n'
       + `<meta http-equiv="Content-Security-Policy" content="${HTML_ARTIFACT_FRAME_CSP}">\n`
       + '<style>html, body { margin: 0; padding: 0; background: transparent; }</style>\n'
-      + `<script>(${initFn.toString()})(${JSON.stringify(safeRequestId)});</script>\n`
+      + `<script>(${initFn.toString()})(${initArgs});</script>\n`
       + '</head>\n<body>\n'
       + String(htmlBody || '')
       + '\n</body>\n</html>';
@@ -171,6 +180,9 @@
   function createHtmlArtifactFrame(host, htmlBody, options = {}) {
     const onSuccess = typeof options.onSuccess === 'function' ? options.onSuccess : null;
     const onFailure = typeof options.onFailure === 'function' ? options.onFailure : null;
+    const onLinkBlocked = typeof options.onLinkBlocked === 'function' ? options.onLinkBlocked : null;
+    const onScroll = typeof options.onScroll === 'function' ? options.onScroll : null;
+    const onNavigatedAway = typeof options.onNavigatedAway === 'function' ? options.onNavigatedAway : null;
 
     function failedHandle(error) {
       if (onFailure) {
@@ -197,7 +209,7 @@
     }
 
     const requestId = `html-artifact-frame-${++requestSequence}-${sanitizeToken(options.requestKey || '', 'preview')}`;
-    const documentHtml = buildHtmlArtifactDocument(body, requestId);
+    const documentHtml = buildHtmlArtifactDocument(body, requestId, { restoreScrollY: options.restoreScrollY });
     if (!documentHtml) {
       return failedHandle(jt('artifacts.htmlFrame.initUnavailable', 'HTML preview frame init is unavailable.'));
     }
@@ -220,6 +232,8 @@
     let renderSettled = false;
     let timeoutId = 0;
     let unregisterDisconnect = null;
+    let srcAssigned = false;
+    let loadsSinceSrc = 0;
 
     host.innerHTML = '';
 
@@ -266,6 +280,7 @@
       disposed = true;
       clearPendingTimeout();
       windowRef.removeEventListener('message', handleMessage);
+      iframe.removeEventListener('load', handleLoad);
       unregisterDisconnect?.();
       unregisterDisconnect = null;
       if (host[HOST_DISPOSE_KEY] === dispose) {
@@ -320,6 +335,17 @@
         setHeight(payload.height);
         return;
       }
+      if (payload.type === 'link-blocked') {
+        onLinkBlocked?.();
+        return;
+      }
+      if (payload.type === 'scroll') {
+        const y = Number(payload.y);
+        if (onScroll && Number.isFinite(y)) {
+          onScroll(Math.min(Math.max(Math.floor(y), 0), MAX_SCROLL_Y));
+        }
+        return;
+      }
       if (payload.type === 'rendered' && payload.ok === true) {
         markRendered(payload);
         return;
@@ -327,6 +353,19 @@
       if (payload.type === 'error' || payload.type === 'rendered') {
         fail(payload);
       }
+    }
+
+    // The first load after src assignment is the staged document; any later
+    // one means the frame navigated away (the initial about:blank load fires
+    // before src is set and is ignored).
+    function handleLoad() {
+      if (disposed || !srcAssigned || ++loadsSinceSrc < 2) {
+        return;
+      }
+      iframe.removeEventListener('load', handleLoad);
+      renderSettled = true;
+      clearPendingTimeout();
+      onNavigatedAway();
     }
 
     function dispose() {
@@ -347,6 +386,9 @@
     }, timeoutMs);
 
     windowRef.addEventListener('message', handleMessage);
+    if (onNavigatedAway) {
+      iframe.addEventListener('load', handleLoad);
+    }
     host[HOST_DISPOSE_KEY] = dispose;
 
     Promise.resolve()
@@ -368,6 +410,7 @@
           });
           return;
         }
+        srcAssigned = true;
         iframe.src = url;
       })
       .catch(function handleStageFailure(error) {

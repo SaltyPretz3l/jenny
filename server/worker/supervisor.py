@@ -9,6 +9,7 @@ import signal
 import socket
 import stat
 import struct
+import subprocess
 import tempfile
 import threading
 import time
@@ -21,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - Windows unit tests
     fcntl = None
 
-from .job import _set_no_new_privs, run_command
+from .job import MODES, _set_no_new_privs, run_command
 from .protocol import (
     CONTROLLER_KEY_BYTES,
     ERROR_RE,
@@ -34,14 +35,28 @@ from .protocol import (
     response,
     validate_request,
 )
-from .security import validate_runtime
+from .security import OUTBOX, validate_runtime
+from .sync_steps import (
+    SYNC_PENDING,
+    SYNC_PENDING_LIMIT,
+    MirrorRunner,
+    MirrorStepError,
+    post_step,
+    pre_step,
+    run_mirror_helper,
+)
 
+# A long-lived container recycled per job (the hosted compose `sandbox` service) must stay up
+# 10 s per incarnation, or Docker's restart manager doubles its restart delay toward a minute.
+# A per-run container (desktop: created for one job, removed once the successor reports)
+# restarts once and passes 0. Cleanup never depends on it: PID 1's exit reaps the namespace.
 READY_DELAY_SECONDS = 10.0
 METADATA_LIMIT = 3 * 1024 * 1024
 CONTROL_DIR = "/run/jenny-worker"
 INPUTS_DIR = "/inputs"
 WORKSPACE_DIR = "/workspace"
 TMP_DIR = "/tmp"
+OUTBOX_DIR = OUTBOX
 APP_UID = 10001
 WORKER_GID = 10003
 JOB_UID = 10001
@@ -54,12 +69,12 @@ class StartupError(RuntimeError):
     """The worker cannot safely establish a fresh incarnation."""
 
 
-def _atomic_json(path: Path, value: dict[str, Any]) -> None:
+def _atomic_json(path: Path, value: dict[str, Any], limit: int = METADATA_LIMIT) -> None:
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
         "utf-8"
     )
-    if len(encoded) > METADATA_LIMIT:
-        raise StartupError("worker metadata exceeds 3 MiB")
+    if len(encoded) > limit:
+        raise StartupError("worker metadata exceeds its limit")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -101,7 +116,11 @@ def _strict_dir(path: Path, mode: int, *, gid: int | None = None) -> None:
 def _read_private(path: Path, limit: int, *, strict: bool = True) -> bytes | None:
     try:
         fd = os.open(
-            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_BINARY", 0),
         )
     except FileNotFoundError:
         return None
@@ -145,7 +164,8 @@ def _load_key(path: Path, directory: Path, *, strict: bool = True) -> bytes:
     key = _read_private(path, CONTROLLER_KEY_BYTES, strict=strict)
     if key is None:
         key = secrets.token_bytes(CONTROLLER_KEY_BYTES)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        fd = os.open(path, flags, 0o640)
         try:
             os.write(fd, key)
             os.fsync(fd)
@@ -209,6 +229,21 @@ def _record_valid(record: Any) -> bool:
     )
 
 
+def _terminal(identity: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
+    """A result record for a job that produced no output."""
+    return {
+        "schema_version": 1,
+        "incarnation": identity["incarnation"],
+        "job_id": identity["job_id"],
+        "status": status,
+        "exit_code": None,
+        "stdout": "",
+        "stderr": "",
+        "output_truncated": False,
+        "reason": reason,
+    }
+
+
 class Supervisor:
     """Own one socket, one incarnation and at most one admitted job."""
 
@@ -222,6 +257,8 @@ class Supervisor:
         ready_delay: float = READY_DELAY_SECONDS,
         exit_func: Callable[[int], None] | None = None,
         enforce_identity: bool = True,
+        mode: str = "copy",
+        mirror_runner: MirrorRunner = run_mirror_helper,
     ) -> None:
         self.control_dir = Path(control_dir)
         self.inputs_dir = Path(inputs_dir)
@@ -241,6 +278,12 @@ class Supervisor:
         self._socket: socket.socket | None = None
         self._lock_fd: int | None = None
         self.enforce_identity = enforce_identity
+        if mode not in MODES:
+            raise StartupError("worker_mode_invalid")
+        self.mode = mode
+        self._mirror = mirror_runner
+        self.sync_pending_path = self.control_dir / SYNC_PENDING
+        self.post_step_done = threading.Event()
         if enforce_identity and os.name == "posix":
             if os.getpid() != 1 or os.geteuid() != 0 or os.getegid() != WORKER_GID:
                 raise StartupError("worker must run as root:GID10003")
@@ -249,6 +292,11 @@ class Supervisor:
         self.key = _load_key(self.key_path, self.control_dir, strict=enforce_identity)
         self._load_metadata()
         _set_no_new_privs()
+        if self.mode == "synced":
+            # The successor incarnation copies the previous job's changes out before Ready.
+            threading.Thread(target=self._post_step, daemon=True).start()
+        else:
+            self.post_step_done.set()
 
     def _acquire_lock(self) -> None:
         try:
@@ -329,17 +377,7 @@ class Supervisor:
                 )
             except ProtocolError as exc:
                 raise StartupError("corrupt worker admission") from exc
-            interrupted = {
-                "schema_version": 1,
-                "incarnation": admission["incarnation"],
-                "job_id": admission["job_id"],
-                "status": "interrupted",
-                "exit_code": None,
-                "stdout": "",
-                "stderr": "",
-                "output_truncated": False,
-                "reason": "namespace_restarted",
-            }
+            interrupted = _terminal(admission, "interrupted", "namespace_restarted")
             self.previous_result = interrupted
             self._persist(None, interrupted)
         else:
@@ -357,9 +395,23 @@ class Supervisor:
             self._exit_func(1)
             raise StartupError("worker_persistence_failed") from exc
 
+    def _post_step(self) -> None:
+        try:
+            data = _read_private(
+                self.sync_pending_path, SYNC_PENDING_LIMIT, strict=self.enforce_identity
+            )
+        except (OSError, StartupError):
+            data = b"{}"
+        post_step(self._mirror, self.sync_pending_path, data, self.previous_result)
+        self.post_step_done.set()
+
     def _refresh_phase(self) -> str:
         with self._lock:
-            if self.phase == "starting" and time.monotonic() >= self.ready_at:
+            if (
+                self.phase == "starting"
+                and time.monotonic() >= self.ready_at
+                and self.post_step_done.is_set()
+            ):
                 self.phase = "ready"
             return self.phase
 
@@ -412,17 +464,10 @@ class Supervisor:
             if self.current is None:
                 if self.phase != "ready":
                     return response(request_id, ok=False, error="worker_not_ready")
-                result = {
-                    "schema_version": 1,
-                    "incarnation": self.incarnation,
-                    "job_id": request["job_id"],
-                    "status": "cancelled",
-                    "exit_code": None,
-                    "stdout": "",
-                    "stderr": "",
-                    "output_truncated": False,
-                    "reason": "cancelled_before_admission",
-                }
+                result = _terminal(
+                    {"incarnation": self.incarnation, "job_id": request["job_id"]},
+                    "cancelled", "cancelled_before_admission",
+                )
                 self._persist(None, result)
                 self.phase = "recycling"
                 timer = threading.Timer(0.05, self._exit_after_commit)
@@ -436,6 +481,17 @@ class Supervisor:
 
     def _run_current(self, args: dict[str, Any]) -> None:
         try:
+            if self.mode == "synced":
+                try:
+                    pre_step(self._mirror, args, lambda value: _atomic_json(
+                        self.sync_pending_path, value, SYNC_PENDING_LIMIT))
+                except (OSError, StartupError, ValueError, MirrorStepError,
+                        subprocess.SubprocessError):
+                    with self._lock:
+                        self._persist(None, _terminal(args, "failed", "mirror_apply_failed"))
+                        self.phase = "recycling"
+                        self._exit_after_commit()
+                    return
             result = run_command(
                 args["command"],
                 args["cwd"],
@@ -445,6 +501,7 @@ class Supervisor:
                 cancel_event=self._cancel,
                 uid=JOB_UID,
                 gid=JOB_GID,
+                mode=self.mode,
             )
             record = result.record(args["incarnation"], args["job_id"])
             with self._lock:
@@ -520,14 +577,16 @@ class Supervisor:
             return False
 
 
-def main() -> None:
+def main(ready_delay: float = READY_DELAY_SECONDS) -> None:
     try:
-        validate_runtime()
+        if not isinstance(ready_delay, (int, float)) or not 0 <= ready_delay <= READY_DELAY_SECONDS:
+            raise StartupError("worker_ready_delay_invalid")
+        mode = validate_runtime()
         # Docker stops the application first. An explicit worker stop still
         # tears down the namespace immediately; any admission is reconciled as
         # interrupted at the next startup, never reported as successful.
         signal.signal(signal.SIGTERM, lambda _signum, _frame: os._exit(0))
-        Supervisor().serve_forever()
+        Supervisor(mode=mode, ready_delay=float(ready_delay)).serve_forever()
     except (OSError, StartupError, RuntimeError, ValueError) as error:
         reason = str(error) if ERROR_RE.fullmatch(str(error)) else "worker_startup_invalid"
         print(json.dumps({"event": "worker.start_failed", "reason": reason}), flush=True)

@@ -9,6 +9,34 @@
   const getFieldCopy = fieldCopyModule && typeof fieldCopyModule.getSettingsFieldCopy === 'function'
     ? fieldCopyModule.getSettingsFieldCopy
     : function () { return null; };
+  const loadSiblingModule = (globalName, modulePath) => globalThis[globalName] || (typeof require === 'function' ? require(modulePath) : null);
+  // The web-search block, the tool switch-field model and the chatUi value normalizers / external-change
+  // sync live in sibling modules (loaded just before this one); this module re-exports their surface.
+  const {
+    WEB_SEARCH_PROVIDERS,
+    WEB_SEARCH_SECRET_KEY_IDS,
+    normalizeWebSearchState,
+    buildWebSearchSectionMarkup,
+    resolveWebSearchKeySaveClickEvent,
+  } = loadSiblingModule('rendererSettingsWebSearch', './renderer-settings-web-search.js');
+  const {
+    DEFAULT_TOOL_CONFIG_FIELDS,
+    normalizeToolConfig,
+    normalizeToolConfigFields,
+    getToolConfigFieldsForRender,
+  } = loadSiblingModule('rendererSettingsToolConfig', './renderer-settings-tool-config.js');
+  const {
+    UI_LANGUAGE_TAGS,
+    normalizeRunMode,
+    normalizeDefaultRunMode,
+    normalizeUiLanguageTag,
+    normalizeSafetyMode,
+    normalizeUnattendedGuardMinutes,
+    normalizeAutoApproveStreakCap,
+    normalizeDigestQuietStart,
+    normalizeDigestQuietEnd,
+    createExternalSettingsSync,
+  } = loadSiblingModule('rendererSettingsExternalSync', './renderer-settings-external-sync.js');
   // Derives the Models card badge { state, text } from runtime signals, ready to
   // pass to the design-system applyBadgeState (renderer-settings-foundation.js).
   // Lives here next to the other Models/session resolvers rather than in the
@@ -26,202 +54,10 @@
     return { state, text };
   }
 
-  // Web provider rows follow the Web tools switch in toolsWebList.
-  const WEB_SEARCH_PROVIDERS = Object.freeze([
-    Object.freeze({ value: 'duckduckgo', label: jt('settings.tools.webSearch.provider.duckDuckGo', 'DuckDuckGo (default, no key)') }),
-    Object.freeze({ value: 'searxng', label: jt('settings.tools.webSearch.provider.searxng', 'SearXNG (self-hosted URL)') }),
-    Object.freeze({ value: 'brave', label: jt('settings.tools.webSearch.provider.brave', 'Brave Search API') }),
-    Object.freeze({ value: 'tavily', label: jt('settings.tools.webSearch.provider.tavily', 'Tavily') }),
-    Object.freeze({ value: 'serper', label: jt('settings.tools.webSearch.provider.serper', 'Serper.dev') }),
-    Object.freeze({ value: 'google_pse', label: jt('settings.tools.webSearch.provider.googlePse', 'Google Programmable Search') }),
-  ]);
-  const WEB_SEARCH_PROVIDER_VALUES = WEB_SEARCH_PROVIDERS.map((entry) => entry.value);
-  // Providers whose credential is a single secret-store key id matching the
-  // provider id. google_pse additionally needs the cx field (handled inline).
-  const WEB_SEARCH_KEY_PROVIDERS = Object.freeze(['brave', 'tavily', 'serper', 'google_pse']);
-  // All secret-store key ids the "Save key" affordance can write, including
-  // the google_pse cx companion field (not itself a provider option).
-  const WEB_SEARCH_SECRET_KEY_IDS = Object.freeze([...WEB_SEARCH_KEY_PROVIDERS, 'google_pse_cx']);
-
-  function normalizeWebSearchState(payload) {
-    const source = isPlainObject(payload) ? payload : {};
-    const provider = WEB_SEARCH_PROVIDER_VALUES.includes(source.provider) ? source.provider : 'duckduckgo';
-    return {
-      provider,
-      searxngUrl: normalizeString(source.searxngUrl),
-    };
-  }
-
-  function getInventoryFn(name, standaloneGlobalName) {
-    if (typeof globalThis === 'undefined') { return null; }
-    const inv = globalThis.inventory;
-    const fromBarrel = inv && inv[name];
-    const standalone = globalThis[standaloneGlobalName];
-    const fn = fromBarrel || standalone;
-    return typeof fn === 'function' ? fn : null;
-  }
-
-  // Provider-specific credentials remain masked and use the secret bridge.
-  function buildWebSearchSectionMarkup(options) {
-    const source = isPlainObject(options) ? options : {};
-    if (source.visible !== true) {
-      return '';
-    }
-    const escapeHtmlFn = typeof source.escapeHtml === 'function' ? source.escapeHtml : defaultEscapeHtml;
-    const selectFieldFn = typeof source.selectField === 'function'
-      ? source.selectField
-      : getInventoryFn('selectField', 'inventorySelectField');
-    const textFieldFn = typeof source.textField === 'function'
-      ? source.textField
-      : getInventoryFn('textField', 'inventoryTextField');
-    const actionButtonFn = typeof source.actionButton === 'function'
-      ? source.actionButton
-      : getInventoryFn('actionButton', 'inventoryActionButton');
-    const settingsField = source.settingsField || getInventoryFn('settingsField', 'inventorySettingsField');
-    if (!settingsField || typeof selectFieldFn !== 'function' || typeof textFieldFn !== 'function') {
-      return '';
-    }
-    const webSearch = normalizeWebSearchState(source.webSearch);
-    const configured = isPlainObject(source.secretStatus?.configured) ? source.secretStatus.configured : {};
-    const disabled = source.parentOff === true;
-    const dataset = disabled ? { 'setting-parent-off': 'true' } : {};
-    const testButton = typeof actionButtonFn === 'function' ? actionButtonFn({
-      id: 'webSearchConnectionTest',
-      label: jt('settings.tools.webSearch.testConnection', 'Test'),
-      variant: 'secondary',
-      size: 'sm',
-      disabled,
-      dataset: { 'web-search-test': 'true' },
-    }) : '';
-    const parts = [settingsField({
-      // The row carries its descriptor's id, so a refused save lands in its alert slot.
-      id: 'webSearchProviderSelect',
-      variant: 'row',
-      // Provider names run long ("Google Programmable Search"): the wide dropdown.
-      className: 'settings-field--sub settings-field--wide-control',
-      dataset,
-      label: jt('settings.tools.webSearch.providerLabel', 'Search provider'),
-      labelFor: 'webSearchProviderSelect',
-      help: jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no setup.'),
-      controlHtml: testButton + selectFieldFn({
-        id: 'webSearchProviderSelect',
-        value: webSearch.provider,
-        disabled,
-        options: WEB_SEARCH_PROVIDERS.map((entry) => ({ value: entry.value, label: entry.label })),
-        ariaLabel: jt('settings.tools.webSearch.providerAriaLabel', 'Web search provider'),
-        dataset: { 'web-search-field': 'provider' },
-      }),
-    }), '<p class="settings-field-note" data-web-search-test-status aria-live="polite"></p>'];
-    if (webSearch.provider === 'searxng') {
-      const label = jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL');
-      parts.push(settingsField({
-        id: 'webSearchSearxngUrlField',
-        variant: 'row',
-        className: 'settings-field--sub settings-field--block',
-        label,
-        labelFor: 'webSearchSearxngUrlField',
-        dataset,
-        controlHtml: textFieldFn({
-          id: 'webSearchSearxngUrlField',
-          value: webSearch.searxngUrl,
-          disabled,
-          ariaLabel: label,
-          placeholder: jt('settings.tools.webSearch.searxngUrlPlaceholder', 'https://searx.example.com'),
-          dataset: { 'web-search-field': 'searxngUrl' },
-        }),
-      }));
-    }
-    if (WEB_SEARCH_KEY_PROVIDERS.includes(webSearch.provider)) {
-      parts.push(buildWebSearchKeyFieldMarkup({
-        keyId: webSearch.provider,
-        settingsField,
-        disabled,
-        label: jt('settings.tools.webSearch.apiKeyLabel', 'API key'),
-        configured: configured[webSearch.provider] === true,
-        textField: textFieldFn,
-        actionButton: actionButtonFn,
-        escapeHtml: escapeHtmlFn,
-      }));
-      if (webSearch.provider === 'google_pse') {
-        parts.push(buildWebSearchKeyFieldMarkup({
-          keyId: 'google_pse_cx',
-          settingsField,
-          disabled,
-          label: jt('settings.tools.webSearch.searchEngineIdLabel', 'Search engine ID (cx)'),
-          configured: configured.google_pse_cx === true,
-          textField: textFieldFn,
-          actionButton: actionButtonFn,
-          escapeHtml: escapeHtmlFn,
-        }));
-      }
-    }
-    return '<div data-web-search-section="true">' + parts.join('') + '</div>';
-  }
-
-  // One key field row: password-masked input + inline Save button + a subtle
-  // "configured" hint. The input is NEVER pre-filled with a real secret value.
-  function buildWebSearchKeyFieldMarkup(options) {
-    const source = isPlainObject(options) ? options : {};
-    const escapeHtmlFn = typeof source.escapeHtml === 'function' ? source.escapeHtml : defaultEscapeHtml;
-    const keyId = normalizeString(source.keyId);
-    const fieldId = `webSearchKeyField-${keyId}`.replace(/[^A-Za-z0-9_-]/g, '-');
-    const fieldMarkup = source.textField({
-      id: fieldId,
-      disabled: source.disabled,
-      value: '',
-      type: 'password',
-      // The search engine ID is not a key, so its empty field does not ask for one.
-      placeholder: source.configured === true ? jt('settings.tools.webSearch.configuredPlaceholder', 'Configured (hidden)')
-        : keyId === 'google_pse_cx' ? '' : jt('settings.tools.webSearch.enterApiKeyPlaceholder', 'Enter API key'),
-      ariaLabel: source.label,
-      dataset: { 'web-search-key-field': keyId },
-    });
-    const saveButtonMarkup = typeof source.actionButton === 'function'
-      ? source.actionButton({
-        id: `webSearchKeySave-${keyId}`,
-        disabled: source.disabled,
-        label: jt('settings.tools.webSearch.saveKey', 'Save key'),
-        variant: 'secondary',
-        size: 'sm',
-        ariaLabel: jt('settings.tools.webSearch.saveKeyAriaLabel', 'Save {label}', { label: source.label }),
-        title: jt('settings.tools.webSearch.saveKeyTitle', 'Save this API key'),
-        dataset: { 'web-search-key-save': keyId },
-      })
-      : '';
-    const hint = source.configured === true
-      ? `<span class="settings-field-note" data-web-search-key-hint="${escapeHtmlFn(keyId)}">${escapeHtmlFn(jt('common.configured', 'Configured'))}</span>`
-      : '';
-    return source.settingsField({
-      id: `webSearchKeyRow-${keyId}`,
-      variant: 'row',
-      className: 'settings-field--sub settings-field--block',
-      label: source.label,
-      labelFor: fieldId,
-      controlHtml: fieldMarkup + saveButtonMarkup + hint,
-      dataset: { 'web-search-key-row': keyId, ...(source.disabled ? { 'setting-parent-off': 'true' } : {}) },
-    });
-  }
-
-  // Resolves a delegated click on a "Save key" button into { keyId } or null.
-  function resolveWebSearchKeySaveClickEvent(event) {
-    const target = event?.target && typeof event.target.closest === 'function'
-      ? event.target.closest('[data-web-search-key-save]')
-      : null;
-    if (!target) {
-      return null;
-    }
-    const keyId = normalizeString(target.getAttribute('data-web-search-key-save'));
-    return keyId ? { keyId } : null;
-  }
-
   const TOOL_CONFIG_TOGGLE_ID_PREFIX = 'settings-tool-config-';
   // Dependent row (or row set) -> the tool switch it follows. While the parent is
   // off the dependent row is marked parent-off and locked, and its stored value is kept.
   const TOOL_DEPENDENTS = Object.freeze({ richFiles: 'fileTools', commandSandbox: 'bash', webSearch: 'web' });
-  const RUN_MODES = Object.freeze(['ask', 'auto', 'plan', 'propose']);
-  // Propose (row 35) is chosen per chat, never as the new-chat default.
-  const DEFAULT_RUN_MODES = Object.freeze(['ask', 'auto', 'plan']);
-  const UI_LANGUAGE_TAGS = Object.freeze(['en', 'es', 'fr', 'de', 'it', 'pt-BR', 'nl', 'pl', 'ru', 'uk', 'tr', 'ar', 'hi', 'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW']);
   const UI_LANGUAGE_LABELS = Object.freeze([
     jt('settings.language.option.en', 'English'), jt('settings.language.option.es', 'Español (Spanish)'), jt('settings.language.option.fr', 'Français (French)'), jt('settings.language.option.de', 'Deutsch (German)'),
     jt('settings.language.option.it', 'Italiano (Italian)'), jt('settings.language.option.ptBr', 'Português do Brasil (Brazilian Portuguese)'), jt('settings.language.option.nl', 'Nederlands (Dutch)'), jt('settings.language.option.pl', 'Polski (Polish)'),
@@ -230,87 +66,6 @@
     jt('settings.language.option.ko', '한국어 (Korean)'), jt('settings.language.option.zhCn', '简体中文 (Simplified Chinese)'),
     jt('settings.language.option.zhTw', '繁體中文 (Traditional Chinese)'),
   ]);
-  const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
-  // The switch copy (label, help, detail) is written once, on the descriptors
-  // (settings-tool-config-<key>); every reader of these fields still finds it here.
-  const toolDescriptors = globalThis.rendererSettingsFieldDescriptors || (typeof require === 'function' ? require('./renderer-settings-field-descriptors.js') : null);
-  const DEFAULT_TOOL_CONFIG_FIELDS = Object.freeze([
-    {
-      key: 'fileTools',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: true,
-      configFlag: '',
-      toolIds: Object.freeze(['read_file', 'write_file', 'edit_file', 'delete_file', 'glob_files', 'grep_search', 'list_dir', 'create_artifact']),
-    },
-    {
-      key: 'richFiles',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: true,
-      configFlag: 'tools_rich_files_enabled',
-      toolIds: Object.freeze(['read_file']),
-    },
-    {
-      key: 'imageRead',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      configFlag: 'tools_image_read_enabled',
-      toolIds: Object.freeze(['read_file']),
-    },
-    {
-      key: 'web',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      configFlag: 'tools_web_enabled',
-      toolIds: Object.freeze(['web_search', 'fetch_url']),
-    },
-    {
-      key: 'bash',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: true,
-      configFlag: '',
-      toolIds: Object.freeze(['run_command', 'run_temp_script', 'check_background_job', 'stop_background_job']),
-    },
-    {
-      key: 'pythonRuntime',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      configFlag: 'tools_python_runtime_enabled',
-      toolIds: Object.freeze(['python_execute']),
-    },
-    {
-      key: 'lsp',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      configFlag: 'tools_lsp_enabled',
-      toolIds: Object.freeze(['lsp']),
-    },
-    {
-      key: 'worktree',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      configFlag: 'tools_worktree_enabled',
-      toolIds: Object.freeze(['worktree_list', 'worktree_create', 'worktree_select', 'worktree_delete']),
-    },
-    {
-      key: 'subagents',
-      fieldType: 'toggle',
-      storage: 'config',
-      default: true,
-      configFlag: 'tools_subagents_enabled',
-      toolIds: Object.freeze(['delegate']),
-    },
-  ].map((field) => {
-    const copy = toolDescriptors.getSettingDescriptor('settings-tool-config-' + field.key).copy;
-    return Object.freeze(Object.assign(field, { label: copy.label, helpText: copy.description, detail: copy.detail }));
-  }));
 
   function isPlainObject(value) {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -322,139 +77,6 @@
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  function readMetadataField(source, keys) {
-    for (const key of keys) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) {
-        return source[key];
-      }
-    }
-    return undefined;
-  }
-
-  function normalizeToolIds(value) {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-    const ids = [];
-    for (const entry of value) {
-      const id = normalizeString(entry);
-      if (id && !ids.includes(id)) {
-        ids.push(id);
-      }
-    }
-    return ids;
-  }
-
-  function cloneToolConfigField(field) {
-    return {
-      key: field.key,
-      label: field.label,
-      fieldType: field.fieldType,
-      storage: field.storage,
-      default: field.default === true,
-      helpText: field.helpText,
-      configFlag: field.configFlag,
-      toolIds: [...(field.toolIds || [])],
-    };
-  }
-
-  function hasControlCharacter(value) {
-    for (let index = 0; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
-      if (code < 32 || code === 127) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function normalizeToolConfigField(rawField) {
-    if (!isPlainObject(rawField)) {
-      return null;
-    }
-    const key = normalizeString(rawField.key);
-    if (!key || hasControlCharacter(key)) {
-      return null;
-    }
-    const label = normalizeString(rawField.label);
-    if (!label) return null;
-    const fieldType = normalizeString(readMetadataField(rawField, ['fieldType', 'field_type'])) || 'toggle';
-    const storage = normalizeString(rawField.storage) || 'config';
-    if (fieldType !== 'toggle' || storage !== 'config') {
-      return null;
-    }
-    if (
-      Object.prototype.hasOwnProperty.call(rawField, 'default')
-      && typeof rawField.default !== 'boolean'
-    ) {
-      return null;
-    }
-    return {
-      key,
-      label,
-      fieldType,
-      storage,
-      default: rawField.default === true,
-      helpText: normalizeString(readMetadataField(rawField, ['helpText', 'help_text'])),
-      configFlag: normalizeString(readMetadataField(rawField, ['configFlag', 'config_flag'])),
-      toolIds: normalizeToolIds(readMetadataField(rawField, ['toolIds', 'tool_ids'])),
-    };
-  }
-
-  function normalizeToolConfigFields(fields) {
-    return (Array.isArray(fields) ? fields : [])
-      .map(normalizeToolConfigField)
-      .filter(Boolean);
-  }
-
-  function normalizeToolConfig(toolConfig) {
-    if (!isPlainObject(toolConfig)) {
-      return { schemaVersion: 0, fields: [] };
-    }
-    const schemaVersion = Number(toolConfig.schemaVersion);
-    return {
-      schemaVersion: Number.isSafeInteger(schemaVersion) && schemaVersion >= 0 ? schemaVersion : 0,
-      fields: normalizeToolConfigFields(toolConfig.fields),
-    };
-  }
-
-  function getToolConfigFieldsForRender(featureState) {
-    const normalizedConfig = normalizeToolConfig(featureState?.toolConfig);
-    const fields = normalizedConfig.fields.length
-      ? normalizedConfig.fields
-      : DEFAULT_TOOL_CONFIG_FIELDS;
-    return fields.map(cloneToolConfigField);
-  }
-
-  function normalizeRunMode(value, { planModeFallback = false } = {}) {
-    const token = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    return RUN_MODES.includes(token) ? token : (planModeFallback === true ? 'plan' : 'ask');
-  }
-
-  function normalizeDefaultRunMode(value, options) {
-    const mode = normalizeRunMode(value, options);
-    return DEFAULT_RUN_MODES.includes(mode) ? mode : 'ask';
-  }
-
-  function normalizeUiLanguageTag(value) {
-    if (typeof value !== 'string') return 'en';
-    const normalized = value.toLowerCase();
-    return UI_LANGUAGE_TAGS.find((tag) => tag.toLowerCase() === normalized) || 'en';
-  }
-  function normalizeSafetyMode(value) {
-    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    return SAFETY_MODES.includes(normalized) ? normalized : 'normal';
-  }
-  function normalizeBoundedCount(value, max, fallback) {
-    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return fallback;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return fallback;
-    return parsed <= 0 ? 0 : Math.min(max, Math.max(fallback === 0 ? 1 : 0, Math.trunc(parsed)));
-  }
-  const normalizeUnattendedGuardMinutes = (value) => normalizeBoundedCount(value, 120, 0);
-  const normalizeAutoApproveStreakCap = (value) => normalizeBoundedCount(value, 500, 50);
-  // Row 86 digest quiet hours: the one normalizer main uses too (renderer/shared/string-utils.js).
-  const { normalizeDigestQuietStart, normalizeDigestQuietEnd } = globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
   // Settings cohesion S3: the chatUi builders are shims over the shared descriptor
   // row (renderer-settings-field-binding.js); renderer-settings-event-utils.js binds them.
   function renderDescriptorRow(id, value, options, extra) {
@@ -803,138 +425,6 @@
       spinner: source.spinner === true,
       compact: source.compact !== false,
     };
-  }
-
-  // Row 88 D6: a chatUi / windowUi / workspace-IDE preferences commit made in main by any
-  // writer (the Jenny chat's settings tool, its Undo, another window) arrives on three bridge
-  // events. Each handler folds the payload into renderer state through the same state fields
-  // and side effects the Settings controls use after a confirmed save, then repaints. Echo-safe:
-  // a payload equal to current state changes and repaints nothing, and nothing here ever writes
-  // back to main, so there is no update loop. renderSettings() keeps its own dirty-draft guard.
-  function createExternalSettingsSync(options) {
-    const o = options && typeof options === 'object' ? options : {};
-    const state = o.state || {};
-    const windowRef = o.windowRef || globalThis;
-    const noop = function noop() {};
-    const renderAll = typeof o.renderAll === 'function' ? o.renderAll : noop;
-    const renderSettings = typeof o.renderSettings === 'function' ? o.renderSettings : noop;
-    const reapplyIde = typeof o.reapplyIde === 'function' ? o.reapplyIde : noop;
-    const log = typeof o.appendClientLog === 'function' ? o.appendClientLog : noop;
-    const hasKey = (source, key) => Object.prototype.hasOwnProperty.call(source, key);
-    const CHAT_UI_FIELDS = [
-      ['defaultRunMode', (value) => normalizeRunMode(value)],
-      ['uiLanguage', normalizeUiLanguageTag],
-      ['use24HourTime', (value) => value === true],
-      ['safetyMode', normalizeSafetyMode],
-      ['unattendedGuardMinutes', normalizeUnattendedGuardMinutes],
-      ['autoApproveStreakCap', normalizeAutoApproveStreakCap],
-      ['digestQuietStart', normalizeDigestQuietStart],
-      ['digestQuietEnd', normalizeDigestQuietEnd],
-    ];
-
-    function applyChatUi(payload) {
-      if (!isPlainObject(payload)) return [];
-      const changed = [];
-      for (const [key, normalize] of CHAT_UI_FIELDS) {
-        if (!hasKey(payload, key)) continue;
-        const next = normalize(payload[key]);
-        if (state[key] === next) continue;
-        state[key] = next;
-        changed.push(key);
-      }
-      if (changed.includes('use24HourTime')) globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
-      if (changed.includes('defaultRunMode') && !state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state.defaultRunMode;
-      if (changed.includes('uiLanguage')) {
-        try { windowRef.localStorage.setItem('jenny.ui.language', state.uiLanguage); } catch (_error) { /* best effort */ }
-      }
-      // The transcript default also resets the sessions that inherit it (adoptDefault is idempotent).
-      if (hasKey(payload, 'transcriptViewDefault')) {
-        const controller = windowRef.rendererTranscriptViewController;
-        const before = state.transcriptViewDefault;
-        if (typeof controller?.adoptDefault === 'function') controller.adoptDefault(payload.transcriptViewDefault, 'external');
-        if (state.transcriptViewDefault !== before) changed.push('transcriptViewDefault');
-      }
-      if (!changed.length) return changed;
-      // Timestamps and the composer's run-mode chip render from state; the rest paint on the Settings page only.
-      if (changed.includes('use24HourTime') || changed.includes('defaultRunMode')) renderAll();
-      renderSettings();
-      return changed;
-    }
-
-    function applyWindowUi(payload) {
-      if (!isPlainObject(payload)) return [];
-      const ui = isPlainObject(state.ui) ? state.ui : (state.ui = {});
-      const changed = [];
-      const zoom = Number(payload.appZoomPercent);
-      if (Number.isFinite(zoom) && zoom > 0 && zoom !== Number(ui.appZoomPercent)) {
-        ui.appZoomPercent = zoom;
-        changed.push('appZoomPercent');
-      }
-      const normalizeNotifications = windowRef.rendererDesktopNotifications?.normalizeNotificationSettings;
-      if (hasKey(payload, 'notifications') && typeof normalizeNotifications === 'function') {
-        const next = normalizeNotifications(payload.notifications);
-        if (JSON.stringify(next) !== JSON.stringify(ui.notifications)) {
-          ui.notifications = next;
-          changed.push('notifications');
-        }
-      }
-      if (isPlainObject(payload.dictation) && typeof payload.dictation.deviceId === 'string'
-        && payload.dictation.deviceId !== (ui.dictation && ui.dictation.deviceId)) {
-        ui.dictation = { ...(ui.dictation || {}), deviceId: payload.dictation.deviceId };
-        changed.push('dictation');
-      }
-      if (changed.length) renderSettings();
-      return changed;
-    }
-
-    // Before Settings has loaded its editor section, the open IDE's slice still takes the change
-    // (normalized by the eager IDE state module): the IDE persists its live preferences on every
-    // snapshot, so a slice left stale would write the old value back over the external change.
-    function adoptIntoIdeSlice(payload) {
-      const ide = state.ui && isPlainObject(state.ui.ide) ? state.ui.ide : null;
-      const normalize = windowRef.rendererIdeState?.normalizeEditorPrefs;
-      if (!ide || typeof normalize !== 'function') return [];
-      const prefs = normalize(payload);
-      const changed = [];
-      for (const key of Object.keys(prefs)) {
-        const present = key in payload || (key === 'autoSaveEnabled' && 'autoSaveMode' in payload);
-        if (!present || JSON.stringify(ide[key]) === JSON.stringify(prefs[key])) continue;
-        ide[key] = prefs[key];
-        changed.push(key);
-      }
-      return changed;
-    }
-
-    function applyIdePreferences(payload) {
-      if (!isPlainObject(payload)) return [];
-      const editor = windowRef.rendererSettingsEditorSection;
-      const changed = typeof editor?.adoptExternalPreferences === 'function'
-        ? editor.adoptExternalPreferences(state, payload) : adoptIntoIdeSlice(payload);
-      if (!changed.length) return changed;
-      renderSettings();
-      reapplyIde(changed);
-      return changed;
-    }
-
-    // Subscribes the three events once; returns one teardown. A handler error is logged,
-    // never thrown into the bridge.
-    function bind() {
-      const shell = (typeof o.getShell === 'function' ? o.getShell() : windowRef.jennyShell) || {};
-      const offs = [
-        [shell.chatUi, 'onChanged', applyChatUi, 'chat_ui'],
-        [shell.windowUi, 'onChanged', applyWindowUi, 'window_ui'],
-        [shell.workspaceIde, 'onPreferencesChanged', applyIdePreferences, 'ide_preferences'],
-      ].map(([api, method, apply, label]) => {
-        if (typeof api?.[method] !== 'function') return noop;
-        const off = api[method]((payload) => {
-          try { apply(payload); } catch (error) { log('WARN', 'settings.external_change_failed', { scope: label, message: String(error?.message || error).slice(0, 200) }); }
-        });
-        return typeof off === 'function' ? off : noop;
-      });
-      return function unbind() { offs.forEach((off) => { try { off(); } catch (_error) { /* already gone */ } }); };
-    }
-
-    return { applyChatUi, applyWindowUi, applyIdePreferences, bind };
   }
 
   return {

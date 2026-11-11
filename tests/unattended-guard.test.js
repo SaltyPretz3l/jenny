@@ -243,3 +243,67 @@ test('start is idempotent, ticks immediately, unrefs the timer, and stop clears 
     unavailable: false,
   });
 });
+
+function createFullAutoHarness(isFullAutoArmed) {
+  const sessions = [
+    { id: 'armed-1', run_mode: 'auto', active_turn: { stream_id: 'stream-armed' } },
+    { id: 'plain-1', run_mode: 'auto', active_turn: { stream_id: 'stream-plain' } },
+  ];
+  const activeStreams = new Map([['stream-armed', {}], ['stream-plain', {}]]);
+  const runtimePauseSessionIds = [];
+  const pausedSessionIds = [];
+  const backend = {
+    activeStreams,
+    sessionRuntime: {
+      pausePending({ sessionId }) {
+        runtimePauseSessionIds.push(sessionId);
+        return { paused: 1 };
+      },
+    },
+    sessionStore: { listSessionRecords: () => sessions },
+    primaryFullAuto: { isArmed: isFullAutoArmed },
+    pauseSessionAutoRun(sessionId) {
+      pausedSessionIds.push(sessionId);
+      return { requested: true };
+    },
+  };
+  const guard = createUnattendedGuard({
+    powerMonitor: { getSystemIdleTime: () => 600 },
+    getBackendService: () => backend,
+    getThresholdMinutes: () => 5,
+    isEnabled: () => true,
+    sendBridgeEvent: () => {},
+    log: () => {},
+    setIntervalFn: () => ({ unref() {} }),
+    clearIntervalFn: () => {},
+  });
+  return { guard, runtimePauseSessionIds, pausedSessionIds };
+}
+
+test('an armed Full auto session is left alone while an unarmed Auto session is still paused', () => {
+  const harness = createFullAutoHarness((sessionId) => sessionId === 'armed-1');
+
+  harness.guard.tick();
+
+  assert.deepEqual(harness.runtimePauseSessionIds, ['plain-1']);
+  assert.deepEqual(harness.pausedSessionIds, ['plain-1']);
+  assert.deepEqual(harness.guard.snapshot().pausedStreamIds, ['stream-plain']);
+});
+
+test('an armed Full auto session gets neither a pending nor an active-stream pause', () => {
+  const harness = createFullAutoHarness((sessionId) => sessionId === 'armed-1');
+
+  harness.guard.tick();
+
+  assert.equal(harness.runtimePauseSessionIds.includes('armed-1'), false);
+  assert.equal(harness.pausedSessionIds.includes('armed-1'), false);
+});
+
+test('a throwing isFullAutoArmed fails closed: the guard still pauses', () => {
+  const harness = createFullAutoHarness(() => { throw new Error('armed check broke'); });
+
+  harness.guard.tick();
+
+  assert.deepEqual(harness.runtimePauseSessionIds, ['armed-1', 'plain-1']);
+  assert.deepEqual(harness.pausedSessionIds, ['armed-1', 'plain-1']);
+});

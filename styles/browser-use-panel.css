@@ -1,0 +1,451 @@
+/* Browser panel (renderer-browser-use-panel.js): the `browser` mode of the artifact review
+   panel. The shared 36px header keeps the address and Close; the native page view sits
+   exactly over .bu-stage, and the still picture takes its place while a menu covers it. */
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-controls,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-status,
+.artifact-review-panel[data-artifact-review-mode="browser"] > .artifact-review-header {
+  display: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-v2-content-host,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-shell,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+  min-height: 0;
+  height: 100%;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+  overflow: hidden;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-detail-panel {
+  gap: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+  padding: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] {
+  background: var(--bg-base);
+  border-inline-start: 1px solid var(--line);
+}
+
+/* The bar stands in for the shared header's title. */
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header {
+  height: 40px;
+  min-height: 40px;
+}
+
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header-primary {
+  display: none;
+}
+
+.bu-bar {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bu-bar .artifact-panel-icon-btn:disabled {
+  opacity: 0.35;
+}
+
+.bu-address {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  margin-inline: 4px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--widget-action-bg);
+  font-size: var(--font-size-footnote);
+}
+
+.bu-address:hover {
+  border-color: var(--border-default);
+}
+
+.bu-address:focus-within {
+  border-color: var(--accent);
+}
+
+.bu-lock {
+  display: inline-flex;
+  flex: none;
+  margin-inline-start: -3px;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.bu-lock:hover {
+  color: var(--text-primary);
+}
+
+.bu-lock svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.bu-lock[data-insecure="true"] {
+  color: var(--state-warning);
+}
+
+.bu-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.bu-url b {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.bu-url b[data-empty="true"] {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.bu-address-field,
+.bu-find-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The address and find fields wear the row they sit in, not a box of their own. */
+.bu-address-field input,
+.bu-address-field input:focus-visible,
+.bu-find-field input,
+.bu-find-field input:focus-visible {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+/* Only the drawer covers the chat, so only the drawer needs a way back to it. */
+.artifact-review-panel:not(.artifact-review-overlay) .bu-back-to-chat {
+  display: none;
+}
+
+.bu-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Always there, always this tall: the page under it never moves. */
+.bu-status {
+  flex: none;
+  height: 30px;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.bu-status[data-quiet="true"] {
+  color: var(--text-muted);
+}
+
+.bu-status[data-quiet="true"] .bu-dot {
+  display: none;
+}
+
+.bu-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 12px;
+}
+
+.bu-line-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin-inline-start: auto;
+}
+
+.bu-load {
+  position: absolute;
+  inset: -1px 0 auto;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bu-load::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  border-radius: 2px;
+  background: var(--accent);
+  content: "";
+  animation: bu-load-slide 1.25s var(--motion-ease-standard) infinite;
+}
+
+@keyframes bu-load-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+.bu-pop {
+  position: absolute;
+  z-index: 8;
+  top: 4px;
+  width: 300px;
+  max-width: calc(100% - 12px);
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-surface, var(--bg-base));
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.bu-pop-more {
+  inset-inline-end: 6px;
+  width: 240px;
+  padding: 6px;
+}
+
+.bu-pop-site {
+  inset-inline-start: 6px;
+}
+
+.bu-pop h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.bu-pop p {
+  margin: 8px 0 0;
+}
+
+.bu-pop .bu-pop-sub {
+  margin-top: 1px;
+}
+
+.bu-pop-head {
+  color: var(--text-muted);
+}
+
+.bu-pop-sites {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bu-pop-sites li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--text-primary);
+}
+
+.bu-menu-item,
+.bu-menu-forget {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: inherit;
+}
+
+.bu-menu-item:hover,
+.bu-menu-forget:hover {
+  background: var(--widget-action-bg);
+}
+
+.bu-menu-item kbd {
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.bu-pop-site .bu-menu-forget {
+  margin-top: 10px;
+  padding-inline: 0;
+}
+
+.bu-menu-forget {
+  color: var(--state-danger);
+}
+
+.bu-menu-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  color: var(--text-primary);
+}
+
+.bu-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bu-zoom-step {
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.bu-zoom-step:hover {
+  background: var(--widget-action-bg);
+}
+
+.bu-menu-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  color: var(--text-primary);
+}
+
+.bu-pop p.bu-menu-note {
+  margin: -2px 8px 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.bu-menu-rule {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bu-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tl-status-active);
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.bu-status:is([data-tone="user"], [data-tone="ask"], [data-tone="note"]) .bu-dot {
+  background: var(--state-warning);
+}
+
+.bu-status:is([data-tone="user"], [data-tone="note"]) .bu-dot {
+  animation: none;
+}
+
+.bu-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bu-chat-wait .bu-status-text {
+  white-space: normal; /* the chat column can be narrow, and this line must be readable */
+}
+
+.bu-chat-wait .bu-hand-back {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.bu-chat-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.bu-chat-wait .bu-dot {
+  background: var(--state-warning);
+  animation: none;
+}
+
+.bu-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bu-frozen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bu-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-8) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  text-align: center;
+}
+
+.bu-message strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+/* Collapsed, the Browser chip is its icon, like the Tools chip beside it. */
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-browser-chip {
+  width: var(--composer-secondary-control-size);
+  padding: 0;
+  justify-content: center;
+}
+
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-browser-chip .inv-chip-label {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bu-dot,
+  .bu-load::after {
+    animation: none;
+  }
+}

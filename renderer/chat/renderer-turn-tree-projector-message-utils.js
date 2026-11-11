@@ -13,6 +13,14 @@
 
   const { deepCloneJsonValue, normalizeId } = turnNormalizationUtils;
 
+  // A running delegate's own tool row carries its summary (collectLiveDelegationSteps);
+  // projecting its steps as a notice too drew that card twice in a reopened chat.
+  function isCallBoundSubagent(entry) {
+    return String(entry?.taskType || entry?.task_type || '') === 'sub_agent'
+      && /^(delegate|subagent_(run|batch))$/.test(String(entry?.source || ''))
+      && Boolean(String(entry?.toolCallId || entry?.tool_call_id || '').trim());
+  }
+
   function cloneNoticePayload(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
@@ -260,6 +268,7 @@
   }
 
   return {
+    isCallBoundSubagent,
     cloneNoticePayload,
     clonePlainObject,
     cloneSubagentReportMetadata,

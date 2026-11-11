@@ -70,7 +70,6 @@ dom.window.clearTimeout = function countingClearTimeout(handle) {
 const { createRenderPipeline } = require('../renderer/chat/renderer-render-pipeline-utils');
 const messageIndexUtils = require('../renderer/chat/renderer-message-index-utils');
 const surfaceStateUtils = require('../renderer/chat/renderer-render-pipeline-surface-state');
-const pinToTopUtils = require('../renderer/chat/renderer-pin-to-top-utils');
 
 global.rendererMessageIndexUtils = messageIndexUtils;
 
@@ -272,22 +271,3 @@ test('disposeRenderPipeline tears down the surface-state pipeline (wiring)', () 
   assert.equal(uiRuntime.threadTransitionTimer, 0);
 });
 
-test('pin-to-top dispose disconnects its layout ResizeObserver (regression pin — already fixed on main)', () => {
-  const documentRef = dom.window.document;
-  const controller = pinToTopUtils.createPinToTopController({
-    scrollContainer: documentRef.getElementById('scroll'),
-    timelineContainer: documentRef.getElementById('timeline'),
-  });
-
-  const observersBefore = roState.instances.length;
-  controller.bind();
-  assert.equal(roState.instances.length, observersBefore + 1, 'bind creates the layout ResizeObserver');
-  const observer = roState.instances[roState.instances.length - 1];
-  assert.ok(observer.observed.length >= 1, 'the observer watches at least the timeline container');
-
-  controller.dispose();
-  assert.equal(observer.disconnected, true, 'dispose must disconnect the layout observer');
-
-  controller.dispose();
-  assert.equal(observer.disconnected, true, 'a second dispose stays torn down');
-});

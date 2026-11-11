@@ -34,7 +34,7 @@
 // so every stored seed keeps loading; an invalid one is dropped on its own and
 // never takes the meter seed with it.
 //
-// Consumption contract (renderer/shell/renderer-shell-runtime-utils.js
+// Consumption contract (renderer/shell/renderer-shell-context-ring.js
 // `getContextMeterOptions`): the record seeds ONLY the two continuity inputs
 // of the fallback estimate — the numerator floor and the auto-compact
 // denominator, the latter only while the record's model still matches the

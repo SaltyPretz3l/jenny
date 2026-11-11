@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from sidecar.ai.error_codes import (
+    CMP_APPROVAL_REJECTED,
     CMP_TOOL_APPROVAL_WINDOW_DROPPED,
     CMP_TOOL_COERCED_ARGS_REJECTED,
     CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
@@ -16,6 +17,7 @@ from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_call_execution import (
     execute_tool_calls_sequentially,
     pre_filter_tool_calls,
+    settle_app_refused_call,
     settle_dropped_tool_calls,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -394,6 +396,62 @@ def test_settle_dropped_tool_calls_lists_the_batch_on_the_last_row() -> None:
     assert "paused for approval of 'edit_file'" in outcomes[1].output
 
 
+def test_settle_app_refused_call_tells_the_model_and_leaves_the_row_to_electron() -> None:
+    """The model reads the app's reason; Electron already wrote the row, so no second tool.result."""
+    kernel = _Kernel()
+    outcomes: list[ToolExecutionOutcome] = []
+    working_messages: list[dict[str, object]] = []
+    iteration_calls: list[Any] = []
+    refused = _call("project_create", call_id="call-refused")
+    plan = SimpleNamespace(
+        app_refusal='{"ok":false,"reason":"resolves_elsewhere"}', approved_call_id="call-refused", call_id="",
+        tool_calls=(_call("read_file", call_id="call-read"), refused), generation_result=SimpleNamespace(),
+        request_id="req-1", session_id="session-1",
+    )
+
+    assert settle_app_refused_call(
+        plan, kernel=kernel, outcomes=outcomes, working_messages=working_messages, iteration_calls=iteration_calls,
+    ) is False, "a first refusal is settled and the model may still use tools"
+
+    assert kernel.executed == []
+    assert [(item.call_id, item.success, item.output, item.error_code) for item in outcomes] == [
+        ("call-refused", False, '{"ok":false,"reason":"resolves_elsewhere"}', CMP_APPROVAL_REJECTED),
+    ]
+    assert outcomes[0].metadata == {"app_refused": True}
+    assert len(working_messages) == 2
+    assert iteration_calls == [refused]
+
+
+def test_settle_app_refused_call_reports_the_third_identical_refusal() -> None:
+    """Each refusal is a fresh resume, so the count comes from the outcomes the turn carries."""
+    refusal = '{"ok":false,"reason":"resolves_elsewhere"}'
+    outcomes: list[ToolExecutionOutcome] = []
+
+    def settle(refusal_text: str, tool_id: str = "project_create") -> bool:
+        plan = SimpleNamespace(
+            app_refusal=refusal_text, approved_call_id="c", call_id="",
+            tool_calls=(_call(tool_id, call_id="c"),), generation_result=SimpleNamespace(),
+            request_id="req-1", session_id="session-1",
+        )
+        return settle_app_refused_call(
+            plan, kernel=_Kernel(), outcomes=outcomes, working_messages=[], iteration_calls=[],
+        )
+
+    assert [settle(refusal), settle(refusal)] == [False, False]
+    assert settle("a different reason") is False, "another reason is not a repeat"
+    assert settle(refusal, "session_export") is False, "another tool is not a repeat"
+    assert settle(refusal) is True
+
+
+def test_settle_app_refused_call_is_a_no_op_for_an_ordinary_approval() -> None:
+    plan = SimpleNamespace(app_refusal="", approved_call_id="c", call_id="", tool_calls=())
+    outcomes: list[ToolExecutionOutcome] = []
+    assert settle_app_refused_call(
+        plan, kernel=_Kernel(), outcomes=outcomes, working_messages=[], iteration_calls=[],
+    ) is False
+    assert outcomes == []
+
+
 def test_settle_dropped_tool_calls_settles_every_reserved_call() -> None:
     """Every budget-reserved call the resume skips gets an explicit outcome."""
     kernel = _Kernel()
@@ -432,6 +490,12 @@ def test_settle_dropped_tool_calls_settles_every_reserved_call() -> None:
     )
     assert all(
         outcome.metadata.get("approval_window_dropped") is True for outcome in outcomes
+    )
+    # "Re-issue it now" in the body, so the envelope must not say "not yet".
+    assert all(outcome.metadata.get("failure_class") == "transient" for outcome in outcomes)
+    assert all(
+        outcome.metadata.get("remediation") == "Not run. Call it again now, on its own."
+        for outcome in outcomes
     )
     assert all("approved execution window" in outcome.output for outcome in outcomes)
     executing = [event for event in events if isinstance(event, ToolExecutingEvent)]

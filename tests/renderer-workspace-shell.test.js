@@ -12,9 +12,9 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-// Two chats as two tabs. A draft makes the first chat touched: a bare New chat
-// reuses an untouched empty chat (real-app X3) instead of opening a second one.
-async function openTwoChats(window) {
+// Two chats, one after the other. A draft makes the first chat touched: a bare New
+// chat reuses an untouched empty chat (real-app X3) instead of opening a second one.
+async function startTwoChats(window) {
   const doc = window.document;
   const newChatButton = doc.getElementById('newChatButton');
   const input = doc.getElementById('chatInput');
@@ -25,6 +25,21 @@ async function openTwoChats(window) {
   newChatButton.click();
   await waitForUi(window, 40);
 }
+
+// Two chats as two tabs: New chat only stacks tabs with the preference on.
+async function openTwoChats(window) {
+  window.sessionOpenPrefUtils.setOpenSessionsInNewTab(true);
+  await startTwoChats(window);
+}
+
+test('New chat takes the active tab by default instead of adding one', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+
+  await startTwoChats(window);
+
+  assert.equal(window.__rendererState.currentSessionId, 'session-2');
+  assert.deepEqual(Array.from(window.__rendererState.workspace.openSessionIds), ['session-2']);
+});
 
 test('renderer shell harness loads workspace scripts in order and boots the workspace rail cleanly', async (t) => {
   const workspaceStateIndex = SCRIPT_ORDER.indexOf('renderer/shell/renderer-workspace-state-utils.js');

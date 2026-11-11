@@ -58,7 +58,7 @@ test('a failed send shows on its own row with Retry and Cancel send, and the str
   const failed = outboxItem({ operation_id: OP, state: 'failed', send_requested_at: '2026-10-15T15:40:00.000Z',
     destination: { session_id: 'beta', title: 'Beta parser' },
     last_error: { code: 'CMP-MESSAGE-0006', reason: 'recipient_archived', retryable: true } });
-  const dialogSend = outboxItem({ operation_id: 'op-dialog', state: 'delivered', delivered_at: '2026-10-15T15:45:00.000Z',
+  const dialogSend = outboxItem({ operation_id: 'op-dialog', state: 'delivered', delivered_at: '2026-10-15T15:55:00.000Z',
     destination: { title: 'Sandbox notes' } });
   const h = harness(t, { 'session-1': { outbox: [failed, dialogSend], inbox: [], counts: { failed_delivery: 1 } } });
   await flush();

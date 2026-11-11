@@ -102,3 +102,35 @@ test('the patch sync and the cleanup own the article min-height', (t) => {
   assert.equal(article.hasAttribute('data-predicted-height'), false);
   assert.equal(article.style.minHeight, '');
 });
+
+// Row 131, D5: a reservation painted under a reader following the latest message is room the
+// follow scrolls into; the view jumps back when the room goes.
+test('a reader following the latest message never gets a painted reservation', (t) => {
+  const dom = new JSDOM('<!doctype html><div id="timeline"><article id="a"></article><article id="b" data-predicted-height="4200" style="min-height: 4200px"></article></div>');
+  const previousWindow = global.window;
+  const frames = [];
+  global.window = { requestAnimationFrame: (fn) => frames.push(fn), cancelAnimationFrame() {}, setTimeout() { return 1; }, clearTimeout() {} };
+  t.after(() => { global.window = previousWindow; dom.window.close(); });
+  const document = dom.window.document;
+  const article = document.getElementById('a');
+  const settled = document.getElementById('b');
+  const state = { ui: { followLatest: true } };
+  const prediction = createArticlePrediction({
+    state,
+    chatTimeline: document.getElementById('timeline'),
+    resolveVisibleTurnArticleTarget: () => article,
+  });
+
+  prediction.syncPatchedArticlePrediction('m1', 240);
+  assert.equal(article.dataset.predictedHeight, '240');
+  assert.equal(article.style.minHeight, '', 'the live turn reserves nothing while followed');
+
+  prediction.schedulePredictedHeightCleanup();
+  assert.equal(settled.style.minHeight, '4200px', 'the plain cleanup still waits for a frame');
+  prediction.schedulePredictedHeightCleanup({ beforePaint: true });
+  assert.equal(settled.style.minHeight, '', 'beforePaint clears in the same task');
+
+  state.ui.followLatest = false;
+  prediction.syncPatchedArticlePrediction('m1', 240);
+  assert.equal(article.style.minHeight, '240px', 'a reader who scrolled away keeps the reservation');
+});

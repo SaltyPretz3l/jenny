@@ -32,6 +32,22 @@ _RESULT_FIELDS = frozenset(
 _REQUIRED_RESULT_FIELDS = frozenset({"schema_version", "operation_id", "status"})
 _ADMIT_TIMEOUT_SECONDS = 30.0
 _SETTLE_TIMEOUT_SECONDS = 5.0
+# What the reason codes the model used to see bare mean, and what to do (row 129, A9).
+_REJECTION_SENTENCES = {
+    "tool_resource_own_cleanup_unconfirmed": (
+        "This call did not start: an earlier call in this turn timed out and is still being "
+        "cleaned up, so the workspace is locked (tool_resource_own_cleanup_unconfirmed). "
+        "Do not call workspace tools again this turn; answer from what you have."
+    ),
+    "tool_resource_request_closed": (
+        "This call did not start: the turn is ending (tool_resource_request_closed). "
+        "Do not call more tools; answer from what you have."
+    ),
+    "project_authority_stale": (
+        "This call did not start: the project or workspace changed while the turn was "
+        "running (project_authority_stale). Do not repeat it this turn; tell the user."
+    ),
+}
 
 
 class _UnansweredExchange(ToolExecutionFailure):
@@ -48,11 +64,15 @@ def _failure(
     return cls(
         code=CMP_RESOURCE_EXCEEDED if waiting else CMP_TOOL_EXECUTION_FAILED,
         message=(
-            f"Tool resource capacity is busy: {normalized}"
+            f"Tool resource capacity is busy: {normalized}. "
+            "The call did not start; repeat it unchanged."
             if waiting
-            else f"Tool resource admission failed: {normalized}"
+            else _REJECTION_SENTENCES.get(
+                normalized, f"Tool resource admission failed: {normalized}"
+            )
         ),
         retryable=waiting,
+        error_details={"failure_class": "transient"} if waiting else None,
     )
 
 

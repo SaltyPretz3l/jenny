@@ -69,10 +69,10 @@ function makeCatalogBridge(initial) {
   };
 }
 
-function createHarness(t, { flag = true, catalog } = {}) {
+function createHarness(t, { flag = true, catalog, roots = [{ id: 'kbroot_1', path: NOTES, label: 'Notes' }] } = {}) {
   const dom = makeDom();
   const knowledge = {
-    getState: async (payload) => ({ schemaVersion: 1, revision: 1, roots: [{ id: 'kbroot_1', path: NOTES, label: 'Notes' }], enabled: true, projectId: payload.project_id }),
+    getState: async (payload) => ({ schemaVersion: 1, revision: 1, roots, enabled: true, projectId: payload.project_id }),
     onChanged: () => () => {},
   };
   const catalogStub = catalog || makeCatalogBridge({ settings: settings(), status: status() });
@@ -120,6 +120,19 @@ test('flag off renders no catalog block and never probes the catalog bridge', as
   assert.equal(signalText(doc), '');
   assert.deepEqual(catalog.calls, []);
   assert.equal(catalog.listeners.length, 0);
+});
+
+test('with no folders and no model the block has nothing to act on and hides', async (t) => {
+  const catalog = makeCatalogBridge({ settings: settings({ modelPath: '' }), status: status({ state: 'waiting_model', roots: [] }) });
+  const { doc } = await mount(t, { catalog, roots: [] });
+  assert.ok(doc.getElementById('knowledgeFoldersGroup'), 'the folders group still renders');
+  assert.equal(doc.querySelector('[data-knowledge-catalog]'), null);
+});
+
+test('with no folders a chosen model keeps its controls', async (t) => {
+  const { doc } = await mount(t, { roots: [] });
+  assert.ok(doc.querySelector('[data-knowledge-catalog]'));
+  assert.ok(doc.querySelector('.knowledge-catalog-facts'));
 });
 
 test('without a model the block asks for one and the rows stay quiet', async (t) => {

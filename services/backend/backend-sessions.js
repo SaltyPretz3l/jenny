@@ -18,6 +18,7 @@ const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-
 const { editUserMessageAndTruncate } = require('./backend-session-truncate');
 const { normalizeLinkedTaskId } = require('./session-store-migrations');
 const { normalizeRunMode } = require('./session-preferences-patch');
+const { inheritedToolCategoryOverrides } = require('./spawned-child-tool-switches');
 const { resolveSessionToolDenyList } = require('./backend-service-utils');
 const { resolveDefaultSessionProjectId } = require('../projects/workspace-project-provisioner');
 const { createWorkspaceViewStore, normalizeSpawnedFrom } = require('./session-coordination-records');
@@ -198,6 +199,7 @@ function createLinkedChildSession(service, spec = {}) {
         reasoning_effort: preferences?.reasoning_effort,
         run_mode: preferences?.run_mode,
         lockdown: lockdown === true,
+        tool_category_overrides: inheritedToolCategoryOverrides(store, spawnedFrom.parent_session_id),
       },
     });
     if (created && store.flushSession(childSessionId) === true) {
@@ -666,6 +668,7 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     ? ['run_mode', 'plan_mode'].filter((key) => stored[key] !== previous?.[key])
     : [];
   const modeChanged = changedKeys.length > 0;
+  if (changedKeys.includes('run_mode')) service.primaryFullAuto?.noteRunMode?.(sessionId, stored.run_mode);
   const toolPreferencesChanged = stored && ['tool_category_overrides', 'tool_connection_overrides']
     .some(key => !isDeepStrictEqual(stored[key], previous?.[key]));
   const activeTurn = modeChanged || toolPreferencesChanged

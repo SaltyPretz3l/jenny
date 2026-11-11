@@ -10,7 +10,7 @@
   };
   if (root.document?.readyState === 'loading') root.document.addEventListener('DOMContentLoaded', mount, { once: true });
   else mount();
-  root.addEventListener?.('beforeunload', () => root.__rendererPlanDocumentController?.dispose?.(), { once: true });
+  root.addEventListener?.('pagehide', () => root.__rendererPlanDocumentController?.dispose?.(), { once: true });
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -23,11 +23,22 @@
     let disposed = false;
     const cleanups = new Map();
     const planStates = new Map();
-    const focusedProposalRefs = new Set();
+    const focusedProposalRefs = new Map();
+    // Keyed by approval ref; a row re-render rebuilds the DOM from the plan document.
+    const sectionFolds = new Map();
+    const drafts = new Map();
     let editSequence = 0;
+
+    function remember(map, key, value) {
+      map.delete(key);
+      map.set(key, value);
+      while (map.size > 100) map.delete(map.keys().next().value);
+    }
 
     const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
       || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+    const planDocument = globalThis.rendererPlanDocument
+      || (typeof require === 'function' ? require('../features/renderer-plan-document') : null);
 
     function planChanged(state) {
       return state.working.title !== state.original.title
@@ -37,19 +48,17 @@
 
     function syncEditedState(host, state) {
       state.edited = planChanged(state);
+      if (state.edited) remember(drafts, state.ref, { original: state.original, working: state.working });
+      else drafts.delete(state.ref);
       const chip = host.querySelector('[data-plan-edited]');
       if (chip) chip.hidden = !state.edited;
-    }
-
-    function renderText(target, value) {
-      if (target) target.innerHTML = escapeHtml(value);
     }
 
     function updateStepMeta(host, state) {
       const meta = host.querySelector('.plan-document__meta');
       if (!meta) return;
       const suffix = state.filesReadCount ? ` · ${jt('artifacts.plan.filesRead', '{count} files read', { count: state.filesReadCount })}` : '';
-      meta.textContent = jtn('chat.planDocument.stepCount', state.working.steps.length, { count: state.working.steps.length, suffix }, '{count} steps{suffix}', '{count} steps{suffix}').replace('{count}', () => String(state.working.steps.length)).replace('{suffix}', () => String(suffix));
+      meta.textContent = jtn('chat.planDocument.stepCount', state.working.steps.length, { count: state.working.steps.length, suffix }, '{count} steps{suffix}', '{count} steps{suffix}');
     }
 
     function beginInputEdit(target, value, maxLength, onFinish) {
@@ -86,7 +95,7 @@
       beginInputEdit(title, previous, 120, (rawValue) => {
         const next = rawValue == null ? previous : String(rawValue).trim().slice(0, 120);
         state.working.title = next || previous;
-        renderText(title, state.working.title);
+        title.textContent = state.working.title;
         syncEditedState(host, state);
       });
     }
@@ -124,8 +133,9 @@
         text.dataset.planStepText = '';
         text.tabIndex = 0;
         text.setAttribute('role', 'button');
-        text.setAttribute('aria-label', jt('chat.planDocument.editStepNumber', 'Edit step {number}', { number: index + 1 }).replace('{number}', () => String(index + 1)));
-        renderText(text, step);
+        text.setAttribute('aria-label', jt('chat.planDocument.editStepNumber', 'Edit step {number}', { number: index + 1 }));
+        text.dataset.planStepRaw = step;
+        text.innerHTML = planDocument.planStepInnerMarkup(step, escapeHtml);
         const controls = doc.createElement('span');
         controls.className = 'plan-document__step-controls';
         controls.dataset.planStepControls = '';
@@ -215,20 +225,10 @@
         list.querySelectorAll('.plan-document__step--dragging')
           .forEach((item) => item.classList.remove('plan-document__step--dragging'));
       };
-      host.addEventListener('click', onHostClick);
-      host.addEventListener('keydown', onHostKeydown);
-      list?.addEventListener('dragstart', onDragStart);
-      list?.addEventListener('dragover', onDragOver);
-      list?.addEventListener('drop', onDrop);
-      list?.addEventListener('dragend', onDragEnd);
-      return () => {
-        host.removeEventListener('click', onHostClick);
-        host.removeEventListener('keydown', onHostKeydown);
-        list?.removeEventListener('dragstart', onDragStart);
-        list?.removeEventListener('dragover', onDragOver);
-        list?.removeEventListener('drop', onDrop);
-        list?.removeEventListener('dragend', onDragEnd);
-      };
+      const listeners = [[host, 'click', onHostClick], [host, 'keydown', onHostKeydown], [list, 'dragstart', onDragStart],
+        [list, 'dragover', onDragOver], [list, 'drop', onDrop], [list, 'dragend', onDragEnd]];
+      listeners.forEach(([node, name, fn]) => node?.addEventListener(name, fn));
+      return () => listeners.forEach(([node, name, fn]) => node?.removeEventListener(name, fn));
     }
 
     function settle(host, decision, feedback = '') {
@@ -238,16 +238,18 @@
       const state = planStates.get(host);
       const payload = { decision, feedback };
       if (state?.edited) payload.plan = { title: state.working.title, steps: [...state.working.steps] };
+      const setDisabled = (disabled) => host.querySelectorAll('button, input, textarea').forEach((control) => { control.disabled = disabled; });
       host.dataset.planSubmitting = 'true';
-      host.querySelectorAll('button, input, textarea').forEach((control) => { control.disabled = true; });
+      setDisabled(true);
       return Promise.resolve(win.jennyShell.tools.approve(ref, payload))
         .then((accepted) => {
           if (!accepted) throw new Error('Plan decision was already resolved.');
+          drafts.delete(ref);
           return true;
         })
         .catch((error) => {
           host.dataset.planSubmitting = 'false';
-          host.querySelectorAll('button, input, textarea').forEach((control) => { control.disabled = false; });
+          setDisabled(false);
           const status = host.querySelector('.plan-document__decision');
           if (status) status.dataset.error = String(error?.message || error || 'Plan decision failed').slice(0, 240);
           return false;
@@ -258,17 +260,24 @@
       if (disposed || cleanups.has(host) || host.dataset.planState !== 'pending') return;
       const actions = host.querySelector('[data-plan-actions]');
       if (!actions || typeof button !== 'function' || typeof field !== 'function') return;
-      const title = host.querySelector('[data-plan-title]')?.textContent?.trim() || jt('chat.planDocument.defaultTitle', 'Implementation plan');
+      const ref = String(host.dataset.approvalRef || '').trim();
+      const titleEl = host.querySelector('[data-plan-title]');
+      const title = titleEl?.textContent?.trim() || jt('chat.planDocument.defaultTitle', 'Implementation plan');
       const steps = [...host.querySelectorAll('[data-plan-step-text]')]
-        .map((step) => step.textContent.trim()).filter(Boolean);
+        .map((step) => (step.dataset.planStepRaw ?? step.textContent).trim()).filter(Boolean);
       const filesReadCount = Number(host.querySelector('.plan-document__meta')?.dataset.planFilesReadCount);
       const state = {
-        original: { title, steps: [...steps] }, working: { title, steps: [...steps] },
+        ref, original: { title, steps: [...steps] }, working: { title, steps: [...steps] },
         edited: false, filesReadCount: Number.isInteger(filesReadCount) && filesReadCount > 0 ? filesReadCount : 0,
       };
+      // Models can reuse tool call ids, so a draft applies only to the plan it was made from.
+      const draft = drafts.get(ref);
+      if (draft && JSON.stringify(draft.original) === JSON.stringify(state.original)) {
+        state.working = { title: draft.working.title, steps: [...draft.working.steps] };
+        if (titleEl) titleEl.textContent = state.working.title;
+      }
       planStates.set(host, state);
       const removeEditing = installPlanEditing(host, state);
-      // Review actions left, build actions right; the primary Build it sits at the edge.
       actions.innerHTML = '<span class="plan-document__actions-group">'
         + button({ label: jt('chat.planDocument.keepPlanning', 'Keep planning'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'feedback' } })
         + button({ label: jt('chat.planDocument.looksGoodNotYet', 'Looks good, not yet'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'accepted' } })
@@ -289,27 +298,38 @@
           return;
         }
         const feedback = actions.querySelector('[data-plan-feedback]')?.value || '';
-        // Only a revision request carries the placeholder; approvals carry no feedback.
+        // Only a revision carries the placeholder.
         void settle(host, decision, feedback.trim() || (decision === 'rejected' ? '<no feedback given>' : ''));
       };
       actions.addEventListener('click', onClick);
+      const saved = ref ? sectionFolds.get(ref) : null;
+      if (saved) {
+        host.querySelectorAll('details[data-plan-section]').forEach((details) => {
+          details.open = saved[details.dataset.planSection] ?? details.open;
+        });
+      }
+      // `toggle` does not bubble.
+      const onSectionToggle = (event) => {
+        const details = event.target.closest('details[data-plan-section]');
+        if (!ref || !details) return;
+        remember(sectionFolds, ref, { ...(sectionFolds.get(ref) || {}), [details.dataset.planSection]: details.open });
+      };
+      host.addEventListener('toggle', onSectionToggle, true);
       cleanups.set(host, () => {
+        // A removed input never blurs: commit an open edit.
+        host.querySelectorAll('.plan-document__edit-input').forEach((input) => input.dispatchEvent(new win.Event('blur')));
         actions.removeEventListener('click', onClick);
+        host.removeEventListener('toggle', onSectionToggle, true);
         removeEditing();
         planStates.delete(host);
       });
-      const proposalRef = String(host.dataset.approvalRef || '').trim();
-      if (!focusedProposalRefs.has(proposalRef)) {
+      if (!focusedProposalRefs.has(ref)) {
         actions.querySelector('[data-plan-decision="approved"]')?.focus({ preventScroll: true });
-        if (proposalRef) focusedProposalRefs.add(proposalRef);
-        while (focusedProposalRefs.size > 100) {
-          focusedProposalRefs.delete(focusedProposalRefs.values().next().value);
-        }
+        if (ref) remember(focusedProposalRefs, ref, true);
       }
     }
 
-    // Only the latest plan in the timeline offers "Build it" on its accepted
-    // receipt; the chat shell's timeline click handler owns the send.
+    // Only the latest plan offers "Build it" on its accepted receipt.
     function syncBuildAcceptedSlots() {
       const documents = timeline ? [...timeline.querySelectorAll('[data-plan-document]')] : [];
       const latest = documents[documents.length - 1] || null;
@@ -325,8 +345,6 @@
       });
     }
 
-    // Returns whether the subtree held any plan document, so the observer only
-    // re-syncs receipt actions when plans actually entered or left the timeline.
     function scan(rootNode) {
       if (disposed || !rootNode) return false;
       const hosts = [...(rootNode.matches?.('[data-plan-document]') ? [rootNode] : []),
@@ -370,6 +388,8 @@
         cleanups.clear();
         planStates.clear();
         focusedProposalRefs.clear();
+        sectionFolds.clear();
+        drafts.clear();
       },
     };
   }

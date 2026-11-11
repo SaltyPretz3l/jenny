@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
+const { resolvePaletteScheme } = require('../renderer/shared/appearance-utils');
 
 function loadRendererMermaidUtils() {
   // Bust the runtime-loader too so its module-level promise cache resets per
@@ -48,6 +49,7 @@ function createInteractivePreview(dom) {
 }
 
 function installPaletteTokens(dom, paletteId, tokenMap) {
+  dom.window.document.documentElement.dataset.scheme = resolvePaletteScheme(paletteId);
   dom.window.document.documentElement.dataset.palette = paletteId;
   const style = dom.window.document.createElement('style');
   style.textContent = ':root {' + Object.entries(tokenMap).map(([token, value]) => `${token}: ${value};`).join(' ') + '}';
@@ -164,14 +166,13 @@ test('buildThemeConfig uses light palette-safe Mermaid colors for paper and wool
   }
 });
 
-test('buildThemeConfig treats signal as a dark Mermaid palette', (t) => {
-  // signal declares color-scheme: dark (palette-signal.css:2); the light
-  // override set is exactly {paper, woolly, jenny-day}. The deliberately
-  // light-ish tokens prove classification is id/color-scheme-driven, not
+test('buildThemeConfig treats obsidian as a dark Mermaid palette', (t) => {
+  // obsidian is a dark-scheme palette (the registry stamps data-scheme). The
+  // deliberately light-ish tokens prove classification is scheme-driven, not
   // token-derived.
   const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { pretendToBeVisual: true });
   installDomGlobals(dom, t);
-  installPaletteTokens(dom, 'signal', {
+  installPaletteTokens(dom, 'obsidian', {
     '--bg-surface': '#f5f7fb',
     '--surface-input-background': 'rgba(255, 255, 255, 0.9)',
     '--bg-panel': '#eef2fa',
@@ -701,7 +702,7 @@ test('renderMermaidDirect normalizes basic and polygon Mermaid label containers'
     url: 'http://localhost/',
   });
   installDomGlobals(dom, t);
-  installPaletteTokens(dom, 'signal', {
+  installPaletteTokens(dom, 'obsidian', {
     '--bg-surface': '#0f1926',
     '--surface-input-background': '#0b1622',
     '--bg-panel': '#101b29',

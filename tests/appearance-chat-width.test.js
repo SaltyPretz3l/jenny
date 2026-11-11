@@ -79,15 +79,15 @@ test('ids stored before the rename land on the Standard default', () => {
   assert.equal(normalizeAppearancePreferences({ chatWidthId: 'WIDE' }).chatWidthId, 'standard');
   // Row 92: the new Wide preset is `full`, so an old stored `wide` never turns it on.
   assert.notEqual(normalizeAppearancePreferences({ chatWidthId: 'wide' }).chatWidthId, 'full');
-  const storage = createStorage(JSON.stringify({ paletteId: 'signal', chatWidthId: 'default' }));
+  const storage = createStorage(JSON.stringify({ paletteId: 'pewter', chatWidthId: 'default' }));
   assert.equal(loadAppearancePreferences(storage).chatWidthId, 'standard');
 });
 
 test('a stored v2 blob without the chat width axis loads as Standard', () => {
-  const storage = createStorage(JSON.stringify({ paletteId: 'signal', typographyId: 'technical' }));
+  const storage = createStorage(JSON.stringify({ paletteId: 'pewter', typographyId: 'technical' }));
   const loaded = loadAppearancePreferences(storage);
   assert.equal(loaded.chatWidthId, 'standard', 'a missing field takes the Standard default');
-  assert.equal(loaded.paletteId, 'signal', 'the pre-existing axes still round-trip');
+  assert.equal(loaded.paletteId, 'pewter', 'the pre-existing axes still round-trip');
 });
 
 test('a fresh profile boots Standard', () => {

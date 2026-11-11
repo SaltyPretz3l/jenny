@@ -84,7 +84,7 @@ function createBackend(root, options = {}) {
       return { workspaceGitService: service };
     },
     sessionStore: { getSessionSummary: () => state.summary },
-    get commandSandbox() { return { enabled: state.sandbox }; },
+    get commandSandbox() { return { enabled: state.sandbox, mode: state.mode }; },
   };
   return { backend, state };
 }
@@ -477,6 +477,20 @@ describe('recheckCommandBinding', () => {
     state.sandbox = false;
     const other = process.platform === 'win32' ? 'linux' : 'win32';
     assert.deepEqual(await recheck(record, backend, { platform: other }), { ok: false, cause_code: 'shell_changed' });
+  });
+
+  test('a Docker binding records its sandbox mode; another mode is retryable, never drift (row 106)', async () => {
+    const { backend, state, record } = await arranged();
+    assert.equal(record.binding.command.workspace, undefined, 'native bindings carry no mode');
+    Object.assign(state, { sandbox: true, mode: 'synced' });
+    const docker = await captureCommandProposalBinding({ backendService: backend, sessionId: SESSION, trusted: null, cwd: 'tools', command: COMMAND });
+    assert.equal(docker.binding.command.workspace, 'synced');
+    const stored = { ...record, binding: docker.binding };
+    assert.deepEqual(await recheck(stored, backend), { ok: true });
+    state.mode = 'copy';
+    assert.deepEqual(await recheck(stored, backend), { ok: false, cause_code: 'sandbox_mode_changed' });
+    const legacy = { ...stored, binding: { ...docker.binding, command: { ...docker.binding.command, workspace: undefined } } };
+    assert.deepEqual(await recheck(legacy, backend), { ok: true }, 'a missing key reads copy');
   });
 
   test('reports cwd_changed when the directory vanished or became a file, unavailable when unreadable', async () => {

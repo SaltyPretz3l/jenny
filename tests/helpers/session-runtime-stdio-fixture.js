@@ -9,6 +9,8 @@ const { createFakeSafeStorage } = require('./fake-safe-storage');
 const { filesystemResource } = require('../../services/session-runtime/resource-broker');
 const protocol = require('../../services/session-runtime/inference-protocol');
 const ROOT = path.resolve(__dirname, '../..');
+// These fixtures drive real child waits; the child tools are no longer offered by default (row 129).
+process.env.JENNY_ENABLE_RUNTIME_CHILD_TOOLS = '1';
 const PYTHON = path.join(ROOT, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 async function waitFor(predicate, timeout = 15_000) {
   const until = Date.now() + timeout;

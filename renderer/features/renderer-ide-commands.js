@@ -215,6 +215,7 @@
     keymapUtils.registerIdeKeymapCommands?.(registry, bag);
     resolveModule('rendererIdePaletteCommands', './renderer-ide-palette-commands').registerIdePaletteCommands?.(registry, bag);
     options.chipPicker?.registerCommands?.(registry);
+    options.follow?.registerCommands?.(registry);
 
     function getContext(target) {
       if (ideCommands?.getContext) return ideCommands.getContext(target);

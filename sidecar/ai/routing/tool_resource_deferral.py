@@ -308,8 +308,12 @@ def resource_wait_failure(wait: ToolResourceWait) -> ToolExecutionFailure:
 
     return ToolExecutionFailure(
         code=CMP_RESOURCE_EXCEEDED,
-        message=f"Tool resource capacity is busy: {wait.reason or 'resource_capacity'}",
+        message=(
+            f"Tool resource capacity is busy: {wait.reason or 'resource_capacity'}. "
+            "The call did not start; repeat it unchanged."
+        ),
         retryable=True,
+        error_details={"failure_class": "transient"},
     )
 
 

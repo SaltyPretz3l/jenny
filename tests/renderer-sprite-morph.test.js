@@ -9,6 +9,18 @@ const { createSpriteMorph } = require('../renderer/chat/renderer-sprite-morph');
 const { SPRITE_ACTIVITIES } = require('../renderer/chat/renderer-sprite-activity');
 const { SVG_NS, EASE, createRig, activity, settledIn } = require('./helpers/sprite-morph-rig');
 
+test('onLoopsReleased fires when a morph settles and when the form is reset, never at construction', () => {
+  let released = 0;
+  const { morph, clock } = createRig({ onLoopsReleased: () => { released += 1; } });
+  assert.equal(released, 0);
+  morph.setActivity('think');
+  assert.equal(released, 0, 'loops stay frozen while the morph eases');
+  clock.advance(400);
+  assert.equal(released, 1, 'the settled form hands its loops back to CSS');
+  morph.reset();
+  assert.equal(released, 2);
+});
+
 test('builds the dot root once, in front of the J, at rest with no animation', () => {
   const rig = createRig({ drawing: true });
   const { root, sprite } = rig;

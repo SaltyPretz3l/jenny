@@ -57,3 +57,35 @@ class SecurityTests(unittest.TestCase):
         for drift in (private.replace("tmpfs shm", "tmpfs tmpfs"), private.replace("0:130 / ", "0:130 /secret ")):
             with self.assertRaises(SecurityError):
                 validate_mounts({**mounts, **parse_mounts(drift)})
+
+    def test_mode_comes_from_the_exact_mounts_never_a_flag(self):
+        base = {
+            "/": ({"ro"}, "overlay", set()),
+            "/inputs": ({"ro"}, "ext4", set()),
+            "/run/jenny-worker": ({"rw"}, "ext4", set()),
+            "/tmp": ({"rw", "nosuid", "nodev"}, "tmpfs", {"size=65536k", "nr_inodes=4096"}),
+        }
+        copy = {**base, "/workspace": (
+            {"rw", "nosuid", "nodev"}, "tmpfs", {"size=524288k", "nr_inodes=16384"})}
+        synced = {**base, "/workspace": ({"rw"}, "ext4", set()),
+                  "/run/jenny-sync/outbox": ({"rw"}, "fakeowner", set())}
+
+        def full(value):
+            return {key: (*item, "/", "fixture") for key, item in value.items()}
+
+        self.assertEqual(validate_mounts(full(copy)), "copy")
+        self.assertEqual(validate_mounts(full(synced)), "synced")
+        for broken in (
+            # An outbox beside a tmpfs workspace, a read-only mirror or outbox, a tmpfs mirror.
+            {**copy, "/run/jenny-sync/outbox": ({"rw"}, "fakeowner", set())},
+            {**synced, "/workspace": ({"ro"}, "ext4", set())},
+            {**synced, "/run/jenny-sync/outbox": ({"ro"}, "fakeowner", set())},
+            {**synced, "/workspace": ({"rw", "nosuid", "nodev"}, "tmpfs",
+                                      {"size=524288k", "nr_inodes=16384"})},
+            # A writable mirror without the outbox is not a mode; neither is a mounted sync parent.
+            {**base, "/workspace": ({"rw"}, "ext4", set())},
+            {**synced, "/run/jenny-sync": ({"rw"}, "ext4", set())},
+            {**synced, "/run/jenny-sync/other": ({"rw"}, "ext4", set())},
+        ):
+            with self.assertRaises(SecurityError):
+                validate_mounts(full(broken))

@@ -173,7 +173,10 @@
       });
     }
 
-    function schedulePredictedHeightCleanup() {
+    // `beforePaint`: clear in this task. A reader following the latest message must never see the
+    // reserved heights: on a rewrite they make a long chat tens of thousands of px taller for one
+    // frame, the follow glides into that room, and the view jumps back when it goes (row 131, D5).
+    function schedulePredictedHeightCleanup(options) {
       if (!chatTimeline) {
         return;
       }
@@ -184,6 +187,15 @@
       }
       if (predictedHeightCleanupFrame && typeof windowRef.cancelAnimationFrame === 'function') {
         windowRef.cancelAnimationFrame(predictedHeightCleanupFrame);
+      }
+      if (options && options.beforePaint === true) {
+        predictedHeightCleanupFrame = 0;
+        if (predictedHeightCleanupTimer && typeof windowRef.clearTimeout === 'function') {
+          windowRef.clearTimeout(predictedHeightCleanupTimer);
+        }
+        predictedHeightCleanupTimer = 0;
+        clearPredictedHeightStyles();
+        return;
       }
       const runCleanup = function runCleanup() {
         predictedHeightCleanupFrame = 0;
@@ -224,7 +236,9 @@
       const nextHeight = Number(predictedHeight) || 0;
       if (nextHeight > 0) {
         article.dataset.predictedHeight = String(nextHeight);
-        article.style.minHeight = `${nextHeight}px`;
+        // No reservation under a reader following the latest message: an overshoot is blank room
+        // the follow scrolls into, and the reply jumps back down when the room goes (row 131, D5).
+        article.style.minHeight = state?.ui?.followLatest === true ? '' : `${nextHeight}px`;
         return;
       }
       article.style.minHeight = '';

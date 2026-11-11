@@ -55,6 +55,15 @@ test('checkpoint request uses owner wait classification, canonical sequence and 
   assert.equal(saved.proposal.frozen_input.effective_tool_arguments._jenny_session_id, 'session_1');
 });
 
+test('a run-mode change during the request reports that reason, and any other authority throw stays invalid', async () => {
+  for (const [code, reason] of [['run_mode_changed', 'run_mode_changed'], ['stale_authority', 'runtime_continuation_request_invalid']]) {
+    const f = fixture();
+    f.dependencies.assertCurrent = () => { throw Object.assign(new Error('private'), { code }); };
+    const response = await createRuntimeContinuationOperationHandler(f.dependencies)(f.params);
+    assert.deepEqual([response.status, response.reason], ['rejected', reason]);
+  }
+});
+
 test('publication failure diagnostics identify bounded stages without exposing exceptions', async () => {
   for (const [dependency, stage, code, expected] of [
     ['wait', 'wait_validation', 'runtime_resource_progress_unproven', 'runtime_resource_progress_unproven'],

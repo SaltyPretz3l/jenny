@@ -501,6 +501,21 @@ test('listAgentTargets bounds titles to 512 UTF-8 bytes and reports a stale or m
   assert.equal((await f.service.listAgentTargets({})).reason, 'invalid_request');
 });
 
+test('any chat lists the Jenny chat as a free-form target, and it never lists itself', async (t) => {
+  const { f, src, inc, targets } = setup(t);
+  const jenny = f.sessionId('Jenny');
+  f.backend.primaryChatControls = { primarySessionId: () => jenny };
+  assert.deepEqual(await targets(), [{ session_id: jenny, title: 'Jenny', project_label: null, free_form_allowed: true, grant: null }]);
+  const own = await f.service.listAgentTargets({ sourceSessionId: jenny, sourceIncarnation: inc(jenny) });
+  assert.deepEqual(own.targets, [], 'Jenny is not her own target');
+  f.backend.primaryChatControls = { primarySessionId: () => null };
+  assert.deepEqual(await targets(), [], 'the kill switch removes it');
+  f.backend.primaryChatControls = { primarySessionId: () => jenny };
+  f.archive(jenny);
+  assert.deepEqual(await targets(), [], 'an archived Jenny chat is not listed');
+  assert.ok(src);
+});
+
 test('a linked child lists its immediate parent as a reporting-only target while reporting is on', async (t) => {
   const f = createFixture(t);
   const parent = f.sessionId('Parent chat');

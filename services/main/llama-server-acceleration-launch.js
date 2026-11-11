@@ -12,6 +12,7 @@ const {
 } = require('../backend/llama-server-acceleration');
 const { probeCapabilities } = require('../backend/llama-server-capabilities');
 const { resolveGgufPath } = require('../llama-server-lifecycle');
+const { readGgufHeader } = require('../gguf-header');
 
 function offResult(reason) {
   return {
@@ -21,6 +22,24 @@ function offResult(reason) {
     reason,
     drafter: '',
   };
+}
+
+// `<arch>.nextn_predict_layers` of the model GGUF: 0 when the header has no
+// such key, null when the header cannot be read (the resolver then keeps its
+// pre-header behavior). The tokenizer arrays sit in the header, so the read
+// budget is larger than the architecture-only probe's (Qwen3.8 needs ~10 MB;
+// one synchronous read per launch, ~40 ms).
+function readEmbeddedMtpLayers(modelPath, { readHeader = readGgufHeader } = {}) {
+  if (!modelPath) {
+    return null;
+  }
+  try {
+    const { architecture, kv } = readHeader(modelPath, { maxBytes: 32 * 1024 * 1024 });
+    const layers = architecture ? kv[`${architecture}.nextn_predict_layers`] : undefined;
+    return Number.isInteger(layers) && layers >= 0 ? layers : 0;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function normalizeResult(result) {
@@ -50,6 +69,7 @@ function resolveLaunchAcceleration({
   loadAccelerationCatalogImpl = loadAccelerationCatalog,
   resolveAccelerationArgsImpl = resolveAccelerationArgs,
   resolveGgufPathImpl = resolveGgufPath,
+  readEmbeddedMtpLayersImpl = readEmbeddedMtpLayers,
   fsImpl = fs,
 } = {}) {
   try {
@@ -83,6 +103,7 @@ function resolveLaunchAcceleration({
       capabilities,
       profileExtraArgs: profile ? profile.extraArgs : [],
       modelDir,
+      embeddedMtpLayers: readEmbeddedMtpLayersImpl(resolvedModel && resolvedModel.path),
       fsImpl,
     }));
     // A projector's residency is not an acceleration cost.
@@ -110,6 +131,7 @@ function shouldRetryWithoutAcceleration({ error, accelExtraArgs, aborted } = {})
 }
 
 module.exports = {
+  readEmbeddedMtpLayers,
   resolveLaunchAcceleration,
   shouldRetryWithoutAcceleration,
 };

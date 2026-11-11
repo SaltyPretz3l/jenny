@@ -67,6 +67,7 @@ def runtime_continuation_resume_from_params(  # noqa: PLR0913
     if not isinstance(value, dict) or set(value) not in (
         _KEYS, _KEYS | {"canonical_events_bytes"},
         _KEYS | {"canonical_events_bytes", "approval_inputs_bytes"},
+        _KEYS | {"canonical_events_bytes", "approved_call"},
     ):
         raise ValueError(f"{_FIELD} must be an exact continuation artifact object")
     if (
@@ -94,6 +95,7 @@ def runtime_continuation_resume_from_params(  # noqa: PLR0913
             ),
             approval_inputs_bytes=(_bytes(value["approval_inputs_bytes"], "approval_inputs_bytes")
                                    if "approval_inputs_bytes" in value else None),
+            approved_call=value.get("approved_call"),
             allow_dependency=params.get("runtime_children_enabled") is True,
         )
     except (TypeError, ValueError) as error:

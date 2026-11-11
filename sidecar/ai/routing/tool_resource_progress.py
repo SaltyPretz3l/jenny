@@ -31,6 +31,8 @@ class ResourceProgressContinuation(BeforeToolDispatchContinuation):
     prior_checkpoint_json: bytes | None = None
     prior_effect_count: int = 0
     current_execution_count: int = 0
+    # An approved call can be the turn's first tool: its wait has no prefix to bind.
+    allow_no_effects: bool = False
 
     def _prior_outcome_count(self) -> int:
         return self.tool_calls_consumed - len(self.ordered_call_ids)
@@ -40,7 +42,7 @@ class ResourceProgressContinuation(BeforeToolDispatchContinuation):
         pending = set(self.ordered_call_ids)
         if (
             not isinstance(effects, list)
-            or not effects
+            or (not effects and not self.allow_no_effects)
             or len(effects) >= _MAX_EFFECTS
             or not len(pending) <= self.tool_calls_consumed <= len(pending) + len(effects)
             or not 0 <= self.prior_effect_count <= len(effects)
@@ -114,7 +116,9 @@ def settled_effects(
     return SettledEffects(effects, previous, predecessor, len(records))
 
 
-def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
+def _capture(
+    loop: Any, iteration: int, deferred: Any, calls: tuple, *, allow_no_effects: bool = False,
+) -> Any:
     runtime = loop.runtime
     if (
         not runtime.streaming
@@ -132,7 +136,7 @@ def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
     if deferred.prepared.frozen_input()["effective_tool_arguments"].get("_jenny_change_set_id"):
         return None
     settled = settled_effects(loop, tool_calls=calls, quota_state_json=quota)
-    if settled is None or not settled.effects:
+    if settled is None or not (settled.effects or allow_no_effects):
         return None
     deadline = runtime.wall_clock_deadline
     base = build_before_tool_dispatch_continuation(
@@ -152,13 +156,16 @@ def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
         base,
         ResourceProgressContinuation,
         tool_calls_consumed=runtime.tool_calls_consumed,
+        allow_no_effects=allow_no_effects,
         **settled.checkpoint_fields(),
     )
 
 
-def _suspend(loop: Any, iteration: int, deferred: Any, calls: tuple) -> None:
+def _suspend(
+    loop: Any, iteration: int, deferred: Any, calls: tuple, *, allow_no_effects: bool = False,
+) -> None:
     try:
-        captured = _capture(loop, iteration, deferred, calls)
+        captured = _capture(loop, iteration, deferred, calls, allow_no_effects=allow_no_effects)
     except (ValueError, TypeError, AttributeError) as error:
         # Capture is optional: fall back to the legacy retryable wait, but keep
         # the reason observable.
@@ -178,5 +185,7 @@ def _suspend(loop: Any, iteration: int, deferred: Any, calls: tuple) -> None:
         raise ToolLoopSuspended(loop.runtime.continuation_checkpoint(captured))
 
 
-def resource_deferral_callback(loop: Any, iteration: int) -> Any:
-    return partial(_suspend, loop, iteration)
+def resource_deferral_callback(
+    loop: Any, iteration: int, *, allow_no_effects: bool = False,
+) -> Any:
+    return partial(_suspend, loop, iteration, allow_no_effects=allow_no_effects)

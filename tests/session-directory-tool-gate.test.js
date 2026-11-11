@@ -87,10 +87,10 @@ test('managedToolPreferenceInput applies the gate to ordinary turns but never to
   const options = { service, sessionId: 's1', session: { id: 's1' } };
   assert.deepEqual(managedToolPreferenceInput({ disabled_tools: ['read_file'] }, options),
     { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run'] });
-  assert.deepEqual(managedToolPreferenceInput(undefined, options), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(managedToolPreferenceInput(undefined, options), { disabled_tools: [...VIEW, 'browser', ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run'] });
   assert.deepEqual(managedToolPreferenceInput(undefined, { ...options, handoffPreparation: { proposal_id: 'p' } }),
     { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] });
-  assert.equal(managedToolPreferenceInput(undefined), undefined, 'no service, no gate');
+  assert.deepEqual(managedToolPreferenceInput(undefined), { disabled_tools: ['browser'] }, 'no service, no gate: only the default-off tools');
 });
 
 test('the context preview mirrors the gate so the context ring does not count hidden schemas', async () => {
@@ -106,11 +106,11 @@ test('the context preview mirrors the gate so the context ring does not count hi
     },
   };
   await previewContext(service, 's1');
-  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run']);
+  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, 'browser', ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run']);
   sessions.push({ id: 'c', spawned_from: { parent_session_id: 's1' } });
   session.updated_at = 'linked';
   await previewContext(service, 's1');
-  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run']);
+  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, 'browser', ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run']);
 });
 
 test('the child check reads the raw index without listSessions, and a parent keeps the tools once offered', () => {

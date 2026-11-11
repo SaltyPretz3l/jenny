@@ -59,3 +59,82 @@
 .model-library-folders-status:empty {
   display: none;
 }
+
+/* Row 107: the first folder's role, and the Move and add note under the list. */
+.model-library-folders-home-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.model-library-add {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  padding: 4px 0 2px;
+  min-width: 0;
+}
+
+.model-library-add-line,
+.model-library-add-sub {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.model-library-add-line {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+.model-library-add-sub {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.model-library-add-line code {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: 0.92em;
+}
+
+.model-library-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.model-library-add-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-primary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.model-library-add-link:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.model-library-add-progress {
+  max-width: 420px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-subtle);
+}
+
+.model-library-add-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--accent-primary);
+}
+
+.model-library-add-num {
+  font-variant-numeric: tabular-nums;
+}

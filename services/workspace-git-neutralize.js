@@ -19,7 +19,10 @@
  * User-initiated writes (stage, commit, restore, checkout, stash, conflict
  * resolution) never come through here: they run the repository's filters, as
  * in any editor (neutralizing `clean` on `git add` would store raw content in an
- * LFS repository).
+ * LFS repository). The one exception is the row 106 sandbox restore point
+ * (workspace-git-sandbox-checkpoint), which runs EVERY verb, its checkpoint
+ * writes included, through this wrapper with `ignoreSubmodules: 'all'`: no
+ * repository program runs on the host for a sandboxed command's restore point.
  */
 
 const fsPromises = require('fs/promises');
@@ -53,6 +56,12 @@ const READ_FLAGS_BY_VERB = new Map([
   ['show', ['--no-ext-diff', '--no-textconv']],
   ['blame', ['--no-textconv']],
 ]);
+// `ignoreSubmodules: 'all'`: submodules are never inspected, so no submodule
+// config (whose filters the parent's overrides cannot name) is ever read.
+const ALL_SUBMODULES_READ_FLAGS = new Map([...READ_FLAGS_BY_VERB].map(([verb, flags]) => [
+  verb, flags.map((flag) => (flag === '--ignore-submodules=dirty' ? '--ignore-submodules=all' : flag)),
+]));
+const ALL_SUBMODULES_CONFIG = Object.freeze(['-c', 'diff.ignoreSubmodules=all', '-c', 'submodule.recurse=false']);
 
 const CONFIG_KEYS_TTL_MS = 30_000;
 const CONFIG_KEYS_CACHE_LIMIT = 64;
@@ -82,8 +91,8 @@ function unneutralizableReason(keys) {
   return null;
 }
 
-function withReadFlags(args) {
-  const flags = (READ_FLAGS_BY_VERB.get(args[0]) || []).filter((flag) => (
+function withReadFlags(args, flagsByVerb = READ_FLAGS_BY_VERB) {
+  const flags = (flagsByVerb.get(args[0]) || []).filter((flag) => (
     !args.some((arg) => String(arg).split('=')[0] === flag.split('=')[0])
   ));
   return flags.length ? [args[0], ...flags, ...args.slice(1)] : args;
@@ -153,16 +162,20 @@ async function configCacheKey({ fs, path, env }, root) {
 /**
  * Wrap a workspace git executor `(cwd, args, options) => result` so every call
  * runs neutralized. Use the wrapped function for reads only; writes keep the
- * unwrapped executor.
+ * unwrapped executor (except the sandbox restore point, see the header).
+ * `ignoreSubmodules: 'all'` also skips submodules entirely.
  */
 function createReadOnlyGitExec(exec, {
   fs = fsPromises,
   path = nodePath,
   env = process.env,
   now = () => Date.now(),
+  ignoreSubmodules = 'dirty',
 } = {}) {
   if (typeof exec !== 'function') throw new TypeError('Workspace Git executor must be a function.');
   const cache = new Map();
+  const allSubmodules = ignoreSubmodules === 'all';
+  const flagsByVerb = allSubmodules ? ALL_SUBMODULES_READ_FLAGS : READ_FLAGS_BY_VERB;
 
   function cached(key) {
     if (key === null) return null;
@@ -213,8 +226,11 @@ function createReadOnlyGitExec(exec, {
         cleanupConfirmed: listed.cleanupConfirmed === true,
       };
     }
-    const overrides = neutralizingConfigArguments(discovered.keys);
-    const result = await exec(root, [...overrides, ...withReadFlags(args)], options);
+    const overrides = [
+      ...neutralizingConfigArguments(discovered.keys),
+      ...(allSubmodules ? ALL_SUBMODULES_CONFIG : []),
+    ];
+    const result = await exec(root, [...overrides, ...withReadFlags(args, flagsByVerb)], options);
     if (result?.success !== false || typeof result.message !== 'string') return result;
     // A spawn failure message echoes the argv ("Command failed: git ..."); keep
     // it as callers (and the user) saw it before the overrides.

@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const { ElectronSessionStore } = require('../../services/backend/electron-session-store');
 const { hasDurableProof } = require('../../services/backend/conversation-store-port');
 const { exportSession } = require('../../services/backend/session-export-import');
-const { migrateStorePayload } = require('../../services/backend/session-store-migrations');
+const { STORE_SCHEMA_VERSION, migrateStorePayload } = require('../../services/backend/session-store-migrations');
 const { RuntimeContinuationCoordinator } = require('../../services/backend/runtime-continuation-coordinator');
 const { buildPreparedContinuationPrefix } = require('../../services/backend/chat-stream-reasoning');
 const { fingerprintRuntimeHistory } = require('../../services/backend/runtime-continuation-records');
@@ -24,7 +24,7 @@ test('schema 21 initializes the hidden header without replacing existing future 
   const migrated = migrateStorePayload({ schema_version: 20, sessions: {
     legacy: { project_id: 'general' }, future: { project_id: 'general', runtime_continuations: future },
   } });
-  assert.equal(migrated.schema_version, 26);
+  assert.equal(migrated.schema_version, STORE_SCHEMA_VERSION);
   assert.deepEqual(migrated.sessions.legacy.runtime_continuations,
     { schema_version: 1, entries: [] });
   assert.deepEqual(migrated.sessions.future.runtime_continuations, future);

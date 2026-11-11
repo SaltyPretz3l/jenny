@@ -10,6 +10,7 @@ const { normalizeNotificationSettings } = require('../shell-config-notifications
 const MAX_FAILURE_MESSAGES = 32;
 
 function createReminderNotifier({
+  isAppMuted = () => false,
   getShellConfigService,
   getMainWindow,
   notificationFactory,
@@ -124,7 +125,7 @@ function createReminderNotifier({
       return;
     }
     try {
-      const notification = notificationFactory({ title, body, silent: settings.sound !== true });
+      const notification = notificationFactory({ title, body, silent: settings.sound !== true || isAppMuted() });
       notification?.on?.('click', () => openReminder(reminderId));
       notification?.show?.();
       logInfo('reminder_notifier.shown', { silent: settings.sound !== true });

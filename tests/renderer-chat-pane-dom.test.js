@@ -75,18 +75,15 @@ const LEDGER_EXTRA_NAMES = Object.freeze(['chatView']);
 // `attachmentTray` fallback in renderer-mcp-prompt-slash-commands.js (it tries
 // the pane's `.attachment-tray` first); 44 pairs.
 const REMAINING_LOOKUP_SITES = Object.freeze([
-  // Wave 2 -- composer + wayfinder
-  'renderer/app/renderer-app-controller-composition.js|composerWayfinderHost',
+  // Wave 2 -- composer
   'renderer/app/renderer-app-shell-bindings.js|stopStreamButton',
-  'renderer/chat/renderer-chat-wayfinder-utils.js|composerWayfinderHost',
-  'renderer/chat/renderer-render-pipeline-chrome.js|composerWayfinderHost',
   'renderer/chat/renderer-skill-slash-commands.js|chatInput',
   'renderer/chat/renderer-mcp-prompt-slash-commands.js|attachmentTray',
   'renderer/chat/renderer-slash-autocomplete.js|chatInput',
   'renderer/chat/renderer-stream-handler-terminal.js|composerWrap',
   // Wave 2 -- chat chrome (timeline utility cluster, transcript bindings,
   // shell runtime helpers)
-  'renderer/app/renderer-app-lifecycle-composition.js|artifactSplitViewToggle',
+  'renderer/app/renderer-app-navigation-composition.js|artifactSplitViewToggle',
   // Row 59 checkpoint 1 (2026-10-15): pane 0's utility cluster, handed to the pane surface controllers
   // for the utility reserve and the session rail (pane 1 passes its own from the pane template).
   'renderer/app/renderer-app-lifecycle-composition.js|chatTimelineUtilityCluster',
@@ -109,8 +106,8 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/features/renderer-artifact-file-preview.js|artifactReviewPanel',
   'renderer/shell/renderer-shell-artifact-bridge.js|artifactReviewPanel',
   'renderer/shell/renderer-shell-artifact-bridge.js|artifactSplitViewToggle',
-  'renderer/shell/renderer-shell-artifact-bridge.js|chatInput',
-  'renderer/shell/renderer-shell-artifact-bridge.js|chatTimelineUtilityCluster',
+  'renderer/shell/renderer-shell-artifact-rails.js|chatInput',
+  'renderer/shell/renderer-shell-artifact-rails.js|chatTimelineUtilityCluster',
   // Wave 2 -- IDE dock
   'renderer/features/renderer-ide-active-file-context.js|composerWrap',
   'renderer/features/renderer-ide-chat-dock.js|artifactReviewResizer',
@@ -343,15 +340,15 @@ test('the Wave 2 burn-down ledger of un-migrated getElementById lookups is exact
   );
   assert.equal(
     REMAINING_LOOKUP_SITES.length,
-    43,
+    40,
     'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form); '
     + 'W3-2 (2026-09-26) added the subagentInspector name and its one un-migrated path-open lookup: 41; '
-    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43'
+    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43; the merged jump control (2026-11-09) retired the three composerWayfinderHost lookups: 40'
   );
   assert.equal(
     new Set(REMAINING_LOOKUP_SITES.map((pair) => pair.split('|')[0])).size,
-    25,
-    'across 25 files (22 + the two project notes modules, 2026-10-06, + the MCP prompt slash commands, 2026-10-15), each named with the Wave 2 feature that owns its migration'
+    24,
+    'across 24 files (22 + the two project notes modules, 2026-10-06, + the MCP prompt slash commands, 2026-10-15, + the navigation composition split out of the lifecycle composition, 2026-11-03, + the artifact rails split out of the artifact bridge, 2026-11-03, - the three modules that only looked up the retired wayfinder host, 2026-11-09), each named with the Wave 2 feature that owns its migration'
   );
 
   // The constant-argument lookups the pattern cannot see: same equality, same

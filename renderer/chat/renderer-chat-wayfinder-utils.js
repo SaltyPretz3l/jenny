@@ -1,5 +1,7 @@
 /* renderer/chat/renderer-chat-wayfinder-utils.js
- * Contextual transcript Wayfinder controller.
+ * Contextual transcript Wayfinder controller: decides which jump the bottom-edge control offers
+ * (first unread, then latest once the reader has left the live end) and runs it.
+ * It renders nothing itself.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -13,8 +15,8 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var STATE_HIDDEN = 'hidden';
   var STATE_UNREAD = 'unread';
-  var STATE_PROMPT = 'prompt';
   var STATE_LATEST = 'latest';
+  var JUMP_CLICK_GUARD_MS = 350;
 
   var isNearBottom = scrollUtils && typeof scrollUtils.isNearBottom === 'function'
     ? scrollUtils.isNearBottom
@@ -43,12 +45,44 @@
     }
   }
 
+  // Runs the first-unread jump a model names; "latest" is the bottom-edge control's own jump.
+  function activateModel(model, handlers) {
+    if (!model || model.visible !== true) return false;
+    var h = handlers || {};
+    try {
+      if (model.state === STATE_UNREAD) {
+        var unread = h.unreadController;
+        return Boolean(unread && typeof unread.jumpToFirstUnread === 'function' && unread.jumpToFirstUnread());
+      }
+    } catch (error) {
+      if (typeof h.onError === 'function') h.onError(error);
+    }
+    return false;
+  }
+
+  // One click, one jump: the control's state flips the moment a jump starts, so the second press of a
+  // double-click would otherwise undo the first.
+  function createJumpClickHandler(deps) {
+    var guardUntil = 0;
+    var now = deps.now || Date.now;
+    return function onJumpClick() {
+      var time = now();
+      if (time < guardUntil) return false;
+      guardUntil = time + JUMP_CLICK_GUARD_MS;
+      var model = deps.getModel();
+      if (model && model.visible === true && model.state !== STATE_LATEST
+        && String(model.sessionId || '') === String(deps.getSessionId() || '')) {
+        if (activateModel(model, deps.getHandlers())) return true;
+      }
+      deps.jumpToLatest();
+      return true;
+    };
+  }
+
   function createChatWayfinderController(deps) {
     var options = deps || {};
     var state = options.state || {};
     var uiState = ensureUiState(state);
-    var doc = options.document || (typeof document !== 'undefined' ? document : null);
-    var host = options.host || null;
     var getCurrentSessionId = typeof options.getCurrentSessionId === 'function'
       ? options.getCurrentSessionId
       : function defaultGetCurrentSessionId() { return normalizeId(state.currentSessionId); };
@@ -58,35 +92,22 @@
     var getScrollMetrics = typeof options.getScrollMetrics === 'function'
       ? options.getScrollMetrics
       : function defaultGetScrollMetrics() { return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }; };
-    var scrollMessageIntoView = typeof options.scrollMessageIntoView === 'function'
-      ? options.scrollMessageIntoView
-      : null;
-    var handleJumpToBottom = typeof options.handleJumpToBottom === 'function'
-      ? options.handleJumpToBottom
-      : null;
     var appendClientLog = typeof options.appendClientLog === 'function'
       ? options.appendClientLog
       : function noopAppendClientLog() {};
-    var affordanceFactory = options.affordanceFactory
-      || (typeof globalThis !== 'undefined' ? globalThis.inventoryChatWayfinderAffordance : null);
+    // Fired when the model changes, so the bottom-edge jump control re-renders.
+    var onChange = typeof options.onChange === 'function' ? options.onChange : null;
 
-    var affordance = null;
     var bound = false;
     var disposed = false;
-    var offActivate = null;
-    var unreadController = null;
     var unreadState = null;
-    var pinState = null;
     var renderedSignature = '';
-    var mountedVisible = null;
-    var mountedHost = null;
     var currentModel = {
       visible: false,
       state: STATE_HIDDEN,
       label: '',
       messageId: '',
       sessionId: '',
-      detail: '',
     };
 
     function logWarning(eventName, error, details) {
@@ -106,7 +127,6 @@
         label: '',
         messageId: '',
         sessionId: normalizeId(sessionId || getCurrentId()),
-        detail: '',
       };
     }
 
@@ -141,14 +161,6 @@
         && Boolean(normalizeId(unreadState.messageId));
     }
 
-    function hasVisiblePrompt() {
-      return activeViewAllowsWayfinder()
-        && pinState
-        && pinState.visible === true
-        && sessionMatches(pinState)
-        && Boolean(normalizeId(pinState.messageId));
-    }
-
     function hasLatestTarget(scrollSnapshot) {
       if (!activeViewAllowsWayfinder()) return false;
       if (uiState.followLatest !== false) return false;
@@ -173,17 +185,6 @@
           label: jt('chat.wayfinder.jumpToFirstUnread', 'Jump to first unread'),
           messageId: normalizeId(unreadState.messageId),
           sessionId: sessionId,
-          detail: '',
-        };
-      }
-      if (hasVisiblePrompt()) {
-        return {
-          visible: true,
-          state: STATE_PROMPT,
-          label: jt('chat.wayfinder.backToPrompt', 'Back to prompt'),
-          messageId: normalizeId(pinState.messageId),
-          sessionId: sessionId,
-          detail: String(pinState.text || '').trim(),
         };
       }
       if (hasLatestTarget(scrollSnapshot)) {
@@ -193,7 +194,6 @@
           label: jt('chat.wayfinder.returnToLatest', 'Return to latest'),
           messageId: '',
           sessionId: sessionId,
-          detail: '',
         };
       }
       return {
@@ -202,13 +202,7 @@
         label: '',
         messageId: '',
         sessionId: sessionId,
-        detail: '',
       };
-    }
-
-    function setUiWayfinderState(model) {
-      uiState.chatWayfinderVisible = model.visible === true;
-      uiState.chatWayfinderState = model.state || STATE_HIDDEN;
     }
 
     function getModelSignature(model) {
@@ -218,158 +212,46 @@
         model.label || '',
         model.messageId || '',
         model.sessionId || '',
-        model.detail || '',
-      ].join('\x1f');
+      ].join('');
     }
 
-    function ensureAffordance() {
-      if (affordance || !affordanceFactory || typeof affordanceFactory.createChatWayfinderAffordance !== 'function') {
-        return affordance;
-      }
+    // The model is published on state.ui.chatWayfinder so the bottom-edge jump control
+    // (rendered per pane by the composer chrome) reads it; each pane matches it to its own session.
+    function publish(model) {
+      uiState.chatWayfinder = model;
+    }
+
+    function notifyChange() {
+      if (typeof onChange !== 'function') return;
       try {
-        affordance = affordanceFactory.createChatWayfinderAffordance({
-          document: doc,
-          hostId: 'chat-wayfinder',
-        });
-        if (affordance && typeof affordance.on === 'function') {
-          offActivate = affordance.on('activate', handleActivate);
-        }
+        onChange(currentModel);
       } catch (error) {
-        logWarning('chat.wayfinder_affordance_failed', error);
-        try {
-          affordance?.dispose?.();
-        } catch (_disposeError) { /* ignore */ }
-        affordance = null;
-        affordanceFactory = null;
-        offActivate = null;
+        logWarning('chat.wayfinder_change_failed', error);
       }
-      return affordance;
-    }
-
-    function resolveHost() {
-      if (host) return host;
-      if (doc && typeof doc.getElementById === 'function') {
-        host = doc.getElementById('composerWayfinderHost');
-      }
-      return host;
     }
 
     function sync(scrollSnapshot) {
       if (disposed) return currentModel;
       var model = buildModel(scrollSnapshot);
-      var targetHost = resolveHost();
-      var nextAffordance = ensureAffordance();
-      if (model.visible && (!nextAffordance || !targetHost)) {
-        model = createHiddenModel(model.sessionId);
-      }
+      var nextSignature = getModelSignature(model);
       currentModel = model;
-      setUiWayfinderState(model);
-      if (nextAffordance && typeof nextAffordance.setState === 'function') {
-        var nextSignature = getModelSignature(model);
-        try {
-          if (nextSignature !== renderedSignature) {
-            nextAffordance.setState(model);
-            renderedSignature = nextSignature;
-          }
-        } catch (error) {
-          logWarning('chat.wayfinder_affordance_failed', error, { phase: 'set_state' });
-          try {
-            nextAffordance.dispose?.();
-          } catch (_disposeError) { /* ignore */ }
-          affordance = null;
-          offActivate = null;
-          renderedSignature = '';
-          mountedVisible = null;
-          mountedHost = null;
-          currentModel = createHiddenModel(model.sessionId);
-          setUiWayfinderState(currentModel);
-          return currentModel;
-        }
-      }
-      if (bound && nextAffordance) {
-        try {
-          if (model.visible && (mountedVisible !== true || mountedHost !== targetHost)) {
-            nextAffordance.mount?.(targetHost);
-            mountedVisible = true;
-            mountedHost = targetHost;
-          } else if (!model.visible && mountedVisible !== false) {
-            nextAffordance.unmount?.();
-            mountedVisible = false;
-            mountedHost = null;
-          }
-        } catch (error) {
-          logWarning('chat.wayfinder_affordance_failed', error, { phase: model.visible ? 'mount' : 'unmount' });
-          try {
-            nextAffordance.dispose?.();
-          } catch (_disposeError) { /* ignore */ }
-          affordance = null;
-          offActivate = null;
-          renderedSignature = '';
-          mountedVisible = null;
-          mountedHost = null;
-          currentModel = createHiddenModel(model.sessionId);
-          setUiWayfinderState(currentModel);
-          return currentModel;
-        }
+      if (nextSignature !== renderedSignature) {
+        renderedSignature = nextSignature;
+        publish(model);
+        notifyChange();
       }
       return model;
     }
 
-    function logActionFailure(error) {
-      logWarning('chat.wayfinder_action_failed', error, {
-        state: currentModel.state || STATE_HIDDEN,
-      });
-    }
-
-    function handleActivate() {
-      if (disposed || !currentModel.visible) return false;
-      try {
-        if (currentModel.state === STATE_UNREAD) {
-          if (unreadController && typeof unreadController.jumpToFirstUnread === 'function') {
-            return Boolean(unreadController.jumpToFirstUnread());
-          }
-          return false;
-        }
-        if (currentModel.state === STATE_PROMPT) {
-          if (!currentModel.messageId || !scrollMessageIntoView) return false;
-          return Boolean(scrollMessageIntoView(currentModel.messageId, { block: 'start', followLatest: false }));
-        }
-        if (currentModel.state === STATE_LATEST) {
-          if (!handleJumpToBottom) return false;
-          return Boolean(handleJumpToBottom());
-        }
-      } catch (error) {
-        logActionFailure(error);
-        return false;
-      } finally {
-        sync();
-      }
-      return false;
-    }
-
-    function bind(nextHost) {
+    function bind() {
       if (disposed || bound) return false;
       bound = true;
-      host = nextHost || host;
-      ensureAffordance();
       sync();
-      return Boolean(affordance);
-    }
-
-    function setUnreadController(nextController) {
-      unreadController = nextController || null;
-      sync();
+      return true;
     }
 
     function setUnreadState(nextState) {
       unreadState = nextState && typeof nextState === 'object'
-        ? Object.assign({}, nextState)
-        : null;
-      sync();
-    }
-
-    function setPinState(nextState) {
-      pinState = nextState && typeof nextState === 'object'
         ? Object.assign({}, nextState)
         : null;
       sync();
@@ -387,34 +269,10 @@
       if (disposed) return;
       disposed = true;
       bound = false;
-      setUiWayfinderState({ visible: false, state: STATE_HIDDEN });
-      if (typeof offActivate === 'function') {
-        try {
-          offActivate();
-        } catch (_error) { /* ignore */ }
-      }
-      offActivate = null;
-      if (affordance && typeof affordance.dispose === 'function') {
-        try {
-          affordance.dispose();
-        } catch (_error) { /* ignore */ }
-      }
-      affordance = null;
-      host = null;
+      publish(createHiddenModel(''));
       renderedSignature = '';
-      mountedVisible = null;
-      mountedHost = null;
-      unreadController = null;
       unreadState = null;
-      pinState = null;
-      currentModel = {
-        visible: false,
-        state: STATE_HIDDEN,
-        label: '',
-        messageId: '',
-        sessionId: '',
-        detail: '',
-      };
+      currentModel = createHiddenModel('');
     }
 
     return {
@@ -422,13 +280,13 @@
       dispose: dispose,
       handleScroll: handleScroll,
       refresh: refresh,
-      setPinState: setPinState,
-      setUnreadController: setUnreadController,
       setUnreadState: setUnreadState,
     };
   }
 
   return {
+    activateModel: activateModel,
+    createJumpClickHandler: createJumpClickHandler,
     createChatWayfinderController: createChatWayfinderController,
   };
 });

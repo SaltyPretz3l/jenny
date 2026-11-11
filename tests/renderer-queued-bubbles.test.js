@@ -128,3 +128,45 @@ test('Up in an empty composer takes every queued send back, in order, as one dra
   assert.equal(queueView.handleTakeBackKeydown(new dom.window.KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }),
     { input, rows, actions }), false);
 });
+
+// 2026-11-03 live report: a timeline write (full-render morph, virtualizer remount) rebuilds the
+// queued bubble from its own markup, which drops the attribute and the line, so mid-stream it read
+// as a sent message until some later composer render. Every timeline commit now re-applies them.
+const domPatch = require('../renderer/chat/renderer-stream-dom-patch-utils');
+const { createRenderEffectsPipeline } = require('../renderer/chat/renderer-render-pipeline-render-effects');
+
+function morphFromMarkup(doc, timeline) {
+  const fresh = doc.createElement('div');
+  fresh.innerHTML = timeline.innerHTML.replace(/ data-queued-send="[^"]*"/gu, '')
+    .replace(/<div class="queued-send-meta"[\s\S]*?<\/div>(?=<\/article>)/u, '');
+  domPatch.morphChildren(timeline, fresh);
+}
+
+test('a timeline write that rebuilds the bubble is followed by the queued look and line again', (t) => {
+  const { doc, timeline } = setup(t);
+  const previous = globalThis.rendererRuntimeQueueView;
+  globalThis.rendererRuntimeQueueView = queueView;
+  t.after(() => { globalThis.rendererRuntimeQueueView = previous; });
+  queueView.syncQueuedBubbles({ timeline, rows: [row()], actions: { withdraw: () => true } });
+  morphFromMarkup(doc, timeline);
+  assert.equal(article(doc, 'user_a').hasAttribute('data-queued-send'), false, 'the morph strips the decoration');
+  assert.equal(article(doc, 'user_a').querySelector('[data-queued-send-meta]'), null);
+  const effects = createRenderEffectsPipeline({ dom: { chatTimeline: timeline } });
+  effects.runPostTimelineRenderEffects([], { liveThinking: false });
+  assert.equal(article(doc, 'user_a').getAttribute('data-queued-send'), 'queued');
+  assert.match(article(doc, 'user_a').querySelector('[data-queued-send-meta]').textContent, /^Queued\s*Withdraw$/u);
+  // A virtualizer remount restores the entry's inner markup: the line comes back with it.
+  article(doc, 'user_a').querySelector('[data-queued-send-meta]').remove();
+  effects.redecorateVirtualizedEntry(article(doc, 'user_a'));
+  assert.ok(article(doc, 'user_a').querySelector('[data-queued-send-meta]'));
+  assert.equal(article(doc, 'user_b').hasAttribute('data-queued-send'), false);
+});
+
+test('re-applying after a timeline write never revives a send the composer has since cleared', (t) => {
+  const { doc, timeline } = setup(t);
+  queueView.syncQueuedBubbles({ timeline, rows: [row()], actions: {} });
+  queueView.syncQueuedBubbles({ timeline, rows: [row({ status: 'running' })], actions: {} });
+  queueView.resyncQueuedBubbles(timeline);
+  assert.equal(article(doc, 'user_a').hasAttribute('data-queued-send'), false);
+  assert.equal(queueView.resyncQueuedBubbles(doc.createElement('div')).size, 0, 'a timeline never synced stays untouched');
+});

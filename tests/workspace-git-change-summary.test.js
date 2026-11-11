@@ -313,3 +313,25 @@ test('resolveContained resolves a deleted leaf through its parent and refuses es
   const escaped = await resolveContained(root, 'out/never-created.txt');
   assert.deepEqual([escaped.ok, escaped.reason], [false, 'path_outside_workspace']);
 });
+
+test('the shared row, totals and diff-result helpers keep unknown counts unknown and cap bodies', () => {
+  const { fileRow, summarizeFiles, diffResult, GIT_ARGS_PREFIX } = require('../services/workspace-git-change-summary');
+  assert.deepEqual(fileRow('a.txt', '', 'modified', { binary: false, additions: 2, deletions: 1 }), {
+    path: 'a.txt', orig_path: null, change: 'modified', binary: false, additions: 2, deletions: 1,
+  });
+  assert.deepEqual(fileRow('b.bin', 'old.bin', 'renamed', { binary: true, additions: null, deletions: null }), {
+    path: 'b.bin', orig_path: 'old.bin', change: 'renamed', binary: true, additions: null, deletions: null,
+  });
+  assert.equal(fileRow('c.txt', null, 'deleted', undefined).additions, null);
+  const known = [fileRow('a', null, 'modified', { additions: 2, deletions: 1 }), fileRow('b', null, 'added', { additions: 3, deletions: 0 })];
+  assert.deepEqual(summarizeFiles(known, false, true), { reason: null, additions: 5, deletions: 1 });
+  assert.equal(summarizeFiles(known, true, true).reason, 'some_files_unmeasured');
+  assert.equal(summarizeFiles([...known, fileRow('c', null, 'modified', null)], false, true).reason, 'some_files_unmeasured');
+  assert.deepEqual(summarizeFiles([fileRow('c', null, 'modified', null)], false, false), { reason: 'counts_unavailable', additions: null, deletions: null });
+  assert.deepEqual(summarizeFiles([], false, true), { reason: null, additions: 0, deletions: 0 });
+  assert.equal(diffResult('x', 'modified', 'Binary files a/x and b/x differ\n').binary, true);
+  const big = diffResult('x', 'modified', 'y'.repeat(MAX_DIFF_CHARS + 5));
+  assert.deepEqual([big.truncated, big.diff.length], [true, MAX_DIFF_CHARS]);
+  assert.equal(GIT_ARGS_PREFIX.includes('--no-textconv'), true);
+  assert.equal(typeof createWorkspaceGitChangeSummary().kit.measureUntracked, 'function');
+});

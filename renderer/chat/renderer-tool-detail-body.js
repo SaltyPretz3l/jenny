@@ -256,7 +256,8 @@
     function textSection(label, text, options) {
       const opts = options || {};
       const copyId = String(opts.copyId || '').trim();
-      const sourceText = String(text == null ? '' : text);
+      const value = String(text == null ? '' : text);
+      const sourceText = (/bash-command/.test(opts.className) && globalThis.toolApprovalFacts?.showInvisible(value)) || value;
       // A pretty section is tagged json exactly when its text parsed as JSON.
       const pretty = opts.pretty === true ? prettyJson(sourceText, copyId) : null;
       const raw = pretty ? pretty.text : sourceText;
@@ -348,9 +349,7 @@
       }
     }
 
-    // String code / command / content fields render as their own block in the
-    // tool's language (python for the Python tool, shell for a command, the
-    // file's language for written content); the rest stays Args.
+    // String code / command / content fields get their own block in the tool's language.
     const CODE_INPUT_FIELDS = ['code', 'command', 'content'];
 
     function codeInputLanguage(model, parsed, key) {
@@ -493,9 +492,7 @@
     function genericBody(model) {
       let body = inputSections(model);
       if (model.outputText) {
-        // Only JSON-shaped output is code here: write/edit tools answer with a
-        // prose receipt ("Wrote 120 bytes to src/x.js"), so the file's language
-        // must not be inferred from the path for this section.
+        // Only JSON-shaped output is code here: write/edit tools answer with prose.
         body += textSection('Output', model.outputText, {
           copyId: `${model.domToken || model.callId || 'tool'}-output`,
           pretty: true,

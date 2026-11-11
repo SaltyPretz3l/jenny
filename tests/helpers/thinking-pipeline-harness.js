@@ -67,6 +67,7 @@ function createHarness({
   multiStream = createMultiStreamStub(),
   toolCallUtils = null,
   runtimeSendController = undefined,
+  jumpControl = false,
 } = {}) {
   const scheduler = createFrameScheduler();
   const dom = new JSDOM(`<!doctype html><html><body>
@@ -82,6 +83,13 @@ function createHarness({
   const layer = documentRef.getElementById('layer');
   const sprite = documentRef.getElementById('sprite');
   const column = documentRef.getElementById('column');
+  let jumpButton = null;
+  if (jumpControl) {
+    jumpButton = documentRef.createElement('button');
+    jumpButton.dataset.visible = 'false';
+    jumpButton.innerHTML = '<svg></svg>';
+    documentRef.body.appendChild(jumpButton);
+  }
   let layerDisplay = 'block';
   const resizeObservers = [];
   dom.window.ResizeObserver = class {
@@ -154,6 +162,7 @@ function createHarness({
       chatThreadColumn: column,
       chatSpriteLayer: layer,
       chatAssistantSprite: sprite,
+      jumpToBottomButton: jumpButton,
     },
     controllers: {
       thinkingIndicator: {
@@ -179,6 +188,7 @@ function createHarness({
 
   return {
     dom,
+    jumpButton,
     resizeObservers,
     layer,
     messages,

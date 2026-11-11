@@ -100,7 +100,6 @@ def _run_turn(  # noqa: PLR0913 - compact scenario builder.
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
-        tools_mermaid_enabled=True,
         max_tools_per_turn=500,
         engine_type=engine_type,
     )

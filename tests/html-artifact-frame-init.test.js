@@ -57,9 +57,10 @@ function makeFrameWindow({ readyState = 'complete', withResizeObserver = false }
   return { dom, windowRef, posted, resizeCallbacks, addEventListenerCalls };
 }
 
-function runInitInWindow(dom, requestId) {
+function runInitInWindow(dom, requestId, options) {
   const context = dom.getInternalVMContext();
-  vm.runInContext(`(${initHtmlArtifactFrame.toString()})(${JSON.stringify(requestId)});`, context);
+  const optionsArg = options === undefined ? '' : `, ${JSON.stringify(options)}`;
+  vm.runInContext(`(${initHtmlArtifactFrame.toString()})(${JSON.stringify(requestId)}${optionsArg});`, context);
 }
 
 test('posts rendered ok with the embedded requestId and opaque-origin target "*" when the document is ready', (t) => {
@@ -137,4 +138,146 @@ test('registers NO message listener — the frame has no parent->frame command s
   runInitInWindow(dom, 'req-6');
   assert.ok(!addEventListenerCalls.includes('message'),
     `frame-init must ignore all inbound messages, listeners: ${addEventListenerCalls.join(',')}`);
+});
+
+/* ── link guard ── */
+
+function addLink(windowRef, href, inner = 'go') {
+  const anchor = windowRef.document.createElement('a');
+  if (href !== null) {
+    anchor.setAttribute('href', href);
+  }
+  anchor.innerHTML = inner;
+  windowRef.document.body.appendChild(anchor);
+  return anchor;
+}
+
+function click(windowRef, target) {
+  const event = new windowRef.MouseEvent('click', { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
+test('link guard blocks relative and absolute links and posts no href', (t) => {
+  const { dom, windowRef, posted } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  runInitInWindow(dom, 'req-l1');
+  for (const href of ['page2.html', 'https://example.com/x?secret=1']) {
+    const before = posted.length;
+    const event = click(windowRef, addLink(windowRef, href));
+    assert.equal(event.defaultPrevented, true, `${href} must be prevented`);
+    const added = posted.slice(before);
+    assert.equal(added.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(added[0].payload)), { type: 'link-blocked', requestId: 'req-l1' });
+    assert.equal(added[0].targetOrigin, '*');
+  }
+});
+
+test('link guard blocks area links and links nested inside an anchor', (t) => {
+  const { dom, windowRef, posted } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  runInitInWindow(dom, 'req-l2');
+  const anchor = addLink(windowRef, 'next.html', '<span><b id="deep">deep</b></span>');
+  const event = click(windowRef, anchor.querySelector('#deep'));
+  assert.equal(event.defaultPrevented, true);
+  const area = windowRef.document.createElement('area');
+  area.setAttribute('href', 'elsewhere.html');
+  windowRef.document.body.appendChild(area);
+  assert.equal(click(windowRef, area).defaultPrevented, true);
+  assert.equal(posted.filter((entry) => entry.payload?.type === 'link-blocked').length, 2);
+});
+
+test('link guard leaves #fragment, javascript:, hrefless and already-prevented clicks alone', (t) => {
+  const { dom, windowRef, posted } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  runInitInWindow(dom, 'req-l3');
+  const before = posted.length;
+  assert.equal(click(windowRef, addLink(windowRef, '#x')).defaultPrevented, false);
+  assert.equal(click(windowRef, addLink(windowRef, ' #x')).defaultPrevented, false);
+  assert.equal(click(windowRef, addLink(windowRef, '  JavaScript:void(0)')).defaultPrevented, false);
+  assert.equal(click(windowRef, addLink(windowRef, null)).defaultPrevented, false);
+  const prevented = addLink(windowRef, 'page2.html');
+  prevented.addEventListener('click', (event) => event.preventDefault());
+  click(windowRef, prevented);
+  assert.equal(posted.length, before, 'none of these may post link-blocked');
+});
+
+/* ── scroll restore + report ── */
+
+function stubScroll(windowRef, calls) {
+  windowRef.scrollTo = (x, y) => {
+    calls.push({ x, y });
+    Object.defineProperty(windowRef, 'scrollY', { configurable: true, value: y });
+  };
+}
+
+function setScrollY(windowRef, y) {
+  Object.defineProperty(windowRef, 'scrollY', { configurable: true, value: y });
+  windowRef.dispatchEvent(new windowRef.Event('scroll'));
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('restoreScrollY is applied before rendered posts, and again on load', (t) => {
+  const { dom, windowRef } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  const order = [];
+  windowRef.scrollTo = (x, y) => order.push(`scrollTo:${y}`);
+  windowRef.postMessage = (payload) => order.push(`post:${payload.type}`);
+  runInitInWindow(dom, 'req-s1', { restoreScrollY: 340 });
+  assert.deepEqual(order.slice(0, 2), ['scrollTo:340', 'post:rendered']);
+  windowRef.dispatchEvent(new windowRef.Event('load'));
+  assert.equal(order.filter((entry) => entry === 'scrollTo:340').length, 2);
+});
+
+test('restore is skipped on load once the user scrolled away from the target', (t) => {
+  const { dom, windowRef } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  const calls = [];
+  stubScroll(windowRef, calls);
+  runInitInWindow(dom, 'req-s2', { restoreScrollY: 340 });
+  assert.equal(calls.length, 1);
+  setScrollY(windowRef, 340); // the restore's own scroll event lands on target
+  windowRef.dispatchEvent(new windowRef.Event('load'));
+  assert.equal(calls.length, 2, 'landing on the target is not a user scroll');
+  setScrollY(windowRef, 900);
+  windowRef.dispatchEvent(new windowRef.Event('load'));
+  assert.equal(calls.length, 2, 'a user scroll must suppress the load re-apply');
+});
+
+test('no restore option (or a non-positive one) never calls scrollTo', (t) => {
+  for (const options of [undefined, {}, { restoreScrollY: 0 }, { restoreScrollY: -5 }, { restoreScrollY: 'x' }]) {
+    const { dom, windowRef } = makeFrameWindow();
+    t.after(() => dom.window.close());
+    const calls = [];
+    stubScroll(windowRef, calls);
+    runInitInWindow(dom, 'req-s3', options);
+    windowRef.dispatchEvent(new windowRef.Event('load'));
+    assert.equal(calls.length, 0, JSON.stringify(options));
+  }
+});
+
+test('scroll reports are trailing-throttled to the latest rounded value', async (t) => {
+  const { dom, windowRef, posted } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  runInitInWindow(dom, 'req-s4');
+  setScrollY(windowRef, 10.4);
+  setScrollY(windowRef, 20);
+  setScrollY(windowRef, 77.6);
+  assert.equal(posted.filter((entry) => entry.payload?.type === 'scroll').length, 0, 'nothing is posted synchronously');
+  await wait(220);
+  const reports = posted.filter((entry) => entry.payload?.type === 'scroll');
+  assert.equal(reports.length, 1, JSON.stringify(reports));
+  assert.deepEqual(JSON.parse(JSON.stringify(reports[0].payload)), { type: 'scroll', requestId: 'req-s4', y: 78 });
+  assert.equal(reports[0].targetOrigin, '*');
+});
+
+test('beforeunload clears a pending scroll report', async (t) => {
+  const { dom, windowRef, posted } = makeFrameWindow();
+  t.after(() => dom.window.close());
+  runInitInWindow(dom, 'req-s5');
+  setScrollY(windowRef, 50);
+  windowRef.dispatchEvent(new windowRef.Event('beforeunload'));
+  await wait(220);
+  assert.equal(posted.filter((entry) => entry.payload?.type === 'scroll').length, 0);
 });

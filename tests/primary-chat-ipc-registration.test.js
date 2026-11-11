@@ -1,6 +1,6 @@
 'use strict';
 
-/* primaryChat.* IPC registration (row 76 slice S2; row 88 adds undoSettingChange; row 87 adds two rule channels): the thirteen descriptor-backed
+/* primaryChat.* IPC registration (row 76 slice S2; row 88 adds undoSettingChange; row 87 adds two rule channels): the sixteen descriptor-backed
  * channels, the trusted-sender gate, closed-schema validation before any service
  * call, the service-answer mapping, the failure envelope when a service is absent
  * or throws, and the lazy reset-module dispatch. The controls service, the
@@ -30,6 +30,9 @@ const CHANNELS = {
   forgetPreview: 'primary-chat:forget-preview',
   undoSettingChange: 'primary-chat:undo-setting-change',
   undoChatChange: 'primary-chat:undo-chat-change',
+  getFullAuto: 'primary-chat:get-full-auto',
+  armFullAuto: 'primary-chat:arm-full-auto',
+  disarmFullAuto: 'primary-chat:disarm-full-auto',
 };
 const PERMISSION_ID = `lp_${'a'.repeat(32)}`;
 const UNDO_ID = `sc_${'c'.repeat(32)}`;
@@ -73,11 +76,11 @@ function register({ allow = true, backendService, loadReset } = {}) {
 
 const V1 = { schema_version: 1 };
 
-test('exactly the thirteen descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
+test('exactly the sixteen descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
   const { handlers } = register({ backendService: {} });
   // Row 94 P3: plus app_view's two report channels, which answer `{ok}` straight from the app-view port.
   assert.deepEqual([...handlers.keys()].sort(), [...Object.values(CHANNELS), 'app-view:report-layout', 'app-view:report-outcome', 'terminal-tools:report-run'].sort());
-  assert.equal(Object.keys(METHODS).length, 13);
+  assert.equal(Object.keys(METHODS).length, 16);
   assert.equal(Object.isFrozen(METHODS), true);
   for (const [method, channel] of Object.entries(CHANNELS)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel });
@@ -199,6 +202,33 @@ test('valid payloads reach the services with defaults filled in, and service ans
   ]);
 });
 
+test('Full auto channels take an empty request and reach the armed-state port (arm refusals ride the success envelope)', async () => {
+  const calls = [];
+  let armAnswer = { ok: true, armed: true };
+  const backendService = fakeBackend(calls, {
+    primaryFullAuto: {
+      getState: () => { calls.push(['getFullAuto']); return { available: true, armed: false, session_id: '' }; },
+      arm: () => { calls.push(['arm']); return armAnswer; },
+      disarm: (reason) => { calls.push(['disarm', reason]); return { ok: true, armed: false }; },
+    },
+  });
+  const { invoke } = register({ backendService });
+  for (const channel of [CHANNELS.getFullAuto, CHANNELS.armFullAuto, CHANNELS.disarmFullAuto]) {
+    for (const bad of [{ schema_version: 1, extra: 1 }, { schema_version: 2 }, undefined]) {
+      assert.equal((await invoke(channel, bad)).code, CODES.INVALID_REQUEST, `${channel} ${JSON.stringify(bad)}`);
+    }
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await invoke(CHANNELS.getFullAuto, V1), { schema_version: 1, ok: true, available: true, armed: false, session_id: '' });
+  assert.deepEqual(await invoke(CHANNELS.armFullAuto, V1), { schema_version: 1, ok: true, armed: true });
+  assert.deepEqual(await invoke(CHANNELS.disarmFullAuto, V1), { schema_version: 1, ok: true, armed: false });
+  armAnswer = { ok: false, armed: false, reason: 'not_auto' };
+  assert.deepEqual(await invoke(CHANNELS.armFullAuto, V1), { schema_version: 1, ok: true, armed: false, reason: 'not_auto' });
+  armAnswer = { ok: false, armed: false, reason: 'disabled' };
+  assert.equal((await invoke(CHANNELS.armFullAuto, V1)).code, CODES.DISABLED);
+  assert.deepEqual(calls, [['getFullAuto'], ['arm'], ['disarm', 'user'], ['arm'], ['arm']]);
+});
+
 test('a service refusal maps through the reason classes', async () => {
   const refuse = (reason) => async () => ({ ok: false, reason });
   const backend = fakeBackend([], {
@@ -234,6 +264,7 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
     [CHANNELS.revokeLaunch, { ...V1, permission_id: PERMISSION_ID }], [CHANNELS.reset, V1], [CHANNELS.forgetPreview, V1],
     [CHANNELS.undoSettingChange, { ...V1, change_id: UNDO_ID }], [CHANNELS.undoChatChange, { ...V1, change_id: UNDO_ID }],
     [CHANNELS.addRule, ADD_RULE], [CHANNELS.revokeRule, { ...V1, rule_id: RULE_ID }],
+    [CHANNELS.getFullAuto, V1], [CHANNELS.armFullAuto, V1], [CHANNELS.disarmFullAuto, V1],
   ]) {
     assert.deepEqual(await missing.invoke(channel, payload), expected, channel);
   }
@@ -246,6 +277,7 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
     primaryActivityLog: { list: boom, permissions: boom },
     primarySettings: { undo: boom },
     primaryChatManage: { undo: boom },
+    primaryFullAuto: { getState: boom, arm: boom, disarm: boom },
   });
   const loadReset = () => ({ resetPrimaryChat: boom, forgetPreview: boom });
   const throwing = register({ backendService: backend, loadReset });

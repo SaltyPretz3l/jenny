@@ -40,6 +40,7 @@ test('settings section registry preserves ids and defaults', () => {
     'aboutUpdates',
     'advanced',
     'runtimeLimits',
+    'team',
   ].sort());
   assert.equal(normalizeSettingsSectionId('not-a-section'), 'models');
   assert.equal(normalizeSettingsSectionId(' tools '), 'tools');
@@ -69,7 +70,7 @@ test('Runs lives in Diagnostics, not Settings (owner, 2026-10-03)', () => {
   // A stored or deep-linked `runs` section opens the default section.
   assert.equal(normalizeSettingsSectionId('runs'), 'models');
   const work = getSettingsGroups().find((group) => group.id === 'work').sections.map((section) => section.id);
-  assert.deepEqual(work, ['runtime', 'usage']);
+  assert.deepEqual(work, ['runtime', 'team', 'usage']);
   // Search no longer finds a Runs page in Settings.
   for (const section of getSettingsSections()) {
     assert.equal((section.keywords || []).some((keyword) => /^(runs|orchestration|subagents)$/i.test(String(keyword))), false, section.id);
@@ -84,7 +85,7 @@ test('settings section registry exposes six uniform ordered groups', () => {
   const groups = getSettingsGroups();
   assert.deepEqual(groups.map(group => [group.id, group.label, group.sections.map(section => section.id)]), [
     ['modelTools', 'Model & tools', ['readiness', 'models', 'offline', 'tools']],
-    ['work', 'Work', ['runtime', 'usage']],
+    ['work', 'Work', ['runtime', 'team', 'usage']],
     ['context', 'Context & memory', ['context', 'memories', 'personality']],
     ['app', 'App', ['appearance', 'editor', 'home', 'notifications', 'jennyChat', 'dictation']],
     ['system', 'System', ['extensions', 'account']],
@@ -95,6 +96,16 @@ test('settings section registry exposes six uniform ordered groups', () => {
   assert.equal(getSettingsSectionDefinition('advanced').label, 'Limits & budgets');
   assert.equal(getSettingsSectionDefinition('runtime').label, 'Projects');
   assert.equal(getSettingsSectionDefinition('memories').lazy, true);
+});
+
+test('Team page (row 123, slice 1g-1) follows Projects and is shown only with the team flag', () => {
+  const section = getSettingsSectionDefinition('team');
+  assert.equal(section.label, 'Team');
+  assert.equal(section.group, 'work');
+  assert.equal(section.featureFlag, 'team');
+  assert.equal(Boolean(section.lazy), false);
+  assert.equal(getSettingsSectionDefinition('runtime').featureFlag, '', 'no other section is gated');
+  for (const word of ['invite', 'host', 'server', 'members']) assert.ok(section.keywords.includes(word), word);
 });
 
 test('Jenny chat page (row 86, pick S1) sits after Notifications and is found by its words', () => {

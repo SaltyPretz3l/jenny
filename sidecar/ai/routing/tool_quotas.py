@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sidecar.ai.routing.iteration_limits import (
+    BROWSER_USE_TOOL_ID,
     effective_max_tool_calls_per_session,
     effective_max_web_tool_calls_per_turn,
 )
@@ -333,7 +334,9 @@ def _classify_call(
         tool_family=str(getattr(descriptor, "tool_family", "") or ""),
     )
     return _ToolCallClassification(
-        web_or_browser=family in {"web", "browser"} or "browser" in tool_id,
+        # The browsing tool counts its own steps, so the exact id is exempt from the web quota.
+        web_or_browser=tool_id != BROWSER_USE_TOOL_ID
+        and (family in {"web", "browser"} or "browser" in tool_id),
         code_intelligence=family == "code_intelligence",
     )
 

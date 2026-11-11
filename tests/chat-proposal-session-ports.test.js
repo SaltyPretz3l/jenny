@@ -103,3 +103,17 @@ test('child creation, existence and provenance reads go through the backend; a m
   assert.equal(ports.readSpawnedFrom('sess_nope'), null);
   assert.deepEqual(createSessionPorts(backend()).createLinkedChildSession({}), { ok: false, code: 'unsupported' });
 });
+
+test('isWakeTurn: a woken turn counts unless its only mail is reports from chats it started (owner, 2026-11-10)', () => {
+  const own = new Set(['turn_reports']);
+  const chatMessages = {
+    wakeDepth: (turnId) => (turnId === 'turn_user' ? 0 : 1),
+    ownChildReportTurn: (turnId) => own.has(turnId),
+  };
+  const ports = createSessionPorts(backend({ chatMessages }));
+  assert.equal(ports.isWakeTurn('s', 'turn_user'), false, 'the person\'s own turn');
+  assert.equal(ports.isWakeTurn('s', 'turn_reports'), false, 'woken only by own children\'s reports');
+  assert.equal(ports.isWakeTurn('s', 'turn_check'), true, 'a check, digest or other chat\'s wake still counts');
+  assert.equal(createSessionPorts(backend({ chatMessages: { wakeDepth: () => 1 } })).isWakeTurn('s', 'turn_reports'), true,
+    'no provenance port: fails closed');
+});

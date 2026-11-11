@@ -150,6 +150,14 @@ def python_execute_tool(
             output=json.dumps(payload, ensure_ascii=False, indent=2),
             success=bool(success),
             trusted_attachments=trusted_attachments,
+            # The code's own exception is not a runtime fault (row 129, B8).
+            metadata={} if success or payload.get("error") is None else {
+                "failure_class": "precondition_unmet",
+                "remediation": (
+                    "The code raised an error; the traceback is in the result. Fix the "
+                    "code and run it again."
+                ),
+            },
         )
     except ToolExecutionFailure:
         raise

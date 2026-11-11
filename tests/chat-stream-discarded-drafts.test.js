@@ -94,6 +94,22 @@ test('reset counting: empty and tool_continuation resets are not counted', () =>
   assert.equal(cont.discardedDrafts, null);
 });
 
+test('the Propose nudge saves its prose and counts as no discard; other resets save nothing', () => {
+  const seen = [];
+  const nudge = resetCtx({ assistantText: 'The answer.', currentSegmentText: 'The answer.' });
+  nudge.persistCurrentTextSegment = (options) => seen.push([options, nudge.currentSegmentText]);
+  reset(nudge, 'propose_nudge');
+  assert.deepEqual(seen, [[{ atToolBoundary: true }, 'The answer.']]);
+  assert.equal(nudge.discardedDrafts, null);
+
+  for (const reason of ['tool_continuation', 'nudge_retry']) {
+    const other = resetCtx({ assistantText: 'Text.', currentSegmentText: 'Text.' });
+    other.persistCurrentTextSegment = (options) => seen.push(options);
+    reset(other, reason);
+  }
+  assert.equal(seen.length, 1, 'only the nudge saves here');
+});
+
 test('reset counting: model_winddown with an empty live slice is not counted, with text it is', () => {
   const wind = resetCtx({ assistantText: 'Persisted.', persisted: ['seg0'] });
   reset(wind, 'model_winddown');

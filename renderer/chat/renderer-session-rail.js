@@ -16,21 +16,26 @@
      undocked  below the threshold: the toggle (aria-expanded) opens a non-modal sheet anchored to
                the pane. The sheet never writes rail_visible; responsive collapse never does.
 
+   Motion (renderer-session-rail-motion.js): the toggle glides the rail's column through the shared side-panel
+   motion; a side panel's open that leaves the pane under the dock width takes the rail out inside its own
+   motion (side-panel-measuring); every other change (first paint, session switch, a width-driven dock
+   change, disposal) is instant. A separator on the docked rail's start edge resizes it, 240 to 420 px.
+
    Data: getSummary on mount and on a session/input change, a refetch on onChanged for this pane's
    session (debounced, one request in flight), and an optional visible-rail freshness timer. A summary for another session is
    never painted: a session change clears to "checking" first. Every listener, observer, timer
    and the bridge subscription is released by dispose(). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'), require('./renderer-session-rail-jobs'));
+    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'), require('./renderer-session-rail-jobs'), require('./renderer-session-rail-motion'));
     return;
   }
-  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview, root.rendererSessionRailJobs);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview, railJobs) {
+  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview, root.rendererSessionRailJobs, root.rendererSessionRailMotion);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview, railJobs, railMotion) {
   'use strict';
 
   const REFETCH_DELAY_MS = 120;
-  const REFLOW_EVENT = 'session-rail-reflow';
+  const REFLOW_EVENT = railMotion.REFLOW_EVENT;
   const SHEET_TOP_PROPERTY = '--session-rail-sheet-top';
   const SCHEMA_VERSION = 1;
   let railSequence = 0;
@@ -49,7 +54,7 @@
   }
 
   const configured = { openSession: null }; // Row 59 cp5a: a linked Background tasks row opens its chat (app-level port)
-  const mountedByPane = new WeakMap(); // pane -> dispose of its live rail; a remount retires it
+  const mountedByPane = new WeakMap(); // pane -> its live rail's api; a remount retires it
   const configure = (options) => { if (typeof options?.openSession === 'function') configured.openSession = options.openSession; };
 
   function mountSessionRail(options) {
@@ -98,7 +103,7 @@
     }
 
     // ── Elements ─────────────────────────────────────────────────────────
-    mountedByPane.get(pane)?.(); // retire the previous controller (timer, listeners, nodes)
+    mountedByPane.get(pane)?.dispose(); // retire the previous controller (timer, listeners, nodes)
     cluster.querySelectorAll('[data-session-rail-toggle]').forEach((node) => node.remove());
     pane.querySelectorAll(':scope > [data-session-rail-root], :scope > [data-session-rail-sheet]').forEach((node) => node.remove());
     const title = jt('chat.sessionRail.title', 'Session');
@@ -129,6 +134,9 @@
       sheet.remove();
       return null;
     }
+    // Row 115 slice 3: the toggle's glide and the drag-to-resize separator (renderer-session-rail-motion.js).
+    const layout = railMotion.createRailLayout({ pane, rail, stage, chatView, win, getPaneWidth: o.getPaneWidth, motionOptions: o.motion });
+    const resizer = railMotion.createRailResizer({ pane, rail, stage, chatTimeline: o.chatTimeline, doc, win, jt, notify: layout.notify });
     const jobs = railJobs?.createRailJobs({ tray, toggle, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters }); if (jobs) disposers.push(jobs.dispose); // background-job rows + toggle readout
     // Row 59 cp6: the Performance section and the toggle readout (own bridge; absent = nothing renders).
     const perf = performanceRail ? performanceRail.createRailPerformance({ win, doc, jt, getSessionId, idPrefix, bridge: o.performance, onChange: () => syncToggle(currentMode()) }) : null;
@@ -151,11 +159,6 @@
     function visible() {
       const mode = currentMode();
       return mode === 'docked' || (mode === 'undocked' && sheetOpen);
-    }
-
-    function reflowEvent(phase) {
-      const EventCtor = win.CustomEvent;
-      if (typeof EventCtor === 'function') pane.dispatchEvent(new EventCtor(REFLOW_EVENT, { detail: { phase } }));
     }
 
     function toggleLabel(mode) {
@@ -199,28 +202,28 @@
       }
     }
 
-    /* Applies the mode to the pane and its parts. Layout-changing modes (docked <-> not) are
-       bracketed by the reflow notice so the pane's scroll coordinator keeps the reader's place. */
-    function applyMode() {
+    /* Applies the mode to the pane and its parts. `how` names who asked: 'glide' (the person's toggle) moves
+       the rail's column through the shared side-panel motion, 'measuring' (a side panel's open is being
+       measured) lets the rail leave inside that motion, anything else is instant. Instant layout changes
+       (docked <-> not) are bracketed by the reflow notice so the pane's scroll coordinator keeps the reader's
+       place; the glide's anchors replace that bracket, never add to it. */
+    function applyMode(how) {
       const mode = currentMode();
+      if (!how && layout.target() === mode) return syncToggle(mode); // the glide already carries this mode
       const layoutChange = (mode === 'docked') !== (lastMode === 'docked');
       if (mode !== 'undocked' && sheetOpen) closeSheet({ restoreFocus: false, silent: true });
+      if (!how && layout.target()) layout.cancel(); // a different mode while a glide runs: it snaps
+      syncToggle(mode); // the pressed state flips with the click, not with the glide
       const run = () => {
         pane.dataset.sessionRail = mode;
         rail.hidden = mode !== 'docked';
         sheet.hidden = !(mode === 'undocked' && sheetOpen);
         attachTray(mode);
-        syncToggle(mode);
+        resizer.setShown(mode === 'docked');
       };
-      if (layoutChange && lastMode) {
-        reflowEvent('before');
-        run();
-        if (stage) void stage.offsetWidth;
-        reflowEvent('after');
-      } else {
-        run();
-      }
-      lastMode = mode;
+      const changed = layoutChange && Boolean(lastMode);
+      lastMode = mode; // before the commit: a measuring step inside it must see this mode, not the old one
+      layout.commit({ how, mode, changed, run });
       if (visible()) {
         paint();
         if (needsFetch) { needsFetch = false; void fetchSummary(); }
@@ -228,34 +231,18 @@
     }
 
     // ── Docking ──────────────────────────────────────────────────────────
-    function panelActive() {
-      if (!chatView) return false;
-      if (chatView.classList.contains('artifact-review-open') || chatView.hasAttribute('data-panel-motion')) return true;
-      const context = chatView.querySelector('.chat-context-panel');
-      return Boolean(context && !context.classList.contains('collapsed'));
-    }
-
-    /* The pane's inline size. The stage gives up the rail's room (a margin) while docked, so the
-       pane is the stage plus that margin: measuring it this way cannot feed back on its own answer. */
-    function paneWidth() {
-      if (typeof o.getPaneWidth === 'function') return Number(o.getPaneWidth());
-      if (!stage) return 0;
-      const width = stage.getBoundingClientRect().width;
-      if (!(width > 0)) return 0;
-      let margin = 0;
-      if (docked && typeof win.getComputedStyle === 'function') margin = Number.parseFloat(win.getComputedStyle(stage).marginInlineEnd) || 0;
-      return width + margin;
-    }
-
-    function evaluateDock() {
+    /* `measuring`: a side panel's open is being measured (side-panel-measuring), so the decision is made
+       with the panel's final state now and the rail leaves inside that motion. */
+    function evaluateDock(options) {
       if (disposed) return;
+      const measuring = Boolean(options && options.measuring === true);
       // Never re-evaluate mid-motion: the motion's end (the attribute leaving) re-runs this.
-      if (chatView && chatView.hasAttribute('data-panel-motion')) return;
-      const width = paneWidth();
+      if (!measuring && chatView && chatView.hasAttribute('data-panel-motion')) return;
+      const width = layout.paneWidth(docked);
       if (perf) perf.setPaneWidth(width);
-      const next = model.resolveDocked({ paneWidth: width, panelActive: panelActive(), wasDocked: docked });
+      const next = model.resolveDocked({ paneWidth: width, panelActive: layout.panelActive(), wasDocked: docked });
       if (next !== docked) docked = next;
-      if (currentMode() !== lastMode) applyMode();
+      if (currentMode() !== lastMode) applyMode(measuring ? 'measuring' : undefined);
     }
 
     // ── Data ─────────────────────────────────────────────────────────────
@@ -326,8 +313,9 @@
       needsFetch = false;
       if (fetchTimer) { win.clearTimeout(fetchTimer); fetchTimer = 0; }
       closeSheet({ restoreFocus: false, silent: true });
+      layout.cancel(); // a switch snaps any glide
       applyMode();
-      paint();
+      paint({ instant: true });
       void fetchSummary();
       return true;
     }
@@ -340,7 +328,7 @@
       return { ...summary, context: { ...summary.context, data } };
     }
 
-    function paint() {
+    function paint(paintOptions) {
       if (disposed || !visible()) return;
       const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt });
       if (!painted) {
@@ -357,7 +345,7 @@
       const focusKey = active && tray.contains(active) ? (active.closest('[data-row-key]') || {}).dataset : null;
       const focusSection = active && tray.contains(active) ? active.closest('[data-section]') : null;
       // Nothing animates on load or on a session switch: data arriving after "checking" settles at once.
-      const settling = vm.sections.some((section) => (cache.get(section.key) || {}).state === 'checking' && section.state !== 'checking');
+      const settling = Boolean(paintOptions && paintOptions.instant) || vm.sections.some((section) => (cache.get(section.key) || {}).state === 'checking' && section.state !== 'checking');
       if (settling) tray.setAttribute('data-no-motion', '');
       for (const section of vm.sections) {
         const node = tray.querySelector(`[data-section="${section.key}"]`);
@@ -433,7 +421,7 @@
       const shown = view.rail_visible !== false;
       const next = !shown;
       view = { ...view, rail_visible: next };
-      applyMode();
+      applyMode('glide');
       void writeView({ rail_visible: next }, {
         confirm: () => {},
         revert: () => { if (view.rail_visible === next) view = previous; },
@@ -528,22 +516,10 @@
     disposers.push(contextPreview.bindRefresh({ pane, win, listen, syncSession, scheduleFetch, paint, visible, options: o, getSessionId: () => sessionId }));
     if (o.chatTimeline) listen(o.chatTimeline, 'transcript-view-rendered', () => { syncSession(); });
 
-    if (typeof win.ResizeObserver === 'function' && stage) {
-      const resizeObserver = new win.ResizeObserver(() => { syncSession(); evaluateDock(); });
-      resizeObserver.observe(stage);
-      disposers.push(() => resizeObserver.disconnect());
-    }
-    if (typeof win.MutationObserver === 'function') {
-      const watch = (node, attributeFilter) => {
-        if (!node) return;
-        const observer = new win.MutationObserver(() => { evaluateDock(); });
-        observer.observe(node, { attributes: true, attributeFilter });
-        disposers.push(() => observer.disconnect());
-      };
-      watch(chatView, ['class', 'data-panel-motion']);
-      watch(chatView && chatView.querySelector('.chat-context-panel'), ['class']);
-      watch(pane, ['class', 'data-pane-hosted']);
-    }
+    disposers.push(layout.watch({ onResize: () => { syncSession(); evaluateDock(); }, onChange: () => { evaluateDock(); } }));
+    // A side panel's open is being measured: decide the dock with its final state, so a rail it forces out
+    // leaves inside that motion rather than in a second reflow after it.
+    disposers.push(layout.onMeasuring(() => { evaluateDock({ measuring: true }); }));
 
     if (bridgeOk && typeof bridge.onChanged === 'function') {
       const unsubscribe = bridge.onChanged((event) => {
@@ -558,7 +534,9 @@
       if (disposed) return;
       closeSheet({ restoreFocus: false, silent: true });
       disposed = true;
-      if (mountedByPane.get(pane) === dispose) mountedByPane.delete(pane);
+      if (mountedByPane.get(pane) === api) mountedByPane.delete(pane);
+      layout.dispose();
+      resizer.dispose();
       if (perf) perf.dispose();
       if (fetchTimer) win.clearTimeout(fetchTimer);
       fetchTimer = 0;
@@ -567,12 +545,12 @@
         try { release(); } catch (_error) { /* best-effort teardown, as the registry does */ }
       }
       doc.removeEventListener('pointerdown', onOutsidePointer, true);
-      if (stage && lastMode === 'docked') reflowEvent('before');
+      if (stage && lastMode === 'docked') layout.notify('before');
       delete pane.dataset.sessionRail;
       rail.remove(); sheet.remove(); toggle.remove();
       if (stage && lastMode === 'docked') {
         void stage.offsetWidth;
-        reflowEvent('after');
+        layout.notify('after');
       }
     }
     if (o.signal && typeof o.signal.addEventListener === 'function') {
@@ -580,20 +558,29 @@
       disposers.push(() => o.signal.removeEventListener('abort', dispose));
     }
 
-    mountedByPane.set(pane, dispose);
-    evaluateDock(); applyMode();
-    if (sessionId && bridgeOk) void fetchSummary();
-
-    return {
+    const api = {
       dispose,
       syncSession,
       evaluateDock,
       refresh: () => { if (sessionId) void fetchSummary(); },
       getMode: currentMode,
       isSheetOpen: () => sheetOpen,
-      elements: { rail, sheet, tray, toggle },
+      // Ctrl+\: hides the docked rail through the toggle's own path (glide, rail_visible write); false when not docked.
+      hideDocked: () => { if (currentMode() !== 'docked') return false; toggleRailVisible(); return true; },
+      elements: { rail, sheet, tray, toggle, resizer: resizer.element },
     };
+    mountedByPane.set(pane, api);
+    evaluateDock(); applyMode();
+    if (sessionId && bridgeOk) void fetchSummary();
+    return api;
   }
 
-  return { mountSessionRail, configure, REFLOW_EVENT };
+  // Ctrl+\ (renderer-global-shortcuts.js): hides the focused pane's docked rail. True when it did.
+  function hideFocusedRail(doc) {
+    const pane = doc && (doc.querySelector('.chat-pane[data-pane-focused="true"]') || (doc.activeElement && doc.activeElement.closest && doc.activeElement.closest('.chat-pane')));
+    const rail = pane ? mountedByPane.get(pane) : null;
+    return Boolean(rail && rail.hideDocked());
+  }
+
+  return { mountSessionRail, configure, hideFocusedRail, REFLOW_EVENT };
 });

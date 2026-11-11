@@ -21,7 +21,7 @@ function prepareManagedCheckpointHistory(service, runtimeContinuation) {
 // Negotiated after sidecar readiness and before dispatch. Legacy initial sends
 // retain their existing behavior; a checkpoint resume never falls back to a new
 // generation when the paired receiver cannot consume its saved tool batch.
-function createManagedContinuationSend({ service, runtimeContinuation, gateway, collector,
+function createManagedContinuationSend({ service, runtimeContinuation, gateway, collector, executionAuthority,
   canonicalSessionMessages, contextPreferences, compactedHistory, sessionSummary, traceId, controller, activateCanonical } = {}) {
   if (!runtimeContinuation) return null;
   if (!supportsRuntimeContinuationProtocol(service.sidecarClient)) {
@@ -38,6 +38,12 @@ function createManagedContinuationSend({ service, runtimeContinuation, gateway, 
     fields.runtime_continuation_resume = runtimeContinuation.resumeHydration.buildResumeFields({
       work: runtimeContinuation.getCurrentWork(), context: runtimeContinuation.context,
     });
+    // The resumed attempt has a new authority binding, so the answer is recorded on it too.
+    const grant = service.approvedCallGrants?.take(fields.runtime_continuation_resume.checkpoint_ref.checkpoint_id);
+    if (grant && service.sessionExecutionAuthority.noteApproved(executionAuthority, {
+      operationId: grant.call.call_id, toolName: grant.call.tool_id, arguments: grant.input })) {
+      fields.runtime_continuation_resume.approved_call = grant.call;
+    }
   }
   function bindFrame(frameFit) {
     if (frameFit.outcome.fitsBudget !== true || (runtimeContinuation.resumeHydration
@@ -47,6 +53,7 @@ function createManagedContinuationSend({ service, runtimeContinuation, gateway, 
         compactedHistory, sessionSummary, frameOutcome: frameFit.outcome });
     const boundary = createManagedContinuationBoundary({ ...runtimeContinuation, assertProtocol, gateway,
       collector, historySelector, traceId, signal: controller?.signal, dependencyRuntime: service.sessionRuntime,
+      approvedCallGrants: service.approvedCallGrants,
       onPublicationFailure: details => service._emitServiceLog?.('WARN', 'session_runtime.continuation_publication_failed', {
         ...details, sessionId: collector.sessionId, streamId: runtimeContinuation.context.source_attempt.stream_id,
       }) });

@@ -116,6 +116,8 @@ CONVERSATIONS_SEARCH_METHOD = "conversations.search"
 CONVERSATIONS_EMBED_STEP_METHOD = "conversations.embed_step"
 SUGGESTIONS_GENERATE_METHOD = "suggestions.generate"
 COMMIT_GENERATE_MESSAGE_METHOD = "commit.generate_message"
+# Row 112: one-shot, off-transcript model-written chat name.
+SESSION_GENERATE_TITLE_METHOD = "session.generate_title"
 # Row 60 W4: one-shot, off-transcript note that seeds a new chat (/handoff).
 HANDOFF_GENERATE_NOTE_METHOD = "handoff.generate_note"
 HARDWARE_PROFILE_METHOD = "hardware.profile"
@@ -206,6 +208,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         CONVERSATIONS_EMBED_STEP_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
+        SESSION_GENERATE_TITLE_METHOD,
         HANDOFF_GENERATE_NOTE_METHOD,
         HARDWARE_PROFILE_METHOD,
         HARDWARE_VRAM_USAGE_METHOD,
@@ -250,10 +253,20 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
 # params.inference_performance = {live: bool, provider_kind:
 # "ninfer"|"llama-server"|"ollama"|"other"}. Closed object; invalid fields
 # (including unknown keys) are ignored, never a turn failure. Only live=True
-# with provider_kind="ninfer" requests timings_per_token / return_progress.
+# with provider_kind "ninfer" or "llama-server" requests timings_per_token /
+# return_progress.
 # Desktop advertises inference_performance_version: 1; hosted strips it.
 # Terminal capture is always on; notifications are ephemeral, outside history.
 INFERENCE_PERFORMANCE_METHOD = "inference.performance"
+# Additive optional chat.send field, following WO-26 / D3 (no new method, no
+# notification): ``params.route_token``, an opaque per-request routing token
+# for a local gateway: exactly 43 base64url characters (32 random bytes).
+# While that one request runs, each chat-completion call of the
+# openai-compatible engine carries it in ROUTE_TOKEN_HEADER, and only when the
+# engine's base URL host is a loopback IP literal. A missing or invalid value
+# is dropped silently and never fails or changes the turn. The token is a
+# secret: never logged or echoed. See sidecar/ai/engines/request_route.py.
+ROUTE_TOKEN_HEADER = "X-Jenny-Route-Token"
 CHAT_TOKEN_METHOD = "chat.token"
 # Streamed assistant text token. Required payload: ``delta`` and ``role``.
 # Optional additive payload: ``sequence`` (monotonic token index) so Electron
@@ -261,7 +274,8 @@ CHAT_TOKEN_METHOD = "chat.token"
 # Transport-level buffer flush: emitted by the sidecar when a provider or
 # tool-loop retry discards accumulated text so the renderer can start fresh.
 # This is a physical transport concern and must NOT be reused for phase
-# signalling. ``tool_continuation`` is the only conditionally preserving reason;
+# signalling. ``tool_continuation`` is the only conditionally preserving reason
+# (``propose_nudge`` is the same reset for prose no tool boundary has saved yet);
 # ``provider_retry``, ``nudge_retry``, ``reflexive_retry``,
 # ``post_tool_restart``, and ``deterministic_replacement`` are discard-only.
 # Empty or unknown reasons fail safe as discard-only.

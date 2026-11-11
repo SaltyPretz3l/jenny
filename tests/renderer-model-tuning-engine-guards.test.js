@@ -290,7 +290,7 @@ test('an owed restart never runs once another model is served, whatever open() s
   const h = createHarness(t);
   await oweBuildRestart(h);
   const host = await openTune(h, TAG);
-  assert.equal(host.querySelector('[data-model-tuning-row="engine"] .model-tuning-row-range').textContent, 'Serving on :8033');
+  assert.equal(host.querySelector('[data-model-tuning-engine] [data-model-tuning-section-status]').textContent, 'Serving on :8033');
   await h.manager.ensureRunning({ modelTag: OTHER_TAG, modelPath: h.otherModel }); // a scheduled run, another pane
   const launches = h.lifecycle.launches;
   setField(host, '#modelTuningTemperature', '0.4');
@@ -478,7 +478,7 @@ test('a successful pick or Use bundled clears a failed pick\'s copy, never a sta
     await click(host, action);
     assert.equal(statusText(host), expected, action);
   }
-  assert.deepEqual([runtimeText(host), ggufText(host)], ['Bundled', 'Ternary-Bonsai-2-27B-Q4_K_M.gguf']);
+  assert.deepEqual([runtimeText(host), ggufText(host)], ['Bundled with Jenny', 'Ternary-Bonsai-2-27B-Q4_K_M.gguf']);
 
   // A failed pick, then a pick whose probe lands while an Apply is pending: the
   // status line is the Apply's by then, and stays so.

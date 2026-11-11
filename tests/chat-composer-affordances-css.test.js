@@ -40,7 +40,6 @@ test('chat composer meta and wayfinder selectors live in their focused styleshee
 
   for (const selector of [
     '.composer-meta',
-    '.composer-wayfinder-host',
   ]) {
     assert.match(affordanceCss, selectorBlockPattern(selector));
     assert.doesNotMatch(composerCss, selectorBlockPattern(selector));

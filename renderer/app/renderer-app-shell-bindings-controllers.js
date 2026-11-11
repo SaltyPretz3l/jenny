@@ -100,7 +100,7 @@
 
     // Primary Jenny chat controls (row 76): the shared paused-state store behind the row tag, the row menu
     // and the composer notice. The Activity / Reset / Forget dialogs arrive as late globals, so a missing one is a no-op.
-    const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => callbacks.renderSessions?.(), appendClientLog }) || null;
+    const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => { callbacks.renderSessions?.(); root.rendererRunModeControl?.syncFullAutoChips?.(); }, appendClientLog }) || null;
     if (windowRef.jennyShell?.primaryChat) primaryChatStore?.start();
     if (primaryChatStore) registerCleanup(() => primaryChatStore.dispose());
     const primaryDialogDeps = () => ({ documentRef: windowRef.document, stepModal: root.inventoryStepModal, overlayManager: controllers.overlayManager || null, appendClientLog, state, getBridge: () => windowRef.jennyShell?.primaryChat || null });
@@ -135,7 +135,7 @@
           setSidebarCollapsed: (collapsed) => { setSidebarCollapsed(collapsed); return true; },
           close: (pane) => (pane === 'chat_panel' ? (root.rendererChatWorkspaceDetail?.close?.(), true) : more.close?.(pane) === true),
           readLayout: () => ({ ...(more.readLayout?.() || {}), active_view: state.ui?.activeView || 'other', current_session_id: state.currentSessionId || null,
-            chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()) }),
+            chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()), terminal_open: Boolean(windowRef.document?.getElementById?.('wbView-terminal')?.offsetParent) }),
         },
       });
       registerCleanup(() => appView.dispose());
@@ -180,10 +180,11 @@
         showSessionActionError,
         appendClientLog,
         registerCleanup,
+        setRovingChatSession,
         // Locking a streaming session stops it through the Stop path so the
         // outbox hold keeps a queued send from starting a replacement turn.
         stopSessionStream: (sessionId) => handleStopActiveStream(sessionId),
-        // "Move to project ›" (row menu) and the bulk bar's Move open the
+        // "Move to project ›" (row menu) and the selection menu's Move open the
         // shared project switcher's move menu.
         getProjectSwitcher: (...a) => callbacks.getProjectSwitcher?.(...a),
         // "Link sessions…" (row menu) opens the rail's linked-session popover
@@ -405,7 +406,7 @@
 
     // App-level shortcuts (nav overhaul W10): Ctrl+1-6 views, Ctrl+N new chat,
     // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle,
-    // Ctrl+Alt+W Wide transcript.
+    // Ctrl+Alt+W Wide transcript, Ctrl+\ close the side panel or the Session rail.
     const globalShortcutsController = (root.rendererGlobalShortcuts || {}).createGlobalShortcutsController?.({
       windowRef,
       // The startup curtain owns the keyboard until it is removed, like a modal.
@@ -422,6 +423,16 @@
           || root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
         togglePaneSplit: () => root.rendererAppPaneComposition?.getPaneComposition?.()?.toggleSplit?.() === true,
         toggleChatWidth: () => chatWidthToggle?.toggle('shortcut'),
+        // Row 115, Ctrl+\: close the open side panel through its own Close control (artifact, Changes, Tasks,
+        // Notes and browser share one panel; Activity has its own), else hide the focused pane's docked Session rail.
+        closeFocusedPanel: () => {
+          if (state?.ui?.activeView !== 'chat') return false;
+          const doc = ctx.documentRef;
+          const close = doc.querySelector('.chat-view.artifact-review-mode #artifactReviewCollapseButton')
+            || doc.querySelector('.chat-context-panel.activity-mode:not(.collapsed) [data-activity-action="close"]');
+          if (close) { close.click(); return true; }
+          return root.rendererSessionRail?.hideFocusedRail?.(doc) === true;
+        },
         appendClientLog: (...a) => appendClientLog(...a),
         openCapture: () => {
           // Respect the per-user opt-out (Settings ▸ Home ▸ Quick-capture

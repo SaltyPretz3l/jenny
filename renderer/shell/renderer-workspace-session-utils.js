@@ -184,8 +184,8 @@
         ? wsc.getRollbackSnapshot()
         : previousWorkspace;
       // 'replace' swaps the active tab in place; 'new-tab' adds a tab. The default
-      // follows the user's sticky preference; callers (e.g. + new-chat, context
-      // menu) may force a mode explicitly via options.mode.
+      // follows the user's sticky preference; callers (e.g. the context
+      // menu, the split path) may force a mode explicitly via options.mode.
       const mode = options.mode || (getOpenSessionsInNewTab() ? 'new-tab' : 'replace');
       const openFn = (mode === 'replace' && typeof wsc.replaceActiveSession === 'function')
         ? wsc.replaceActiveSession

@@ -7,8 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {
-  REQUIRED_SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
-  listModelSets, resolveModelSet, removeModelSet, setDefaultModelSet,
+  REQUIRED_SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet, listModelSets, resolveModelSet, removeModelSet, setDefaultModelSet, getComfyFolder,
 } = require('../services/image-model-sets');
 const { linkDirectory } = require('./helpers/platform-skips');
 
@@ -183,7 +182,7 @@ test('save persists atomically, stable IDs replace entries, and first set is def
   assert.equal(saveModelSet({ ...input, label: 'Updated' }).set.id, saved.set.id);
   assert.equal(listModelSets({ storePath }).sets.length, 1);
   assert.equal(listModelSets({ storePath }).sets[0].label, 'Updated');
-  assert.equal(JSON.parse(fs.readFileSync(storePath, 'utf8')).version, 1);
+  assert.equal(JSON.parse(fs.readFileSync(storePath, 'utf8')).version, 2);
 });
 
 test('save caps sets at sixteen, while replacement remains allowed', (t) => {
@@ -230,7 +229,7 @@ test('resolve returns paths and rejects changed sizes or missing files', (t) => 
 
 test('default and removal mutate only the store; missing store is empty', (t) => {
   const { input, storePath, write } = fixture(t);
-  assert.deepEqual(listModelSets({ storePath }), { sets: [], default_id: null });
+  assert.deepEqual(listModelSets({ storePath }), { sets: [], default_id: null, comfyui_folder: null });
   const first = saveModelSet(input).set;
   write('vae/second.safetensors');
   const second = saveModelSet({ ...input, vae: 'vae/second.safetensors' }).set;
@@ -241,7 +240,7 @@ test('default and removal mutate only the store; missing store is empty', (t) =>
   assert.deepEqual(removeModelSet(second.id, { storePath }), { ok: true });
   assert.equal(listModelSets({ storePath }).default_id, first.id);
   assert.deepEqual(removeModelSet(first.id, { storePath }), { ok: true });
-  assert.deepEqual(listModelSets({ storePath }), { sets: [], default_id: null });
+  assert.deepEqual(listModelSets({ storePath }), { sets: [], default_id: null, comfyui_folder: null });
   assert.deepEqual(files.map((file) => fs.statSync(file).mtimeMs), before);
   assert.equal(files.every((file) => fs.existsSync(file)), true);
   for (const action of [resolveModelSet, removeModelSet, setDefaultModelSet]) {
@@ -289,4 +288,60 @@ test('projector header and family rejection does not prevent generation-only set
   write(name,gguf('clip'));
   const families=loadFamilies().families;families.qwen_image21.vision_flag=undefined;
   assert.equal(saveModelSet({...input,vision_projector:name},{families}).reason,'image_projector_unsupported');
+});
+
+function v1Store(input, extra = {}) {
+  const set = (id, files, more) => ({ id, label: id, family: 'qwen_image21', root: input.root, files, created_at: 1, ...more });
+  const files = (vae) => ({
+    diffusion: { name: input.diffusion, size_bytes: fs.statSync(path.join(input.root, input.diffusion)).size },
+    text_encoder: { name: input.text_encoder, size_bytes: fs.statSync(path.join(input.root, input.text_encoder)).size },
+    vae: { name: vae, size_bytes: 5 },
+  });
+  return { version: 1, default_id: 'aaaaaaaaaaaa', sets: [
+    set('aaaaaaaaaaaa', files(input.vae), { vision_projector: { name: 'text_encoders/mm.gguf', size_bytes: 3 } }),
+    set('bbbbbbbbbbbb', files(input.vae), { note: 'kept', ...extra }),
+  ] };
+}
+
+test('a version 1 store reads as v2 with sdcpp sets and migrates only on the next write', (t) => {
+  const { input, storePath } = fixture(t);
+  const original = v1Store(input);
+  const bytes = `${JSON.stringify(original, null, 2)}\n`;
+  fs.writeFileSync(storePath, bytes);
+  const listed = listModelSets({ storePath });
+  assert.equal(listed.comfyui_folder, null);
+  assert.equal(listed.default_id, 'aaaaaaaaaaaa');
+  assert.deepEqual(listed.sets, original.sets.map((set) => ({ ...set, backend: 'sdcpp' })));
+  assert.equal(fs.readFileSync(storePath, 'utf8'), bytes);
+  assert.deepEqual(setDefaultModelSet('bbbbbbbbbbbb', { storePath }), { ok: true });
+  const disk = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+  assert.equal(disk.version, 2);
+  assert.equal(disk.comfyui_folder, null);
+  assert.equal(disk.default_id, 'bbbbbbbbbbbb');
+  assert.deepEqual(disk.sets, original.sets.map((set) => ({ ...set, backend: 'sdcpp' })));
+});
+
+test('stores that are not valid version 1 or 2 are corrupt and keep their bytes', (t) => {
+  const { storePath } = fixture(t);
+  const home = path.join(os.tmpdir(), 'x');
+  const files = { diffusion: { name: 'diffusion_models/a.safetensors', size_bytes: 1 }, text_encoder: { name: 'text_encoders/a.safetensors', size_bytes: 1 }, vae: { name: 'vae/a.safetensors', size_bytes: 1 } };
+  const sdcpp = { id: 'aaaaaaaaaaaa', label: 'a', backend: 'sdcpp', family: 'qwen_image21', root: home, files, created_at: 1 };
+  const comfy = { id: 'bbbbbbbbbbbb', label: 'b', backend: 'comfyui', recipe: 'minimax_h3_image', root: home, files, created_at: 1 };
+  const { family: _family, ...withoutFamily } = sdcpp;
+  const { recipe: _recipe, ...withoutRecipe } = comfy;
+  const store = (sets, more = {}) => ({ version: 2, default_id: null, comfyui_folder: null, sets, ...more });
+  assert.deepEqual(listModelSets({ storePath }), { sets: [], default_id: null, comfyui_folder: null });
+  for (const bad of [
+    store([withoutRecipe]), store([withoutFamily]), store([{ ...sdcpp, backend: 'other' }]), store([{ ...sdcpp, backend: undefined }]),
+    { ...store([]), version: 3 }, store([], { comfyui_folder: 'relative' }), store([], { comfyui_folder: 5 }),
+    store([sdcpp, { ...comfy, id: 'aaaaaaaaaaaa' }]), store([sdcpp], { default_id: 'cccccccccccc' }),
+  ]) {
+    const bytes = JSON.stringify(bad);
+    fs.writeFileSync(storePath, bytes);
+    assert.deepEqual(listModelSets({ storePath }), { ok: false, reason: 'store_corrupt' });
+    assert.equal(fs.readFileSync(storePath, 'utf8'), bytes);
+  }
+  fs.writeFileSync(storePath, JSON.stringify(store([sdcpp, comfy], { comfyui_folder: home })));
+  assert.equal(listModelSets({ storePath }).sets.length, 2);
+  assert.equal(getComfyFolder({ storePath }).comfyui_folder, home);
 });

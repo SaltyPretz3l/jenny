@@ -171,7 +171,7 @@ test('narrow panels move the dot column to the row end margin', () => {
   assert.doesNotMatch(narrowHover.body, /opacity/);
 });
 
-test('hover and focus swap the time for the controls with opacity only; bulk selection keeps the time', t => {
+test('hover and focus swap the time for the controls with opacity only, on every row including selected ones', t => {
   assert.equal(declared(trailRules, '.session-row__chevron', 'opacity'), '0');
   assert.equal(declared(trailRules, '.session-row__menu', 'opacity'), '0');
   assert.doesNotMatch(treeCss, /aria-expanded="false"\]\s*\{\s*opacity:\s*1/);
@@ -206,7 +206,7 @@ test('hover and focus swap the time for the controls with opacity only; bulk sel
   const timeHide = swap.find(rule => /session-row__time/.test(rule.selector));
   const controlsShow = swap.find(rule => /session-row__menu/.test(rule.selector));
   assert.ok(timeHide && /opacity:\s*0/.test(timeHide.body), 'hover hides the time');
-  assert.match(timeHide.selector, /:not\(\.sidebar-bulk-selecting\)/, 'the time stays in bulk selection');
+  assert.equal(timeHide.selector, '.session-row:is(:hover, :focus-within) .session-row__time', 'selection never changes the swap');
   assert.ok(controlsShow && /opacity:\s*1/.test(controlsShow.body) && /session-row__chevron/.test(controlsShow.selector), 'hover shows the chevron and menu');
 });
 
@@ -229,13 +229,6 @@ test('tree guide line: 24 px indent, 4 px inside the title start, one straight s
   assert.doesNotMatch(last.body, /border-block-end|border-radius/);
   const origin = decls(parseRules(treeCss), '.session-row__origin');
   assert.doesNotMatch(origin, /padding-inline-start/);
-});
-
-test('the Select control is quiet until hovered; Done keeps the accent', () => {
-  const rules = parseRules(selectionCss);
-  assert.equal(declared(rules, '.sidebar-bulk-control--select', 'color'), 'var(--text-secondary)');
-  assert.match(selectionCss, /\.sidebar-bulk-control--select:(?:hover|is\(:hover, :focus-visible\))[^{]*\{[^}]*color:\s*var\(--text-primary\)/);
-  assert.equal(declared(rules, '.sidebar-bulk-control--done', 'color'), 'var(--accent)');
 });
 
 test('chats-panel.css stays under the 600-line ratchet', () => {

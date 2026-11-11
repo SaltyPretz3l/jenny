@@ -139,6 +139,7 @@ function buildCommandProposal(record) {
       shell: binding.command.shell,
       cwd: binding.command.cwd,
       root_revision: binding.authority_revision,
+      ...(binding.command.backend === 'docker' ? { workspace: binding.command.workspace || 'copy' } : {}),
     },
     command_input: {
       command: input.command,

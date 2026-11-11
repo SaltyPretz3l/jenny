@@ -14,7 +14,7 @@ const { notifyJobSettled } = require('./sidecar-client-notifications');
 const COMMAND_PROMPT_CHARS = 120;
 const MAX_JOBS_PER_FRAME = 8;
 const MAX_ACK_IDS = 16;
-const SETTLED_STATES = new Set(['completed', 'failed']);
+const SETTLED_STATES = new Set(['completed', 'failed', 'stopped']); // stopped: the person pressed Stop
 // stream ctx -> Set<job id> already sent on that stream: a re-check never resends, a newer stream may.
 const pushedByStream = new WeakMap();
 

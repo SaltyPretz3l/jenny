@@ -275,13 +275,12 @@ test('the summary projects session_role as primary or null', () => {
 });
 
 test('schema 26 fills session_role and keeps a primary through the migration', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 26);
   assert.equal(repairSessionForV26({}).session_role, null);
   assert.equal(repairSessionForV26({ session_role: 'primary' }).session_role, 'primary');
   assert.equal(repairSessionForV26({ session_role: 'boss', title: 'kept' }).session_role, null);
   assert.equal(repairSessionForV26({ title: 'kept' }).title, 'kept');
   const migrated = migrateStorePayload({ schema_version: 25, sessions: { a: { id: 'a' }, b: { id: 'b', session_role: 'primary' } } });
-  assert.equal(migrated.schema_version, 26);
+  assert.equal(migrated.schema_version, STORE_SCHEMA_VERSION);
   assert.equal(migrated.sessions.a.session_role, null);
   assert.equal(migrated.sessions.b.session_role, 'primary');
 });

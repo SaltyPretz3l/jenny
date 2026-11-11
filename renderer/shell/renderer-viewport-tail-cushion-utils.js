@@ -17,6 +17,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const TAIL_CUSHION_PROPERTY = '--chat-tail-cushion';
   const TAIL_CUSHION_WRITE_REASON = 'tail_cushion';
+  const TAIL_CUSHION_DROP_REASONS = new Set(['session', 'offscreen', 'force_bottom', 'resize', 'reply_end']);
   // At least this much real content stays in the reader-visible band.
   const TAIL_CUSHION_MIN_VISIBLE_PX = 64;
   const TAIL_CUSHION_GLIDE_MS = 200;
@@ -74,8 +75,10 @@
       lastReaderIntentAt: 0,
       glideFrame: 0,
       glideFrom: 0,
+      glideReason: '',
       glideStartedAt: 0,
       lastStreamingAt: 0,
+      streamOpen: false,
       settleFrame: 0,
     };
 
@@ -137,8 +140,18 @@
       return finite(readRect(chatTimeline)?.height);
     }
 
+    // Stamps the settle window: while the reply streams and, from a viewport sync (`atSync`), once
+    // more when the reply is first seen to have ended. A reply can sit quiet for longer than the
+    // window before its terminal render, and the Answers view hides its reasoning rows only then
+    // (row 131, D6).
+    function noteStreaming(atSync) {
+      const streaming = isStreaming() === true;
+      if (streaming || (atSync && runtime.streamOpen)) runtime.lastStreamingAt = now();
+      if (streaming || atSync) runtime.streamOpen = streaming;
+    }
+
     function record() {
-      if (isStreaming() === true) runtime.lastStreamingAt = now();
+      noteStreaming(false);
       const tail = readTail();
       runtime.timelineHeight = readTimelineHeight();
       runtime.anchors = tail.anchors;
@@ -203,21 +216,28 @@
       runtime.glideFrame = 0;
     }
 
-    function drop(_reason) {
+    // `tail_cushion:<cause>` for a known call site, else plain `tail_cushion`.
+    function dropWriteReason(reason) {
+      return TAIL_CUSHION_DROP_REASONS.has(reason)
+        ? `${TAIL_CUSHION_WRITE_REASON}:${reason}` : TAIL_CUSHION_WRITE_REASON;
+    }
+
+    function drop(reason) {
       stopGlide();
       if (runtime.cushionPx > 0) {
-        noteProgrammaticWrite(TAIL_CUSHION_WRITE_REASON);
+        noteProgrammaticWrite(dropWriteReason(reason));
         writeCushion(0);
       }
       record();
     }
 
+    // The glide is `settle`'s, so its writes carry the reason settle was given.
     function stepGlide() {
       runtime.glideFrame = 0;
       if (runtime.disposed) return;
       const progress = Math.min(1, Math.max(0, (now() - runtime.glideStartedAt) / TAIL_CUSHION_GLIDE_MS));
       const target = runtime.glideFrom * (1 - easeOutCubic(progress));
-      noteProgrammaticWrite(TAIL_CUSHION_WRITE_REASON);
+      noteProgrammaticWrite(dropWriteReason(runtime.glideReason));
       writeCushion(Math.min(runtime.cushionPx, target));
       if (progress >= 1 || runtime.cushionPx <= 0) {
         writeCushion(0);
@@ -227,15 +247,25 @@
       runtime.glideFrame = requestFrame(stepGlide);
     }
 
-    // Leftover room closes: silently when it is off-screen, instantly under
+    // Leftover room closes silently when it is off-screen. On-screen it
+    // stays after a reply ends; for any other cause it closes instantly under
     // reduced motion, otherwise with a short glide.
     function settle(reason) {
       if (runtime.cushionPx <= 0 || runtime.glideFrame) return;
-      if (isCushionOffscreen() || reducedMotionQuery.matches) {
+      if (isCushionOffscreen()) {
+        drop(reason);
+        return;
+      }
+      // Row 131 (owner pick A): room under a finished reply stays, so the
+      // view never drops at the end of a turn. The next message grows into
+      // it, and it is dropped unseen once the reader scrolls it off-screen.
+      if (reason === 'reply_end') return;
+      if (reducedMotionQuery.matches) {
         drop(reason);
         return;
       }
       runtime.glideFrom = runtime.cushionPx;
+      runtime.glideReason = reason;
       runtime.glideStartedAt = now();
       runtime.glideFrame = requestFrame(stepGlide);
     }
@@ -254,8 +284,25 @@
       const height = readTimelineHeight();
       const tail = readTail();
       const shrink = runtime.timelineHeight - height;
+      // A rewrite can lay the page out short for one forced layout inside the
+      // frame (a new Thinking panel has no height until its own pass sizes
+      // it) and be taller again by now. The clamp from that layout would be
+      // painted and the follow would glide back from it (replay 2026-11-10:
+      // 62 px at every tool start). Nothing was lost, so undo it here.
+      const growing = canGrow();
+      if (shrink <= 0 && growing && finite(chatThreadScroll.scrollTop) < runtime.lastScrollTop) {
+        const keptTop = Math.min(runtime.lastScrollTop,
+          finite(chatThreadScroll.scrollHeight) - finite(chatThreadScroll.clientHeight));
+        if (finite(chatThreadScroll.scrollTop) < keptTop) {
+          noteProgrammaticWrite(`${TAIL_CUSHION_WRITE_REASON}:hold`);
+          chatThreadScroll.scrollTop = keptTop;
+        }
+      }
       const anchor = shrink ? findSurvivingAnchor(tail) : null;
       if (!anchor) {
+        // A new turn shares no row with the old tail: its height still uses
+        // up room kept under the reply before it.
+        if (shrink < 0 && runtime.cushionPx > 0) writeCushion(runtime.cushionPx + shrink);
         record();
         return;
       }
@@ -265,7 +312,7 @@
       const tailShrink = shrink - aboveShift;
       const previous = runtime.cushionPx;
       let next = previous;
-      if (tailShrink < 0 || canGrow()) next = Math.min(cushionLimit(), Math.max(0, previous + tailShrink));
+      if (tailShrink < 0 || growing) next = Math.min(cushionLimit(), Math.max(0, previous + tailShrink));
       if (next !== previous) {
         const keepTop = runtime.lastScrollTop - aboveShift;
         writeCushion(next);
@@ -273,8 +320,8 @@
           noteProgrammaticWrite(TAIL_CUSHION_WRITE_REASON);
           chatThreadScroll.scrollTop = keepTop;
         }
-        // Room added after the reply ended is retired next frame: the shrink
-        // lands without a jump, then the usual glide (or silent drop) runs.
+        // Room added after the reply ended is looked at next frame: it is
+        // dropped if it is already off-screen and kept otherwise.
         if (next > previous && isStreaming() !== true) {
           stopGlide();
           if (!runtime.settleFrame) {
@@ -283,6 +330,23 @@
               if (!runtime.disposed) settle('reply_end');
             });
           }
+        }
+      }
+      // The browser can hold its own clamp back for a whole collapse above
+      // the tail and then apply it in one frame (replay 2026-11-10: a
+      // reasoning panel closing over the first answer text slid the answer up
+      // 460 px, then dropped it back). Take the lost height off the scroll
+      // position in the frame it is lost, so the rows under it stay put.
+      // Only within a screen of the bottom (the follow can trail a fast
+      // reply by a few rows): further up, the collapse can be below what the
+      // reader sees and the position must not move.
+      if (aboveShift > 0 && growing) {
+        const heldTop = Math.max(0, runtime.lastScrollTop - aboveShift);
+        const top = finite(chatThreadScroll.scrollTop);
+        const fromBottom = finite(chatThreadScroll.scrollHeight) - finite(chatThreadScroll.clientHeight) - top;
+        if (top > heldTop && fromBottom <= finite(chatThreadScroll.clientHeight)) {
+          noteProgrammaticWrite(`${TAIL_CUSHION_WRITE_REASON}:hold`);
+          chatThreadScroll.scrollTop = heldTop;
         }
       }
       record();
@@ -313,6 +377,7 @@
         drop('session');
         return;
       }
+      noteStreaming(true);
       if (noteClientHeight() || runtime.cushionPx <= 0) return;
       if (isStreaming() !== true) settle('reply_end');
     }

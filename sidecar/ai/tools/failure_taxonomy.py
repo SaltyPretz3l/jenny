@@ -30,7 +30,9 @@ RETRY_DISPOSITIONS: Mapping[str, str] = {
     "unavailable": "never",
     "limit_exceeded": "changed_args",
     "transient": "same_args",
-    "internal_error": "never",
+    # Most failures that reach this class are a handler that set no class, not a broken
+    # runtime: the message says what to change, so "never" contradicted it (row 129, A1).
+    "internal_error": "after_fix",
 }
 
 RECOVERY_CLASS_PROJECTION: Mapping[str, str] = {

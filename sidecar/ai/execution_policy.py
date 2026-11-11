@@ -26,7 +26,6 @@ DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES: frozenset[str] = frozenset(
         "grep_search",
         "list_dir",
         "create_artifact",
-        "mermaid_generate",
         "report_findings",
     }
 )
@@ -39,6 +38,11 @@ DESKTOP_SANDBOX_ELECTRON_TOOL_NAMES: frozenset[str] = frozenset(
         "propose_session",
         "complete_session_handoff",
         "run_command",
+        # Read-only chat directory (owner, 2026-11-03): they execute nothing on
+        # the host, and without them the primary chat cannot see other chats.
+        "sessions_list",
+        "session_status",
+        "session_transcript",
     }
 )
 DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES: frozenset[str] = (
@@ -279,14 +283,30 @@ def latch_runtime_policies(container: Any, params: Any) -> None:
             latch(raw_config)
 
 
-def desktop_command_descriptor_fields() -> dict[str, Any]:
-    """The public foreground schema for the Linux disposable command backend."""
+_DESKTOP_COMMAND_DESCRIPTIONS = {
+    "copy": (
+        "Run a foreground POSIX /bin/sh command in the offline Docker Linux sandbox. "
+        "cwd is workspace-relative (default '.'). The workspace is a disposable copy: "
+        "all command-created files are discarded. Use reviewed typed write/edit tools "
+        "for durable workspace changes. No background execution; maximum 120 seconds."
+    ),
+    # Row 106 synced workspace (the workspace sandbox mode plan, section 8).
+    "synced": (
+        "Run a foreground POSIX /bin/sh command offline in a Linux copy of the workspace. "
+        "cwd is workspace-relative (default '.'). Files the command adds, changes or deletes "
+        "are copied back to the workspace afterwards and the user can undo them; .git, hook "
+        "folders, dependency folders (node_modules, .venv, venv) and links are never copied "
+        "back. Windows-built virtual environments and native modules may not run. "
+        "No network, no background execution; maximum 120 seconds."
+    ),
+}
+
+
+def desktop_command_descriptor_fields(workspace: str = "copy") -> dict[str, Any]:
+    """The public foreground schema for the Linux command backend in either workspace mode."""
     return {
-        "description": (
-            "Run a foreground POSIX /bin/sh command in the offline Docker Linux sandbox. "
-            "cwd is workspace-relative (default '.'). The workspace is a disposable copy: "
-            "all command-created files are discarded. Use reviewed typed write/edit tools "
-            "for durable workspace changes. No background execution; maximum 120 seconds."
+        "description": _DESKTOP_COMMAND_DESCRIPTIONS.get(
+            workspace, _DESKTOP_COMMAND_DESCRIPTIONS["copy"]
         ),
         "input_schema": {
             "type": "object", "additionalProperties": False, "required": ["command"],

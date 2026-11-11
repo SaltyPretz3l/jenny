@@ -14,7 +14,7 @@ const { buildChatsViewModel } = require('../renderer/shell/renderer-chats-panel'
 const { createSessionActionsController } = require('../renderer/shell/renderer-session-actions');
 const { createSidebarBulkActions } = require('../renderer/shell/renderer-sidebar-bulk-actions');
 const actionButton = require('../renderer/inventory/action-button');
-const popover = require('../renderer/inventory/popover');
+const contextMenu = require('../renderer/inventory/context-menu');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 
 const NOW = new Date(Date.UTC(2026, 9, 20, 12, 0, 0));
@@ -154,25 +154,34 @@ test('row menu: the primary offers Rename, Send to chat and its controls group; 
   assert.equal(h.controller.isSessionPendingDelete('p'), false);
 });
 
-test('bulk actions: the primary row is never part of the selection', (t) => {
-  const dom = new JSDOM('<section id="sidebarHistorySection"><div id="chatsSelectionEntry"></div><input id="conversationSearch"><div><ul id="conversationGroups"></ul></div></section>');
+test('selection: the primary row is never part of the selection', (t) => {
+  const dom = new JSDOM('<section id="sidebarHistorySection"><input id="conversationSearch"><div><ul id="conversationGroups"></ul></div></section>');
   const doc = dom.window.document;
   const state = { sessions: [{ id: 'p', title: 'Jenny', session_role: 'primary', updated_at: 'old', message_count: 1 }, { id: 'a', title: 'a', updated_at: 'old', message_count: 1 }], ui: {}, sendOutboxBySession: new Map() };
   const groups = doc.getElementById('conversationGroups');
-  const rowHtml = (id, role) => `<li class="conversation-item session-row" data-session-id="${id}"${role ? ` data-session-role="${role}"` : ''}><button class="session-row__open" data-session-open="${id}" tabindex="0"><span class="session-row__selection" aria-hidden="true"></span>${id}</button><button class="session-row__menu" data-session-action="menu">Menu</button></li>`;
+  const rowHtml = (id, role) => `<li class="conversation-item session-row" data-session-id="${id}"${role ? ` data-session-role="${role}"` : ''}><button class="session-row__open" data-session-open="${id}" tabindex="0">${id}</button><button class="session-row__menu" data-session-action="menu">Menu</button></li>`;
   groups.insertAdjacentHTML('beforeend', rowHtml('p', 'primary') + rowHtml('a'));
   const cleanups = [];
-  const controller = createSidebarBulkActions({ state, windowRef: dom.window, actionButton, popover,
+  const controller = createSidebarBulkActions({ state, windowRef: dom.window, contextMenu,
     scheduler: { schedule: () => true },
     callbacks: { registerCleanup: (fn) => cleanups.push(fn), renderSessions() {}, showToastMessage() {}, showSessionActionError() {}, hardDeleteSession: async () => ({}) },
   });
   t.after(() => { cleanups.forEach((fn) => fn()); dom.window.close(); });
-  controller.act('select');
-  controller.act('all');
-  assert.deepEqual([...controller.selected], ['a'], 'select-all skips the primary');
-  groups.querySelector('[data-session-id="p"] .session-row__open').click();
-  assert.deepEqual([...controller.selected], ['a'], 'a click on the primary row selects nothing');
   const primaryOpen = groups.querySelector('[data-session-id="p"] .session-row__open');
-  assert.equal(primaryOpen.getAttribute('role'), null, 'the primary row is not painted as a checkbox');
-  assert.equal(groups.querySelector('[data-session-id="p"]').classList.contains('sidebar-bulk-selecting'), false);
+  const press = (target, init) => target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
+  let opened = 0;
+  groups.addEventListener('click', () => { opened += 1; });
+  primaryOpen.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true }));
+  assert.deepEqual([...controller.selected], ['a'], 'select-all skips the primary');
+  press(primaryOpen, { ctrlKey: true });
+  assert.equal(opened, 0, 'a modified click on the primary does not open it');
+  assert.deepEqual([...controller.selected], ['a'], 'and neither selects it nor drops the selection');
+  press(primaryOpen, { shiftKey: true });
+  assert.equal(opened, 0);
+  assert.deepEqual([...controller.selected], ['a']);
+  press(primaryOpen, {});
+  assert.equal(opened, 1, 'a plain click opens it');
+  assert.deepEqual([...controller.selected], [], 'and clears the selection');
+  assert.equal(groups.querySelector('[data-session-id="p"]').classList.contains('sidebar-bulk-selected'), false);
+  assert.equal(primaryOpen.getAttribute('role'), null);
 });

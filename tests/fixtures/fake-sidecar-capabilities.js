@@ -3,9 +3,6 @@ function buildAvailableTools(config = {}) {
   if (config.tools_web_enabled === true) {
     tools.push('web_search', 'fetch_url');
   }
-  if (config.tools_mermaid_enabled === true) {
-    tools.push('mermaid_generate');
-  }
   if (config.tools_python_runtime_enabled === true) {
     tools.push('python_execute');
   }
@@ -21,15 +18,12 @@ function buildToolsStatus(config = {}, availableTools = buildAvailableTools(conf
     'run_command',
     'web_search',
     'fetch_url',
-    'mermaid_generate',
     'python_execute',
   ];
   return Object.fromEntries(allTools.map((toolName) => {
     let reason = null;
     if (!available.has(toolName)) {
       if ((toolName === 'web_search' || toolName === 'fetch_url') && config.tools_web_enabled !== true) {
-        reason = 'config disabled';
-      } else if (toolName === 'mermaid_generate' && config.tools_mermaid_enabled !== true) {
         reason = 'config disabled';
       } else if (toolName === 'python_execute' && config.tools_python_runtime_enabled !== true) {
         reason = 'config disabled';

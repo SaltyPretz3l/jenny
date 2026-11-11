@@ -22,6 +22,9 @@ const MODULES = [
   // renderer-settings-support.js reads its tool rows' copy from the descriptors at load (index.html order).
   'renderer/shell/renderer-settings-field-descriptors.js',
   'renderer/shell/renderer-settings-field-copy.js',
+  'renderer/shell/renderer-settings-web-search.js',
+  'renderer/shell/renderer-settings-tool-config.js',
+  'renderer/shell/renderer-settings-external-sync.js',
   'renderer/shell/renderer-settings-support.js',
   'renderer/inventory/chip.js',
   'renderer/inventory/action-button.js',

@@ -141,6 +141,8 @@
       if (!panel || !controller || !windowRef.inventory?.actionButton) return;
       const vm = controller.getViewModel();
       const rows = rowsFor(vm);
+      const browserRow = rows.find((row) => row.id === 'browser_use');
+      windowRef.rendererSyncBrowserUse?.({ sessionId: id, enabled: Boolean(browserRow?.on && browserRow.state !== 'blocked'), chipHost });
       // Write only on change, so an unchanged pass stays read-only.
       const hideFilter = rows.length < SEARCH_MIN_ROWS;
       if (filter && filter.hidden !== hideFilter) filter.hidden = hideFilter;

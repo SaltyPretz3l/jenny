@@ -42,7 +42,7 @@ function createHarness() {
     performance: { now: () => clock },
   });
   const state = { ui: { followLatest: true } };
-  const snapshots = { viewport: [], unread: [], pin: [], wayfinder: [], jump: [], intent: [] };
+  const snapshots = { viewport: [], unread: [], wayfinder: [], jump: [], intent: [] };
   const logs = [];
   const coordinator = createChatScrollCoordinator({
     state,
@@ -66,7 +66,6 @@ function createHarness() {
     },
   });
   coordinator.setUnreadController({ handleScroll(snapshot) { snapshots.unread.push(snapshot); } });
-  coordinator.setPinController({ handleScrollFrame(snapshot) { snapshots.pin.push(snapshot); } });
   coordinator.setWayfinderController({ handleScroll(snapshot) { snapshots.wayfinder.push(snapshot); } });
 
   return {
@@ -110,7 +109,6 @@ test('100 native scroll events coalesce into one immutable presentation snapshot
   assert.equal(Object.isFrozen(snapshot), true);
   assert.strictEqual(harness.snapshots.viewport[0], snapshot);
   assert.strictEqual(harness.snapshots.unread[0], snapshot);
-  assert.strictEqual(harness.snapshots.pin[0], snapshot);
   assert.strictEqual(harness.snapshots.wayfinder[0], snapshot);
   assert.strictEqual(harness.snapshots.jump[0], snapshot);
 

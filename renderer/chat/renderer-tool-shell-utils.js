@@ -151,15 +151,61 @@
     }).join('');
   }
 
+  // Row 106 synced workspace: why write-back left a path in the Linux copy, in a few words.
+  function notCopiedReason(reason) {
+    switch (reason) {
+      case 'conflict': case 'type_changed': return jt('chat.toolShell.notCopiedConflict', 'changed in your folder while it ran');
+      case 'protected': return jt('chat.toolShell.notCopiedProtected', 'protected location');
+      case 'symlink': case 'special': case 'hardlink': return jt('chat.toolShell.notCopiedLink', 'link or special file');
+      case 'path_invalid': case 'path_short_name': case 'path_reserved_name': return jt('chat.toolShell.notCopiedName', 'name not allowed on Windows');
+      case 'not_empty': return jt('chat.toolShell.notCopiedNotEmpty', 'folder not empty');
+      default: return jt('chat.toolShell.notCopiedFailed', "couldn't be written");
+    }
+  }
+  var MAX_NOT_COPIED_SHOWN = 10;
+
+  function listWithMore(items, total) {
+    var extra = total - items.length;
+    return items.join(', ') + (extra > 0 ? ' ' + jt('chat.toolShell.plusMore', '(+{count} more)', { count: extra }) : '');
+  }
+
+  // Write-back failure, no restore point, host-run files and the paths not copied back.
+  function syncedWriteBackNotices(review, changed, out) {
+    if (review.reason === 'write_back_too_large') {
+      out.push(jt('chat.toolShell.writeBackTooLarge', 'Too many changes to copy back; your folder was not changed'));
+    } else if (review.reason === 'write_back_failed') {
+      out.push(jt('chat.toolShell.writeBackFailed', "Changes couldn't be copied back to your folder"));
+    }
+    var point = review.restore_point;
+    if (changed > 0 && !(point && point.kind === 'git_checkpoint')) out.push(jt('chat.toolShell.noUndoForRun', 'No undo for this run'));
+    var hostRun = Array.isArray(review.host_run_paths) ? review.host_run_paths.map(String) : [];
+    if (hostRun.length) {
+      out.push(jt('chat.toolShell.hostRunFiles', 'These files run on this computer later: {paths}',
+        { paths: listWithMore(hostRun, Math.max(countOf(review.host_run_count), hostRun.length)) }));
+    }
+    var refused = Array.isArray(review.refused_paths) ? review.refused_paths : [];
+    var refusedCount = Math.max(countOf(review.refused_count), refused.length);
+    if (!refusedCount) return;
+    out.push(jtn('chat.toolShell.notCopiedBack', refusedCount, { count: refusedCount },
+      '{count} change was not copied back', '{count} changes were not copied back'));
+    refused.slice(0, MAX_NOT_COPIED_SHOWN).forEach(function (entry) {
+      out.push(jt('chat.toolShell.notCopiedPath', '{path}: {reason}', { path: String(entry && entry.path || ''), reason: notCopiedReason(entry && entry.reason) }));
+    });
+    if (refusedCount > MAX_NOT_COPIED_SHOWN) {
+      out.push(jt('chat.toolShell.plusMore', '(+{count} more)', { count: refusedCount - Math.min(refused.length, MAX_NOT_COPIED_SHOWN) }));
+    }
+  }
+
   // Honest states from scripted_change_review: never "no changes".
   function scriptedChangeNotices(review, diffCount) {
     var before = [];
     var after = [];
     if (!review || typeof review !== 'object' || review.schema_version !== 1) return { before: before, after: after };
     var changed = countOf(review.changed_path_count) || diffCount;
+    var synced = review.coverage === 'synced_write_back';
     if (review.state === 'unavailable' && review.reason === 'background') {
       before.push(jt('chat.toolShell.changesCheckedWhenFinished', 'Changes are checked when it finishes'));
-    } else if (review.state === 'unavailable') {
+    } else if (review.state === 'unavailable' && !synced) {
       before.push(jt('chat.toolShell.changesUnchecked', "Couldn't check which files changed"));
     } else if (review.state === 'unsupported') {
       before.push(jt('chat.toolShell.changesNeedGit', 'Change tracking needs a git folder'));
@@ -168,6 +214,7 @@
         '{count} file changed while it ran (may include other edits)',
         '{count} files changed while it ran (may include other edits)'));
     }
+    if (synced) syncedWriteBackNotices(review, changed, before);
     var omitted = countOf(review.omitted_count);
     if (omitted > 0) {
       after.push(jtn('chat.toolShell.moreFilesNotShown', omitted, { count: omitted }, '{count} more file not shown', '{count} more files not shown'));

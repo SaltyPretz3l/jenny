@@ -72,12 +72,13 @@ test('switching a family off pushes the request resolver deny-list and settles o
     ['web-alpha', 'remote-alpha', 'status-alpha', 'files-other']);
   assert.deepEqual(h.logs, [{ level: 'INFO', event: 'session.tool_preferences_pushed',
     fields: { sessionId: 'session-alpha', streamId: 'stream-alpha',
-      newlyDeniedToolCount: names.length, pendingApprovalsDenied: 2 } }]);
+      // Row 114: the browser is already denied by default, so switching files off does not newly deny it.
+      newlyDeniedToolCount: names.length - 1, pendingApprovalsDenied: 2 } }]);
   assert.deepEqual(h.modes, []);
   await setSessionPreferences(h.service, 'session-alpha', { tool_category_overrides: { files: false } });
   assert.equal(h.pushed.length, 1, 'equal stored maps do not push again');
   await setSessionPreferences(h.service, 'session-alpha', { tool_category_overrides: { files: true } });
-  assert.deepEqual(h.pushed[1], { sessionId: 'session-alpha', names: [] });
+  assert.deepEqual(h.pushed[1], { sessionId: 'session-alpha', names: ['browser'] }, 'the browser stays off by default');
   assert.equal(h.logs[1].fields.newlyDeniedToolCount, 0);
 });
 
@@ -86,7 +87,7 @@ test('connection overrides use the catalog connection resolver', async () => {
   await setSessionPreferences(h.service, 'session-alpha', {
     tool_connection_overrides: { 'mcp:remote': false },
   });
-  assert.deepEqual(h.pushed, [{ sessionId: 'session-alpha', names: ['remote_tool'] }]);
+  assert.deepEqual(h.pushed, [{ sessionId: 'session-alpha', names: ['browser', 'remote_tool'] }]);
   assert.deepEqual(h.denied, [{ ref: 'remote-alpha', args: [false, 'denied'] }]);
 });
 

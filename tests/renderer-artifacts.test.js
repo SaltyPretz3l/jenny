@@ -184,6 +184,34 @@ test('artifact projection hides internal inspect_harness snapshots', () => {
   assert.deepEqual(artifacts, []);
 });
 
+test('artifact projection leaves browser steps to the chat row and the Browser panel', () => {
+  const artifacts = buildArtifactsFromMessages([
+    {
+      id: 'tool-use-browser',
+      role: 'assistant',
+      kind: 'tool_use',
+      timestamp: '2026-11-09T10:01:00.000Z',
+      tool_call: { call_id: 'call-browser', tool_name: 'browser', summary: 'Open example.com' },
+    },
+    {
+      id: 'tool-result-browser',
+      role: 'tool',
+      kind: 'tool_result',
+      timestamp: '2026-11-09T10:01:02.000Z',
+      tool_result: {
+        call_id: 'call-browser',
+        tool_name: 'browser',
+        summary: 'Browser: ok',
+        output_text: 'Opened https://example.com/',
+        is_error: false,
+        metadata: { result_kind: 'browser', status: 'ok' },
+      },
+    },
+  ], { sessionId: 'session-1' });
+
+  assert.deepEqual(artifacts, []);
+});
+
 test('generated artifact metadata projects first-class file artifacts and suppresses generic tool cards', () => {
   const artifacts = buildArtifactsFromMessages([
     {

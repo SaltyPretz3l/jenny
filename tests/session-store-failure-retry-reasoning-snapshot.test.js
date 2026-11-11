@@ -186,7 +186,6 @@ test('production-cap normalization is idempotent and survives a store reload', (
 });
 
 test('a v22 session file holding snapshots loads, saves and reloads without error', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 26, 'this legacy fixture is written at the current schema');
   const { store, userDataPath } = freshStore();
   const { id: sessionId } = store.createSession({ title: 'Saved with the carry on' });
   assert.equal(store.flushSession(sessionId), true);
@@ -195,7 +194,7 @@ test('a v22 session file holding snapshots loads, saves and reloads without erro
   // Rewrite the on-disk record as a build with the carry enabled left it.
   const sessionFile = path.join(userDataPath, 'sessions', `${sessionId}.json`);
   const persisted = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-  assert.equal(persisted.schema_version, 26);
+  assert.equal(persisted.schema_version, STORE_SCHEMA_VERSION);
   const legacy = {
     user_1: snapshotRecord({
       userId: 'user_1',

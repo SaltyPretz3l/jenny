@@ -85,13 +85,14 @@ test('cli/main.js statically reaches every CLI subcommand module', () => {
   }
 });
 
-test('every project-internal file required from the CLI is covered by electron-builder files globs', () => {
+// The files the entry points reach that the packaged asar would not hold.
+function uncoveredFiles(entryPoints) {
   const { includes, excludes } = electronBuilderFileGlobs();
   const reached = new Set();
-  for (const entry of CLI_ENTRY_POINTS) {
+  for (const entry of entryPoints) {
     for (const absPath of collectProjectRequireGraph(entry)) reached.add(toRelative(absPath));
   }
-  assert.ok(reached.size > CLI_ENTRY_POINTS.length, 'the CLI closure must reach past its entry points');
+  assert.ok(reached.size > entryPoints.length, 'the closure must reach past its entry points');
 
   const uncovered = [];
   for (const relPath of [...reached].sort()) {
@@ -99,10 +100,30 @@ test('every project-internal file required from the CLI is covered by electron-b
     const isExcluded = excludes.some((glob) => minimatch(relPath, glob, { dot: true }));
     if (!isIncluded || isExcluded) uncovered.push(relPath);
   }
+  return { reached, uncovered };
+}
 
+test('every project-internal file required from the CLI is covered by electron-builder files globs', () => {
+  const { uncovered } = uncoveredFiles(CLI_ENTRY_POINTS);
   assert.deepEqual(
     uncovered,
     [],
     `CLI require graph reaches files outside the packaged asar: ${uncovered.join(', ')}`
+  );
+});
+
+// Desktop Jenny starts the hosted application host as a team host (row 123):
+// server/main.js and server/healthcheck.js run from the asar too. The team
+// start sequence is required lazily, so it is listed as an entry of its own.
+test('every project-internal file the hosted host requires is covered by electron-builder files globs', () => {
+  // Slice 1f-2: the utility-process entry, and the packaged sidecar layout host-core requires lazily.
+  const { reached, uncovered } = uncoveredFiles(['server/main.js', 'server/healthcheck.js', 'server/team/team-main.js',
+    'services/team/host/host-entry.js', 'services/cli-host/runtime-layout.js', 'services/backend/packaged-sidecar-launch.js']);
+  assert.equal(reached.has('server/team/transport/host-bridge.js'), true, 'the team host closure reaches the bridge');
+  assert.equal(reached.has('server/main.js'), true, 'the host entry reaches server/main.js');
+  assert.deepEqual(
+    uncovered,
+    [],
+    `hosted host require graph reaches files outside the packaged asar: ${uncovered.join(', ')}`
   );
 });

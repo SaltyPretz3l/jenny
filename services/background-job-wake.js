@@ -11,7 +11,8 @@
  *
  * A job needs no wake when its result already reached the model: a check_background_job or
  * stop_background_job result that reported it settled (noteResultRead), typically a wait_ms poll in the turn
- * that started it. A job the person stopped never wakes. A job that settles while the chat is working is
+ * that started it. A job the person stopped never wakes: it is held and told to the model on the chat's next
+ * step, in the live turn or the next one (onTurnStarted). A job that settles while the chat is working is
  * pushed into the live turn (deliverMidTurn, row 71): the tool loop tells the model before its next step and
  * the acknowledgement marks it read. A notice nobody acknowledges leaves the job pending, so the turn's end
  * still wakes the chat. Every map is per process and bounded: a restart forgets them and never wakes
@@ -60,6 +61,7 @@ function createBackgroundJobWakeOps({
   maxTracked = 256,
 } = {}) {
   const pending = new Map(); // job id -> settled job snapshot whose result the model has not read
+  const stopped = new Map(); // job id -> a job the person stopped, until the model has been told
   const resultRead = new Map(); // job id -> true: its settled result reached the model
   const wakes = new Map(); // session id -> submit times (ms) inside the rate window
   const inFlight = new Set(); // session ids with a wake submit awaiting its answer
@@ -71,6 +73,17 @@ function createBackgroundJobWakeOps({
     if (typeof jobId !== 'string' || !jobId) return;
     boundedSet(resultRead, jobId, true, maxTracked);
     pending.delete(jobId);
+    stopped.delete(jobId);
+  }
+
+  // Pushed into the live turn if there is one; unacknowledged stops wait for the next turn.
+  function pushStopped(sessionId) {
+    const jobs = [...stopped.values()].filter((job) => job.sessionId === sessionId);
+    if (!jobs.length) return { outcome: 'none' };
+    const pushed = read(() => deliverMidTurn(sessionId, jobs), { ok: false, reason: 'exception' });
+    const outcome = pushed?.ok === true ? 'delivered' : 'held';
+    log('INFO', 'background_job_wake.stop_notice', { session_id: sessionId, job_count: jobs.length, outcome });
+    return { outcome };
   }
 
   function idle(sessionId) {
@@ -178,7 +191,13 @@ function createBackgroundJobWakeOps({
     try {
       const jobId = typeof job?.jobId === 'string' ? job.jobId : '';
       const sessionId = typeof job?.sessionId === 'string' ? job.sessionId : '';
-      if (!jobId || !sessionId || job.stopRequested === true || resultRead.has(jobId)) return { outcome: 'not_needed' };
+      if (!jobId || !sessionId || resultRead.has(jobId)) return { outcome: 'not_needed' };
+      if (job.stopRequested === true) {
+        boundedSet(stopped, jobId, {
+          jobId, sessionId, command: job.command, state: 'stopped', exitCode: null, endedAtMs: job.endedAtMs,
+        }, maxTracked);
+        return pushStopped(sessionId);
+      }
       boundedSet(pending, jobId, {
         jobId, sessionId, command: job.command, state: job.state, exitCode: job.exitCode, endedAtMs: job.endedAtMs,
       }, maxTracked);
@@ -199,11 +218,21 @@ function createBackgroundJobWakeOps({
     }
   }
 
-  function stats() {
-    return { pending: pending.size, read: resultRead.size, rate_sessions: wakes.size };
+  // That chat's chat.send just went out: its first step hears about any held stop. Never throws.
+  function onTurnStarted(sessionId) {
+    try {
+      return pushStopped(String(sessionId || ''));
+    } catch {
+      log('WARN', 'background_job_wake.failed', { reason: 'exception' });
+      return { outcome: 'held' };
+    }
   }
 
-  return { noteResultRead, onJobSettled, onTurnSettled, stats };
+  function stats() {
+    return { pending: pending.size, read: resultRead.size, rate_sessions: wakes.size, stopped: stopped.size };
+  }
+
+  return { noteResultRead, onJobSettled, onTurnSettled, onTurnStarted, stats };
 }
 
 // The ports, from the backend service the tracker and chat streams already hang off.

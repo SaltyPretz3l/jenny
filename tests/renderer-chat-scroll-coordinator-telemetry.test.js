@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 
 const {
   createChatScrollCoordinator,
+  SCROLL_SNAP_MIN_PX,
 } = require('../renderer/chat/renderer-chat-scroll-coordinator');
 delete global.rendererAppLifecyclePreferences;
 require('../renderer/app/renderer-app-lifecycle-preferences');
@@ -82,6 +83,7 @@ function createTelemetryHarness(options = {}) {
     appendClientLog(level, event, details) { logs.push({ level, event, details }); },
     renderJumpControls() { clock += frameWorkMs; },
     ...(options.isStreaming ? { isStreaming: options.isStreaming } : {}),
+    ...(options.streamClientMetrics ? { streamClientMetrics: options.streamClientMetrics } : {}),
   });
   return {
     coordinator,
@@ -437,4 +439,109 @@ test('a programmatic scroll write rate above the ceiling warns once per streamin
   burst(500, 'virtualizer');
   harness.coordinator.noteProgrammaticWrite('live_follow');
   assert.equal(rateWarnings().length, 2, 'the next streaming turn may log again');
+});
+
+// Row 131 S0b: a followed reader's upward move is a snap. It is counted per
+// reply in client_timing, by the reason the frame attributes it to.
+function createSnapHarness(options = {}) {
+  const snaps = [];
+  const harness = createTelemetryHarness({
+    followLatest: options.followLatest !== false,
+    streamClientMetrics: options.streamClientMetrics || {
+      noteScrollSnapForSession(sessionId, details) { snaps.push({ sessionId, ...details }); },
+    },
+  });
+  harness.snaps = snaps;
+  harness.coordinator.attach();
+  harness.runFrame();
+  return harness;
+}
+
+test('a followed upward move of the threshold or more is counted with its attributed reason', (t) => {
+  assert.equal(SCROLL_SNAP_MIN_PX, 8);
+  const harness = createSnapHarness();
+  t.after(() => harness.coordinator.dispose());
+
+  harness.coordinator.noteProgrammaticWrite('tail_cushion:reply_end');
+  harness.scrollContainer.scrollTop = 282;
+  harness.runFrame();
+  assert.deepEqual(harness.snaps, [{ sessionId: 'telemetry-session', px: 218, reason: 'tail_cushion:reply_end' }]);
+
+  harness.scrollContainer.scrollTop = 274;
+  harness.runFrame();
+  assert.equal(harness.snaps.length, 2, 'exactly the threshold counts');
+  assert.deepEqual(harness.snaps[1], { sessionId: 'telemetry-session', px: 8, reason: 'marker_absent' });
+});
+
+test('a suffixed tail cushion reason is attributed like plain tail_cushion', (t) => {
+  const harness = createSnapHarness();
+  t.after(() => harness.coordinator.dispose());
+
+  harness.coordinator.noteProgrammaticWrite('tail_cushion:reply_end');
+  harness.scrollContainer.scrollTop = 200;
+  harness.runFrame();
+  assert.equal(harness.jumps().length, 0, 'a large attributed move is not an unattributed jump');
+  assert.equal(harness.moves().length, 1);
+  assert.equal(harness.moves()[0].details.reason, 'tail_cushion:reply_end');
+});
+
+test('a tail cushion hold moves the position with the content and is not a snap', (t) => {
+  const harness = createSnapHarness();
+  t.after(() => harness.coordinator.dispose());
+
+  harness.coordinator.noteProgrammaticWrite('tail_cushion:hold');
+  harness.scrollContainer.scrollTop = 200;
+  harness.runFrame();
+  assert.deepEqual(harness.snaps, []);
+});
+
+test('small, downward, follow-off and reader-initiated moves are not snaps', (t) => {
+  const harness = createSnapHarness();
+  t.after(() => harness.coordinator.dispose());
+
+  harness.scrollContainer.scrollTop = 500 - (SCROLL_SNAP_MIN_PX - 1);
+  harness.runFrame();
+  harness.scrollContainer.scrollTop = 900;
+  harness.runFrame();
+  assert.equal(harness.snaps.length, 0, 'a 7 px upward move and a downward move are not snaps');
+
+  harness.advance(1200);
+  harness.coordinator.markUserIntent('wheel', { ctrlKey: false, target: null });
+  harness.scrollContainer.scrollTop = 700;
+  harness.runFrame();
+  assert.equal(harness.snaps.length, 0, 'a reader-initiated upward move is not a snap');
+
+  const away = createSnapHarness({ followLatest: false });
+  t.after(() => away.coordinator.dispose());
+  away.scrollContainer.scrollTop = 100;
+  away.runFrame();
+  assert.equal(away.snaps.length, 0, 'an upward move while follow is off is not a snap');
+});
+
+test('a failing metrics sink never breaks a scroll frame', (t) => {
+  const harness = createSnapHarness({
+    streamClientMetrics: { noteScrollSnapForSession() { throw new Error('sink down'); } },
+  });
+  t.after(() => harness.coordinator.dispose());
+
+  harness.scrollContainer.scrollTop = 100;
+  assert.doesNotThrow(() => harness.runFrame());
+  assert.equal(harness.coordinator.getStats().frames, 2, 'the frame still completed');
+});
+
+test('without an injected sink the shared client metrics module receives the snap', (t) => {
+  const calls = [];
+  const previous = globalThis.rendererStreamClientMetricsModule;
+  globalThis.rendererStreamClientMetricsModule = {
+    getShared() { return { noteScrollSnapForSession(sessionId, details) { calls.push({ sessionId, ...details }); } }; },
+  };
+  t.after(() => { globalThis.rendererStreamClientMetricsModule = previous; });
+  const harness = createTelemetryHarness({ followLatest: true });
+  t.after(() => harness.coordinator.dispose());
+  harness.coordinator.attach();
+  harness.runFrame();
+
+  harness.scrollContainer.scrollTop = 300;
+  harness.runFrame();
+  assert.deepEqual(calls, [{ sessionId: 'telemetry-session', px: 200, reason: 'marker_absent' }]);
 });

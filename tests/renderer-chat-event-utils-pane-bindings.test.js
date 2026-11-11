@@ -29,12 +29,12 @@ const asyncFence = require('../renderer/shared/async-fence');
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'renderer/chat/renderer-chat-event-utils.js'), 'utf8');
 
 const DOCUMENT_NODES = [
-  'homeNavButton', 'newChatButton', 'jumpToTopButton', 'jumpToLastPromptButton', 'jumpToBottomButton',
+  'homeNavButton', 'newChatButton', 'jumpToTopButton', 'jumpToBottomButton',
   'toastViewport', 'composerModelSelect', 'composerEffortSelect',
   'artifactReviewPanel',
 ];
 
-function buildHarness(t, { paneId, coordinator = false, rail = false, calls = null } = {}) {
+function buildHarness(t, { paneId, coordinator = false, rail = false, calls = null, uiState = null, callbackOverrides = null, unreadController = null } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     ${DOCUMENT_NODES.map((id) => `<div id="${id}"></div>`).join('')}
     <div id="chatView">
@@ -87,6 +87,7 @@ function buildHarness(t, { paneId, coordinator = false, rail = false, calls = nu
     requestAnimationFrame: (cb) => window.setTimeout(cb, 0),
     cancelAnimationFrame: (id) => window.clearTimeout(id),
     rendererAsyncFence: asyncFence,
+    rendererChatWayfinderUtils: require('../renderer/chat/renderer-chat-wayfinder-utils'),
     rendererChatEventTranscriptBindings: {
       createTranscriptEventBindings: (deps) => ({
         bindTranscriptEvents(register, options) {
@@ -139,6 +140,10 @@ function buildHarness(t, { paneId, coordinator = false, rail = false, calls = nu
     },
   };
   context.globalThis = context;
+  // renderer-chat-event-utils.js resolves its split siblings from the same browser-shaped context.
+  for (const sibling of ['renderer-chat-tool-row-toggles.js', 'renderer-chat-shell-subscriptions.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', sibling), 'utf8'), context);
+  }
   vm.runInNewContext(SOURCE, context, { filename: 'renderer-chat-event-utils.js' });
 
   const byId = (id) => doc.getElementById(id);
@@ -150,9 +155,10 @@ function buildHarness(t, { paneId, coordinator = false, rail = false, calls = nu
   const callbacks = new Proxy({
     setActivityChangeListener: (fn) => log.push(fn ? 'activity.set' : 'activity.clear'),
     handleSend: async () => { log.push('handleSend'); },
+    ...callbackOverrides,
   }, { get: (target, key) => (key in target ? target[key] : () => { calls?.push(key); }) });
   const bindings = context.rendererChatEventUtils.createChatEventBindings({
-    state: { ui: { activeView: 'chat' }, currentSessionId: 'session-a' },
+    state: { ui: { activeView: 'chat', ...uiState }, currentSessionId: 'session-a' },
     sessionContext: { paneId, getSessionId: () => (paneId === 0 ? 'session-a' : 'session-b'), setSessionId() {}, isCurrent: () => false },
     constants: { TOAST_SOURCE: { memory: 'memory', chatStream: 'chat' }, ACTIVITY_SCOPE: {} },
     dom: domBag,
@@ -160,6 +166,7 @@ function buildHarness(t, { paneId, coordinator = false, rail = false, calls = nu
     controllers: {
       thinkingController: { prune() {}, resumeAutoScroll() {} },
       toastActionHandlers: new Map(),
+      unreadOrientationController: unreadController,
       chatScrollCoordinator: coordinator
         ? { attach({ registerListener, listenerOptions }) { log.push('scroll.attach'); registerListener(byId('chatThreadScroll'), 'scroll', noop, listenerOptions); return () => {}; } }
         : null,
@@ -183,7 +190,6 @@ const PANE_ZERO_SET = [
   'sendButton:click',
   'stopStreamButton:click',
   'jumpToTopButton:click',
-  'jumpToLastPromptButton:click',
   'jumpToBottomButton:click',
   'chatInput:keydown',
   'chatInput:input',
@@ -211,6 +217,7 @@ const PANE_ZERO_SET = [
 const PANE_ONE_SET = [
   'sendButton:click',
   'stopStreamButton:click',
+  'jumpToBottomButton:click',
   'chatInput:keydown',
   'chatInput:input',
   'chatInput:paste',
@@ -230,7 +237,7 @@ test('paneId 0 registers today\'s full listener set in today\'s order', (t) => {
   assert.deepEqual(log, PANE_ZERO_SET);
 });
 
-test('paneId 1 registers the pane set only: no IPC, no home/new-chat/jump/popover/window listeners, no settings chrome', (t) => {
+test('paneId 1 registers the pane set only: no IPC, no home/new-chat/top-jump/popover/window listeners, no settings chrome', (t) => {
   const { log, bindings } = buildHarness(t, { paneId: 1 });
   bindings.bind();
   assert.deepEqual(log, PANE_ONE_SET);
@@ -382,3 +389,53 @@ for (const [paneId, expected] of [[0, 0], [1, 1]]) {
     bindings.dispose();
   });
 }
+
+// One bottom-edge jump control: the wayfinder's pick runs when it names this pane's session, else "Latest" jumps to the end.
+function clickBottomJump(t, model, extra = {}) {
+  const jumps = [];
+  const harness = buildHarness(t, {
+    paneId: 0,
+    uiState: { chatWayfinder: model },
+    callbackOverrides: {
+      handleJumpToBottom: () => { jumps.push(['bottom']); },
+      scrollMessageIntoView: (id, options) => { jumps.push(['scroll', id, options.block, options.followLatest]); return true; },
+    },
+    ...extra,
+  });
+  harness.bindings.bind();
+  harness.byId('jumpToBottomButton').click();
+  return jumps;
+}
+
+test('a double-click on the bottom-edge jump control jumps once', (t) => {
+  const jumps = [];
+  const harness = buildHarness(t, {
+    paneId: 0,
+    uiState: { chatWayfinder: { visible: true, state: 'latest', sessionId: 'session-a' } },
+    callbackOverrides: { handleJumpToBottom: () => { jumps.push('bottom'); } },
+  });
+  harness.bindings.bind();
+  harness.byId('jumpToBottomButton').click();
+  harness.byId('jumpToBottomButton').click();
+  assert.deepEqual(jumps, ['bottom']);
+});
+
+test('a second pane\'s jump control only ever goes to its own live end, whatever the wayfinder says', (t) => {
+  const jumps = clickBottomJump(t, { visible: true, state: 'unread', messageId: 'a1', sessionId: 'session-b', label: 'Jump to first unread' }, { paneId: 1 });
+  assert.deepEqual(jumps, [['bottom']]);
+});
+
+test('the bottom-edge jump control jumps to the first unread when the wayfinder says so', (t) => {
+  const unread = [];
+  const jumps = clickBottomJump(t, { visible: true, state: 'unread', messageId: 'a1', sessionId: 'session-a' }, {
+    unreadController: { jumpToFirstUnread: () => { unread.push('first'); return true; } },
+  });
+  assert.deepEqual(unread, ['first']);
+  assert.deepEqual(jumps, []);
+});
+
+test('the bottom-edge jump control keeps the plain jump to the live end for Latest and for a model naming another session', (t) => {
+  assert.deepEqual(clickBottomJump(t, { visible: true, state: 'latest', sessionId: 'session-a' }), [['bottom']]);
+  assert.deepEqual(clickBottomJump(t, null), [['bottom']]);
+  assert.deepEqual(clickBottomJump(t, { visible: true, state: 'unread', messageId: 'a1', sessionId: 'session-b' }), [['bottom']]);
+});

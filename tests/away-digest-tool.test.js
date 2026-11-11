@@ -44,7 +44,8 @@ function harness({ flags = { primary_digests: true }, primaryId = 'jenny', calle
   return { context: { sessionId: caller, backendService }, calls };
 }
 
-const output = (result) => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 const run = async (input, options) => {
   const h = harness(options);
   return { answer: output(await tool.execute(input, h.context)), calls: h.calls };

@@ -12,34 +12,6 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
-  const IDE_EDITOR_OPTIONS = {
-    automaticLayout: true,
-    minimap: { enabled: true },
-    scrollBeyondLastLine: false,
-    wordWrap: 'off',
-    fontSize: 13,
-    lineNumbers: 'on',
-    folding: true,
-    // Glyph-margin lane (left of the line-number margin) for the bookmark glyph
-    // decorations; inert until a glyphMarginClassName decoration is added.
-    glyphMargin: true,
-    tabSize: 2,
-    renderWhitespace: 'selection',
-    // Modern-editor chrome (Monaco 0.52 option shapes): colorized bracket
-    // pairs + guides, pinned scope headers, smooth caret/scroll feel.
-    bracketPairColorization: { enabled: true },
-    guides: { bracketPairs: true, indentation: true },
-    stickyScroll: { enabled: true },
-    smoothScrolling: true,
-    cursorBlinking: 'smooth',
-    cursorSmoothCaretAnimation: 'on',
-    fontLigatures: true,
-    linkedEditing: true,
-    occurrencesHighlight: 'singleFile',
-    renderLineHighlight: 'all',
-    mouseWheelZoom: true,
-  };
-
   function createIdeEditorHost(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const log = typeof deps?.log === 'function' ? deps.log : null;
@@ -70,6 +42,12 @@
     const editorDocuments = deps?.editorDocuments
       || globalRef.rendererIdeEditorDocuments
       || (typeof require === 'function' ? require('./renderer-ide-editor-documents') : null);
+    const optionsUtils = globalRef.rendererIdeEditorHostOptions || require('./renderer-ide-editor-host-options');
+    const { IDE_EDITOR_OPTIONS } = optionsUtils;
+    const diffPaneUtils = globalRef.rendererIdeEditorHostDiffPane || require('./renderer-ide-editor-host-diff-pane');
+    const groupEditorsUtils = globalRef.rendererIdeEditorHostGroupEditors || require('./renderer-ide-editor-host-group-editors');
+    const viewUtils = globalRef.rendererIdeEditorHostView || require('./renderer-ide-editor-host-view');
+    const groupDiffUtils = globalRef.rendererIdeEditorHostGroupDiff || require('./renderer-ide-editor-host-group-diff');
     const onDirtyChange = typeof deps?.onDirtyChange === 'function' ? deps.onDirtyChange : () => {};
     const onSaveRequest = typeof deps?.onSaveRequest === 'function' ? deps.onSaveRequest : () => {};
     // Fires once when Monaco actually boots (never on the textarea fallback
@@ -91,24 +69,10 @@
 
     let monacoApi = null;
     let monacoEditor = null;
-    // One reused diff editor (created lazily on the first diff tab) swapped
-    // over the regular editor inside the same host element.
-    let diffEditor = null;
-    let diffRevealSubscription = null;
-    let diffPane = null;
-    let diffEditorEl = null;
-    let diffPlaceholderEl = null;
     let activePath = '';
     // Problems-panel diagnostics listeners (fanned out from ensureEditor on boot).
     const markerListeners = new Set(); let markerSubscription = null;
     let fallbackBound = false; let fallbackInputHandler = null;
-    let wordWrapMode = 'off';
-    let minimapEnabled = IDE_EDITOR_OPTIONS.minimap.enabled;
-    // The full editor options: the applied preferences (so a large-file restore keeps them) plus the session wrap + minimap.
-    const baseEditorOptions = () => ({ ...IDE_EDITOR_OPTIONS, ...editorLevelOptions, wordWrap: wordWrapMode, minimap: { enabled: minimapEnabled } });
-    // The editor-level preferences last applied (font size, line numbers, whitespace):
-    // a group editor created later starts from them, not from the shared code size.
-    let editorLevelOptions = {};
     // Monaco applies its own per-platform mono stack whenever `fontFamily` is
     // absent, so every editor here opts in to --font-family-mono explicitly.
     // The binding owns registration and the shared typography observer.
@@ -121,24 +85,23 @@
     // is unchanged is pure redundancy. Reset whenever the editor is (re)created or
     // detached so a fresh editor always re-applies.
     let lastAppliedLargeFile = null;
-    // Secondary editor-group editors (W5): each is a Monaco editor created by
-    // createGroupEditor over the same models; the value holds its font
-    // unregister, its action registrations (id -> disposable) and getPath.
-    const groupEditors = new Map();
-    const groupDiffUtils = globalRef.rendererIdeEditorHostGroupDiff || require('./renderer-ide-editor-host-group-diff');
+    let draftLocked = false; // the primary editor is showing a Follow Jenny draft (read-only)
+    // Editor-level options (wrap, minimap, applied preferences) and the fan-out of
+    // setEditorOptions live in the options sibling; the thunks reach the surfaces built below.
+    const options = optionsUtils.createEditorOptions({
+      monacoUtils, getEditor: () => monacoEditor, getDiffPane: () => diffPane, getGroupEditors: () => groupEditors,
+      getGroupDiffs: () => groupDiffs, isActiveLargeFile: () => getDoc(activePath)?.largeFile === true,
+    });
+    const { baseEditorOptions, setEditorOptions, setWordWrap } = options;
     const groupDiffs = groupDiffUtils.createGroupDiffHost({
       getMonaco: () => monacoApi, getDoc: (id) => getDoc(id), isDisposed: () => disposalFence.isDisposed(), fonts,
-      getOptions: () => ({ ...monacoUtils.IDE_DIFF_EDITOR_OPTIONS, ...editorLevelOptions, wordWrap: wordWrapMode }),
+      getOptions: () => options.getDiffOptions(),
       registerFont: monacoUtils.registerMonacoFontConsumer,
     });
-    // Every editor action contributed through addEditorAction (id -> descriptor),
-    // so group editors created later get the same context-menu actions.
-    const editorActions = new Map();
-    // { editor, path } while a group editor runs an action: the active-editor
-    // readers below answer for that editor instead of the primary.
-    let actionContext = null;
-    // The group editor that last had focus (null: the primary); readers follow it.
-    let focusedGroupEditor = null;
+    // The primary diff surface (Monaco mode): the pane over the editor, the reused diff editor and the placeholder.
+    const diffPane = diffPaneUtils.createDiffPane({
+      getDom, getMonaco: () => monacoApi, monacoUtils, groupDiffUtils, groupDiffs, fonts, getWrapMode: options.getWrapMode,
+    });
     // Per-open-file bookkeeping lives in the document store (Monaco mode: docs
     // hold models + view states; fallback mode: plain string buffers).
     const documents = editorDocuments.createEditorDocuments({ monacoUtils, onDirtyChange, onModelChange });
@@ -146,16 +109,33 @@
       docs, docText, getAltVersionId, getDoc, getDocumentKind, getEol, getMtime,
       hasDocument, isDirty, languageForPath, syncDirty, withEol,
     } = documents;
+    // Secondary editor-group editors, the shared editor actions and the focused-group / action-context state.
+    const groupEditors = groupEditorsUtils.createGroupEditors({
+      getMonaco: () => monacoApi, getPrimaryEditor: () => monacoEditor, getActivePath: () => activePath,
+      isDisposed: () => disposalFence.isDisposed(), docs, getDoc, options, fonts, monacoUtils,
+      onCursorActivity, getFocusedCursorInfo: () => getFocusedCursorInfo(), getFocusedPath: () => getFocusedPath(),
+      dispatchActiveFileChanged: (path) => dispatchActiveFileChanged(path),
+    });
+    const {
+      addEditorAction, createGroupEditor, releaseGroupEditor, triggerGoToLine, editorShowing,
+      getFocusedGroupPath, setFocusedGroupEditor,
+    } = groupEditors;
     // Overlay panes (image W7, PDF/DOCX documents) share `docs`;
     // the panes module owns their DOM and per-format pane instances.
     const panes = panesUtils.createEditorHostPanes?.({
       docs, getDom, log, onDirtyChange, onDocumentEdit, onSaveRequest,
       asyncFence, ownerFence: disposalFence,
-      hideEditorSurfaces: () => { setDiffPaneVisible(false); setFallbackVisible(false); },
+      hideEditorSurfaces: () => { diffPane.setVisible(false); setFallbackVisible(false); },
       imageHostUtils: deps?.imageHostUtils,
       imageMemoryUtils: deps?.imageMemoryUtils, imageMemoryOptions: deps?.imageMemoryOptions,
       documentPaneFactories: deps?.documentPaneFactories,
     }) || null;
+    // Cursor reveal and view-state capture (find-in-files, tab restore, reopen-closed-tab).
+    const view = viewUtils.createEditorView({
+      getDom, getDoc, getActivePath: () => activePath, getPrimaryEditor: () => monacoEditor, editorShowing, editorReads,
+      isTextDocument: (path) => isTextDocument(path), getCursorInfo: () => getCursorInfo(),
+    });
+    const { revealPosition, getViewState, getViewLines, revealTopLine, applyViewState } = view;
 
     async function ensureEditor() {
       if (disposalFence.isDisposed()) return false;
@@ -182,7 +162,7 @@
         fonts.register(monacoEditor, host?.ownerDocument);
         // Fresh editor starts on the default (full-chrome) options, so the next
         // activation must re-apply the large-file mode regardless of prior state.
-        lastAppliedLargeFile = null;
+        lastAppliedLargeFile = null; draftLocked = false;
         monacoEditor.addCommand(
           monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyS,
           () => onSaveRequest()
@@ -221,41 +201,6 @@
       return true;
     }
 
-    // Secondary editor groups: a lighter Monaco editor per group, created with
-    // the primary's options over the SAME models (the document store owns them).
-    // Never triggers a Monaco load; null until the primary has booted.
-    function createGroupEditor(el, { onSave, onFocus, getPath } = {}) {
-      if (!monacoApi || !el || disposalFence.isDisposed()) return null;
-      const doc = el.ownerDocument;
-      const editor = monacoApi.editor.create(el, fonts.withFont(baseEditorOptions(), doc));
-      // The shared font binding only releases everything at once, so register
-      // per editor here: a closed group must leave the typography observer.
-      const unregisterFont = typeof monacoUtils.registerMonacoFontConsumer === 'function'
-        ? monacoUtils.registerMonacoFontConsumer(editor, doc) : null;
-      editor.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyS, () => { if (typeof onSave === 'function') onSave(); });
-      editor.onDidFocusEditorWidget?.(() => { setFocusedGroupEditor(editor); if (typeof onFocus === 'function') onFocus(); });
-      editor.onDidChangeCursorSelection?.(() => { if (focusedGroupEditor === editor) onCursorActivity(getFocusedCursorInfo()); });
-      editor.onDidChangeModel?.(() => { if (focusedGroupEditor === editor) dispatchActiveFileChanged(getFocusedPath()); });
-      const { minimap: _minimap, wordWrap: _wordWrap, ...levelOptions } = editorLevelOptions;
-      if (Object.keys(levelOptions).length) editor.updateOptions?.(levelOptions);
-      const entry = { unregisterFont, actions: new Map(), getPath: typeof getPath === 'function' ? getPath : () => '' };
-      groupEditors.set(editor, entry);
-      for (const descriptor of editorActions.values()) bindGroupAction(editor, entry, descriptor);
-      return editor;
-    }
-
-    function releaseGroupEditor(editor) {
-      if (!editor || !groupEditors.has(editor)) return;
-      if (focusedGroupEditor === editor) setFocusedGroupEditor(null);
-      const entry = groupEditors.get(editor);
-      entry.unregisterFont?.();
-      for (const registration of entry.actions.values()) registration?.dispose?.();
-      entry.actions.clear();
-      groupEditors.delete(editor);
-      editor.setModel?.(null);
-      editor.dispose?.();
-    }
-
     // A group editor changed a model: same bookkeeping as the primary's content listener.
     function noteModelEdited(path) {
       const normalizedPath = String(path || '');
@@ -267,74 +212,13 @@
     // True for a text file document backed by a Monaco model (no large-file limit).
     function isTextDocument(path) {
       const doc = getDoc(path);
-      return Boolean(doc && doc.kind === 'file' && doc.model);
+      return Boolean(doc && doc.kind === 'file' && doc.model && doc.draft !== true);
     }
 
     function setFallbackVisible(visible) {
       const dom = getDom();
       dom.ideEditorFallback?.classList.toggle('hidden', !visible);
       dom.ideEditorHost?.classList.toggle('hidden', visible);
-    }
-
-    // ── Diff surface (Monaco mode) ──
-    // The diff pane overlays the regular editor inside #ideEditorHost; it
-    // hosts the reused diff editor plus a plain-text placeholder element for
-    // changes whose original snapshot is gone (hunks-summary fallback).
-
-    function ensureDiffPane() {
-      if (diffPane) {
-        return diffPane;
-      }
-      const host = getDom().ideEditorHost || null;
-      const documentRef = host?.ownerDocument || null;
-      if (!host || !documentRef) {
-        return null;
-      }
-      diffPane = documentRef.createElement('div');
-      diffPane.className = 'ide-diff-pane hidden';
-      diffEditorEl = documentRef.createElement('div');
-      diffEditorEl.className = 'ide-diff-editor';
-      diffPlaceholderEl = documentRef.createElement('pre');
-      diffPlaceholderEl.className = 'ide-diff-placeholder hidden';
-      diffPane.appendChild(diffEditorEl);
-      diffPane.appendChild(diffPlaceholderEl);
-      host.appendChild(diffPane);
-      return diffPane;
-    }
-
-    function ensureDiffEditor() {
-      if (diffEditor) {
-        return diffEditor;
-      }
-      if (!monacoApi || typeof monacoApi.editor?.createDiffEditor !== 'function' || !ensureDiffPane()) {
-        return null;
-      }
-      diffEditor = monacoApi.editor.createDiffEditor(diffEditorEl, fonts.withFont(
-        { ...monacoUtils.IDE_DIFF_EDITOR_OPTIONS, wordWrap: wordWrapMode }, diffEditorEl?.ownerDocument,
-      ));
-      // A diff editor is a pair of editors behind one facade; register both
-      // sides so a typography change retunes original as well as modified.
-      fonts.register(diffEditor.getOriginalEditor?.(), diffEditorEl?.ownerDocument);
-      fonts.register(diffEditor.getModifiedEditor?.(), diffEditorEl?.ownerDocument);
-      return diffEditor;
-    }
-
-    // A change deep inside a long line (a minified file) sat off-screen to the
-    // right of the diff, so the person scrolled to find it (owner report,
-    // 2026-10-05). Once Monaco has computed the diff, scroll its first changed
-    // character into view; the two sides scroll together. One reveal per
-    // activation, so later recomputes never yank the view back.
-    function revealFirstDiffChange() {
-      diffRevealSubscription?.dispose?.();
-      diffRevealSubscription = groupDiffUtils.revealFirstChangeOnce(diffEditor);
-    }
-
-    function setDiffPaneVisible(visible) {
-      if (!visible && !diffPane) {
-        return;
-      }
-      ensureDiffPane();
-      diffPane?.classList.toggle('hidden', !visible);
     }
 
     function ensureFallbackBinding() {
@@ -385,6 +269,21 @@
       return documents.openDiff({ id: normalizedId, label, languagePath, original, modified, placeholderText });
     }
 
+    // Follow Jenny (row 121): a read-only draft of a file Jenny is writing, keyed by a diff:// tab id.
+    async function openDraftDocument({ id, languagePath = '', text = '', lineNumbers = null } = {}) {
+      const normalizedId = String(id || '');
+      if (!normalizedId) return null;
+      const hasMonaco = await ensureEditor(); if (disposalFence.isDisposed()) return null;
+      return documents.openDraft({ id: normalizedId, languagePath, text, lineNumbers, monacoApi: hasMonaco ? monacoApi : null });
+    }
+    function writeDraftDocument(id, text, splice = null) {
+      const normalizedId = String(id || '');
+      if (!documents.writeDraft(normalizedId, text, splice)) return false;
+      const textarea = getDoc(normalizedId)?.model || activePath !== normalizedId ? null : getDom().ideEditorFallback || null;
+      if (textarea) documents.runApplying(() => { textarea.value = String(text ?? ''); });
+      return true;
+    }
+
     // Image / binary documents: the panes module owns the surfaces.
     function openImageDocument(payload) {
       return panes?.openImageDocument(payload, closeDocument) || null;
@@ -405,22 +304,7 @@
     function activateDiffDocument(normalizedId, doc) {
       activePath = normalizedId;
       if (monacoApi && monacoEditor) {
-        setDiffPaneVisible(true);
-        if (doc.placeholderText) {
-          diffPlaceholderEl.textContent = doc.placeholderText; diffPlaceholderEl.classList.toggle('nowrap', wordWrapMode === 'off');
-          diffPlaceholderEl.classList.remove('hidden');
-          diffEditorEl.classList.add('hidden');
-        } else if (ensureDiffEditor()) {
-          groupDiffs.getDiffSurface(normalizedId); // creates the shared models once
-          // A minified side wraps to a different height in each pane (live
-          // recheck 2026-10-06: the original pane showed another part of the
-          // one-line file), so such a diff renders inline, in one pane.
-          diffEditor.updateOptions?.({ renderSideBySide: doc.inlineDiff !== true });
-          diffEditor.setModel({ original: doc.originalModel, modified: doc.modifiedModel });
-          revealFirstDiffChange();
-          diffPlaceholderEl.classList.add('hidden');
-          diffEditorEl.classList.remove('hidden');
-        }
+        diffPane.show(normalizedId, doc);
         setFallbackVisible(false);
         return true;
       }
@@ -466,7 +350,7 @@
         return activateDiffDocument(normalizedPath, doc) && dispatchActiveFileChanged(normalizedPath);
       }
       activePath = normalizedPath;
-      setDiffPaneVisible(false);
+      diffPane.setVisible(false);
       if (monacoEditor && doc.model) {
         documents.runApplying(() => {
           monacoEditor.setModel(doc.model);
@@ -484,13 +368,20 @@
           monacoUtils.applyLargeFileEditorMode?.(monacoEditor, getDom().ideEditorHost, nextLargeFile, baseEditorOptions());
           lastAppliedLargeFile = nextLargeFile;
         }
+        // A draft is read-only and numbers its own lines; the next file takes the editor back.
+        const draft = doc.draft === true;
+        if (draft || draftLocked) {
+          const numbers = baseEditorOptions().lineNumbers;
+          monacoEditor.updateOptions?.({ readOnly: draft, lineNumbers: draft && doc.lineNumbers && numbers !== 'off' ? doc.lineNumbers : numbers });
+          draftLocked = draft;
+        }
         return dispatchActiveFileChanged(normalizedPath);
       }
       const textarea = ensureFallbackBinding();
       if (textarea) {
         documents.runApplying(() => {
           textarea.value = doc.buffer;
-          textarea.readOnly = false;
+          textarea.readOnly = doc.draft === true;
         });
         setFallbackVisible(true);
       }
@@ -503,26 +394,16 @@
     // or the invoking group editor while one of its actions runs; `followFocus`
     // readers (status strip, selection intents, chat context) take a focused group editor.
     function readInputs(followFocus) {
+      const actionContext = groupEditors.getActionContext();
       if (actionContext) return { doc: getDoc(actionContext.path), monacoEditor: actionContext.editor, textarea: null };
       const group = followFocus ? getFocusedGroupPath() : '';
-      if (group) return { doc: getDoc(group), monacoEditor: focusedGroupEditor, textarea: null };
+      if (group) return { doc: getDoc(group), monacoEditor: groupEditors.getFocusedEditor(), textarea: null };
       return { doc: getDoc(activePath), monacoEditor, textarea: getDom().ideEditorFallback || null };
     }
 
-    // The focused group editor's file, '' when the primary has focus or it shows nothing.
-    function getFocusedGroupPath() {
-      const model = groupEditors.has(focusedGroupEditor) && focusedGroupEditor.getModel?.();
-      if (model) for (const [path, doc] of docs) if (doc.model === model) return path;
-      return '';
-    }
     function getFocusedPath() {
+      const actionContext = groupEditors.getActionContext();
       return actionContext ? actionContext.path : getFocusedGroupPath() || activePath;
-    }
-    function setFocusedGroupEditor(editor) {
-      if (focusedGroupEditor === editor) return;
-      focusedGroupEditor = editor;
-      onCursorActivity(getFocusedCursorInfo());
-      dispatchActiveFileChanged(getFocusedPath());
     }
 
     // Selection reads serve the selection intents, so they follow a focused group.
@@ -579,37 +460,6 @@
       return setLaneDecorations(path, 'bookmarkDecorationIds', decorations);
     }
 
-    // Lets the controller contribute editor context-menu actions without
-    // reaching into the host-private Monaco instance. Callers register from
-    // onMonacoReady; every descriptor is also kept so each editor group's
-    // editor (existing or created later) carries the same actions.
-    function addEditorAction(descriptor) {
-      if (!descriptor || typeof descriptor.id !== 'string' || !descriptor.id) {
-        return null;
-      }
-      editorActions.set(descriptor.id, descriptor);
-      for (const [editor, entry] of groupEditors) bindGroupAction(editor, entry, descriptor);
-      if (!monacoEditor || typeof monacoEditor.addAction !== 'function') {
-        return null;
-      }
-      return monacoEditor.addAction(descriptor);
-    }
-
-    // A group editor's copy of an action runs inside a synchronous action
-    // context: getActivePath / getSelectedText / getSelectionRange /
-    // getCursorInfo / getActiveLanguageId read THAT editor and the path it
-    // shows. Async runs must read their inputs before the first await.
-    function bindGroupAction(editor, entry, descriptor) {
-      if (typeof editor.addAction !== 'function') return;
-      entry.actions.get(descriptor.id)?.dispose?.();
-      const run = (...args) => {
-        const previous = actionContext;
-        actionContext = { editor, path: String(entry.getPath() || '') };
-        try { return descriptor.run?.(...args); } finally { actionContext = previous; }
-      };
-      entry.actions.set(descriptor.id, editor.addAction({ ...descriptor, run }) || null);
-    }
-
     // 1-based cursor line/column plus selected-character count for the
     // status bar. Monaco reports natively; the fallback derives from the
     // textarea's selection offsets.
@@ -618,16 +468,6 @@
     }
     function getFocusedCursorInfo() {
       return editorReads.readCursorInfo?.(readInputs(true)) || null;
-    }
-
-    function triggerGoToLine() {
-      const editor = getFocusedGroupPath() ? focusedGroupEditor : monacoEditor;
-      if (!editor || typeof editor.trigger !== 'function') {
-        return false;
-      }
-      editor.focus?.();
-      editor.trigger('jenny-statusbar', 'editor.action.gotoLine', null);
-      return true;
     }
 
     // Runs a built-in Monaco editor action by id, focusing the editor FIRST —
@@ -643,38 +483,6 @@
       return true;
     }
 
-    function setWordWrap(mode) {
-      setEditorOptions({ wordWrap: mode === 'on' ? 'on' : 'off' });
-    }
-    // Applies editor-LEVEL options live (fontSize, lineNumbers, renderWhitespace,
-    // minimap, wordWrap). Per-MODEL
-    // options (tabSize, eol) stay on setTabSize/setEol + the chip-picker. The two
-    // recreate-sensitive vars are kept in sync so a Monaco recreate honors them;
-    // fontSize/lineNumbers/renderWhitespace need no var because the controller
-    // re-applies them in onMonacoReady on every (re)create.
-    function setEditorOptions(opts) {
-      const next = opts && typeof opts === 'object' ? opts : {};
-      const applied = { ...next };
-      if (typeof next.wordWrap === 'string') {
-        wordWrapMode = next.wordWrap === 'on' ? 'on' : 'off'; diffPlaceholderEl?.classList.toggle('nowrap', wordWrapMode === 'off');
-        // The diff editor is a separate instance: the wrap toggle reaches it too.
-        diffEditor?.updateOptions?.({ wordWrap: wordWrapMode });
-      }
-      if (next.minimap && typeof next.minimap === 'object' && typeof next.minimap.enabled === 'boolean') {
-        minimapEnabled = next.minimap.enabled;
-        applied.minimap = { ...next.minimap, enabled: minimapEnabled && getDoc(activePath)?.largeFile !== true };
-      }
-      monacoEditor?.updateOptions?.(applied);
-      editorLevelOptions = { ...editorLevelOptions, ...applied };
-      // Group editors follow the preference only (the large-file override is per active primary doc).
-      const groupApplied = applied.minimap ? { ...applied, minimap: { ...applied.minimap, enabled: minimapEnabled } } : applied;
-      for (const editor of groupEditors.keys()) editor.updateOptions?.(groupApplied);
-      groupDiffs.updateOptions(groupApplied);
-      // The diff editor is a separate instance; without this the editor font
-      // size never reached diffs.
-      if (typeof next.fontSize === 'number') diffEditor?.updateOptions?.({ fontSize: next.fontSize });
-    }
-
     // Document-pane docs (PDF / DOCX) report saves through the panes module.
     function markSaved(path, options) {
       if (getDoc(path)?.kind === 'document') { panes?.markDocumentSaved(path, { mtimeMs: options?.mtimeMs }); return; }
@@ -686,19 +494,15 @@
       const doc = getDoc(normalizedPath);
       if (!doc) return;
       if (activePath === normalizedPath) {
-        if (doc.kind === 'diff') setDiffPaneVisible(false);
+        if (doc.kind === 'diff') diffPane.setVisible(false);
         else if (doc.kind !== 'file') panes?.hideForClose(doc);
         else if (monacoEditor) monacoEditor.setModel(null);
       }
       // Monaco 0.52 asserts when a TextModel still attached to the DiffEditorWidget
-      // is disposed (CMP-RENDER-0001). Switching tabs away only hides the diff pane
-      // and leaves the models attached, so detach by identity, not active-tab state.
-      const attachedDiff = diffEditor?.getModel?.();
-      if (attachedDiff && (attachedDiff.original === doc.originalModel || attachedDiff.modified === doc.modifiedModel)) {
-        diffEditor.setModel(null);
-      }
+      // is disposed (CMP-RENDER-0001): detach by identity, not active-tab state.
+      diffPane.detachDocument(doc);
       // Same Monaco assert for a group editor still showing this model.
-      if (doc.model) for (const editor of groupEditors.keys()) if (editor.getModel?.() === doc.model) editor.setModel(null);
+      if (doc.model) groupEditors.detachModel(doc.model);
       groupDiffs.detach(doc);
       documents.disposeModels(doc);
       panes?.release(normalizedPath, doc); documents.deleteDocument(normalizedPath);
@@ -706,6 +510,7 @@
     }
 
     function getActivePath() {
+      const actionContext = groupEditors.getActionContext();
       return actionContext ? actionContext.path : activePath;
     }
 
@@ -715,7 +520,7 @@
       if (monacoEditor) {
         monacoEditor.setModel(null);
       }
-      setDiffPaneVisible(false);
+      diffPane.setVisible(false);
       panes?.hideAll();
       const textarea = getDom().ideEditorFallback || null;
       if (textarea) {
@@ -729,7 +534,7 @@
 
     function layout() {
       monacoEditor?.layout?.();
-      diffEditor?.layout?.();
+      diffPane.layout();
     }
 
     function focus() {
@@ -744,102 +549,9 @@
       return Boolean(monacoEditor);
     }
 
-    // Moves the cursor to a 1-based line/column in the active document (used
-    // by find-in-files result clicks). The document must already be active.
-    function editorShowing(path) {
-      const model = getDoc(path)?.model;
-      if (!model) return null;
-      return (activePath === path ? monacoEditor : [...groupEditors.keys()].find((editor) => editor.getModel?.() === model)) || null;
-    }
     function runFormat(editor) {
       const action = editor?.getAction?.('editor.action.formatDocument');
       return action && typeof action.run === 'function' ? Promise.resolve(action.run()).then(() => ({ supported: true, formatted: true })) : Promise.resolve({ supported: false, formatted: false });
-    }
-
-    function revealPosition(path, lineNumber, column) {
-      const normalizedPath = String(path || '');
-      const doc = getDoc(normalizedPath);
-      const line = Math.max(1, Number(lineNumber) || 1);
-      const col = Math.max(1, Number(column) || 1);
-      // A file showing in a secondary editor group (W5) moves that group's cursor.
-      const groupEditor = activePath !== normalizedPath ? editorShowing(normalizedPath) : null;
-      if (groupEditor) {
-        groupEditor.setPosition({ lineNumber: line, column: col });
-        groupEditor.revealPositionInCenter?.({ lineNumber: line, column: col });
-        groupEditor.focus?.();
-        return true;
-      }
-      if (!doc || activePath !== normalizedPath) {
-        return false;
-      }
-      if (monacoEditor && doc.model) {
-        monacoEditor.setPosition({ lineNumber: line, column: col });
-        monacoEditor.revealPositionInCenter?.({ lineNumber: line, column: col });
-        monacoEditor.focus();
-        return true;
-      }
-      const textarea = getDom().ideEditorFallback || null;
-      if (!textarea) {
-        return false;
-      }
-      const offset = editorReads.offsetForLineColumn(doc.buffer, line, col);
-      textarea.focus();
-      try {
-        textarea.setSelectionRange(offset, offset);
-      } catch (_error) {
-        /* selection is best-effort in the fallback editor */
-      }
-      return true;
-    }
-
-    // Captures the Monaco view state (cursor + scroll + folds) for a document.
-    // For the active doc the LIVE editor state is read (closeDocument disposes
-    // the model without saving, so this must run before close); for a
-    // backgrounded doc the value stashed on switch-away is returned. Powers
-    // reopen-closed-tab (Ctrl+Shift+T) restoring the cursor where it was left.
-    function getViewState(path) {
-      const normalizedPath = String(path || '');
-      const doc = getDoc(normalizedPath);
-      if (!doc) {
-        return null;
-      }
-      if (monacoEditor && activePath === normalizedPath && doc.model) {
-        return monacoEditor.saveViewState();
-      }
-      return doc.viewState || null;
-    }
-
-    function getViewLines(path) {
-      if (!isTextDocument(path)) return null;
-      const view = editorShowing(path)?.saveViewState?.() || getViewState(path);
-      return { line: view?.cursorState?.[0]?.position?.lineNumber || (activePath === path ? getCursorInfo()?.lineNumber : 1) || 1,
-        top: view?.viewState?.firstPosition?.lineNumber || 1 };
-    }
-    function revealTopLine(path, top, line) {
-      const doc = getDoc(path);
-      if (!doc) return false;
-      const end = doc.model?.getLineCount?.() || String(doc.buffer || '').split('\n').length;
-      const cursor = Math.min(end, Math.max(1, Number(line) || 1));
-      const editor = editorShowing(path);
-      if (!editor) return revealPosition(path, cursor, 1);
-      editor.setPosition({ lineNumber: cursor, column: 1 });
-      // Exact top, not revealLineNearTop: its gap above the line would move the
-      // saved first line a few lines up on every restart.
-      const topLine = Math.min(end, Math.max(1, Number(top) || 1));
-      if (typeof editor.getTopForLineNumber === 'function') editor.setScrollTop(editor.getTopForLineNumber(topLine));
-      return true;
-    }
-    // Restores a captured view state onto a document - immediately when active,
-    // otherwise stashed for the next activation. No-op without Monaco.
-    function applyViewState(path, viewState) {
-      const normalizedPath = String(path || '');
-      const doc = getDoc(normalizedPath);
-      if (!doc || !viewState) {
-        return false;
-      }
-      doc.viewState = viewState;
-      editorShowing(normalizedPath)?.restoreViewState?.(viewState);
-      return true;
     }
 
     // The indent width of `path`, by default the focused editor's file (a secondary
@@ -883,25 +595,17 @@
       // Release font handles first: the observer must not reach an editor
       // that the sweep below is about to tear down.
       fonts.release();
-      focusedGroupEditor = null;
-      for (const editor of [...groupEditors.keys()]) releaseGroupEditor(editor);
+      groupEditors.releaseAll();
       groupDiffs.dispose();
-      editorActions.clear();
+      groupEditors.clearActions();
       // Detach both editors before the model sweep (same Monaco assert as closeDocument).
-      diffEditor?.setModel?.(null); monacoEditor?.setModel?.(null);
+      diffPane.detachModel(); monacoEditor?.setModel?.(null);
       documents.disposeAllModels();
       panes?.dispose();
       documents.clear();
       monacoEditor?.dispose?.();
       monacoEditor = null; markerSubscription?.dispose?.(); markerSubscription = null;
-      diffRevealSubscription?.dispose?.();
-      diffRevealSubscription = null;
-      diffEditor?.dispose?.();
-      diffEditor = null;
-      diffPane?.remove?.();
-      diffPane = null;
-      diffEditorEl = null;
-      diffPlaceholderEl = null;
+      diffPane.dispose();
       activePath = '';
       lastAppliedLargeFile = null;
     }
@@ -960,6 +664,7 @@
       openBinaryDocument,
       openDiffDocument,
       openDocument,
+      openDraftDocument,
       openImageDocument,
       revealPosition,
       revealTopLine,
@@ -967,6 +672,7 @@
       setEditorOptions,
       setBookmarkDecorations,
       setEol,
+      setFollowDecorations: (path, decorations) => setLaneDecorations(path, 'followDecorationIds', decorations),
       setGutterDecorations,
       setTabSize,
       // Status-bar pickers: session-only per-tab language / indentation / encoding info.
@@ -979,6 +685,7 @@
       setWordWrap,
       showEmpty,
       triggerGoToLine,
+      writeDraftDocument,
     };
   }
 

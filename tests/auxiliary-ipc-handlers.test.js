@@ -3,10 +3,8 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  normalizeRuntimeToolStatusMap,
-  registerAuxiliaryIpcHandlers,
-} = require('../services/auxiliary-ipc-handlers');
+const { registerAuxiliaryIpcHandlers } = require('../services/auxiliary-ipc-handlers');
+const { normalizeRuntimeToolStatusMap } = require('../services/ipc-validation-helpers');
 const { getBridgeChannel } = require('../services/ipc-contract');
 const { CONTEXT_LENGTH_STEPS } = require('../services/shell-config-compaction-tuning');
 

@@ -33,6 +33,41 @@ TOOL_SEARCH_TOOL_NAME = "tool_search"
 # ``JENNY_ENABLE_JENNY_HELP_DEFER=0`` offers them in full again.
 ALWAYS_DEFERRED_TOOL_NAMES = frozenset({"jenny_help"})
 JENNY_HELP_DEFER_FLAG = "JENNY_ENABLE_JENNY_HELP_DEFER"
+# Owner decision 2026-11-10 (tool review, row 129): tools a month of real chats never or
+# almost never called, each with another route to the same result. ``tst-auto`` defers the
+# eligible ones the same way; the model still sees their names in the "not loaded" line.
+# ``JENNY_ENABLE_RARE_TOOL_DEFER=0`` offers them in full again.
+RARELY_USED_DEFERRED_TOOL_NAMES = frozenset(
+    {
+        "app_view",
+        "automation_list",
+        "check_monitor",
+        "connections_list",
+        "knowledge_exec",
+        "lsp",
+        "monitor",
+        "session_export",
+        "terminal_read",
+        "terminal_run",
+        "todo_read",
+        "workspace_change_baseline",
+        "workspace_change_delta",
+        "workspace_manifest_read",
+        "workspace_present",
+        "worktree_create",
+        "worktree_delete",
+        "worktree_list",
+        "worktree_select",
+    }
+)
+RARE_TOOL_DEFER_FLAG = "JENNY_ENABLE_RARE_TOOL_DEFER"
+# A tool that is only useful after another one: loading the first loads these too,
+# so the follow-up call is not refused as "not loaded".
+DEFERRED_TOOL_COMPANIONS: dict[str, tuple[str, ...]] = {
+    "monitor": ("check_monitor",),
+    "terminal_run": ("terminal_read",),
+    "workspace_change_baseline": ("workspace_change_delta",),
+}
 
 # Scoring weights
 SCORE_EXACT_ID = 100
@@ -311,6 +346,11 @@ class ToolSearchIndex:
                 scored.append(ScoredTool(name=entry.name, score=s, description=entry.description))
 
         scored.sort(key=lambda t: t.score, reverse=True)
+        # When some tool matched on its own name, a tool that only mentions the words in its
+        # description is noise: "git commit" used to load every tool that mentions Git (row 129).
+        description_only = len(all_terms) * SCORE_DESCRIPTION
+        if scored and scored[0].score > len(all_terms) * SCORE_SEARCH_HINT:
+            scored = [tool for tool in scored if tool.score > description_only]
         return scored[:max_results]
 
     def select(self, names: list[str]) -> list[ScoredTool]:
@@ -350,6 +390,28 @@ def always_deferred_tools_enabled() -> bool:
     return read_environment_value(JENNY_HELP_DEFER_FLAG, "1") != "0"
 
 
+RUNTIME_CHILD_TOOLS_FLAG = "JENNY_ENABLE_RUNTIME_CHILD_TOOLS"
+
+
+def runtime_child_tools_offered() -> bool:
+    """Whether the child-task tools are offered at all (off unless the flag is 1)."""
+    from sidecar.ai.config import read_environment_value
+
+    return read_environment_value(RUNTIME_CHILD_TOOLS_FLAG, "0") == "1"
+
+
+def always_deferred_tool_names() -> frozenset[str]:
+    """The built-in tools ``tst-auto`` defers under the threshold, by kill switch."""
+    from sidecar.ai.config import read_environment_value
+
+    names: frozenset[str] = frozenset()
+    if always_deferred_tools_enabled():
+        names |= ALWAYS_DEFERRED_TOOL_NAMES
+    if read_environment_value(RARE_TOOL_DEFER_FLAG, "1") != "0":
+        names |= RARELY_USED_DEFERRED_TOOL_NAMES
+    return names
+
+
 def compute_deferral_set(
     mode: DeferralMode,
     all_descriptors: Sequence[Any],
@@ -376,11 +438,8 @@ def compute_deferral_set(
         return frozenset(d.name for d in candidates)
 
     # TST_AUTO: defer only when MCP tool description tokens exceed threshold
-    always_deferred = (
-        frozenset(d.name for d in candidates if d.name in ALWAYS_DEFERRED_TOOL_NAMES)
-        if always_deferred_tools_enabled()
-        else frozenset()
-    )
+    always_names = always_deferred_tool_names()
+    always_deferred = frozenset(d.name for d in candidates if d.name in always_names)
     if context_window <= 0 or tool_token_threshold_pct <= 0:
         return always_deferred
     estimated_tokens = sum(

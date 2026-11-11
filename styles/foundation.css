@@ -19,7 +19,7 @@
   src: url("../assets/fonts/anastasia.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: block;
 }
 
 :root {
@@ -47,6 +47,15 @@
   --text-active: var(--accent-strong);
   --accent-cyan: #16e9ff;
   --accent-amber: #f3b537;
+  /* Editor colours read by the Monaco theme bridge; every palette sheet sets its own eight. */
+  --syntax-keyword: #8b9dff;
+  --syntax-string: #7be0b0;
+  --syntax-comment: #7b7a92;
+  --syntax-number: #f3b537;
+  --syntax-function: #16e9ff;
+  --syntax-type: #c4a6ff;
+  --syntax-variable: #b3b2c8;
+  --syntax-constant: #ff8aa8;
   /* File-map language tints (dark-palette defaults; light palettes override).
      Never --state-*: those belong to Health and git decorations. */
   --atlas-lang-js: #d9c98a;
@@ -59,8 +68,6 @@
   --atlas-lang-other: #858d98;
   --holo-periwinkle: #95adff;
   --holo-lavender: #d3a2ff;
-  --holo-pink: #ff79d7;
-  --holo-cyan: #66f7ff;
   --reactive-grid-motion-scale: 1;
   --reactive-grid-cell-size: 24px;
   --reactive-grid-hit-radius: 170;
@@ -244,24 +251,15 @@
   --surface-input-background: rgba(14, 16, 24, 0.92);
   --surface-input-background-strong: rgba(11, 13, 20, 0.78);
   --surface-toolbar-background: rgba(17, 19, 28, 0.88);
-  --surface-prompt-chip-background: rgba(255, 255, 255, 0.035);
-  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.06);
-  --surface-prompt-chip-border: rgba(128, 139, 186, 0.15);
-  --surface-prompt-chip-border-hover: rgba(109, 130, 255, 0.28);
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(18, 24, 39, 0.96), rgba(11, 16, 28, 0.96)),
     radial-gradient(circle at top left, rgba(86, 146, 255, 0.1), transparent 48%);
-  --surface-notice-background:
-    linear-gradient(180deg, rgba(61, 49, 32, 0.72), rgba(41, 32, 22, 0.7)),
-    rgba(24, 20, 16, 0.68);
   --surface-composer-inner:
     linear-gradient(180deg, rgba(33, 37, 51, 0.94), rgba(25, 28, 40, 0.97)),
     rgba(18, 20, 30, 0.94);
   --surface-composer-signal-background: rgba(16, 21, 34, 0.78);
   --surface-composer-mode-background: rgba(16, 21, 34, 0.72);
-  --surface-user-bubble-background: linear-gradient(180deg, rgba(42, 47, 65, 0.96), rgba(31, 35, 50, 0.98));
   --surface-auth-overlay: rgba(6, 7, 12, 0.76);
-  --surface-auth-card: linear-gradient(180deg, rgba(28, 31, 45, 0.98), rgba(18, 20, 31, 0.98));
   --surface-popover-background: linear-gradient(180deg, rgba(29, 34, 52, 0.98), rgba(18, 22, 34, 0.98));
   --surface-popover-row: rgba(48, 54, 80, 0.44);
   --surface-popover-row-hover: rgba(71, 81, 122, 0.56);
@@ -279,8 +277,6 @@
    * theme resolves it with no per-palette declarations. */
   --side-panel-gutter: 16px;
   --side-panel-bg: color-mix(in srgb, var(--bg-base) 60%, var(--bg-surface));
-  --surface-dev-row-background: rgba(18, 31, 43, 0.5);
-  --surface-dev-row-border: rgba(123, 211, 226, 0.16);
   --artifact-surface-shell-bg:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 66%, transparent), color-mix(in srgb, var(--bg-base) 96%, transparent)),
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 44%),
@@ -312,32 +308,24 @@
   --artifact-surface-action-border: color-mix(in srgb, var(--border-default) 78%, transparent);
   --artifact-surface-action-hover-bg: color-mix(in srgb, var(--bg-surface) 84%, transparent);
   --artifact-surface-action-hover-border: color-mix(in srgb, var(--accent) 26%, var(--border-default));
-  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent-cyan) 22%, transparent);
 
   /* ── Material hierarchy (semantic aliases) ── */
 
   /* Chrome: structural shell, quietest surfaces */
   --mat-chrome-bg: var(--surface-titlebar-background);
-  --mat-chrome-border: var(--border-subtle);
-  --mat-chrome-text: var(--text-secondary);
-  --mat-chrome-accent: var(--text-primary);
 
   /* Work: primary content, highest contrast */
   --mat-work-bg: var(--surface-body-background);
-  --mat-work-border: var(--border-default);
   --mat-work-text: var(--text-primary);
-  --mat-work-accent: var(--text-secondary);
 
   /* Live: state-reactive, slightly elevated */
   --mat-live-bg: var(--surface-sidebar-background);
   --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 10%, var(--border-subtle));
-  --mat-live-text: var(--text-primary);
   --mat-live-accent: var(--accent-cyan);
 
   /* Ephemeral: overlays, highest z, strongest depth cues */
   --mat-ephemeral-bg: var(--surface-popover-background);
   --mat-ephemeral-border: var(--border-default);
-  --mat-ephemeral-text: var(--text-primary);
   --mat-ephemeral-shadow: var(--border-strong);
 
   /* ── Semantic color tokens ── */
@@ -345,7 +333,6 @@
   --text-danger-soft: #ffbfca;
   --text-accent-soft: #dbe3ff;
   --text-success-soft: #d8fff0;
-  --status-gradient-end: #ffd080;
   --text-danger-emphasis: #ff9ea7;
 
   /* ── Shadow elevation scale ── */

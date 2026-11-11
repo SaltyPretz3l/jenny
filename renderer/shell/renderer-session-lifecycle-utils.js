@@ -6,6 +6,32 @@
   root.rendererSessionLifecycleUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
+  // A running delegation's per-child state lives on a renderer-only message
+  // that a chat refetch replaces. Main keeps each child's latest lifecycle on
+  // the live active turn; these frames put it back through normal dispatch.
+  // A call whose report already landed renders from that report instead.
+  function buildDelegateRestorePayloads(snapshot, sessionId, streamId, messages) {
+    const children = Array.isArray(snapshot?.delegate_children) ? snapshot.delegate_children : [];
+    if (!streamId || !children.length) return [];
+    const settledCalls = new Set((Array.isArray(messages) ? messages : [])
+      .map((message) => String(message?.tool_result?.call_id || '').trim()).filter(Boolean));
+    const turnId = String(snapshot.turn_id || streamId).trim();
+    return children
+      .filter((child) => !settledCalls.has(child.tool_call_id))
+      .sort((left, right) => (Number(left.updated_at_ms) || 0) - (Number(right.updated_at_ms) || 0))
+      .map((child) => ({
+        type: 'agent_status', restored: true, sessionId, streamId, turnId,
+        taskType: 'sub_agent', taskId: child.task_id, source: child.source, status: child.status,
+        summary: child.summary, agentId: child.agent_id, toolCallId: child.tool_call_id,
+        childTaskId: child.child_task_id, childAgentId: child.child_agent_id,
+        childOrdinal: child.ordinal, childCount: child.count, childLabel: child.label,
+        childTerminal: child.child_terminal === true, childSuccess: child.child_success === true,
+        model: child.model, reasoningEffort: child.reasoning_effort,
+        usage: child.usage, terminalReason: child.terminal_reason,
+        startedAt: child.started_at_ms, updatedAt: child.updated_at_ms,
+      }));
+  }
+
   function createSessionLifecycleController(deps) {
     const { state } = deps;
     // F37: a sessions.list() response older than one already applied is stale.
@@ -61,7 +87,7 @@
       }
     }
 
-    async function rehydrateActiveTurnState(sessionId) {
+    async function rehydrateActiveTurnWaits(sessionId) {
       const normalizedSessionId = String(sessionId || '').trim();
       if (!normalizedSessionId || typeof jennyShell.chat?.getActiveTurnState !== 'function') {
         return null;
@@ -196,6 +222,20 @@
       const multiStreamController = getMultiStreamController();
       if (streamId) {
         multiStreamController?.registerStream?.(normalizedSessionId, streamId);
+      }
+      return snapshot;
+    }
+
+    // Delegate rows go last: the approval path above can refetch the chat, and
+    // a refetch replaces the renderer-only message that holds them.
+    async function rehydrateActiveTurnState(sessionId) {
+      const snapshot = await rehydrateActiveTurnWaits(sessionId);
+      const normalizedSessionId = String(sessionId || '').trim();
+      const delegatePayloads = buildDelegateRestorePayloads(snapshot, normalizedSessionId,
+        String(snapshot?.stream_id || snapshot?.request_id || '').trim(),
+        state.messagesBySession?.get?.(normalizedSessionId));
+      if (delegatePayloads.length) {
+        rehydrateLiveTurnState(normalizedSessionId, { pendingPayloads: delegatePayloads, skipSeed: true });
       }
       return snapshot;
     }

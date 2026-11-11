@@ -8,8 +8,8 @@
  *     (renderer-html-artifact-frame-utils.js: staged jenny-artifact:// src +
  *     sandbox="allow-scripts", CSP default-src 'none') — NEVER the DOMPurify
  *     inline artifact path.
- *     v1 previews self-contained documents only; the chrome states that
- *     external CSS/JS/images/network are not loaded. Buffer edits rebuild the
+ *     Linked workspace files are built into the page first (the html surface
+ *     module); web addresses and network stay blocked. Buffer edits rebuild the
  *     frame on a longer debounce so the postMessage height handshake can
  *     settle (the artifact renderer's churn lesson); a busy/never-reporting
  *     frame lands in a bounded "stopped responding" state via the frame
@@ -68,8 +68,6 @@
   // they debounce longer than markdown to leave it an uninterrupted window.
   const HTML_DEBOUNCE_MS = 600;
 
-  const SELF_CONTAINED_NOTE = jt('ide.previewStage.selfContainedNote', 'Self-contained preview — external stylesheets, scripts, images, and network requests are not loaded.');
-
   function createIdePreviewStage(deps) {
     const d = deps || {};
     const getDom = typeof d.getDom === 'function' ? d.getDom : () => ({});
@@ -82,16 +80,22 @@
     const appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : noop;
     const activateStage = typeof d.activateStage === 'function' ? d.activateStage : noop;
     const schedulePersist = typeof d.schedulePersist === 'function' ? d.schedulePersist : noop;
+    const isWatchActive = typeof d.isWatchActive === 'function' ? d.isWatchActive : () => false;
     const windowRef = d.windowRef || globalRef.window || globalRef;
+    const chrome = resolveModule('rendererIdePreviewStageChrome', './renderer-ide-preview-stage-chrome');
     const markdownUtils = resolveModule('markdownUtils', '../shared/markdown-utils');
     const frameUtils = resolveModule('rendererHtmlArtifactFrameUtils', './renderer-html-artifact-frame-utils');
+    const surfaceModule = resolveModule('rendererIdePreviewHtmlSurface', './renderer-ide-preview-html-surface');
+    const assetsUtils = resolveModule('rendererIdePreviewAssets', './renderer-ide-preview-assets');
 
     let disposed = false;
     let mounted = false;
     let barEl = null;
     let bodyEl = null;
-    let frameHandle = null;
+    let htmlSurface = null;
     let renderToken = 0;
+    // The render token of the latest HTML mount: frame events from older mounts are stale.
+    let mountedToken = 0;
     let lastRenderedSignature = '';
     let lastRequestedSignature = '';
     let pendingRequestSignature = '';
@@ -100,6 +104,9 @@
     let diskRevision = 0;
     // The text the body currently shows for a path: an unchanged buffer is not re-rendered.
     let shown = { path: '', text: null };
+    // Bar controller (inputs, Live cue, transient note); built on first mount.
+    let bar = null;
+    let onBarClick = null;
     // One pending render report for a workspace_present open(): settled by the
     // next render of that exact path (or replaced by a newer open()).
     let renderReport = null;
@@ -113,24 +120,6 @@
       try {
         callback(outcome);
       } catch (_error) { /* reporter owns its failures */ }
-    }
-
-    // External references the sandboxed frame never loads. DOMParser builds an
-    // inert document (no script runs, nothing fetches), so counting is safe.
-    function countExternalResources(text) {
-      const Parser = windowRef.DOMParser || globalRef.DOMParser;
-      if (typeof Parser !== 'function') {
-        return {};
-      }
-      try {
-        const doc = new Parser().parseFromString(text, 'text/html');
-        return {
-          external_scripts: doc.querySelectorAll('script[src]').length,
-          external_stylesheets: doc.querySelectorAll('link[rel~="stylesheet" i][href]').length,
-        };
-      } catch (_error) {
-        return {};
-      }
     }
 
     function extensionOf(path) {
@@ -181,12 +170,18 @@
       bodyEl.className = 'ide-preview-stage-body';
       hostEl.appendChild(barEl);
       hostEl.appendChild(bodyEl);
+      htmlSurface = surfaceModule.createPreviewHtmlSurface({ getBodyEl: () => bodyEl, windowRef, frameUtils, assetsUtils, editorHost, getWorkspaceFsApi });
+      bar = chrome.createBarController({ getBarEl: () => barEl, windowRef, ideStateUtils, escapeHtml, isWatchActive });
+      onBarClick = (event) => {
+        if (event.target?.closest?.('[data-preview-reload]')) reload();
+      };
+      barEl.addEventListener('click', onBarClick);
+      bodyEl.addEventListener('click', onBarClick);
       mounted = true;
     }
 
     function disposeFrame() {
-      frameHandle?.dispose?.();
-      frameHandle = null;
+      htmlSurface?.disposeFrames();
       shown = { path: '', text: null };
     }
 
@@ -197,35 +192,28 @@
       return text.length > MAX_PREVIEW_BYTES || previewUtf8Encoder.encode(text).length > MAX_PREVIEW_BYTES;
     }
 
-    function renderBar(path, kind, note) {
-      if (!barEl) {
-        return;
+    function clearTimer(timer) {
+      if (timer) windowRef.clearTimeout(timer);
+      return null;
+    }
+
+    function cardActionLabel(stateKind) {
+      if (stateKind === 'frame-failed' || stateKind === 'missing') {
+        return jt('ide.previewStage.tryAgain', 'Try again');
       }
-      const name = path
-        ? escapeHtml(typeof ideStateUtils.fileNameOf === 'function' ? ideStateUtils.fileNameOf(path) : path)
-        : '';
-      const title = path
-        ? `<span class="ide-preview-stage-name" title="${escapeHtml(path)}">${name}</span>`
-        : '<span class="ide-preview-stage-name ide-preview-stage-name--empty">' + escapeHtml(jt('ide.previewStage.title', 'Preview')) + '</span>';
-      const chip = kind
-        ? `<span class="ide-preview-stage-kind">${escapeHtml(kind === 'html' ? jt('ide.previewStage.sandboxedHtml', 'Sandboxed HTML') : 'Markdown')}</span>`
-        : '';
-      const noteHtml = note
-        ? `<span class="ide-preview-stage-note" data-preview-note>${escapeHtml(note)}</span>`
-        : '';
-      barEl.innerHTML = title + chip + noteHtml;
+      return stateKind === 'navigated-away' ? jt('ide.previewStage.reload', 'Reload preview') : '';
     }
 
     // Bounded state card. Every non-render outcome routes here — nothing
     // unsupported/binary/oversized is ever injected into a renderer.
     function renderState(path, stateKind, message) {
       settleRenderReport(path, { render: 'failed', detail: stateKind });
-      renderBar(path, '', '');
+      bar?.render(path, '', '', true);
       if (!bodyEl) {
         return;
       }
       disposeFrame();
-      bodyEl.innerHTML = `<div class="ide-preview-stage-state" data-preview-state="${escapeHtml(stateKind)}">${escapeHtml(message)}</div>`;
+      bodyEl.innerHTML = chrome.previewStateHtml({ stateKind, message, actionLabel: cardActionLabel(stateKind), escapeHtml });
     }
 
     // .mmd/.mermaid wraps as a mermaid fence so the SAME sanitize +
@@ -305,13 +293,18 @@
       return `${kindOf(path)}::${path}::${version}`;
     }
 
-    function completeRequest(requestSignature, renderedSignature = requestSignature) {
+    function abandonRequest(requestSignature) {
       if (pendingRequestSignature === requestSignature) pendingRequestSignature = '';
+    }
+
+    function completeRequest(requestSignature, renderedSignature = requestSignature) {
+      abandonRequest(requestSignature);
       lastRequestedSignature = requestSignature;
       lastRenderedSignature = renderedSignature;
     }
 
     async function renderPath(path) {
+      if (!mounted) return;
       if (renderReport && renderReport.path !== path) {
         settleRenderReport(renderReport.path, { render: 'cancelled' });
       }
@@ -330,12 +323,10 @@
         return;
       }
       const source = await readSource(path);
-      if (disposed || token !== renderToken) {
-        if (pendingRequestSignature === requestSignature) pendingRequestSignature = '';
-        return;
-      }
+      if (disposed || token !== renderToken) return abandonRequest(requestSignature);
       if (source.reason === 'stale') {
-        if (pendingRequestSignature === requestSignature) pendingRequestSignature = '';
+        abandonRequest(requestSignature);
+        bar.settle();
         return;
       }
       if (!source.ok) {
@@ -365,14 +356,19 @@
         renderState(path, 'binary', jt('ide.previewStage.binary', '“{path}” looks like a binary or non-UTF-8 file and can’t be previewed.', { path }));
         return;
       }
+      // Linked files are built in before the unchanged check, so editing one re-stages the page.
+      const built = kind === 'html' ? await htmlSurface.build(path, text) : null;
+      if (disposed || token !== renderToken) return abandonRequest(requestSignature);
+      const content = built ? built.html : text;
       completeRequest(requestSignature, source.signature || requestSignature);
       // A pending workspace_present report always gets a fresh render.
-      if (!bodyEl || (shown.path === path && shown.text === text && renderReport?.path !== path)) {
+      if (!bodyEl || (shown.path === path && shown.text === content && renderReport?.path !== path)) {
+        bar.settle();
         return;
       }
       if (kind === 'markdown') {
         disposeFrame();
-        renderBar(path, 'markdown', '');
+        bar.render(path, 'markdown', '', true);
         bodyEl.innerHTML = `<div class="ide-preview-content">${buildMarkdownHtml(path, text)}</div>`;
         // The chat's lazy mermaid pass (single shared runtime).
         markdownUtils.renderInlineMermaidBlocks?.(bodyEl.firstElementChild, { isStreaming: false });
@@ -380,45 +376,57 @@
         settleRenderReport(path, { render: 'loaded' });
         return;
       }
-      // kind === 'html': strict sandboxed iframe only. The frame factory owns
-      // the handshake timeout; its onFailure lands the bounded state.
-      renderBar(path, 'html', SELF_CONTAINED_NOTE);
-      disposeFrame();
-      bodyEl.innerHTML = '<div class="ide-preview-frame-host" data-preview-frame-host></div>';
-      const frameHost = bodyEl.firstElementChild;
+      // kind === 'html': strict sandboxed iframe only; its onFailure lands the bounded state.
+      bar.render(path, 'html', built.note, false, built.noteTitle);
       if (!frameUtils || typeof frameUtils.createHtmlArtifactFrame !== 'function') {
         renderState(path, 'unavailable', jt('ide.previewStage.frameUnavailable', 'The sandboxed HTML preview frame is unavailable in this build.'));
         return;
       }
-      const externalResources = renderReport?.path === path ? countExternalResources(text) : {};
-      shown = { path, text };
-      frameHandle = frameUtils.createHtmlArtifactFrame(frameHost, text, {
-        requestKey: path,
-        sizing: 'fill',
-        onSuccess: () => {
-          if (!disposed && token === renderToken) {
-            settleRenderReport(path, { render: 'loaded', ...externalResources });
-          }
+      const externalResources = renderReport?.path === path ? htmlSurface.countExternalResources(content) : {};
+      shown = { path, text: content };
+      mountedToken = token;
+      const isCurrent = () => !disposed && token === mountedToken;
+      htmlSurface.mount(path, content, {
+        onLinkBlocked: () => {
+          if (isCurrent()) bar.showNote(jt('ide.previewStage.linkBlocked', 'Links don’t open in the preview'));
         },
-        onFailure: (payload) => {
-          if (disposed || token !== renderToken) {
+        onNavigatedAway: () => {
+          if (!isCurrent()) return;
+          if (!bar.claimAutoReturn(path)) {
+            renderState(path, 'navigated-away', jt('ide.previewStage.navigatedAway', '“{path}” tried to open another page, and the preview can only show this file.', { path }));
             return;
           }
-          settleRenderReport(path, {
-            render: 'failed',
-            detail: typeof payload?.error === 'string' ? payload.error.trim().slice(0, 200) : RENDER_DETAIL.frameFailed,
-            ...externalResources,
-          });
-          // Relay the frame's own error text (script exceptions, staging
-          // failures) so a broken artifact names its defect instead of the
-          // generic card. renderState escapes the whole message — the text is
-          // attacker-influenced frame content.
-          const detail = typeof payload?.error === 'string' && payload.error.trim()
-            ? ` (${payload.error.trim().slice(0, 200)})`
-            : '';
+          bar.showNote(jt('ide.previewStage.wentBack', 'The page tried to leave, so the preview went back'));
+          reload();
+        },
+        onSuccess: () => {
+          if (!isCurrent()) return;
+          bar.markLive();
+          settleRenderReport(path, { render: 'loaded', ...externalResources });
+        },
+        onFailure: (payload) => {
+          if (!isCurrent()) return;
+          const error = typeof payload?.error === 'string' ? payload.error.trim().slice(0, 200) : null;
+          settleRenderReport(path, { render: 'failed', detail: error ?? RENDER_DETAIL.frameFailed, ...externalResources });
+          // The frame's own error text names a broken artifact's defect; renderState
+          // escapes it (attacker-influenced frame content).
+          const detail = error ? ` (${error})` : '';
           renderState(path, 'frame-failed', jt('ide.previewStage.frameFailed', 'The preview for “{path}” stopped responding or failed to render{detail}. Its scripts may be busy, or the document may rely on external resources that sandboxed previews never load.', { path, detail }));
         },
       });
+    }
+
+    // Re-renders the resolved path past every "unchanged" skip (Reload button, navigation auto-return).
+    function reload() {
+      if (disposed) return;
+      debounceTimer = clearTimer(debounceTimer);
+      lastRequestedSignature = '';
+      lastRenderedSignature = '';
+      pendingRequestSignature = '';
+      shown = { path: '', text: null };
+      htmlSurface?.resetScroll();
+      bar?.beginUpdating();
+      renderPath(resolveDisplayPath());
     }
 
     // Explicit open (context menu, workspace_present): pin the target and
@@ -452,6 +460,10 @@
       return applied;
     }
 
+    function refreshLiveCue() {
+      if (!disposed) bar?.refresh();
+    }
+
     // Called from the stage-surface controller's sync() on every renderIde.
     // Content re-renders only when the resolved target/version changed; a
     // hidden pass keeps the last DOM (keep-alive, like the map host).
@@ -472,43 +484,53 @@
       renderPath(path);
     }
 
-    // Editor-buffer live updates (wired from the controller's onModelChange
-    // choke point). Markdown keeps the W8 200ms debounce; HTML rebuilds the
-    // iframe on a longer one so the handshake can settle between keystrokes.
-    function handleModelChange(path) {
-      if (disposed || !path || resolveDisplayPath() !== path) {
-        return;
-      }
-      const ide = getIde() || {};
-      if (ideStateUtils.coerceStageSurface?.(ide.activeStageSurface) !== 'preview') {
-        return;
-      }
+    const isPreviewActive = () => ideStateUtils.coerceStageSurface?.((getIde() || {}).activeStageSurface) === 'preview';
+
+    function scheduleRender(path) {
       const delay = kindOf(path) === 'html' ? HTML_DEBOUNCE_MS : MARKDOWN_DEBOUNCE_MS;
-      if (debounceTimer) {
-        windowRef.clearTimeout(debounceTimer);
-      }
+      debounceTimer = clearTimer(debounceTimer);
+      bar?.beginUpdating();
       debounceTimer = windowRef.setTimeout(() => {
         debounceTimer = null;
-        if (!disposed) {
-          renderPath(resolveDisplayPath());
-        }
+        if (!disposed) renderPath(resolveDisplayPath());
       }, delay);
+    }
+
+    // True for a file the displayed page was built from (linked CSS, JS, images).
+    const isLinkedDependency = (path, target) => !!target && target !== path && kindOf(target) === 'html' && htmlSurface?.isDependency(path) === true;
+
+    // Editor-buffer live updates (wired from the controller's onModelChange
+    // choke point). Markdown keeps the W8 200ms debounce; HTML rebuilds on a
+    // longer one so the handshake can settle. A linked file re-renders its page.
+    function handleModelChange(path) {
+      if (disposed || !path) return;
+      const target = resolveDisplayPath();
+      const dependency = isLinkedDependency(path, target);
+      if (target !== path && !dependency) return;
+      // On stage the debounce re-renders; hidden, the next sync() must not skip.
+      if (isPreviewActive()) scheduleRender(target);
+      else if (dependency) lastRequestedSignature = '';
     }
 
     function handleExternalChange(change) {
       const path = typeof ideStateUtils.normalizeIdeRelativePath === 'function'
         ? ideStateUtils.normalizeIdeRelativePath(change?.relPath)
         : String(change?.relPath || '');
-      if (!path) return;
-      if (disposed || editorHost?.hasDocument?.(path) || resolveDisplayPath() !== path) return;
+      if (!path || disposed || editorHost?.hasDocument?.(path)) return;
+      const target = resolveDisplayPath();
+      if (isLinkedDependency(path, target)) {
+        handleModelChange(path);
+        return;
+      }
+      if (target !== path) return;
       if (diskRevisionPath !== path) {
         diskRevisionPath = path;
         diskRevision = 0;
       }
       diskRevision += 1;
-      const ide = getIde() || {};
-      if (ideStateUtils.coerceStageSurface?.(ide.activeStageSurface) !== 'preview') return;
+      if (!isPreviewActive()) return;
       lastRequestedSignature = '';
+      bar?.beginUpdating();
       renderPath(path);
     }
 
@@ -521,6 +543,7 @@
       pendingRequestSignature = '';
       diskRevisionPath = '';
       diskRevision = 0;
+      htmlSurface?.resetScroll();
       disposeFrame();
     }
 
@@ -532,10 +555,10 @@
       if (renderReport) settleRenderReport(renderReport.path, { render: 'cancelled' });
       renderToken += 1;
       getFileOperations()?.cancelPreviewIntents?.();
-      if (debounceTimer) {
-        windowRef.clearTimeout(debounceTimer);
-        debounceTimer = null;
-      }
+      debounceTimer = clearTimer(debounceTimer);
+      bar?.dispose();
+      barEl?.removeEventListener('click', onBarClick);
+      bodyEl?.removeEventListener('click', onBarClick);
       disposeFrame();
       barEl = null;
       bodyEl = null;
@@ -548,6 +571,8 @@
       handleModelChange,
       handleWorkspaceRootCommitted,
       open,
+      refreshLiveCue,
+      reload,
       sync,
     };
   }
@@ -556,7 +581,6 @@
     HTML_EXTENSIONS,
     MARKDOWN_EXTENSIONS,
     MAX_PREVIEW_BYTES,
-    SELF_CONTAINED_NOTE,
     SUPPORTED_LABEL,
     createIdePreviewStage,
   };

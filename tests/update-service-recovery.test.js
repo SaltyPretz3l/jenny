@@ -278,6 +278,29 @@ test('missing channel metadata falls back to manual discovery without claiming c
   assert.equal(service.getState().failureCount, 0);
 });
 
+test('an unpacked build without app-update.yml checks GitHub releases instead of the updater', async (t) => {
+  const updateConfigPath = path.join(createTrackedTempDir('update-config-'), 'app-update.yml');
+  const { service, updater } = fixture(t, { updateConfigPath, releaseClient: async () =>
+    ({ latestVersion: '1.0.2', packageAvailable: true }) });
+  let updaterChecks = 0;
+  updater.checkForUpdates = async () => {
+    updaterChecks += 1;
+    throw Object.assign(new Error('no config'), { code: 'ENOENT' });
+  };
+  assert.match(service.getState().installUnavailableReason, /unpacked build/);
+  const state = await service.check();
+  assert.equal(state.status, 'manual');
+  assert.equal(state.latestVersion, '1.0.2');
+  assert.equal(state.autoUpdateAllowed, false);
+  assert.equal(state.canDownload, false);
+  assert.equal(state.failureCount, 0);
+  assert.equal(updaterChecks, 0);
+
+  fs.writeFileSync(updateConfigPath, 'provider: github\n');
+  const installed = fixture(t, { updateConfigPath }).service;
+  assert.equal((await installed.check()).status, 'available');
+});
+
 test('an updater check has a total deadline and ignores its late settlement', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { service, updater, info } = fixture(t);

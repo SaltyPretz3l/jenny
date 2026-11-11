@@ -156,7 +156,7 @@
 
     async function reuseChat(sessionId, navigationGuard) {
       followChatsProjectFilter(sessionId);
-      await activateWorkspaceSession(sessionId, { silent: true, mode: 'new-tab', navigationGuard });
+      await activateWorkspaceSession(sessionId, { silent: true, navigationGuard });
       if (navigationGuard.isCurrent() && text(state.currentSessionId) === sessionId) focusComposer();
       renderWorkspaceChrome();
       appendClientLog('INFO', 'sessions.new_chat_reused', { sessionId });
@@ -186,9 +186,9 @@
       followChatsProjectFilter(createdSessionId);
       if (createdSessionId && navigationGuard.isCurrent()) {
         state.currentSessionId = createdSessionId;
-        // A brand-new chat always opens in its own tab, regardless of the
-        // open-in-new-tab preference (which only governs existing sessions).
-        await activateWorkspaceSession(createdSessionId, { silent: true, mode: 'new-tab', navigationGuard });
+        // A new chat follows the open-in-new-tab preference like any other
+        // open, so by default it takes the active tab's place.
+        await activateWorkspaceSession(createdSessionId, { silent: true, navigationGuard });
         renderWorkspaceChrome();
       }
       return createdSessionId;

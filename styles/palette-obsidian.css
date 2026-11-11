@@ -27,7 +27,6 @@
   --text-danger-soft: #ff9aa6;
   --text-success-soft: #7fe9c0;
   --text-danger-emphasis: #ff8d99;
-  --status-gradient-end: #f5b13a;
 
   /* ── Accents — a single vivid cyan signal owns chrome; the black canvas itself never gets a cyan wash ── */
   --accent: #1bd6ff;
@@ -39,8 +38,6 @@
   /* ── Holo palette — neon on black glass ── */
   --holo-periwinkle: #8aa2ff;
   --holo-lavender: #b78bff;
-  --holo-pink: #ff5cc8;
-  --holo-cyan: #3df0ff;
 
   /* ── Syntax tokens — vivid HUD set read by the Monaco theme bridge (scoped to Obsidian) ── */
   --syntax-keyword: #7aa2ff;
@@ -51,8 +48,6 @@
   --syntax-type: #36e0d0;
   --syntax-variable: #9cdcfe;
   --syntax-constant: #ff8197;
-
-  /* ── Doodle field — cyan circuitry on ink ── */
 
   /* ── Atomic burst — vivid cyan / violet / pink HUD ── */
   --widget-atomic-burst-color-a: rgba(61, 240, 255, 0.84);
@@ -74,6 +69,7 @@
   /* ── Reactive grid: achromatic idle, vivid cyan active ── */
   --widget-reactive-grid-dot-idle: rgba(168, 168, 176, 0.20);
   --widget-reactive-grid-dot-active: rgba(61, 240, 255, 0.98);
+  --reactive-grid-wave-contrast: 1.3;
 
   /* ── Playlist scroll ── */
   --playlist-scroll-line-color: rgba(168, 168, 176, 0.5);
@@ -135,18 +131,9 @@
   --surface-input-background-strong: rgba(8, 8, 10, 0.78);
   --surface-toolbar-background: rgba(15, 15, 18, 0.88);
 
-  --surface-prompt-chip-background: rgba(255, 255, 255, 0.04);
-  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.06);
-  --surface-prompt-chip-border: rgba(168, 168, 176, 0.16);
-  --surface-prompt-chip-border-hover: rgba(27, 214, 255, 0.34);
-
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(22, 22, 26, 0.96), rgba(11, 11, 14, 0.96)),
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.025), transparent 48%);
-
-  --surface-notice-background:
-    linear-gradient(180deg, rgba(48, 40, 16, 0.72), rgba(32, 26, 9, 0.7)),
-    rgba(24, 18, 7, 0.68);
 
   --surface-composer-inner:
     linear-gradient(180deg, rgba(22, 22, 26, 0.94), rgba(13, 13, 16, 0.97)),
@@ -154,38 +141,24 @@
   --surface-composer-signal-background: rgba(13, 13, 16, 0.78);
   --surface-composer-mode-background: rgba(13, 13, 16, 0.72);
 
-  --surface-user-bubble-background:
-    linear-gradient(180deg, rgba(28, 28, 33, 0.96), rgba(19, 19, 23, 0.98));
-
   --surface-auth-overlay: rgba(4, 4, 6, 0.80);
-  --surface-auth-card: linear-gradient(180deg, rgba(22, 22, 26, 0.98), rgba(13, 13, 16, 0.98));
 
   --surface-popover-background: linear-gradient(180deg, rgba(22, 22, 27, 0.98), rgba(14, 14, 17, 0.98));
   --surface-popover-row: rgba(42, 42, 48, 0.46);
   --surface-popover-row-hover: rgba(56, 56, 64, 0.58);
 
-  --surface-dev-row-background: rgba(22, 22, 26, 0.5);
-  --surface-dev-row-border: rgba(61, 240, 255, 0.16);
-
   /* ── Material hierarchy ── */
   --mat-chrome-bg: linear-gradient(90deg, rgba(20, 20, 24, 0.98), rgba(11, 11, 14, 0.98));
-  --mat-chrome-border: rgba(168, 168, 176, 0.10);
-  --mat-chrome-text: var(--text-secondary);
-  --mat-chrome-accent: var(--text-primary);
   --mat-work-bg:
     radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.02), rgba(12, 12, 14, 0) 30%),
     radial-gradient(circle at 84% 16%, rgba(255, 255, 255, 0.015), rgba(12, 12, 14, 0) 28%),
     #111114;
-  --mat-work-border: var(--border-default);
   --mat-work-text: var(--text-primary);
-  --mat-work-accent: var(--text-secondary);
   --mat-live-bg: var(--surface-sidebar-background);
   --mat-live-accent: var(--accent-cyan);
   --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
-  --mat-live-text: var(--text-primary);
   --mat-ephemeral-bg: var(--surface-popover-background);
   --mat-ephemeral-border: var(--border-default);
-  --mat-ephemeral-text: var(--text-primary);
   --mat-ephemeral-shadow:
     0 6px 24px rgba(0, 0, 0, 0.46),
     0 2px 6px rgba(0, 0, 0, 0.30);
@@ -202,8 +175,6 @@
   --widget-button-danger-bg: rgba(255, 110, 124, 0.14);
   --widget-button-danger-border: rgba(255, 110, 124, 0.28);
   --widget-button-danger-color: #ff9aa6;
-  --widget-button-session-bg: linear-gradient(180deg, #ffc56a, #f5b13a);
-  --widget-button-session-color: #2a1d00;
   --widget-close-hover-bg: #b24a4a;
   --widget-hero-avatar-bg: linear-gradient(180deg, #39ecff, #1bd6ff);
 
@@ -211,30 +182,17 @@
   --widget-item-active-bg: linear-gradient(180deg, rgba(27, 214, 255, 0.16), rgba(27, 214, 255, 0.04));
   --widget-item-active-border: rgba(27, 214, 255, 0.26);
   --widget-badge-bg: rgba(255, 255, 255, 0.04);
-  --widget-badge-border: rgba(168, 168, 176, 0.10);
-  --widget-badge-color: #b0b0b6;
-  --widget-badge-secondary-color: #74747c;
-  --widget-action-color: #b0b0b6;
   --widget-action-bg: rgba(255, 255, 255, 0.04);
-  --widget-action-border: rgba(168, 168, 176, 0.14);
   --widget-action-hover-bg: rgba(27, 214, 255, 0.14);
   --widget-action-hover-border: rgba(27, 214, 255, 0.32);
   --widget-action-hover-color: #fcfcfd;
-  --widget-action-delete-hover-bg: rgba(255, 110, 124, 0.14);
-  --widget-action-delete-hover-border: rgba(255, 110, 124, 0.28);
-  --widget-action-delete-hover-color: #ff9aa6;
   --widget-scrollbar-color: rgba(168, 168, 176, 0.28);
-  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(27, 214, 255, 0.20), rgba(61, 240, 255, 0.24));
-  --widget-collapsed-item-color: #04141b;
-  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(61, 240, 255, 0.92), rgba(27, 214, 255, 0.90));
 
   /* Chat & copy */
-  --widget-chat-meta-color: #74747c;
   --widget-chat-meta-error-color: #ff9aa6;
   --widget-copy-chip-bg: linear-gradient(180deg, rgba(22, 22, 26, 0.98), rgba(13, 13, 16, 0.98));
   --widget-copy-chip-border: rgba(168, 168, 176, 0.22);
   --widget-copy-chip-color: #dfe0e3;
-
 
   /* Rail J glyph */
   --widget-sprite-color: rgba(233, 233, 236, 0.94);
@@ -249,11 +207,7 @@
     linear-gradient(180deg, rgba(22, 22, 26, 0.84), rgba(13, 13, 16, 0.92)),
     radial-gradient(circle at left center, rgba(255, 255, 255, 0.02), transparent 55%);
   --widget-tool-border: rgba(168, 168, 176, 0.20);
-  --widget-tool-pending-border: rgba(245, 177, 58, 0.36);
-  --widget-tool-running-border: rgba(61, 240, 255, 0.36);
-  --widget-tool-error-border: rgba(255, 110, 124, 0.30);
   --widget-tool-color: #dfe0e3;
-  --widget-tool-name-color: #fcfcfd;
   --widget-tool-success-color: rgba(79, 224, 160, 0.92);
   --widget-tool-error-color: rgba(255, 125, 142, 0.9);
   --widget-tool-denied-color: rgba(140, 140, 150, 0.7);
@@ -267,9 +221,8 @@
   --widget-deny-border: rgba(168, 168, 176, 0.22);
   --widget-deny-color: rgba(233, 233, 236, 0.84);
 
-
   /* Composer — send pops cyan */
-  --widget-placeholder-color: #62626a;
+  --widget-placeholder-color: #82828a;
   --widget-placeholder-focus-color: #b0b0b6;
   --widget-composer-mode-active-bg: rgba(27, 214, 255, 0.20);
   --widget-send-bg: linear-gradient(180deg, #39ecff, #1bd6ff);
@@ -282,16 +235,13 @@
   --widget-select-hover-color: #fcfcfd;
   --widget-select-option-bg: var(--bg-surface);
   --widget-select-option-color: #dfe0e3;
-  --widget-composer-meta-color: #62626a;
+  --widget-composer-meta-color: #82828a;
   --widget-composer-scrollbar-color: rgba(168, 168, 176, 0.50);
   --widget-token-pill-bg: rgba(22, 22, 26, 0.66);
   --widget-token-pill-color: #b0b0b6;
-  --widget-jump-color: rgba(180, 180, 188, 0.84);
-  --widget-jump-hover-color: #fcfcfd;
 
   /* Interactive mode — cyan for active selection */
   --widget-interactive-card-border: rgba(168, 168, 176, 0.24);
-  --widget-interactive-pending-border: rgba(27, 214, 255, 0.34);
   --widget-interactive-intro-color: rgba(233, 233, 236, 0.92);
   --widget-interactive-option-bg: rgba(22, 22, 26, 0.36);
   --widget-interactive-option-border: rgba(168, 168, 176, 0.18);
@@ -318,14 +268,6 @@
   --settings-shell-panel-bg: var(--surface-card-background);
   --settings-shell-field-bg: var(--surface-input-background);
 
-  /* Personality */
-  --widget-personality-preview-color: rgba(224, 224, 228, 0.92);
-
-  /* Mermaid */
-
-  /* Artifact focus */
-  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
-
   /* Activity states */
   --widget-activity-pending-glow: rgba(27, 214, 255, 0.12);
   --widget-activity-pending-border: rgba(27, 214, 255, 0.50);
@@ -343,8 +285,6 @@
   --widget-attachment-clear-color: #74747c;
 
   /* Popover badge & stop */
-  --widget-popover-badge-active-bg: rgba(245, 177, 58, 0.20);
-  --widget-popover-badge-active-color: #f5b13a;
   --widget-stop-bg: rgba(255, 110, 124, 0.16);
   --widget-stop-color: #ff9aa6;
 

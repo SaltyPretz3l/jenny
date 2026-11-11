@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { executeSandboxCommand, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../services/execution/command-bridge');
+const { executeSandboxCommand, sandboxReady, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../services/execution/command-bridge');
 const { executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
 const { normalizeSandboxResultMetadata } = require('../services/backend/sandbox-result-metadata');
 const { normalizeCommandSandbox } = require('../services/shell-config-command-sandbox');
@@ -97,9 +97,13 @@ test('Electron indirect executable paths are fenced before plugin and checkpoint
   }
 });
 test('config migration fails closed on malformed present sandbox settings', () => {
-  assert.deepEqual(normalizeCommandSandbox(undefined), { enabled: false });
+  assert.deepEqual(normalizeCommandSandbox(undefined), { enabled: false, mode: 'synced' });
   for (const value of [null, {}, { enabled: 'false' }]) assert.equal(normalizeCommandSandbox(value).enabled, true);
   assert.equal(normalizeCommandSandbox({ enabled: false }).enabled, false);
+  // Row 106: an unknown mode never selects synced for a profile that already ran the copy.
+  assert.equal(normalizeCommandSandbox({ enabled: true }).mode, 'copy');
+  assert.equal(normalizeCommandSandbox({ enabled: true, mode: 'live' }).mode, 'copy');
+  assert.equal(normalizeCommandSandbox({ enabled: false, mode: 'copy' }).mode, 'copy');
 });
 test('persisted sandbox metadata has a bounded allowlist', () => {
   const result = normalizeSandboxResultMetadata({ execution: { backend: 'docker', status: 'completed',
@@ -180,5 +184,56 @@ test('cancelled bridge result persists before terminal settlement and releases t
 });
 
 test('the sandbox bridge passes every Electron-owned shell-free tool through (seam 17 of a new manifest tool)', () => {
-  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['app_view', 'ask_user', 'away_digest', 'chat_configure', 'chat_organize', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'jenny_help', 'project_create', 'project_notes', 'projects_list', 'propose_command', 'propose_session', 'run_command', 'schedule_change', 'schedule_list', 'session_export', 'session_status', 'session_stop', 'session_transcript', 'sessions_list', 'settings_change', 'settings_get', 'suggest_next_step', 'task_board', 'terminal_read']);
+  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['app_view', 'ask_user', 'away_digest', 'browser', 'chat_configure', 'chat_organize', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'jenny_help', 'project_create', 'project_notes', 'projects_list', 'propose_command', 'propose_session', 'run_command', 'schedule_change', 'schedule_list', 'session_export', 'session_status', 'session_stop', 'session_transcript', 'sessions_list', 'settings_change', 'settings_get', 'suggest_next_step', 'task_board', 'terminal_read']);
+});
+test('a refusal retrying cannot fix names its limits and is recorded for the card Run', async () => {
+  const { service, options } = fixture('auto');
+  service.commandSandbox.execute = async () => { throw Object.assign(new Error(), { reason: 'snapshot_limit' }); };
+  const result = await executeSandboxCommand(service, options);
+  assert.equal(result.success, false);
+  assert.equal(result.metadata.execution.reason, 'snapshot_limit');
+  assert.match(result.output, /too large to copy into the sandbox \(limits: 64 MiB, 2,048 files and folders, 32 levels deep\)/);
+  assert.match(result.output, /turn the command sandbox off in Settings/);
+  assert.deepEqual(service.lastSandboxFailure, { streamId: 'stream', reason: 'snapshot_limit' });
+  service.commandSandbox.execute = async () => { throw Object.assign(new Error(), { reason: 'sandbox_policy_changed' }); };
+  assert.equal((await executeSandboxCommand(service, options)).output, 'Docker sandbox: sandbox policy changed. No host command was run.');
+});
+test('sandboxReady accepts ready and busy only', () => {
+  for (const [state, ready] of [['ready', true], ['busy', true], ['unavailable', false], ['preparing', false],
+    ['recovery-required', false], ['disabled', false]]) {
+    assert.equal(sandboxReady({ commandSandbox: { state } }), ready, state);
+  }
+  assert.equal(sandboxReady({}), false);
+});
+
+// 2026-11-03 Rust session: `rustc` was missing from the image; behind `| tail` it read as
+// success, and a bare exit 127 came back classed as an internal error.
+function completedRun(result) {
+  const setup = fixture('auto');
+  setup.service.commandSandbox.execute = async (_args, _context, authorize) => {
+    (await authorize({ command_digest: 'test' }, () => {})).validate();
+    return { status: 'completed', cleanup_confirmed: true, ...result };
+  };
+  return executeSandboxCommand(setup.service, setup.options);
+}
+test('a completed run reports its exit code and a non-zero exit as the command\'s own result', async () => {
+  const failed = await completedRun({ success: false, stdout: 'error[E0599]: no method', exit_code: 1 });
+  assert.equal(failed.success, false);
+  assert.match(failed.output, /\[exit code 1\]$/u);
+  assert.equal(failed.metadata.failure_class, 'precondition_unmet');
+  assert.match(failed.metadata.remediation, /exited with code 1\. That is the command's own result/u);
+  assert.doesNotMatch(failed.output, /sandbox image has only/u);
+
+  const passed = await completedRun({ success: true, stdout: 'ok', exit_code: 0 });
+  assert.equal(passed.output, 'ok\n[exit code 0]');
+  assert.equal(passed.metadata.failure_class, undefined);
+});
+test('a program missing from the sandbox image is named, even when a pipe hides the exit code', async () => {
+  const masked = await completedRun({ success: true, stdout: '/bin/sh: 1: rustc: not found', exit_code: 0 });
+  assert.match(masked.output, /sandbox image has only Node\.js \(node, npm, npx, yarn\) and Python 3; rustc is not installed there/u);
+  assert.match(masked.output, /turn the command sandbox off in Settings/u);
+
+  const bare = await completedRun({ success: false, stderr: '', exit_code: 127 });
+  assert.match(bare.output, /sandbox image has only Node\.js .* and Python 3\. Give the user/u);
+  assert.equal(bare.metadata.failure_class, 'precondition_unmet');
 });

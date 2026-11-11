@@ -125,6 +125,24 @@ jobs:
       - name: Build sidecar artifact (this OS)
         run: python scripts/packaging/build_sidecar_artifact.py
 
+      # One pinned Rust toolchain on every OS (crate minimum 1.91; the lockfile was resolved
+      # and tested on this version). Bump it here, in the other leg and in the Linux mirror together.
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          rustc --version
+          cargo --version
+
+      - name: Build native launcher (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/packaging/build_native_launcher.py
+
+      # The Rust team bridge ships as resources/sidecar/jenny-team-bridge on every OS.
+      - name: Build team bridge
+        run: python scripts/packaging/build_team_bridge.py
+
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
 
@@ -151,8 +169,41 @@ jobs:
             fi
           done
 
+      # Azure Artifact Signing is opt-in: on only when every JENNY_AZURE_SIGNING_*
+      # repository variable and AZURE_* secret is set, unsigned when none is, and
+      # a failed build when only some are (scripts/packaging/windows_signing.py).
+      - name: Configure Windows signing
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          JENNY_AZURE_SIGNING_ENDPOINT: ${{ vars.JENNY_AZURE_SIGNING_ENDPOINT }}
+          JENNY_AZURE_SIGNING_ACCOUNT: ${{ vars.JENNY_AZURE_SIGNING_ACCOUNT }}
+          JENNY_AZURE_SIGNING_PROFILE: ${{ vars.JENNY_AZURE_SIGNING_PROFILE }}
+          JENNY_AZURE_SIGNING_PUBLISHER: ${{ vars.JENNY_AZURE_SIGNING_PUBLISHER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: python scripts/packaging/windows_signing.py config --out "$RUNNER_TEMP/signed-build-config.json"
+
       - name: Build installer without publishing
-        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish never
+        shell: bash
+        env:
+          # Read by the TrustedSigning PowerShell module that electron-builder runs.
+          AZURE_TENANT_ID: ${{ runner.os == 'Windows' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ runner.os == 'Windows' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ runner.os == 'Windows' && secrets.AZURE_CLIENT_SECRET || '' }}
+        run: |
+          config=electron-builder.yml
+          if [ -f "$RUNNER_TEMP/signed-build-config.json" ]; then
+            config="$RUNNER_TEMP/signed-build-config.json"
+          fi
+          npm exec -- electron-builder ${{ matrix.eb_flag }} --config "$config" --publish never
+
+      # Off (passes) when the configure step wrote no signed config.
+      - name: Verify Windows signatures
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python scripts/packaging/windows_signing.py verify --config "$RUNNER_TEMP/signed-build-config.json" --dist dist
 
       - name: Verify Apple Silicon release artifacts
         if: runner.os == 'macOS'
@@ -279,6 +330,20 @@ jobs:
       - name: Build sidecar artifact (Linux)
         run: python scripts/packaging/build_sidecar_artifact.py
 
+      # One pinned Rust toolchain on every OS (crate minimum 1.91; the lockfile was resolved
+      # and tested on this version). Bump it here, in the other leg and in the Linux mirror together.
+      - name: Install pinned Rust toolchain (Linux)
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+
+      # The Rust team bridge ships as resources/sidecar/jenny-team-bridge on every OS.
+      - name: Build team bridge
+        run: python scripts/packaging/build_team_bridge.py
+
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
 
@@ -294,6 +359,7 @@ jobs:
           binaries=(
             dist/linux-unpacked/jenny
             dist/linux-unpacked/resources/sidecar/sidecar
+            dist/linux-unpacked/resources/sidecar/jenny-team-bridge
           )
           for bundled in dist/linux-unpacked/chrome-sandbox dist/linux-unpacked/chrome_crashpad_handler dist/linux-unpacked/*.so*; do
             if [ -f "$bundled" ]; then binaries+=("$bundled"); fi

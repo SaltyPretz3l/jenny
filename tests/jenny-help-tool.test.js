@@ -9,7 +9,8 @@ const { createAppGuideService } = require('../services/app-guide-service');
 const manifest = require('../services/tools/tool-manifest.json');
 
 const PERMISSIONS = { getSnapshot: () => ({ version: 1, legacy_policies: {}, rules: [] }) };
-const output = result => JSON.parse(result.content);
+const { parseToolOutput } = require('./helpers/refusal-output');
+const output = parseToolOutput;
 
 function fakeGuide() {
   const calls = [];

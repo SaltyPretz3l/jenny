@@ -19,12 +19,12 @@ const {
 const WORKSPACE_ID = `root_${'a'.repeat(24)}`;
 
 function makeController(overrides = {}) {
-  const dom = new JSDOM('<div id="ideMain"></div>');
+  const dom = new JSDOM(`<div id="ideMain"></div><textarea id="chatInput">${overrides.draft || ''}</textarea>`);
   const ideMain = dom.window.document.getElementById('ideMain');
   const calls = {
     previews: [], maps: 0, reveals: [], logs: [],
     diffs: [], panels: 0, toasts: [], subscribed: 0, unsubscribed: 0,
-    reports: [], previewOptions: [],
+    reports: [], previewOptions: [], files: [],
   };
   let clock = 100_000;
   const timers = [];
@@ -56,7 +56,7 @@ function makeController(overrides = {}) {
     },
   };
   const controller = createWorkspacePresentationController({
-    getDom: () => ({ ideMain }),
+    getDom: () => ({ ideMain, chatInput: dom.window.document.getElementById('chatInput') }),
     windowRef,
     escapeHtml: (v) => String(v == null ? '' : v).replace(/[<>&"]/g, ''),
     appendClientLog: (level, event, meta) => calls.logs.push({ level, event, meta }),
@@ -67,6 +67,7 @@ function makeController(overrides = {}) {
     },
     openFileMap: () => { calls.maps += 1; },
     revealInMap: (path) => calls.reveals.push(path),
+    openFileAtLine: (path, line) => { calls.files.push([path, line]); return true; },
     getSessionId: overrides.getSessionId || (() => 'session-1'),
     getWorkspaceId: overrides.getWorkspaceId || (() => WORKSPACE_ID),
     getChangeLedger: overrides.getChangeLedger || (() => ({ changes: [] })),
@@ -246,6 +247,27 @@ test('missing change-diff integration degrades without opening or throwing', (t)
   assert.equal(h.calls.panels, 1);
   assert.equal(h.calls.toasts.length, 1);
   assert.ok(h.calls.logs.some((entry) => entry.event === 'workspace_presentation.change_context_rejected'));
+});
+
+test('a file request opens from an idle chat; a draft or any other view still waits', (t) => {
+  const idle = makeController({ getActiveView: () => 'chat' });
+  const draft = makeController({ getActiveView: () => 'chat', draft: 'half a sentence' });
+  t.after(() => { idle.controller.dispose(); draft.controller.dispose(); });
+
+  idle.controller.handleRequest({ view: 'file', path: 'src/app.js', line: 40 });
+  idle.fireTimers();
+  assert.deepEqual(idle.calls.files, [['src/app.js', 40]]);
+  assert.equal(idle.chip(), null);
+
+  idle.controller.handleRequest({ view: 'preview', path: 'docs/plan.md' });
+  idle.advance(1000);
+  idle.fireTimers();
+  assert.deepEqual(idle.calls.previews, [], 'a preview never pulls the reader out of the chat');
+
+  draft.controller.handleRequest({ view: 'file', path: 'src/app.js', line: 40 });
+  draft.fireTimers();
+  assert.deepEqual(draft.calls.files, []);
+  assert.ok(draft.chip());
 });
 
 test('recent typing defers to the non-stealing chip; Show applies user-initiated', (t) => {

@@ -34,7 +34,8 @@ const { normalizeString } = require('../../shared/normalize');
 const {
   extensionOf,
   realpathSafe,
-  toRelativePosix,
+  resolveWorkspaceRelative,
+  unsafePathMessage,
 } = require('../../shared/workspace-tool-helpers');
 const { manifestSchema, toolFailure } = require('./tool-result');
 const { workspaceRootId } = require('../../workspace-root-identity');
@@ -310,7 +311,7 @@ function createWorkspacePresentTool({
 
     // 4. Path (required for preview/change_diff/file; optional reveal target for file_map).
     const rawPath = normalizeString(input?.path);
-    const relPath = toRelativePosix(rawPath);
+    const relPath = await resolveWorkspaceRelative(rawPath, { root: workingDirectory, fsLike });
     if (view !== 'file_map' && !rawPath) {
       return failure({
         reason: 'path_required',
@@ -321,7 +322,7 @@ function createWorkspacePresentTool({
     if (rawPath && !relPath) {
       return failure({
         reason: 'unsafe_path',
-        message: 'The requested file is not identified by a safe workspace-relative path.',
+        message: unsafePathMessage(),
         summary: 'Unsafe path',
       });
     }

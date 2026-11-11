@@ -36,6 +36,9 @@ SEAM_PREFIXES = ("codex-cli-",)
 SEAM = (BACKEND_DIR / "backend-service.js").resolve()
 
 IGNORE_DIRS = {
+    # .claude/ holds other checkouts of this repo (session worktrees); scanning them
+    # multiplies the walk and can push this check past run_all's per-check budget.
+    ".claude",
     ".git",
     ".venv",
     ".tmp",

@@ -116,19 +116,25 @@ test('send slash dispatch attaches, strips the token, carries the full invocatio
   dispatch.dispose();
 });
 
-test('empty attach remainder focuses without sending and pending chips do not decorate edits', async () => {
+test('a bare skill runs at once, leaves nothing armed, and pending chips do not decorate edits', async () => {
   const state = { currentSessionId: 's1', ui: {}, composerSessionState: new Map() };
   const chatInput = { value: '/verify', focusCalls: 0, focus() { this.focusCalls += 1; } };
   const registry = createSlashCommandRegistry({ state });
   const skill = { id: 'bundled/verify', name: 'Verifier', scope: 'bundled', command: 'verify' };
   registry.register('/verify', 'Check work', null, { action: 'attach', skill });
   const dispatch = createSendSlashDispatch({ state, registry, chatInput });
-  const attached = await dispatch.dispatch('/verify', {});
-  assert.equal(attached.handled, true);
-  assert.equal(chatInput.value, '');
-  assert.equal(chatInput.focusCalls, 1);
+  const bare = await dispatch.dispatch('/verify', {});
+  assert.equal(bare.handled, false);
+  assert.equal(bare.prompt, '/verify');
+  assert.deepEqual(bare.settings.skillInvocation, skill);
   const later = await dispatch.dispatch('hello', {});
-  assert.deepEqual(later.settings.skillInvocation, skill);
+  assert.equal(later.settings.skillInvocation, undefined, 'nothing stays armed');
+  const replay = await dispatch.dispatch('/verify', { outboxDispatch: true, skillInvocation: skill });
+  assert.equal(replay.prompt, '/verify');
+  assert.equal(composerState.getPendingSkillInvocation(state), null, 'a replay never arms the chip');
+  await dispatch.dispatch('/verify now', {});
+  const armed = await dispatch.dispatch('hello', {});
+  assert.deepEqual(armed.settings.skillInvocation, skill, 'a skill with text still applies through the chip');
   const edit = await dispatch.dispatch('edited text', { editedMessageId: 'user-1' });
   assert.equal(edit.settings.skillInvocation, undefined);
   dispatch.dispose();
@@ -150,9 +156,10 @@ function chipHarness() {
 test('attaching renders a removable composer chip and removing it clears the pending skill', async () => {
   const h = chipHarness();
   const slash = createSendSlashDispatch({ state: h.state, registry: h.registry, chatInput: h.chatInput });
-  h.chatInput.value = '/verify';
-  const result = await slash.dispatch('/verify', {});
-  assert.equal(result.handled, true);
+  h.chatInput.value = '/verify now';
+  const result = await slash.dispatch('/verify now', {});
+  assert.equal(result.handled, false);
+  assert.equal(result.prompt, 'now');
   assert.equal(h.host.classList.contains('hidden'), false);
   const chip = h.host.querySelector('[data-inv-chip="skill_pending"]');
   assert.ok(chip, 'chip button rendered');
@@ -162,6 +169,17 @@ test('attaching renders a removable composer chip and removing it clears the pen
   assert.equal(composerState.getPendingSkillInvocation(h.state), null);
   assert.equal(h.host.classList.contains('hidden'), true);
   assert.equal(h.host.innerHTML, '');
+  slash.dispose();
+});
+
+test('a bare skill replaces a chip that was already armed', async () => {
+  const h = chipHarness();
+  attachSkillInvocation({ state: h.state, skill: { ...h.skill, id: 'bundled/other', command: 'other' }, document: h.doc });
+  const slash = createSendSlashDispatch({ state: h.state, registry: h.registry, chatInput: h.chatInput });
+  const result = await slash.dispatch('/verify', {});
+  assert.deepEqual(result.settings.skillInvocation, h.skill);
+  assert.equal(composerState.getPendingSkillInvocation(h.state), null);
+  assert.equal(h.host.classList.contains('hidden'), true);
   slash.dispose();
 });
 

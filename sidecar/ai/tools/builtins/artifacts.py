@@ -365,7 +365,7 @@ def build_text_artifact_metadata(  # noqa: PLR0913 - stable shared artifact faca
     """Persist UTF-8 ``content`` as a session-scoped artifact file and return its
     ``generated_artifacts`` metadata.
 
-    Shared by builtins (e.g. ``mermaid_generate``) that want a first-class
+    Shared by builtins that want a first-class
     generated_file artifact -- rendered directly in the artifacts panel -- instead
     of a JSON tool-output blob the user has to hunt for. Mirrors
     ``create_artifact_tool``'s metadata shape so the renderer projection

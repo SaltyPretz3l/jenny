@@ -43,7 +43,7 @@ test('startupAnimation persists through save and load', () => {
 
 test('an older stored record without the field loads losslessly with the animation on', () => {
   const older = {
-    paletteId: 'signal',
+    paletteId: 'pewter',
     typographyId: 'editorial',
     surfaceEffectId: 'circuit-trace',
     composerHoloId: 'off',
@@ -73,7 +73,7 @@ test('the field reaches the document so the boot curtain can read it before any 
 });
 
 test('theme bundles never touch the startup animation choice', () => {
-  const picked = appearance.pickThemeBundleAxes({ startupAnimation: false, paletteId: 'signal' });
+  const picked = appearance.pickThemeBundleAxes({ startupAnimation: false, paletteId: 'pewter' });
   assert.equal(Object.prototype.hasOwnProperty.call(picked, 'startupAnimation'), false);
 });
 

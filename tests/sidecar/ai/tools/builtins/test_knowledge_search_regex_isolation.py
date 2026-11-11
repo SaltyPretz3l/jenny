@@ -18,10 +18,12 @@ from pathlib import Path
 import pytest
 
 from sidecar.ai.tools.builtins import grep_search as grep_module
+from sidecar.ai.tools.builtins import grep_search_client
 from sidecar.ai.tools.builtins.grep_search_file import (
     MATCH_SUMMARY_OP,
     FileSearchResult,
     run_lines_request,
+    worker_ok_response,
 )
 from sidecar.ai.tools.builtins.knowledge import search as search_module
 from sidecar.ai.tools.builtins.knowledge.roots import scoped_knowledge_tools
@@ -67,13 +69,31 @@ class _FakeWorker:
 
     def __init__(self) -> None:
         self.summary_requests: list[dict[str, object]] = []
+        self.answers: list[object] = []
         _FakeWorker.instances.append(self)
 
-    def search(self, *, path: Path, **_kwargs: object) -> FileSearchResult:
-        return _search_result([f"{path.name}:1:{_LONG_LINE}"])
+    def send(self, request: dict[str, object], *, expected_responses: int = 1) -> None:
+        # A scan batch: every listed file answers with the probe's long line.
+        files = request["files"]
+        assert isinstance(files, list) and len(files) == expected_responses
+        self.answers.extend(
+            worker_ok_response(_search_result([f"{Path(name).name}:1:{_LONG_LINE}"]))
+            for name in files
+        )
+
+    def receive(self, timeout_seconds: float) -> object:
+        assert timeout_seconds == grep_module.REGEX_SEARCH_TIMEOUT_SECONDS
+        return self.answers.pop(0)
+
+    def abandon_pending(self) -> None:
+        self.answers.clear()
+
+    def prestart(self) -> None:
+        return None
 
     def request(self, request: dict[str, object], timeout_seconds: float) -> FileSearchResult:
         assert timeout_seconds == grep_module.REGEX_SEARCH_TIMEOUT_SECONDS
+        assert not self.answers, "a summary must wait for the batch answers"
         self.summary_requests.append(request)
         if self.summary_timeout:
             raise FutureTimeoutError()
@@ -212,7 +232,7 @@ def _summary(texts: list[str], pattern: str, flags: int = 0) -> dict[str, object
         "op": MATCH_SUMMARY_OP, "lines": texts, "pattern": pattern, "flags": flags,
     })
     assert response["status"] == "ok"
-    result = grep_module._response_to_search_result(response)
+    result = grep_search_client._response_to_search_result(response)
     return {
         "first": result.first_match_index,
         "distinct": result.distinct_match_count,
@@ -239,7 +259,7 @@ def test_plain_grep_responses_carry_no_summary() -> None:
         "context_lines": 0, "max_output_matches": 5, "max_output_bytes": 1000,
     })
     assert "distinct_match_count" not in response
-    result = grep_module._response_to_search_result(response)
+    result = grep_search_client._response_to_search_result(response)
     assert result.lines == ["f.txt:1:needle"]
     assert result.first_match_index is None
     assert result.distinct_match_count is None
@@ -253,4 +273,4 @@ def test_summary_request_texts_fit_the_worker_protocol() -> None:
     request = {
         "op": MATCH_SUMMARY_OP, "lines": bounded, "pattern": "\x01" * 2000, "flags": 0,
     }
-    assert grep_module._encode_worker_message(request)
+    assert grep_search_client._encode_worker_message(request)

@@ -442,12 +442,12 @@ test('split view: switching pane 1\'s session view leaves pane 0 byte-identical,
 
 /* ── the cluster control in the real shell ── */
 
-test('the pane cluster control switches the view through its menu and its icon follows the render', async (t) => {
+test('the pane More button switches the view through its menu and the reopened menu checks the new view', async (t) => {
   const { window, document, streamSettledTurn } = await loadApp(t);
   await streamSettledTurn('first question');
   const button = document.querySelector('#chatPane0 [data-transcript-view-toggle]');
-  assert.ok(button, 'pane 0 built its transcript view control');
-  assert.equal(button.dataset.transcriptView, 'thinking');
+  assert.ok(button, 'pane 0 built its More button');
+  assert.equal(button.getAttribute('aria-label'), 'More');
   assert.equal(document.getElementById('timelineCollapseExpandToggle'), null, 'the bulk toggle is gone');
 
   button.click();
@@ -456,7 +456,7 @@ test('the pane cluster control switches the view through its menu and its icon f
   items[0].click();
   await waitForUi(window, 80);
   assert.equal(document.getElementById('chatTimeline').dataset.transcriptView, 'answers');
-  assert.equal(button.dataset.transcriptView, 'answers', 'the render notice synced the icon');
-  assert.match(button.getAttribute('aria-label'), /Answers/);
+  button.click();
+  assert.deepEqual([...document.querySelectorAll('.inv-context-menu [role="menuitemradio"]')].map((item) => item.getAttribute('aria-checked')), ['true', 'false', 'false'], 'the reopened menu checks the new view');
   assert.equal(window.rendererTranscriptViewController.getView(SESSION_ID), 'answers');
 });

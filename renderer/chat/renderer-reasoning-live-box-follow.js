@@ -135,10 +135,15 @@
         writeTop(body, state, target);
         return false;
       }
-      const alpha = Math.abs(remaining) <= DAMPED_MAX_LAG_PX
-        ? clamp(dt / DAMPED_RESPONSE_MS, 0.04, 0.25)
-        : clamp(dt / DEFAULT_RESPONSE_MS, 0.12, 0.45);
-      const step = Math.max(Math.abs(remaining) * alpha, MIN_STEP_PX);
+      // Blend from the damped to the catch-up rate over one more lag span, so
+      // the speed is continuous at the threshold (a hard switch read as a
+      // lurch-then-stall on every burst past 96 px).
+      const lag = Math.abs(remaining);
+      const damped = clamp(dt / DAMPED_RESPONSE_MS, 0.04, 0.25);
+      const fast = clamp(dt / DEFAULT_RESPONSE_MS, 0.12, 0.45);
+      const blend = clamp((lag - DAMPED_MAX_LAG_PX) / DAMPED_MAX_LAG_PX, 0, 1);
+      const alpha = damped + (fast - damped) * blend;
+      const step = Math.max(lag * alpha, MIN_STEP_PX);
       writeTop(body, state, remaining > 0 ? Math.min(current + step, target) : Math.max(current - step, target));
       return true;
     }

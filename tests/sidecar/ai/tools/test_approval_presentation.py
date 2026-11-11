@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sidecar.ai.tools.policy import (
+from sidecar.ai.tools.approval_presentation import (
     MAX_APPROVAL_POLICY_TEXT_CHARS,
     NEUTRAL_APPROVAL_POLICY_TEXT,
     approval_presentation_for_call,

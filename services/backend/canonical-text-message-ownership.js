@@ -3,12 +3,18 @@
 const { validateTurnEvent } = require('./canonical-turn-event');
 const { redactTranscriptPaths } = require('./transcript-export-redaction');
 
-// Older canonical-primary captures kept the base assistant ID after the stream
+const BASE_ASSISTANT_ID_PREFIX = 'assistant_';
+
+// A canonical-primary capture keeps the base assistant ID after the stream
 // persisted segmented messages. Resolve only a unique, exact content match in
 // the same logical turn and physical attempt. Comparing through the canonical
 // sanitizer accounts for redacted secrets without fuzzy matching or lost
 // content; captures persisted before HB-012 also carry path-redacted text, so
 // the historical path rules give each message its legacy form too.
+//
+// The attempt is the stream the base ID names. The payload's trace_id is the
+// request's trace token: a composer send mints its own, so it equals the
+// stream ID only when the sender supplied none.
 function resolveCanonicalTextMessageOwners(events, messages) {
   const source = Array.isArray(events) ? events : [];
   const saved = Array.isArray(messages) ? messages : [];
@@ -16,13 +22,15 @@ function resolveCanonicalTextMessageOwners(events, messages) {
   const groups = new Map();
   const pending = new Map();
   for (const event of source) {
-    const streamId = event?.payload?.trace_id;
+    const baseId = typeof event?.primary_message_id === 'string' ? event.primary_message_id : '';
+    const streamId = baseId.startsWith(BASE_ASSISTANT_ID_PREFIX)
+      ? baseId.slice(BASE_ASSISTANT_ID_PREFIX.length)
+      : '';
     const text = event?.payload?.text;
     if (event?.kind !== 'assistant_text_segment'
       || event.payload?.canonical_event_type !== 'text_part_completed'
       || !streamId || !text || event.payload?.truncated
-      || event.primary_message_id !== `assistant_${streamId}`
-      || messageIds.has(event.primary_message_id)) continue;
+      || messageIds.has(baseId)) continue;
     const key = JSON.stringify([event.turn_id, streamId]);
     if (!groups.has(key)) groups.set(key, new Map());
     pending.set(event, key);

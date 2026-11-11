@@ -1,9 +1,11 @@
 'use strict';
 
 const { validateCommand, hostFailure } = require('./api-contract');
+const { createIdentityCheck } = require('./command-router-identity');
 const { createDecisionAdapter } = require('./decision-adapter');
 const { CancellationRegistry, SessionMutationQueue } = require('./command-router-concurrency');
 const { buildSessionSnapshot } = require('./session-snapshots');
+const { memberAuthor } = require('../services/backend/message-author');
 const {
   PROJECT_LEASE_OPERATIONS, PROJECT_MUTATIONS, PROJECT_OPERATIONS,
   createProjectCommandDispatcher,
@@ -86,6 +88,8 @@ function createCommandRouter({
   resolveAttachments,
   canAdmit = () => true,
   canAdmitDeletion = () => true,
+  authorize,
+  teamCommands = null,
 } = {}) {
   if (!isRecord(backend)) throw new TypeError('Command router requires backend.');
   if (!isRecord(clients) || typeof clients.authorize !== 'function') {
@@ -102,13 +106,17 @@ function createCommandRouter({
     throw new TypeError('Command router requires event stream.');
   }
 
+  const disposed = { value: false };
+  const identity = createIdentityCheck({ clients, bootEpoch, disposed, authorize });
+  // Slice 3-5: a team host (built with `authorize`) names the actor as a user message's author (null, refused, without
+  // a valid member id); the single-owner host's constant owner actor is never an author.
+  const trustedAuthor = typeof authorize === 'function' ? (context) => memberAuthor(context?.actor?.member_id) : () => undefined;
   const decisionAdapter = createDecisionAdapter({ backend });
   const revisions = new Map();
   const mutationQueue = new SessionMutationQueue({ capacity: MAX_SESSIONS });
   const projectMutationQueue = new SessionMutationQueue({ capacity: 1 });
   const cancellations = new CancellationRegistry();
   let creatingSession = false;
-  const disposed = { value: false };
   const listeners = [];
   const projectDispatcher = createProjectCommandDispatcher({
     applicationService: backend.projectApplicationService,
@@ -119,7 +127,7 @@ function createCommandRouter({
 
   const runtimeDispatcher = createRuntimeCommandDispatcher({
     applicationService: backend.runtimeApplicationService,
-    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity },
+    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity, trustedAuthor },
     transaction: { runReceipt }, result: { bumpRevision, publish, trustedChatOptions },
   });
   const suggestedDispatcher = createSuggestedChangesCommandDispatcher({ getService: () => backend.suggestedChanges || null,
@@ -146,8 +154,9 @@ function createCommandRouter({
     return currentRevision(sessionId);
   }
 
-  function publish(type, payload = {}) {
-    try { eventStream.publish(type, payload); } catch (_error) { /* transport is best effort */ }
+  function publish(type, payload = {}, options = undefined) {
+    // Best effort; a refused audience is dropped here, never retried as a broadcast.
+    try { eventStream.publish(type, payload, options); } catch (_error) { /* transport is best effort */ }
   }
 
   function onBackendStream(event) {
@@ -167,22 +176,6 @@ function createCommandRouter({
   if (typeof backend.on === 'function') {
     backend.on('chat-stream', onBackendStream);
     listeners.push(['chat-stream', onBackendStream]);
-  }
-
-  function identity(command, context) {
-    if (disposed.value) return hostFailure('unavailable', 'router_disposed', command.request_id);
-    let authenticated;
-    try {
-      authenticated = typeof context?.isAuthenticated === 'function'
-        ? context.isAuthenticated() === true : context?.isAuthenticated === true;
-    } catch (_error) { authenticated = false; }
-    if (!context || !authenticated
-      || typeof context.deviceId !== 'string' || !context.deviceId
-      || !clients.authorize(command.client_id, context.clientToken, context.deviceId)) {
-      return hostFailure('unauthorized', 'client_unauthorized', command.request_id);
-    }
-    if (command.boot_epoch !== bootEpoch) return hostFailure('conflict', 'boot_epoch_mismatch', command.request_id, true);
-    return null;
   }
 
   function revisionAndLease(command, context, { expectedRevision = true, requireSession = true } = {}) {
@@ -426,6 +419,7 @@ function createCommandRouter({
 
   async function sendChat(command, context) {
     const failure = mutationGuard(command, context); if (failure) return failure;
+    if (trustedAuthor(context) === null) return hostFailure('forbidden', 'member_author_required', command.request_id);
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
       if (!backend.runtimeApplicationService?.submit) return hostFailure('unavailable', 'runtime_unavailable', command.request_id);
@@ -448,7 +442,7 @@ function createCommandRouter({
         preferred_model: options.preferredModel, reasoning_effort: options.reasoningEffort,
         plan_mode: options.planMode, context_preferences: options.contextPreferences,
         tool_preferences: options.toolPreferences, approval_mode: options.approvalMode,
-      }, { beforeCommit: () => assertMutationAuthority(command, context) });
+      }, { beforeCommit: () => assertMutationAuthority(command, context), author: trustedAuthor(context) });
       assertPostAwaitAuthority(command, context);
       if (!saved?.ok) return hostFailure(saved?.error?.reason === 'idempotency_conflict' ? 'conflict' : 'unavailable',
         saved?.error?.reason || 'runtime_submission_refused', command.request_id);
@@ -532,6 +526,9 @@ function createCommandRouter({
     const authFailure = identity(command, context);
     if (authFailure) return authFailure;
     try {
+      if (teamCommands && command.operation.startsWith('team.')) {
+        return await teamCommands.dispatch(command, context, { runReceipt, canAdmit, publish });
+      }
       // A committed exact retry returns its durable receipt even after its own
       // mutation advanced the revision. New work still checks the live lease.
       if (LEASE_OPERATIONS.has(command.operation) || PROJECT_MUTATIONS.has(command.operation)

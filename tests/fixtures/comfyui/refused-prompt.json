@@ -1,0 +1,33 @@
+{
+ "error": {
+  "type": "prompt_outputs_failed_validation",
+  "message": "Prompt outputs failed validation",
+  "details": "",
+  "extra_info": {}
+ },
+ "node_errors": {
+  "1": {
+   "errors": [
+    {
+     "type": "value_not_in_list",
+     "message": "Value not in list",
+     "details": "unet_name: 'missing_model.safetensors' not in ['minimax_h3_image_pruned_int8_convrot.safetensors']",
+     "extra_info": {
+      "input_name": "unet_name",
+      "input_config": [
+       [
+        "minimax_h3_image_pruned_int8_convrot.safetensors"
+       ],
+       {}
+      ],
+      "received_value": "missing_model.safetensors"
+     }
+    }
+   ],
+   "dependent_outputs": [
+    "9"
+   ],
+   "class_type": "UNETLoader"
+  }
+ }
+}

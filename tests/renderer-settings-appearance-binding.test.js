@@ -58,7 +58,7 @@ test('mounted Appearance selects keep their nodes across renders and option-list
   assert.equal(doc.getElementById('appearancePaletteSelect'), palette);
   assert.equal(doc.getElementById('appearanceThemeBundleSelect'), bundle);
 
-  change(window, palette, 'signal');
+  change(window, palette, 'darkroom');
   await waitForUi(window, 20);
   assert.equal(bundleValues().at(-1), 'custom', 'a hand-tuned palette adds the Custom entry');
   assert.equal(bundle.value, 'custom');
@@ -79,29 +79,29 @@ test('a palette change persists through the appearance adapter; a refused write 
   const doc = window.document;
   const palette = doc.getElementById('appearancePaletteSelect');
 
-  change(window, palette, 'signal');
+  change(window, palette, 'darkroom');
   await waitForUi(window, 20);
-  assert.equal(storedAppearance(window).paletteId, 'signal');
-  assert.equal(window.__rendererState.ui.appearance.paletteId, 'signal');
-  assert.equal(doc.documentElement.dataset.palette, 'signal');
+  assert.equal(storedAppearance(window).paletteId, 'darkroom');
+  assert.equal(window.__rendererState.ui.appearance.paletteId, 'darkroom');
+  assert.equal(doc.documentElement.dataset.palette, 'darkroom');
   assert.equal(rowError(doc, 'appearancePaletteSelect'), '');
 
   const restore = refuseAppearanceWrites(window);
   t.after(restore);
   change(window, palette, 'paper');
   await waitForUi(window, 20);
-  assert.equal(palette.value, 'signal', 'the control returns to the last acknowledged value');
+  assert.equal(palette.value, 'darkroom', 'the control returns to the last acknowledged value');
   assert.notEqual(rowError(doc, 'appearancePaletteSelect'), '', 'the row shows the failure');
-  assert.equal(storedAppearance(window).paletteId, 'signal');
-  assert.equal(window.__rendererState.ui.appearance.paletteId, 'signal');
-  assert.equal(doc.documentElement.dataset.palette, 'signal', 'nothing is half-applied');
+  assert.equal(storedAppearance(window).paletteId, 'darkroom');
+  assert.equal(window.__rendererState.ui.appearance.paletteId, 'darkroom');
+  assert.equal(doc.documentElement.dataset.palette, 'darkroom', 'nothing is half-applied');
 });
 
 test('Revert on a modified palette writes the descriptor default through the adapter', async (t) => {
   const { window } = await loadApp(t);
   const doc = window.document;
   const descriptor = window.rendererSettingsFieldDescriptors.getSettingDescriptor('appearancePaletteSelect');
-  const other = descriptor.default === 'signal' ? 'paper' : 'signal';
+  const other = descriptor.default === 'darkroom' ? 'paper' : 'darkroom';
   const palette = doc.getElementById('appearancePaletteSelect');
 
   change(window, palette, other);

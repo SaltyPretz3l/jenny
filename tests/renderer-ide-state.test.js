@@ -155,6 +155,8 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   ide.railSide = 'left';
   ide.railWidth = 333;
   ide.showGenerated = true;
+  assert.equal(ide.followJenny, true, 'Follow Jenny starts on');
+  ide.followJenny = false;
   ide.wordWrap = 'on';
   ide.fontSize = 18;
   ide.tabSize = 4;
@@ -203,6 +205,7 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(restored.railSide, 'left');
   assert.equal(restored.railWidth, 333);
   assert.equal(restored.showGenerated, true);
+  assert.equal(restored.followJenny, false);
   assert.equal(restored.wordWrap, 'on');
   assert.equal(restored.fontSize, 18);
   assert.equal(restored.tabSize, 4);
@@ -272,6 +275,7 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(hostile.railSide, 'left');
   assert.equal(hostile.railWidth, 300);
   assert.equal(hostile.showGenerated, false);
+  assert.equal(hostile.followJenny, true, 'absent reads as on');
   assert.equal(hostile.wordWrap, 'off');
   assert.equal(hostile.fontSize, 0, 'invalid reads as Match text size');
   assert.equal(hostile.tabSize, 2);

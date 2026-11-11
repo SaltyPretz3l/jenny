@@ -3,7 +3,7 @@
 // Row 54 N2 Step 11: the Tune drawer for an NInfer row shows the NInfer
 // section (context window + multi-token prediction) instead of the
 // llama-server Engine section (no GGUF, build or Run-with rows), names NInfer
-// in the subtitle, saves through jennyShell.ninfer.updateSettings and reuses
+// in its section title, saves through jennyShell.ninfer.updateSettings and reuses
 // the restart flow with NInfer wording.
 
 const test = require('node:test');
@@ -73,7 +73,9 @@ test('an NInfer row opens on the NInfer section: context + MTP + vision, NInfer 
   assert.equal(doc.querySelector('[data-model-tuning-engine]'), null, 'no llama-server Engine section');
   assert.equal(doc.querySelector('[data-model-tuning-row="runtimePath"]'), null, 'no build row');
   assert.equal(doc.querySelector('#modelTuningContextLength'), null, 'no generic context row');
-  assert.match(doc.querySelector('.model-tuning-drawer-subtitle').textContent, /qwen3\.8-27b-nvfp4 · NInfer · applies after the runtime confirms/);
+  assert.equal(doc.querySelector('[data-model-tuning-ninfer] .model-tuning-section-title').textContent, 'NInfer', 'the section names NInfer');
+  assert.equal(doc.querySelector('.model-tuning-drawer-grid').dataset.engineType, 'openai-compatible');
+  assert.match(doc.querySelector('[data-model-tuning-row="ninferContext"] .model-tuning-row-label').getAttribute('data-tooltip'), /8-bit cache/);
   assert.match(h.text(), /Starts when you press Use/);
   const select = doc.getElementById('modelTuningNinferContext');
   assert.deepEqual([...select.options].map((option) => option.textContent), ['16k tokens', '32k tokens', '64k tokens', '128k tokens', '150k tokens · 8-bit cache', '256k tokens · 8-bit cache']);
@@ -93,7 +95,7 @@ test('a context change enables Apply, saves through ninfer.updateSettings, and a
   select.dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
   const apply = h.doc().querySelector('[data-action="apply-ninfer-tuning"]');
   assert.equal(apply.disabled, false);
-  assert.equal(h.doc().querySelector('[data-model-tuning-row="ninferContext"] .model-tuning-row-range').dataset.dirty, 'true');
+  assert.equal(h.doc().querySelector('[data-model-tuning-row="ninferContext"] [data-model-tuning-changed]').hidden, false);
   apply.click();
   await flush();
   await flush();
@@ -119,7 +121,7 @@ test('the drawer Apply commits a pending NInfer change it counts, then reads cle
   await flush();
   assert.deepEqual(h.calls.filter((call) => call[0] === 'ninfer.updateSettings'), [['ninfer.updateSettings', { contextSize: 262144, mtp: true, vision: true }]]);
   assert.equal(h.calls.some((call) => call[0] === 'tuning'), false, 'no profile write when only NInfer changed');
-  assert.equal(save().textContent, 'Apply 0 changes');
+  assert.equal(save().textContent, 'No changes');
   assert.equal(save().disabled, true);
   assert.match(h.text(), /Setting saved\. It takes effect when NInfer next starts\./);
   assert.doesNotMatch(h.text(), /runtime acknowledged this model profile/);
@@ -188,7 +190,7 @@ test('a plain openai-compatible row (no NInfer hint) keeps the llama-server Engi
   assert.equal(h.doc().querySelector('[data-model-tuning-ninfer]'), null);
   assert.ok(h.doc().querySelector('[data-model-tuning-engine]'));
   assert.ok(h.doc().querySelector('#modelTuningContextLength'), 'the generic context row is back');
-  assert.match(h.doc().querySelector('.model-tuning-drawer-subtitle').textContent, /· llama-server ·/);
+  assert.equal(h.doc().querySelector('[data-model-tuning-engine] .model-tuning-section-title').textContent, 'Engine');
   assert.ok(h.calls.some((call) => call[0] === 'engines.getSettings'));
 });
 

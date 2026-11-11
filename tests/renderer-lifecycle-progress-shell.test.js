@@ -112,7 +112,10 @@ test('startup overlay uses the quiet-curtain tokens and plain text status host',
   );
 
   const rootTokenBlock = startupCss.match(/:root\s*\{[\s\S]*?\}/)?.[0] || '';
-  assert.deepEqual((rootTokenBlock.match(/--startup-[a-z-]+:/g) || []), ['--startup-bg:', '--startup-fade-ms:']);
+  assert.deepEqual((rootTokenBlock.match(/--startup-[a-z-]+:/g) || []), [
+    '--startup-bg:', '--startup-text:', '--startup-text-secondary:', '--startup-cyan:', '--startup-accent:',
+    '--startup-fade-ms:', '--startup-arrive-ms:',
+  ]);
   assert.match(startupCss, /transition: opacity var\(--startup-fade-ms\)/);
   assert.doesNotMatch(startupCss, /startup-overlay-status-row/);
 });
@@ -464,7 +467,7 @@ test('lifecycle progress keeps fatal state until authoritative backend recovery'
   }
 });
 
-test('lifecycle progress dispose() tears down the startup starfield rAF loop', (t) => {
+test('lifecycle progress dispose() terminates the startup starfield worker', (t) => {
   const { JSDOM } = require('jsdom');
   const dom = new JSDOM('<!doctype html><html><body><div id="startupOverlay">'
     + '<canvas id="startupOverlaySky"></canvas><div class="startup-overlay-wordmark">Jenny</div>'
@@ -475,17 +478,12 @@ test('lifecycle progress dispose() tears down the startup starfield rAF loop', (
     globalThis.rendererStartupStarfield = previousStarfield;
     dom.window.close();
   });
-  const frames = new Map();
-  let nextId = 1;
-  dom.window.requestAnimationFrame = (cb) => { const id = nextId++; frames.set(id, cb); return id; };
-  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
-  dom.window.HTMLCanvasElement.prototype.getContext = () => ({
-    setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, fillStyle: '', globalAlpha: 1,
-  });
-  const flush = (ts) => {
-    const pending = Array.from(frames.values());
-    frames.clear();
-    pending.forEach((cb) => cb(ts));
+  dom.window.HTMLCanvasElement.prototype.transferControlToOffscreen = () => ({});
+  const workers = [];
+  dom.window.Worker = class FakeWorker {
+    constructor() { this.terminated = 0; workers.push(this); }
+    postMessage() {}
+    terminate() { this.terminated += 1; }
   };
 
   const controller = createLifecycleProgressController({
@@ -498,14 +496,11 @@ test('lifecycle progress dispose() tears down the startup starfield rAF loop', (
     callbacks: { onStartupReady() {} },
   });
 
-  assert.ok(frames.size > 0, 'the starfield should schedule a frame at construction');
-  flush(16);
-  assert.ok(frames.size > 0, 'the starfield loop keeps rescheduling while visible');
+  assert.equal(workers.length, 1, 'the sky worker starts at construction');
+  assert.equal(workers[0].terminated, 0);
 
   controller.dispose();
-  assert.equal(frames.size, 0, 'dispose() must cancel the live starfield frame');
-  flush(32);
-  assert.equal(frames.size, 0, 'no starfield frame should be scheduled after dispose()');
+  assert.equal(workers[0].terminated, 1, 'dispose() must stop the sky worker');
 });
 
 function createStartupGateController(activeView, callbacks = {}) {

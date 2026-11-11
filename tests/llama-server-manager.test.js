@@ -31,7 +31,7 @@ function makeSettings(overrides = {}) {
   };
 }
 
-function makeHarness({ settings = makeSettings(), accel, managed = null, acceleration = null, startupModelLoad = true, onReady = null, loadProfileImpl } = {}) {
+function makeHarness({ settings = makeSettings(), accel, managed = null, acceleration = null, startupModelLoad = true, onReady = null, loadProfileImpl, memoryPlan = null } = {}) {
   const calls = [];
   const logs = [];
   const marks = [];
@@ -120,6 +120,10 @@ function makeHarness({ settings = makeSettings(), accel, managed = null, acceler
       resolverCalls.push(options);
       return accel || { mode: 'off', reason: 'flag_off', extraArgs: [], drafter: '', vramHeadroomMb: 0 };
     },
+    // A pass-through memory plan unless a test supplies one (llama-server-memory-fit.js).
+    planLaunchMemoryImpl: async (options) => (memoryPlan ? memoryPlan(options) : {
+      contextSize: options.requestedContext, extraArgs: [], reason: 'fit_tool_missing',
+    }),
     resolveSettingsImpl: (options) => {
       settingsResolverCalls.push(options);
       return options.startupModelLoad === false ? { ...settings, autostart: false } : settings;
@@ -293,7 +297,8 @@ test('start failure records lastError, returns to stopped, emits failed mark, an
 
 test('spawn failure with acceleration args retries once without them and reports mode off', async () => {
   const accel = { mode: 'mtp', reason: 'eligible', extraArgs: ['--spec-type', 'draft-mtp'], drafter: 'mtp-x.gguf', vramHeadroomMb: 1200 };
-  const h = makeHarness({ accel });
+  const headrooms = [];
+  const h = makeHarness({ accel, memoryPlan: (options) => { headrooms.push(options.headroomMb); return { contextSize: options.requestedContext, extraArgs: [] }; } });
   h.lifecycle.projectorPath = 'G:/models/mmproj-F16.gguf';
   h.lifecycle.failNext = new Error('spawn_failed:exit 1');
   const status = await h.manager.start();
@@ -308,6 +313,7 @@ test('spawn failure with acceleration args retries once without them and reports
   assert.equal(h.launches[1].projectorPath, 'G:/models/mmproj-F16.gguf');
   assert.ok(h.logs.some((entry) => entry.event === 'llama.server.acceleration_fallback'));
   assert.equal(h.marks[1].payload.accelerationMode, 'off');
+  assert.deepEqual(headrooms, [1200], 'the fit keeps the acceleration headroom free');
 });
 
 test('accelerated launch reports its mode; a reused server reports unknown and is never stopped', async () => {

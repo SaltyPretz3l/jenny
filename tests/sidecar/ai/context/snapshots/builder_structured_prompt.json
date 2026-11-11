@@ -18,6 +18,12 @@
     "content": "## Current Date\nThe effective `current_date` for this request is `2026-05-07`. Use this value consistently unless the user provides a different explicit date."
   },
   {
+    "name": "static",
+    "cacheable": true,
+    "heading": "## Diagrams",
+    "content": "## Diagrams\nTo show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; the chat draws it as a chart."
+  },
+  {
     "name": "executable_tools",
     "cacheable": false,
     "heading": "## Executable Tools",

@@ -17,16 +17,20 @@ METRIC_NAMES = (
     "index_html_scripts",
     "raw_primitive_allowlist_budget",
     "production_files_over_600",
+    "production_files_over_900",
     "test_files_over_600",
 )
+NOTE_MAX_CHARS = 300
+HISTORY_RELATIVE_PATH = Path("docs/history/complexity-ratchet-history.md")
 SCRIPT_SRC_RE = re.compile(
     r"<script\b[^>]*\bsrc\s*=\s*(['\"])(.*?)\1",
     flags=re.IGNORECASE | re.DOTALL,
 )
 HTTP_URL_RE = re.compile(r"https?://", flags=re.IGNORECASE)
 RATCHET_RULE = (
-    "reductions may lower the baseline in the same commit; raising a baseline "
-    "requires an explicit justification in the note field and review"
+    "baselines go down only: split or extract instead of raising; a raise needs "
+    "the owner's approval in the current task (WORKFLOW.md, Modularity and "
+    "Legibility Contract)"
 )
 
 
@@ -74,10 +78,12 @@ def _raw_primitive_allowlist_budget() -> int:
     return total
 
 
-def _files_over_600() -> tuple[int, int]:
+def _files_over_thresholds() -> tuple[int, int, int]:
+    """Return (production files > 600, production files > 900, test files > 600)."""
     size_check = _load_sibling("check_file_size.py")
     size_check.ROOT = ROOT
     production_count = 0
+    production_near_cap_count = 0
     test_count = 0
 
     for directory, dir_names, file_names in os.walk(ROOT):
@@ -93,7 +99,8 @@ def _files_over_600() -> tuple[int, int]:
                 continue
             if size_check.should_skip(path):
                 continue
-            if _count_lines(path) <= 600:
+            line_count = _count_lines(path)
+            if line_count <= 600:
                 continue
 
             relative_path = path.relative_to(ROOT)
@@ -101,19 +108,22 @@ def _files_over_600() -> tuple[int, int]:
                 test_count += 1
             else:
                 production_count += 1
+                if line_count > 900:
+                    production_near_cap_count += 1
 
-    return production_count, test_count
+    return production_count, production_near_cap_count, test_count
 
 
 def measure_metrics() -> dict[str, int]:
     index_path = ROOT / "index.html"
     index_html = index_path.read_text(encoding="utf-8")
-    production_count, test_count = _files_over_600()
+    production_count, production_near_cap_count, test_count = _files_over_thresholds()
     return {
         "index_html_lines": _count_lines(index_path),
         "index_html_scripts": _count_local_scripts(index_html),
         "raw_primitive_allowlist_budget": _raw_primitive_allowlist_budget(),
         "production_files_over_600": production_count,
+        "production_files_over_900": production_near_cap_count,
         "test_files_over_600": test_count,
     }
 
@@ -151,6 +161,12 @@ def load_baselines(path: Path) -> tuple[dict[str, int], list[str]]:
             baselines[metric] = baseline
         if not isinstance(note, str) or not note.strip() or "\n" in note or "\r" in note:
             errors.append(f"{metric}: note must be a non-empty single line")
+        elif len(note) > NOTE_MAX_CHARS:
+            errors.append(
+                f"{metric}: note is {len(note)} characters (max {NOTE_MAX_CHARS}); "
+                "keep it current-state and record dated entries in "
+                f"{HISTORY_RELATIVE_PATH.as_posix()}"
+            )
 
     return baselines, errors
 
@@ -181,7 +197,8 @@ def main() -> int:
         elif current < baseline:
             print(
                 f"INFO: {metric}: current {current} is below baseline {baseline}; "
-                "lower the baseline in the same commit"
+                "lower the baseline in the same commit and record it in "
+                f"{HISTORY_RELATIVE_PATH.as_posix()}"
             )
 
     if failures:

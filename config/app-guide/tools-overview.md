@@ -20,7 +20,7 @@ If a tool is hidden from the model to save context, the model can ask for it wit
 - Search: grep_search and glob_files search the workspace; knowledge_search searches your registered knowledge folders; conversations_search searches earlier chats in the same project; web_search searches the web (off by default).
 - Commands: run_command, run_temp_script, background jobs (check_background_job, stop_background_job) and monitors. Off by default, approval required, with a fail-closed classifier that always asks about interpreters, package managers, compilers, fetchers and destructive commands.
 - Python: python_execute runs Python with the same file access as Jenny. Off by default, every run asks, resource-bounded but not a filesystem or network sandbox.
-- Artifacts and visualizations: create_artifact makes scratch documents (Markdown, text, JSON, CSV, Mermaid) and HTML pages that preview in a network-isolated frame in the artifact panel. Inert documents need no approval; scripts do. mermaid_generate draws a Mermaid diagram inline in the chat and saves a .mmd artifact.
+- Artifacts and visualizations: create_artifact makes scratch documents (Markdown, text, JSON, CSV, Mermaid) and HTML pages that preview in a network-isolated frame in the artifact panel. Inert documents need no approval; scripts do. A Mermaid diagram needs no tool: a fenced code block tagged mermaid in the reply is drawn as a chart in the chat.
 - Preview and checks: workspace_present asks the IDE to show a preview, the File Map or a change. preview_test loads one HTML file in a hidden sandbox and reports render state and console errors. verify runs one of your own saved test configurations.
 - Image generation: image_generate draws one PNG from a prompt using your local image engine and saved model set. It needs the image engine installed in Settings > Models. Nothing leaves the machine.
 - Web: web_search and fetch_url. Off by default and read-only, with protections against private-network addresses. Settings > Tools > Web has the provider choice (DuckDuckGo needs no setup; Brave, Google Programmable Search, Serper, Tavily and a self-hosted SearXNG are options).
@@ -42,6 +42,10 @@ If a tool is hidden from the model to save context, the model can ask for it wit
 ## Per-chat tool switches
 
 The tools chip in the composer opens "Tools for this chat". It shows the chat's tool families as switches (Files, Git, Terminal, Python, Web, Knowledge, Images, Artifacts and diagrams, Preview and checks, Home and tasks, Helpers, Code intelligence). A row can say Off in Settings (turn it on in Settings first), Needs a project, Offline for this chat, or Some actions ask first. Always on: questions, to-dos, plan, status and skills. Reset to defaults restores the settings values, All tools shows each tool, and Full settings opens Settings > Tools. Per-chat changes apply to your next message.
+
+## The Browser row
+
+Browser is a row in "Tools for this chat" and is off in every chat until you switch it on. When it is on, Jenny can open and use real web pages. A page opens in the panel beside the chat, and a Browser chip next to Tools shows or hides it. Jenny asks before it opens a site it has not been to in this chat, and before a click or form send that could buy, send, delete or sign in. Allowing a site lasts for the chat; allowing a risky action covers that one action. Jenny never types into password or payment fields, and a chat has no saved sign-ins. Click or type in the page to take over; Jenny waits until you choose Hand back to Jenny. Stop in the composer leaves the page open. Jenny stops at a CAPTCHA and hands it to you. Strict safety mode makes Browser unavailable, and PDFs and downloads are not supported yet. JENNY_ENABLE_TOOLS_BROWSER_USE=0 removes the row.
 
 ## Where the main switches are
 

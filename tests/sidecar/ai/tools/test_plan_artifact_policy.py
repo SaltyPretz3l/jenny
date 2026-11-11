@@ -144,7 +144,7 @@ def test_manifest_capability_is_owned_only_by_first_party_artifact_tools() -> No
         if entry.get("availability", {}).get("plan_mode_artifact_write") is True
     }
 
-    assert flagged == {"create_artifact", "mermaid_generate", "memory", "todo_write"}
+    assert flagged == {"create_artifact", "memory", "todo_write"}
 
 
 def test_plan_mode_allows_memory_remember_but_not_update_or_forget() -> None:

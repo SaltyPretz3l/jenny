@@ -12,6 +12,7 @@ const { JSDOM } = require('jsdom');
 
 const actionButton = require('../renderer/inventory/action-button.js');
 const lifecycleUtils = require('../renderer/shell/renderer-lifecycle-progress-utils.js');
+const starfieldUtils = require('../renderer/shell/renderer-startup-starfield.js');
 
 function lifecycleState(activeView = 'chat') {
   return {
@@ -51,7 +52,7 @@ function createController(documentRef, callbacks = {}, extra = {}) {
   });
 }
 
-function createControlledHandoff(t, animated = false, { fullSkySeen } = {}) {
+function createControlledHandoff(t, animated = false, { fullSkySeen, now = 0 } = {}) {
   const dom = createCurtainDom('<main id="appShell"></main>', {
     sky: animated,
     ...(fullSkySeen === undefined ? {} : { url: 'https://jenny.test/' }),
@@ -66,14 +67,14 @@ function createControlledHandoff(t, animated = false, { fullSkySeen } = {}) {
   const scheduled = [];
   const cleared = new Set();
   const marks = [];
-  let collapseDone;
   let collapseOptions = null;
   let readyCalls = 0;
   let removedCalls = 0;
   const sky = {
-    start() {}, pause() {}, resume() {}, dispose() {},
+    startedAt: 0,
+    pause() {}, resume() {}, dispose() {},
     isAnimated() { return true; },
-    collapse(options) { collapseOptions = options; collapseDone = options.onDone; },
+    collapse(options) { collapseOptions = options; },
   };
   global.setTimeout = (callback, delay) => {
     const id = scheduled.length + 1;
@@ -81,14 +82,16 @@ function createControlledHandoff(t, animated = false, { fullSkySeen } = {}) {
     return id;
   };
   global.clearTimeout = (id) => cleared.add(id);
-  global.rendererStartupStarfield = animated ? { createStartupStarfield() { return sky; } } : null;
+  global.rendererStartupStarfield = animated
+    ? { createStartupStarfield() { return sky; }, resolveStartupExit: starfieldUtils.resolveStartupExit }
+    : null;
   global.__jennyStartupAudit = { mark(name) { marks.push(name); } };
   const overlay = dom.window.document.getElementById('startupOverlay');
   overlay.classList.add('startup-overlay');
   const controller = createController(dom.window.document, {
     onStartupReady() { readyCalls += 1; },
     onStartupRemoved() { removedCalls += 1; },
-  }, { now: () => 0 });
+  }, { now: () => now });
   t.after(() => {
     controller.dispose();
     Object.assign(global, previous);
@@ -100,7 +103,7 @@ function createControlledHandoff(t, animated = false, { fullSkySeen } = {}) {
     get readyCalls() { return readyCalls; },
     get removedCalls() { return removedCalls; },
     get collapseOptions() { return collapseOptions; },
-    finishCollapse() { collapseDone(); },
+    finishFade() { overlay.dispatchEvent(new dom.window.Event('transitionend')); },
     dismiss() {
       controller.notifyBootViewReady();
       controller.notifyShellHydrated();
@@ -117,12 +120,12 @@ for (const animated of [false, true]) {
     assert.equal(h.readyCalls, 1);
     assert.equal(h.background.inert, true, 'dismissal must retain isolation until removal');
     assert.deepEqual(h.marks, [], 'dismissal must not mark the shell interactive');
-    if (animated) { h.finishCollapse(); } else { h.overlay.dispatchEvent(new h.dom.window.Event('transitionend')); }
+    h.finishFade();
     assert.equal(h.overlay.parentNode, null);
     assert.equal(h.background.inert, false);
     assert.deepEqual(h.marks, ['shell-interactive']);
     assert.equal(h.removedCalls, 1);
-    if (animated) { h.finishCollapse(); } else { h.overlay.dispatchEvent(new h.dom.window.Event('transitionend')); }
+    h.finishFade();
     assert.deepEqual(h.marks, ['shell-interactive'], 'removal is idempotent');
     assert.equal(h.removedCalls, 1);
   });
@@ -149,13 +152,15 @@ test('dispose mid-collapse removes the curtain without notifying removal', (t) =
   assert.equal(h.overlay.__jennyStartupSky, undefined);
 });
 
-test('a hidden window completes the real sky collapse synchronously and releases isolation', (t) => {
+test('a hidden window, where no fade can finish, still removes the curtain and releases isolation', (t) => {
   const dom = createCurtainDom('<main id="appShell"></main>', { sky: true });
-  const previousStarfield = global.rendererStartupStarfield;
-  global.rendererStartupStarfield = require('../renderer/shell/renderer-startup-starfield.js');
-  dom.window.HTMLCanvasElement.prototype.getContext = () => ({
-    setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {},
-  });
+  const previous = { starfield: global.rendererStartupStarfield, setTimeout: global.setTimeout };
+  global.rendererStartupStarfield = starfieldUtils;
+  const scheduled = [];
+  global.setTimeout = (callback, delay) => { scheduled.push({ callback, delay }); return scheduled.length; };
+  dom.window.HTMLCanvasElement.prototype.transferControlToOffscreen = () => ({});
+  const worker = { posts: [], postMessage(message) { this.posts.push(message); }, terminate() {} };
+  dom.window.Worker = function FakeWorker() { return worker; };
   Object.defineProperty(dom.window.document, 'visibilityState', { value: 'hidden', configurable: true });
   let now = 0;
   let removedCalls = 0;
@@ -164,14 +169,18 @@ test('a hidden window completes the real sky collapse synchronously and releases
   }, { now: () => now });
   t.after(() => {
     controller.dispose();
-    global.rendererStartupStarfield = previousStarfield;
+    global.rendererStartupStarfield = previous.starfield;
+    global.setTimeout = previous.setTimeout;
     dom.window.close();
   });
   const overlay = dom.window.document.getElementById('startupOverlay');
+  overlay.__jennyStartupSky.pause();
   assert.equal(overlay.__jennyStartupSky.isPaused(), true);
   now = 900;
   controller.notifyBootViewReady();
   controller.notifyShellHydrated();
+  assert.equal(overlay.classList.contains('hidden'), true);
+  scheduled.find((entry) => entry.delay === 1000).callback();
   assert.equal(overlay.parentNode, null);
   assert.equal(dom.window.document.getElementById('appShell').inert, false);
   assert.equal(removedCalls, 1);
@@ -231,7 +240,7 @@ test('dispose in fatal mode clears the dialog and explicitly restores reachabili
   assert.equal(h.background.inert, false);
 });
 
-test('the first launch on a profile plays the full sky and records it; a returning launch skips the hold, collapses fast and hands input over at once', (t) => {
+test('the first launch on a profile plays the full sky and records it', (t) => {
   const first = createControlledHandoff(t, true, { fullSkySeen: false });
   first.controller.notifyBootViewReady();
   first.controller.notifyShellHydrated();
@@ -240,17 +249,87 @@ test('the first launch on a profile plays the full sky and records it; a returni
   assert.equal(first.collapseOptions.durationMs, 750, 'the full collapse');
   assert.equal(first.background.inert, true, 'the full sky keeps the shell isolated until removal');
   assert.equal(first.dom.window.localStorage.getItem('jenny.startup.fullSkySeen'), '1');
+  assert.equal(first.overlay.getAttribute('data-exit'), 'collapse');
+  assert.equal(first.overlay.style.getPropertyValue('--startup-exit-delay-ms'), '375ms');
+});
 
-  const returning = createControlledHandoff(t, true, { fullSkySeen: true });
-  returning.controller.notifyBootViewReady();
-  returning.controller.notifyShellHydrated();
-  // Red before 2026-10-19: every launch waited out the 900 ms hold and a 750 ms collapse.
-  assert.equal(returning.overlay.classList.contains('hidden'), true, 'no hold on a returning launch');
-  assert.equal(returning.scheduled.some((entry) => entry.delay === 900), false);
-  assert.equal(returning.collapseOptions.durationMs, 250, 'the quick collapse');
-  assert.equal(returning.background.inert, false, 'input reaches the shell during the collapse');
-  assert.equal(returning.overlay.style.pointerEvents, 'none');
-  returning.finishCollapse();
-  assert.equal(returning.overlay.parentNode, null);
-  assert.deepEqual(returning.marks, ['shell-interactive']);
+test('a fast returning launch dissolves quietly after the floor, with input released at shell ready', (t) => {
+  const h = createControlledHandoff(t, true, { fullSkySeen: true });
+  h.controller.notifyBootViewReady();
+  h.controller.notifyShellHydrated();
+  assert.equal(h.overlay.classList.contains('hidden'), false, 'the name never flashes');
+  assert.equal(h.background.inert, false, 'the floor does not hold input back');
+  assert.equal(h.overlay.style.pointerEvents, 'none');
+  h.scheduled.find((entry) => entry.delay === 260).callback();
+  assert.equal(h.overlay.classList.contains('hidden'), true);
+  assert.equal(h.overlay.getAttribute('data-exit'), 'quiet');
+  assert.equal(h.collapseOptions, null, 'no collapse without a sky to collapse');
+  assert.equal(h.overlay.style.getPropertyValue('--startup-exit-fade-ms'), '220ms');
+  h.finishFade();
+  assert.equal(h.overlay.parentNode, null);
+  assert.deepEqual(h.marks, ['shell-interactive']);
+});
+
+test('a longer returning launch collapses for as long as the sky has earned', (t) => {
+  const h = createControlledHandoff(t, true, { fullSkySeen: true, now: 5000 });
+  h.controller.notifyBootViewReady();
+  h.controller.notifyShellHydrated();
+  assert.equal(h.overlay.classList.contains('hidden'), true, 'past the floor nothing waits');
+  assert.equal(h.scheduled.some((entry) => entry.delay === 900), false);
+  assert.equal(h.collapseOptions.durationMs, 720);
+  assert.equal(h.overlay.getAttribute('data-exit'), 'collapse');
+  assert.equal(h.overlay.style.getPropertyValue('--startup-name-delay-ms'), '518ms');
+  assert.equal(h.background.inert, false, 'input reaches the shell during the collapse');
+  h.finishFade();
+  assert.equal(h.overlay.parentNode, null);
+  assert.equal(h.removedCalls, 1);
+});
+
+test('the curtain clock starts when the sky started, not when the controller mounted', (t) => {
+  const dom = createCurtainDom('<main id="appShell"></main>', { sky: true, url: 'https://jenny.test/' });
+  dom.window.localStorage.setItem('jenny.startup.fullSkySeen', '1');
+  const previous = global.rendererStartupStarfield;
+  let collapse = null;
+  const sky = { startedAt: 1000, pause() {}, resume() {}, dispose() {}, isAnimated: () => true, collapse(options) { collapse = options; } };
+  global.rendererStartupStarfield = { getEarlySky: () => sky, resolveStartupExit: starfieldUtils.resolveStartupExit };
+  const controller = createController(dom.window.document, {}, { now: () => 2200 });
+  t.after(() => {
+    controller.dispose();
+    global.rendererStartupStarfield = previous;
+    dom.window.close();
+  });
+  controller.notifyBootViewReady();
+  controller.notifyShellHydrated();
+  assert.ok(collapse && collapse.durationMs > 600, 'the sky that ran during script loads counts');
+});
+
+test('a failure during the returning-launch floor gives the dialog its clicks back', (t) => {
+  const h = createControlledHandoff(t, true, { fullSkySeen: true });
+  h.controller.notifyBootViewReady();
+  h.controller.notifyShellHydrated();
+  assert.equal(h.overlay.style.pointerEvents, 'none', 'input was handed over at shell ready');
+  h.controller.handleBackendStatus({ phase: 'failed', detail: 'CMP-SIDECAR-0007 spawn failed' });
+  assert.equal(h.overlay.getAttribute('role'), 'alertdialog');
+  assert.equal(h.overlay.style.pointerEvents, '', 'pointer-events is inherited, so Retry would be mouse-dead');
+});
+
+test('a composition failure before the controller mounts still stops the early sky', (t) => {
+  const dom = createCurtainDom('', { sky: true });
+  const previous = global.rendererStartupStarfield;
+  let pauses = 0;
+  global.rendererStartupStarfield = { getEarlySky: () => ({ pause() { pauses += 1; } }) };
+  t.after(() => {
+    global.rendererStartupStarfield = previous;
+    dom.window.close();
+  });
+  lifecycleUtils.presentStartupOverlayFatalError(dom.window.document.getElementById('startupOverlay'), {});
+  assert.equal(pauses, 1);
+});
+
+test('a first launch that showed no sky does not use up the full sky', (t) => {
+  const h = createControlledHandoff(t, false, { fullSkySeen: false });
+  h.controller.notifyBootViewReady();
+  h.controller.notifyShellHydrated();
+  h.finishFade();
+  assert.equal(h.dom.window.localStorage.getItem('jenny.startup.fullSkySeen'), null);
 });

@@ -388,3 +388,41 @@ def test_a_comma_splits_only_between_file_patterns(pattern, expected):
     from sidecar.ai.tools.builtins.grep_search_file import split_top_level_commas
 
     assert split_top_level_commas(pattern) == expected
+
+
+def test_grep_reports_ignored_directories_the_scan_reached_not_the_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The walk runs a batch ahead of the scan; a search that stops early must
+    # still report the count the old one-file-at-a-time loop saw (row 124 P1).
+    if shutil.which("git") is None:
+        pytest.skip("needs the git executable")
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    _write(root / ".gitignore", "b/ign/\n")
+    for index in range(1, 6):
+        _write(root / f"r{index}.txt")
+    _write(root / "b" / "keep.txt")
+    _write(root / "b" / "ign" / "hidden.txt")
+
+    whole = grep_module.grep_search_tool({"pattern": "needle"}, WorkspaceGuard(str(root)))
+    assert whole.metadata["ignored_directories_skipped"] == 1
+
+    stop = {"now": False}
+    original_apply = grep_module._CandidateScan._apply
+
+    def apply_then_stop(self: object, path: Path, outcome: object) -> bool:
+        kept = original_apply(self, path, outcome)  # type: ignore[arg-type]
+        stop["now"] = stop["now"] or path.name == "r3.txt"
+        return kept
+
+    monkeypatch.setattr(grep_module._CandidateScan, "_apply", apply_then_stop)
+    monkeypatch.setattr(grep_module, "_runtime_budget_exhausted", lambda _started: stop["now"])
+
+    stopped = grep_module.grep_search_tool({"pattern": "needle"}, WorkspaceGuard(str(root)))
+
+    assert stopped.metadata["aborted_by_runtime_budget"] is True
+    assert "r3.txt:1:needle" in stopped.output
+    assert "r4.txt" not in stopped.output
+    assert stopped.metadata["ignored_directories_skipped"] == 0

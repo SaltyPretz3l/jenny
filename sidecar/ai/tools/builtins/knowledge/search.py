@@ -1,8 +1,8 @@
 """knowledge_search — regex and by-meaning search across the registered knowledge folders.
 
-``pattern`` reuses grep_search's pure-Python worker pipeline (spawned
-subprocess with a per-file timeout) scoped to each registered root's
-WorkspaceGuard: live filesystem reads, bounded per call. ``query`` adds search
+``pattern`` reuses grep_search's pure-Python worker pipeline (a spawned
+subprocess, files sent in batches, a timeout per answer) scoped to each
+registered root's WorkspaceGuard: live filesystem reads, bounded per call. ``query`` adds search
 by meaning over the semantic catalog when one is available (one query embed,
 fused by reciprocal rank; see ``semantic_fusion``) and otherwise matches the
 query's words.
@@ -13,31 +13,34 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
-from sidecar.ai.tools.builtins.filesystem import is_binary_file
+from sidecar.ai.tools.builtins.file_state import is_binary_extension
 from sidecar.ai.tools.builtins.grep_search import (
     DEFAULT_MAX_RESULTS,
-    LARGE_FILE_HINT,
     MATCH_SUMMARY_OP,
+    MAX_BATCH_FILES,
     MAX_CONTEXT_LINES,
     MAX_RESULTS,
     MAX_TIMED_OUT_FILES,
     MAX_TOTAL_RUNTIME_SECONDS,
     REGEX_SEARCH_TIMEOUT_SECONDS,
+    FileSearchResult,
+    ScanOutcome,
     _bounded_include_patterns,
     _bounded_int,
     _build_result,
+    _count_skipped,
     _iter_candidate_files,
     _matches_glob,
     _max_search_file_bytes,
     _optional_string,
     _RegexSearchWorker,
-    _search_file_with_timeout,
+    _scan_text_batches,
     _SearchState,
 )
 from sidecar.ai.tools.builtins.knowledge.roots import (
@@ -122,6 +125,7 @@ def knowledge_search_tool(
     )
     aborted_by_file_budget = False
     try:
+        search_context.worker.prestart()  # its start overlaps the first walk
         for scope_index, root in enumerate(roots):
             if root.path is None:
                 continue
@@ -208,65 +212,97 @@ def _search_root(
 ) -> None:
     if root.path is None:
         return
+    pending: list[Path] = []
     for candidate in _iter_candidate_files(
         start_path or root.path,
         root.guard,
         context.include_patterns,
     ):
+        pending.append(candidate)
+        if len(pending) >= MAX_BATCH_FILES:
+            if not _scan_chunk(root, pending, context):
+                return
+            pending = []
+    if pending:
+        _scan_chunk(root, pending, context)
+
+
+_BINARY_BY_EXTENSION = ScanOutcome("binary")
+
+
+def _scan_chunk(root: KnowledgeRoot, chunk: list[Path], context: _RootSearchContext) -> bool:
+    """Scan walk-ordered candidates through the worker; False when the search must stop.
+
+    Match summaries are worker requests too, so they run, in file order, once the
+    chunk's scan answers are in or the worker that still owed some is discarded.
+    """
+    binary = [is_binary_extension(path) for path in chunk]
+    outcomes = _scan_text_batches(
+        context.worker,
+        [path for path, skip in zip(chunk, binary, strict=True) if not skip],
+        context.compiled,
+        workspace_root=root.guard.root,
+        context_lines=context.context_lines,
+        max_output_matches=context.state.remaining_output_matches,
+        max_output_bytes=context.state.remaining_output_bytes,
+        max_file_bytes=_max_search_file_bytes(),
+        timeout_seconds=REGEX_SEARCH_TIMEOUT_SECONDS,
+    )
+    matched: list[tuple[Path, FileSearchResult]] = []
+    try:
+        keep_going = _apply_outcomes(
+            root,
+            zip(chunk, binary, strict=True),
+            lambda skip: _BINARY_BY_EXTENSION if skip else next(outcomes),
+            context,
+            matched,
+        )
+    finally:
+        outcomes.close()
+        context.worker.abandon_pending()
+    for candidate, result in matched:
+        display = display_path(root, candidate)
+        snippet, distinct = _match_summary(_line_texts(result.lines), context)
+        context.source_entries.append((display, snippet))
+        context.lexical_files.setdefault(display, (root, candidate))
+        context.lexical_strength.setdefault(display, (distinct, result.total_match_count))
+    return keep_going
+
+
+def _apply_outcomes(
+    root: KnowledgeRoot,
+    candidates: Iterable[tuple[Path, bool]],
+    outcome_for: Callable[[bool], ScanOutcome],
+    context: _RootSearchContext,
+    matched: list[tuple[Path, FileSearchResult]],
+) -> bool:
+    """Each candidate's budget checks, counters and outcome, as the per-file loop gave them."""
+    state = context.state
+    for candidate, skip in candidates:
         if time.monotonic() - context.started_at >= MAX_TOTAL_RUNTIME_SECONDS:
-            context.state.aborted_by_runtime_budget = True
-            return
+            state.aborted_by_runtime_budget = True
+            return False
         context.files_visited += 1
         if context.files_visited >= MAX_TOTAL_FILES_VISITED:
-            return
-        context.state.selected_files += 1
-        if is_binary_file(candidate):
-            context.state.skipped_binary_files += 1
+            return False
+        state.selected_files += 1
+        outcome = outcome_for(skip)  # next() runs after the budget checks
+        if _count_skipped(state, candidate, outcome):
             continue
-        try:
-            root.guard.check_file_size(
-                candidate,
-                _max_search_file_bytes(),
-                hint=LARGE_FILE_HINT,
-            )
-        except ToolExecutionFailure as error:
-            if error.retryable:
-                raise
-            context.state.skipped_large_files += 1
-            context.state.record_large_file_message(error.message)
-            continue
-        context.state.candidate_files += 1
-        try:
-            result = _search_file_with_timeout(
-                candidate,
-                context.compiled,
-                workspace=root.guard,
-                context_lines=context.context_lines,
-                max_output_matches=context.state.remaining_output_matches,
-                max_output_bytes=context.state.remaining_output_bytes,
-                worker=context.worker,
-            )
-        except FutureTimeoutError:
-            context.state.timed_out_files += 1
-            if context.state.timed_out_files >= MAX_TIMED_OUT_FILES:
-                context.state.aborted_by_timeout_cap = True
-                return
+        state.candidate_files += 1
+        result = outcome.result
+        if result is None:  # a timeout; the worker restarts for the next file
+            state.timed_out_files += 1
+            if state.timed_out_files >= MAX_TIMED_OUT_FILES:
+                state.aborted_by_timeout_cap = True
+                return False
             continue
         if result.total_match_count:
-            display = display_path(root, candidate)
-            snippet, distinct = _match_summary(_line_texts(result.lines), context)
-            context.source_entries.append((display, snippet))
-            context.lexical_files.setdefault(display, (root, candidate))
-            context.lexical_strength.setdefault(display, (distinct, result.total_match_count))
+            matched.append((candidate, result))
         # Worker lines are root-relative; re-anchor them to the display label.
-        context.state.consume(
-            replace(
-                result,
-                lines=[
-                    f"{root.label}/{line}" if line else line for line in result.lines
-                ],
-            )
-        )
+        anchored = [f"{root.label}/{line}" if line else line for line in result.lines]
+        state.consume(replace(result, lines=anchored))
+    return True
 
 
 def _line_texts(lines: list[str]) -> list[str]:

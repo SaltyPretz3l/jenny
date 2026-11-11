@@ -164,10 +164,9 @@
       noteUserScrollIntent,
       isReaderAwayFromFollow,
       isReaderReleaseHeld,
-      clearReaderRelease,
+      clearReaderRelease, relatchFollowAtBottom,
       releaseFollowForUserScrollAway,
-      cancelLiveStreamingFollow,
-      startLiveStreamingFollow,
+      cancelLiveStreamingFollow, startLiveStreamingFollow,
       snapThreadToBottom,
     } = liveFollowController;
 
@@ -324,7 +323,7 @@
 
     function noteScrollInputIntent() {
       if (viewportDisposed) return;
-      schedulingController?.tailCushion?.noteReaderIntent();
+      schedulingController?.noteReaderIntent?.();
       noteUserScrollIntent?.();
     }
 
@@ -372,8 +371,10 @@
           return false;
         }
       }
+      const wasFollowing = followState.get() !== false;
       const thinkingNearBottom = Boolean(thinkingController.handleScroll(metrics));
       setFollowLatest(nearBottom);
+      if (nearBottom && !wasFollowing && userInitiated) relatchFollowAtBottom?.(Number(metrics.scrollTop) || 0);
       return thinkingNearBottom;
     }
 

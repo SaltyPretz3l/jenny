@@ -34,6 +34,15 @@ PRELOAD_BUILD_MARKERS = (
     "npm run release:windows",
 )
 
+# The team bridge binary ships as resources/sidecar/jenny-team-bridge on every OS, so
+# each job that runs electron-builder builds it first (the pack:/release: scripts embed it).
+TEAM_BRIDGE_BUILD_MARKERS = (
+    "build_team_bridge.py",
+    "npm run build:team-bridge",
+    "npm run pack:",
+    "npm run release:windows",
+)
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -41,31 +50,36 @@ from scripts.checks.release_contract_versions import validate_contract_versions 
 
 REQUIRED_SCRIPTS = {
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
+    "build:launcher": "python scripts/packaging/build_native_launcher.py",
+    "build:team-bridge": "python scripts/packaging/build_team_bridge.py",
     "pack:dir": (
         "npm run build:preload && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run sbom:sidecar && "
         "npm exec -- electron-builder --dir "
         "--config electron-builder.yml --publish never"
     ),
     "pack:release": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run sbom:sidecar && "
         "npm exec -- electron-builder "
         "--config electron-builder.yml --publish never"
     ),
     "pack:linux": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && "
         "npm exec -- electron-builder --linux "
         "--config electron-builder.yml --publish never"
     ),
     "release:windows": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "
         "--config electron-builder.yml --publish never"
     ),
@@ -310,6 +324,39 @@ def _has_cli_option(run: str, option: str, value: str | None = None) -> bool:
     return re.search(pattern + r"(?=\s|$)", run) is not None
 
 
+def _builder_follows(run: str, markers: tuple[str, ...], builder_start: int) -> bool:
+    return any(0 <= run.find(marker) < builder_start for marker in markers)
+
+
+def _validate_job_build_order(
+    workflow_path: str, job_name: str, steps: list[dict[str, object]]
+) -> list[str]:
+    """Each electron-builder call needs the preload bundle and the team bridge built before it."""
+    violations: list[str] = []
+    preload_built = False
+    bridge_built = False
+    for step in steps:
+        run = str(step.get("run") or "")
+        for builder in re.finditer("electron-builder", run):
+            if not bridge_built and not _builder_follows(
+                run, TEAM_BRIDGE_BUILD_MARKERS, builder.start()
+            ):
+                violations.append(
+                    f"{workflow_path} job {job_name!r} packages the app "
+                    "without a preceding team bridge build "
+                    "('python scripts/packaging/build_team_bridge.py')"
+                )
+            if preload_built or _builder_follows(run, PRELOAD_BUILD_MARKERS, builder.start()):
+                continue
+            violations.append(
+                f"{workflow_path} job {job_name!r} runs electron-builder "
+                "without a preceding 'npm run build:preload' command"
+            )
+        preload_built = preload_built or any(marker in run for marker in PRELOAD_BUILD_MARKERS)
+        bridge_built = bridge_built or any(marker in run for marker in TEAM_BRIDGE_BUILD_MARKERS)
+    return violations
+
+
 def _validate_release_workflows(root: Path) -> list[str]:
     """Every electron-builder invocation needs an earlier preload build.
 
@@ -348,22 +395,7 @@ def _validate_release_workflows(root: Path) -> list[str]:
         if relative.name == 'release.yml':
             violations.extend(_validate_public_release_safety(workflow))
         for job_name, steps in _workflow_jobs(workflow):
-            preload_built = False
-            for step in steps:
-                run = str(step.get("run") or "")
-                for builder in re.finditer("electron-builder", run):
-                    preload_precedes_builder = preload_built or any(
-                        0 <= run.find(marker) < builder.start()
-                        for marker in PRELOAD_BUILD_MARKERS
-                    )
-                    if preload_precedes_builder:
-                        continue
-                    violations.append(
-                        f"{relative.as_posix()} job {job_name!r} runs electron-builder "
-                        "without a preceding 'npm run build:preload' command"
-                    )
-                if any(marker in run for marker in PRELOAD_BUILD_MARKERS):
-                    preload_built = True
+            violations.extend(_validate_job_build_order(relative.as_posix(), job_name, steps))
     return violations
 
 

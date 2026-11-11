@@ -23,11 +23,10 @@ from sidecar.ai.tools.plan_artifact_policy import strip_plan_artifact_write_arg
 
 MODEL_TOOL_ID_ALIASES: dict[str, str] = {
     "list_files": "list_dir",
-    "mermaid_gen": "mermaid_generate",
     "web:web_search": "web_search",
     "web:fetch_url": "fetch_url",
 }
-COALESCIBLE_TOOL_IDS = frozenset({"mermaid_generate"})
+COALESCIBLE_TOOL_IDS: frozenset[str] = frozenset()
 # Tag on a web_search call whose empty query was filled from the user's prompt.
 WEB_SEARCH_QUERY_FROM_PROMPT = "query_from_prompt"
 _WEB_SEARCH_FALLBACK_QUERY_CHARS = 200

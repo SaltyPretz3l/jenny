@@ -3,7 +3,8 @@
 /* services/chat-messaging-wake.js - row 70 W1: a delivered message or linked-child report
  * wakes its destination chat. Pure decision logic over injected ports (no Electron, no
  * backend object): the destination's eligibility, a depth cap carried by the waking turn id,
- * a per-destination rate window, the idle test and the deferred set a settled turn drains.
+ * the idle test and the deferred set a settled turn drains. There is no rate window (owner,
+ * 2026-11-10): the depth cap stops message ping-pong and the person's Pause stops the rest.
  *
  * The wake is an ordinary durable turn of the destination (`submitTurn` is the runtime's
  * submitApplicationTurn) under that chat's own run mode, model and effort; the queued mail is
@@ -117,22 +118,18 @@ function createWakeOps({
   scheduleRecheck = (fn, ms) => { const handle = setTimeout(fn, ms); handle.unref?.(); return handle; },
   settlingRecheckMs = 1500,
   maxSenderHoldTicks = 400, // about 10 minutes of re-checks at settlingRecheckMs
-  now = () => new Date(),
   log = () => {},
   maxDepth = 3,
-  rateLimit = { max: 6, windowMs: 600000 },
   maxTracked = 256,
 } = {}) {
   const depths = new Map(); // wake turn id -> depth
   const deferred = new Map(); // message id -> entry, waiting for the destination's settled turn
-  const wakes = new Map(); // destination id -> submit times (ms) inside the rate window
   const attempted = new Map(); // message id -> true: a message wakes at most once
   const inFlight = new Map(); // destination id -> submits awaiting their answer
   const held = new Map(); // message id -> entry, waiting for its sender's live turn to end
   let sequence = 0;
 
   const read = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
-  const nowMs = () => read(() => now().getTime(), Date.now());
   const ids = (entry) => ({ destination_session_id: entry.destination, message_id: entry.message_id, kind: entry.kind });
 
   function noteWakeTurn(turnId, depth) {
@@ -167,14 +164,6 @@ function createWakeOps({
     const ok = Boolean(summary) && !summary.archived_at && summary.lockdown !== true
       && sessionAllowsChatSend(summary) && summary.messaging_addressable !== false;
     return ok ? summary : null;
-  }
-
-  function recentWakes(destination) {
-    const cutoff = nowMs() - rateLimit.windowMs;
-    const kept = (wakes.get(destination) || []).filter((at) => at > cutoff);
-    if (kept.length) boundedSet(wakes, destination, kept, maxTracked);
-    else wakes.delete(destination);
-    return kept.length;
   }
 
   function idle(destination) {
@@ -247,11 +236,6 @@ function createWakeOps({
       log('WARN', 'chat_messaging.wake_depth_exceeded', { ...ids(entry), reason: 'depth_exceeded', depth: entry.depth });
       return { outcome: 'depth_exceeded' };
     }
-    const count = recentWakes(entry.destination);
-    if (count >= rateLimit.max) {
-      log('WARN', 'chat_messaging.wake_rate_limited', { ...ids(entry), reason: 'rate_limited', count });
-      return { outcome: 'rate_limited' };
-    }
     return { summary };
   }
 
@@ -298,7 +282,6 @@ function createWakeOps({
     }
     if (result?.ok === true) {
       noteWakeTurn(result.turn_id, entry.depth);
-      boundedSet(wakes, entry.destination, [...(wakes.get(entry.destination) || []), nowMs()], maxTracked);
       const workId = typeof result.work_id === 'string' ? result.work_id : null;
       log('INFO', 'chat_messaging.wake_submitted', {
         destination_session_id: entry.destination, kind: entry.kind, depth: entry.depth, work_id: workId,
@@ -388,7 +371,7 @@ function createWakeOps({
       if (!remaining.length) return { outcome: 'none' };
       const oldest = remaining[0];
       const gated = gate(oldest);
-      if (gated.outcome === 'rate_limited' || gated.outcome === 'paused') { for (const entry of remaining) defer(entry, 'rate_limited'); return gated; }
+      if (gated.outcome === 'paused') { for (const entry of remaining) defer(entry, 'paused'); return gated; }
       if (gated.outcome) return gated;
       return await submit(oldest, gated.summary);
     } catch {
@@ -427,7 +410,7 @@ function createWakeOps({
   }
 
   function stats() {
-    return { tracked_turns: depths.size, deferred: deferred.size, held: held.size, rate_destinations: wakes.size, attempted: attempted.size };
+    return { tracked_turns: depths.size, deferred: deferred.size, held: held.size, attempted: attempted.size };
   }
 
   return { onDelivered, onTurnSettled, resumeDestination, noteWakeTurn, depthForTurn, stats };

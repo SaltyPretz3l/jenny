@@ -59,9 +59,9 @@ test('malformed/future setup or config state and invalid keys are never silently
   writeJson(marker, { schema_version: 2, state: 'pending' });
   assert.throws(() => readSetup(configPath), /unsupported_setup_marker/);
   fs.unlinkSync(marker);
-  writeJson(configPath, { ...source, schema_version: 3 });
+  writeJson(configPath, { ...source, schema_version: 4 });
   assert.throws(() => readSetup(configPath), (error) => error.reason === 'config_schema_future');
-  assert.equal(JSON.parse(fs.readFileSync(configPath)).schema_version, 3);
+  assert.equal(JSON.parse(fs.readFileSync(configPath)).schema_version, 4);
   assert.throws(() => saveSetup(configPath, source, 'bad\nkey'), /invalid_model_key/);
   assert.equal(fs.existsSync(marker), false);
 });
@@ -75,14 +75,14 @@ test('removing an unneeded key is explicit and durable with the new config', (t)
 });
 
 
-test('startup reloads a committed endpoint/key pair under the profile lock', (t) => {
+test('startup reloads a committed endpoint/key pair under the profile lock', async (t) => {
   const { acquireConfiguredProfile } = require('../../server/main');
   const { source, configPath } = setupFixture(t);
   source.model_endpoint.engine = 'openai-compatible';
   source.model_endpoint.api_url = 'http://old:1234/v1';
   saveSetup(configPath, source, 'old-key');
   let released = false;
-  const result = acquireConfiguredProfile(configPath, { acquireProfileImpl() {
+  const result = await acquireConfiguredProfile(configPath, { acquireProfileImpl() {
     // A competing setup transaction finishes before this startup owns the lock.
     source.model_endpoint.api_url = 'http://new:1234/v1';
     saveSetup(configPath, source, 'new-key');
@@ -95,17 +95,17 @@ test('startup reloads a committed endpoint/key pair under the profile lock', (t)
   assert.equal(released, true);
 });
 
-test('startup rejects profile retargeting or unfinished setup after lock acquisition', (t) => {
+test('startup rejects profile retargeting or unfinished setup after lock acquisition', async (t) => {
   const { acquireConfiguredProfile } = require('../../server/main');
   const { source, configPath, root } = setupFixture(t);
   saveSetup(configPath, source, null);
   let releases = 0;
-  assert.throws(() => acquireConfiguredProfile(configPath, { acquireProfileImpl() {
+  await assert.rejects(acquireConfiguredProfile(configPath, { acquireProfileImpl() {
     writeJson(configPath, { ...source, user_data_path: path.join(root, 'new-profile') });
     return { release() { releases += 1; } };
   } }), /host_profile_changed_during_start/);
   writeJson(configPath, source);
-  assert.throws(() => acquireConfiguredProfile(configPath, { acquireProfileImpl() {
+  await assert.rejects(acquireConfiguredProfile(configPath, { acquireProfileImpl() {
     writeJson(path.join(path.dirname(configPath), SETUP_PENDING_FILE), { schema_version: 1, state: 'pending' });
     return { release() { releases += 1; } };
   } }), (error) => error.reason === 'setup_incomplete');

@@ -314,18 +314,18 @@ function createAppearanceHarness(markup, callbacks) {
 
 test('settings event bindings update palette without deriving a user motion preference', async () => {
   const { harness, controller, appliedPreferences } = createAppearanceHarness(
-    '<select id="appearancePaletteSelect"><option value="midnight">Midnight</option><option value="signal">Signal</option></select>'
+    '<select id="appearancePaletteSelect"><option value="midnight">Midnight</option><option value="pewter">Pewter</option></select>'
   );
 
   try {
     controller.bind();
     const paletteSelect = harness.document.getElementById('appearancePaletteSelect');
-    paletteSelect.value = 'signal';
+    paletteSelect.value = 'pewter';
     paletteSelect.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(appliedPreferences.length, 1);
-    assert.equal(appliedPreferences[0].paletteId, 'signal');
+    assert.equal(appliedPreferences[0].paletteId, 'pewter');
     // Retired motion axes are never derived into the stored preferences.
     assert.equal('motionId' in appliedPreferences[0], false);
     assert.equal('explicitMotion' in appliedPreferences[0], false);

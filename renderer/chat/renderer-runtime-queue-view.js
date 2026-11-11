@@ -236,6 +236,8 @@
    * the timeline has not drawn). */
   const QUEUED_ATTR = 'data-queued-send';
   const META_ATTR = 'data-queued-send-meta';
+  // Per timeline: the composer's last syncQueuedBubbles input, re-applied after timeline writes.
+  const lastSync = new WeakMap();
 
   function bubbleRow(row) {
     return Boolean(row) && row.queued !== false && row.detached !== true && row.status !== 'running' && Boolean(row.userId);
@@ -359,6 +361,7 @@
   function syncQueuedBubbles({ timeline, rows, actions = {}, closing = false } = {}) {
     const shown = new Set();
     if (!timeline || typeof timeline.querySelectorAll !== 'function') return shown;
+    lastSync.set(timeline, { rows, actions, closing });
     const wanted = new Map();
     for (const row of (Array.isArray(rows) ? rows : []).filter(bubbleRow)) {
       const article = timeline.querySelector(`.chat-entry[data-message-id="${cssId(row.userId)}"]`);
@@ -392,6 +395,17 @@
     return shown;
   }
 
+  /* A timeline write (full-render morph, virtualizer remount) rebuilds a bubble
+   * from its own markup, which carries neither the attribute nor the line, and
+   * mid-stream the next composer render can be minutes away. Each timeline
+   * commit re-applies the composer's last rows (`lastSync`); a timeline with
+   * no queued bubble wanted skips the DOM entirely. */
+  function resyncQueuedBubbles(timeline) {
+    const last = timeline ? lastSync.get(timeline) : null;
+    if (!last || !(Array.isArray(last.rows) && last.rows.some(bubbleRow))) return new Set();
+    return syncQueuedBubbles({ timeline, ...last });
+  }
+
   function disposeRuntimeQueueRender(host) {
     const view = host?.[VIEW];
     if (!view) return;
@@ -402,6 +416,6 @@
     host.hidden = true;
   }
 
-  return { disposeRuntimeQueueRender, handleTakeBackKeydown, putBackInComposer, renderRuntimeQueue, syncQueuedBubbles,
-    takeBackQueued, withdrawToComposer };
+  return { disposeRuntimeQueueRender, handleTakeBackKeydown, putBackInComposer, renderRuntimeQueue, resyncQueuedBubbles,
+    syncQueuedBubbles, takeBackQueued, withdrawToComposer };
 });

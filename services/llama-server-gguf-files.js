@@ -232,6 +232,12 @@ const isImatrixData = (name) => {
   return /(?:^|[-_.\s])imatrix$/i.test(base) || (/^imatrix(?:[-_.\s]|$)/i.test(base) && !QUANT_SUFFIX.test(base));
 };
 const modelFamily = (name) => baseName(name).replace(SHARD_SUFFIX, '').replace(QUANT_SUFFIX, '').toLowerCase();
+// The folder a moved model gets: its family name as written ("LFM3-Omni-2B"
+// for "LFM3-Omni-2B-F16.gguf"), so every quant of one model shares a folder.
+const modelFolderName = (name) => {
+  const base = baseName(name).replace(SHARD_SUFFIX, '');
+  return base.replace(QUANT_SUFFIX, '') || base;
+};
 function oneModel(modelFile, main) {
   const models = main.filter((name) => !isImatrixData(name));
   if (models.length === 0) return false;
@@ -304,6 +310,8 @@ module.exports = {
   DIFFUSION_ARCHITECTURES,
   chatModelRefusal,
   filterDiffusionGgufs,
+  modelFamily,
+  modelFolderName,
   normalizeModelTagForFilename,
   pairProjector,
   resolveGgufPath,

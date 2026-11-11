@@ -8,6 +8,7 @@ import hashlib
 import importlib
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ from sidecar.ai.error_codes import (
 from sidecar.ai.tools import workspace as workspace_module
 from sidecar.ai.tools.builtins import file_state as file_state_module
 from sidecar.ai.tools.builtins import filesystem as filesystem_module
-from sidecar.ai.tools.builtins import filesystem_content, pdf_text
+from sidecar.ai.tools.builtins import filesystem_content, handle_containment, pdf_text
 from sidecar.ai.tools.builtins.file_state import (
     READ_SNAPSHOT_SCOPE_FULL,
     ReadSnapshot,
@@ -280,7 +281,9 @@ def test_read_file_accepts_exact_full_read_byte_cap(tmp_path: Path) -> None:
     result = read_file_tool({"path": "exact-cap.txt"}, _guard(tmp_path))
 
     assert result.success is True
-    assert len(result.output.encode("utf-8")) == MAX_READ_BYTES
+    # Over the output budget the read comes back as a window; its one line is
+    # still the whole file.
+    assert len(result.output.split("\n\n", 1)[1].encode("utf-8")) == MAX_READ_BYTES
 
 
 def test_read_file_includes_path_in_size_limit_error(tmp_path: Path) -> None:
@@ -526,11 +529,12 @@ def test_read_file_refuses_when_file_grows_during_read(
 
     def _fake_fstat(fd: int):
         real = real_fstat(fd)
+        if sys._getframe(1).f_globals.get("__name__") == handle_containment.__name__:
+            return real  # the open-time check's own stat (only off Windows and /proc)
         call_count["n"] += 1
-        # The authorized opener fstats once to bind the handle. The capped read
-        # then takes its open baseline and post-read stat; simulate growth only
-        # for that final observation.
-        return _FakeStat(real, size_delta=64 if call_count["n"] == 3 else 0)
+        # The capped read takes its open baseline and post-read stat; simulate
+        # growth only for that final observation.
+        return _FakeStat(real, size_delta=64 if call_count["n"] == 2 else 0)
 
     monkeypatch.setattr(filesystem_module.os, "fstat", _fake_fstat)
 

@@ -4,12 +4,13 @@
       root,
       require('../inventory/number-input'),
       require('./renderer-model-tuning-engine-utils'),
-      require('./renderer-model-library-format-utils')
+      require('./renderer-model-library-format-utils'),
+      require('./renderer-model-tuning-rows')
     );
     return;
   }
-  root.rendererModelTuningDrawer = factory(root, root.inventoryNumberInput, root.rendererModelTuningEngineUtils, root.rendererModelLibraryFormatUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, bundledNumberInput, engineUtils, formatUtils) {
+  root.rendererModelTuningDrawer = factory(root, root.inventoryNumberInput, root.rendererModelTuningEngineUtils, root.rendererModelLibraryFormatUtils, root.rendererModelTuningRows);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, bundledNumberInput, engineUtils, formatUtils, rows) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
@@ -22,38 +23,8 @@
     repetitionPenalty: { min: 0, max: 2 },
     maxOutputTokens: { min: 1, max: 200000 },
   };
-  var FIELD_GROUPS = [
-    {
-      title: jt('models.tuning.contextAndMemory', 'Context and memory'),
-      fields: [
-        { key: 'contextLength', label: jt('models.tuning.contextWindow', 'Context window'), kind: 'context' },
-        { key: 'ratio', label: jt('models.tuning.summarizeAt', 'Summarize at'), kind: 'ratio' },
-      ],
-    },
-    {
-      title: jt('models.tuning.sampling', 'Sampling'),
-      fields: [
-        { key: 'temperature', label: jt('models.tuning.temperature', 'Temperature'), kind: 'profile' },
-        { key: 'topP', label: jt('models.tuning.topP', 'Top P'), kind: 'profile' },
-        { key: 'topK', label: jt('models.tuning.topK', 'Top K'), kind: 'profile' },
-        { key: 'minP', label: jt('models.tuning.minP', 'Min P'), kind: 'profile' },
-      ],
-    },
-    {
-      title: jt('models.tuning.repetitionAndLength', 'Repetition and length'),
-      fields: [
-        { key: 'repetitionPenalty', label: jt('models.tuning.repetitionPenalty', 'Repetition penalty'), kind: 'profile' },
-        { key: 'presencePenalty', label: jt('models.tuning.presencePenalty', 'Presence penalty'), kind: 'profile' },
-        { key: 'maxOutputTokens', label: jt('models.tuning.maximumOutput', 'Maximum output'), kind: 'profile' },
-      ],
-    },
-  ];
-  var FIELD_DEFINITIONS = FIELD_GROUPS.reduce(function (definitions, group) {
-    group.fields.forEach(function (field) {
-      if (field.kind === 'profile') definitions.push([field.key, field.label]);
-    });
-    return definitions;
-  }, []);
+  // The generation-profile fields, in collect order (rows: renderer-model-tuning-rows.js).
+  var PROFILE_KEYS = ['temperature', 'topP', 'topK', 'minP', 'repetitionPenalty', 'presencePenalty', 'maxOutputTokens'];
   var SUPPORTED_ENGINES = new Set(['ollama', 'vllm', 'openai-compatible']);
   // Engine restarts owed by model key ({runtimeChanged, launch}): a reflected
   // engine write on the served model whose restart could not run (a chat was
@@ -95,6 +66,7 @@
     var pickFailure = ''; // the status copy a failed pick put up
     var pickingGguf = null; // the drawer generation whose pick (dialog, then probe) is in flight
     var pickingRuntime = null;
+    var advancedOpen = null; // Advanced sampling fold: null until the first render decides
     var getStreamingSessionIds = typeof d.getStreamingSessionIds === 'function'
       ? d.getStreamingSessionIds
       : function () { return []; };
@@ -209,56 +181,6 @@
       };
     }
 
-    function renderRow(definition, controlsDisabled, contextSteps, contextValue, ratioValue, profile) {
-      var selectField = inventory.selectField || windowRef.inventorySelectField;
-      var numberInput = inventory.numberInput || windowRef.inventoryNumberInput || bundledNumberInput;
-      var control;
-      var range = '';
-      if (definition.kind === 'context') {
-        control = selectField({
-          id: 'modelTuningContextLength',
-          label: '',
-          ariaLabel: definition.label,
-          value: String(contextValue || ''),
-          options: [{ value: '', label: jt('models.tuning.modelDefault', 'Model default') }].concat(contextSteps.map(function (step) {
-            return { value: String(step), label: formatContextLength(step) };
-          })),
-          disabled: controlsDisabled,
-          dataset: { 'model-tuning-field': definition.key },
-        });
-      } else {
-        var bounds = definition.kind === 'ratio'
-          ? { min: 0.1, max: 0.99 }
-          : profileBounds(definition.key);
-        var value = definition.kind === 'ratio' ? ratioValue : profile[definition.key];
-        // Integer fields step by 1: a numeric input takes its step BASE from
-        // min, so a 256 step against min=1 makes every round value (4096,
-        // 8192) step-mismatched and walks the spinner down to 3841.
-        var integerField = definition.key === 'maxOutputTokens' || definition.key === 'topK';
-        var step = integerField ? 1 : 0.01;
-        control = numberInput({
-          id: 'modelTuning' + definition.key[0].toUpperCase() + definition.key.slice(1),
-          label: '',
-          ariaLabel: definition.label,
-          value: value == null ? '' : String(value),
-          min: bounds.min,
-          max: bounds.max,
-          step: step,
-          allowEmpty: true,
-          placeholder: jt('models.tuning.modelDefault', 'Model default'),
-          disabled: controlsDisabled,
-          dataset: { 'model-tuning-field': definition.key },
-        });
-        range = 'range ' + escapeHtml(Number(bounds.min).toLocaleString(globalThis.jennyI18n?.tag?.()))
-          + '–' + escapeHtml(Number(bounds.max).toLocaleString(globalThis.jennyI18n?.tag?.()));
-      }
-      return '<div class="model-tuning-row" data-model-tuning-row="' + escapeHtml(definition.key) + '">'
-        + '<span class="model-tuning-row-label">' + escapeHtml(definition.label) + '</span>'
-        + '<div class="model-tuning-row-control">' + control + '</div>'
-        + '<span class="model-tuning-row-range" data-dirty="false">' + range + '</span>'
-        + '</div>';
-    }
-
     function buildEngineSection() {
       if (ninferActive()) {
         var selectFieldModule = inventory.selectField || windowRef.inventorySelectField;
@@ -267,6 +189,7 @@
           selectField: selectFieldModule, pending: pending,
           toggleSwitch: typeof ninferToggle === 'function' ? ninferToggle : ninferToggle?.toggleSwitch,
           actionButton: inventory.actionButton || windowRef.inventoryActionButton,
+          rowHtml: rows.rowHtml, sectionHtml: rows.sectionHtml,
         });
       }
       if (!engineSectionEnabled() || !engineView) return '';
@@ -285,6 +208,16 @@
       });
     }
 
+    function contextBounds() {
+      var b = activeState?.contextLengthBounds || {};
+      return { min: Number(b.min) || rows.CONTEXT_BOUNDS.min, max: Number(b.max) || rows.CONTEXT_BOUNDS.max };
+    }
+
+    function savedAnything() {
+      return Object.keys(resolveProfile()).length > 0 || activeState?.ratioByModel?.[activeModelId] != null
+        || (supportsContextTuning() && activeState?.contextLengthByModel?.[activeModelId] != null);
+    }
+
     function buildBodyHtml() {
       var selectField = inventory.selectField || windowRef.inventorySelectField;
       var numberInput = inventory.numberInput || windowRef.inventoryNumberInput || bundledNumberInput;
@@ -297,27 +230,26 @@
           + ' <strong>' + escapeHtml(activeModelId) + '</strong>' + escapeHtml(jt('models.tuning.engineOwnsControlsSuffix', '. This engine owns its generation controls.')) + '</p>';
       }
       var controlsDisabled = pending || engineUnknown;
-      var contextSteps = Array.isArray(activeState?.contextLengthSteps) ? activeState.contextLengthSteps : [];
-      var contextValue = activeState?.contextLengthByModel?.[activeModelId] || '';
-      var ratioValue = activeState?.ratioByModel?.[activeModelId];
       var profile = resolveProfile();
-      var sections = FIELD_GROUPS.map(function (group) {
-        var rows = group.fields.filter(function (definition) {
-          return definition.kind !== 'context' || engineUnknown || supportsContextTuning();
-        }).map(function (definition) {
-          return renderRow(definition, controlsDisabled, contextSteps, contextValue, ratioValue, profile);
-        }).join('');
-        return '<section class="model-tuning-section">'
-          + '<h4 class="model-tuning-section-title">' + escapeHtml(group.title) + '</h4>'
-          + (group.fields[0]?.key === 'contextLength' && (engineUnknown || supportsContextTuning())
-            ? '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.tuning.contextWindowHint', 'Larger context windows retain more history and tool output but consume more RAM or VRAM.')) + '</p>'
-            : '')
-          + rows
-          + '</section>';
-      }).join('');
+      // Decided once the profile has loaded (the loading render must not close it).
+      if (advancedOpen == null && activeState) advancedOpen = rows.advancedHasValues(profile);
+      var sections = rows.tuningSectionsHtml({
+        escapeHtml: escapeHtml, actionButton: actionButton, selectField: selectField, numberInput: numberInput,
+        disabled: controlsDisabled, profile: profile, profileBounds: profileBounds,
+        ratioValue: activeState?.ratioByModel?.[activeModelId],
+        ratioBounds: activeState?.ratioBounds || { min: 0.1, max: 0.99 },
+        showContext: engineUnknown || supportsContextTuning(),
+        contextSteps: Array.isArray(activeState?.contextLengthSteps) ? activeState.contextLengthSteps : [],
+        contextValue: activeState?.contextLengthByModel?.[activeModelId] || '',
+        contextBounds: contextBounds(), formatContextLength: formatContextLength,
+        contextNote: engineUtils.servedContextNote(engineView, serverStatus, formatContextLength),
+        advancedOpen: advancedOpen === true,
+      });
+      var engineSection = buildEngineSection();
       return ''
-        + '<p class="model-tuning-drawer-subtitle">' + escapeHtml(activeModelId) + ' · '
-        + escapeHtml(engineLabel(engineType)) + ' ' + escapeHtml(jt('models.tuning.appliesAfterRuntimeConfirms', '· applies after the runtime confirms')) + '</p>'
+        // No Engine section to name the engine: one line does.
+        + (engineSection || engineUnknown ? '' : '<p class="model-tuning-drawer-subtitle">'
+          + escapeHtml(jt('models.tuning.runsOn', 'Runs on {engine}.', { engine: engineLabel(engineType) })) + '</p>')
         + (engineUnknown
           ? '<div class="model-tuning-drawer-warning" role="status"><span>' + escapeHtml(jt('models.tuning.engineUnverified', 'Jenny can\'t verify this model\'s engine yet, so tuning is paused.')) + '</span>'
             + actionButton({ id: 'recheck-model-tuning-engine', label: jt('models.tuning.recheck', 'Re-check'), variant: 'ghost', size: 'sm' })
@@ -326,14 +258,19 @@
         // One block-level wrapper: the drawer body is a grid, and a sticky footer
         // placed directly in a grid cell has no travel. Also the container-query root.
         + '<div class="model-tuning-drawer-scroll">'
-        + '<div class="model-tuning-drawer-grid"' + (engineUnknown ? ' data-disabled="true"' : '') + '>'
-        + buildEngineSection() + sections
+        // data-engine-type: the engine Jenny resolved for this model (drivers read it).
+        + '<div class="model-tuning-drawer-grid" data-engine-type="' + escapeHtml(engineType) + '"' + (engineUnknown ? ' data-disabled="true"' : '') + '>'
+        + engineSection + sections
         + '</div>'
         + '<div class="model-tuning-drawer-footer">'
-        + actionButton({ id: 'save-model-tuning', label: pending ? jt('models.tuning.applying', 'Applying…') : jt('models.tuning.applyNoChanges', 'Apply 0 changes'), variant: 'primary', disabled: true })
-        + actionButton({ id: 'reset-model-tuning', label: jt('models.tuning.resetToDefaults', 'Reset to defaults'), variant: 'secondary', disabled: controlsDisabled })
         + '<p class="model-tuning-drawer-status" aria-live="polite">' + escapeHtml(statusMessage) + '</p>'
-        + '</div>'
+        + '<div class="model-tuning-drawer-actions">'
+        + actionButton({ id: 'save-model-tuning', label: pending ? jt('models.tuning.applying', 'Applying…') : jt('models.tuning.noChanges', 'No changes'), variant: 'primary', disabled: true })
+        + rows.hiddenHtml(actionButton({ id: 'discard-model-tuning', label: jt('models.tuning.discard', 'Discard'), variant: 'secondary', disabled: pending }))
+        + actionButton({ id: 'reset-model-tuning', label: jt('models.tuning.resetToDefaults', 'Reset to defaults'), variant: 'secondary', className: 'model-tuning-reset',
+          title: jt('models.tuning.resetHint', 'Clears every sampling and memory value for this model. The engine choice stays. Apply to save.'),
+          disabled: controlsDisabled || !savedAnything() })
+        + '</div></div>'
         + '</div>';
     }
 
@@ -357,16 +294,17 @@
     function dirtyFields(host) {
       var dirty = [];
       var profile = resolveProfile();
-      FIELD_DEFINITIONS.forEach(function (definition) {
-        var input = host?.querySelector?.('[data-model-tuning-field="' + definition[0] + '"]');
-        if (input && !numericValuesMatch(input.value, profile[definition[0]])) dirty.push(definition[0]);
+      PROFILE_KEYS.forEach(function (key) {
+        var input = host?.querySelector?.('[data-model-tuning-field="' + key + '"]');
+        if (input && !numericValuesMatch(input.value, profile[key])) dirty.push(key);
       });
+      // Summarize at is a percentage field over a stored ratio.
       var ratio = host?.querySelector?.('#modelTuningRatio');
-      if (ratio && !numericValuesMatch(ratio.value, activeState?.ratioByModel?.[activeModelId])) {
+      if (ratio && !numericValuesMatch(ratio.value, rows.ratioPercent(activeState?.ratioByModel?.[activeModelId]))) {
         dirty.push('ratio');
       }
-      var context = host?.querySelector?.('#modelTuningContextLength');
-      if (context && !numericValuesMatch(context.value, activeState?.contextLengthByModel?.[activeModelId])) {
+      var contextValue = rows.readContextValue(host);
+      if (contextValue != null && !numericValuesMatch(contextValue, activeState?.contextLengthByModel?.[activeModelId])) {
         dirty.push('contextLength');
       }
       if (engineSectionEnabled() && engineDraft) {
@@ -380,22 +318,70 @@
       var dirty = dirtyFields(host);
       var dirtySet = new Set(dirty);
       var busy = pending || (ninferActive() && ninferSection.busy());
+      var contextInvalid = rows.contextValueInvalid(host, contextBounds());
       var saveButton = host?.querySelector?.('[data-action="save-model-tuning"]');
       if (saveButton) {
         saveButton.textContent = busy
           ? jt('models.tuning.applying', 'Applying…')
-          : jtn('models.tuning.applyChanges', dirty.length, { count: dirty.length }, 'Apply {count} change', 'Apply {count} changes');
-        saveButton.disabled = busy || !supportsTuning() || dirty.length === 0;
+          : dirty.length
+            ? jtn('models.tuning.applyChanges', dirty.length, { count: dirty.length }, 'Apply {count} change', 'Apply {count} changes')
+            : jt('models.tuning.noChanges', 'No changes');
+        saveButton.disabled = busy || !supportsTuning() || dirty.length === 0 || contextInvalid;
       }
+      var discard = host?.querySelector?.('[data-action="discard-model-tuning"]');
+      if (discard) Object.assign(discard, { hidden: dirty.length === 0, disabled: busy });
       host?.querySelectorAll?.('[data-model-tuning-row]').forEach(function (row) {
-        var range = row.querySelector('.model-tuning-row-range');
-        if (range) range.dataset.dirty = dirtySet.has(row.dataset.modelTuningRow) ? 'true' : 'false';
+        var changed = row.querySelector('[data-model-tuning-changed]');
+        if (changed) changed.hidden = !dirtySet.has(row.dataset.modelTuningRow);
+        var revert = row.querySelector('[data-model-tuning-revert]');
+        var input = revert && row.querySelector('[data-model-tuning-field]');
+        // Revert follows its field: hidden when empty, disabled while the grid is locked.
+        if (revert) Object.assign(revert, { hidden: !input || String(input.value || '').trim() === '', disabled: busy || !resolveEngineType() });
       });
+      var contextNote = host?.querySelector?.('[data-model-tuning-row="contextLength"] [data-model-tuning-note]');
+      if (contextNote) {
+        contextNote.textContent = contextInvalid
+          ? rows.contextInvalidText(contextBounds())
+          : engineUtils.servedContextNote(engineView, serverStatus, formatContextLength);
+        contextNote.dataset.invalid = contextInvalid ? 'true' : 'false';
+      }
+    }
+
+    // Custom… shows the token field (seeded with the saved size); a preset hides it.
+    function syncContextCustom(host, seed) {
+      var select = host?.querySelector?.('#modelTuningContextLength');
+      var wrap = host?.querySelector?.('[data-model-tuning-context-custom]');
+      if (!select || !wrap) return;
+      var custom = select.value === rows.CUSTOM_CONTEXT;
+      var input = wrap.querySelector('input');
+      if (custom && seed && input && !input.value) input.value = String(activeState?.contextLengthByModel?.[activeModelId] || '');
+      wrap.hidden = !custom;
+      if (custom && seed) input?.focus?.();
+    }
+
+    function revertField(event) {
+      var key = event?.target?.closest?.('[data-model-tuning-revert]')?.dataset?.modelTuningRevert;
+      var input = key && boundActionsHost?.querySelector?.('[data-model-tuning-field="' + key + '"]');
+      if (!input || input.disabled || pending) return;
+      input.value = '';
+      input.focus?.();
+      updateDirtyState(boundActionsHost);
+    }
+
+    // Back to the saved settings: every draft (fields, engine, NInfer) is rebuilt.
+    function discardDraft() {
+      // Never mid-apply: discarding the NInfer draft then would leave a change that undoes the apply.
+      if (pending || (ninferActive() && ninferSection.busy())) return;
+      if (engineView) deriveEngineState();
+      if (ninferActive()) ninferSection.discard?.();
+      statusMessage = '';
+      render();
     }
 
     function handleTuningChange(event) {
       // The NInfer context select keeps its own draft and Apply; it is no generic tuning field.
       if (ninferActive() && ninferSection.onChange(event)) { render(); return; }
+      if (event?.type === 'change' && event.target?.id === 'modelTuningContextLength') syncContextCustom(boundActionsHost, true);
       updateDirtyState(boundActionsHost);
     }
 
@@ -411,7 +397,7 @@
       if (mtpRow) mtpRow.hidden = engineDraft.engine !== 'llama-server';
       var runtimeRow = boundActionsHost?.querySelector?.('[data-model-tuning-row="runtimePath"]');
       if (runtimeRow) runtimeRow.hidden = engineDraft.engine !== 'llama-server';
-      var status = boundActionsHost?.querySelector?.('[data-model-tuning-row="engine"] .model-tuning-row-range');
+      var status = boundActionsHost?.querySelector?.('[data-model-tuning-engine] [data-model-tuning-section-status]');
       if (status) status.textContent = engineUtils.engineStatusText(engineView, engineDraft, serverStatus);
       updateDirtyState(boundActionsHost);
     }
@@ -455,7 +441,7 @@
         clearPickFailure();
         var code = boundActionsHost?.querySelector?.('[data-model-tuning-gguf]');
         if (code) { code.textContent = engineUtils.modelPathName(result.path); code.title = result.path; }
-        var note = boundActionsHost?.querySelector?.('[data-model-tuning-row="mtp"] .model-tuning-row-range');
+        var note = boundActionsHost?.querySelector?.('[data-model-tuning-row="mtp"] [data-model-tuning-note]');
         if (note) note.textContent = engineUtils.engineNote(engineView);
         var group = boundActionsHost?.querySelector?.('[data-inv-segmented="modelTuningEngine"]');
         var option = group?.querySelector?.('[data-value="llama-server"]');
@@ -476,7 +462,10 @@
     function syncRuntimeRow() {
       clearPickFailure();
       var code = boundActionsHost?.querySelector?.('[data-model-tuning-runtime]');
-      if (code) { code.textContent = engineUtils.runtimeValueText(engineDraft); code.title = engineDraft.runtimePath; }
+      if (code) {
+        code.textContent = engineUtils.runtimeValueText(engineDraft); code.title = engineDraft.runtimePath;
+        code.classList?.toggle?.('model-tuning-gguf-path--plain', !engineDraft.runtimePath);
+      }
       var useBundled = boundActionsHost?.querySelector?.('[data-action="use-bundled-llama-server"]');
       if (useBundled) {
         if (!engineDraft.runtimePath && documentRef?.activeElement === useBundled) {
@@ -526,6 +515,7 @@
         host.addEventListener('change', handleTuningChange);
         host.addEventListener('inv-segmented-change', handleEngineChange);
         host.addEventListener('inv-toggle-change', handleMtpChange);
+        host.addEventListener('click', revertField);
       }
       // Load-bearing: the number-input primitive does not emit a disabled
       // attribute, so the numeric fields are only disabled here.
@@ -535,6 +525,7 @@
       });
       host?.querySelector?.('[data-action="save-model-tuning"]')?.addEventListener('click', save);
       host?.querySelector?.('[data-action="reset-model-tuning"]')?.addEventListener('click', reset);
+      host?.querySelector?.('[data-action="discard-model-tuning"]')?.addEventListener('click', discardDraft);
       host?.querySelector?.('[data-action="recheck-model-tuning-engine"]')?.addEventListener('click', recheckEngine);
       host?.querySelector?.('[data-action="choose-model-gguf"]')?.addEventListener('click', chooseGguf);
       host?.querySelector?.('[data-action="choose-llama-server-runtime"]')?.addEventListener('click', chooseRuntime);
@@ -547,11 +538,16 @@
       if (!drawer || disposed || !visible) return false;
       rendering = true;
       try {
+        // innerHTML re-renders close a <details>: carry its state over.
+        var fold = documentRef?.getElementById?.('modelTuningDrawer')?.querySelector?.('[data-model-tuning-fold]');
+        if (fold && advancedOpen != null) advancedOpen = fold.open;
         var opened = drawer.open({
           title: jt('models.tuning.tuneModel', 'Tune {model}', { model: activeDisplayName || activeModelId }),
           bodyHtml: buildBodyHtml(),
           restoreFocusTo: returnFocusTarget,
         });
+        var heading = documentRef?.getElementById?.('modelTuningDrawer')?.querySelector?.('.inv-drawer-header h2');
+        heading?.setAttribute?.('data-tooltip', activeDisplayName || activeModelId);
         bindDrawerActions();
         return opened;
       } finally {
@@ -561,10 +557,10 @@
 
     function collectProfile(host) {
       var profile = {};
-      FIELD_DEFINITIONS.forEach(function (definition) {
-        var input = host?.querySelector?.('[data-model-tuning-field="' + definition[0] + '"]');
+      PROFILE_KEYS.forEach(function (key) {
+        var input = host?.querySelector?.('[data-model-tuning-field="' + key + '"]');
         var value = String(input?.value || '').trim();
-        if (value) profile[definition[0]] = Number(value);
+        if (value) profile[key] = Number(value);
       });
       return profile;
     }
@@ -589,6 +585,7 @@
         var control = host?.querySelector?.('[data-model-tuning-field="' + key + '"]');
         if (control) control.value = draft[key];
       });
+      syncContextCustom(host, false);
       updateDirtyState(host);
     }
 
@@ -830,15 +827,13 @@
       var dirty = dirtyFields(host).filter(function (field) { return !ninferRows.includes(field); });
       var draft = readTuningDraft(host);
       var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath', 'runtimePath'].includes(field); });
+      if (rows.contextValueInvalid(host, contextBounds())) return;
       var ratioRaw = String(host?.querySelector?.('#modelTuningRatio')?.value || '').trim();
-      var ratio = ratioRaw ? Number(ratioRaw) : null;
-      var hydratedRatio = activeState?.ratioByModel?.[activeModelId];
-      hydratedRatio = hydratedRatio == null ? null : Number(hydratedRatio);
       var patch = { generationProfile: collectProfile(host) };
-      if (ratio !== hydratedRatio) patch.ratio = ratio;
-      var contextField = host?.querySelector?.('#modelTuningContextLength');
-      if (contextField) {
-        var contextRaw = String(contextField.value || '').trim();
+      // Whole percents only: the field shows a rounded percent, so a stored 85.5 could never be typed back.
+      if (dirty.includes('ratio')) patch.ratio = ratioRaw ? Math.round(Number(ratioRaw)) / 100 : null;
+      var contextRaw = rows.readContextValue(host);
+      if (contextRaw != null) {
         var contextLength = contextRaw ? Number(contextRaw) : null;
         var hydratedContextLength = activeState?.contextLengthByModel?.[activeModelId];
         hydratedContextLength = hydratedContextLength == null ? null : Number(hydratedContextLength);
@@ -933,14 +928,15 @@
       if (restartOptions) await restartManagedServer('engine', restartOptions);
     }
 
+    // Reset clears the fields into a draft (the engine choice stays); Apply commits it.
     function reset() {
-      var patch = {
-        ratio: null,
-        generationProfile: {},
-        resetGenerationProfile: true,
-      };
-      if (supportsContextTuning()) patch.contextLength = null;
-      return applyPatch(patch);
+      var host = boundActionsHost;
+      host?.querySelectorAll?.('.model-tuning-drawer-grid [data-model-tuning-field]').forEach(function (control) {
+        if (control.closest('[data-model-tuning-engine]') || control.closest('[data-model-tuning-ninfer]')) return;
+        control.value = '';
+      });
+      syncContextCustom(host, false);
+      updateDirtyState(host);
     }
 
     async function open(modelId, restoreFocusTo, options) {
@@ -956,6 +952,7 @@
       engineSettings = null; localGgufs = null; serverStatus = null; engineView = null; engineDraft = null;
       engineHints = options?.engines || null; // the library card's merged engine facts, when opened from a card
       engineTypeHint = String(options?.engineTypeHint || '').trim().toLowerCase(); // per open(): resolveEngineType's last resort
+      advancedOpen = null; activeState = null; // the fold decides from this model's loaded profile
       if (!ninferSection && ninferModule && typeof ninferModule.createNinferTuningSection === 'function') {
         ninferSection = ninferModule.createNinferTuningSection({
           windowRef: windowRef, escapeHtml: escapeHtml, confirmDialog: confirmDialog,
@@ -1002,6 +999,7 @@
       boundActionsHost?.removeEventListener?.('change', handleTuningChange);
       boundActionsHost?.removeEventListener?.('inv-segmented-change', handleEngineChange);
       boundActionsHost?.removeEventListener?.('inv-toggle-change', handleMtpChange);
+      boundActionsHost?.removeEventListener?.('click', revertField);
       boundActionsHost = null;
       confirmDialog?.dispose?.();
       drawer?.dispose?.();

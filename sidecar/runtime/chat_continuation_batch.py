@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, NoReturn
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
@@ -150,7 +151,54 @@ def preflight_pending_batch(
     return remaining, policy.audit_metadata_by_call, scan_mode
 
 
-__all__ = ["attention", "preflight_pending_batch"]
+__all__ = ["asks_fresh_consent", "attention", "preflight_pending_batch", "terminal_loop_result"]
+
+
+def asks_fresh_consent(checkpoint: dict[str, Any]) -> bool:
+    """Whether a checkpoint may raise a new card: a saved card, or a resource wait."""
+    if checkpoint["kind"] == "before_decision_wait":
+        return checkpoint["decision"]["kind"] == "approval"
+    return checkpoint["kind"] == "before_tool_dispatch" and "completed_effect_refs" in checkpoint
+
+
+def terminal_loop_result(decision: Any, outcomes: list[Any]) -> _tool_loop.ToolLoopResult:
+    return _tool_loop.ToolLoopResult(
+        thinking_text=decision.thinking_text,
+        thinking_kind=decision.thinking_kind,
+        persist_thinking=decision.persist_thinking,
+        response_text=decision.response_text,
+        approval_request=decision.approval_request,
+        approval_plan=decision.approval_plan,
+        outcomes=[*outcomes, *decision.tool_results],
+        usage_totals=decision.usage,
+        streamed_event_types=set(decision.streamed_event_types),
+        completion_source=decision.completion_source,
+        terminal_error_code=decision.terminal_error_code,
+        terminal_subcode=decision.terminal_subcode,
+        terminal_error_retryable=decision.terminal_error_retryable,
+    )
+
+
+def _approved_call_id(run: Any) -> str:
+    """The call Electron says the person already allowed; request-local, used once."""
+    hydrated = getattr(run.request_context, "runtime_continuation_resume", None)
+    return hydrated.approved_call_id() if hydrated is not None else ""
+
+
+def _honor_approved_call(run: Any, result: Any, policy: Any, approval: Any) -> tuple[Any, Any]:
+    """Clear exactly the allowed call; every other pending call still answers for itself."""
+    rest = replace(
+        result,
+        tool_calls=tuple(c for c in result.tool_calls if c.call_id != approval.tool_call_id),
+    )
+    if not rest.tool_calls:
+        return None, result
+    remaining, kept = _tool_loop.tool_loop_recovery.approval_with_recovery(
+        run, rest, policy_decisions_by_call=policy.decisions_by_call
+    )
+    if kept.tool_calls != rest.tool_calls:
+        attention("current_approval_required")
+    return remaining, result
 
 
 def _check_approval(run: Any, result: Any, policy: Any, approvals: list[Any] | None) -> None:
@@ -159,6 +207,14 @@ def _check_approval(run: Any, result: Any, policy: Any, approvals: list[Any] | N
     approval, approved = _tool_loop.tool_loop_recovery.approval_with_recovery(
         run, result, policy_decisions_by_call=policy.decisions_by_call
     )
+    granted_call_id = _approved_call_id(run)
+    if (
+        granted_call_id
+        and approval is not None
+        and approval.tool_call_id == granted_call_id
+        and approved.tool_calls == result.tool_calls
+    ):
+        approval, approved = _honor_approved_call(run, result, policy, approval)
     if (
         approved.tool_calls != result.tool_calls
         or tuple(run.outcomes) != before_outcomes

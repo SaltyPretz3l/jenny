@@ -23,7 +23,7 @@ MAX_PENDING_JOB_NOTICES = 16
 MAX_NOTICE_COMMAND_CHARS = 120
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
-_SETTLED_STATES = frozenset({"completed", "failed"})
+_SETTLED_STATES = frozenset({"completed", "failed", "stopped"})
 _UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _WHITESPACE_RE = re.compile(r"\s+")
 

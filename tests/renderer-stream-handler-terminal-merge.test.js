@@ -315,12 +315,12 @@ test('a durable canonical client-identity twin wins even when its row id differs
 });
 
 
-function releasedLegCase(hydratedEntryIds) {
+function releasedLegCase(hydratedEntryIds, content = '') {
   const turnId = 'turn-f18';
   const entry = { id: 'reasoning-paused', text: 'Real reasoning.' };
   const current = [
     { id: 'user-1', role: 'user', content: 'Write it', turn_id: turnId },
-    { id: 'assistant_stream-a', role: 'assistant', content: '', status: 'streaming', streamId: 'stream-a',
+    { id: 'assistant_stream-a', role: 'assistant', content, status: 'streaming', streamId: 'stream-a',
       turn_id: turnId, reasoning: { entries: [entry] } },
     { id: 'assistant_stream-b', role: 'assistant', content: 'Done.', status: 'complete', streamId: 'stream-b',
       turn_id: turnId },
@@ -340,6 +340,10 @@ function releasedLegCase(hydratedEntryIds) {
 test("a released paused leg's blank shell is dropped once hydration holds its reasoning (F18)", () => {
   assert.deepEqual(releasedLegCase(['reasoning-paused']),
     ['user-1', 'assistant_stream-a_seg0', 'assistant_stream-b']);
+});
+
+test("a released paused leg's unsaved prose does not stay below the answer", () => {
+  assert.ok(!releasedLegCase([], 'Retrying once.').includes('assistant_stream-a'));
 });
 
 test("a released paused leg's shell keeps reasoning that hydration does not hold", () => {

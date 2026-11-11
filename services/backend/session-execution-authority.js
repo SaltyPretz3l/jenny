@@ -12,6 +12,7 @@ const { ALWAYS_ON_TOOL_NAMES } = require('../tools/tool-surface-families');
 const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const { normalizeHandoffPreparation } = require('./session-handoff-context');
 const grants = require('./read-only-command-grant');
+const { normalizeKnowledgeRoots } = require('./execution-config-snapshot');
 
 const EXECUTION_CONTEXT_SCHEMA_VERSION = 1;
 const SIDECAR_API_VERSION = '2026-10-15';
@@ -21,8 +22,6 @@ const MAX_RUNTIME_OPERATION_BYTES = 1024 * 1024;
 const MAX_CORRELATION_CHARS = 128;
 const MAX_OPERATION_CHARS = 256;
 const MAX_ROOT_PATH_CHARS = 4096;
-const MAX_KNOWLEDGE_ROOTS = 32;
-const MAX_KNOWLEDGE_ROOT_CHARS = 4096;
 const EMPTY_SKILLS_CONFIG = Object.freeze({
   skills_bundled_root: null,
   skills_user_root: null,
@@ -169,18 +168,6 @@ function validateRuntimeOperation(params) {
   } catch (error) {
     return { ok: false, reason: 'payload_too_large', message: error.message };
   }
-}
-
-function normalizeKnowledgeRoots(config) {
-  const roots = Array.isArray(config?.knowledge_roots) ? config.knowledge_roots : [];
-  if (roots.length > MAX_KNOWLEDGE_ROOTS) throw new Error('Knowledge root snapshot exceeds its bound.');
-  return roots.map((value) => {
-    const root = typeof value === 'string' ? value.trim() : '';
-    if (!root || root.length > MAX_KNOWLEDGE_ROOT_CHARS) {
-      throw new Error('Knowledge root snapshot contains an invalid path.');
-    }
-    return root;
-  });
 }
 
 function normalizeSkillsConfig(config) {
@@ -358,6 +345,7 @@ class SessionExecutionAuthority {
       get mode() { return bindingStates.get(binding)?.mode || capturedMode; },
       get readOnly() { return bindingStates.get(binding)?.readOnly ?? capturedReadOnly; },
       get autoRun() { return bindingStates.get(binding)?.autoRun === true; },
+      capturedAutoRun: approvalMode === 'auto_run', // fixed at capture; autoRun follows an Ask -> Auto flip
       assertCurrent: () => this.requireCurrent(binding),
       describeToolAvailability: (status) => {
         this.requireCurrent(binding);
@@ -563,7 +551,7 @@ class SessionExecutionAuthority {
     if (policy.decision !== 'auto'
       && !(policy.decision === 'ask' && (approved || ordinaryAutoRun || planArtifactDefault || roAsk))) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'policy_rejected',
-        'Current tool policy does not authorize this operation.');
+        'The user\'s tool permissions do not allow this call and it was not approved. Do not repeat it: use a tool that is allowed, or tell the user which permission it needs.');
     }
     // Record each grant-admitted call (a saved auto rule too): the lease re-check carries no grant.
     if (roGrant) state.readOnlyCommandGrants.set(validation.operationId, signature);

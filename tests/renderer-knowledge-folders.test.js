@@ -522,3 +522,44 @@ test('group mounts into the settings CARD, never the nav item with the same sect
   assert.equal(group.closest('#settingsNav'), null, 'group must not land in the nav');
   assert.ok(group.closest('.settings-card[data-settings-section="tools"]'), 'group lands in the Tools card');
 });
+
+test('the group joins the page grid right after Files and documents and stays there on re-render', async (t) => {
+  const { dom, controller } = createHarness(t);
+  const doc = dom.window.document;
+  doc.querySelector('.settings-card[data-settings-section="tools"]').insertAdjacentHTML('beforeend', `
+    <div class="settings-flow" id="toolsConfigFieldList">
+      <div class="settings-group"><h4 id="toolsFilesHeading">Files and documents</h4></div>
+      <div class="settings-group"><h4 id="toolsWebHeading">Web</h4></div>
+    </div>`);
+  const order = () => Array.from(doc.getElementById('toolsConfigFieldList').children, (node) => node.id || node.querySelector('h4').id);
+  const expected = ['toolsFilesHeading', 'knowledgeFoldersGroup', 'toolsWebHeading'];
+  controller.bind();
+  controller.render();
+  await settle();
+  assert.deepEqual(order(), expected);
+  controller.render();
+  assert.deepEqual(order(), expected, 'a re-render replaces the group in place');
+});
+
+test('the group falls back to the end of the card when Files and documents is absent', async (t) => {
+  const { dom, controller } = createHarness(t);
+  controller.bind();
+  controller.render();
+  await settle();
+  const card = dom.window.document.querySelector('.settings-card[data-settings-section="tools"]');
+  assert.equal(card.lastElementChild.id, 'knowledgeFoldersGroup');
+});
+
+test('adding a folder is one line: field, Browse, then Add folder', async (t) => {
+  const { dom, controller } = createHarness(t);
+  dom.window.jennyShell.knowledge.chooseFolder = async () => ({ ok: false, reason: 'canceled' });
+  controller.bind();
+  controller.render();
+  await settle();
+  const row = dom.window.document.querySelector('.knowledge-folders-add-row');
+  const [field, ...buttons] = row.children;
+  assert.ok(field.querySelector('#knowledgeFolderPathInput'), 'the field comes first');
+  assert.deepEqual(buttons.map((node) => node.getAttribute('data-knowledge-folders-action')), ['browse', 'add']);
+  assert.equal(row.querySelector('.inv-text-field-label'), null, 'no visible label: the field is named by its aria-label');
+  assert.ok(row.querySelector('#knowledgeFolderPathInput').getAttribute('aria-label'));
+});

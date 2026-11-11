@@ -165,6 +165,26 @@ test('dispose stops the subscription and further reads', async () => {
   assert.equal(bridge.hasListener(), false);
 });
 
+test('a sandbox state change re-reads only the command cards whose Run waited on the sandbox', async () => {
+  const waiting = projection({ kind: 'command', actions: { run: { available: false, reason: 'sandbox_not_ready' } } });
+  const recovered = projection({ kind: 'command', revision: 1, actions: { run: { available: true, reason: null } } });
+  const other = `proposal_${'b'.repeat(64)}`;
+  const bridge = makeBridge([{ schema_version: 1, ok: true, proposal: waiting },
+    { schema_version: 1, ok: true, proposal: projection({ proposal_id: other }) },
+    { schema_version: 1, ok: true, proposal: recovered }]);
+  const sandbox = makeBridge([]);
+  const store = createProposalCardStore({ getBridge: () => bridge, getSandboxBridge: () => sandbox });
+  store.lookup(SID, PID);
+  store.lookup(SID, other);
+  await flush();
+  assert.equal(bridge.calls.length, 2);
+  sandbox.emit({ state: 'ready' });
+  await flush();
+  assert.deepEqual(bridge.calls.slice(2).map((call) => call.proposal_id), [PID]);
+  store.dispose();
+  assert.equal(sandbox.hasListener(), false);
+});
+
 // ---- session proposals (row 59 checkpoint 5a-2) ---------------------------------------
 
 const GID = `group_${'a'.repeat(64)}`;

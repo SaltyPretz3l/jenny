@@ -20,6 +20,15 @@ function createUnattendedGuard({
   let unavailable = false;
   let unavailableLogged = false;
 
+  // A throw counts as not armed: an unreadable Full auto state keeps the pause.
+  function isArmed(sessionId) {
+    try {
+      return getBackendService()?.primaryFullAuto?.isArmed?.(sessionId) === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function tick() {
     try {
       if (isEnabled() !== true) return;
@@ -35,7 +44,7 @@ function createUnattendedGuard({
         ? store.listSessionRecords()
         : (store?.listSessions?.() || []);
       const autoSessionIds = new Set(records.filter(record => record?.run_mode === 'auto')
-        .map(record => String(record?.id || '').trim()).filter(Boolean));
+        .map(record => String(record?.id || '').trim()).filter(id => id && !isArmed(id)));
       for (const sessionId of autoSessionIds) {
         try {
           const result = backend.sessionRuntime?.pausePending?.({
@@ -75,6 +84,7 @@ function createUnattendedGuard({
         const sessionId = String(record.id || '').trim();
         const session = store?.getSession?.(sessionId) || record;
         if (session?.run_mode !== 'auto') continue;
+        if (isArmed(sessionId)) continue;
 
         const result = backend.pauseSessionAutoRun(sessionId, {
           streamId,

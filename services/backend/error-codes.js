@@ -382,6 +382,20 @@ const HOST_ERROR_CODES = Object.freeze({
   LIMIT: 'CMP-HOST-0007',
 });
 
+// Desktop team member client (services/team/, row 123 slice 1f-1). A failure the
+// team host answered keeps the host's own CMP-HOST code and reason; these are the
+// client's own: the connection, the version handshake, the invite, the device key
+// and a stopped connection.
+const TEAM_ERROR_CODES = Object.freeze({
+  CONNECTION_FAILED: 'CMP-TEAM-0001',
+  VERSION_MISMATCH: 'CMP-TEAM-0002',
+  INVITE_MALFORMED: 'CMP-TEAM-0003',
+  DEVICE_KEY_UNAVAILABLE: 'CMP-TEAM-0004',
+  HOST_STOPPED: 'CMP-TEAM-0005',
+  // The team host this Jenny runs (slice 1f-2) cannot start here, failed or exited.
+  HOST_UNAVAILABLE: 'CMP-TEAM-0006',
+});
+
 // Jenny CLI host (services/cli-host/): the in-process local-only composition,
 // its profile lock and its run-scoped permission ceiling. Every CLI failure
 // reaches the agent as a cli.v1 `error` or `result` frame carrying one of these.
@@ -518,6 +532,7 @@ module.exports = {
   RUNTIME_ERROR_CODES,
   UPDATER_ERROR_CODES,
   HOST_ERROR_CODES,
+  TEAM_ERROR_CODES,
   CLI_ERROR_CODES,
   CLI_PATH_ERROR_CODES,
   PROJECT_ERROR_CODES,

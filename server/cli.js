@@ -10,8 +10,19 @@ const { AuthService } = require('./auth-service');
 const { AuthStore } = require('./auth-store');
 const { loadHostConfig } = require('./config');
 
+// Team commands (TEAM_MEMBERSHIP_SPEC slice 1h): run with the team server
+// stopped; they take only --config, so no argument can carry a key or an invite.
+const TEAM_COMMANDS = new Set(['team-keygen', 'team-init', 'team-recover']);
+const OWNER_COMMANDS = new Set(['owner-init', 'import-conversations', ...TEAM_COMMANDS]);
+
 function usage() {
-  return 'Usage: node server/cli.js (owner-init | import-conversations --archive /backup/jenny.archive) --config /etc/jenny/host.json';
+  return [
+    'Usage: node server/cli.js (owner-init | import-conversations --archive /backup/jenny.archive) --config /etc/jenny/host.json',
+    '       node server/cli.js (team-keygen | team-init | team-recover) --config <absolute path to the team host config>',
+    '  team-keygen   writes the team host key file once (key_source secret_file); prints the team id',
+    '  team-init     prints the first owner invite on this terminal (empty team, server stopped)',
+    '  team-recover  prints an owner recovery invite on this terminal (server stopped)',
+  ].join('\n');
 }
 
 function parseCliArgs(argv = process.argv.slice(2)) {
@@ -23,7 +34,7 @@ function parseCliArgs(argv = process.argv.slice(2)) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--help' || value === '-h') return { help: true };
-    if (value === 'owner-init' || value === 'import-conversations') {
+    if (OWNER_COMMANDS.has(value)) {
       if (command) throw new Error('Only one owner command may be supplied.');
       command = value;
     } else if (value === '--config' || value === '-c') {
@@ -39,8 +50,12 @@ function parseCliArgs(argv = process.argv.slice(2)) {
       throw new Error('Unknown CLI argument.');
     }
   }
-  if (!command) throw new Error('The owner-init command is required.');
+  if (!command) throw new Error('A command is required (owner-init, import-conversations, team-keygen, team-init, team-recover).');
   if (!configPath) throw new Error('The --config path is required.');
+  if (TEAM_COMMANDS.has(command)) {
+    if (archivePath || pythonExecutable) throw new Error('Team commands take only --config.');
+    return { command, configPath };
+  }
   if ((command === 'import-conversations') !== Boolean(archivePath)) throw new Error('Import requires --archive.');
   return { command, configPath, ...(archivePath ? { archivePath } : {}), ...(pythonExecutable ? { pythonExecutable } : {}) };
 }
@@ -129,9 +144,31 @@ async function initializeOwner({
   }
 }
 
+// The team commands print to the terminal stream (`confirmOutput`) and a refusal
+// as one plain line with its reason on `errorOutput`. Their logs go to stderr.
+async function runTeamCommand(parsed, dependencies) {
+  // Required lazily: owner-init and import-conversations load no team module.
+  const { createTeamHostKey } = require('./team/keygen');
+  const { mintLocalOwnerInvite, stderrLog } = require('./team/recovery');
+  const configPath = path.resolve(parsed.configPath);
+  const output = dependencies.confirmOutput || process.stdout;
+  const errorOutput = dependencies.errorOutput || process.stderr;
+  const logger = dependencies.logger || stderrLog;
+  const result = parsed.command === 'team-keygen'
+    ? await createTeamHostKey({ configPath, output, logger })
+    : await mintLocalOwnerInvite({
+      kind: parsed.command === 'team-init' ? 'owner_first' : 'recovery',
+      configPath, output, logger,
+      acquireProfileImpl: dependencies.acquireProfileImpl, networkInterfaces: dependencies.networkInterfaces,
+    });
+  if (!result.ok) errorOutput.write(`${parsed.command} refused: ${result.reason}\n`);
+  return result;
+}
+
 async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   const parsed = parseCliArgs(argv);
   if (parsed.help) return { ok: true, help: usage() };
+  if (TEAM_COMMANDS.has(parsed.command)) return runTeamCommand(parsed, dependencies);
   const config = (dependencies.loadHostConfigImpl || loadHostConfig)(path.resolve(parsed.configPath));
   if (parsed.command === 'import-conversations') {
     const pythonExecutable = parsed.pythonExecutable || config.pythonExecutable || '/opt/jenny-venv/bin/python';
@@ -158,13 +195,13 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   });
 }
 
-async function main() {
+async function main(argv = process.argv.slice(2), dependencies = {}) {
   try {
-    const result = await runCli();
-    if (result.help) process.stdout.write(`${result.help}\n`);
+    const result = await runCli(argv, dependencies);
+    if (result.help) (dependencies.confirmOutput || process.stdout).write(`${result.help}\n`);
     return result.ok ? 0 : 1;
   } catch (error) {
-    process.stderr.write(`${error?.message || 'Hosted CLI failed.'}\n${usage()}\n`);
+    (dependencies.errorOutput || process.stderr).write(`${error?.message || 'Hosted CLI failed.'}\n${usage()}\n`);
     return 1;
   }
 }

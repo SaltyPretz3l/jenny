@@ -3,38 +3,23 @@ const { acceptPrefillProgress } = require('./prefill-progress');
 // Notification handlers receive explicit ctx so extracted functions mutate shared runtime state.
 
 const {
-  normalizeRuntimeToken,
-  normalizeRuntimeNumber,
-  buildPhaseSnapshot,
-  normalizeTokenRate,
   isSuccessfulStopReason,
   textSequenceKey,
 } = require('./chat-stream-managed-runtime-utils');
 const {
   appendProviderReasoningDelta,
-  buildAggregateCheckpointFields,
   isPairedReasoningDelta,
 } = require('./chat-stream-reasoning-delta');
-const {
-  reduceToTurnEventKind,
-  validateTurnEvent,
-} = require('./canonical-turn-event');
 const {
   isAgentStatusSurfaceEnabled,
   coordinateWorkLifecycle,
   normalizeAgentProgressNotification,
 } = require('./work-lifecycle-coordinator');
 const { normalizePendingQuestionBatch } = require('./message-normalization');
-const { noteDiscardedDraft } = require('./chat-stream-discarded-drafts');
-const { attachWorkspaceIdentityToCanonicalEvent, mergeLocalGeneratedArtifactPaths, opensNewToolRow } = require('./chat-stream-tool-payload-utils');
-const { withIngestedAttachmentRefs } = require('./tool-result-attachments');
 const {
   buildStreamToolResultMessageId,
   buildStreamToolUseMessageId,
 } = require('./tool-message-id');
-const {
-  normalizePhaseSummary,
-} = require('./chat-transcript-phase-collector');
 const {
   hasValidInteractiveQuestionCount,
 } = require('./interactive-session-utils');
@@ -57,6 +42,8 @@ const { buildContextUsageStreamEvent, rebuildChatDoneUsage } = require('./chat-s
 const { persistTerminalContextUsage } = require('./session-context-usage');
 const { normalizeCompletion, normalizeResumableStop } = require('./chat-stream-stop-detail');
 const { createCompactionDiagnostics } = require('./turn-diagnostic-compactions');
+const { applyVisibleTextDelta, handleCanonicalTurnEvent } = require('./chat-stream-managed-runtime-canonical-bridge');
+const { applyStreamReset, notePhaseCompleted, notePhaseStarted } = require('./chat-stream-managed-runtime-phase-reset');
 
 // Every notification.method this router (or the tool-handling claim at the
 // bottom of handleNotification) knows how to consume. Anything else used to
@@ -86,278 +73,6 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'session.job_notice_consumed',
 ]);
 
-function canonicalToolNotification(ctx, event) {
-  const { streamId, resolvedSessionId } = ctx;
-  const eventType = normalizeRuntimeToken(event?.type);
-  const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
-    ? event.payload
-    : {};
-  const callId = normalizeRuntimeToken(event?.tool_call_id || payload.tool_call_id || payload.toolCallId);
-  const toolName = normalizeRuntimeToken(payload.tool_name || payload.toolName);
-  if (!callId || !toolName) {
-    return null;
-  }
-  const common = {
-    request_id: streamId,
-    requestId: streamId,
-    stream_id: streamId,
-    streamId,
-    session_id: resolvedSessionId,
-    sessionId: resolvedSessionId,
-    tool_name: toolName,
-    tool_call_id: callId,
-    tool_input: payload.tool_input || payload.input || {},
-  };
-  if (eventType === 'tool_call_requested' || eventType === 'tool_execution_started') {
-    return {
-      method: eventType === 'tool_call_requested' ? 'tool.requested' : 'tool.executing',
-      params: common,
-    };
-  }
-  if (eventType === 'tool_execution_completed' || eventType === 'tool_execution_failed') {
-    const success = eventType === 'tool_execution_completed' && payload.success !== false;
-    return {
-      method: 'tool.result',
-      params: {
-        ...common,
-        success,
-        output: String(payload.tool_output_summary || payload.output_text || payload.output || ''),
-        content_type: normalizeRuntimeToken(payload.content_type) || 'text',
-        ...(payload.ui_payload != null ? { ui_payload: payload.ui_payload } : {}),
-        ...(Array.isArray(payload.generated_artifacts) ? { generated_artifacts: payload.generated_artifacts } : {}),
-        ...(payload.error_code ? { error_code: payload.error_code } : {}),
-        ...(payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
-          ? { metadata: payload.metadata }
-          : {}),
-        ...(payload.duration_ms != null ? { duration_ms: payload.duration_ms } : {}),
-      },
-    };
-  }
-  return null;
-}
-
-function applyVisibleTextDelta(ctx, tokenDelta, params = {}, options = {}) {
-  const { service, streamId, resolvedSessionId, transcriptCollector, emitChatStream } = ctx;
-  const text = String(tokenDelta || '');
-  if (!text) {
-    return false;
-  }
-  const sequenceValue = params.sequence ?? params.tokenSequence;
-  const shouldDedupeSequence = options.dedupeBySequence === true
-    && Boolean(textSequenceKey(sequenceValue));
-  if (shouldDedupeSequence && !ctx.appliedTextSequenceGate.shouldApply(sequenceValue)) {
-    return false;
-  }
-  if (ctx.streamSawBatch) {
-    ctx.sidecarProtocolError = new Error(
-      `${INTERACTIVE_ERROR_CODES.TEXT_AFTER_BATCH} Interactive protocol error: received text after question batch.`
-    );
-    return false;
-  }
-  ctx.streamSawText = true;
-  ctx.assistantText += text;
-  ctx.currentSegmentText += text;
-  transcriptCollector.appendText(text, {
-    timestamp: params.timestamp || new Date().toISOString(),
-  });
-  if (shouldDedupeSequence) {
-    const gapOverflowed = ctx.appliedTextSequenceGate.note(sequenceValue);
-    if (
-      gapOverflowed
-      && ctx.textSequenceGapOverflowWarned !== true
-      && typeof service._emitServiceLog === 'function'
-    ) {
-      ctx.textSequenceGapOverflowWarned = true;
-      service._emitServiceLog('WARN', 'chat.text_sequence_gap_overflow', {
-        sessionId: resolvedSessionId,
-        streamId,
-        model: ctx.model,
-        ...ctx.appliedTextSequenceGate.state(),
-      });
-    }
-  }
-  const tokenSequence = normalizeRuntimeNumber(sequenceValue);
-  const assistantText = ctx.assistantText;
-  emitChatStream({
-    type: 'delta',
-    content: text,
-    ...buildAggregateCheckpointFields(ctx, assistantText, {
-      forceCheckpoint: options.forceAggregateCheckpoint === true,
-    }),
-    ...(tokenSequence != null ? { tokenSequence } : {}),
-    ...ctx.eventBase,
-  }, {
-    channel: 'response',
-  });
-  return true;
-}
-
-// The renderer's activity row only needs the call's cumulative size plus the
-// first few KB (to spot a path), so provider-rate fragments are folded into at
-// most one control event per TOOL_INPUT_FORWARD_INTERVAL_MS. Envelope kind
-// 'progress' passes 1:1, which is exactly why this must not forward per chunk
-// (a 32 KiB write would otherwise be thousands of IPC sends). Nothing trails:
-// the row is replaced by the tool_use event that follows the last fragment.
-const TOOL_INPUT_PREVIEW_CHARS = 4096;
-// Checklist writes (FG-006) show the item being written and the running item
-// count, so the row reads their whole argument text. Todo lists and task-board
-// entries stay small; the per-interval fold still caps the IPC rate.
-const CHECKLIST_TOOL_INPUT_PREVIEW_CHARS = 32768;
-const CHECKLIST_TOOL_NAMES = new Set(['todo_write', 'task_board']);
-const TOOL_INPUT_FORWARD_INTERVAL_MS = 100;
-
-function forwardToolInputDelta(ctx, event, payload) {
-  const toolCallId = String(event.tool_call_id || '');
-  const delta = String(payload.arguments_delta || '');
-  let forward = ctx.toolInputForward;
-  if (!forward || forward.toolCallId !== toolCallId) {
-    const previewChars = CHECKLIST_TOOL_NAMES.has(String(payload.tool_name || ''))
-      ? CHECKLIST_TOOL_INPUT_PREVIEW_CHARS
-      : TOOL_INPUT_PREVIEW_CHARS;
-    forward = { toolCallId, bytes: 0, shippedChars: 0, pending: '', lastEmitAt: 0, previewChars };
-    ctx.toolInputForward = forward;
-  }
-  forward.bytes += Buffer.byteLength(delta, 'utf8');
-  const previewRoom = forward.previewChars - forward.shippedChars - forward.pending.length;
-  if (previewRoom > 0) forward.pending += delta.slice(0, previewRoom);
-  const nowMs = typeof ctx.now === 'function' ? Number(ctx.now()) : Date.now();
-  if (forward.lastEmitAt && nowMs - forward.lastEmitAt < TOOL_INPUT_FORWARD_INTERVAL_MS) return;
-  forward.lastEmitAt = nowMs;
-  ctx.emitChatStream({
-    type: 'tool_input_delta',
-    toolCallId,
-    toolName: String(payload.tool_name || ''),
-    argumentsDelta: forward.pending,
-    argumentsBytes: forward.bytes,
-    sequence: Number.isFinite(Number(payload.sequence)) ? Number(payload.sequence) : 0,
-    ...ctx.eventBase,
-  }, { channel: 'control' });
-  forward.shippedChars += forward.pending.length;
-  forward.pending = '';
-}
-
-function applyCanonicalBridgeEvent(ctx, event, {
-  toolContext,
-  handleToolNotification,
-  touchProgress,
-} = {}) {
-  const {
-    service, streamId, canonicalBridgeEnabled, transcriptCollector,
-    persistCurrentTextSegment, noteDiagnosticToolEvent,
-  } = ctx;
-  if (!canonicalBridgeEnabled || !event || typeof event !== 'object') {
-    return false;
-  }
-  const eventType = normalizeRuntimeToken(event.type);
-  const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
-    ? event.payload
-    : {};
-  if (eventType === 'text_delta') {
-    if (typeof touchProgress === 'function') touchProgress();
-    return applyVisibleTextDelta(ctx, String(payload.delta || ''), {
-      sequence: payload.sequence ?? event.seq,
-      timestamp: event.ts,
-    }, {
-      dedupeBySequence: true,
-    });
-  }
-  if (eventType === 'text_part_completed') {
-    const completedText = String(payload.text || '');
-    if (completedText && !ctx.assistantText) {
-      if (typeof touchProgress === 'function') touchProgress();
-      return applyVisibleTextDelta(ctx, completedText, {
-        sequence: payload.sequence,
-        timestamp: event.ts,
-      }, {
-        dedupeBySequence: false,
-        forceAggregateCheckpoint: true,
-      });
-    }
-    if (completedText && completedText.length > ctx.assistantText.length
-      && completedText.startsWith(ctx.assistantText)) {
-      const suffix = completedText.slice(ctx.assistantText.length);
-      if (typeof touchProgress === 'function') touchProgress();
-      return applyVisibleTextDelta(ctx, suffix, {
-        timestamp: event.ts,
-      }, {
-        dedupeBySequence: false,
-        forceAggregateCheckpoint: true,
-      });
-    }
-    return true;
-  }
-  if (eventType === 'reasoning_delta') {
-    if (typeof touchProgress === 'function') touchProgress();
-    const thinkingId = payload.thinking_id || event.part_id;
-    if (!isPairedReasoningDelta(ctx, 'canonical', payload.delta, thinkingId)) {
-      appendProviderReasoningDelta(ctx, payload.delta, event.ts || new Date().toISOString(), thinkingId, payload);
-    }
-    return true;
-  }
-  if (eventType === 'tool_input_delta') {
-    if (typeof touchProgress === 'function') touchProgress();
-    forwardToolInputDelta(ctx, event, payload);
-    return true;
-  }
-  const toolNotification = canonicalToolNotification(ctx, event);
-  if (!toolNotification) {
-    return false;
-  }
-  if (typeof touchProgress === 'function') touchProgress();
-  const callId = normalizeRuntimeToken(toolNotification.params?.tool_call_id);
-  if (toolNotification.method === 'tool.executing' || toolNotification.method === 'tool.requested') {
-    const toolCallAlreadyProjected = toolContext?.seenToolCalls instanceof Set
-      && toolContext.seenToolCalls.has(callId);
-    if (
-      (ctx.canonicalToolStartedCallIds.has(callId) && eventType === 'tool_execution_started')
-      || toolCallAlreadyProjected
-    ) {
-      return true;
-    }
-    if (toolNotification.method === 'tool.executing') {
-      ctx.canonicalToolStartedCallIds.add(callId);
-      ctx.unfinishedToolsSettled = false;
-    }
-    persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true });
-    noteDiagnosticToolEvent({
-      callId,
-      toolName: String(toolNotification.params.tool_name || ''),
-      phase: toolNotification.method === 'tool.requested' ? 'requested' : 'executing',
-    });
-    transcriptCollector.noteToolStep({
-      callId,
-      toolName: String(toolNotification.params.tool_name || ''),
-      status: toolNotification.method === 'tool.requested' ? 'pending' : 'running',
-      toolUseMessageId: buildStreamToolUseMessageId(streamId, callId),
-    });
-  } else if (toolNotification.method === 'tool.result') {
-    // W2-2: a backgrounded run_command's result carries its job id — hand it
-    // to the tracker (idempotent, so the legacy notification arriving for the
-    // same call is harmless).
-    noteBackgroundJobFromToolResult(service, ctx, toolNotification.params, toolContext?.workspaceRoot);
-    noteDiagnosticToolEvent({
-      callId,
-      toolName: String(toolNotification.params.tool_name || ''),
-      phase: 'result',
-    });
-    transcriptCollector.noteToolStep({
-      callId,
-      toolName: String(toolNotification.params.tool_name || ''),
-      status: toolNotification.params.success === true ? 'completed' : 'error',
-      toolUseMessageId: buildStreamToolUseMessageId(streamId, callId),
-      toolResultMessageId: buildStreamToolResultMessageId(streamId, callId),
-    });
-  }
-  return typeof handleToolNotification === 'function'
-    ? handleToolNotification(service, toolContext, toolNotification, {
-      canonicalEvent: true,
-      ...(toolNotification.method === 'tool.executing'
-        ? { nextAssistantMessageId: `assistant_${ctx.streamId}_seg${ctx.textSegmentIndex}` }
-        : {}),
-    })
-    : false;
-}
-
 // ChatGPT plan-usage meter ingest (composer footer ring, additive/optional
 // wire key -- see docs/plans "ChatGPT plan-usage meter"). `snapshot` is the
 // RAW `usage.plan_usage` / `plan_usage` value straight off the wire; the
@@ -383,30 +98,6 @@ function recordCompactionDiagnostic(ctx, params, summaryPersisted) {
   ctx.compactionDiagnostics.record(params, { summaryPersisted });
 }
 
-// The sidecar strips local paths from an Electron-run tool's artifacts
-// (electron_tool_bridge.py), and the persisted turn-event normalizer drops an
-// artifact without one, so the canonical tool_result journaled
-// `generated_artifacts: []` and the image never rendered (GIP-1). Electron
-// stashed the paths when it ran the tool; restore them (redacted, trusted)
-// before capture, as the legacy tool.result path already does.
-function withLocalGeneratedArtifactPaths(ctx, event) {
-  const type = normalizeRuntimeToken(event?.type);
-  const payload = event?.payload;
-  if ((type !== 'tool_execution_completed' && type !== 'tool_execution_failed')
-    || !Array.isArray(payload?.generated_artifacts) || !payload.generated_artifacts.length) {
-    return event;
-  }
-  const merged = mergeLocalGeneratedArtifactPaths(ctx.service, {
-    streamId: ctx.streamId,
-    callId: normalizeRuntimeToken(event.tool_call_id || payload.tool_call_id || payload.toolCallId),
-    sessionId: ctx.resolvedSessionId,
-    artifacts: payload.generated_artifacts,
-  });
-  return merged === payload.generated_artifacts
-    ? event
-    : { ...event, payload: { ...payload, generated_artifacts: merged } };
-}
-
 function handleNotification(ctx, notification, {
   toolContext,
   handleToolNotification,
@@ -414,9 +105,9 @@ function handleNotification(ctx, notification, {
   if (notification.method === 'heuristic.fire') return;
   const {
     service, adapter, streamId, resolvedSessionId, transcriptCollector,
-    turnMetrics, turnEventCollector, assistantBaseMessageId, canonicalBridgeEnabled,
+    turnMetrics, canonicalBridgeEnabled,
     emitChatStream, emitThinkingStatus, persistCurrentTextSegment,
-    discardPersistedTextSegmentsForReset, noteDiagnosticToolEvent, settleUnfinishedToolRows,
+    noteDiagnosticToolEvent, settleUnfinishedToolRows,
     recordSidecarErrorFromParams, beginVisibleCompletionFinalization,
   } = ctx;
   if (toolContext && typeof toolContext === 'object') {
@@ -450,49 +141,11 @@ function handleNotification(ctx, notification, {
     });
   };
   if (notification.method === 'turn.event') {
-    if (!canonicalBridgeEnabled && service.featureFlags?.canonical_turn_events !== true) return;
-    if (ctx.turnLease && params.turn_id !== streamId && params.turn_id !== ctx.turnId) {
-      turnMetrics?.recordDroppedCanonicalEvent?.();
-      return;
-    }
-    const identityStampedParams = withIngestedAttachmentRefs(ctx, withLocalGeneratedArtifactPaths(ctx,
-      attachWorkspaceIdentityToCanonicalEvent(
-        ctx.turnId && params.turn_id === streamId ? { ...params, turn_id: ctx.turnId } : params,
-        service,
-        toolContext?.workspaceRoot
-      )));
-    const validation = validateTurnEvent(identityStampedParams);
-    if (
-      validation.status !== 'accepted'
-      && turnMetrics
-      && typeof turnMetrics.recordDroppedCanonicalEvent === 'function'
-    ) {
-      turnMetrics.recordDroppedCanonicalEvent();
-    }
-    // The pre-tool text enters the turn log before the event that opens its tool row.
-    if (validation.status === 'accepted'
-      && opensNewToolRow(identityStampedParams, ctx.canonicalToolStartedCallIds, toolContext?.seenToolCalls)) {
-      persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true });
-    }
-    const captured = turnEventCollector && typeof turnEventCollector.noteEvent === 'function'
-      ? turnEventCollector.noteEvent(identityStampedParams, { validation })
-      : null;
-    if (
-      !captured
-      && validation.status === 'accepted'
-      && reduceToTurnEventKind(validation.event)
-      && turnMetrics
-      && typeof turnMetrics.recordDroppedCanonicalEvent === 'function'
-    ) {
-      turnMetrics.recordDroppedCanonicalEvent();
-    }
-    if (validation.status === 'accepted') {
-      applyCanonicalBridgeEvent(ctx, validation.event, {
-        toolContext,
-        handleToolNotification,
-        touchProgress,
-      });
-    }
+    handleCanonicalTurnEvent(ctx, params, {
+      toolContext,
+      handleToolNotification,
+      touchProgress,
+    });
     return;
   }
   if (notification.method === 'chat.thinking') {
@@ -566,224 +219,16 @@ function handleNotification(ctx, notification, {
   }
   if (notification.method === 'chat.phase_started') {
     touchProgress();
-    if (service?.featureFlags?.aggregate_checkpoints === true) {
-      ctx.aggregateCheckpointPending = true;
-    }
-    const summary = normalizePhaseSummary(params.summary);
-    const tokenRate = normalizeTokenRate(params.tokens_per_second);
-    transcriptCollector.notePhaseStarted({
-      phase_id: String(params.phase_id || ''),
-      phase_kind: String(params.phase_kind || ''),
-      iteration: Number(params.iteration || 0) || 0,
-      thinking_id: String(params.thinking_id || ''),
-      tool_call_id: String(params.tool_call_id || ''),
-      tool_name: String(params.tool_name || ''),
-      summary,
-      ...(tokenRate != null ? { tokens_per_second: tokenRate } : {}),
-    });
-    ctx.currentPhaseSnapshot = buildPhaseSnapshot({
-      phase_id: String(params.phase_id || ''),
-      phase_kind: String(params.phase_kind || ''),
-      iteration: Number(params.iteration || 0) || 0,
-      thinking_id: String(params.thinking_id || ''),
-      tool_call_id: String(params.tool_call_id || ''),
-      tool_name: String(params.tool_name || ''),
-      summary,
-    });
-    emitChatStream({
-      type: 'phase_started',
-      phaseId: String(params.phase_id || ''),
-      phaseKind: String(params.phase_kind || ''),
-      iteration: Number(params.iteration || 0) || 0,
-      thinkingId: String(params.thinking_id || ''),
-      toolCallId: String(params.tool_call_id || ''),
-      toolName: String(params.tool_name || ''),
-      summary,
-      ...(tokenRate != null ? { tokensPerSecond: tokenRate } : {}),
-      ...ctx.eventBase,
-    }, { channel: 'phase', phase: ctx.currentPhaseSnapshot });
+    notePhaseStarted(ctx, params);
     return;
   }
   if (notification.method === 'chat.phase_completed') {
     touchProgress();
-    if (service?.featureFlags?.aggregate_checkpoints === true) {
-      ctx.aggregateCheckpointPending = true;
-    }
-    // Reasoning after a closed reasoning phase (the sidecar ends it at the
-    // first tool-call output) can reuse its thinking id; it is a new entry.
-    if (String(params.phase_kind || '') === 'reasoning') ctx.reasoningTailBreakPending = true;
-    const summary = normalizePhaseSummary(params.summary);
-    const tokenRate = normalizeTokenRate(params.tokens_per_second);
-    transcriptCollector.notePhaseCompleted({
-      phase_id: String(params.phase_id || ''),
-      completed_at: new Date().toISOString(),
-      summary,
-      ...(tokenRate != null ? { tokens_per_second: tokenRate } : {}),
-    });
-    ctx.currentPhaseSnapshot = buildPhaseSnapshot({
-      phase_id: String(params.phase_id || ''),
-      phase_kind: String(params.phase_kind || ''),
-      iteration: Number(params.iteration || 0) || 0,
-      thinking_id: String(params.thinking_id || ''),
-      tool_call_id: String(params.tool_call_id || ''),
-      tool_name: String(params.tool_name || ''),
-      summary,
-    }) || ctx.currentPhaseSnapshot;
-    emitChatStream({
-      type: 'phase_completed',
-      phaseId: String(params.phase_id || ''),
-      phaseKind: String(params.phase_kind || ''),
-      iteration: Number(params.iteration || 0) || 0,
-      thinkingId: String(params.thinking_id || ''),
-      toolCallId: String(params.tool_call_id || ''),
-      toolName: String(params.tool_name || ''),
-      summary,
-      ...(tokenRate != null ? { tokensPerSecond: tokenRate } : {}),
-      ...ctx.eventBase,
-    }, { channel: 'phase', phase: ctx.currentPhaseSnapshot });
+    notePhaseCompleted(ctx, params);
     return;
   }
   if (notification.method === 'chat.stream_reset') {
-    // Most resets replace the entire active answer. Tool continuations and
-    // terminal wind-downs instead preserve earlier durable segments while
-    // clearing only the current live slice. This deliberately does not depend
-    // on canonicalBridgeEnabled: multi-tool turns need the same persistence
-    // behavior with the canonical bridge canary disabled.
-    const resetReason = String(params.reason || '');
-    const preserveToolContinuation = resetReason === 'tool_continuation';
-    // deterministic_replacement is NOT a preserve reason. StreamResetEvent's
-    // contract (sidecar/ai/routing/loop_events.py) names it alongside
-    // provider_retry / nudge_retry / reflexive_retry / post_tool_restart as a
-    // garbage reset whose "discarded text is bad and must not survive", and
-    // its emission site
-    // (tool_loop_finalize.py) fires it when the model produced pseudo-search
-    // text for a lookup it could not run — the loop then returns the real
-    // unavailability answer instead. Preserving those segments persists
-    // fabricated content into the transcript.
-    const preservePriorSegments = preserveToolContinuation
-      || resetReason === 'model_winddown';
-    // What this reset erases (see the stream_reset emit below); decided before
-    // anything is cleared so the discarded-drafts receipt sees the real state.
-    const discardScope = !preservePriorSegments
-      ? 'all'
-      : (preserveToolContinuation ? 'none' : 'live_slice');
-    // Receipt count: only a reset that erased visible content (text or
-    // reasoning of the live slice; for 'all' also earlier segments) counts.
-    // ctx.reasoningEntries spans the whole turn; the collector's slice phases
-    // hold only the unsaved live slice's reasoning.
-    const liveSliceErased = Boolean(String(ctx.currentSegmentText || '').trim())
-      || (transcriptCollector.slice?.phases || []).some((phase) => (
-        phase?.phase_kind === 'reasoning' && phase.entries?.length > 0
-      ));
-    if (
-      (discardScope === 'live_slice' && liveSliceErased)
-      || (discardScope === 'all' && (
-        liveSliceErased
-        || ctx.persistedTextSegmentIds?.length > 0
-        || ctx.refusedTextSegments?.length > 0
-      ))
-    ) {
-      ctx.discardedDrafts = noteDiscardedDraft(ctx.discardedDrafts, resetReason);
-    }
-    if (!preservePriorSegments) {
-      discardPersistedTextSegmentsForReset();
-      // The reset discards the persisted segment messages, so the live-captured
-      // text/reasoning turn events that referenced them must not persist either.
-      if (turnEventCollector && typeof turnEventCollector.discardCapturedEvents === 'function') {
-        turnEventCollector.discardCapturedEvents(streamId, [
-          'assistant_text_segment',
-          'reasoning_phase',
-        ]);
-      }
-    } else if (
-      !preserveToolContinuation
-      && turnEventCollector
-      && typeof turnEventCollector.discardCapturedEvents === 'function'
-    ) {
-      turnEventCollector.discardCapturedEvents(
-        streamId,
-        ['assistant_text_segment', 'reasoning_phase'],
-        { primaryMessageId: assistantBaseMessageId },
-      );
-    }
-    ctx.lastReasoningEventPhaseKey = '';
-    // Advance the reasoning ordinal even when preserving: the pre-reset phase's
-    // event_id is already in the journal (which dedupes by event_id), so a
-    // post-reset reasoning phase needs a fresh id to journal at all — otherwise
-    // it silently collides with the pre-reset phase and one is dropped.
-    ctx.reasoningTurnEventOrdinal += 1;
-    ctx.assistantText = '';
-    ctx.currentSegmentText = '';
-    ctx.reasoningEntries = [];
-    ctx.reasoningTailBreakPending = false;
-    ctx.reasoningRawTailText = '';
-    ctx.reasoningSanitizedTailText = '';
-    ctx.reasoningTruncationLogged = false;
-    ctx.questionBatch = null;
-    ctx.thinkingStatusText = '';
-    ctx.currentThinkingPhaseId = '';
-    ctx.lastReasoningThinkingId = '';
-    ctx.reasoningTransportChunks = null;
-    ctx.streamSawText = false;
-    ctx.streamSawDone = false;
-    ctx.streamSawBatch = false;
-    // Convention-following only, with no reachable repro today: a successful
-    // chat.done both sets this and finalizes in the same block, so a reset can
-    // never land between the two. Kept because this block's job is to void every
-    // terminal-shaped field the discarded attempt produced, and a future change
-    // that defers finalization would otherwise reintroduce the stale carry.
-    ctx.resumableStop = null;
-    ctx.completion = null;
-    // Keep hasPersistedSegments on the preserve path: the preserved segments are
-    // still real, so finalize must route the final answer through the proven
-    // multi-segment path (persist it as its own segment) rather than rewriting
-    // the base message. On the discard path nothing survives, so clear it.
-    // The refusal latch clears with it: a refusal describes content this
-    // discard just erased, and left set it would falsely veto the restarted
-    // reply's settle (spurious durability warning + retained active_turn).
-    // On the preserve path a pre-reset refusal is still a real durable loss,
-    // so the latch survives there.
-    if (!preservePriorSegments) {
-      ctx.hasPersistedSegments = false;
-      ctx.segmentPersistRefused = false;
-      ctx.refusedTextSegments = [];
-    }
-    ctx.visibleAssistantMessageId = assistantBaseMessageId;
-    ctx.currentPhaseSnapshot = null;
-    ctx.appliedTextSequenceGate.reset();
-    ctx.canonicalToolStartedCallIds.clear();
-    ctx.legacyTextSequence = 0;
-    if (service?.featureFlags?.aggregate_checkpoints === true) {
-      ctx.aggregateCheckpointPending = true;
-    }
-    transcriptCollector.resetSlice();
-    transcriptCollector.turnHasVisibleText = false;
-    // Emit the exact next persisted assistant segment ID after reset because the
-    // renderer's local counter can diverge; compute it after reset bookkeeping.
-    const nextAssistantMessageId = `assistant_${streamId}_seg${ctx.textSegmentIndex}`;
-    // What this reset ERASED, named for the renderer so it never has to
-    // re-derive the branch above from `reason` alone (it cannot:
-    // model_winddown erases the live slice while keeping its persisted
-    // segments, and transcripts recorded before the post-1.2.0 flag collapse
-    // carry 'all' for tool_continuation). Exactly three shapes:
-    //   'all'        -> discardPersistedTextSegmentsForReset() + every captured
-    //                   assistant_text_segment / reasoning_phase for the turn.
-    //   'live_slice' -> persisted segments survive; only the captured events
-    //                   scoped to assistantBaseMessageId (the unsaved live
-    //                   slice) are dropped. model_winddown.
-    //   'none'       -> nothing erased. tool_continuation.
-    emitChatStream({
-      type: 'stream_reset',
-      // The renderer folds a discarding reset's erased rows into one "Draft
-      // discarded" line; a preserved tool_continuation reset is genuine
-      // commentary and must not fold. Forward the sidecar's reason so the live
-      // reducer can tell the two apart and name it.
-      reason: resetReason,
-      next_assistant_message_id: nextAssistantMessageId,
-      preserve_prior_segments: preservePriorSegments,
-      discard_scope: discardScope,
-      ...ctx.eventBase,
-    }, { channel: 'control', phase: null });
+    applyStreamReset(ctx, params);
     return;
   }
   if (notification.method === 'chat.token') {

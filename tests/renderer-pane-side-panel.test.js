@@ -170,21 +170,6 @@ test('the panel stays with the chat that opened it: focusing the other pane keep
     'the title keeps its own direction inside RTL chrome (live re-check NF5)');
 });
 
-test('expanding the context panel from the focused pane claims the side panel for that chat', async (t) => {
-  const { window, doc, pane1, state } = await openTwoPanes(t);
-  const contextPanel = doc.getElementById('chatContextPanel');
-  assert.equal(contextPanel.classList.contains('collapsed'), true, 'precondition: collapsed by default');
-  pane1.dom.chatInput.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
-  await waitForUi(window, 80);
-  assert.equal(state.currentSessionId, 'session-b');
-  doc.getElementById('contextPanelToggle').click();
-  await waitForUi(window, 80);
-  assert.equal(contextPanel.classList.contains('collapsed'), false);
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'the open claimed the owner');
-  assert.equal(contextPanel.querySelector('.orbit-card'), null, 'the context panel no longer lists artifacts');
-  assert.equal(contextPanel.querySelector(':scope > .side-panel-owner-line .side-panel-owner-title').textContent, 'Beta chat');
-});
-
 test('opening an artifact from pane 1 switches the panel to pane 1\'s chat', async (t) => {
   const { window, doc, pane1, state } = await openTwoPanes(t);
   await clickInPane(window, placeChip(doc.getElementById('chatTimeline'), 'art_session-a'));
@@ -316,39 +301,25 @@ test('closing the pane whose monitor holds the panel restores what the monitor d
   assert.equal(stored.enabled, true, 'no close was saved');
 });
 
-// W3 review P2-1 (row 59 checkpoint 2: the context panel's Artifacts list is gone): a click on the
-// context panel's own controls while pane 1 is focused never claims the panel.
-test('a context-panel control click while pane 1 is focused keeps the owner and the shown artifact', async (t) => {
-  const { window, doc, pane1, state } = await openTwoPanes(t);
-  await clickInPane(window, placeChip(doc.getElementById('chatTimeline'), 'art_session-a'));
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a');
-  pane1.dom.chatInput.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
-  await waitForUi(window, 120);
-  assert.equal(state.currentSessionId, 'session-b');
-  const disclosure = doc.getElementById('contextLogDisclosure');
-  assert.ok(disclosure, 'the context panel keeps its Diagnostic log');
-  disclosure.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
-  disclosure.click();
-  await waitForUi(window, 120);
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a', 'owner must not move');
-  assert.equal(state.artifacts.selectedArtifactId, 'art_session-a', 'the shown artifact did not change');
-});
-
-// W3 open item: the owner closing collapses an open CONTEXT panel too (without saving the preference).
-test('closing the pane that owns an open context panel collapses it without saving the preference', async (t) => {
+// W3 open item, row 115 slice 2a: the context panel hosts only Activity now, and the owner closing collapses it.
+test('closing the pane that owns an open Activity panel collapses it', async (t) => {
   const { window, doc, pane1, state } = await openTwoPanes(t);
   const contextPanel = doc.getElementById('chatContextPanel');
+  assert.equal(contextPanel.classList.contains('collapsed'), true, 'collapsed unless Activity is open');
+  assert.equal(doc.getElementById('contextPanelOpenToggle'), null, 'no bar button opens the context panel any more');
+  state.features = { ...(state.features || {}), featureFlags: { ...(state.features?.featureFlags || {}), activity_monitor: true } };
   pane1.dom.chatInput.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
   await waitForUi(window, 80);
-  doc.getElementById('contextPanelToggle').click();
+  const open = doc.querySelector('[data-activity-open]');
+  assert.ok(open, 'Activity keeps its node in the bar even though CSS hides it');
+  open.hidden = false;
+  open.click();
   await waitForUi(window, 80);
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'precondition: pane 1 owns the open context panel');
-  const storedBefore = window.localStorage.getItem('jenny.contextPanel.v1');
+  assert.equal(contextPanel.classList.contains('collapsed'), false, 'precondition: Activity opened the panel');
+  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'the explicit open claimed the panel for the focused chat');
   doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
   await waitForUi(window, 120);
   assert.equal(contextPanel.classList.contains('collapsed'), true, 'the panel collapsed with its owner');
-  assert.equal(doc.getElementById('contextPanelOpenToggle').getAttribute('aria-pressed'), 'false');
-  assert.equal(window.localStorage.getItem('jenny.contextPanel.v1'), storedBefore, 'the expanded preference is kept');
 });
 
 // Gate side finding: with pane 1 focused, collapsing the review panel kept focus off pane 0.
@@ -360,21 +331,4 @@ test('collapsing the review panel with pane 1 focused keeps focus (and the focus
   await waitForUi(window, 120);
   assert.equal(state.currentSessionId, 'session-b', 'pane 1 stays the focused pane');
   assert.equal(doc.activeElement?.closest('.chat-pane')?.dataset.paneId, '1', 'focus stays inside pane 1');
-});
-
-// Owner decision 2026-09-26: the timeline cluster's toggle reopens a collapsed context panel.
-test('the timeline cluster toggle opens and closes the context panel and mirrors its state', async (t) => {
-  const { window, doc } = await openTwoPanes(t);
-  const contextPanel = doc.getElementById('chatContextPanel');
-  const toggle = doc.getElementById('contextPanelOpenToggle');
-  assert.equal(contextPanel.classList.contains('collapsed'), true, 'precondition: collapsed by default');
-  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
-  toggle.click();
-  await waitForUi(window, 80);
-  assert.equal(contextPanel.classList.contains('collapsed'), false, 'the cluster toggle opened it');
-  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
-  assert.equal(toggle.classList.contains('active'), true);
-  doc.getElementById('contextPanelToggle').click();
-  await waitForUi(window, 80);
-  assert.equal(toggle.getAttribute('aria-pressed'), 'false', 'the panel\'s own chevron keeps it in sync');
 });

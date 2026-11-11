@@ -76,6 +76,7 @@
   // projector siblings — see index.html + harness SCRIPT_ORDER.
   const {
     cloneNoticePayload,
+    isCallBoundSubagent,
     clonePlainObject,
     cloneSubagentReportMetadata,
     contextCompactedPayloadsMatch,
@@ -514,10 +515,9 @@
       intra += 1;
     }
 
-    const agentStatus = cloneNoticePayload(message && message.agent_status);
-    const agentStatusSteps = Array.isArray(message && message.agent_status_steps) && message.agent_status_steps.length
-      ? message.agent_status_steps
-      : null;
+    const agentStatus = isCallBoundSubagent(message && message.agent_status) ? null : cloneNoticePayload(message && message.agent_status);
+    const noticeSteps = (Array.isArray(message && message.agent_status_steps) ? message.agent_status_steps : []).filter((step) => !isCallBoundSubagent(step));
+    const agentStatusSteps = noticeSteps.length ? noticeSteps : null;
     if (agentStatus || agentStatusSteps) {
       const agentStatusPayload = { subkind: 'agent_status' };
       if (agentStatus) {

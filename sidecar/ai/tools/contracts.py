@@ -10,11 +10,27 @@ from typing import Any, Callable, Mapping
 
 from sidecar.ai.error_codes import CMP_TOOL_COERCED_ARGS_REJECTED
 from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME
+from sidecar.ai.tools.argument_coercion import (
+    ignored_argument_note,  # noqa: F401  (re-exported beside the validator)
+    repair_known_spellings,
+    repair_stringified_values,
+)
 from sidecar.exceptions import CompanionError
 
+_CWD_ALIASES = (("cwd", "workdir"), ("cwd", "working_directory"))
+# (canonical, alias). The file tools disagree on path/file_path, so each accepts the
+# other's name; a wrong name used to be ignored silently on an open schema (row 129, A4/A5).
 _TOOL_ARGUMENT_ALIASES: dict[str, tuple[tuple[str, str], ...]] = {
     "write_file": (("path", "file_path"), ("content", "file_content")),
     "delete_file": (("path", "file_path"),),
+    "read_file": (("path", "file_path"),),
+    "edit_file": (("file_path", "path"),),
+    "list_dir": (("path", "directory"), ("path", "dir")),
+    "glob_files": (("path", "directory"),),
+    "grep_search": (("path", "directory"),),
+    "run_command": _CWD_ALIASES,
+    "run_temp_script": _CWD_ALIASES,
+    "monitor": _CWD_ALIASES,
 }
 # Row 34: the user-only change evidence a failed scripted call keeps on
 # ``ToolExecutionFailure.result_metadata`` and its failed outcome's metadata.
@@ -160,6 +176,10 @@ def canonicalize_tool_arguments(
     for canonical_key, alias_key in _TOOL_ARGUMENT_ALIASES.get(tool_name, ()):
         if alias_key not in normalized:
             continue
+        if canonical_key in normalized and normalized[alias_key] in (None, ""):
+            # A model filling the other name with "" or null means "not given", not a conflict.
+            normalized.pop(alias_key)
+            continue
         if canonical_key in normalized and normalized[canonical_key] != normalized[alias_key]:
             raise ToolExecutionFailure(
                 code=CMP_TOOL_COERCED_ARGS_REJECTED,
@@ -173,7 +193,13 @@ def canonicalize_tool_arguments(
             normalized[canonical_key] = normalized[alias_key]
         normalized.pop(alias_key, None)
         aliases.append({"from": alias_key, "to": canonical_key})
-    return normalized, tuple(aliases)
+    normalized = repair_stringified_values(tool_name, normalized)
+    return repair_known_spellings(tool_name, normalized), tuple(aliases)
+
+
+def validation_detail(message: str) -> str:
+    """A validation failure's text without its ``tool 'x' rejected malformed arguments:`` prefix."""
+    return message.partition("rejected malformed arguments: ")[2] or message
 
 
 def strip_private_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
@@ -469,7 +495,7 @@ def _shared_any_of_cause(
     try:
         _validate_value("", value, shared, path=path)
     except ToolExecutionFailure as error:
-        return error.message.partition("rejected malformed arguments: ")[2] or error.message
+        return validation_detail(error.message)
     return ""
 
 

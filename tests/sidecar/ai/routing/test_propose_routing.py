@@ -137,8 +137,8 @@ def test_prose_without_a_recorded_suggestion_gets_one_nudge() -> None:
     assert PROPOSE_NUDGE.startswith("No suggested change was recorded. Call propose_change")
     assert [type(event) for event in loop.events] == [HeuristicFireEvent, StreamResetEvent]
     assert loop.events[0].name == "propose_nudge"
-    # The fold names the real cause: a tool the draft skipped, not the tools (2026-10-05 recheck).
-    assert loop.events[1].reason == "nudge_retry"
+    # Kept, not folded: the draft may be a complete answer (owner gate 2026-11-07).
+    assert loop.events[1].reason == "propose_nudge"
     assert final_propose_nudge(loop, _reply(), 3) is False
 
 
@@ -160,6 +160,23 @@ def test_no_nudge(overrides: dict[str, Any]) -> None:
 def test_no_nudge_for_a_question_or_a_cut_off_reply() -> None:
     assert final_propose_nudge(_loop(), _reply("Which file holds the greeting?"), 2) is False
     assert final_propose_nudge(_loop(), _reply(finish_reason="length"), 2) is False
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Summarise the last 10 commits and list the files that changed most.",
+        "summarize this repo",
+        "Please explain how the loader works.",
+        "What does main.py do",
+        "List the TODOs in src.",
+    ],
+)
+def test_no_nudge_for_a_request_that_only_asks_for_an_answer(request_text: str) -> None:
+    """Owner gate 2026-11-07: the nudge wiped a commit summary and the model answered the nudge."""
+    loop = _loop(latest_user_content=request_text)
+    assert final_propose_nudge(loop, _reply("Ten commits touched these files: a.py, b.py."), 2) is False
+    assert loop.working_messages[-1] == {"role": "user", "content": "Make the greeting friendlier."}
 
 
 def test_nudge_honours_the_presentation_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:

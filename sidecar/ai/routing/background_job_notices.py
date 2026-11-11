@@ -48,6 +48,8 @@ def _already_read_job_ids(outcomes: list[Any]) -> set[str]:
 
 
 def _job_line(job: dict[str, Any]) -> str:
+    if job["state"] == "stopped":
+        return f"- {job['job_id']} (`{job['command']}`): stopped by the user"
     exit_code = job.get("exit_code")
     exit_text = f", exit {exit_code}" if isinstance(exit_code, int) else ""
     return f"- {job['job_id']} (`{job['command']}`): {job['state']}{exit_text}"

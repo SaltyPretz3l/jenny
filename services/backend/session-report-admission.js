@@ -167,6 +167,10 @@ function finishTerminalReport(ctx, report, settled) {
       });
     }
     convertLater(service, { sessionId, turnId, outcome, body, clipped, errorCode });
+    // A chat that reported back is done with its browser page, and the app only holds a few. A stopped turn, one
+    // waiting on a decision, or one that hit a limit and may be resumed carries on, so its page stays.
+    const done = (outcome === 'completed' && !ctx.resumableStop) || outcome === 'failed';
+    if (done) service.toolExecutor?.browserUse?.closeFinished?.(sessionId);
   } catch (error) {
     logWarn(service, 'chat.terminal_report_convert_failed', { sessionId, turnId, reason: String(error?.code || 'exception') });
   }

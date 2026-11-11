@@ -16,16 +16,16 @@
   // removal timer is the fallback for a transitionend that never arrives.
   var STARTUP_OVERLAY_PLAIN_FADE_MS = 240;
   var STARTUP_OVERLAY_REMOVAL_FALLBACK_MS = STARTUP_OVERLAY_PLAIN_FADE_MS + 60;
-  // A starfield collapse lands in COLLAPSE_MS; this backstops a window that
-  // stops delivering frames mid-collapse.
-  var STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS = 250;
+  // An animated exit ends with its CSS fade; this backstops a window that is
+  // hidden during the exit, where no transitionend arrives.
+  var STARTUP_OVERLAY_EXIT_FALLBACK_SLACK_MS = 250;
   var STARTUP_LINE_REFRESH_MS = 250;
   var DEFAULT_STARFIELD_MIN_HOLD_MS = 900;
-  var DEFAULT_STARFIELD_COLLAPSE_MS = 750;
-  var DEFAULT_STARFIELD_QUICK_COLLAPSE_MS = 250;
+  var DEFAULT_STARFIELD_VISIBLE_FLOOR_MS = 260;
   // The full sky (hold plus the long collapse) is the first impression: a
-  // profile sees it once, then later launches skip the hold, collapse fast and
-  // let input through during the collapse (owner, 2026-10-19).
+  // profile sees it once, then later launches show only the sky they earned and
+  // let input through as soon as the shell is ready (owner, 2026-10-19 and
+  // 2026-11-09).
   var STARTUP_FULL_SKY_SEEN_KEY = 'jenny.startup.fullSkySeen';
 
   function startupStorage(doc) {
@@ -226,7 +226,12 @@
   // actions after Retry when this call has to render the row itself.
   function presentStartupOverlayFatalError(overlayEl, options) {
     if (!overlayEl) { return; }
-    if (overlayEl.__jennyStartupSky) { overlayEl.__jennyStartupSky.pause(); }
+    // A failure before the controller mounts still finds the sky by its early handle.
+    var engine = typeof globalThis !== 'undefined' ? globalThis.rendererStartupStarfield : null;
+    var sky = overlayEl.__jennyStartupSky || (engine && typeof engine.getEarlySky === 'function' ? engine.getEarlySky() : null);
+    if (sky) { sky.pause(); }
+    // A returning launch may already have handed input to the shell; the dialog needs it back.
+    if (overlayEl.style) { overlayEl.style.pointerEvents = ''; }
     var opts = options || {};
     if (!overlayEl.__jennyStartupFatalActive) {
       overlayEl.__jennyStartupFatalActive = true;
@@ -293,21 +298,30 @@
     return 'on';
   }
 
-  function mountStartupStarfield(overlay, doc, reducedMotion) {
+  function mountStartupStarfield(overlay, doc, reducedMotion, now) {
     var engine = typeof globalThis !== 'undefined' && globalThis.rendererStartupStarfield;
-    if (!engine || typeof engine.createStartupStarfield !== 'function' || !overlay
-      || typeof overlay.querySelector !== 'function') { return null; }
+    if (!engine || !overlay || typeof overlay.querySelector !== 'function') { return null; }
+    // In the app the sky is already running: it started from its own script tag.
+    var earlySky = typeof engine.getEarlySky === 'function' ? engine.getEarlySky() : null;
+    if (earlySky) { return earlySky; }
+    if (typeof engine.createStartupStarfield !== 'function') { return null; }
     var canvas = overlay.querySelector('#startupOverlaySky');
     if (!canvas) { return null; }
-    var sky = engine.createStartupStarfield({
+    return engine.createStartupStarfield({
       canvas: canvas,
       wordmark: overlay.querySelector('.startup-overlay-wordmark'),
       curtain: overlay,
       window: (doc && doc.defaultView) || null,
       reducedMotion: reducedMotion,
+      now: now,
     });
-    if (sky) { sky.start(); }
-    return sky;
+  }
+
+  // A sky started before a late off switch (the automation override) was read.
+  function discardEarlyStarfield() {
+    var engine = typeof globalThis !== 'undefined' && globalThis.rendererStartupStarfield;
+    var earlySky = engine && typeof engine.getEarlySky === 'function' ? engine.getEarlySky() : null;
+    if (earlySky && typeof earlySky.dispose === 'function') { earlySky.dispose(); }
   }
 
   function createLifecycleProgressController(deps) {
@@ -351,13 +365,13 @@
     var startupOverlayMaxVisibleMs = Math.max(Number((typeof globalThis !== 'undefined' && globalThis.__JENNY_STARTUP_OVERLAY_MAX_VISIBLE_MS) || 0) || 0, 0) || DEFAULT_STARTUP_OVERLAY_MAX_VISIBLE_MS;
     var starfieldModule = typeof globalThis !== 'undefined' ? globalThis.rendererStartupStarfield : null;
     var starfieldMinHoldMs = (starfieldModule && Number(starfieldModule.MIN_HOLD_MS)) || DEFAULT_STARFIELD_MIN_HOLD_MS;
-    var starfieldCollapseMs = (starfieldModule && Number(starfieldModule.COLLAPSE_MS)) || DEFAULT_STARFIELD_COLLAPSE_MS;
-    var starfieldQuickCollapseMs = (starfieldModule && Number(starfieldModule.QUICK_COLLAPSE_MS)) || DEFAULT_STARFIELD_QUICK_COLLAPSE_MS;
+    var starfieldVisibleFloorMs = (starfieldModule && Number(starfieldModule.VISIBLE_FLOOR_MS)) || DEFAULT_STARFIELD_VISIBLE_FLOOR_MS;
 
     var overlayDocument = startupOverlay && (startupOverlay.ownerDocument || (typeof document !== 'undefined' ? document : null));
     var returningLaunch = readFullSkySeen(overlayDocument);
     var startupSky = null;
     var startupSkyMountedAt = 0;
+    var startupInputReleased = false;
 
     function isSkyAnimating() {
       return !!(startupSky && typeof startupSky.isAnimated === 'function' && startupSky.isAnimated());
@@ -535,15 +549,42 @@
       if (startupLineRefreshTimer) { clearTimeout(startupLineRefreshTimer); startupLineRefreshTimer = 0; }
     }
 
+    function releaseStartupInput() {
+      if (startupInputReleased) { return; }
+      startupInputReleased = true;
+      setStartupOverlayBackgroundInert(startupOverlay, false);
+      if (startupOverlay.style) { startupOverlay.style.pointerEvents = 'none'; }
+      try { globalThis.__jennyStartupAudit?.markComposerInteractive?.(overlayDocument, 'input-released'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
+    }
+
+    function resolveAnimatedExit() {
+      var engine = typeof globalThis !== 'undefined' ? globalThis.rendererStartupStarfield : null;
+      if (!engine || typeof engine.resolveStartupExit !== 'function') { return null; }
+      return engine.resolveStartupExit({ firstLaunch: !returningLaunch, skyElapsedMs: now() - startupSkyMountedAt });
+    }
+
+    // The fades are CSS transitions, so a busy page thread cannot stall them.
+    function applyStartupExit(exit) {
+      startupOverlay.setAttribute('data-exit', exit.kind === 'quiet' ? 'quiet' : 'collapse');
+      if (!startupOverlay.style || typeof startupOverlay.style.setProperty !== 'function') { return; }
+      startupOverlay.style.setProperty('--startup-exit-fade-ms', exit.curtainFadeMs + 'ms');
+      startupOverlay.style.setProperty('--startup-exit-delay-ms', exit.curtainDelayMs + 'ms');
+      startupOverlay.style.setProperty('--startup-name-fade-ms', exit.nameFadeMs + 'ms');
+      startupOverlay.style.setProperty('--startup-name-delay-ms', exit.nameDelayMs + 'ms');
+    }
+
     function dismissStartupOverlay(options) {
       if (startupOverlayDismissed || !startupOverlay) { return; }
       // UIUX-021: the backstop must never silently drop a fatal alertdialog.
       if (isStartupOverlayFatalActive(startupOverlay)) { return; }
       retireSkyWhenSwitchedOff();
       var animating = isSkyAnimating();
-      // A warm start still gets a short sky: never collapse before the hold.
-      var holdLeft = animating && !returningLaunch && !(options && options.skipHold)
-        ? Math.ceil(starfieldMinHoldMs - (now() - startupSkyMountedAt))
+      // A returning launch hands input to the shell the moment it is ready.
+      if (animating && returningLaunch) { releaseStartupInput(); }
+      // The first-ever launch gets its full hold; later ones only the floor.
+      var minVisibleMs = returningLaunch ? starfieldVisibleFloorMs : starfieldMinHoldMs;
+      var holdLeft = animating && !(options && options.skipHold)
+        ? Math.ceil(minVisibleMs - (now() - startupSkyMountedAt))
         : 0;
       if (holdLeft > 0) {
         if (!startupOverlayHoldTimer) {
@@ -556,37 +597,26 @@
       }
       startupOverlayDismissed = true;
       clearStartupOverlayTimers();
-      if (!returningLaunch) { markFullSkySeen(overlayDocument); }
+      if (!returningLaunch && animating) { markFullSkySeen(overlayDocument); }
       if (onStartupReady) { try { onStartupReady(); } catch (error) { logIgnoredError('startup_ready', error); } }
-      if (animating && startupOverlay.style) {
-        // The stars drive the fade; the class marks dismissal while the
-        // mounted curtain continues intercepting input until removal.
-        startupOverlay.style.opacity = '1';
-      } else {
-        disposeStartupSky();
+      var exit = animating ? resolveAnimatedExit() : null;
+      if (exit) {
+        applyStartupExit(exit);
+        if (typeof startupSky.reportFrames === 'function') { startupSky.reportFrames(); }
+        if (exit.kind !== 'quiet') { startupSky.collapse({ durationMs: exit.durationMs }); }
       }
+      // The class starts the compositor fade while the mounted curtain keeps
+      // intercepting input until removal.
       startupOverlay.classList.add('hidden');
-      if (animating) {
-        var collapseMs = returningLaunch ? starfieldQuickCollapseMs : starfieldCollapseMs;
-        if (returningLaunch) {
-          // A returning launch hands input to the shell as the collapse starts.
-          setStartupOverlayBackgroundInert(startupOverlay, false);
-          if (startupOverlay.style) { startupOverlay.style.pointerEvents = 'none'; }
-          try { globalThis.__jennyStartupAudit?.markComposerInteractive?.(overlayDocument, 'input-released'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
-        }
-        startupSky.collapse({ onDone: removeStartupOverlayNode, durationMs: collapseMs });
-        if (startupOverlayDismissed && !startupOverlayRemoved && !startupOverlayRemovalTimer) {
-          startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, collapseMs + STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS);
-        }
-        return;
-      }
       startupOverlay.addEventListener('transitionend', function onEnd(event) {
         if (event && event.target && event.target !== startupOverlay) { return; }
         if (event && event.propertyName && event.propertyName !== 'opacity') { return; }
         startupOverlay.removeEventListener('transitionend', onEnd);
         removeStartupOverlayNode();
       });
-      startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, STARTUP_OVERLAY_REMOVAL_FALLBACK_MS);
+      startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, exit
+        ? exit.durationMs + STARTUP_OVERLAY_EXIT_FALLBACK_SLACK_MS
+        : STARTUP_OVERLAY_REMOVAL_FALLBACK_MS);
     }
 
     function dismissStartupOverlayForBackstop() {
@@ -645,14 +675,16 @@
       setStartupOverlayBackgroundInert(startupOverlay, true);
       if (resolveStartupAnimationMode(overlayDocument, state) === 'on') {
         try {
-          startupSky = mountStartupStarfield(startupOverlay, overlayDocument, prefersReducedMotion());
+          startupSky = mountStartupStarfield(startupOverlay, overlayDocument, prefersReducedMotion(), now);
           if (startupSky) { startupOverlay.__jennyStartupSky = startupSky; }
         } catch (error) {
           logIgnoredError('starfield_mount', error);
           startupSky = null;
         }
+      } else {
+        discardEarlyStarfield();
       }
-      startupSkyMountedAt = now();
+      startupSkyMountedAt = startupSky && Number.isFinite(startupSky.startedAt) ? startupSky.startedAt : now();
       refreshStartupLine();
       scheduleStartupLineRefresh();
     }

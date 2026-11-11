@@ -208,6 +208,11 @@ async function assertExpiredQuestionPersists(t, omitAccessors = false) {
     rendererEnterKeydownUtils: require('../renderer/chat/renderer-enter-keydown-utils'),
     rendererChatCtrlWheelGate: require('../renderer/chat/renderer-chat-ctrl-wheel-gate'),
   };
+  context.rendererChatWayfinderUtils = require('../renderer/chat/renderer-chat-wayfinder-utils');
+  // renderer-chat-event-utils.js resolves its split siblings from the same browser-shaped context.
+  for (const sibling of ['renderer-chat-tool-row-toggles.js', 'renderer-chat-shell-subscriptions.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', sibling), 'utf8'), context);
+  }
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../renderer/chat/renderer-chat-event-utils.js'), 'utf8'), context);
   const callbacks = new Proxy({
     getSessionMessages: (id) => { reads.push(id); return messages; },

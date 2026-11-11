@@ -129,8 +129,9 @@ test('two panes: each pane is a grid with kicker, thread and composer rows', () 
     'min-block-size': '0',
     overflow: 'hidden',
   });
-  assert.deepEqual(rule(PANES_CSS, `${TWO} > .chat-pane > .chat-pane-kicker`), { 'grid-row': '1' });
-  for (const child of ['.hero-stage', '.chat-thread-stage', '.chat-timeline-utility-cluster']) {
+  assert.deepEqual(rule(PANES_CSS, `${TWO} > .chat-pane > .chat-pane-kicker`), { 'grid-column': '1', 'grid-row': '1' });
+  // The utility cluster is not placed here: in a split the kicker row is the session bar (chat-session-bar.css).
+  for (const child of ['.hero-stage', '.chat-thread-stage']) {
     assert.deepEqual(rule(PANES_CSS, `${TWO} > .chat-pane > ${child}`), { 'grid-column': '1', 'grid-row': '2' });
   }
   assert.deepEqual(rule(PANES_CSS, `${TWO} > .chat-pane > .composer-wrap`), {
