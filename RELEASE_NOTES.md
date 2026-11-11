@@ -61,6 +61,29 @@ calmer.
 - Not yet covered by a person: browser use and its controls, sound and ad blocking on your own sites; Follow Jenny, before and after pictures and the IDE live preview in your own projects; a ComfyUI image on your machine; Full auto with a deny rule and a scheduled check; the session bar, jump control, palettes, Plan mode and startup by eye, maximized and in a packaged build; multi-select, moving a model across drives and the Synced workspace sandbox in the real app; the native launcher in the installed app; and the installed 1.6.1 to 1.7.0 upgrade on Windows. The fixes from the last real-app check of multi-select, the jump control and Follow Jenny were tested headless and not yet rechecked live.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.7.0.
 
+### 1.7.0 download checksums
+
+Published 2026-11-11 from public `9f6a8218` (private `ac71ced7b`, tag `v1.7.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 7cb17fb8e3faf2a5ca8807d60c4c1809d398a9813360b208763454c2dfc8a5b6 |
+| dist/Jenny-Setup-x64.exe.blockmap | d51ba5214603ba3dc5ae8025678761e575c9e0189c2c2d5ae6203ae1753aff8c |
+| dist/Jenny-amd64.deb | 66fff4b4dc96bee53aa3e716c5196b4026b7e27d25adbdbb6a067b8e0f5adcb5 |
+| dist/Jenny-arm64.dmg | 97361728d3e3e2e84e311b8331e22f0b3febb3bccda694b83664b3d3d6c71566 |
+| dist/Jenny-arm64.zip | 0f8d550f12e3c6efeb3379191e0a4dfc4ad51a6100af305191daa2dd7c4755c7 |
+| dist/Jenny-x86_64.AppImage | 76a2249414837d0ef3b3400c927a85f15ed212f4f659d8f647659f925aa8f59c |
+| dist/SHA256SUMS-linux.txt | 4fdcc8c9e973fa705e1cea412272d6b0be22e24fb9e807b597948a93cafa9f57 |
+| dist/SHA256SUMS-mac.txt | 37ea511707452f0f6de817769b4dc73be845963966133a84b2f786046f8bebf2 |
+| dist/SHA256SUMS-windows.txt | 567115b28f5930962592340506956b878437a122cb377ee7c1cd0952c619a63c |
+| dist/latest-linux.yml | 9802df16ee4c70740d2ae935b2e518d50e6becf4637921d9653c6dd801686849 |
+| dist/latest-mac.yml | 2ec32c0e32650e20dc65104c91506a5c74f520ee3307b030f184b57f67df5cee |
+| dist/latest.yml | 4c1032995cb37dd74e5500a21cb71804bcc79d24a5635a67064f1a0c48cdf63f |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.6.1 - 2026-11-03
 
 Everything landed since 1.6.0, through private `main` on 2026-11-03: 104
@@ -127,7 +150,6 @@ Published 2026-11-03 from public `4883c720` (private `88ad662b5`, tag `v1.6.1`):
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the build-only run and the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 0e9f1f2b6c72f278210e737279e2a20e84b80060b08b7f92626336bbcf7956a4 |
@@ -142,7 +164,6 @@ release jobs were green on the build-only run and the tagged run.
 | dist/latest-linux.yml | fde6a4f5216523dc5ea2b1b84056d0afd02619f67ae9e233a7ba5926a1e2a169 |
 | dist/latest-mac.yml | fcbb58e54e02490fb1de64c56f8b1d9df44b9b038627f86d155e0f0d5e29ac36 |
 | dist/latest.yml | e2f705e577790e108da7bb0ec0b671be44642a8d9ac423f327971ccf4ebe49d2 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.6.0 - 2026-10-27
 
