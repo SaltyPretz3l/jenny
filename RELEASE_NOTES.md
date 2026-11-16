@@ -69,6 +69,31 @@ many chat screens are quieter and clearer. All 18 languages are level with Engli
 - Not yet covered by a person: Team beyond the owner's runs on two PCs on one home network (joining, admitting, messages both ways, leaving and removal), including a run across two networks, internet joining with a real router and relay, a node serving a real turn, model sharing between two PCs, a removed PC rejoining, export, restore and delete of a hosted team, history after a restart, the packaged app as a host, the Docker host image, every Team screen by eye, and the two-member team board run; project boards, sketch blocks and the Aurora theme in each palette, and a real-model run of the new cards-first board instructions; the Claude API route on Sonnet, with one approval for a round of edits, the picker names and a board in a new chat; Finish this first with two live chats; Open with Jenny in an installed build on Windows, macOS and Linux; the Background tasks panel with a running command; a real Get drafter, Get vision and Get llama.cpp build download with cancel and resume; a held scheduled check; and by eye, at three widths and in light and dark palettes, Settings and the Models page, the header, the sprite on the rail, sources, message editing, find, question cards, Needs you from the strip, the image viewer, calendar and diff blocks, shortcuts and Quick settings, toasts, attachment chips, the new-chat screen, save feedback, the folder hint, Diagnostics Activity and the file preview. Also owed: the installed 1.7.0 to 1.8.0 upgrade on Windows (schema 27 to 29).
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
 
+### 1.8.0 download checksums
+
+Published 2026-11-16 from public `7631488d` (private `170630643`, tag `v1.8.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run. The first build-only run failed
+on every leg because the export left out the sketch bundle sources; the public commit before the
+tag adds them.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | fcf65743bba6cabe559e842fb7fbb00336658d4b12ec2689fa899971feedd017 |
+| dist/Jenny-Setup-x64.exe.blockmap | a7c47c2303b9ca29062be77ecaf7ec400df7899e87f77e8ed72b81cd582a32f1 |
+| dist/Jenny-amd64.deb | 134092322f1d3e959ead51d05be64c9e7f62c3c2868ad9d42bdc7a457b5331ad |
+| dist/Jenny-arm64.dmg | 2c8cff2790b4a0dd4a5976cd6ef5cbd6bbc1e3155816aa3a076c3975293d1698 |
+| dist/Jenny-arm64.zip | 89f9651a2a4a580f956a6bffe2bd78b0a8b69025124246b91cdac58bebdb199f |
+| dist/Jenny-x86_64.AppImage | d267d4e3f015678e94bf5224a7b93d7ed94de958d5a362a7877c735f7d611d27 |
+| dist/SHA256SUMS-linux.txt | a7b46c703cecb593a5b71f3ef4bb75c62cc0236f40bf29944ef252fc4c0fdd2d |
+| dist/SHA256SUMS-mac.txt | 6869b934d6ac97f382a664ab83de6621a589a43b44e481375a3172bfb2bc67ef |
+| dist/SHA256SUMS-windows.txt | 4bc08c5755c82f1deb9b9704dbbbf049db0940a2af02a09d810442481fe5bfdb |
+| dist/latest-linux.yml | 12cf7048c4c30386e1da399ac51798f5bdfc6857449a0099f6d18830002af3e7 |
+| dist/latest-mac.yml | 57e7b5db56513bb00fb8acb41eee8a93e5ad464592ab35f8ac85fdc653a4d6b0 |
+| dist/latest.yml | 01e02cf6258d480d9d20d307ed76f45c31d331f9a5081dc7dc2ce2ff760860ca |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.7.0 - 2026-11-10
 
 Everything landed since 1.6.1, through private `main` on 2026-11-10: 226
@@ -136,7 +161,6 @@ Published 2026-11-11 from public `9f6a8218` (private `ac71ced7b`, tag `v1.7.0`):
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the build-only run and the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 7cb17fb8e3faf2a5ca8807d60c4c1809d398a9813360b208763454c2dfc8a5b6 |
@@ -151,7 +175,6 @@ release jobs were green on the build-only run and the tagged run.
 | dist/latest-linux.yml | 9802df16ee4c70740d2ae935b2e518d50e6becf4637921d9653c6dd801686849 |
 | dist/latest-mac.yml | 2ec32c0e32650e20dc65104c91506a5c74f520ee3307b030f184b57f67df5cee |
 | dist/latest.yml | 4c1032995cb37dd74e5500a21cb71804bcc79d24a5635a67064f1a0c48cdf63f |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.6.1 - 2026-11-03
 
