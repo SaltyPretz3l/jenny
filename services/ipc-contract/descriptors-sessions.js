@@ -38,6 +38,44 @@ module.exports = Object.freeze({
   // folder picker and rebinds the same project; the renderer never sends a path.
   'projects.chooseRoot': invokeMethod('projects:choose-root'),
   'projects.revealFolder': invokeMethod('projects:reveal-folder'),
+  // Row 150: project boards (services/main/board-ipc-registration.js). Ids and batches cross, never a
+  // path or a whole document; every call resolves, { ok: false, reason: 'disabled' } with the flag off.
+  'boards.list': invokeMethod('boards:list'),
+  'boards.create': invokeMethod('boards:create'),
+  'boards.get': invokeMethod('boards:get'),
+  'boards.apply': invokeMethod('boards:apply'),
+  'boards.undo': invokeMethod('boards:undo'),
+  'boards.redo': invokeMethod('boards:redo'),
+  'boards.rename': invokeMethod('boards:rename'),
+  'boards.duplicate': invokeMethod('boards:duplicate'),
+  'boards.delete': invokeMethod('boards:delete'),
+  'boards.restore': invokeMethod('boards:restore'),
+  // The link card's "Fetch title" button: one page title through the URL guard, { ok, title } or { ok: false, reason }.
+  'boards.fetchLinkTitle': invokeMethod('boards:fetch-link-title'),
+  // The cards selected on the Board page, so a turn sent from its docked chat shows them first: { boardId, ids }.
+  'boards.setSelection': invokeMethod('boards:set-selection'),
+  // Pictures and file cards (slice B7): picture bytes in and out by content hash; a file card's path is checked in
+  // main against the board's own project folder, and only a relative path comes back.
+  'boards.addAsset': invokeMethod('boards:add-asset'),
+  'boards.readAsset': invokeMethod('boards:read-asset'),
+  'boards.resolveFile': invokeMethod('boards:resolve-file'),
+  'boards.openFile': invokeMethod('boards:open-file'),
+  'boards.fileStatus': invokeMethod('boards:file-status'),
+  // Jenny's proposed changes (slice C3): the proposals of a board without their operations, and one decision
+  // ({ boardId, proposalId, action: accept_additions | accept | reject, n? }). The main process reads replies; the page never does.
+  'boards.listProposals': invokeMethod('boards:list-proposals'),
+  'boards.decideProposal': invokeMethod('boards:decide-proposal'),
+  // A .jennyboard file (slice B10): main shows the dialog and does the IO; { boardId } / { projectId } go in, a base name comes back.
+  'boards.exportFile': invokeMethod('boards:export-file'),
+  'boards.importFile': invokeMethod('boards:import-file'),
+  // Pin to board (slice C5): one chat item becomes one card; chatRefs names the boards that hold cards of one chat.
+  'boards.pin': invokeMethod('boards:pin'),
+  'boards.chatRefs': invokeMethod('boards:chat-refs'),
+  // A board that loads read-only (slice B11): show its file in the file manager, or rename its files aside in the boards
+  // folder and take it out of the list. { boardId } goes in; only the aside file's name comes back.
+  'boards.revealFile': invokeMethod('boards:reveal-file'),
+  'boards.setAside': invokeMethod('boards:set-aside'),
+  'boards.onChanged': subscribeMethod('boards:changed'),
   'permissionReview.getState': invokeMethod('permission-review:get-state'),
   'permissionReview.resolve': invokeMethod('permission-review:resolve'),
   'sessionRuntime.getSnapshot': invokeMethod('session-runtime:get-snapshot'),

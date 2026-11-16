@@ -1,0 +1,4 @@
+title Search tree
+tree t: Binary search tree = 8(3(1,6),10(,14))
+stack st: Call stack = main, parse, lex
+step Find 6: left, then right | t[8] t[3] t[6]

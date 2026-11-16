@@ -444,7 +444,8 @@
     };
   }
 
-  function buildAssistantMetaLabel(message, formatTime, turnMessages, turn) {
+  // Shared by the full and the short footer label so the two cannot drift.
+  function resolveAssistantMetaParts(message, formatTime, turnMessages, turn) {
     message = resolveFooterMessage(message, turnMessages, turn);
     const kind = String(message && message.kind || '');
     if (
@@ -454,7 +455,7 @@
       kind === 'question_batch' ||
       kind === 'interactive_round_recap'
     ) {
-      return '';
+      return null;
     }
 
     // User stops retain coarse error status but display "Stopped"; include per-turn model provenance because a conversation may span model switches.
@@ -464,6 +465,7 @@
       : message.runtime_status === 'pending' ? jt('setup.common.pending', 'Pending')
         : message.runtime_status === 'running' ? jt('setup.hub.running', 'Running')
           : message.runtime_status === 'needs_attention' ? jt('setup.common.needsAttention', 'Needs attention') : '';
+    const succeeded = !runtimeLabel && !cancelled && message.status !== ERROR_STATUS && message.status !== 'unknown';
     const prefix = runtimeLabel || (cancelled ? jt('chat.footer.stopped', 'Stopped')
       : message.status === ERROR_STATUS ? jt('chat.footer.failed', 'Failed')
         : message.status === 'unknown' ? jt('chat.footer.statusUnknown', 'Status unknown')
@@ -472,15 +474,30 @@
     const fallbackTime = isValidTimestamp(message.timestamp) ? message.timestamp : '';
     const time = terminalTime || fallbackTime;
     const formattedTime = time ? String(typeof formatTime === 'function' ? formatTime(time) : time) : '';
-    const base = formattedTime
-      ? `${prefix}${terminalTime ? '' : ' · ' + jt('chat.footer.messageTime', 'message time')} ${formattedTime}`
-      : `${prefix} · ${jt('chat.footer.timeUnknown', 'time unknown')}`;
     const provenance = (turnMessages || [message]).filter((item) => !item.kind || item.kind === 'assistant_error');
     const models = [...new Set(provenance.map((item) => String(item.model_used || '').trim()).filter(Boolean))];
     if (!models.length || provenance.some((item) => !String(item.model_used || '').trim())) {
       models.push(jt('chat.footer.modelUnknown', 'Model unknown'));
     }
-    return `${base} · ${models.join(', ')}`;
+    return { prefix, succeeded, terminalTime, formattedTime, models: models.join(', ') };
+  }
+
+  function buildAssistantMetaLabel(message, formatTime, turnMessages, turn) {
+    const parts = resolveAssistantMetaParts(message, formatTime, turnMessages, turn);
+    if (!parts) return '';
+    const { prefix, terminalTime, formattedTime, models } = parts;
+    const base = formattedTime
+      ? `${prefix}${terminalTime ? '' : ' · ' + jt('chat.footer.messageTime', 'message time')} ${formattedTime}`
+      : `${prefix} · ${jt('chat.footer.timeUnknown', 'time unknown')}`;
+    return `${base} · ${models}`;
+  }
+
+  // The hover row's line, "3:41 PM · model": no "Completed", other statuses lead.
+  function buildShortAssistantMetaLabel(message, formatTime, turnMessages, turn) {
+    const parts = resolveAssistantMetaParts(message, formatTime, turnMessages, turn);
+    if (!parts) return '';
+    const lead = [parts.succeeded ? '' : parts.prefix, parts.formattedTime].filter(Boolean).join(' ');
+    return [lead, parts.models].filter(Boolean).join(' · ');
   }
 
   return {
@@ -503,6 +520,7 @@
     mergeReasoningEntries,
     getLatestAssistantMessageId,
     buildAssistantMetaLabel,
+    buildShortAssistantMetaLabel,
     normalizeInteractiveRoundRecap,
   };
 });

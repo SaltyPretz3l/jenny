@@ -32,6 +32,7 @@ test('saveSetupEndpoint persists preferred engine and matching settings atomical
       lastUsedTag: '',
       lastPickDir: '',
       libraryRoots: [],
+      runtimeRoots: [],
       perModel: {},
     },
   });

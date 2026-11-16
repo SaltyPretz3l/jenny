@@ -25,6 +25,13 @@ from sidecar.ai.tools.builtins.web_url_policy import (
     url_origin,
 )
 
+
+def _default_tls_context() -> ssl.SSLContext:
+    """The shared verified context, loaded on the first fetch rather than at sidecar start."""
+    from sidecar.ai.tools.builtins.web_tls import default_tls_context
+
+    return default_tls_context()
+
 _MAX_URL_LENGTH = 8192
 _MAX_FETCH_BYTES_HARD = 1024 * 1024
 _MAX_REDIRECTS = 5
@@ -302,7 +309,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             raw_sock = self.sock
         context = getattr(self, "_context", None)
         ssl_context = (
-            context if isinstance(context, ssl.SSLContext) else ssl.create_default_context()
+            context if isinstance(context, ssl.SSLContext) else _default_tls_context()
         )
         self.sock = ssl_context.wrap_socket(raw_sock, server_hostname=self.host)
 
@@ -333,9 +340,13 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         self._ssl_check_hostname = check_hostname
 
     def https_open(self, req: urllib.request.Request):  # type: ignore[override]
-        conn_kwargs: dict[str, Any] = {}
-        if self._ssl_context is not None:
-            conn_kwargs["context"] = self._ssl_context
+        # http.client fills a missing context with its own OS-store default, so the shared
+        # context (OS store plus certifi) is passed here, not left to the connection.
+        conn_kwargs: dict[str, Any] = {
+            "context": self._ssl_context
+            if self._ssl_context is not None
+            else _default_tls_context()
+        }
         if self._ssl_check_hostname is not None:
             conn_kwargs["check_hostname"] = self._ssl_check_hostname
         return self.do_open(

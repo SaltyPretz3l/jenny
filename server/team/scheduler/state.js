@@ -70,11 +70,60 @@ function normalizeModels(models, limits) {
   return Object.freeze(out);
 }
 
+// A node's id is a fixed function of its device: `node_` plus base64url of the first
+// 16 bytes of SHA-256 over a fixed label and the device id, the shape newId gives. The same
+// device is the same node after an unregister, a sweep removal or a host restart, so a saved
+// allowed-node list keeps matching it. The device id stays hidden (publicNode, node-commands.js).
+const NODE_ID_LABEL = 'jenny-team-node-id-v1\0';
+
+function nodeIdFor(deviceId) {
+  const digest = crypto.createHash('sha256').update(`${NODE_ID_LABEL}${deviceId}`, 'utf8').digest();
+  return `node_${digest.subarray(0, 16).toString('base64url')}`;
+}
+
+// The nodes a lease request allows: null for any node, else a frozen copy of 1 to
+// limits.maxNodes distinct node ids; undefined when the value is not acceptable.
+// Node ids are `node_` plus base64url (nodeIdFor above; server/team/ids.js has no node kind).
+const NODE_ID = /^node_[A-Za-z0-9_-]{1,64}$/u;
+// The one node id rule (also the usage log, the member's node agent and its GPU list).
+const isNodeId = (value) => typeof value === 'string' && NODE_ID.test(value);
+
+function normalizeAllowedNodes(value, limits) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > limits.maxNodes) return undefined;
+  const list = Array.from(value); // a hole in a sparse array becomes undefined and fails the checks
+  if (!list.every((id) => typeof id === 'string' && NODE_ID.test(id)) || new Set(list).size !== list.length) return undefined;
+  return Object.freeze(list);
+}
+
+// ---------------------------------------------------------------------------
+// The member record. When each member was last served, as a number that grows
+// with every serve (a lease becoming active, a job created on it): rank(member) is
+// 0 for a member never served (or forgotten), and larger for a more recent one. Bounded at
+// `max` members (limits.maxMembers): marking a member beyond that forgets the
+// one served longest ago, who then reads as never served. No timers or handles,
+// so there is nothing to clean up when the scheduler goes away.
+
+function createMemberServed({ max }) {
+  const served = new Map(); // member_id -> serve number; insertion order is serve order
+  let counter = 0;
+  return {
+    rank: (memberId) => served.get(memberId) || 0,
+    mark(memberId) {
+      served.delete(memberId);
+      counter += 1;
+      while (served.size >= max) served.delete(served.keys().next().value);
+      served.set(memberId, counter);
+    },
+    size: () => served.size,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Node table. Bounded at limits.maxNodes nodes, limits.maxNodesPerMember a
 // member, from limits.maxMembers members.
 
-function createNodeTable({ limits, randomBytes }) {
+function createNodeTable({ limits }) {
   const nodes = new Map(); // node_id -> record
   let order = 0;
 
@@ -116,9 +165,11 @@ function createNodeTable({ limits, randomBytes }) {
       return plan.existing;
     }
     const node = {
-      node_id: newId('node_', randomBytes), device_id: deviceId, member_id: memberId, slots, models: plan.models,
-      online: true, offline_at: null, paused: false, last_contact_at: now, last_served_at: 0, order: order++,
+      node_id: nodeIdFor(deviceId), device_id: deviceId, member_id: memberId, slots, models: plan.models,
+      online: true, offline_at: null, paused: false, owner_busy: false, last_contact_at: now, last_served_at: 0, order: order++,
       claims: new Map(),
+      // E52: the last turn handed out here went to the owner ahead of another waiting member.
+      owner_went_ahead: false,
     };
     nodes.set(node.node_id, node);
     return node;
@@ -138,7 +189,7 @@ function createNodeTable({ limits, randomBytes }) {
 function nodeView(node, busySlots) {
   return {
     node_id: node.node_id, device_id: node.device_id, member_id: node.member_id, online: node.online,
-    paused: node.paused, slots: node.slots, busy_slots: busySlots, last_served_at: node.last_served_at,
+    paused: node.paused, owner_busy: node.paused && node.owner_busy === true, slots: node.slots, busy_slots: busySlots, last_served_at: node.last_served_at,
     order: node.order, models: node.models.map((entry) => ({ ...entry })),
   };
 }
@@ -164,10 +215,10 @@ function createLeaseTable({ limits, randomBytes }) {
   const revokedTokens = new Map(); // token digest -> lease_id, while the terminal lease is kept
   let seq = 0;
 
-  function create({ conversationKey, memberId, model, wantsVision }, now) {
+  function create({ conversationKey, memberId, model, wantsVision, allowedNodes = null }, now) {
     const record = {
       lease_id: newId('lease_', randomBytes), conversation_key: conversationKey, member_id: memberId, model,
-      wants_vision: wantsVision, state: undefined, reason: null, node_id: null, model_info: null, seq: seq++,
+      wants_vision: wantsVision, allowed_nodes: allowedNodes, state: undefined, reason: null, node_id: null, model_info: null, seq: seq++,
       created_at: now, queued_at: null, active_at: null, terminal_at: null, last_job_at: null, job_count: 0,
       live_job_id: null, token_hex: null, token_plain: null,
     };
@@ -264,6 +315,6 @@ function leaseView(record, position) {
 }
 
 module.exports = {
-  LEASE_STATES, LEASE_TERMINAL, LEASE_TRANSITIONS, createLeaseTable, createNodeTable, isPrintable, leaseView,
-  newId, nodeView, transitionLease,
+  LEASE_STATES, LEASE_TERMINAL, LEASE_TRANSITIONS, createLeaseTable, createMemberServed, createNodeTable, isNodeId, isPrintable,
+  leaseView, newId, nodeIdFor, nodeView, normalizeAllowedNodes, transitionLease,
 };

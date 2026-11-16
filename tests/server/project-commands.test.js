@@ -107,3 +107,30 @@ test('host project adapter maps application failures and rejects malformed proje
   }).execute('projects.list');
   assert.deepEqual(malformed.projects, []);
 });
+
+test('3-4b: a move publishes to the new project and, when a scope was captured before it, to the old one', async () => {
+  const { createProjectCommandDispatcher } = require('../../services/host/project-commands');
+  const { calls } = fixture();
+  const published = [];
+  const order = [];
+  const build = (captureScope) => createProjectCommandDispatcher({
+    applicationService: {
+      assignSessionProject: (params) => { order.push('assign'); calls.push(params); return { ok: true, session: { id: params.session_id } }; },
+    },
+    authorization: { identity: () => null, mutationGuard: () => null, assertMutationAuthority: () => {},
+      assertPostAwaitAuthority: () => {} },
+    transaction: { runReceipt: (_command, _context, fn) => fn() },
+    result: { safeSession: (session) => ({ session_id: session.id }), bumpRevision: () => 'rev_2',
+      publish: (...args) => published.push(args), ...(captureScope ? { captureScope } : {}) },
+  });
+  const command = { operation: 'projects.assignSession', session_id: 'sess_1', request_id: 'request_1',
+    params: { project_id: 'project_b' } };
+  const oldScope = Object.freeze({ audience: new Set(['member_a']), bucket: 'project:project_a' });
+  assert.equal((await build((id) => { order.push(`capture:${id}`); return oldScope; }).dispatch(command, {})).ok, true);
+  assert.deepEqual(order, ['capture:sess_1', 'assign'], 'the old scope is taken before the move');
+  const moved = { session_id: 'sess_1', revision: 'rev_2', reason: 'project_assigned' };
+  assert.deepEqual(published, [['session_changed', moved], ['session_changed', moved, oldScope]]);
+  published.length = 0;
+  await build(null).dispatch(command, {});
+  assert.deepEqual(published, [['session_changed', moved]], 'a single-owner host publishes once, as before');
+});

@@ -33,6 +33,7 @@ from sidecar.ai.mcp.builtin_server_cli import (
     builtin_tool_config,
     default_builtin_tool_config,
 )
+from sidecar.ai.mcp.builtin_server_hosted import report_hosted_file_reason, start_hosted_file_io
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
     configure_stdio,
@@ -90,7 +91,6 @@ from sidecar.ai.tools.contracts import (
     ToolHandlerResult,
     validate_tool_arguments,
 )
-from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io
 from sidecar.ai.tools.phase_trace import PhaseTrace
 from sidecar.ai.tools.plan_artifact_policy import strip_plan_artifact_write_arg
 from sidecar.ai.tools.registry import build_tool_bindings
@@ -612,15 +612,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.owned_process_ledger_path, owner_pid=args.owned_process_owner_pid
     )
     ledger_root_arg = str(args.operation_ledger_root or "").strip()
-    configure_operation_ledger(
-        ledger_root_arg if ledger_root_arg else resolve_operation_ledger_root()
-    )
+    configure_operation_ledger(ledger_root_arg or resolve_operation_ledger_root())
     start_background_compaction()
     workspace = _build_workspace_guard(args)
-    configure_hosted_file_io(
-        str(workspace.root) if workspace.root is not None else None,
-        enabled=host_policy.mode == "server",
-    )
+    hosted_file_reason = start_hosted_file_io(workspace.root, server_mode=host_policy.mode
+                                              == "server", win32_files=args.hosted_win32_files)
     configure_catalog_reader_from_cli(
         db_path=str(args.semantic_catalog_db or ""),
         base_url=str(args.semantic_catalog_url or ""),
@@ -636,7 +632,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             host_execution_policy_version=host_policy.version,
             desktop_execution_policy_version=desktop_policy.version,
         ),
-        workspace_root_present=workspace.root is not None,
+        workspace_root_present=workspace.root is not None and hosted_file_reason is None,
         request_scoped_authority=True,
     )
 
@@ -644,6 +640,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     logging_configured = _configure_logging(
         log_level=args.diagnostics_log_level, capture_mode=args.diagnostics_capture_mode,
     )
+    report_hosted_file_reason(hosted_file_reason)
     # The finally also covers SIGTERM: the termination handler exits via
     # SystemExit, so cached language servers are closed on both exit paths.
     try:

@@ -57,6 +57,38 @@ test('moving a chat re-stamps its agent tasks and deleting a project re-homes ta
   }
 });
 
+test('D13: deleting a project moves its boards to General through the board service', async () => {
+  const { createBoardStore } = require('../services/boards/board-store');
+  const { createBoardService } = require('../services/boards/board-service');
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-project-hooks-boards-'));
+  trackDirectory(userDataPath);
+  const configService = new ShellConfigService({ userDataPath });
+  const backend = new BackendService({ userDataPath, safeStorage: createFakeSafeStorage(), configService });
+  try {
+    const application = backend.projectApplicationService;
+    const projectId = application.createProject({ name: 'Boarded' }).project.id;
+    let n = 0;
+    const boards = createBoardService({ store: createBoardStore({ userDataPath }), makeId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`,
+      projectExists: (id) => Boolean(backend.projectService.get(id)) });
+    const moved = [];
+    boards.on('changed', (event) => { if (event.kind === 'moved') moved.push(event); });
+    const board = (await boards.create({ projectId, name: 'Plan' })).board;
+    backend.getBoardService = () => boards;
+    backend.sidecarClient = { connected: true, dispose() {}, request: async () => ({ moved: 0, merged: 0, pending_moved: 0 }) };
+    const deleted = await application.deleteProject({ project_id: projectId });
+    assert.equal(deleted.ok, true, JSON.stringify(deleted));
+    assert.equal((await boards.get({ boardId: board.id })).board.project_id, GENERAL_PROJECT_ID);
+    assert.deepEqual(moved, [{ boardId: board.id, projectId: GENERAL_PROJECT_ID, kind: 'moved', rev: 1 }]);
+    assert.deepEqual((await boards.list({ projectId: GENERAL_PROJECT_ID })).boards.map((b) => b.id), [board.id]);
+
+    backend.getBoardService = () => null; // project_boards off: the delete still succeeds and moves nothing
+    const other = application.createProject({ name: 'Unboarded' }).project.id;
+    assert.equal((await application.deleteProject({ project_id: other })).ok, true);
+  } finally {
+    backend.dispose();
+  }
+});
+
 test('a failing task re-stamp does not keep the note alive, and a refused note delete does not fail the project delete', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-project-hooks-fail-'));
   trackDirectory(userDataPath);

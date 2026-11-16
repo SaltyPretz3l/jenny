@@ -41,6 +41,12 @@
   padding-inline: var(--space-4);
 }
 
+/* The flyout's kicker is the same line without the toggle: its list is always shown. */
+.attention-inbox__heading-static {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
 /* Kicker chrome only: .group-label owns the type, the colour and the hairline. */
 .attention-inbox .attention-inbox__toggle {
   flex: 1 1 auto;
@@ -250,6 +256,32 @@
 .attention-inbox button:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 2px;
+}
+
+/* The same list in a dialog beside the collapsed Chats strip (set up and
+   positioned by renderer-attention-inbox-flyout.js, on the strip peek's layer). */
+.attention-inbox-flyout {
+  position: fixed;
+  z-index: 90;
+  inline-size: min(320px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--space-3);
+  border: 1px solid var(--view-panel-flyout-border);
+  border-radius: var(--view-panel-flyout-radius);
+  background: var(--view-panel-flyout-bg);
+  box-shadow: var(--view-panel-flyout-shadow);
+}
+.attention-inbox-flyout[hidden] {
+  display: none;
+}
+.attention-inbox--flyout {
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+.attention-inbox-flyout .attention-inbox__list {
+  flex: 1 1 auto;
+  max-block-size: none;
 }
 
 /* The titlebar mark: the health pill's shape, not its class -- a dot and a

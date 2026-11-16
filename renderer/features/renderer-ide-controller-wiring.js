@@ -66,7 +66,7 @@
     const { mods, state, getDom, getIde, ideStateUtils } = p;
     return mods.workbenchWiringUtils.createIdeWorkbenchWiring?.({
       getDom, getIde: () => getIde(), ideStateUtils, schedulePersist: () => p.schedulePersist(), requestRender: () => p.renderIde(),
-      focusEditor: () => p.focusIdeEditor(), focusTerminal: () => p.terminals?.focusTerminal?.() === true,
+      focusEditor: () => p.focusIdeEditor(), focusTerminal: () => p.terminals?.focusTerminal?.() === true, canAdoptChatDock: () => state?.ui?.activeView !== 'board',
       // Problems shows only while there are markers of any severity (F7; the statusbar count stays);
       // test output only while the config it shows has output (F6).
       isViewAvailable: (id) => (id === 'activity' ? state.features?.featureFlags?.activity_monitor === true : id === 'test-runner' ? p.testRunnerWiring?.isAvailable() !== false
@@ -169,8 +169,9 @@
         escapeHtml, appendClientLog, openSuggestionDiff: (sessionId, id, origin) => p.openDiffFrom(origin, () => p.diffController?.openSuggestionDiff(sessionId, id), p.diffController?.suggestionDiffId(sessionId)),
       },
     }) || null;
+    // shared: the one controller of this app state; the Board page adds itself to the same one (row 150).
     const ideChatDock = mods.chatDockUtils.createIdeChatDock?.({
-      state, getDom, getIde: () => getIde(),
+      shared: true, state, getDom, getIde: () => getIde(),
       layoutIdeEditor: () => p.layoutIdeEditor(), focusEditor: p.focusIdeEditor,
       // The workbench owns open/closed (the chat stack), the Chat | Changes tabs and the Changes host.
       workbench: p.workbenchWiring ? {
@@ -202,7 +203,7 @@
       state, getIde, saveActiveFile, saveFile, tabsController: p.tabsController, quickOpen: p.quickOpen, editorHost: p.editorHost, workbenchWiring: p.workbenchWiring, chipPicker: p.chipPicker, appendClientLog, showToastMessage, isRepo: () => p.gitFeature?.isRepo?.() === true,
       bottomPanel: p.bottomPanel, newTerminal: () => p.newTerminalAction()?.(), canAddTerminal: () => p.terminals?.canAdd?.() === true, terminals: p.terminals, getActiveTerminalViewId: () => p.terminals?.activeViewId?.() || p.workbenchWiring?.workbench?.getActiveView?.('terminal') || 'terminal',
       revealInExplorer, chooseWorkspaceRoot: () => p.chooseWorkspaceRoot(), getWorkspaceRoot: () => state.workspaceRoot || null, getClipboardApi: () => windowRef.jennyShell?.clipboard || null, getCloseOrchestrator: () => p.closeOrchestrator, getFileLifecycle: () => p.fileLifecycle, problemsPanel: p.problemsPanel, runScripts: p.runScripts,
-      commitEditorPreference, applyEditorPrefs: () => mods.editorPrefsUtils.applyEditorPrefs?.(getIde(), p.editorHost, p.chipPicker), previewActiveFile: () => p.qol?.previewStage?.open(getIde().activeTabPath || ''),
+      commitEditorPreference, applyEditorPrefs: () => mods.editorPrefsUtils.applyEditorPrefs?.(getIde(), p.editorHost, p.chipPicker), previewActiveFile: () => p.qol?.previewStage?.openActiveFile(),
       chatDock: p.ideChatDock, isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
       mruSwitcher: p.qol?.mruSwitcher || null, editorGroups: p.editorGroups, getOutlineView: () => p.qol?.outline || null,
       reopenClosedTab, showPanel, gitFeature: p.gitFeature, gutterDecorations: p.gutterDecorations, openEditorSettings: () => callbacks.openSettingsSection?.('editor'),

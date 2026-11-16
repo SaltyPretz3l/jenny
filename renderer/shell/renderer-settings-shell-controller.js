@@ -207,7 +207,7 @@
     const getSectionDom = typeof dom.getSectionDom === 'function'
       ? dom.getSectionDom
       : function noopGetSectionDom() { return {}; };
-    const initializedSections = new Set(['models', 'appearance', 'context', 'tools', 'account', 'editor', 'home']);
+    const initializedSections = new Set(['models', 'appearance', 'context', 'tools', 'account', 'editor', 'home', 'general', 'chat']);
     const refreshPromises = new Map();
     let usageController = null;
     let usageConfirmDialog = null;
@@ -418,11 +418,11 @@
         : false;
     }
 
-    // True once the section is shown; false when the leave guard (unsaved
-    // personality changes) vetoed the switch.
+    // True once shown; false, before anything moves, when the nav would show another section; false if the leave guard vetoes.
     function navigateSettingsSection(sectionId, options = {}) {
       const normalizedSectionId = normalizeSettingsSectionId(sectionId);
       const previousSectionId = state.ui.activeSettingsSection;
+      if ((settingsNavController?.resolveSectionId?.(normalizedSectionId) ?? normalizedSectionId) !== normalizedSectionId) return false;
       setActiveView('settings');
       if (settingsNavController?.setActiveSection?.(normalizedSectionId) === false) return false;
       if (options.refresh === true && previousSectionId === normalizedSectionId) {
@@ -433,7 +433,10 @@
       // Its first control takes keyboard focus a frame later, after the page heading
       // has taken it, and the scroll comes after the focus so the focus cannot undo it.
       whenSettingsPageReady(() => {
-        const target = options.focusId ? globalDocument?.getElementById?.(String(options.focusId)) : null;
+        // A link to a retired page (Dictation, Offline) shows the group that holds its rows on the host page.
+        const retiredId = /^[A-Za-z]+$/.test(String(sectionId)) && String(sectionId) !== normalizedSectionId ? String(sectionId) : '';
+        const target = options.focusId ? globalDocument?.getElementById?.(String(options.focusId))
+          : (retiredId ? globalDocument?.querySelector?.(`[data-settings-merged-section="${retiredId}"]`) : null);
         if (target) {
           globalWindow?.requestAnimationFrame?.(() => {
             const focusable = 'button, input, select, textarea, [href], [tabindex]';
@@ -464,8 +467,6 @@
         composerAttachMenu: dom.composerAttachMenu,
         composerAttachShortcut: dom.composerAttachShortcut,
         settingsModelCard: dom.settingsModelCard,
-        modelBadge: dom.modelBadge,
-        modelStatus: dom.modelStatus,
         modelStartupLoadList: dom.modelStartupLoadList,
         appearanceResetButton: dom.appearanceResetButton,
         modelCatalogEmpty: dom.modelCatalogEmpty,
@@ -484,7 +485,9 @@
         contextRuntimeList: dom.contextRuntimeList,
         contextCompactionTuning: dom.contextCompactionTuning,
         toolsConfigFieldList: dom.toolsConfigFieldList,
-        toolsPermissionsList: dom.toolsPermissionsList,
+        generalSettingsSection: dom.generalSettingsSection,
+        chatSettingsSection: dom.chatSettingsSection,
+        permissionsSettingsSection: dom.permissionsSettingsSection,
         toolsFilesList: dom.toolsFilesList,
         toolsWebList: dom.toolsWebList,
         toolsTerminalList: dom.toolsTerminalList,
@@ -558,6 +561,9 @@
       dom: {
         settingsView: dom.settingsView,
         appearanceSettingsSection: dom.appearanceSettingsSection,
+        generalSettingsSection: dom.generalSettingsSection,
+        chatSettingsSection: dom.chatSettingsSection,
+        permissionsSettingsSection: dom.permissionsSettingsSection,
         appearanceSurfaceEffectMeta: dom.appearanceSurfaceEffectMeta,
         appearanceSurfaceEffectPreview: dom.appearanceSurfaceEffectPreview,
         appearanceHoloList: dom.appearanceHoloList,
@@ -685,9 +691,14 @@
         documentRef: globalDocument,
         onAfterReset: () => renderSettings(),
         log: (message) => appendClientLog('WARN', 'settings.field_reset', { message }),
+        confirmLabels: { appearance: jt('settings.fieldReset.resetAppearance', 'Reset Appearance to its defaults?') },
         resetActions: {
+          // Row 133: the reset covers the Appearance page. Rows that share its store but sit on Chat and General keep their values.
           appearance: () => {
-            return appearanceAdapter.write(getDefaultAppearancePreferences()).then((saved) => {
+            const next = { ...appearanceAdapter.read() };
+            const defaults = getDefaultAppearancePreferences();
+            for (const key of (appearanceUtils || globalThis.appearanceUtils).APPEARANCE_PAGE_KEYS) next[key] = defaults[key];
+            return appearanceAdapter.write(next).then((saved) => {
               applySurfaceEffect();
               activateSurfaceEffect(saved.surfaceEffectId);
               renderAll();
@@ -719,6 +730,9 @@
       whenSettingsPageReady(() => {
         settingsEventBindings?.bind?.();
         mountFieldReset();
+        // A launch that restores the Settings view skips setActiveView, which readies the page on
+        // screen; ready it here so a lazy companion of the boot page (Models' Local only) binds.
+        if (state.ui.activeView === 'settings') ensureSettingsSectionReady(state.ui.activeSettingsSection);
       });
       renderSettings();
     }

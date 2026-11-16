@@ -1,7 +1,8 @@
 /* renderer/chat/renderer-render-pipeline-chrome-hero.js
  * The empty-chat hero (title, subtitle, setup resume action, model-state
  * actions) of the chrome pipeline. Split out of
- * renderer-render-pipeline-chrome.js, which composes it.
+ * renderer-render-pipeline-chrome.js, which composes it. Project names reach
+ * only textContent; the hero re-renders when onProjectsChanged fires.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -12,7 +13,6 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (heroModelState) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-  const { resolveDefaultTitle } = globalRef.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
   function createHeroChrome(deps) {
     const {
       state,
@@ -20,9 +20,10 @@
       getPaneSessionId,
       getVisibleSessionMessages,
       setDatasetIfChanged,
+      getSessionProject = () => null,
+      onProjectsChanged = null,
     } = deps;
     const {
-      heroAvatar = null,
       heroTitle = null,
       heroSubtitle = null,
       heroRuntimeHint = null,
@@ -35,6 +36,25 @@
     const setHeroText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
     function handleResumeSetup() {
       if (typeof globalRef.jennySetupResume === 'function') globalRef.jennySetupResume();
+    }
+
+    // The facts line is plain text, or words around one link; the link is rebuilt only when it changes.
+    let hintLinkKey = '';
+    function setHeroHint(text, action) {
+      if (!heroRuntimeHint) return;
+      heroRuntimeHint.classList.toggle('hidden', !text);
+      const key = action ? [action.action, action.lead, action.label, action.tail].join('\u0000') : '';
+      if (!key) setHeroText(heroRuntimeHint, text);
+      else if (hintLinkKey !== key) {
+        const template = heroRuntimeHint.ownerDocument.createElement('template');
+        template.innerHTML = action.html; // the inventory button, label escaped there
+        heroRuntimeHint.replaceChildren(action.lead, template.content, action.tail);
+      }
+      hintLinkKey = key;
+    }
+    function setHeroSubtitle(text) {
+      setHeroText(heroSubtitle, text);
+      heroSubtitle?.classList.toggle('hidden', !text);
     }
 
     function syncHeroSetupAction(show, footnote) {
@@ -90,7 +110,9 @@
       heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
       const view = !pluginSession && !hasMessages ? heroModelState.deriveHeroView(state) : null;
       syncHeroSetupAction(showSetup, showSetup ? heroModelState.setupFootnote(view) : '');
-      const copy = view && !showSetup ? heroModelState.heroCopy(view) : null;
+      const copy = view && !showSetup
+        ? heroModelState.heroCopy(view.kind === 'ready' ? { ...view, project: getSessionProject(activeSession) } : view)
+        : null;
       if (copy?.actionsHtml && !heroActions && heroSubtitle) {
         heroActions = heroSubtitle.ownerDocument.createElement('div');
         heroActions.className = 'hero-actions';
@@ -104,41 +126,31 @@
       heroActions?.classList.toggle('hidden', !actionsHtml);
       if (heroStage && copy) setDatasetIfChanged(heroStage, 'modelState', view.kind);
       else if (heroStage?.hasAttribute('data-model-state')) heroStage.removeAttribute('data-model-state');
-      if (heroStage) heroStage.classList.toggle('hero-plugin-session', pluginSession);
+      if (heroStage) {
+        heroStage.classList.toggle('hidden', false); // toggle, not remove: remove() rewrites the class attribute every render
+        // With messages the stack is invisible (opacity 0) and keeps its last words: hide them from assistive technology too.
+        if (hasMessages) heroStage.setAttribute('aria-hidden', 'true');
+        else heroStage.removeAttribute('aria-hidden');
+      }
       if (pluginSession) {
-        if (heroStage) heroStage.classList.toggle('hidden', false);
-        setHeroText(heroAvatar, 'J');
-        heroAvatar.classList.toggle('hidden', !hasMessages);
         setHeroText(heroTitle, activeSession?.title || jt('chat.chrome.pluginSession', 'Plugin session'));
-        setHeroText(heroSubtitle, hasMessages
+        setHeroSubtitle(hasMessages
           ? jt('chat.pipelineChrome.pluginTranscriptReadOnly', 'This saved plugin transcript is read-only in Jenny.')
           : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.'));
-        if (heroRuntimeHint) {
-          setHeroText(heroRuntimeHint, '');
-          heroRuntimeHint.classList.toggle('hidden', true);
-        }
-        return;
-      }
-      if (heroStage) heroStage.classList.toggle('hidden', false);
-      setHeroText(heroAvatar, 'J');
-      heroAvatar.classList.toggle('hidden', !hasMessages);
-      if (hasMessages) {
-        setHeroText(heroTitle, resolveDefaultTitle(activeSession?.title));
-        setHeroText(heroSubtitle, jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.'));
-      } else if (setupIncomplete) {
+      } else if (setupIncomplete && !hasMessages) {
         setHeroText(heroTitle, jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny"));
-        setHeroText(heroSubtitle, setupHeroSubtitle(setupSnapshot));
-      } else {
+        setHeroSubtitle(setupHeroSubtitle(setupSnapshot));
+      } else if (copy) {
         setHeroText(heroTitle, copy.title);
-        setHeroText(heroSubtitle, copy.subtitle);
+        setHeroSubtitle(copy.subtitle);
       }
-      if (heroRuntimeHint) {
-        setHeroText(heroRuntimeHint, copy?.hint || '');
-        heroRuntimeHint.classList.toggle('hidden', !copy?.hint);
-      }
+      setHeroHint(copy?.hint || '', copy?.hintAction);
     }
 
+    const unsubscribeProjects = onProjectsChanged?.(() => renderHero());
+
     function dispose() {
+      unsubscribeProjects?.();
       resumeSetupButton?.removeEventListener('click', handleResumeSetup);
       resumeSetupButton?.remove();
       setupFootnote?.remove();

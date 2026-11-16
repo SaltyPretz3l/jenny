@@ -53,6 +53,11 @@
     + '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" fill="none" '
     + 'stroke-linecap="round"/></svg>';
 
+  // Outside-Workspace documents (row 137) never ride the chip: the model gets them through Attach File to Chat.
+  function isOutsideKey(path) {
+    return typeof path === 'string' && path.indexOf('outside://') === 0;
+  }
+
   // No trim: a leading or trailing space is part of the name.
   function normalizePath(value) {
     var raw = String(value || '');
@@ -148,7 +153,7 @@
       return null;
     }
     var path = normalizePath(reader.getActivePath());
-    if (!path) {
+    if (!path || isOutsideKey(path)) {
       return null;
     }
     if (isPdfTab(reader, path)) {
@@ -244,7 +249,7 @@
         return '';
       }
       var path = normalizePath(reader.getActivePath());
-      if (!path) {
+      if (!path || isOutsideKey(path)) {
         return '';
       }
       if (typeof reader.getDocumentKind === 'function' && reader.getDocumentKind(path) !== 'file' && !isPdfTab(reader, path)) {

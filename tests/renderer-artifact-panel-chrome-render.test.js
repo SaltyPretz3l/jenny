@@ -410,7 +410,7 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
     const h = makePanel(t);
     // Copy stays for the file preview's text and Wrap for the Changes diffs.
     const shown = { file_preview: ['[data-artifact-panel-v2-copy]'], code_review: ['[data-artifact-panel-wrap]'] };
-    for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents', 'notes']) {
+    for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents', 'notes', 'background_tasks']) {
       h.state.ui.artifactReview.mode = mode;
       h.controller.afterRender(toolOutput);
       for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-wrap]', '[data-artifact-panel-overflow]', '[data-artifact-panel-maximize]']) {
@@ -433,5 +433,40 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
     h.panelEl.appendChild(list);
     h.controller.afterRender(null);
     assert.equal(copy.disabled, false);
+  });
+
+  test('a file preview is titled by its file and its footer shows lines and size, not Provenance', (t) => {
+    const h = makePanel(t);
+    h.state.ui.artifactReview.mode = 'file_preview';
+    h.state.ui.filePreview = { path: 'games\\tiny-city\\index.html', status: 'loading', payload: null };
+    h.controller.afterRender(null);
+    const title = h.panelEl.querySelector('#artifactReviewDetailTitle');
+    assert.equal(title.textContent, 'index.html');
+    assert.equal(title.getAttribute('title'), 'games/tiny-city/index.html', 'the full path on hover');
+    assert.ok(h.panelEl.querySelector('.artifact-panel-kind-glyph svg'), 'a kind glyph like an artifact title');
+    assert.equal(h.panelEl.querySelector('#artifactPanelV2ProvenanceTrigger').classList.contains('hidden'), true);
+    assert.equal(h.panelEl.querySelector('#artifactPanelV2FooterMeta').textContent, '', 'nothing while it loads');
+
+    h.state.ui.filePreview = { path: 'games/tiny-city/index.html', status: 'ready', payload: { kind: 'html', totalLines: 812, byteSize: 24678 } };
+    // A blanked live title (the non-V3 preview path blanks it) is restored.
+    h.panelEl.querySelector('#artifactReviewDetailTitle .artifact-panel-title-text').textContent = '';
+    h.controller.afterRender(null);
+    assert.equal(h.panelEl.querySelector('#artifactReviewDetailTitle').textContent, 'index.html');
+    assert.equal(h.panelEl.querySelector('#artifactPanelV2FooterMeta').textContent, '812 lines · 24 KB');
+
+    h.state.ui.artifactReview.mode = 'artifact';
+    h.controller.afterRender(null);
+    assert.equal(h.panelEl.querySelector('#artifactPanelV2ProvenanceTrigger').classList.contains('hidden'), false, 'artifacts keep Provenance');
+  });
+});
+
+describe('buildFilePreviewMetaText', () => {
+  test('counts lines for text, sizes every loaded kind, and stays empty until loaded', () => {
+    assert.equal(chromeRender.buildFilePreviewMetaText({ status: 'ready', payload: { kind: 'code', totalLines: 1, byteSize: 12 } }), '1 line · 12 B');
+    assert.equal(chromeRender.buildFilePreviewMetaText({ status: 'ready', payload: { kind: 'image', totalLines: 0, byteSize: 2048 } }), '2.0 KB');
+    assert.equal(chromeRender.buildFilePreviewMetaText({ status: 'ready', payload: { kind: 'code', totalLines: 900, byteSize: 2097152, byteTruncated: true } }), '2.0 MB', 'a read cut short shows its true size and no partial line count');
+    assert.equal(chromeRender.buildFilePreviewMetaText({ status: 'loading', payload: null }), '');
+    assert.equal(chromeRender.buildFilePreviewMetaText({ status: 'error', payload: { kind: 'code', totalLines: 3, byteSize: 9 } }), '');
+    assert.equal(chromeRender.buildFilePreviewMetaText(null), '');
   });
 });

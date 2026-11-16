@@ -17,7 +17,7 @@ const {
 } = require('./services/main/packaged-smoke');
 const PACKAGED_SMOKE_CONFIG = resolvePackagedSmokeConfig();
 const mainBootMode = resolveMainBootMode({
-  app, packagedSmokeConfig: PACKAGED_SMOKE_CONFIG, onSecondInstance: () => focusMainWindow(),
+  app, packagedSmokeConfig: PACKAGED_SMOKE_CONFIG, onSecondInstance: (...args) => { focusMainWindow(); outsideFileLaunch.onSecondInstance(...args); },
 });
 // V8 compile cache for the module graph below, under the settled userData path
 // (NODE_DISABLE_COMPILE_CACHE=1 turns it off; runtimes without it no-op).
@@ -31,6 +31,7 @@ if (mainBootMode === MAIN_BOOT_MODES.PRIMARY) {
     }
   }
 }
+const outsideFileLaunch = require('./services/main/outside-files/outside-file-launch-buffer').createOutsideFileLaunchBuffer({ app, enabled: mainBootMode === MAIN_BOOT_MODES.PRIMARY }); // row 137
 const { revealExistingWindow, startWhenSingleInstanceAvailable } = require('./services/apply-single-instance');
 const { ensureDevPreloadBundle } = require('./services/main/dev-preload-bundle');
 const { createSuggestionCache, clearSuggestionCache } = require('./services/backend/backend-suggestions');
@@ -59,13 +60,14 @@ const { shouldRevealWindowInactive } = require('./services/agent-quiet-launch');
 const { createRuntimeServicesWithDeps, resolveUiLanguage } = require('./services/main/runtime-service-composition');
 const { scheduleStartupRetentionTasks } = require('./services/main/startup-retention-tasks');
 const dataLifecycleStartup = require('./services/main/data-lifecycle-startup');
-const { registerArtifactFramePrivilegedScheme } = require('./services/artifact-frame-protocol');
+const { registerFramePrivilegedSchemes } = require('./services/sketch-frame-protocol');
 const { installDefaultSessionWiring } = require('./services/main/default-session-wiring');
 const { createTrustedSenderAuthorizer, unauthorizedIpcResult } = require('./services/main/ipc-sender-authorization');
 // Electron permits this registration only once and only before readiness.
-registerArtifactFramePrivilegedScheme(protocol);
+registerFramePrivilegedSchemes(protocol);
 const {
   resolveBootFailureAction,
+  shouldShowBootFailureDialog,
   shouldAutoStartMainProcess,
   shouldRefreshManagedConfigForShellConfigReason,
 } = require('./services/main/main-process-policy');
@@ -79,6 +81,7 @@ let schedulerService;
 let linkStatusService;
 let calendarService;
 let deferredServicesStarted = false;
+let bootChildrenStarted = false; // set just before the first engine or sidecar spawn
 let startDeferredBackgroundRefreshes = () => {};
 let startPostWindowServices = () => {};
 let offlineIntelligenceService;
@@ -135,8 +138,7 @@ const getStartupElapsedMs = () => Math.max(Date.now() - appStartupStartedAt, 0);
 let refreshElectronToolRegistry = () => {};
 let runtimeShutdownController = null;
 let displayMediaSourceHandler = null;
-getBridgeChannel('diagnostics.reportRendererError', 'invoke');
-// diagnostics:renderer-error is the canonical renderer error-reporting channel.
+// diagnostics:renderer-error is the canonical renderer error channel (handler: ipc-registration/system-ipc.js).
 const RENDERER_READY_CHANNEL = getBridgeChannel('lifecycle.signalReady', 'send');
 const {
   emitMainEntryMark,
@@ -443,6 +445,7 @@ const registerIpcHandlers = () => require('./services/main/ipc-handler-registrat
   getDisplayMediaSourceHandler: () => displayMediaSourceHandler,
   getDiagnosticLogService: () => logStore,
   getLogRedactionPrefixes,
+  outsideFileLaunch,
 });
 function getRuntimeShutdownController() {
   if (!runtimeShutdownController) {
@@ -535,7 +538,11 @@ function handleBootFailure(failedStatus, detail) {
   });
   if (action === 'packaged-smoke') packagedSmokeController.markBackendFailed(failedStatus, detail);
   else if (action === 'keep-window') log('WARN', 'backend.start_failed_window_kept', { reason: 'awaiting_retry' });
-  else requestMainProcessShutdown(1);
+  else {
+    // No window can show the failure (it happened before IPC registration): say why before exiting.
+    if (shouldShowBootFailureDialog({ quitting: Boolean(mainLifecycle?.isAppQuitting?.()), childrenStarted: bootChildrenStarted })) try { dialog.showErrorBox('Jenny could not start', String(detail || 'Unexpected startup failure.')); } catch (_error) { /* exit anyway */ }
+    requestMainProcessShutdown(1);
+  }
 }
 function startMainProcess() {
   return startWhenSingleInstanceAvailable({
@@ -582,14 +589,15 @@ function startMainProcess() {
         try {
           const mainSyncInitStartedAt = Date.now();
           emitMainEntryMark({ mainModuleEntryAt, appStartupStartedAt });
-          const restoreResult = await dataLifecycleStartup.promotePendingRestore(app, nativeImage);
+          const restoreLogs = []; // the log store does not exist yet: restore warnings are replayed below
+          await dataLifecycleStartup.promotePendingRestore(app, nativeImage, (...entry) => restoreLogs.push(entry));
           emitStartupAuditMark('main-sync-init-start', {
             source: 'main',
             ts_ms: mainSyncInitStartedAt,
             startupMs: Math.max(mainSyncInitStartedAt - appStartupStartedAt, 0),
           });
           createRuntimeServices();
-          if (!restoreResult.ok) log('WARN', 'data_lifecycle.restore_promotion_failed', restoreResult.error);
+          for (const entry of restoreLogs) log(...entry);
           flushStartupAuditMarks();
           // Deny-by-default permission guard, display-media picker, and the
           // jenny-artifact:// preview protocol — see default-session-wiring.js.
@@ -650,13 +658,15 @@ function startMainProcess() {
           emitStartupAuditMark('main-sync-init-end', { source: 'main' });
           systemStats.start();
           log('INFO', 'app.bootstrap_ready', { startupMs: getStartupElapsedMs() });
+          bootChildrenStarted = true;
           const localServerReadyPromise = startLlamaServerBeforeBackend();
           emitStartupAuditMark('backend-start', { source: 'main' });
           await backendService.start({
             localServerReadyPromise,
             onProgress: (phase, facts) => emitStartupProgress(phase, facts),
           });
-          await dataLifecycleStartup.finalizeSuccessfulRestoredBoot(app, log);
+          // Restore cleanup deletes sibling folders only and never rejects: it does not hold up the deferred services.
+          void dataLifecycleStartup.finalizeSuccessfulRestoredBoot(app, log);
           emitStartupAuditMark('backend-ready', { source: 'main' });
           if (packagedSmokeController) {
             packagedSmokeController.markBackendReady(backendService.getBackendStatus());

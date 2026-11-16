@@ -41,7 +41,7 @@ function settingsWith(overrides = {}) {
 test('normalizeNotificationSettings is total, fills partial input and drops unknown keys', () => {
   assert.deepEqual(section.normalizeNotificationSettings(undefined), {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true },
   });
   const partial = section.normalizeNotificationSettings({ enabled: 'no', sound: false, categories: { replies: false, bogus: true }, extra: 1 });
   assert.equal(partial.enabled, true);
@@ -64,7 +64,7 @@ test('render lists every switch with its persisted value and disables dependents
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').getAttribute('aria-checked'), 'true');
     assert.equal(toggle(container, 'notificationsReplyPreviewToggle').getAttribute('aria-checked'), 'false');
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').hasAttribute('disabled'), false);
-    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 10);
+    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 11, 'the team switch is always listed (greyed out with no team)');
     assert.equal(toggle(container, 'notificationsCategoryJennyToggle').getAttribute('aria-checked'), 'true');
     // Every row carries its help line.
     assert.ok(container.querySelector('#notificationsSoundToggleDescription').textContent.length > 0);
@@ -309,5 +309,59 @@ test('a binding replaced while its write is in flight settles against the same c
     await flush();
     assert.equal(state.ui.notifications.onlyWhenUnfocused, false);
     assert.equal(second.status.dataset.state, '', 'the outcome reports on the current binding');
+  });
+});
+
+test('row 123 2a-6c: the team switch is greyed out, off and says why until this Jenny is in a team', () => {
+  return withGlobals(() => {
+    const previousShell = globalThis.rendererTopNavShellController;
+    let inTeam = false;
+    globalThis.rendererTopNavShellController = { isTeamTabAvailable: () => inTeam };
+    try {
+      const { container } = harness();
+      const state = { ui: { notifications: settingsWith() }, features: { featureFlags: { team: true } } };
+      section.renderNotificationsSection({ container, state });
+      const sw = toggle(container, 'notificationsCategoryTeamToggle');
+      assert.deepEqual([sw.hasAttribute('disabled'), sw.getAttribute('aria-disabled'), sw.getAttribute('aria-checked')], [true, 'true', 'false']);
+      const row = sw.closest('.settings-field');
+      assert.equal(row.classList.contains('settings-field--unavailable'), true);
+      assert.equal(container.querySelector('#notificationsCategoryTeamToggleDescription').textContent, 'Available once this Jenny has joined or hosts a team.');
+      inTeam = true;
+      section.renderNotificationsSection({ container, state });
+      const live = toggle(container, 'notificationsCategoryTeamToggle');
+      assert.deepEqual([live.hasAttribute('disabled'), live.getAttribute('aria-checked')], [false, 'true']);
+      assert.equal(live.closest('.settings-field').classList.contains('settings-field--unavailable'), false);
+      state.features.featureFlags.team = false;
+      section.renderNotificationsSection({ container, state });
+      const flagOff = toggle(container, 'notificationsCategoryTeamToggle');
+      assert.deepEqual([flagOff.hasAttribute('disabled'), flagOff.getAttribute('aria-checked')], [true, 'false'], 'fix item 3: the flag off shows the row greyed out and off');
+      assert.equal(container.querySelector('#notificationsCategoryTeamToggleDescription').textContent, 'Available once this Jenny has joined or hosts a team.');
+    } finally {
+      globalThis.rendererTopNavShellController = previousShell;
+    }
+  });
+});
+
+test('fix item 2: with replies and Jenny off the preview switch still works while team messages notify', () => {
+  return withGlobals(() => {
+    const previousShell = globalThis.rendererTopNavShellController;
+    let inTeam = true;
+    globalThis.rendererTopNavShellController = { isTeamTabAvailable: () => inTeam };
+    try {
+      const { container } = harness();
+      const categories = { ...section.DEFAULT_NOTIFICATION_SETTINGS.categories, replies: false, jenny: false };
+      const state = { ui: { notifications: settingsWith({ categories }) }, features: { featureFlags: { team: true } } };
+      section.renderNotificationsSection({ container, state });
+      assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), false, 'it governs team toasts');
+      state.ui.notifications = settingsWith({ categories: { ...categories, team: false } });
+      section.renderNotificationsSection({ container, state });
+      assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), true, 'nothing it governs is on');
+      inTeam = false;
+      state.ui.notifications = settingsWith({ categories });
+      section.renderNotificationsSection({ container, state });
+      assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), true, 'no team: the team switch does not count');
+    } finally {
+      globalThis.rendererTopNavShellController = previousShell;
+    }
   });
 });

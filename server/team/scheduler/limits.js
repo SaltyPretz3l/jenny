@@ -63,15 +63,18 @@ function resolveLimits(overrides) {
   return Object.freeze(out);
 }
 
-// Reasons a node may send in `fail` (spec "Failure reasons").
+// Reasons a node may send in `fail` (spec "Failure reasons"). `node_busy` (R16-F02): the member's own
+// work took the GPU after the job was claimed; the job never reached the engine. Sent by a node it excludes
+// that node for the conversation like any other fail (a node cannot fail turn after turn for free).
 const NODE_FAIL_REASONS = Object.freeze(new Set([
-  'engine_unreachable', 'engine_error', 'engine_timeout', 'model_not_loaded', 'user_stopped_sharing',
+  'engine_unreachable', 'engine_error', 'engine_timeout', 'model_not_loaded', 'user_stopped_sharing', 'node_busy',
 ]));
 
 // How the host ends a lease on purpose. Each is a lease trigger and a reason.
 const CANCEL_REASONS = Object.freeze(['cancelled', 'conversation_deleted']);
 
-// Lease end reasons that are not a node fault, so they exclude no node for the conversation.
+// Lease end reasons that are not a node fault, so they exclude no node for the conversation. (The host's own
+// `node_busy` end of a job no node claimed passes `exclude: false` instead, scheduler/index.js busyLease.)
 const NON_EXCLUDING_REASONS = Object.freeze(new Set([...CANCEL_REASONS, 'settled', 'idle_timeout']));
 
 module.exports = { CANCEL_REASONS, DEFAULT_LIMITS, NODE_FAIL_REASONS, NON_EXCLUDING_REASONS, resolveLimits };

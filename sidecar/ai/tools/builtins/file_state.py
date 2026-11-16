@@ -629,7 +629,7 @@ def validate_current_snapshot(
             code=CMP_TOOL_STALE_READ_SNAPSHOT,
             message=(
                 f"File '{relative_path}' changed since it was read. "
-                f"Read the file again before attempting to {action}. "
+                f"Read the file again before {action} it. "
                 f"Expected size={expected_snapshot.size_bytes}, "
                 f"mtime_ns={expected_snapshot.mtime_ns}, "
                 f"sha256={expected_hash}; current size={current_snapshot.size_bytes}, "

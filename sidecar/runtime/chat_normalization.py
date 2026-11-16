@@ -358,9 +358,13 @@ CONTEXT_BLOCK_KINDS = frozenset(
         # Per-turn, so it is not a leading kind (turn_context.py) and rides the
         # trailing turn context on local engines; never compaction input.
         "profile_overview",
+        # Row 150: how to propose board changes and the board as text, only on a
+        # turn sent from the chat docked beside a board. Per-turn like the row
+        # above: trailing turn context on local engines, never compaction input.
+        "board",
     }
 )
-MAX_CONTEXT_BLOCKS = 7
+MAX_CONTEXT_BLOCKS = 8
 # Generous by design: Electron already trims these blocks to the model's
 # MEASURED effective window (context-budget-trimmer.js), so these ceilings are a
 # transport-integrity backstop against a runaway block, not a context policy. A

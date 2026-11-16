@@ -199,6 +199,9 @@ test('curtain line reads Restoring your chats, then Opening {view} once the sess
     state.ui.activeView = 'logs';
     scheduled.filter((entry) => entry.delay === 250).pop().cb();
     assert.equal(startupOverlaySublabel.textContent, 'Opening Diagnostics');
+    state.ui.activeView = 'board';
+    scheduled.filter((entry) => entry.delay === 250).pop().cb();
+    assert.equal(startupOverlaySublabel.textContent, 'Opening Board');
   } finally {
     global.setTimeout = previousSetTimeout;
     global.clearTimeout = previousClearTimeout;

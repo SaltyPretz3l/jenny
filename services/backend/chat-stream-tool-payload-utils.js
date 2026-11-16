@@ -476,7 +476,7 @@ function approvalTerminalOutput(toolName, approvalState, reason = '') {
       return `Tool "${name}" was cancelled before execution.`;
     case 'timeout':
       if (reason.startsWith('Auto paused after keyboard or mouse inactivity.')) {
-        return `Auto paused because of inactivity. Approval for "${name}" then expired after 10 minutes; the tool never executed. Resume the turn to continue. To work while away, turn off Settings > Tools > Pause Auto when inactive before resuming.`;
+        return `Auto paused because of inactivity. Approval for "${name}" then expired after 10 minutes; the tool never executed. Resume the turn to continue. To work while away, turn off Settings > Permissions > Pause Auto when you are away before resuming.`;
       }
       return `Approval for "${name}" timed out before execution.`;
     case 'preempted':

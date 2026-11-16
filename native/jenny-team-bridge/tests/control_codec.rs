@@ -59,6 +59,100 @@ fn valid_starts_parse() {
 }
 
 #[test]
+fn internet_is_required_and_null_or_map_port_with_a_direct_port() {
+    let invalid = Some(Reason::StartInvalid);
+    let with = |internet: Option<Value>, direct_port: Value| {
+        let mut start = valid_host_start();
+        start["direct_port"] = direct_port;
+        match internet {
+            Some(value) => start["internet"] = value,
+            None => {
+                start.as_object_mut().expect("object").remove("internet");
+            }
+        }
+        parse_host_start(&line(&start))
+    };
+    let parsed = with(Some(Value::Null), json!(7000)).expect("null parses");
+    assert!(!parsed.map_port);
+    let parsed = with(Some(json!({ "map_port": true })), json!(7000)).expect("map_port parses");
+    assert!(parsed.map_port);
+    for (internet, direct_port) in [
+        (None, json!(7000)),
+        (Some(json!({ "map_port": true })), Value::Null),
+        (Some(json!({ "map_port": false })), json!(7000)),
+        (Some(json!({})), json!(7000)),
+        (Some(json!({ "map_port": "true" })), json!(7000)),
+        (Some(json!({ "map_port": 1 })), json!(7000)),
+        (
+            Some(json!({ "map_port": true, "relay": null })),
+            json!(7000),
+        ),
+        (Some(json!(true)), json!(7000)),
+        (Some(json!("map_port")), json!(7000)),
+        (Some(json!([])), json!(7000)),
+        (Some(json!(0)), json!(7000)),
+    ] {
+        let shown = format!("{internet:?} with direct_port {direct_port}");
+        assert_eq!(with(internet, direct_port).err(), invalid, "{shown}");
+    }
+}
+
+#[test]
+fn relay_is_optional_null_or_one_https_url_with_an_optional_token() {
+    let invalid = Some(Reason::StartInvalid);
+    for (host_mode, base) in [(true, valid_host_start()), (false, valid_member_start())] {
+        let parse = |relay: Option<Value>| {
+            let mut start = base.clone();
+            if let Some(relay) = relay {
+                start["relay"] = relay;
+            }
+            if host_mode {
+                parse_host_start(&line(&start)).map(|start| start.relay)
+            } else {
+                parse_member_start(&line(&start)).map(|start| start.relay)
+            }
+        };
+        assert!(parse(None).expect("absent").is_none(), "absent is off");
+        assert!(
+            parse(Some(Value::Null)).expect("null").is_none(),
+            "null is off"
+        );
+        let longest = common::relay::url_of_length(100);
+        for (url, token) in [
+            ("https://relay.example.com", None),
+            ("https://relay.example.com:8443", Some("tok_en-1.2~")),
+            (longest.as_str(), Some("t")),
+        ] {
+            let relay = parse(Some(json!({ "url": url, "token": token })))
+                .expect("a valid relay")
+                .expect("on");
+            assert_eq!(relay.url().as_str().trim_end_matches('/'), url);
+            assert_eq!(relay.has_token(), token.is_some());
+        }
+        for bad in [
+            json!({ "url": "http://relay.example.com", "token": null }),
+            json!({ "url": "https://relay.example.com/", "token": null }),
+            json!({ "url": "https://a@relay.example.com", "token": null }),
+            json!({ "url": "https://relay.example.com?x", "token": null }),
+            json!({ "url": "https://relay.example.com#x", "token": null }),
+            json!({ "url": common::relay::url_of_length(101), "token": null }),
+            json!({ "url": "https://", "token": null }),
+            json!({ "url": 7, "token": null }),
+            json!({ "url": "https://relay.example.com", "token": "" }),
+            json!({ "url": "https://relay.example.com", "token": "a b" }),
+            json!({ "url": "https://relay.example.com", "token": "x".repeat(257) }),
+            json!({ "url": "https://relay.example.com" }),
+            json!({ "url": "https://relay.example.com", "token": null, "more": 1 }),
+            json!("https://relay.example.com"),
+            json!([]),
+            json!(false),
+        ] {
+            assert_eq!(parse(Some(bad.clone())).err(), invalid, "{bad}");
+        }
+    }
+}
+
+#[test]
 fn bad_starts_are_start_invalid() {
     let invalid = Some(Reason::StartInvalid);
     let mutate = |change: &dyn Fn(&mut Value)| {
@@ -115,6 +209,40 @@ fn bad_starts_are_start_invalid() {
         mutate(&|start| start["limits"]["max_connections"] = too_big.clone()),
         invalid
     );
+    // The three admission limits (I7): required, positive, and never above their defaults.
+    for (name, default) in [
+        ("max_waiting", 16u64),
+        ("max_handshakes_per_source", 8),
+        ("refused_cooldown_ms", 60_000),
+    ] {
+        let missing = mutate(&|start| {
+            start["limits"]
+                .as_object_mut()
+                .expect("limits")
+                .remove(name);
+        });
+        assert_eq!(missing, invalid, "{name} missing");
+        assert_eq!(
+            mutate(&|start| start["limits"][name] = json!(0)),
+            invalid,
+            "{name} zero"
+        );
+        assert_eq!(
+            mutate(&|start| start["limits"][name] = json!(default + 1)),
+            invalid,
+            "{name} above its default"
+        );
+        assert_eq!(
+            mutate(&|start| start["limits"][name] = json!(default)),
+            None,
+            "{name} at its default"
+        );
+        assert_eq!(
+            mutate(&|start| start["limits"][name] = json!(1)),
+            None,
+            "{name} lowered"
+        );
+    }
     assert_eq!(mutate(&|start| start["alpn"] = json!("")), invalid);
     assert_eq!(
         mutate(&|start| start["alpn"] = json!("a".repeat(65))),

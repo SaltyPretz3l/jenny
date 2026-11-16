@@ -394,6 +394,7 @@ test('registerCommands registers the eight status-bar rows with ctx guards and t
   const idsFor = (c) => registry.list({ ctx: c }).map((row) => row.id).filter((id) => ids.includes(id));
   assert.deepEqual(idsFor({ ...ctx, hasActiveFile: false }), [], 'hidden without a real file tab');
   assert.deepEqual(idsFor({ ...ctx, activeView: 'chat' }), [], 'hidden outside the IDE view');
+  assert.deepEqual(idsFor({ ...ctx, hasActiveFile: false, activeKind: 'outside' }), ids, 'listed for an outside-Workspace document (row 137)');
 
   dispose();
   assert.deepEqual(idsFor(ctx), [], 'dispose unregisters every row');

@@ -166,11 +166,6 @@ test('wide-028: an unconsumed suppression token expires after its TTL', () => {
   assert.equal(service.consumeRecentWrite('C:/anywhere/g.txt', stats), true);
 });
 
-test('wide-028: the mtime-only wasRecentlyWritten probe is gone', () => {
-  const service = createService('C:/anywhere');
-  assert.equal(typeof service.wasRecentlyWritten, 'undefined', 'no path->mtime suppression surface remains');
-});
-
 test('workspace-ide-service write creates parent directories and new files atomically', async () => {
   const root = createTrackedTempDir('jenny-ide-');
   const service = createService(root);

@@ -9,15 +9,90 @@
 // may do what: nothing here knows a role. The `host*` methods (slice 1f-2) are
 // handled in main by the team host controller (services/team/host/): this
 // Jenny's own host, never a command sent to a host.
+//
+// The `chat*` methods (slice 2a-4b) go to the team's chat client
+// (services/team/chat-client.js): nine mirror one team.chat.* operation each
+// (team.chat.sync is internal to main), three are local (drafts, discarding a
+// failed outbox entry). Text, refs and ids use the host's own validators.
+//
+// Slice 2a-4c adds three more that mirror one host operation each, with the
+// host's own bounds: chatSearch, chatTyping and presenceSet (team.presence.set,
+// the one chat method outside team.chat.*).
+//
+// Four more: chatReact and chatPin (marks, one host operation each, queued per key in
+// chat-marks.js), chatEdits and chatPins (reads). They are online only and never enter the outbox; `emoji` must be on
+// the host's list (services/host/team-chat-emoji.js) or nothing is sent.
+//
+// Slice 5-3 adds the two reconnect-code methods (services/team/reconnect-code.js):
+// `teamReconnectCode { team_id, code }` (local: it rewrites that team's client
+// file and restarts its manager, never reaches the host; reconnect-apply.js) and
+// `hostReconnectCode` (no payload; the owner's code for this Jenny's host,
+// answered read-only by the host controller). RECONNECT_METHODS names the pair.
+//
+// `hostInternet`: only the shape is checked here, the values in the host
+// controller. Its token is a secret: never logged or answered.
+//
+// Slice 6-7: `hostModelRelay { flowing }` (0 off, 1 to 4 at once): the owner's model relay setting for this Jenny's
+// own host (services/team/host/host-model-relay.js). Local to the host controller; never a host operation.
+//
+// Slice 2d: chatDmOpen { member_ids } (team.chat.dm_open, services/team/chat-dm.js): the other participants, 1 to 7
+// distinct member ids, the host's own bound; main cannot know the caller's id here, the client refuses nothing more.
+//
+// Slice 4e: the GPU sharing methods. Four are local to this Jenny (services/team/node/team-sharing.js): shareStatus,
+// shareSet { team_id, on, confirmed? }, sharePause { team_id, on, stop_running? } and shareStop { team_id } (stop now). Three mirror one host
+// operation each (services/team/node/pool-view.js, which rebuilds the answer): gpuList, gpuUse (owner) and teamModelSet
+// (owner; null is Automatic). The host's node.share and owner rows decide who may.
+//
+// Slice 5-6: LIFECYCLE_METHODS, the owner's whole-team operations on the host this Jenny runs: hostInventory,
+// hostDelete { name }, hostStartNew { name, display_name, label }, hostOldDelete { set_aside_id, name? },
+// hostOldShow { set_aside_id }, hostExport { password }, hostRestorePick, hostRestore { password, display_name, label,
+// name? }. The host controller checks who may (the owner, or a lost key) and the typed names; the folder and the
+// file are picked in main, never sent by the renderer.
+//
+// Slice 3-9: the shared project methods (services/team/team-projects.js), each mirroring one host operation
+// (PROJECT_OPERATIONS; the ones marked local there send what their client decides). Project ids use the host's
+// `isProjectId`, conversation ids `isSessionId`. `uploadFolder` and `downloadProject` carry no path: the folder is
+// picked in main.
+//
+// Slice 2c renderer: chat attachments (services/team/chat-attachments.js). `chatPost` may carry `attachment_ids` (1 to 8
+// distinct ids in the host's pattern); such a post is sent only online and never queued. chatUpload { channel_id,
+// upload_id, name, type?, bytes } (bytes an ArrayBuffer or typed array; the 4 MiB cap and the host's name rule are
+// checked by the module before any request), chatUploadCancel { upload_id }, chatAttachPick { room } (the file dialog
+// opens in main), chatAttachmentImage, chatAttachmentCopy and chatAttachmentSave { channel_id, attachment_id, name }
+// (the save dialog opens in main) and chatAttachmentReveal { attachment_id }. No answer carries a path.
+//
+// Slice 6-5: the `model…` methods of model sharing (services/team/model-ipc.js holds their table and MODEL_OPERATIONS;
+// services/team/team-models.js answers them). A model is named by its discovery tag, a root by its index.
+// Slice 3-10: the "Always allowed" rules (team.project.rules.*, 3-12): projectRules { project_id }, projectRuleAdd
+// { project_id, tool_name, folder }, projectRuleRemove { project_id, rule_seq } and projectRuleAnswer { project_id,
+// request_seq, outcome, tool_name?, folder?, reason? }, where an outcome takes only its own fields (allow none, change
+// tool_name and folder?, decline reason). conversationDecide may carry `always` ('rule' or 'ask') with approved: true.
+// Tools, folders and the reason use the host's own validators (project-rules-match.js, isInputText at 200).
 
-const { isId } = require('../../server/team/ids');
-const { isCleanText } = require('../../server/team/member-schema');
+const { isReactionEmoji } = require('../host/team-chat-emoji');
+const { MODEL_METHODS, MODEL_OPERATIONS, isModelMethod } = require('./model-ipc');
+// Row 151 T3: the `board…` methods of team boards (services/team/board-ipc.js; team-board-clients.js answers them).
+const { BOARD_METHODS, BOARD_OPERATIONS, isBoardMethod } = require('./board-ipc');
+const boardIds = require('../boards/board-ids');
+const { LIMITS } = require('../host/team-chat-schema');
+const { isCursor } = require('./chat-answers');
+const { ATTACHMENT_METHODS, UPLOAD_ID, isAttachmentIds, isByteContainer } = require('./chat-attachments');
+const { PRESENCE_REPORTS } = require('./chat-live');
+const { isId, isSessionId } = require('../../server/team/ids');
+const { isCleanText, isInputText, isProjectId, isTeamModel } = require('../../server/team/member-schema');
+const { RULE_TOOL_NAMES, validateFolder } = require('../../server/team/project-rules-match');
+const {
+  ENTRY_ID, isChannelId, isDraftText, isMessageId, isMessageText, isNotify, isRefList,
+} = require('./chat-shapes');
 
-const MAX_INVITE = 256;
+// Version 2 invites (slice 5-3) reach 489 characters; the parser refuses anything past 512 before decoding.
+const MAX_INVITE = 512;
 const CONTROL = /\p{Cc}/u;
 
 const inviteText = (value) => typeof value === 'string' && value.length >= 1 && value.length <= MAX_INVITE
   && !CONTROL.test(value);
+// A reconnect code: the same bound and rule as an invite (the parser refuses past 512 before decoding).
+const codeText = inviteText;
 // Display names, device labels and the team name: the host's rule (NFC, nothing invisible, 1 to 40 characters).
 const name = (value) => isCleanText(value);
 const id = (kind) => (value) => isId(kind, value);
@@ -25,8 +100,71 @@ const role = (value) => value === 'member' || value === 'read_only';
 const integer = (min, max) => (value) => Number.isSafeInteger(value) && value >= min && value <= max;
 
 const TEAM = { team_id: id('team') };
+const boolean = (value) => typeof value === 'boolean';
+const CHANNEL = { ...TEAM, channel_id: isChannelId };
+// A seq or rev the host may answer 0 for (nothing read yet), and one that names a real message or revision.
+const COUNT = integer(0, Number.MAX_SAFE_INTEGER);
+const POSITIVE = integer(1, Number.MAX_SAFE_INTEGER);
+const entryId = (value) => typeof value === 'string' && ENTRY_ID.test(value);
+// A search query: the host's bound (1 to 200 characters), counted in UTF-16 units so it never passes the host's.
+const searchQuery = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 200
+  && (typeof value.isWellFormed !== 'function' || value.isWellFormed());
+const presenceReport = (value) => PRESENCE_REPORTS.includes(value);
+// An internet setting field before the controller's own check: null, or a string within a loose bound.
+const settingText = (value) => value === null || (typeof value === 'string' && value.length <= 512);
+// A direct conversation's other participants: 1 to 7 distinct member ids.
+// A team model id (member-schema.js isTeamModel), or null for Automatic.
+const modelOrNull = (value) => value === null || isTeamModel(value);
+// Slice 5-6: an old team's id (its 17 UTC digits) and a backup password (its length rule is the controller's;
+// a password is never logged or answered).
+const setAsideId = (value) => typeof value === 'string' && /^\d{17}$/u.test(value);
+const passwordText = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 1024;
+const memberIds = (value) => Array.isArray(value) && value.length >= 1 && value.length <= 7
+  && value.every(id('member')) && new Set(value).size === value.length;
+// Slice 3-9: the host's own bounds (server/api-contract.js) for project and conversation fields.
+const PROJECT = { ...TEAM, project_id: isProjectId };
+const CONVERSATION = { ...TEAM, session_id: isSessionId };
+const bounded = (min, max) => (value) => typeof value === 'string' && value.length >= min && value.length <= max
+  && !CONTROL.test(value);
+const projectName = bounded(1, 80);
+const projectRole = (value) => value === 'admin' || value === 'writer' || value === 'reader';
+const hostId = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
+const longRef = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,512}$/u.test(value);
+const approvalId = (value) => typeof value === 'string' && /^[!-~]{1,512}$/u.test(value);
+const prompt = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 100_000;
+const controlAction = (value) => value === 'take' || value === 'takeover' || value === 'release';
+const answerValue = (value) => (typeof value === 'string' && value.length <= 8000)
+  || (Array.isArray(value) && value.length <= 8 && new Set(value).size === value.length
+    && value.every((item) => typeof item === 'string' && item.length <= 240));
+const questionAnswers = (value) => Array.isArray(value) && value.length <= 8 && value.every((entry) => entry
+  && typeof entry === 'object' && !Array.isArray(entry)
+  && Object.keys(entry).every((key) => ['question_id', 'answer', 'other'].includes(key))
+  && typeof entry.question_id === 'string' && entry.question_id.length <= 512 && answerValue(entry.answer)
+  && (entry.other === undefined || (typeof entry.other === 'string' && entry.other.length <= 8000)));
 
-// method -> { fields: { name: check }, optional: [names] }
+// Slice 3-10: a rule's tool, its folder (null: anywhere in the project), a decline reason (the store's 200), the outcome.
+const ruleTool = (value) => RULE_TOOL_NAMES.includes(value);
+const ruleFolder = (value) => value === null || (typeof value === 'string' && value.length >= 1 && value.length <= 255
+  && validateFolder(value).ok);
+const ruleReason = (value) => isInputText(value, 200);
+const ruleOutcome = (value) => value === 'allow' || value === 'change' || value === 'decline';
+// The fields each answer outcome may carry besides project_id, request_seq and outcome (team-project-rules.js).
+const answerShape = (value) => {
+  const has = (name) => Object.hasOwn(value, name);
+  if (value.outcome === 'allow') return !has('tool_name') && !has('folder') && !has('reason');
+  if (value.outcome === 'change') return has('tool_name') && !has('reason');
+  return has('reason') && !has('tool_name') && !has('folder');
+};
+
+// Slice 2c renderer: an attachment's id in the host's pattern, a file name and type as the renderer sends them (the
+// module applies the host's own name rule, and sends `application/octet-stream` for a type outside its pattern).
+const attachmentId = (value) => typeof value === 'string' && /^att_[0-9A-HJKMNP-TV-Z]{26}$/u.test(value);
+const uploadId = (value) => typeof value === 'string' && UPLOAD_ID.test(value);
+const fileName = (value) => typeof value === 'string' && value.length >= 1 && value.length <= LIMITS.ATTACHMENT_NAME_MAX_CHARS;
+const fileType = (value) => typeof value === 'string' && value.length <= 127;
+const ATTACHMENT = { ...CHANNEL, attachment_id: attachmentId };
+
+// method -> { fields: { name: check }, optional: [names], exclusive: [[names never sent together]], refine(value) }
 const METHODS = Object.freeze({
   join: { fields: { invite: inviteText, display_name: name, label: name } },
   status: { fields: {} },
@@ -51,10 +189,106 @@ const METHODS = Object.freeze({
   hostStop: { fields: {} },
   hostStatus: { fields: {} },
   hostRecover: { fields: { display_name: name, label: name } },
+  chatOverview: { fields: { ...TEAM } },
+  chatHistory: { fields: { ...CHANNEL, before_seq: POSITIVE, limit: integer(1, LIMITS.HISTORY_LIMIT_MAX) },
+    optional: ['before_seq', 'limit'] },
+  chatThread: { fields: { ...CHANNEL, root_id: isMessageId, after_seq: COUNT, limit: integer(1, LIMITS.THREAD_LIMIT_MAX) },
+    optional: ['after_seq', 'limit'] },
+  chatPost: { fields: { ...CHANNEL, text: isMessageText, thread_root_id: isMessageId, refs: isRefList, attachment_ids: isAttachmentIds },
+    optional: ['thread_root_id', 'refs', 'attachment_ids'] },
+  chatEdit: { fields: { ...CHANNEL, message_id: isMessageId, text: isMessageText, expected_rev: POSITIVE } },
+  chatDelete: { fields: { ...CHANNEL, message_id: isMessageId } },
+  chatMarkRead: { fields: { ...CHANNEL, seq: COUNT, unread: boolean, thread_root_id: isMessageId }, optional: ['unread', 'thread_root_id'],
+    exclusive: [['unread', 'thread_root_id']] },
+  chatSetNotify: { fields: { ...CHANNEL, level: isNotify } },
+  chatFollow: { fields: { ...CHANNEL, root_id: isMessageId, on: boolean } },
+  chatDraftGet: { fields: { ...CHANNEL, thread_root_id: isMessageId }, optional: ['thread_root_id'] },
+  chatDraftSet: { fields: { ...CHANNEL, thread_root_id: isMessageId, text: isDraftText }, optional: ['thread_root_id'] },
+  chatOutboxDiscard: { fields: { ...TEAM, entry_id: entryId } },
+  chatSearch: { fields: { ...TEAM, query: searchQuery, channel_id: isChannelId, cursor: isCursor, limit: integer(1, 50) },
+    optional: ['channel_id', 'cursor', 'limit'] },
+  chatTyping: { fields: { ...CHANNEL, thread_root_id: isMessageId }, optional: ['thread_root_id'] },
+  presenceSet: { fields: { ...TEAM, state: presenceReport } },
+  chatReact: { fields: { ...CHANNEL, message_id: isMessageId, emoji: isReactionEmoji, on: boolean } },
+  chatPin: { fields: { ...CHANNEL, message_id: isMessageId, on: boolean } },
+  chatEdits: { fields: { ...CHANNEL, message_id: isMessageId } },
+  chatPins: { fields: { ...CHANNEL } },
+  chatDmOpen: { fields: { ...TEAM, member_ids: memberIds } },
+  // Slice 2c renderer: chat attachments (services/team/chat-attachments.js).
+  chatUpload: { fields: { ...CHANNEL, upload_id: uploadId, name: fileName, type: fileType, bytes: isByteContainer }, optional: ['type'] },
+  chatUploadCancel: { fields: { ...TEAM, upload_id: uploadId } },
+  chatAttachPick: { fields: { ...TEAM, room: integer(1, LIMITS.ATTACHMENTS_MAX) } },
+  chatAttachmentImage: { fields: { ...ATTACHMENT } },
+  chatAttachmentCopy: { fields: { ...ATTACHMENT } },
+  chatAttachmentSave: { fields: { ...ATTACHMENT, name: fileName } },
+  chatAttachmentReveal: { fields: { ...TEAM, attachment_id: attachmentId } },
+  teamReconnectCode: { fields: { ...TEAM, code: codeText } },
+  hostReconnectCode: { fields: {} },
+  hostInternet: { fields: { enabled: boolean, public_address: settingText, relay_url: settingText, token: settingText },
+    optional: ['public_address', 'relay_url', 'token'] },
+  hostModelRelay: { fields: { flowing: integer(0, 4) } },
+  shareStatus: { fields: {} },
+  shareSet: { fields: { ...TEAM, on: boolean, confirmed: boolean }, optional: ['confirmed'] },
+  sharePause: { fields: { ...TEAM, on: boolean, stop_running: boolean }, optional: ['stop_running'] },
+  shareStop: { fields: { ...TEAM } },
+  gpuList: { fields: { ...TEAM } },
+  gpuUse: { fields: { ...TEAM, cursor: COUNT, limit: integer(1, 50) }, optional: ['cursor', 'limit'] },
+  teamModelSet: { fields: { ...TEAM, model: modelOrNull } },
+  hostInventory: { fields: { set_aside_id: setAsideId }, optional: ['set_aside_id'] },
+  hostDelete: { fields: { name } },
+  hostStartNew: { fields: { name, display_name: name, label: name } },
+  hostOldDelete: { fields: { set_aside_id: setAsideId, name }, optional: ['name'] },
+  hostOldShow: { fields: { set_aside_id: setAsideId } },
+  hostExport: { fields: { password: passwordText } },
+  hostRestorePick: { fields: {} },
+  hostRestore: { fields: { password: passwordText, display_name: name, label: name, name }, optional: ['name'] },
+  // Slice 3-9: shared projects and their conversations (services/team/team-projects.js).
+  projectList: { fields: { ...TEAM } },
+  projectCreate: { fields: { ...TEAM, name: projectName } },
+  projectRename: { fields: { ...PROJECT, name: projectName } },
+  projectDelete: { fields: { ...PROJECT } },
+  projectMembers: { fields: { ...PROJECT } },
+  projectAddMember: { fields: { ...PROJECT, member_id: id('member'), role: projectRole } },
+  projectSetMember: { fields: { ...PROJECT, member_id: id('member'), role: projectRole } },
+  projectRemoveMember: { fields: { ...PROJECT, member_id: id('member') } },
+  projectLeave: { fields: { ...PROJECT } },
+  projectUnjoined: { fields: { ...TEAM } },
+  projectJoin: { fields: { ...PROJECT, role: projectRole } },
+  projectAudit: { fields: { ...PROJECT, after_seq: COUNT, limit: integer(1, 100) }, optional: ['after_seq', 'limit'] },
+  projectConversations: { fields: { ...PROJECT } },
+  conversationCreate: { fields: { ...PROJECT, title: bounded(0, 80) }, optional: ['title'] },
+  conversationOpen: { fields: { ...CONVERSATION } },
+  conversationClose: { fields: { ...CONVERSATION } },
+  conversationCloseAll: { fields: { ...TEAM } },
+  // Row 151 T5: `board_id` names the team board the turn is about; the host checks it and builds the board section.
+  conversationSend: { fields: { ...CONVERSATION, prompt, board_id: boardIds.isBoardId }, optional: ['board_id'] },
+  conversationCancel: { fields: { ...CONVERSATION, stream_id: hostId } },
+  conversationRename: { fields: { ...CONVERSATION, title: bounded(1, 80) } },
+  conversationDelete: { fields: { ...CONVERSATION } },
+  conversationControl: { fields: { ...CONVERSATION, action: controlAction } },
+  conversationDecide: { fields: { ...CONVERSATION, stream_id: hostId, approval_id: approvalId, decision_revision: hostId,
+    approved: boolean, always: (value) => value === 'rule' || value === 'ask' }, optional: ['always'],
+  refine: (value) => value.always === undefined || value.approved === true },
+  conversationAnswer: { fields: { ...CONVERSATION, stream_id: hostId, question_ref: longRef, answers: questionAnswers } },
+  conversationDecline: { fields: { ...CONVERSATION, stream_id: hostId, question_ref: longRef } },
+  uploadFolder: { fields: { ...PROJECT } },
+  uploadCancel: { fields: { ...TEAM } },
+  downloadProject: { fields: { ...PROJECT } },
+  downloadCancel: { fields: { ...TEAM } },
+  // Slice 6-5: model sharing (services/team/model-ipc.js, team-models.js).
+  ...MODEL_METHODS,
+  ...BOARD_METHODS,
+  // Slice 3-10: "Always allowed" (team.project.rules.*).
+  projectRules: { fields: { ...PROJECT } },
+  projectRuleAdd: { fields: { ...PROJECT, tool_name: ruleTool, folder: ruleFolder } },
+  projectRuleRemove: { fields: { ...PROJECT, rule_seq: POSITIVE } },
+  projectRuleAnswer: { fields: { ...PROJECT, request_seq: POSITIVE, outcome: ruleOutcome, tool_name: ruleTool, folder: ruleFolder,
+    reason: ruleReason }, optional: ['tool_name', 'folder', 'reason'], refine: answerShape },
 });
 
 // Methods that may be called with no payload (nothing, `null` or `{}`).
-const EMPTY_PAYLOAD_METHODS = new Set(['status', 'hostStop', 'hostStatus']);
+const EMPTY_PAYLOAD_METHODS = new Set(['status', 'hostStop', 'hostStatus', 'hostReconnectCode', 'shareStatus', 'hostInventory',
+  'hostRestorePick']);
 
 // The one host operation each method sends: a command operation, or the raw route for leave.
 const HOST_OPERATIONS = Object.freeze({
@@ -75,13 +309,83 @@ const HOST_OPERATIONS = Object.freeze({
   rename: 'team.rename',
 });
 
-const LOCAL_METHODS = Object.freeze(['join', 'status', 'removeTeam']);
-const HOST_METHODS = Object.freeze(['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover']);
+// The chat methods that mirror a host operation (the chat client sends them; post, edit and delete through the outbox).
+const CHAT_OPERATIONS = Object.freeze({
+  chatOverview: 'team.chat.overview',
+  chatHistory: 'team.chat.history',
+  chatThread: 'team.chat.thread',
+  chatPost: 'team.chat.post',
+  chatEdit: 'team.chat.edit',
+  chatDelete: 'team.chat.delete',
+  chatMarkRead: 'team.chat.mark_read',
+  chatSetNotify: 'team.chat.set_notify',
+  chatFollow: 'team.chat.follow',
+  chatSearch: 'team.chat.search',
+  chatTyping: 'team.chat.typing',
+  presenceSet: 'team.presence.set',
+  chatReact: 'team.chat.react',
+  chatPin: 'team.chat.pin',
+  chatEdits: 'team.chat.edits',
+  chatPins: 'team.chat.pins',
+  chatDmOpen: 'team.chat.dm_open',
+});
+const CHAT_LOCAL_METHODS = Object.freeze(['chatDraftGet', 'chatDraftSet', 'chatOutboxDiscard']);
+const isChatMethod = (method) => Object.hasOwn(CHAT_OPERATIONS, method) || CHAT_LOCAL_METHODS.includes(method)
+  || ATTACHMENT_METHODS.includes(method);
+
+const LOCAL_METHODS = Object.freeze(['join', 'status', 'removeTeam', 'teamReconnectCode']);
+// Slice 5-6: the owner's whole-team operations (services/team/host/host-lifecycle.js).
+const LIFECYCLE_METHODS = Object.freeze(['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow',
+  'hostExport', 'hostRestorePick', 'hostRestore']);
+const HOST_METHODS = Object.freeze(['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode',
+  'hostInternet', 'hostModelRelay', ...LIFECYCLE_METHODS]);
+const RECONNECT_METHODS = Object.freeze(['teamReconnectCode', 'hostReconnectCode']);
+// Slice 4e: sharing this PC's GPU (local) and the team's GPUs (one host operation each, pool-view.js).
+const SHARE_METHODS = Object.freeze(['shareStatus', 'shareSet', 'sharePause', 'shareStop']);
+const POOL_OPERATIONS = Object.freeze({ gpuList: 'team.node.list', gpuUse: 'team.pool.usage', teamModelSet: 'team.pool.model.set' });
+// Slice 3-9: the host operation each project method sends (services/team/team-projects.js). Marked local: a close
+// releases a lease this client holds, a control `release` sends control.release, a cancel stops a transfer (an
+// upload's then discarded), and an upload or a download starts with its begin or its first manifest page.
+const PROJECT_OPERATIONS = Object.freeze({
+  projectList: 'projects.list',
+  projectCreate: 'team.project.create',
+  projectRename: 'team.project.rename',
+  projectDelete: 'team.project.delete',
+  projectMembers: 'team.project.members.list',
+  projectAddMember: 'team.project.members.add',
+  projectSetMember: 'team.project.members.setRole',
+  projectRemoveMember: 'team.project.members.remove',
+  projectLeave: 'team.project.leave',
+  projectUnjoined: 'team.project.unjoined',
+  projectJoin: 'team.project.join',
+  projectAudit: 'team.project.audit.read',
+  projectConversations: 'sessions.list',
+  conversationCreate: 'sessions.create',
+  conversationOpen: 'sessions.snapshot',
+  conversationClose: 'control.release', // local: only when this client holds the lease
+  conversationCloseAll: null, // local: every open conversation of the team (a renderer reload), held leases released
+  conversationSend: 'chat.send',
+  conversationCancel: 'chat.cancel',
+  conversationRename: 'sessions.rename',
+  conversationDelete: 'sessions.delete',
+  conversationControl: 'control.acquire', // `release` sends control.release
+  conversationDecide: 'approval.resolve',
+  conversationAnswer: 'questions.answer',
+  conversationDecline: 'questions.decline',
+  uploadFolder: 'team.project.upload.begin', // local: walk, hash, parts, commit
+  uploadCancel: 'team.project.upload.discard', // local: stops the upload, then discards it
+  downloadProject: 'team.project.download.manifest', // local: manifest pages, parts, writes
+  downloadCancel: null, // local: stops the download, removes its partial file
+  projectRules: 'team.project.rules.list',
+  projectRuleAdd: 'team.project.rules.add',
+  projectRuleRemove: 'team.project.rules.remove',
+  projectRuleAnswer: 'team.project.rules.answer',
+});
 
 /** { ok: true, value } with exactly the allowed fields, or { ok: false }. */
 function validatePayload(method, payload) {
   if (!Object.hasOwn(METHODS, method)) return { ok: false };
-  const { fields, optional = [] } = METHODS[method];
+  const { fields, optional = [], exclusive = [], refine = null } = METHODS[method];
   if (EMPTY_PAYLOAD_METHODS.has(method) && (payload === undefined || payload === null)) return { ok: true, value: {} };
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false };
   if (Object.getPrototypeOf(payload) !== Object.prototype && Object.getPrototypeOf(payload) !== null) return { ok: false };
@@ -96,6 +400,8 @@ function validatePayload(method, payload) {
     if (!check(payload[name])) return { ok: false };
     value[name] = payload[name];
   }
+  if (exclusive.some((names) => names.every((name) => Object.hasOwn(value, name)))) return { ok: false };
+  if (refine && !refine(value)) return { ok: false };
   return { ok: true, value };
 }
 
@@ -105,4 +411,8 @@ function hostParams(value) {
   return params;
 }
 
-module.exports = { HOST_METHODS, HOST_OPERATIONS, LOCAL_METHODS, METHODS, hostParams, validatePayload };
+module.exports = {
+  CHAT_LOCAL_METHODS, CHAT_OPERATIONS, HOST_METHODS, HOST_OPERATIONS, LIFECYCLE_METHODS, LOCAL_METHODS, METHODS, POOL_OPERATIONS, RECONNECT_METHODS,
+  BOARD_OPERATIONS, MODEL_OPERATIONS, PROJECT_OPERATIONS, SHARE_METHODS, hostParams, isBoardMethod, isChatMethod, isModelMethod,
+  validatePayload,
+};

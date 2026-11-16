@@ -15,19 +15,18 @@ const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 
 const { readGgufArchitecture } = require('./gguf-header');
-const { modelFamily, modelFolderName, pairProjector, splitGgufFiles } = require('./llama-server-gguf-files');
+const { createArchSupport } = require('./main/llama-server-runtime-choice');
+const { companionFiles, createPlaceFile, safeFolderName } = require('./gguf-place');
+const { splitGgufFiles } = require('./llama-server-gguf-files');
 const { isLocalAbsolutePath } = require('./shell-config-engines');
 
 const MAX_PICKS = 16;
-const MAX_ARCH_ANSWERS = 32;
 // Headroom a cross-volume copy leaves on the destination beyond its own bytes.
 const SPACE_MARGIN_BYTES = 64 * 1024 * 1024;
-const SHARD = /^(.+)-(\d{5})-of-(\d{5})\.gguf$/i;
 // Jenny's own in-flight names: a copy being written, and a file set aside
 // while it is linked into place.
 const PARTIAL_SUFFIX = '.jenny-partial';
 const STAGED_SUFFIX = '.jenny-moving';
-const RUNTIME_LIBRARY = Object.freeze({ win32: 'llama.dll', darwin: 'libllama.dylib' });
 
 function pathKey(value, platform) {
   const resolved = path.resolve(String(value || ''));
@@ -61,77 +60,6 @@ function createPickSet(platform, max = MAX_PICKS) {
   };
 }
 
-// What moves with a model: the other parts of a split set, the projector the
-// shared pairing rule gives it, and drafters that name its family (or the one
-// drafter beside a lone model). Generic files in a crowded folder stay, and so
-// does any companion a model left behind still pairs with (a sibling quant
-// keeps its projector and drafter).
-function companionFiles(dir, file, names) {
-  const split = splitGgufFiles(names);
-  const shards = new Set();
-  const shard = SHARD.exec(file);
-  if (shard) {
-    for (const name of split.main) {
-      const part = SHARD.exec(name);
-      if (name !== file && part && part[1].toLowerCase() === shard[1].toLowerCase() && part[3] === shard[3]) {
-        shards.add(name);
-      }
-    }
-  }
-  const leftovers = split.main.filter((name) => name !== file && !shards.has(name));
-  const companions = new Set(shards);
-  const projector = pairProjector(dir, file, split);
-  const leftBehindPairs = (candidate) => leftovers.some((name) => pairProjector(dir, name, split) === candidate);
-  if (projector && !leftBehindPairs(projector)) companions.add(path.basename(projector));
-  const family = modelFamily(file);
-  const loneModel = leftovers.length === 0 && split.drafters.length === 1;
-  for (const drafter of split.drafters) {
-    const drafterFamily = modelFamily(drafter.replace(/^mtp-/i, ''));
-    const leftBehindNames = leftovers.some((name) => modelFamily(name) === drafterFamily);
-    if (!leftBehindNames && (loneModel || drafterFamily === family)) companions.add(drafter);
-  }
-  companions.delete(file);
-  return [...companions].sort();
-}
-
-function safeFolderName(file) {
-  const name = Array.from(modelFolderName(file))
-    .map((character) => (character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character) ? '_' : character))
-    .join('')
-    .replace(/[. ]+$/, '');
-  return name && name !== '.' && name !== '..' ? name : 'model';
-}
-
-// 'yes' | 'no' | 'unknown': whether a build's llama library carries the
-// architecture's name as a NUL-delimited string. A missing library, a read
-// error or no architecture is 'unknown', and 'no' is only trusted on Windows,
-// where the bundled and downloaded builds were checked (b11513 has "lfm2",
-// not "lfm3"; b12098 has "lfm3").
-function createArchSupport({ fsImpl, platform }) {
-  const answers = new Map();
-  return function archSupport(binaryPath, architecture) {
-    if (!binaryPath || !architecture) return 'unknown';
-    const library = path.join(path.dirname(binaryPath), RUNTIME_LIBRARY[platform] || 'libllama.so');
-    let stat;
-    try {
-      stat = fsImpl.statSync(library);
-    } catch (_error) {
-      return 'unknown';
-    }
-    const key = `${library}\n${architecture}`;
-    const known = answers.get(key);
-    if (known && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.answer;
-    let answer = 'unknown';
-    try {
-      const found = fsImpl.readFileSync(library).includes(Buffer.from(`\0${architecture}\0`, 'latin1'));
-      answer = found ? 'yes' : (platform === 'win32' ? 'no' : 'unknown');
-    } catch (_error) { /* unreadable: unknown */ }
-    answers.set(key, { size: stat.size, mtimeMs: stat.mtimeMs, answer });
-    while (answers.size > MAX_ARCH_ANSWERS) answers.delete(answers.keys().next().value);
-    return answer;
-  };
-}
-
 function createGgufImportService({
   fsImpl = fs,
   platform = process.platform,
@@ -139,6 +67,12 @@ function createGgufImportService({
   repoRoot = process.cwd(),
   getLibraryRoots = () => [],
   resolveBundledRuntime = () => '',
+  // Row 142: the trusted build a launch would use when the bundled one answers
+  // 'no' ({ build, label } or null); the caller prepares the chooser first.
+  chooseRuntimeForArchitecture = () => null,
+  // Row 142 S3: the build "Get a build" would download for an architecture no
+  // trusted build reads ({ build, sizeBytes } or null).
+  runtimeDownloadOffer = () => null,
   readArchitecture = readGgufArchitecture,
   log = () => {},
 } = {}) {
@@ -223,7 +157,25 @@ function createGgufImportService({
     try {
       bundled = String(resolveBundledRuntime() || '');
     } catch (_error) { /* no bundled build: unknown */ }
-    const base = { ok: true, architecture, archSupport: archSupport(bundled, architecture) };
+    const support = archSupport(bundled, architecture);
+    let autoBuild = null;
+    if (support === 'no') {
+      try {
+        const chosen = chooseRuntimeForArchitecture(architecture);
+        if (chosen) autoBuild = { build: chosen.build, label: chosen.label };
+      } catch (_error) { /* no automatic build */ }
+    }
+    let downloadBuild = null;
+    if (support === 'no' && !autoBuild) {
+      try {
+        const offer = runtimeDownloadOffer(architecture);
+        if (offer) downloadBuild = { build: offer.build, sizeBytes: offer.sizeBytes };
+      } catch (_error) { /* no download offer */ }
+    }
+    const base = {
+      ok: true, architecture, archSupport: support,
+      ...(autoBuild ? { autoBuild } : {}), ...(downloadBuild ? { downloadBuild } : {}),
+    };
     if (scannedRoots().some((root) => isWithinOrSame(sourceDir, real(root), platform))) {
       return { ...base, inside: true };
     }
@@ -263,44 +215,10 @@ function createGgufImportService({
       || folderPicks.has(root);
   };
 
-  // Links into place without ever replacing a file (Windows rename would), or
-  // falls back to a checked rename where the volume has no hard links.
-  // FAT32/exFAT answer a hard link with EISDIR on Windows (ERROR_INVALID_FUNCTION).
-  const NO_HARD_LINKS = ['EPERM', 'ENOTSUP', 'ENOSYS', 'EINVAL', ...(platform === 'win32' ? ['EISDIR'] : [])];
-  const fail = (code) => Object.assign(new Error(code), { code });
-  // Renaming the file aside first proves it can move: a program holding it
-  // open without delete sharing (llama.cpp apps do) refuses the rename before
-  // anything is linked. The staged name is never overwritten.
-  const placeFile = (from, to) => {
-    const staged = `${from}${STAGED_SUFFIX}`;
-    if (fsImpl.existsSync(staged)) throw fail('EEXIST');
-    try {
-      fsImpl.renameSync(from, staged);
-    } catch (error) {
-      throw ['EBUSY', 'EPERM', 'EACCES'].includes(error?.code) ? fail('EINUSE') : error;
-    }
-    let linked = false;
-    try {
-      try {
-        fsImpl.linkSync(staged, to);
-        linked = true;
-      } catch (error) {
-        if (!NO_HARD_LINKS.includes(error?.code)) throw error;
-        if (fsImpl.existsSync(to)) throw fail('EEXIST');
-        fsImpl.renameSync(staged, to);
-        return;
-      }
-      fsImpl.unlinkSync(staged);
-    } catch (error) {
-      try {
-        if (linked) fsImpl.unlinkSync(to);
-        fsImpl.renameSync(staged, from);
-      } catch (restoreError) {
-        log('WARN', 'llama.server.gguf_import_restore_failed', { code: restoreError?.code || 'unknown' });
-      }
-      throw error;
-    }
-  };
+  // Links into place without ever replacing a file (services/gguf-place.js).
+  const placeFile = createPlaceFile({
+    fs: fsImpl, platform, log, stagedSuffix: STAGED_SUFFIX, restoreFailedEvent: 'llama.server.gguf_import_restore_failed',
+  });
 
   const moveOnVolume = (sourceDir, destDir, files) => {
     const placed = [];

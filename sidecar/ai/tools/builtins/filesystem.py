@@ -53,6 +53,7 @@ from sidecar.ai.tools.builtins.filesystem_read_window import (
     MAX_PAGINATED_OUTPUT_BYTES,
     MAX_READ_BYTES,
     READ_OUTPUT_CHAR_BUDGET,
+    StreamedLineBuilder,
     build_read_window_result,
 )
 from sidecar.ai.tools.builtins.filesystem_rich import (
@@ -451,7 +452,8 @@ def _read_file_window_streaming(
     limit: int | None,
     root: Path,
 ) -> ToolHandlerResult:
-    selected_line_bytes: list[bytes] = []
+    selected_lines: list[str] = []
+    line_builder = StreamedLineBuilder()
     selected_bytes = 0
     scanned_bytes = 0
     total_lines = 0
@@ -478,8 +480,7 @@ def _read_file_window_streaming(
                 if not chunk:
                     break
                 scanned_bytes += len(chunk)
-                first_chunk = total_lines == 0 and not buffer and not selected_line_bytes
-                if first_chunk and chunk.startswith(codecs.BOM_UTF8):
+                if scanned_bytes == len(chunk) and chunk.startswith(codecs.BOM_UTF8):
                     has_utf8_bom = True
                     chunk = chunk[len(codecs.BOM_UTF8) :]
                 utf8_validator.feed(chunk)
@@ -492,12 +493,14 @@ def _read_file_window_streaming(
                         break
                     line_end, separator_length = boundary
                     if should_collect_line(total_lines):
-                        line_bytes = data[cursor : line_end + separator_length]
-                        if selected_bytes + len(line_bytes) > MAX_PAGINATED_OUTPUT_BYTES:
+                        line_builder.feed(data[cursor:line_end])
+                        line = line_builder.finish(data[line_end : line_end + separator_length])
+                        line_size = len(line.encode("utf-8"))
+                        if selected_bytes + line_size > MAX_PAGINATED_OUTPUT_BYTES:
                             truncated_by_bytes = True
                         else:
-                            selected_line_bytes.append(line_bytes)
-                            selected_bytes += len(line_bytes)
+                            selected_lines.append(line)
+                            selected_bytes += line_size
                     total_lines += 1
                     cursor = line_end + separator_length
                     if end_line is not None and total_lines >= end_line:
@@ -511,15 +514,11 @@ def _read_file_window_streaming(
 
                 remainder = data[cursor:]
                 has_open_line_fragment = bool(remainder)
+                # Keep a trailing CR out of the line so a CRLF split across chunk
+                # boundaries still counts as one preserved line ending.
+                buffer = b"\r" if remainder.endswith(b"\r") else b""
                 if should_collect_line(total_lines):
-                    if selected_bytes + len(remainder) > MAX_PAGINATED_OUTPUT_BYTES:
-                        truncated_by_bytes = True
-                    else:
-                        buffer = remainder
-                elif remainder.endswith(b"\r"):
-                    # Keep a trailing CR so a CRLF split across chunk boundaries
-                    # still counts as one preserved line ending.
-                    buffer = b"\r"
+                    line_builder.feed(remainder[: len(remainder) - len(buffer)])
     except OSError as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
@@ -529,11 +528,11 @@ def _read_file_window_streaming(
 
     if has_open_line_fragment and not has_unscanned_content:
         if should_collect_line(total_lines):
-            if selected_bytes + len(buffer) > MAX_PAGINATED_OUTPUT_BYTES:
+            line = line_builder.finish(buffer)
+            if selected_bytes + len(line.encode("utf-8")) > MAX_PAGINATED_OUTPUT_BYTES:
                 truncated_by_bytes = True
             else:
-                selected_line_bytes.append(buffer)
-                selected_bytes += len(buffer)
+                selected_lines.append(line)
         total_lines += 1
 
     if not has_unscanned_content:
@@ -545,7 +544,6 @@ def _read_file_window_streaming(
         # UTF-8 that just hasn't finished arriving yet. A genuine mid-content encoding
         # error is still caught immediately by feed() above, regardless of this.
         utf8_validator.finish()
-    selected_lines = [line.decode("utf-8", errors="strict") for line in selected_line_bytes]
 
     return build_read_window_result(
         relative_path=relative_path,

@@ -9,13 +9,12 @@ const {
   createMessageEditController,
   EDIT_STREAM_BUSY_REASON,
   EDIT_EMPTY_CONTENT_REASON,
-  EDIT_TEXT_ATTACHMENT_NOTICE,
 } = require('../renderer/chat/renderer-chat-message-edit-utils');
-const { buildInlineUserMessageEditorMarkup } = require('../renderer/inventory/inline-text-editor');
 
 function createDocStub() {
   const textareas = new Map(); // messageId -> { value, listeners: {input,keydown}, focused, selected }
   const entries = new Map();   // messageId -> { focusCalls: 0 }
+  const saveButtons = new Map(); // messageId -> { disabled, title }
   const allEntries = [];
   const timers = [];
   function createClassList() {
@@ -28,6 +27,7 @@ function createDocStub() {
   }
   return {
     defaultView: {
+      innerHeight: 400,
       setTimeout(callback) {
         timers.push(callback);
         return timers.length;
@@ -46,6 +46,8 @@ function createDocStub() {
         selected: false,
         selectionStart: 0,
         selectionEnd: 0,
+        style: {},
+        scrollHeight: 0,
         get value() { return value; },
         set value(nextValue) {
           value = String(nextValue || '');
@@ -66,6 +68,12 @@ function createDocStub() {
       textareas.set(String(messageId), node);
       return node;
     },
+    _addSaveButton(messageId, disabled) {
+      const node = { disabled: disabled === true, title: '' };
+      saveButtons.set(String(messageId), node);
+      return node;
+    },
+    _saveButton(messageId) { return saveButtons.get(String(messageId)) || null; },
     _addEntry(messageId, role) {
       const entry = {
         _messageId: messageId,
@@ -100,6 +108,10 @@ function createDocStub() {
       const taMatch = selector.match(/textarea\[data-edit-target-message-id="(.+)"\]/);
       if (taMatch) {
         return textareas.get(taMatch[1]) || null;
+      }
+      const saveMatch = selector.match(/\[data-edit-action="save"\]\[data-message-id="(.+)"\]/);
+      if (saveMatch) {
+        return saveButtons.get(saveMatch[1]) || null;
       }
       const entryMatch = selector.match(/\.chat-entry\[data-message-id="(.+)"\]/);
       if (entryMatch) {
@@ -166,6 +178,7 @@ function createControllerHarness(options = {}) {
     if (state.ui.editingMessageId && textareaCreatedFor !== state.ui.editingMessageId) {
       // Auto-create the textarea matching the markup the renderer would produce.
       doc._addTextarea(state.ui.editingMessageId, state.ui.editingDraftText);
+      doc._addSaveButton(state.ui.editingMessageId, true);
       textareaCreatedFor = state.ui.editingMessageId;
     }
     if (!state.ui.editingMessageId) {
@@ -193,7 +206,8 @@ function createControllerHarness(options = {}) {
     buildReplayableImageAttachments: options.buildReplayableImageAttachments || (() => []),
     hasTextAttachmentMetadata: options.hasTextAttachmentMetadata || (() => false),
     focusEntryAtIndexFn: (idx) => focusCalls.push(idx),
-    showToastMessage: (payload) => toasts.push(payload),
+    // The shell's signature: (message, options). An object as the message rendered "[object Object]".
+    showToastMessage: (message, options) => toasts.push({ ...(options || {}), message }),
     timelineVirtualizer: options.timelineVirtualizer || {
       ensureMounted(entryEl) {
         virtualizerCalls.push(entryEl && entryEl.getAttribute && entryEl.getAttribute('data-message-id'));
@@ -293,19 +307,73 @@ test('enterEdit on a user message sets edit state', () => {
   const ta = h.doc.querySelector('textarea[data-edit-target-message-id="msg_user_1"]');
   assert.ok(ta);
   assert.equal(ta.focused, true);
-  assert.equal(ta.selected, true);
+  assert.equal(ta.selected, false, 'opening the editor never selects the message');
+  assert.equal(ta.selectionStart, 'original prompt'.length);
+  assert.equal(ta.selectionEnd, 'original prompt'.length, 'the caret sits at the end');
 });
 
-test('inline edit markup presents the exact existing-history impact', () => {
-  const html = buildInlineUserMessageEditorMarkup({
-    messageId: 'msg_user_1',
-    draftText: 'edited',
-    affectedCount: 3,
+test('enterEdit records the replayable-image flag and the text attachment names for the editor', () => {
+  const messages = [
+    {
+      id: 'msg_user_1',
+      role: 'user',
+      content: 'with files',
+      attachments: [
+        { kind: 'text', displayName: 'notes.txt' },
+        { kind: 'image', displayName: 'a.png' },
+        { kind: 'text', displayName: 'log.md' },
+      ],
+    },
+    { id: 'msg_ai_1', role: 'assistant', content: 'reply' },
+  ];
+  const h = createControllerHarness({
+    messages,
+    buildReplayableImageAttachments: () => [{ id: 'img_1', kind: 'image' }],
+    hasTextAttachmentMetadata: () => true,
   });
-  assert.match(html, /Affects 3 existing messages/);
-  assert.match(html, /all later history/);
-  assert.match(html, /title="Cancel edit \(Esc\)"/);
-  assert.match(html, /title="Save and resend \(Ctrl\+Enter\)"/);
+  h.controller.enterEdit('msg_user_1');
+  assert.equal(h.state.ui.editingHasReplayImages, true);
+  assert.deepEqual(h.state.ui.editingTextAttachmentNames, ['notes.txt', 'log.md']);
+});
+
+test('typing flips the Resend button with the draft and restores it when the original text returns', () => {
+  const h = createControllerHarness();
+  h.controller.enterEdit('msg_user_1');
+  const ta = h.doc.querySelector('textarea[data-edit-target-message-id="msg_user_1"]');
+  const save = h.doc._saveButton('msg_user_1');
+  const type = (text) => { ta.value = text; ta.listeners.input.forEach((fn) => fn()); };
+
+  type('original prompt!');
+  assert.equal(save.disabled, false);
+  assert.equal(save.title, 'Resend (Ctrl+Enter)');
+  type('original prompt');
+  assert.equal(save.disabled, true);
+  assert.equal(save.title, 'Change the message to resend it');
+  type('   ');
+  assert.equal(save.disabled, true, 'a blank draft with no image to replay cannot be resent');
+  type('x');
+  assert.equal(save.disabled, false);
+});
+
+test('a blank draft can be resent when the message has an image to replay', () => {
+  const h = createControllerHarness({ buildReplayableImageAttachments: () => [{ id: 'img_1', kind: 'image' }] });
+  h.controller.enterEdit('msg_user_1');
+  const ta = h.doc.querySelector('textarea[data-edit-target-message-id="msg_user_1"]');
+  ta.value = '';
+  ta.listeners.input.forEach((fn) => fn());
+  assert.equal(h.doc._saveButton('msg_user_1').disabled, false);
+});
+
+test('Ctrl+Enter does nothing while Resend is disabled, so the editor stays open', () => {
+  const h = createControllerHarness();
+  h.controller.enterEdit('msg_user_1');
+  const ta = h.doc.querySelector('textarea[data-edit-target-message-id="msg_user_1"]');
+  let prevented = false;
+  const chord = { key: 'Enter', ctrlKey: true, preventDefault() { prevented = true; }, stopPropagation() {} };
+  ta.listeners.keydown.forEach((fn) => fn(chord));
+  assert.equal(prevented, true, 'no newline is inserted either');
+  assert.equal(h.state.ui.editingMessageId, 'msg_user_1');
+  assert.equal(h.state.ui.editCommitting, false);
 });
 
 test('enterEdit on an assistant message is rejected (defensive)', () => {
@@ -485,6 +553,22 @@ test('commitEdit reconciles to the edited anchor and invalidates derived caches 
   assert.deepEqual(h.projectionCacheClears, ['sess_A']);
 });
 
+// identity-retry #2: the store lifts a memory note that sat after the edited
+// prompt to just above it (session-turn-events.js resolveReanchoredHistory);
+// the renderer keeps it there too instead of dropping it until terminal.
+test('commitEdit keeps an off-turn memory note above the edited prompt, as the store does', async () => {
+  const h = createControllerHarness();
+  h.state.messagesBySession.set('sess_A', [
+    { id: 'msg_user_1', role: 'user', content: 'original prompt' },
+    { id: 'msg_ai_1', role: 'assistant', content: 'stale reply' },
+    { id: 'note_1', role: 'assistant', kind: 'memory_note', content: 'remembered' },
+  ]);
+  h.controller.enterEdit('msg_user_1');
+  h.state.ui.editingDraftText = 'edited body';
+  await h.controller.commitEdit();
+  assert.deepEqual(h.state.messagesBySession.get('sess_A').map((message) => message.id), ['note_1', 'msg_user_1']);
+});
+
 test('commitEdit on rejected atomic start leaves edit mode and draft open for retry', async () => {
   const h = createControllerHarness({
     startPromptSend: async () => { throw new Error('sidecar unavailable'); },
@@ -540,14 +624,15 @@ test('commitEdit allows empty draft when image attachments will replay', async (
   assert.deepEqual(h.promptSends[0].opts.replayImageAttachments, [{ id: 'img_1', kind: 'image' }]);
 });
 
-test('commitEdit shows a warning toast when the original message had text attachments', async () => {
+test('commitEdit shows no toast for text attachments: the editor footer already said it', async () => {
   const h = createControllerHarness({
     hasTextAttachmentMetadata: () => true,
   });
   h.controller.enterEdit('msg_user_1');
   h.state.ui.editingDraftText = 'edited body';
   await h.controller.commitEdit();
-  assert.ok(h.toasts.find((t) => /text attachments/i.test(String(t.message || ''))));
+  assert.equal(h.promptSends.length, 1);
+  assert.deepEqual(h.toasts, []);
 });
 
 test('cancelEdit clears state and restores focus to the bubble row', () => {
@@ -865,14 +950,13 @@ test('dispose clears edit state and textarea listeners', () => {
   assert.equal(ta.listeners.keydown.length, 0);
 });
 
-test('edit-utils exposes the stream-busy + empty-content + text-attachment notice constants', () => {
+test('edit-utils exposes the stream-busy + empty-content constants', () => {
   // The lock-reason string is owned by chat-bubble-action-utils
-  // (EDIT_DISABLED_REASON_DURING_EDIT). The three constants below are read
+  // (EDIT_DISABLED_REASON_DURING_EDIT). The two constants below are read
   // by the controller's surfaced toasts.
   assert.equal(typeof EDIT_STREAM_BUSY_REASON, 'string');
   assert.equal(typeof EDIT_EMPTY_CONTENT_REASON, 'string');
-  assert.equal(typeof EDIT_TEXT_ATTACHMENT_NOTICE, 'string');
-  for (const value of [EDIT_STREAM_BUSY_REASON, EDIT_EMPTY_CONTENT_REASON, EDIT_TEXT_ATTACHMENT_NOTICE]) {
+  for (const value of [EDIT_STREAM_BUSY_REASON, EDIT_EMPTY_CONTENT_REASON]) {
     assert.ok(value.length > 0);
   }
 });

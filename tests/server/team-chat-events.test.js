@@ -9,33 +9,11 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 
-const { command } = require('../helpers/command-router-fixture');
 const { streamIdentity } = require('../../server/team/authorize');
-const { createTeamHttpFixture, pause, waitUntil } = require('./helpers/team-http-fixture');
+const { chatFrames, connectMember: connect, createTeamHttpFixture, pause, waitUntil } = require('./helpers/team-http-fixture');
 const { createTeamChatCommandsFixture } = require('./helpers/team-chat-commands-fixture');
 
 const DM_BUCKET = `teamchat:chan_dm_${'b'.repeat(64)}`;
-
-// Hello, a client, and an open stream for one device key.
-async function connect(env, key) {
-  const client = env.client(key);
-  assert.equal((await client.hello()).status, 200);
-  const auth = await client.registerClient();
-  assert.equal(auth.response.status, 200);
-  const stream = await client.openStream(auth);
-  assert.equal(stream.status, 200);
-  const send = async (operation, params = {}) => {
-    const body = { ...command(auth, operation, params), boot_epoch: env.context.bootEpoch };
-    const answer = await client.request('POST', '/api/v1/commands',
-      { body, headers: { 'X-Client-Token': auth.client_token } });
-    return answer.json;
-  };
-  return { client, auth, stream, send };
-}
-
-const chatFrames = (stream) => stream.frames.join('').split('\n')
-  .filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)))
-  .filter((frame) => typeof frame.event_type === 'string' && frame.event_type.startsWith('team_chat_'));
 
 // Every publish on the host stream, with its options.
 function recordPublishes(env) {
@@ -157,6 +135,11 @@ test('the stream identity follows the live directory and the channel rule', asyn
   const scope = (bucket) => ({ type: 'team_chat_message', bucket });
   assert.equal(identity.memberId, seeded.member.member_id);
   assert.equal(identity.mayReceive(seeded.member.member_id, scope('teamchat:chan_team')), true);
+  // Slice 3-2: a project channel is that project's members only.
+  assert.equal(identity.mayReceive(seeded.member.member_id, scope('teamchat:chan_project_p1')), false);
+  assert.equal((await env.store.createProject({ actorMemberId: seeded.owner.member_id, projectId: 'project_p1' })).ok, true);
+  assert.equal((await env.store.addProjectMember({ actorMemberId: seeded.owner.member_id, projectId: 'project_p1',
+    memberId: seeded.member.member_id, role: 'writer' })).ok, true);
   assert.equal(identity.mayReceive(seeded.member.member_id, scope('teamchat:chan_project_p1')), true);
   assert.equal(identity.mayReceive(seeded.member.member_id, scope(DM_BUCKET)), false);
   assert.equal(identity.mayReceive(seeded.member.member_id, scope('teamchat:chan_bogus')), false);
@@ -236,6 +219,7 @@ test('typing in an archived channel is refused and publishes nothing', async (t)
   const f = await createTeamChatCommandsFixture(t);
   assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_old' })).ok, true);
   assert.equal((await f.chat.store.archiveChannel({ channelId: 'chan_project_old' })).ok, true);
+  await f.addToProject('project_old', 'alice');
   const answer = await f.send(f.seats.alice, 'team.chat.typing', { channel_id: 'chan_project_old' });
   assert.equal(f.reasonOf(answer), 'team_chat_archived');
   assert.equal(f.published.filter((entry) => entry.type === 'team_chat_typing').length, 0);
@@ -279,4 +263,44 @@ test('a typing repeat inside 3 s answers ok without touching the store read path
   assert.equal((await f.send(alice, 'team.chat.typing', params)).ok, true);
   assert.deepEqual(touched, [], 'a refused repeat reads nothing');
   assert.equal(f.published.filter((entry) => entry.type === 'team_chat_typing').length, 1);
+});
+
+// ------------------------------------------------------------ pin_count on every message and channel event
+
+test('every team_chat_message and team_chat_channel event carries the pin count after the change that caused it', async (t) => {
+  const f = await createTeamChatCommandsFixture(t, { storeLimits: { maxMessages: 4, segmentMaxMessages: 1 } });
+  const { alice } = f.seats;
+  const first = await f.post(alice, 'one');
+  const second = await f.post(alice, 'two');
+  const tail = (since) => f.chatEvents().slice(since).map((e) => [e.type, e.payload.pin_count]);
+  const run = async (operation, params) => {
+    const since = f.chatEvents().length;
+    const answer = await f.send(alice, operation, { channel_id: 'chan_team', ...params });
+    assert.equal(answer.ok, true, operation);
+    return tail(since);
+  };
+  assert.deepEqual(tail(0), [['team_chat_message', 0], ['team_chat_message', 0]], 'posts');
+  assert.deepEqual(await run('team.chat.pin', { message_id: first.message_id, on: true }), [['team_chat_message', 1]]);
+  assert.deepEqual(await run('team.chat.pin', { message_id: second.message_id, on: true }), [['team_chat_message', 2]]);
+  assert.deepEqual(await run('team.chat.edit', { message_id: second.message_id, text: 'two, edited',
+    expected_rev: f.chat.store.getMessage('chan_team', second.message_id).message.rev }),
+    [['team_chat_message', 2]]);
+  assert.deepEqual(await run('team.chat.react', { message_id: first.message_id, emoji: '\u{1F44D}', on: true }),
+    [['team_chat_message', 2]]);
+  assert.deepEqual(await run('team.chat.pin', { message_id: first.message_id, on: false }), [['team_chat_message', 1]]);
+  assert.deepEqual(await run('team.chat.delete', { message_id: second.message_id }), [['team_chat_message', 0]]);
+  assert.deepEqual(await run('team.chat.pin', { message_id: first.message_id, on: true }), [['team_chat_message', 1]]);
+  const reply = await run('team.chat.post', { text: 'a reply', thread_root_id: first.message_id });
+  assert.deepEqual(reply, [['team_chat_message', 1], ['team_chat_message', 1]], 'the reply and its root');
+
+  // Posts that prune the pinned message: the channel event carries the count after the prune, the message event after the post.
+  const since = f.chatEvents().length;
+  for (let n = 0; n < 5; n += 1) assert.equal((await f.send(alice, 'team.chat.post', { channel_id: 'chan_team', text: `later ${n}` })).ok, true);
+  const events = tail(since);
+  assert.ok(events.some(([type]) => type === 'team_chat_channel'), 'a prune published');
+  assert.equal(f.chat.store.channelInfo('chan_team').pins.length, 0);
+  assert.deepEqual(events.at(-1), ['team_chat_message', 0]);
+  const afterPrune = events.slice(events.findIndex(([type]) => type === 'team_chat_channel'));
+  assert.ok(afterPrune.every(([, count]) => count === 0), JSON.stringify(afterPrune));
+  for (const e of f.chatEvents()) assert.ok(Number.isInteger(e.payload.pin_count), `${e.type} has pin_count`);
 });

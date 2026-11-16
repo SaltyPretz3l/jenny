@@ -492,3 +492,24 @@ test('a reference published while the renames run moves its directory straight b
   assert.equal(result.restored, 1);
   assert.equal(await fs.readFile(path.join(target, 'artifact.md'), 'utf8'), 'body');
 });
+
+test('a sweep over several workspace roots logs artifacts.retention_swept once, with the summed counts', async () => {
+  const rootA = createTrackedTempDir('jenny-artifact-log-a-');
+  const rootB = createTrackedTempDir('jenny-artifact-log-b-');
+  await makeArtifactDir(rootA, 'old-a', { ageMs: 30 * DAY_MS });
+  await makeArtifactDir(rootB, 'old-b', { ageMs: 30 * DAY_MS });
+  const logs = [];
+  const sweeper = createArtifactRetentionService({
+    getWorkspaceScopes: () => [{ rootPath: rootA }, { rootPath: rootB }],
+    getSessionStore: () => fakeSessionStore([]), nowFn: () => NOW, caps: { maxUnreferencedAgeMs: 14 * DAY_MS },
+    logger: (level, event, data) => logs.push({ level, event, data }),
+  });
+  const result = await sweeper.sweep();
+
+  assert.equal(result.quarantined, 2);
+  const swept = logs.filter((entry) => entry.event === 'artifacts.retention_swept');
+  assert.equal(swept.length, 1, 'one sweep, one log line');
+  assert.equal(swept[0].data.quarantined, 2);
+  assert.equal(swept[0].data.scannedDirs, 2);
+  assert.deepEqual([...swept[0].data.quarantinedNames].sort(), ['old-a', 'old-b']);
+});

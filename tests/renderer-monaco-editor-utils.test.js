@@ -22,6 +22,19 @@ function installDomGlobals(dom, t) {
   });
 }
 
+// Waits (bounded) for the script loader to inject its <script>, then fails it as an unreachable file would.
+async function failInjectedLoaderScript(dom, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let script = null;
+  while (!script) {
+    script = dom.window.document.querySelector('script[data-script-loader-src]');
+    if (script) break;
+    if (Date.now() >= deadline) throw new Error('the Monaco loader script was never injected');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  script.dispatchEvent(new dom.window.Event('error'));
+}
+
 test('Monaco AMD onError swallows Monaco loader failures but preserves non-Monaco delegation', async (t) => {
   const dom = new JSDOM(
     '<div id="host"></div><textarea id="fallback"></textarea>',
@@ -208,7 +221,12 @@ test('setWordWrap flips the fallback textarea wrap attribute and survives late t
     host: dom.window.document.getElementById('host'),
     fallbackTextarea: dom.window.document.getElementById('fallback'),
   });
-  await editor.setDocument({ value: 'long line of text', language: 'plaintext', readOnly: true });
+  const loading = editor.setDocument({ value: 'long line of text', language: 'plaintext', readOnly: true });
+  // jsdom never fetches the injected loader <script>, so the real script loader would wait out its 15 s
+  // timeout before reporting the load failed. Fire the failure the browser fires for an unreachable script
+  // (the real loader's own error handler runs) instead of waiting for the timeout.
+  await failInjectedLoaderScript(dom);
+  await loading;
 
   assert.equal(editor.getWordWrap(), true, 'wrap defaults on, matching MONACO_DEFAULTS.wordWrap');
   editor.setWordWrap(false);

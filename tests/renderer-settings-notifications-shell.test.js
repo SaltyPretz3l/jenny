@@ -41,7 +41,11 @@ test('Settings › Notifications renders its ten switches from the persisted win
   const card = document.getElementById('notificationsSettingsSection');
   assert.ok(card, 'the Notifications card exists');
   assert.equal(card.getAttribute('data-settings-section'), 'notifications');
-  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 10);
+  // Ten switches plus the team row, shown greyed out and off while the Team feature is off (2a-6c fix list item 3).
+  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 11);
+  const teamRow = toggle(document, 'notificationsCategoryTeamToggle');
+  assert.equal(teamRow.getAttribute('aria-checked'), 'false');
+  assert.equal(teamRow.getAttribute('aria-disabled') === 'true' || teamRow.disabled === true, true, 'the team row is not operable');
   // Persisted values (hydrated from windowUi.getState) drive the switches.
   assert.equal(toggle(document, 'notificationsSoundToggle').getAttribute('aria-checked'), 'false');
   assert.equal(toggle(document, 'notificationsCategoryFailuresToggle').getAttribute('aria-checked'), 'false');
@@ -61,7 +65,7 @@ test('Settings › Notifications renders its ten switches from the persisted win
   assert.deepEqual(updateCalls, [{
     notifications: {
       enabled: true, onlyWhenUnfocused: true, sound: false, replyPreview: false,
-      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true, jenny: true },
+      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true, jenny: true, team: true },
     },
   }]);
   assert.equal(toggle(document, 'notificationsCategoryQuestionsToggle').getAttribute('aria-checked'), 'false');

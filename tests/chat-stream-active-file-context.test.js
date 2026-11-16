@@ -358,6 +358,23 @@ test('does NOT exclude the active file from codebase when active-file context is
   }
 });
 
+// LFM3 image chat findings F3: an image turn and a thin chat query skip codebase grounding.
+test('codebase grounding is skipped on image turns and thin chat queries', async () => {
+  const dir = makeCodebaseTempDir();
+  try {
+    const service = makeCodebaseService(dir, { activeFileFlag: false });
+    const imageTurn = await assembleContextForChat(service, { ...makeDedupeOptions(dir), hasImageAttachments: true });
+    assert.equal(blockOfKind(imageTurn, 'codebase'), null);
+    assert.equal(imageTurn.contextAssemblyBreakdown.includedCodebaseContext, false);
+    const thin = await assembleContextForChat(service, { ...makeDedupeOptions(dir), prompt: 'widget' });
+    assert.equal(blockOfKind(thin, 'codebase'), null);
+    const textTurn = await assembleContextForChat(service, { ...makeDedupeOptions(dir), hasImageAttachments: false });
+    assert.ok(blockOfKind(textTurn, 'codebase'), 'a two-term text question still grounds');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Memory v2 (row 58 W1 S4): the per-request policy combines the chat's
 // include_memory / memory_opt_out with the three global memory settings.
 test('memory_policy follows the settings and per-chat matrix', async () => {

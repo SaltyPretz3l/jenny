@@ -99,33 +99,129 @@ test('a stranger is closed before any stream and no loopback socket opens', asyn
   await waitFor(() => env.bridge.stats().refusedConnections === 1);
 });
 
-test('an admit callback that throws or answers something odd refuses the connection', async (t) => {
-  const answers = [
-    () => { throw new Error('boom'); },
-    () => 'owner',
-    () => Promise.reject(new Error('x')),
-    () => undefined,
-  ];
-  for (const answer of answers) {
+const admitAnswers = (env) => env.spawner.last().received.filter((line) => line.t === 'admit_answer');
+
+test('an admit callback that answers null or something odd sends the explicit null', async (t) => {
+  for (const answer of [() => null, () => 'owner', () => undefined, async () => null]) {
     const env = await setup(t, { admit: answer });
     const { closed } = await env.dial(4);
     assert.equal((await closed).refused, true);
+    assert.deepEqual(admitAnswers(env).map((line) => line.kind), [null]);
     assert.equal(env.probe.records.length, 0);
   }
 });
 
-test('an admit callback that never answers is refused by the supervisor itself', async (t) => {
-  const env = await setup(t, {
-    admit: () => new Promise(() => {}),
-    limits: { admitTimeoutMs: 60 },
-    spawnerOptions: { childAdmitTimeout: false },
-  });
-  const { closed } = await env.dial(5);
-  assert.equal((await closed).refused, true);
-  const child = env.spawner.last();
-  const answers = child.received.filter((line) => line.t === 'admit_answer');
-  assert.deepEqual(answers.map((line) => line.kind), [null]);
-  assert.equal(env.probe.records.length, 0);
+// A parent failure is not a refusal of the key: the child's own admit timeout ends the connection (closed, the
+// member told `host_admit_timeout`; review round two), and the bridge starts no cooldown for it (TEAM_INTERNET_SPEC,
+// 5-1 departure 5).
+test('an admit callback that throws, rejects or never answers sends no answer', async (t) => {
+  const answers = [
+    () => { throw new Error('boom'); },
+    () => Promise.reject(new Error('x')),
+    () => new Promise(() => {}),
+  ];
+  for (const answer of answers) {
+    const env = await setup(t, { admit: answer, limits: { admitTimeoutMs: 60 } });
+    const { conn, closed } = await env.dial(5);
+    assert.deepEqual([(await closed).refused, conn.bridgeReason], [false, 'host_admit_timeout'], 'the child times out');
+    await new Promise((resolve) => { setTimeout(resolve, 120); });
+    assert.deepEqual(admitAnswers(env), []);
+    assert.equal(env.probe.records.length, 0);
+  }
+});
+
+// Review round two (R11-F04): the fake child has the binary's refused-key cooldown and per-key share
+// (native/jenny-team-bridge/src/host_conn.rs, host.rs answer_admit, key_share.rs), so a member-side rule about
+// `host_refused` cannot pass here and fail against the binary.
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const closedWithin = (dialed, ms) => Promise.race([dialed.closed, pause(ms).then(() => 'still open')]);
+const admittedCount = (env) => env.logs.filter((entry) => entry.event === 'team.bridge.connection_admitted').length;
+
+test('a key the parent refused is refused again for its cooldown without asking; past it the parent is asked', async (t) => {
+  const kinds = new Map();
+  const asked = [];
+  const env = await setup(t, { limits: { refusedCooldownMs: 300 },
+    admit: (key) => { asked.push(hex(key)); return kinds.get(hex(key)) || null; } });
+  const first = await env.dial(111);
+  assert.equal((await first.closed).refused, true);
+  kinds.set(hex(first.key), 'device'); // registered a moment later (a redeem), still cooling at the bridge
+  const cooled = await env.dial(111);
+  assert.equal((await closedWithin(cooled, 1000)).refused, false, 'turned away inside the cooldown, not refused');
+  assert.equal(cooled.conn.bridgeReason, 'host_cooldown', 'and the member is told it was the cooldown');
+  assert.equal(asked.length, 1, 'the parent is not asked about a cooling key');
+  await pause(350);
+  const after = await env.dial(111);
+  await waitFor(() => asked.length === 2);
+  (await after.conn.openStream()).write('x');
+  await waitFor(() => env.probe.records.length === 1);
+});
+
+test('a timed-out admit starts no cooldown, and an admit answer is not followed by one', async (t) => {
+  let silent = true;
+  const asked = [];
+  const env = await setup(t, { limits: { admitTimeoutMs: 60 },
+    admit: () => { asked.push(1); return silent ? new Promise(() => {}) : 'device'; } });
+  const first = await env.dial(112);
+  assert.equal((await first.closed).refused, false, 'the child times out on its own');
+  assert.equal(first.conn.bridgeReason, 'host_admit_timeout');
+  silent = false;
+  const second = await env.dial(112);
+  await waitFor(() => asked.length === 2);
+  (await second.conn.openStream()).write('x');
+  await waitFor(() => env.probe.records.length === 1);
+});
+
+test('one key holds two connections: a third replaces its oldest admitted one; with none admitted it is closed', async (t) => {
+  const gates = [];
+  let hold = false;
+  const env = await setup(t, { admit: () => (hold ? new Promise((resolve) => gates.push(resolve)) : 'device') });
+  const a1 = await env.dial(113);
+  await env.dial(113);
+  await waitFor(() => admittedCount(env) === 2);
+  await env.dial(113);
+  const replaced = await closedWithin(a1, 1000);
+  assert.notEqual(replaced, 'still open', 'the oldest admitted connection gives its slot');
+  assert.equal(replaced.refused, false, 'the replaced connection is closed, not refused');
+  await waitFor(() => admittedCount(env) === 3 && env.bridge.stats().connections === 2);
+  hold = true;
+  await env.dial(114);
+  await env.dial(114);
+  await waitFor(() => gates.length === 2);
+  const third = await env.dial(114);
+  const closed = await closedWithin(third, 1000);
+  assert.notEqual(closed, 'still open', 'a key at its share with nothing admitted is turned away');
+  assert.equal(closed.refused, false, 'closed, so no cooldown is implied');
+  assert.equal(gates.length, 2, 'and the parent is not asked about it');
+});
+
+test('a host bridge from before round two refused a cooling key and a timed-out admit alike', async (t) => {
+  let silent = false;
+  const env = await setup(t, { spawnerOptions: { oldHost: true }, limits: { admitTimeoutMs: 60 },
+    admit: () => (silent ? new Promise(() => {}) : null) });
+  const refused = await env.dial(116);
+  assert.equal((await refused.closed).refused, true);
+  const cooled = await env.dial(116);
+  assert.deepEqual([(await closedWithin(cooled, 1000)).refused, cooled.conn.bridgeReason], [true, undefined]);
+  silent = true;
+  const timedOut = await env.dial(117);
+  assert.deepEqual([(await timedOut.closed).refused, timedOut.conn.bridgeReason], [true, undefined]);
+});
+
+test('one key holds at most 16 streams across its connections', async (t) => {
+  const env = await setup(t);
+  const conns = [(await env.dial(115)).conn, (await env.dial(115)).conn];
+  const streams = [];
+  for (const [conn, count] of [[conns[0], 10], [conns[1], 7]]) {
+    for (let i = 0; i < count; i += 1) {
+      const stream = await conn.openStream();
+      stream.write('x');
+      streams.push(stream);
+    }
+  }
+  await waitFor(() => env.probe.records.length === 16);
+  await waitFor(() => streams.filter((stream) => stream.destroyed).length === 1);
+  const refusal = env.logs.find((entry) => entry.event === 'team.bridge.stream_refused');
+  assert.equal(refusal.fields.reason, 'key_cap');
 });
 
 test('admit is asked with the authenticated 32-byte key', async (t) => {
@@ -177,6 +273,10 @@ test('closing the member stream closes the loopback socket and closing the socke
   const second = await conn.openStream();
   second.write('b');
   await waitFor(() => env.probe.records.length === 2 && env.probe.records[1].total > 72);
+  // The bridge finishes its side cleanly: the member reads the end of stream and closes its own side, as over a
+  // real transport (the fake leaves a cleanly finished peer open to read out what it holds).
+  second.once('end', () => second.destroy());
+  second.resume();
   const gone = new Promise((resolve) => second.once('close', resolve));
   env.probe.records[1].socket.destroy();
   await gone;
@@ -402,6 +502,34 @@ test('addresses() reports the listener addresses as strings and is empty before 
   const env = await setup(t);
   const addresses = env.bridge.addresses();
   assert.deepEqual(addresses, ['192.0.2.7:4242', '[2001:db8::7]:4242']);
+});
+
+test('X3b-F01: an invite connection ends once its key is no longer a live invite; a device one stays; then no more asks', { timeout: 10_000 }, async (t) => {
+  const answers = new Map(); // hex key -> what admit answers now; a throw for 'throw'
+  const asked = [];
+  const env = await setup(t, { limits: { inviteRecheckMs: 20 }, admit: (key) => {
+    asked.push(hex(key));
+    const answer = answers.get(hex(key));
+    if (answer === 'throw') throw new Error('boom');
+    return answer;
+  } });
+  const keyOf = (seed) => hex(env.fake.publicKeyOf(new Uint8Array(32).fill(seed)));
+  answers.set(keyOf(81), 'device').set(keyOf(82), 'invite').set(keyOf(83), 'invite');
+  await env.dial(81);
+  const spent = [await env.dial(82), await env.dial(82)];
+  const failing = await env.dial(83);
+  await waitFor(() => env.logs.filter((entry) => entry.event === 'team.bridge.connection_admitted').length === 4);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(env.bridge.stats().connections, 4, 'a live invite keeps its connections');
+  answers.set(keyOf(82), null); // spent, revoked or expired: the directory no longer knows it
+  for (const conn of spent) assert.equal((await conn.closed).refused, true);
+  answers.set(keyOf(83), 'throw'); // an answer that fails ends it too (fail closed)
+  assert.equal((await failing.closed).refused, true);
+  await waitFor(() => env.bridge.stats().connections === 1);
+  const settled = asked.length;
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(asked.length, settled, 'with no invite connection left nothing asks again');
+  assert.equal(asked.filter((key) => key === keyOf(81)).length, 1, 'a device connection is never asked again');
 });
 
 test('redaction: nothing logged contains a key, a secret, an address or traffic', async (t) => {

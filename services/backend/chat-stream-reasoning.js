@@ -10,9 +10,11 @@ const {
 } = require('./chat-stream-reasoning-sanitize');
 const { projectUserSkillInvocation, withSkillCommand } = require('./chat-skill-command-projection');
 const { projectUserImagePromptPin, withImagePromptPin } = require('./image-prompt-pin');
+const { projectUserAttachmentNote } = require('./chat-attachment-history-note');
 const { validateEnvelope } = require('./session-message-envelope');
 const { validateHandoffRow } = require('./session-handoff-context');
 const { isContextRow, selectContextHistoryMessages, selectRecentTurnGroups } = require('./chat-history-scope');
+const { stubBoardBlocks } = require('../boards/board-fence');
 
 const MAX_PERSISTED_REASONING_ENTRIES = 40;
 const MAX_PERSISTED_REASONING_CHARS = 48_000;
@@ -453,10 +455,12 @@ function buildPreparedContextHistory(messages, contextPreferences, options = {})
       if (kind === 'interactive_round_recap') {
         return convertInteractiveRoundRecapToProviderMessage(message);
       }
+      // Row 150: a `board` block in an earlier reply goes to no model, on any page (board-fence.js).
+      const content = serializeMessageContent(message.content);
       return {
         role: message.role,
-        content: projectUserImagePromptPin(message,
-          projectUserSkillInvocation(message, serializeMessageContent(message.content))),
+        content: projectUserAttachmentNote(message, projectUserImagePromptPin(message,
+          projectUserSkillInvocation(message, message.role === 'assistant' ? stubBoardBlocks(content) : content))),
       };
     })
     .filter((message) => {
@@ -532,7 +536,7 @@ function buildPreparedContinuationPrefix(messages, events) {
       continue;
     }
     const key = event.payload.canonical_part_id || segment || event.event_id;
-    const message = { role: 'assistant', content: event.payload.text.trim() };
+    const message = { role: 'assistant', content: stubBoardBlocks(event.payload.text.trim()) };
     if (parts.has(key)) projected[parts.get(key)] = message;
     else { parts.set(key, projected.length); projected.push(message); }
   }

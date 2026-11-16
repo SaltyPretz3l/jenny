@@ -1,4 +1,4 @@
-// v1..v27 migration chain for the Electron session store payload.
+// v1..v29 migration chain for the Electron session store payload.
 //
 // Each repair function takes a single session record and returns the upgraded
 // version. `migrateStorePayload` runs the chain over every session in a
@@ -30,6 +30,8 @@ const { normalizeSuggestedChanges } = require('./suggested-changes-records');
 const { normalizeCoordinationFields } = require('./session-coordination-records');
 const { normalizeSessionRole } = require('./primary-session');
 const { repairSessionForV27 } = require('./message-author');
+const { repairSessionForV28 } = require('./session-allowed-nodes');
+const { repairSessionForV29 } = require('../boards/board-turn-stamp');
 const {
   createOfficialImagePluginSession,
   enforcePluginOperationMetadataBudget,
@@ -63,9 +65,9 @@ const STALE_PENDING_APPROVAL_TERMINAL_STATE = 'cancelled';
 // workspace_view) with inert defaults; only workspace_view is written so far.
 // v26 adds `session_role` ('primary' on the profile's one Jenny chat, else null);
 // the bump keeps an older build from dropping the field and demoting the chat.
-// v27 adds the optional team user-message `author` ({ kind: 'member', member_id });
-// the step keeps a valid one on user rows only and adds nothing (message-author.js).
-const STORE_SCHEMA_VERSION = 27;
+// v27 adds the team user-message `author` (message-author.js), v28 the team `allowed_nodes` (session-allowed-nodes.js).
+// v29 adds the user-message `board_id`, the board a turn was sent from (services/boards/board-turn-stamp.js).
+const STORE_SCHEMA_VERSION = 29;
 // The highest schema version that lived in the legacy monolithic sessions.json
 // file. Anything <= this number triggers a monolithic -> split migration on
 // first read.
@@ -582,7 +584,7 @@ const SESSION_MIGRATION_STEPS = [
   [24, repairSessionForV24],
   [25, repairSessionForV25],
   [26, repairSessionForV26],
-  [27, repairSessionForV27],
+  [27, repairSessionForV27], [28, repairSessionForV28], [29, repairSessionForV29],
 ];
 
 // v16 introduces `compaction_snapshot` (JCA-003 manual-compaction ownership).
@@ -851,7 +853,7 @@ module.exports = {
   repairSessionForV24,
   repairSessionForV25,
   repairSessionForV26,
-  repairSessionForV27,
+  repairSessionForV27, repairSessionForV28, repairSessionForV29,
   migrateLegacyImageOperationMessage,
   repairStalePendingApprovalToolUse,
   summarizeMessage,

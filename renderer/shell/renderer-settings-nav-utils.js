@@ -44,6 +44,12 @@
         getSectionRefreshPromise: typeof deps.getSectionRefreshPromise === 'function' ? deps.getSectionRefreshPromise : null,
       })
       : null;
+    var pageIndex = createSettingsPageIndex({
+      scroller: settingsContentScroll,
+      getActiveCard: function () {
+        return settingsContentScroll.querySelector('.settings-card.settings-section-active');
+      },
+    });
 
     function isVisibleNode(node) {
       return Boolean(node)
@@ -168,6 +174,7 @@
       if (settingsContentScroll) {
         settingsContentScroll.scrollTop = 0;
       }
+      pageIndex.refresh();
 
       try {
         localStorage.setItem(STORAGE_KEY, id);
@@ -196,7 +203,7 @@
           onSectionChange(id, previousSectionId);
         }
       }
-      return true;
+      return id;
     }
 
     function restoreActiveSection() {
@@ -320,13 +327,142 @@
       settingsNav.removeEventListener('keydown', handleSettingsNavKeydown);
       settingsNav.removeEventListener('click', handleSettingsNavClick);
       searchController?.dispose?.();
+      pageIndex.dispose();
     }
 
     return {
+      resolveSectionId: resolveSectionId,
       setActiveSection: setActiveSection,
       restoreActiveSection: restoreActiveSection,
       bind: bind,
       dispose: dispose,
+    };
+  }
+
+  /*
+   * "On this page": a plain list of the active page's groups beside the content
+   * (styles/settings-page-grid.css decides where and when it shows). Built for a
+   * page with PAGE_INDEX_MIN_ENTRIES groups or more; a page that renders late (a
+   * lazy section) or shows and hides a group is picked up by the observer.
+   */
+  var PAGE_INDEX_MIN_ENTRIES = 4;
+  var PAGE_INDEX_GROUPS = '.settings-group, .settings-subsection, details.settings-fold';
+
+  function createSettingsPageIndex(deps) {
+    var scroller = deps.scroller;
+    var getActiveCard = deps.getActiveCard;
+    var doc = scroller && scroller.ownerDocument;
+    var host = scroller && scroller.parentNode;
+    if (!doc || !host) return { refresh: function () {}, dispose: function () {} };
+    var win = doc.defaultView || {};
+    var nav = null, entries = [], signature = '', pinned = -1, frame = 0, observer = null, observedCard = null;
+
+    function headingOf(group) {
+      return [].filter.call(group.children, function (child) {
+        return child.matches('.settings-group-heading, summary');
+      })[0] || null;
+    }
+    function labelOf(heading) {
+      return [].map.call(heading.childNodes, function (node) {
+        return node.nodeType === 1 && node.classList.contains('settings-fold-count') ? '' : node.textContent;
+      }).join('').replace(/\s+/g, ' ').trim();
+    }
+    function collect(card) {
+      if (!card) return [];
+      return [].map.call(card.querySelectorAll(PAGE_INDEX_GROUPS), function (group) {
+        var outer = group.parentElement.closest(PAGE_INDEX_GROUPS);
+        var heading = (outer && card.contains(outer)) || group.closest('[hidden]') ? null : headingOf(group);
+        return heading ? { group: group, heading: heading, label: labelOf(heading) } : null;
+      }).filter(function (entry) { return entry && entry.label; });
+    }
+    function offsetOf(entry) {
+      return entry.group.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    }
+    function syncCurrent() {
+      var current = 0;
+      for (var i = 0; i < entries.length; i++) if (offsetOf(entries[i]) <= 24) current = i;
+      if (pinned >= 0 && pinned < entries.length) current = pinned;
+      [].forEach.call(nav.querySelectorAll('[data-page-index]'), function (link, index) {
+        if ((index === current) === link.hasAttribute('aria-current')) return;
+        if (index === current) link.setAttribute('aria-current', 'true'); else link.removeAttribute('aria-current');
+      });
+    }
+    function schedule() {
+      if (frame) return;
+      frame = typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame(render) : setTimeout(render, 16);
+    }
+    function onScroll() { if (nav && !nav.hidden) syncCurrent(); }
+    function releasePin() { pinned = -1; }
+    function onClick(event) {
+      var link = event.target.closest('[data-page-index]');
+      var entry = link ? entries[Number(link.getAttribute('data-page-index'))] : null;
+      if (!link) return;
+      event.preventDefault();
+      if (!entry) return;
+      // The clicked group stays current until the person scrolls: a group near the end cannot reach the top.
+      pinned = entries.indexOf(entry);
+      if (entry.group.tagName === 'DETAILS') entry.group.open = true;
+      var top = Math.max(0, scroller.scrollTop + offsetOf(entry) - 8);
+      var calm = typeof win.matchMedia === 'function' && win.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: top, behavior: calm ? 'auto' : 'smooth' });
+      else scroller.scrollTop = top;
+      if (entry.heading.tagName !== 'SUMMARY' && !entry.heading.hasAttribute('tabindex')) entry.heading.setAttribute('tabindex', '-1');
+      entry.heading.focus({ preventScroll: true });
+      syncCurrent();
+    }
+    function observe(card) {
+      if (card === observedCard || typeof win.MutationObserver !== 'function') return;
+      if (observer) observer.disconnect();
+      observedCard = card;
+      observer = card ? new win.MutationObserver(schedule) : null;
+      if (observer) observer.observe(card, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    }
+    function render() {
+      frame = 0;
+      var card = getActiveCard();
+      observe(card);
+      entries = collect(card);
+      if (entries.length < PAGE_INDEX_MIN_ENTRIES) {
+        if (nav) nav.hidden = true;
+        return;
+      }
+      if (!nav) {
+        nav = doc.createElement('nav');
+        nav.className = 'settings-page-index';
+        nav.addEventListener('click', onClick);
+        scroller.addEventListener('scroll', onScroll, { passive: true });
+        ['wheel', 'touchstart', 'keydown'].forEach(function (type) { scroller.addEventListener(type, releasePin, { passive: true }); });
+        host.appendChild(nav);
+      }
+      var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (key, fallback) { return fallback; };
+      var title = jt('settings.pageIndex.label', 'On this page');
+      var nextSignature = entries.map(function (entry) { return entry.label; }).join('\n');
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        pinned = -1;
+        nav.setAttribute('aria-label', title);
+        nav.innerHTML = '<span class="settings-page-index-label" aria-hidden="true">' + escapeHtml(title) + '</span>'
+          + entries.map(function (entry, index) {
+            return '<a class="settings-page-index-link" href="#" data-page-index="' + index + '">' + escapeHtml(entry.label) + '</a>';
+          }).join('');
+      }
+      nav.setAttribute('data-wide', String(card.classList.contains('settings-card--wide')));
+      nav.hidden = false;
+      syncCurrent();
+    }
+    return {
+      refresh: function () { pinned = -1; render(); },
+      dispose: function () {
+        if (observer) observer.disconnect();
+        observer = null;
+        observedCard = null;
+        if (!nav) return;
+        scroller.removeEventListener('scroll', onScroll);
+        ['wheel', 'touchstart', 'keydown'].forEach(function (type) { scroller.removeEventListener(type, releasePin); });
+        nav.remove();
+        nav = null;
+        signature = '';
+      },
     };
   }
 
@@ -373,15 +509,15 @@
 
   /* A tablist may own tabs only. The group wrapper is presentational and the
    * group name is hidden as an element, then read with each tab as its
-   * description, so the grouping is still announced. */
+   * description, so the grouping is still announced. An unlabelled group has neither. */
   function buildSettingsNavMarkup(groups, defaultSectionId) {
     return groups.map(function (group) {
-      var labelId = 'settingsNavGroupLabel-' + group.id;
+      var labelId = group.label ? 'settingsNavGroupLabel-' + group.id : '';
       var items = (group.sections || []).map(function (section) {
         return buildNavItemMarkup(section, { isDefault: section.id === defaultSectionId, groupLabelId: labelId });
       }).join('');
       return '<div class="settings-nav-group" role="presentation" data-settings-nav-group="' + escapeHtml(group.id) + '">'
-        + '<div class="settings-nav-label" id="' + escapeHtml(labelId) + '" aria-hidden="true">' + escapeHtml(group.label) + '</div>'
+        + (labelId ? '<div class="settings-nav-label" id="' + escapeHtml(labelId) + '" aria-hidden="true">' + escapeHtml(group.label) + '</div>' : '')
         + items
         + '</div>';
     }).join('');
@@ -418,9 +554,11 @@
         id: 'settingsNavPicker',
         ariaLabel: jt('settings.shell.sectionPickerLabel', 'Settings section'),
         value: DEFAULT_SECTION,
-        options: groups.map(function (group) {
-          return { label: group.label, options: group.sections.map(function (section) { return { value: section.id, label: section.label }; }) };
-        }),
+        // An unlabelled group (Readiness) lists its pages as plain options ahead of the optgroups.
+        options: [].concat.apply([], groups.map(function (group) {
+          var options = group.sections.map(function (section) { return { value: section.id, label: section.label }; });
+          return group.label ? [{ label: group.label, options: options }] : options;
+        })),
       }) + '</div>');
       syncFeatureFlaggedSettings(doc, {});
       var existingSearch = header.querySelector('[data-settings-search]');
@@ -453,6 +591,7 @@
   return {
     syncFeatureFlaggedSettings: syncFeatureFlaggedSettings,
     createSettingsNavController: createSettingsNavController,
+    createSettingsPageIndex: createSettingsPageIndex,
     buildSettingsNavMarkup: buildSettingsNavMarkup,
     renderSettingsNav: renderSettingsNav,
     setNavItemBadge: setNavItemBadge,

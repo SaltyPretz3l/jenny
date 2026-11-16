@@ -531,12 +531,14 @@ test('the move menu: heading, plain project names, "here now" on the chat\'s pro
   const rows = switcher.moveRows(['s1']);
   assert.equal(rows[0].id, 'project_ascend');
   assert.equal(rows[0].label, 'Ascend');
-  assert.equal(rows[0].detail, 'here now');
+  assert.equal(rows[0].detail, 'This chat is here · D:\\Projects\\Ascend');
+  assert.equal(rows[0].here, true, 'the chat\'s own project is marked, not just disabled');
   assert.equal(rows[0].disabled, true);
   assert.equal(rows[1].label, 'Budget FY27', 'plain names, no "Move this chat to X"');
-  assert.equal(rows.at(-1).id, 'project_general');
-  assert.equal(rows.at(-1).label, 'General');
-  assert.equal(rows.at(-1).detail, 'no folder · file tools off');
+  assert.equal(rows.at(-2).id, 'project_general');
+  assert.equal(rows.at(-2).label, 'General');
+  assert.equal(rows.at(-2).detail, 'no folder · file tools off');
+  assert.equal(rows.at(-1).id, '__manage');
 
   menuRows(dom).find((row) => row.textContent.includes('Budget FY27')).click();
   await settle();
@@ -545,7 +547,7 @@ test('the move menu: heading, plain project names, "here now" on the chat\'s pro
 
   state.sessions[0].active_turn = { id: 't' };
   const busy = switcher.moveRows(['s1']);
-  assert.ok(busy.every((row) => row.disabled), 'a busy single chat gets no enabled row');
+  assert.ok(busy.filter((row) => row.kind === 'project').every((row) => row.disabled), 'a busy single chat gets no enabled project row');
   assert.equal(busy.find((row) => row.id === 'project_grants').reason, 'Wait for this chat to finish first.');
 
   await switcher.openMoveMenu(anchor, ['s2', 's3'], {});

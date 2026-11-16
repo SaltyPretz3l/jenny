@@ -62,6 +62,38 @@ test('write generations distinguish accepted and durable bytes', () => {
   });
 });
 
+test('a rename briefly blocked by another process (EBUSY) is retried; a lasting block still throws', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-fjs-busy-'));
+  trackDirectory(dir);
+  const store = makeStore(path.join(dir, 'data.json'));
+  const realRenameSync = fs.renameSync;
+  let calls = 0;
+  const busy = () => Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+  fs.renameSync = (...args) => {
+    calls += 1;
+    if (calls <= 2) throw busy();
+    return realRenameSync.apply(fs, args);
+  };
+  try {
+    store.write({ saved: true });
+    assert.equal(calls, 3);
+    assert.deepEqual(store.read({}), { saved: true });
+    calls = 0;
+    fs.renameSync = () => { calls += 1; throw busy(); };
+    assert.throws(() => store.write({ saved: false }), { code: 'EBUSY' });
+    assert.equal(calls, 4, 'one try plus three retries');
+    calls = 0;
+    assert.throws(() => store.write({ saved: false }), { code: 'EBUSY' });
+    assert.equal(calls, 1, 'a target still locked gets a single try, not another 230 ms stall');
+    fs.renameSync = (...args) => { calls += 1; return realRenameSync.apply(fs, args); };
+    store.write({ saved: 'again' });
+    assert.deepEqual(store.read({}), { saved: 'again' });
+  } finally {
+    fs.renameSync = realRenameSync;
+  }
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), []);
+});
+
 test('failed immediate write remains observable by generation', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-fjs-failed-epoch-'));
   trackDirectory(dir);

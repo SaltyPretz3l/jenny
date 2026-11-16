@@ -355,8 +355,15 @@ test('a desktop queued prompt without an author is edited exactly as before', as
 test('a team host refuses chat.send and sessionRuntime.start when the actor yields no author', async (t) => {
   const h = teamRouter();
   t.after(() => h.close());
-  const { result } = await send(h, undefined);
-  assert.equal(result.error.reason, 'member_author_required', JSON.stringify(result));
+  // Slice 3-7: a team actor with no author is refused the lease itself; a chat.send sent anyway is refused too.
+  const ctx = h.context(undefined);
+  const created = await h.router.dispatch(command(h.auth, 'sessions.create', { title: 'Team' }), ctx);
+  const sessionId = created.session.session_id;
+  const lease = await h.router.dispatch(command(h.auth, 'control.acquire', { takeover: false }, { session_id: sessionId }), ctx);
+  assert.equal(lease.error.reason, 'member_author_required', JSON.stringify(lease));
+  const result = await h.router.dispatch(command(h.auth, 'chat.send', { prompt: 'hello' }, { session_id: sessionId,
+    control_generation: 1, expected_revision: 'boot_test:1' }), ctx);
+  assert.equal(result.error.reason, 'control_lease_required', JSON.stringify(result)); // no lease was granted
   assert.equal(h.calls.length, 0, 'nothing was submitted');
   const runtime = await teamRuntimeRouter(t);
   assert.equal((await runtime.start(undefined)).error.reason, 'member_author_required');

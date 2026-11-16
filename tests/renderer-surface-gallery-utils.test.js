@@ -164,7 +164,7 @@ test('palette options fall back to the 12 hardcoded ids when appearanceUtils is 
   gallery.open();
   const values = Array.from(getGroupByLabel(env.document, 'Palette').querySelector('select').options).map((o) => o.value);
   assert.deepEqual(values, [
-    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'paper',
+    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'aurora', 'paper',
     'woolly', 'lexicon', 'rocko', 'jenny-day', 'jenny-night',
   ]);
 });

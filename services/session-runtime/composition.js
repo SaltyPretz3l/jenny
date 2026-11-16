@@ -29,6 +29,7 @@ const { recoverRuntimeCancellationTrees } = require('./subtree-cancellation');
 const { RuntimeEligibilityCoordinator } = require('./eligibility');
 const { createRuntimeWaitNotices } = require('../backend/runtime-wait-notices');
 const { isPrimarySession, primaryChatEnabled } = require('../backend/primary-session');
+const { descendsFrom } = require('../session-directory-scope');
 
 function initializeSessionRuntimeComposition(service) {
   if (!Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) return null;
@@ -42,10 +43,14 @@ function initializeSessionRuntimeComposition(service) {
   let scheduler;
   let eligibilityCoordinator;
   let waitNotices;
-  const lanes = new RuntimeLaneAdmission({ limits, onChange: () => {
-    scheduler?.notifyLaneAvailability();
-    eligibilityCoordinator?.wake();
-  } });
+  // Row 136: a chat put first takes the chats it spawned with it.
+  const peekSummary = sessionId => service.sessionStore.peekSessionSummary?.(sessionId);
+  const lanes = new RuntimeLaneAdmission({ limits,
+    sameTask: (firstSessionId, sessionId) => descendsFrom(peekSummary, sessionId, firstSessionId),
+    onChange: () => {
+      scheduler?.notifyLaneAvailability();
+      eligibilityCoordinator?.wake();
+    } });
   // Row 100: cross-process work leases (tests per tree, git writes per repository).
   const workLeases = service.featureFlags?.work_leases === true
     ? createWorkLeaseAdapter({ userDataPath, log }) : null;
@@ -86,6 +91,7 @@ function initializeSessionRuntimeComposition(service) {
     // stop or message a worker chat while that chat streams or waits on an approval.
     isPriorityTurn: work => primaryChatEnabled(service.featureFlags) && work?.purpose === 'chat'
       && isPrimarySession(service.sessionStore, work.session_id),
+    memberTurns: service.options?.memberTurns === true, // set only by a team host (server/host-core.js)
     resolveRoute: work => adapterFor(work).resolveRoute(work),
     validateWork: (work, route) => adapterFor(work).validateWork(work, route),
     prepareCanonical: (work, route) => adapterFor(work).prepareCanonical(work, route),

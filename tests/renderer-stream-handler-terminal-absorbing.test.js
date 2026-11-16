@@ -350,6 +350,21 @@ test('message_updated still applies to a settled message after its stream finali
   assert.equal(message.status, 'complete');
 });
 
+// order-terminal #8: an update for a settled message the renderer never held
+// lands where the store keeps it, not below the newest turn.
+test('message_updated for a message the renderer lacks inserts it at its stored position', async (t) => {
+  const message = (id, role) => ({ id, role, content: id, status: 'complete' });
+  const stored = [message('u1', 'user'), message('a1', 'assistant'), message('x1', 'assistant'), message('u2', 'user'), message('a2', 'assistant')];
+  const harness = createHarness({ stateOverrides: {
+    messagesBySession: new Map([['session-1', stored.filter((entry) => entry.id !== 'x1').map((entry) => ({ ...entry }))]]),
+    window: { jennyShell: { sessions: { async getMessages() { return { data: stored.map((entry) => ({ ...entry })) }; } } } },
+  } });
+  t.after(() => harness.restore());
+  await harness.emit({ type: 'message_updated', sessionId: 'session-1', streamId: 'stream-old', messageId: 'x1', patch: { content: 'x1 updated' } });
+  const ids = harness.state.messagesBySession.get('session-1').map((entry) => entry.id);
+  assert.deepEqual(ids, ['u1', 'a1', 'x1', 'u2', 'a2']);
+});
+
 // Code-review pin (2026-07-10): the one-shot late-terminal allowance admits
 // COMPLETE as well as error — a late complete for a preempt-finalized stream
 // must reconcile the surviving partial bubble in place (previously it was

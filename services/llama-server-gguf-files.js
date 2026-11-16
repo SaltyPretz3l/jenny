@@ -316,5 +316,6 @@ module.exports = {
   pairProjector,
   resolveGgufPath,
   resolveProjectorPath,
+  SHARD_SUFFIX,
   splitGgufFiles,
 };

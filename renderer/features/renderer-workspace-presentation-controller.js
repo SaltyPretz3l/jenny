@@ -88,6 +88,9 @@
     // Feature routing: preview → the preview stage's open(); file_map → the
     // map controller's openFileMap + revealInMap (bounded not-in-map inside).
     const openPreview = typeof d.openPreview === 'function' ? d.openPreview : noop;
+    // Switches the app to the Workspace view so a preview asked for from the chat is seen.
+    // Absent → a preview from the chat stays a chip rather than opening out of sight.
+    const showWorkspace = typeof d.showWorkspace === 'function' ? d.showWorkspace : null;
     const openFileMap = typeof d.openFileMap === 'function' ? d.openFileMap : noop;
     const revealInMap = typeof d.revealInMap === 'function' ? d.revealInMap : noop;
     // file → the IDE's open-file-at-line seam; returns true only when the IDE
@@ -159,8 +162,9 @@
     }
 
     function isSafeToSwitch(request) {
-      // From an idle chat a file opens: its chip would sit unseen in the hidden IDE.
-      if (getActiveView() !== 'ide' && (request.view !== 'file' || getActiveView() !== 'chat' || getDom().chatInput?.value?.trim())) {
+      // From an idle chat a file or a preview opens: its chip would sit unseen in the hidden IDE.
+      const opensFromChat = request.view === 'file' || (request.view === 'preview' && showWorkspace);
+      if (getActiveView() !== 'ide' && (!opensFromChat || getActiveView() !== 'chat' || getDom().chatInput?.value?.trim())) {
         return false;
       }
       if (now() - lastEditAt < TYPING_GUARD_MS) {
@@ -256,6 +260,7 @@
       removeChip();
       const decision = userInitiated ? 'shown_by_user' : 'shown';
       if (request.view === 'preview') {
+        if (getActiveView() !== 'ide' && showWorkspace) showWorkspace();
         report(request, { decision });
         openPreview(request.path || '', {
           onRendered: (outcome) => report(request, outcome),

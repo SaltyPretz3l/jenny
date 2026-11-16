@@ -146,12 +146,13 @@
             const otherInput = question.querySelector?.('[data-user-question-other-input]');
             const freeText = question.querySelector?.('[data-user-question-free-text]');
             if (otherToggle) otherToggle.checked = saved.otherChecked === true;
-            if (otherInput && typeof saved.otherText === 'string') {
-              otherInput.value = saved.otherText;
-              otherInput.disabled = otherToggle?.checked !== true;
-            }
+            if (otherInput && typeof saved.otherText === 'string') otherInput.value = saved.otherText;
             if (freeText && typeof saved.freeText === 'string') freeText.value = saved.freeText;
           }
+          // Restored answers re-count and re-enable Submit (row 157: the card renders it disabled).
+          const questionsBlock = globalThis.rendererUserQuestionsBlock
+            || (typeof require === 'function' ? require('./renderer-user-questions-block') : null);
+          questionsBlock?.syncUserQuestionsState?.(node);
         },
       },
       {
@@ -339,8 +340,11 @@
       for (const definition of definitions) {
         if (typeof definition.capture !== 'function' || typeof definition.restore !== 'function') continue;
         const occurrences = new Map();
+        // The cap is per definition: 64 tool rows must not spend the budget a
+        // later definition (Show more clamps) needs.
+        const firstEntry = entries.length;
         for (const node of collectSelfAndDescendants(rootNode, definition.selector)) {
-          if (entries.length >= captureCap) break;
+          if (entries.length - firstEntry >= captureCap) break;
           const baseKey = definitionKey(definition, node);
           if (!baseKey) continue;
           const ordinal = occurrences.get(baseKey) || 0;

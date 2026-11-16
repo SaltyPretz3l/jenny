@@ -1,9 +1,8 @@
-// Orphan node-dot guard: renderer-turn-row-list-utils.js's buildRowWrapperMarkup
-// must only emit <span class="chat-row-node-dot"> when the row's body markup is
-// visually non-empty. See docs context: a blank assistant_text row (streamed-then-
-// interrupted segment) previously still got an SR-only phase kicker as its
-// bodyMarkup, which passed the plain `.trim()` check and left a floating dot with
-// nothing visible beside it.
+// Row wrapper guard: renderer-turn-row-list-utils.js's buildRowWrapperMarkup no
+// longer emits a per-row <span class="chat-row-node-dot"> (row 135: the sprite is
+// the only gutter mark). A blank assistant_text row (streamed-then-interrupted
+// segment) still carries an SR-only phase kicker as its bodyMarkup, so it must be
+// flagged data-row-visually-empty, and a fully empty body must drop the whole row.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -51,7 +50,7 @@ function createRenderer(overrides = {}) {
   });
 }
 
-test('node-dot guard: blank assistant_text row with only an SR-only phase kicker emits no dot', () => {
+test('node-dot guard: blank assistant_text row with only an SR-only phase kicker is flagged visually empty', () => {
   const renderer = createRenderer();
   const row = {
     row_id: 'row:blank-commentary',
@@ -67,12 +66,13 @@ test('node-dot guard: blank assistant_text row with only an SR-only phase kicker
   ], {});
 
   assert.match(html, /data-row-kind="assistant_text"/);
+  assert.match(html, /data-row-visually-empty="true"/);
   assert.doesNotMatch(html, /chat-row-node-dot/);
   // The SR-only kicker itself must still render (a11y signal preserved).
   assert.match(html, /chat-commentary-kicker/);
 });
 
-test('node-dot guard: non-empty assistant_text row keeps its dot', () => {
+test('node-dot guard: non-empty assistant_text row renders its body without a dot', () => {
   const renderer = createRenderer();
   const row = {
     row_id: 'row:visible-text',
@@ -87,11 +87,12 @@ test('node-dot guard: non-empty assistant_text row keeps its dot', () => {
   ]);
 
   assert.match(html, /data-row-kind="assistant_text"/);
-  assert.match(html, /class="chat-row-node-dot"/);
+  assert.doesNotMatch(html, /data-row-visually-empty/);
+  assert.doesNotMatch(html, /chat-row-node-dot/);
   assert.match(html, /Hello there/);
 });
 
-test('node-dot guard: system_notice rows are unaffected (still render with their existing dot behavior)', () => {
+test('node-dot guard: system_notice rows still render, without a dot', () => {
   const renderer = createRenderer();
   const row = {
     row_id: 'row:notice',
@@ -104,7 +105,7 @@ test('node-dot guard: system_notice rows are unaffected (still render with their
   const html = renderer.buildTurnRowListMarkup([row], []);
 
   assert.match(html, /data-row-kind="system_notice"/);
-  assert.match(html, /class="chat-row-node-dot"/);
+  assert.doesNotMatch(html, /chat-row-node-dot/);
   assert.match(html, /1 orphaned tool call was carried into a clean turn\./);
 });
 

@@ -10,7 +10,7 @@
 // helpers (duplicated rather than shared, since these are tiny fixtures and a
 // cross-file require would recouple the two files' line budgets).
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -19,6 +19,7 @@ const { promisify } = require('node:util');
 
 const { WorkspaceGitService, parseBlamePorcelain } = require('../services/workspace-git-service');
 const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
+const { buildCommittedRepo, createGitTemplates } = require('./helpers/git-template-repo');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -30,20 +31,12 @@ function git(cwd, args) {
   return execFileAsync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
 }
 
-async function createGitRepo(prefix = 'jenny-workspace-git-') {
-  const repoRoot = createTrackedTempDir(prefix);
-  await git(repoRoot, ['init']);
-  // Deterministic default branch name without relying on `git init -b` support.
-  await git(repoRoot, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-  await git(repoRoot, ['config', 'user.email', 'jenny@example.invalid']);
-  await git(repoRoot, ['config', 'user.name', 'Jenny Tests']);
-  await git(repoRoot, ['config', 'commit.gpgsign', 'false']);
-  // Deterministic LF round-trips regardless of the host's global autocrlf.
-  await git(repoRoot, ['config', 'core.autocrlf', 'false']);
-  await fs.writeFile(path.join(repoRoot, 'README.md'), 'line1\nline2\nline3\n', 'utf8');
-  await git(repoRoot, ['add', 'README.md']);
-  await git(repoRoot, ['commit', '-m', 'initial']);
-  return repoRoot;
+// Built once per file, copied per case (see helpers/git-template-repo.js).
+const templates = createGitTemplates();
+after(() => templates.dispose());
+
+function createGitRepo(prefix = 'jenny-workspace-git-') {
+  return templates.copy('standard', (dir) => buildCommittedRepo(dir, { 'README.md': 'line1\nline2\nline3\n' }), prefix);
 }
 
 function createService(root, { flag = true, exec, rootContextProvider = null } = {}) {
@@ -501,5 +494,60 @@ describe('WorkspaceGitService — read methods (real repo)', () => {
       () => svc.blameRange({ path: 'README.md', startLine: 5, endLine: 2 }),
       /Invalid line range/
     );
+  });
+});
+
+// 2026-11-11 session review (F6): each read took the whole-root lease and spawned
+// git even in a folder that is not a repository, so an IDE refresh could refuse a
+// model write under that root. A known miss is answered without either.
+describe('WorkspaceGitService — a known non-repository root skips the lease', () => {
+  function countingService(root, detect) {
+    const calls = { exec: 0, leases: 0 };
+    const svc = createService(root, { exec: async (_cwd, args) => {
+      calls.exec += 1;
+      return args.includes('--is-inside-work-tree') ? detect() : { success: true, stdout: '' };
+    } });
+    const resources = svc._resources;
+    svc._resources = { ...resources, run: (...args) => { calls.leases += 1; return resources.run(...args); } };
+    return { svc, calls };
+  }
+  const notARepo = () => ({ success: false, stdout: '', message: 'fatal: not a git repository' });
+
+  test('the second read of a non-repository takes no lease and spawns nothing', async () => {
+    const root = createTrackedTempDir('jenny-workspace-git-plain-');
+    const { svc, calls } = countingService(root, notARepo);
+    const first = await svc.getStatus();
+    assert.deepEqual({ ...calls }, { exec: 1, leases: 1 });
+    const second = await svc.getBranches();
+    assert.deepEqual({ ...calls }, { exec: 1, leases: 1 });
+    assert.deepEqual(first, { ok: false, available: true, isRepo: false, op: first.op });
+    assert.deepEqual(second, { ok: false, available: true, isRepo: false, op: second.op });
+  });
+
+  test('a .git entry appearing at the root is detected again', async () => {
+    const root = createTrackedTempDir('jenny-workspace-git-plain-');
+    const { svc, calls } = countingService(root, notARepo);
+    await svc.getStatus();
+    await fs.mkdir(path.join(root, '.git'));
+    await svc.getStatus();
+    assert.deepEqual({ ...calls }, { exec: 2, leases: 2 });
+  });
+
+  test('a root inside another repository keeps its not-toplevel answer', async () => {
+    const root = createTrackedTempDir('jenny-workspace-git-nested-');
+    const { svc, calls } = countingService(root, () => ({ success: true, stdout: `true\n${path.dirname(root)}\n` }));
+    const first = await svc.getStatus();
+    const second = await svc.getStatus();
+    assert.equal(first.reason, 'not_repo_toplevel');
+    assert.deepEqual(second, first);
+    assert.deepEqual({ ...calls }, { exec: 1, leases: 1 });
+  });
+
+  test('a failed probe is not remembered', async () => {
+    const root = createTrackedTempDir('jenny-workspace-git-plain-');
+    const { svc, calls } = countingService(root, () => ({ success: false, reason: 'timed_out', stdout: '', message: 'git timed out' }));
+    await svc.getStatus();
+    await svc.getStatus();
+    assert.deepEqual({ ...calls }, { exec: 2, leases: 2 });
   });
 });

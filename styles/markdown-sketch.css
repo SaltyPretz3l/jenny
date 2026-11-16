@@ -1,0 +1,275 @@
+/* Sketch blocks in rendered markdown (docs/plans/PROJECT_BOARD_2026-11-13.md sections 5.2 and 16.4).
+   Loaded by renderer/features/renderer-sketch-frame-host.js with the first sketch block, never at
+   startup. A sketch block is the ordinary code block the markdown module made, with a frame put
+   above its code; these rules take the code block's surface away once there is a drawing. */
+
+.markdown-code-block.markdown-sketch-block {
+  position: relative;
+}
+
+/* Drawn, or refused: the block is no longer one code surface. */
+.markdown-code-block.markdown-sketch-block:is([data-sketch-rendered="true"], [data-sketch-rendered="failed"]) {
+  overflow: visible;
+  border-radius: 0;
+  background: none;
+}
+
+/* Drawn: the drawing stands in for the code. The source stays in the page for copy and search tools. */
+.markdown-sketch-block[data-sketch-rendered="true"] > :is(.markdown-code-header, pre, .markdown-code-expand-overlay) {
+  display: none;
+}
+
+/* Refused: the note and the problems come first, then the source as the code block it was. */
+.markdown-sketch-block[data-sketch-rendered="failed"] > .markdown-code-header {
+  border-start-start-radius: var(--markdown-code-block-radius);
+  border-start-end-radius: var(--markdown-code-block-radius);
+  background: var(--markdown-code-block-bg);
+}
+
+.markdown-sketch-block[data-sketch-rendered="failed"] > pre {
+  border-end-start-radius: var(--markdown-code-block-radius);
+  border-end-end-radius: var(--markdown-code-block-radius);
+  background: var(--markdown-code-block-bg);
+}
+
+/* The drawing sits on the chat background: no surface, no border (D14). */
+.markdown-sketch-paper {
+  overflow: hidden;
+}
+
+.markdown-sketch-paper > iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  /* The drawing core's root says `color-scheme: light`. An element whose scheme differs from its frame's gets an
+     opaque Canvas backdrop, which showed white outside the paper's rounded corners on dark palettes. */
+  color-scheme: light;
+}
+
+/* Still laying out: the frame keeps its real size, so the engine does not throttle it, but it lies
+   over the code without moving anything and cannot be seen or clicked. */
+.markdown-sketch-block[data-sketch-rendered="pending"] > .markdown-sketch-paper {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.markdown-sketch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 28px;
+  margin-block-start: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* The actions on the right wait for the pointer or the keyboard; the problems note never does (16.4). */
+.markdown-sketch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.markdown-sketch-block:hover .markdown-sketch-actions,
+.markdown-sketch-actions:focus-within,
+.markdown-sketch-actions:has([aria-expanded="true"], [aria-pressed="true"]) {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-sketch-actions {
+    transition: none;
+  }
+}
+
+/* The problems chip: an icon and the count, one line. Its tooltip lists the problems; a click asks for a redraw. */
+.btn.markdown-sketch-problems-chip {
+  --btn-color: color-mix(in srgb, var(--state-warning) 60%, var(--text-primary));
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Only lines left out: the drawing worked, so the chip is quieter. */
+.btn.markdown-sketch-problems-chip[data-tone="minor"] {
+  --btn-color: var(--text-secondary);
+}
+
+.markdown-sketch-problems-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* The row is one line at any dock width: in a narrow block the actions keep their icons and their tooltips, and
+   the words stay readable to assistive tech. Copy source shows its word while it says Copied or Copy failed. */
+.markdown-sketch-block[data-sketch-rendered="true"] {
+  container-type: inline-size;
+}
+
+.markdown-sketch-actions,
+.markdown-sketch-actions .btn {
+  white-space: nowrap;
+}
+
+/* 600: the chip and five labelled actions need about 590 px in English; wider than that they keep their words. */
+@container (max-width: 600px) {
+  .markdown-sketch-actions {
+    flex-wrap: nowrap;
+  }
+
+  .markdown-sketch-actions .btn:not([data-copy-status]) > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+.markdown-sketch-problems {
+  margin-block-start: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.markdown-sketch-problem + .markdown-sketch-problem {
+  margin-block-start: var(--space-1);
+}
+
+.markdown-sketch-fix-row {
+  margin-block-start: var(--space-3);
+}
+
+.markdown-sketch-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-end: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.markdown-sketch-block[data-sketch-rendered="failed"] > .markdown-sketch-problems {
+  margin-block: 0 var(--space-4);
+}
+
+/* Slice S6: Copy source and Export under a drawing. The Export menu is the inventory context menu, opened
+   upward by the module (placement above), so only the icon needs sizing here. */
+.markdown-sketch-share-ico {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* Mark up and the picture option (row 149, slice S8). The checkbox is the inventory's; with no
+   skin of its own in the app, the native box shows and the empty drawn box is left out. */
+.markdown-sketch-markup-icon {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.markdown-sketch-picture {
+  display: inline-flex;
+  align-items: center;
+}
+
+.markdown-sketch-picture .inv-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.markdown-sketch-picture .inv-checkbox__box {
+  display: none;
+}
+
+.markdown-sketch-picture .inv-checkbox__input {
+  margin: 0;
+  accent-color: var(--accent-cyan);
+}
+
+.markdown-sketch-picture .inv-checkbox__input:disabled,
+.markdown-sketch-picture .inv-checkbox__input:disabled + .inv-checkbox__box + .inv-checkbox__label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ── S5: "Open large" and the full-window viewer (plan 5.6, mockup state=window) ──
+   The viewer is the inventory help overlay under its own host id (renderer-sketch-open.js), widened to the window.
+   Its body scrolls when the drawing is taller than the window; the drawing takes the whole width. */
+
+.markdown-sketch-large-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+#sketchViewerOverlay .inv-help-overlay-dialog {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
+#sketchViewerOverlay .inv-help-overlay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+#sketchViewerOverlay .markdown-sketch-viewer-block {
+  margin: 0;
+}
+
+/* In the viewer the actions are always shown: there is nothing else to hover. */
+#sketchViewerOverlay .markdown-sketch-actions {
+  opacity: 1;
+}
+
+/* ── Board blocks (row 150, slice C3): a ```board fence in a reply to a turn sent from a board is one compact row
+   (renderer-board-block-row.js). The code block stays in the page, hidden, until Show. ── */
+
+.markdown-board-block[hidden] {
+  display: none;
+}
+
+.board-block-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tl-row-h, 28px);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui, var(--font-size-footnote));
+}
+
+.board-block-row__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-block-row__btn {
+  flex: none;
+}
+
+/* Review needs the Board page's Changes view: it shows only in the chat docked beside the board. */
+.board-block-row__btn[data-board-row-act="review"] {
+  display: none;
+}
+
+[data-board-chat-host] .board-block-row__btn[data-board-row-act="review"] {
+  display: inline-flex;
+}

@@ -241,6 +241,7 @@
       clearChatSendLifecycle,
       isCurrentSession,
       isVisibleChatSession,
+      isIndicatorSession: isPaneZeroSession,
       markHiddenRenderableEvent: markHiddenRenderableRender, dismissApprovalToast,
       publishCompleteImpulse,
     });
@@ -426,6 +427,7 @@
       publishToolStartImpulse,
       applyToolLiveOutputChunk: (payload) => toolLiveTail.appendChunk(payload),
       isToolLiveOutputSession: isPaneZeroSession,
+      isVisibleChatSession,
       settleToolLiveOutput: (identity) => {
         toolLiveTail.settle(identity);
         imageRenderProgress.settle(identity);
@@ -482,6 +484,7 @@
       queueSessionRender,
       isCurrentSession,
       isVisibleChatSession,
+      isComposerSession: isPaneZeroSession,
       normalizeId,
       showToastMessage,
       isRowModelEnabled,
@@ -494,13 +497,13 @@
       captureStreamGeneration,
       isStreamGenerationCurrent,
     });
-    const handleQuestionBatch = terminalHandlers.handleQuestionBatch || noopStreamHandler;
+    const rawHandleQuestionBatch = terminalHandlers.handleQuestionBatch || noopStreamHandler;
     const handleMessageUpdated = terminalHandlers.handleMessageUpdated || noopStreamHandler;
     const rawHandleComplete = terminalHandlers.handleComplete || noopStreamHandler;
     const rawHandleError = terminalHandlers.handleError || noopStreamHandler;
     // Terminal settle wrappers extracted to renderer-stream-handler-terminal-settle.js
     // (file-size ceiling); behavior is unchanged.
-    const { handleComplete, handleError } = createTerminalSettleHandlers({
+    const { handleComplete, handleError, handleQuestionBatch } = createTerminalSettleHandlers({
       getChatTimeline: () => chatTimeline,
       state,
       normalizeId,
@@ -514,6 +517,16 @@
       dropReasoningStream: (streamId) => reasoningStreamMerger.drop(streamId),
       rawHandleComplete,
       rawHandleError,
+      rawHandleQuestionBatch,
+      // The same reconcile complete runs, against the local list (no hydration).
+      settleQuestionBatchRowModel: (payload) => {
+        const sessionId = normalizeId(payload?.sessionId);
+        if (!isRowModelEnabled(sessionId)) return;
+        const turnId = normalizeId(payload?.turnId || payload?.turn_id || payload?.streamId);
+        const reconciliation = reconcileLiveTurnWithHydratedRows(
+          sessionId, turnId, getSessionMessages(sessionId) || [], null, payload?.canonicalTurnEvents, payload?.streamId);
+        if (reconciliation && !isVisibleChatSession(sessionId)) clearSessionLiveTurnState(sessionId);
+      },
       dismissToast,
       chatStreamToastSource: TOAST_SOURCE.chatStream,
       onTerminal: (event) => {

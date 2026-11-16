@@ -13,7 +13,6 @@
   var emptyNote = root.inventoryEmptyNote;
   var collapsible = root.inventoryCollapsible;
   var codeBlock = root.inventoryCodeBlock;
-  var faviconBadge = root.inventoryFaviconBadge;
   var progressBar = root.inventoryProgressBar;
   var statusRow = root.inventoryStatusRow;
   var numberInput = root.inventoryNumberInput;
@@ -60,7 +59,6 @@
     emptyNote: emptyNote,
     collapsible: collapsible,
     codeBlock: codeBlock,
-    faviconBadge: faviconBadge,
     progressBar: progressBar,
     statusRow: statusRow,
     numberInput: numberInput,
@@ -84,9 +82,6 @@
     root.__inventoryHandlersInstalled = true;
     if (inventory.codeBlock && typeof inventory.codeBlock.initCopyHandlers === 'function') {
       inventory.codeBlock.initCopyHandlers(document);
-    }
-    if (inventory.faviconBadge && typeof inventory.faviconBadge.initFaviconHandlers === 'function') {
-      inventory.faviconBadge.initFaviconHandlers(document);
     }
     if (toggleSwitchModule && typeof toggleSwitchModule.initToggleHandlers === 'function') {
       toggleSwitchModule.initToggleHandlers(document);

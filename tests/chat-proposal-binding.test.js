@@ -3,6 +3,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -30,8 +31,34 @@ function git(cwd, args, input) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', input, windowsHide: true }).trim();
 }
 
+// Building a repo costs about ten git spawns. Each variant is built once, lazily,
+// and every case gets its own byte copy under its own tracked temp directory, so
+// nothing a case writes (files, index, refs, config) is visible to another case.
+const repoTemplates = new Map();
+
+test.after(() => {
+  for (const dir of repoTemplates.values()) fs.rmSync(dir, { recursive: true, force: true });
+  repoTemplates.clear();
+});
+
 function createRepo({ commit = true } = {}) {
   const root = createTrackedTempDir('jenny-proposal-binding-');
+  if (!repoTemplates.has(commit)) {
+    const template = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-proposal-template-'));
+    // Registered only once it is complete: a half-built template must not reach later cases.
+    try {
+      buildRepo(template, commit);
+    } catch (error) {
+      fs.rmSync(template, { recursive: true, force: true });
+      throw error;
+    }
+    repoTemplates.set(commit, template);
+  }
+  fs.cpSync(repoTemplates.get(commit), root, { recursive: true, preserveTimestamps: true });
+  return root;
+}
+
+function buildRepo(root, commit) {
   git(root, ['init']);
   git(root, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
   for (const [key, value] of [['user.email', 'jenny@example.invalid'], ['user.name', 'Jenny Tests'],
@@ -43,7 +70,6 @@ function createRepo({ commit = true } = {}) {
     git(root, ['add', '.']);
     git(root, ['commit', '-m', 'initial']);
   }
-  return root;
 }
 
 // Fake backend: real WorkspaceGitService over a real temp repo, stubbed authority/session owners.

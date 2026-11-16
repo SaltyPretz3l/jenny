@@ -65,6 +65,50 @@ function makeService({
   };
 }
 
+function anthropicEntries(models) {
+  const instance = {
+    id: 'claude-key', presetId: 'anthropic-api', label: 'Anthropic API',
+    models: models.map((id) => ({ id, enabled: true })),
+  };
+  const entries = buildApiProviderModelEntries(makeService({ providers: apiProviders({ instances: [instance] }) }));
+  return Object.fromEntries(entries.map((entry) => [entry.apiProviderModelId, entry.capabilities]));
+}
+
+// Seen live: the composer hides its effort control for a model that declares no levels.
+test('an Anthropic model declares the effort levels its request can carry', () => {
+  const byModel = anthropicEntries([
+    'claude-haiku-5-5', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-sonnet-latest',
+  ]);
+
+  assert.deepEqual(byModel['claude-haiku-5-5'].reasoning_efforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(byModel['claude-haiku-5-5'].default_reasoning_effort, 'default');
+  assert.equal(byModel['claude-haiku-5-5'].reasoning_always_on, true);
+  assert.deepEqual(byModel['claude-opus-4-7'].reasoning_efforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(byModel['claude-opus-4-6'].reasoning_efforts, ['none', 'low', 'medium', 'high', 'max'],
+    'Extra high arrived with 4.7');
+  for (const model of ['claude-sonnet-4-5-20250929', 'claude-sonnet-latest']) {
+    assert.equal(byModel[model].reasoning_efforts, undefined, `${model}: the request carries no effort`);
+    assert.equal(byModel[model].reasoning_always_on, undefined);
+  }
+});
+
+test('effort levels are declared only for the Anthropic transport and a reasoning model', () => {
+  // No catalog row: nothing says this model reasons.
+  const unknown = anthropicEntries(['claude-haiku-9-9'])['claude-haiku-9-9'];
+  assert.equal(unknown.reasoning, false);
+  assert.equal(unknown.reasoning_efforts, undefined);
+
+  const [elsewhere] = buildApiProviderModelEntries(makeService({
+    providers: apiProviders({ instances: [{
+      id: 'openrouter', presetId: 'openrouter', label: 'OpenRouter',
+      models: [{ id: 'anthropic/claude-haiku-5-5', enabled: true }],
+      discovery: { rows: [{ id: 'anthropic/claude-haiku-5-5', contextLength: 1000000, reasoning: true }] },
+    }] }),
+  }));
+  assert.equal(elsewhere.capabilities.reasoning, true);
+  assert.equal(elsewhere.capabilities.reasoning_efforts, undefined);
+});
+
 function refusalCode(service, modelId) {
   try {
     assertApiProviderUsable(service, modelId);

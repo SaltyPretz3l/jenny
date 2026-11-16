@@ -17,7 +17,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { isSequentialTestPath } = require('./run-node-tests-safe.js');
+const { isSequentialTestPath, expandDirectoryArg } = require('./run-node-tests-safe.js');
+const { DEFAULT_CUT_MS, SLOW_LANE_LABEL, computeSlowLane, writeSlowLane } = require('./run-node-tests-safe-slow-lane');
 const {
   HISTORY_PATH,
   readHistoryFile,
@@ -120,7 +121,18 @@ function parseArgs(argv) {
   let historyPath = null;
   let top = DEFAULT_TOP;
   let runCount = DEFAULT_RUNS;
+  let writeSlowLaneRequested = false;
+  let cutMs = null;
   for (const arg of argv) {
+    if (arg === '--write-slow-lane') {
+      writeSlowLaneRequested = true;
+      continue;
+    }
+    if (arg.startsWith('--cut-ms=')) {
+      const candidate = Number(arg.slice('--cut-ms='.length));
+      if (Number.isFinite(candidate) && candidate > 0) cutMs = Math.floor(candidate);
+      continue;
+    }
     if (arg.startsWith('--junit=')) {
       const value = arg.slice('--junit='.length).trim();
       if (value) junitPath = value;
@@ -145,7 +157,7 @@ function parseArgs(argv) {
       if (Number.isFinite(candidate) && candidate > 0) runCount = Math.floor(candidate);
     }
   }
-  return { junitPath, historyRequested, historyPath, top, runCount };
+  return { junitPath, historyRequested, historyPath, top, runCount, writeSlowLane: writeSlowLaneRequested, cutMs };
 }
 
 function printUsage() {
@@ -164,8 +176,28 @@ function printUsage() {
       '  --runs=<N>          Read the newest N history runs (default 10).',
       '  --junit=<path>      Read one JUnit XML report instead.',
       '  --top=<N>           Show the N slowest files (default 20).',
+      `  --write-slow-lane   Write ${SLOW_LANE_LABEL} from the passing full runs in the history.`,
+      `  --cut-ms=<N>        With --write-slow-lane: a median at or over N ms is slow (default ${DEFAULT_CUT_MS}).`,
     ].join('\n')
   );
+}
+
+// Writes the fast lane's slow list (tests/.slow-lane.json). Refuses, without
+// touching the file, when the history holds too few passing full runs.
+function writeSlowLaneFromHistory(history, cutMs, cwd = process.cwd()) {
+  const fullRunFileCount = expandDirectoryArg(path.join(cwd, 'tests'), { includeLoad: true }).length;
+  const result = computeSlowLane(history, { cwd, cutMs, fullRunFileCount });
+  if (!result.ok) {
+    console.error(`[report-slow-tests] slow list not written: ${result.reason}`);
+    return 1;
+  }
+  writeSlowLane(cwd, result);
+  console.log(
+    `[report-slow-tests] wrote ${SLOW_LANE_LABEL}: ${result.files.length} file(s) at or over ` +
+      `${(result.cutMs / 1000).toFixed(1)}s (median of ${result.runsUsed} passing full runs); ` +
+      `the fast lane keeps ${result.considered - result.files.length} of ${result.considered} stable-lane files`
+  );
+  return 0;
 }
 
 function main() {
@@ -177,6 +209,11 @@ function main() {
   }
   const defaultHistoryPath = resolveHistoryPath(process.cwd());
   const useHistory = !parsed.junitPath && (parsed.historyRequested || fs.existsSync(defaultHistoryPath));
+  if (parsed.writeSlowLane && !useHistory) {
+    console.error('[report-slow-tests] --write-slow-lane reads the run history: there is none yet, or --junit was given');
+    process.exitCode = 1;
+    return;
+  }
   if (!parsed.junitPath && !useHistory) {
     printUsage();
     process.exitCode = 0;
@@ -188,6 +225,10 @@ function main() {
     if (!fs.existsSync(resolved)) {
       console.error(`[report-slow-tests] failed to read history at ${requestedPath}: file does not exist`);
       process.exitCode = 1;
+      return;
+    }
+    if (parsed.writeSlowLane) {
+      process.exitCode = writeSlowLaneFromHistory(readHistoryFile(resolved), parsed.cutMs);
       return;
     }
     const records = recordsFromHistory(readHistoryFile(resolved), parsed.runCount);
@@ -230,6 +271,7 @@ module.exports = {
   annotateLane,
   formatTopSlowest,
   recordsFromHistory,
+  writeSlowLaneFromHistory,
   parseArgs,
   unescapeXml,
   main,

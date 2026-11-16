@@ -59,6 +59,9 @@
   const BUFFER_CAP = 4096;
   const DEFAULT_TIMEOUT_MS = 10000;
 
+  // Outside-Workspace documents (row 137) have no Workspace path to debug.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
+
   function messageOf(error) {
     return String((error && error.message) || error || '');
   }
@@ -201,6 +204,10 @@
       }
       if (isDiffTabId(path)) {
         toast(jt('ide.debug.openFileToDebug', 'Open the file itself (not a diff or preview tab) to debug it.'));
+        return;
+      }
+      if (isOutsideKey(path)) {
+        toast(jt('ide.outside.notRunnable', 'Files outside the Workspace can’t be run or debugged from Jenny.'));
         return;
       }
       if (!isJavaScriptTarget(path)) {

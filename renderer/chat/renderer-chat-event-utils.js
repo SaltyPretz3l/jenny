@@ -92,7 +92,6 @@
       chatThreadScroll,
       composerWrap,
       chatTimeline,
-      toastViewport,
       composerModelSelect,
       composerEffortSelect,
       composerRunModeSlot,
@@ -143,10 +142,7 @@
       handleFollowUpMessage,
       setReasoningPhaseExpandedPreference,
       syncThinkingBlockNode,
-      dismissToast,
-      showShellErrorToast,
       showToastMessage,
-      toErrorMessage,
       beginActivity,
       resolveActivity,
       failActivity,
@@ -173,7 +169,7 @@
       clearComposerStatusNotice = function noopClearComposerStatusNotice() {},
     } = deps.callbacks;
 
-    const { thinkingController, toastActionHandlers, timelineVirtualizer, chatScrollCoordinator, messageEditController, messageBranchController, selectionController, bulkActionsController, unreadOrientationController } = deps.controllers;
+    const { thinkingController, timelineVirtualizer, chatScrollCoordinator, messageEditController, messageBranchController, selectionController, bulkActionsController, unreadOrientationController } = deps.controllers;
 
     // Pane 0's shell push subscriptions (logs, backend status, lifecycle,
     // auth) and the signed-out reset: renderer-chat-shell-subscriptions.js.
@@ -295,15 +291,12 @@
     // are owned by renderer-chat-event-settings-bindings.js.
     const settingsBindings = (settingsBindingsFactory && typeof settingsBindingsFactory.createSettingsEventBindings === 'function')
       ? settingsBindingsFactory.createSettingsEventBindings({
-          toastViewport,
           composerModelSelect,
           composerEffortSelect,
           state,
           TOAST_SOURCE,
           ACTIVITY_SCOPE,
-          dismissToast,
-          showShellErrorToast, showToastMessage,
-          toErrorMessage,
+          showToastMessage,
           beginActivity,
           resolveActivity,
           failActivity,
@@ -318,7 +311,6 @@
           showComposerActionError,
           setComposerStatusNotice,
           clearComposerStatusNotice,
-          toastActionHandlers,
         })
       : null;
     if (!settingsBindings) {
@@ -423,7 +415,7 @@
       registerListener(chatInput, 'keydown', (event) => {
         if (globalThis.rendererPlanModeShortcut?.handleRunModeCycleShortcut?.(event, document)) return;
         if (globalThis.rendererPlanModeShortcut?.handlePlanModeShortcut?.(event, document)) return;
-        // Up in an empty composer takes the queued sends back as a draft (Claude Code parity).
+        // Up in an empty composer takes the queued sends back as a draft.
         const queueView = globalThis.rendererRuntimeQueueView;
         if (queueView?.handleTakeBackKeydown?.(event, { input: chatInput,
           rows: state.runtimeSendController?.listPending?.(sessionContext.getSessionId()) || [],

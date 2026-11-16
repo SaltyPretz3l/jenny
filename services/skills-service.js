@@ -11,6 +11,7 @@ const {
 } = require('./shell-config-service');
 const { isWorkspaceRootChangeReason } = require('./workspace-root-change-reasons');
 const { authorityProjectRoot, createScopeFolder } = require('./skills-project-scope');
+const { cloneSkillScope, cloneSkillsState } = require('./skills-state-clone');
 
 const SKILL_FILENAME = 'SKILL.md';
 const SCOPE_BUNDLED = 'bundled';
@@ -328,74 +329,6 @@ function listSkillFiles(rootPath, options = {}) {
   });
 }
 
-function cloneSkillEntry(entry = {}) {
-  return {
-    id: String(entry.id || ''),
-    enabled: entry.enabled !== false,
-    scope: String(entry.scope || ''),
-    name: String(entry.name || ''),
-    description: String(entry.description || ''),
-    command: String(entry.command || ''),
-    whenToUse: String(entry.whenToUse || ''),
-    allowedTools: Array.isArray(entry.allowedTools) ? [...entry.allowedTools] : [],
-    always: entry.always === true,
-    body: String(entry.body || ''),
-    path: String(entry.path || ''),
-    realPath: String(entry.realPath || ''),
-    relPath: String(entry.relPath || ''),
-  };
-}
-
-function cloneSkillWarning(warning = {}) {
-  return {
-    scope: String(warning.scope || ''),
-    path: String(warning.path || ''),
-    code: String(warning.code || ''),
-    message: String(warning.message || ''),
-  };
-}
-
-function cloneSkillScope(scope = {}) {
-  return {
-    scope: String(scope.scope || ''),
-    label: String(scope.label || ''),
-    path: String(scope.path || ''),
-    enabled: scope.enabled === true,
-    status: String(scope.status || ''),
-    message: String(scope.message || ''),
-    blocked: scope.blocked === true,
-    workspaceRoot: String(scope.workspaceRoot || ''),
-    entries: Array.isArray(scope.entries) ? scope.entries.map((entry) => cloneSkillEntry(entry)) : [],
-    warnings: Array.isArray(scope.warnings)
-      ? scope.warnings.map((warning) => cloneSkillWarning(warning))
-      : [],
-  };
-}
-
-function cloneSkillsState(state = {}) {
-  return {
-    featureEnabled: state.featureEnabled === true,
-    settings: {
-      ...(state.settings && typeof state.settings === 'object' && !Array.isArray(state.settings)
-        ? state.settings
-        : {}),
-      disabledSkillIds: Array.isArray(state.settings?.disabledSkillIds)
-        ? [...state.settings.disabledSkillIds]
-        : [],
-    },
-    scopes: Array.isArray(state.scopes) ? state.scopes.map((scope) => cloneSkillScope(scope)) : [],
-    entries: Array.isArray(state.entries) ? state.entries.map((entry) => cloneSkillEntry(entry)) : [],
-    warnings: Array.isArray(state.warnings)
-      ? state.warnings.map((warning) => cloneSkillWarning(warning))
-      : [],
-    counts: {
-      total: Number.isFinite(Number(state.counts?.total)) ? Number(state.counts.total) : 0,
-      always: Number.isFinite(Number(state.counts?.always)) ? Number(state.counts.always) : 0,
-      warnings: Number.isFinite(Number(state.counts?.warnings)) ? Number(state.counts.warnings) : 0,
-    },
-  };
-}
-
 class SkillsService extends EventEmitter {
   constructor({
     configService,
@@ -427,6 +360,7 @@ class SkillsService extends EventEmitter {
       typeof buildEntryFromFileImpl === 'function' ? buildEntryFromFileImpl : buildEntryFromFile;
     this.realpathImpl = typeof realpathImpl === 'function' ? realpathImpl : ((targetPath) => targetPath);
     this._watchTimer = null;
+    this._windowVisible = true;
     this._watchScanInFlight = false;
     this._lastWatchSignature = '';
     this._lastScopeScan = null;
@@ -450,6 +384,21 @@ class SkillsService extends EventEmitter {
       this.configService.removeListener('changed', this._handleConfigChanged);
     }
     this._stopWatching();
+  }
+
+  // The poll only pushes 'changed' to the Skills UI; getState() rescans on
+  // demand. So a hidden or minimised window stops it, and showing the window
+  // runs one scan at once so the UI catches up.
+  setWindowVisible(visible) {
+    const nextVisible = visible !== false;
+    if (nextVisible === this._windowVisible) return;
+    this._windowVisible = nextVisible;
+    if (!nextVisible) {
+      this._stopWatching();
+      return;
+    }
+    this._startWatching();
+    if (this._watchTimer) this._pollForChanges();
   }
 
   _log(level, event, details = {}) {
@@ -524,7 +473,7 @@ class SkillsService extends EventEmitter {
   }
 
   _startWatching() {
-    if (!this.featureEnabled || this.watchIntervalMs <= 0 || this._watchTimer) {
+    if (!this.featureEnabled || !this._windowVisible || this.watchIntervalMs <= 0 || this._watchTimer) {
       return;
     }
     this._watchTimer = setInterval(this._pollForChanges, this.watchIntervalMs);

@@ -68,7 +68,8 @@
 
     function noteOpened(path) {
       const normalized = String(path || '');
-      if (!normalized.trim()) {
+      // An outside-Workspace document (row 137) never becomes a "recent file" of this Workspace.
+      if (!normalized.trim() || normalized.startsWith('outside://')) {
         return;
       }
       const existing = recent.indexOf(normalized);

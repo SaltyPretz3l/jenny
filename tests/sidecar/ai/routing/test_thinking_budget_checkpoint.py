@@ -18,6 +18,7 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.provider_tool_limits import MAX_TOOL_CALL_ARGUMENT_BYTES
 from sidecar.ai.routing.router import ChatRouter, ToolExecutionOutcome
 from sidecar.ai.routing.thinking_checkpoint import (
+    CHECKPOINT_CONTINUATION_BUDGET_SCALE,
     build_checkpoint_messages,
     checkpoint_stalled,
 )
@@ -717,6 +718,8 @@ def test_phase_summary_set_and_consumed_once(monkeypatch: pytest.MonkeyPatch) ->
     expected = "Continuing after thinking-budget checkpoint 1"
     assert decision.response_text == "Recovered."
     assert runtime.next_reasoning_phase_summary == expected
+    # Session review F1: the continuation leg runs on a reduced thinking budget.
+    assert runtime.next_thinking_budget_scale == CHECKPOINT_CONTINUATION_BUDGET_SCALE
 
     events: list[object] = []
     runtime.emit = events.append
@@ -752,6 +755,7 @@ def test_phase_summary_set_and_consumed_once(monkeypatch: pytest.MonkeyPatch) ->
     ]
     assert summaries == [expected, "Reasoning through the turn"]
     assert runtime.next_reasoning_phase_summary is None
+    assert runtime.next_thinking_budget_scale is None
 
 def test_length_truncated_tool_call_result_reaches_the_continuation(
     monkeypatch: pytest.MonkeyPatch,

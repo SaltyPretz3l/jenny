@@ -30,6 +30,8 @@
   const MAX_AUTHOR_CHARS = 40;
   const MAX_CACHED_PATHS = 16;
   const DECORATION_CLASS = 'ide-inline-blame';
+  // Outside-Workspace documents (row 137) are not in any repo: no blame ask.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
 
   function clip(text, max) {
     const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -186,6 +188,7 @@
       const norm = String(path || '');
       const lineNumber = Math.floor(Number(line));
       if (!norm || !Number.isInteger(lineNumber) || lineNumber < 1) return;
+      if (isOutsideKey(norm)) { clear(); return; }
       if (painted && (painted.path !== norm || painted.line !== lineNumber)) clear();
       abortOthers(norm);
       last = { path: norm, line: lineNumber };

@@ -10,6 +10,7 @@
 // hold does not block team.chat.* operations.
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const test = require('node:test');
 
 const { createConnectionManager } = require('../services/team/connection-manager');
@@ -17,23 +18,10 @@ const { createDeviceKeyStore } = require('../services/team/device-key-store');
 const { createEventFeed } = require('../services/team/event-feed');
 const { loadClientFile, saveClientFile } = require('../services/team/client-file');
 const { createTeamClientHost, joinAs, pause, waitUntil } = require('./helpers/team-client-host');
+const chatHost = require('./helpers/team-chat-fake-host');
+const { countingTimers } = require('./helpers/team-dial-helpers');
 
 const MARKER = 'payload-marker-never-logged';
-
-function countingTimers() {
-  const live = new Set();
-  const delays = [];
-  return {
-    live, delays,
-    setTimeout(fn, ms) {
-      delays.push(ms);
-      const handle = setTimeout(() => { live.delete(handle); fn(); }, ms);
-      live.add(handle);
-      return handle;
-    },
-    clearTimeout(handle) { live.delete(handle); clearTimeout(handle); },
-  };
-}
 
 // An admitted member (or the first owner with `owner: false`) whose own connection manager is online,
 // with a recorder subscribed before the start so the first frame is seen too.
@@ -419,4 +407,60 @@ test('a frame nested deeper than the bound is refused without a throw and clears
   assert.equal(huge.ok, false);
   assert.equal(feed.lastEventId(), null, 'the position is cleared, never moved past the refused frame');
   assert.deepEqual(got.map((event) => event.cursor), [1, 3]);
+});
+
+// Slice 2a-4b: the chat client's listener runs in the socket's data handler, so it only queues.
+test('chat events are queued by the listener: no request, push or file write before the deferred drain', async (t) => {
+  const host = await chatHost.createChatFakeHost(t);
+  const userData = chatHost.tempDir(t, 'jenny-team-chat-events-');
+  const record = chatHost.writeMembership(userData);
+  const defer = chatHost.createManualDefer();
+  const { chats, manager, timers, pushes } = chatHost.startChats(t, host, { userData, teamId: record.team_id, defer });
+  assert.equal((await chats.handle('chatOverview', { team_id: record.team_id })).ok, true);
+  assert.equal((await chats.handle('chatHistory', { team_id: record.team_id, channel_id: 'chan_team' })).ok, true);
+  defer.run();
+  await chats.idle(record.team_id);
+  const writes = [];
+  const originalWrite = fs.writeFileSync;
+  const originalOpen = fs.openSync;
+  fs.writeFileSync = (...args) => { writes.push(args[0]); return originalWrite.apply(fs, args); };
+  fs.openSync = (...args) => { writes.push(args[0]); return originalOpen.apply(fs, args); };
+  t.after(() => { fs.writeFileSync = originalWrite; fs.openSync = originalOpen; });
+  const calls = manager.calls.length;
+  const pushed = pushes.length;
+  const event = { event_type: 'team_chat_message', cursor: host.nextCursor(), boot_epoch: host.bootEpoch(), api_version: 1,
+    channel_id: 'chan_team', channel_rev: 99, message: { id: 'msg_01ARZ3NDEKTSV4RRFFQ69G5FAV' } };
+  writes.length = 0;
+  manager.deliver(event);
+  manager.deliver({ event_type: 'resync_required', reason: 'replay_unavailable', cursor: host.nextCursor(),
+    boot_epoch: host.bootEpoch(), api_version: 1 });
+  assert.equal(manager.calls.length, calls, 'no network call from the listener');
+  assert.equal(pushes.length, pushed, 'no push from the listener');
+  assert.deepEqual(writes, [], 'no file opened or written from the listener');
+  assert.ok(defer.pending() >= 1, 'the work is queued');
+  defer.run();
+  await chatHost.settleChats(chats, record.team_id, timers);
+  assert.equal(manager.calls[calls]?.operation, 'team.chat.overview', 'the queued gap and resync ran after the drain');
+});
+
+// Slice 3-9: a session envelope is checked before any request and resent unchanged on the re-register retry.
+test('a session envelope is sent on the first attempt and on the re-register retry; a bad one sends nothing', async (t) => {
+  const { host, me, manager } = await onlineMember(t);
+  const seen = [];
+  host.env.commandHook = (command) => { if (command?.operation === 'team.members.list') seen.push(command); return null; };
+  host.env.context.clients.revokeDevice(me.device_id);
+  const envelope = { session_id: 'sess_envelope_1', control_generation: 3, expected_revision: 'boot:7' };
+  await manager.command('team.members.list', {}, { envelope });
+  assert.equal(seen.length, 2, 'refused at identity, then retried once');
+  for (const sent of seen) {
+    assert.deepEqual([sent.session_id, sent.control_generation, sent.expected_revision], ['sess_envelope_1', 3, 'boot:7']);
+  }
+  const before = host.env.commandsSeen.length;
+  for (const bad of [{ session_id: '../x' }, { control_generation: 0 }, { expected_revision: 'x'.repeat(161) },
+    { stream_id: 'stream_1' }, [], 'sess_1']) {
+    const answer = await manager.command('team.members.list', {}, { envelope: bad });
+    assert.deepEqual(answer, { ok: false, error: { code: 'invalid_request', reason: 'team_envelope_invalid' } }, JSON.stringify(bad));
+  }
+  assert.equal(host.env.commandsSeen.length, before, 'nothing reached the host');
+  host.env.commandHook = null;
 });

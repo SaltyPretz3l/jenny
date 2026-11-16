@@ -95,6 +95,7 @@ function harness(options = {}) {
       showComposerActionError: (error, title) => errors.push([String(error?.message || error), title]),
     },
     getAttentionInbox: options.getAttentionInbox,
+    getPendingQuestionCards: options.getPendingQuestionCards,
   });
 
   // Compared, never interpolated: a key may carry selector metacharacters.
@@ -287,6 +288,20 @@ test('a question row counts the questions and opens the session to answer them',
   h.window.close();
 });
 
+test('a live question card reaches the inbox and opens its chat to answer (G7)', () => {
+  let cards = [{ sessionId: 's1', callId: 'ask-1', questionCount: 1, introText: 'Which format?' }];
+  const h = harness({ sessions: [session('s1')], getPendingQuestionCards: () => cards });
+  h.controller.render();
+  assert.match(h.rows()[0].textContent, /Which format\?/);
+  h.action('question:s1:ask-1', 'answer').click();
+  assert.deepEqual(h.openCalls, ['s1']);
+  cards = [];
+  h.controller.render();
+  assert.equal(h.rows().length, 0, 'an answered card leaves on the next pass');
+  h.controller.dispose();
+  h.window.close();
+});
+
 test('the badge mirrors the answerable count, hides at zero, and says so out loud', () => {
   const h = harness({
     sessions: [session('s1', { pending_question_batch: questionBatch('b1') })],
@@ -316,7 +331,7 @@ test('one wait reads in the singular', () => {
   h.window.close();
 });
 
-test('the badge opens the panel, scrolls the section into view and lands on the first decision', () => {
+test('the badge opens the panel, scrolls the section into view and lands on the first title, never a decision', () => {
   const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
   const scrolls = [];
   h.host.scrollIntoView = (options) => scrolls.push(options);
@@ -325,7 +340,8 @@ test('the badge opens the panel, scrolls the section into view and lands on the 
   assert.deepEqual(h.viewCalls, ['chat'], 'the section lives in the Chats panel, so the chat view comes first from any view');
   assert.deepEqual(h.collapseCalls, [false]);
   assert.deepEqual(scrolls, [{ block: 'start' }]);
-  assert.equal(h.document.activeElement, h.action('approval:call-1', 'allow'));
+  assert.equal(h.document.activeElement, h.title('approval:call-1'), 'a stray Space or Enter must not approve a call');
+  assert.notEqual(h.document.activeElement, h.action('approval:call-1', 'allow'));
   h.controller.dispose();
   h.window.close();
 });
@@ -476,7 +492,10 @@ test('the real renderer boots the section and fills it from the session list', a
   const row = host.querySelector('.attention-inbox__row[data-attention-key="question:wired-1:batch-1"]');
   assert.ok(row, 'the question batch renders a row without any timer of ours');
   assert.match(row.textContent, /Wired chat/);
-  assert.match(row.textContent, /1 question waiting/);
+  // The only chat is the one on screen, so its row is one line and no decisions.
+  assert.equal(String(window.__rendererState.currentSessionId), 'wired-1', 'precondition: the wait is on screen');
+  assert.match(row.textContent, /Waiting in the chat on screen/);
+  assert.equal(row.querySelector('[data-attention-action="answer"]'), null);
   const badge = window.document.getElementById('attentionInboxBadge');
   assert.ok(badge, 'the titlebar badge is built beside the health pill slot');
   assert.equal(badge.previousElementSibling.id, 'workbenchHealthPillSlot');

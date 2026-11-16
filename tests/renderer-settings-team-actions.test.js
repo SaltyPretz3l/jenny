@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const shared = require('./helpers/team-settings-harness');
 
-const { TEAM, OTHER, ME, DOT, MAYA, DESK, LAPTOP, CODE, DEVICE_CODE, flush, snapshot, hostState, NONE } = shared;
+const { TEAM, OTHER, ME, DOT, MAYA, DESK, LAPTOP, CODE, DEVICE_CODE, flush, pushed, snapshot, hostState, NONE } = shared;
 const device = (id, label, member = ME) => shared.device(id, label, { member_id: member });
 const harness = (options = {}) => shared.harness({ host: hostState(), teams: [snapshot()], ...options });
 
@@ -252,7 +252,7 @@ test('Add another device shows the code once; removing another device is direct,
   assert.deepEqual(h.sent('deviceRevoke').map((c) => c.payload), [{ team_id: TEAM, device_id: LAPTOP }]);
   devices = [device(DESK, 'Desk')];
   h.listeners.state({ teams: ownerTeams });
-  await flush();
+  await pushed();
   h.click(`[data-team-action="device-revoke"][data-device-id="${DESK}"]`);
   assert.equal(h.sent('deviceRevoke').length, 1, 'the last device asks first');
   assert.match(h.text(), /This is your only device in this team\. Only the owner can bring you back\./);
@@ -332,13 +332,14 @@ test('activity: the latest five rows in plain words, and Show all activity pages
   assert.equal(paged.cursor, 0);
 });
 
-test('a state push refreshes the owner lists without a timer', async (t) => {
+test('a state push re-reads the owner lists once, after it has settled', async (t) => {
   const h = harness({ teams: ownerTeams });
   t.after(h.restore);
   await flush();
   const before = h.sent('members').length;
   h.listeners.state({ teams: ownerTeams });
-  await flush();
+  h.listeners.state({ teams: ownerTeams });
+  await pushed();
   assert.equal(h.sent('members').length, before + 1);
   h.section.leaveTeamSection();
   assert.equal(h.listeners.state, null, 'unsubscribed on leave');
@@ -410,7 +411,7 @@ test('A3: a failed read sentence is cleared by the next good read', async (t) =>
   assert.match(h.text(), /The team server is not answering/);
   fail = false;
   h.listeners.state({ teams: [snapshot()] });
-  await flush();
+  await pushed();
   assert.equal(/The team server is not answering/.test(h.text()), false);
 });
 
@@ -501,7 +502,7 @@ test('B: an idle push does not rebuild the page; a roster action re-reads the li
   await flush();
   const select = h.q('#teamInviteExpiry');
   h.listeners.state({ teams: [snapshot()] });
-  await flush();
+  await pushed();
   assert.equal(h.q('#teamInviteExpiry'), select, 'the same element: an open select stays open');
   const before = { host: h.sent('hostStatus').length, status: h.sent('status').length, members: h.sent('members').length };
   h.click(`[data-team-action="admit"][data-member-id="${MAYA}"]`);

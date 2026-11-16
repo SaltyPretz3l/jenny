@@ -17,7 +17,15 @@ const MAX_OBSERVE_SELECTOR_CHARS = 200;
 // escape to six characters each).
 const MAX_OBSERVE_ENCODED_CHARS = 4000;
 const MAX_EVENT_SELECTOR_CHARS = 80;
-const MAX_OBSERVED_TEXT_CHARS = 160;
+const MAX_OBSERVED_TEXT_CHARS = 600;
+// Longer text keeps its beginning and its end: a diagnostic line puts the
+// verdict last, so a plain prefix clip would hide it.
+const OBSERVED_HEAD_CHARS = 150;
+const OBSERVED_TAIL_CHARS = 440;
+// Extra characters sent past each cut, so a workspace path that straddles a cut
+// is redacted whole before the host trims to the head and tail sizes.
+const OBSERVED_REDACTION_MARGIN = 256;
+const MAX_BLOCKED_HOSTS = 4;
 const MAX_EXTERNAL_RESOURCES = 10;
 const MAX_EXTERNAL_RESOURCE_CHARS = 120;
 const EVENT_STATUS_EXPLANATIONS = Object.freeze({
@@ -36,7 +44,12 @@ const SUCCESSFUL_EVENT_STATUSES = new Set(['clicked', 'typed', 'hovered', 'focus
 function buildObserveScript(selectors) {
   return `
 const selectors = ${JSON.stringify(selectors)};
-const clip = (value) => String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, ${MAX_OBSERVED_TEXT_CHARS});
+const clip = (value) => {
+  const text = String(value == null ? '' : value).replace(/\\s+/g, ' ').trim();
+  return text.length <= ${MAX_OBSERVED_TEXT_CHARS}
+    ? { text }
+    : { head: text.slice(0, ${OBSERVED_HEAD_CHARS + OBSERVED_REDACTION_MARGIN}), tail: text.slice(-${OBSERVED_TAIL_CHARS + OBSERVED_REDACTION_MARGIN}), total: text.length };
+};
 return selectors.map((selector) => {
   let nodes;
   try {
@@ -56,7 +69,7 @@ return selectors.map((selector) => {
     && Number(style.opacity) > 0;
   const tag = String(element.tagName || '').toUpperCase();
   const raw = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') ? element.value : element.innerText;
-  return { count, visible, text: clip(raw) };
+  return Object.assign({ count, visible }, clip(raw));
 });
 `;
 }
@@ -110,7 +123,38 @@ function externalResourcesLine(resources) {
     index === 0 ? pluralize(count, `external ${noun}`, `external ${noun}s`) : pluralize(count, noun)
   ));
   const names = [...resources.scripts, ...resources.stylesheets, ...resources.media].slice(0, MAX_EXTERNAL_RESOURCES);
-  return `In-app preview parity: this page references ${joinWords(phrases)} (names are untrusted page text: ${names.join(', ')}). preview_test loads contained workspace files (never the network), but Jenny's in-app Preview is self-contained and loads no external files at all, so ${joinWords(counts.map(([, , effect]) => effect))}. Inline them into the HTML if the user will view it in the in-app Preview.`;
+  const hosts = blockedHosts(names);
+  const blocked = hosts.length ? ` Blocked: ${hosts.join(', ')}.` : '';
+  return `In-app preview parity: this page references ${joinWords(phrases)} (names are untrusted page text: ${names.join(', ')}). preview_test loads contained workspace files (never the network), but Jenny's in-app Preview is self-contained and loads no external files at all, so ${joinWords(counts.map(([, , effect]) => effect))}. Inline them into the HTML if the user will view it in the in-app Preview.${blocked}`;
+}
+
+// Unique lower-cased hostnames of the http(s) names; relative and
+// protocol-relative names do not parse and are skipped.
+function blockedHosts(names) {
+  const hosts = new Set();
+  for (const name of names) {
+    try {
+      const url = new URL(name);
+      if (url.protocol === 'http:' || url.protocol === 'https:') hosts.add(url.hostname.toLowerCase());
+    } catch (_error) {
+      // Not an absolute URL.
+    }
+  }
+  return [...hosts].slice(0, MAX_BLOCKED_HOSTS);
+}
+
+// The already-bounded error texts as a block the model can read. Uncaught page
+// errors come first: ten 404s in the console must not hide the one SyntaxError.
+// `totalCount` is every error seen, listed or not.
+function errorTextLines(consoleErrors, pageErrors, totalCount, limit) {
+  const listed = [
+    ...pageErrors.map((text) => `- page: ${text}`),
+    ...consoleErrors.map((text) => `- console: ${text}`),
+  ].slice(0, limit);
+  if (!listed.length) return [];
+  const lines = ['Errors (untrusted page text):', ...listed];
+  if (totalCount > listed.length) lines.push(`- (${totalCount - listed.length} more not shown)`);
+  return lines;
 }
 
 function observationLine(selector, entry) {
@@ -165,6 +209,33 @@ async function evalToolScript(service, sessionId, script) {
   return result?.status === 'evaluated' ? { value: result.result } : { reason: result?.reason };
 }
 
+const flattenText = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
+
+// Pure: text over the cap keeps its first OBSERVED_HEAD_CHARS and last
+// OBSERVED_TAIL_CHARS around a marker that states how many characters went.
+function clipObservedText(text) {
+  const flat = flattenText(text);
+  if (flat.length <= MAX_OBSERVED_TEXT_CHARS) return flat;
+  const omitted = flat.length - OBSERVED_HEAD_CHARS - OBSERVED_TAIL_CHARS;
+  return `${flat.slice(0, OBSERVED_HEAD_CHARS)} [... ${omitted} chars omitted ...] ${flat.slice(-OBSERVED_TAIL_CHARS)}`;
+}
+
+// The in-page script sends whole text up to the cap, or a margin-extended head
+// and tail plus the full length beyond it; either way what crosses back stays
+// bounded. Each piece is redacted before it is cut to size.
+function observedText(raw, sensitiveValues) {
+  if (typeof raw?.head === 'string' && typeof raw?.tail === 'string') {
+    const head = flattenText(stripSensitiveValues(raw.head.slice(0, OBSERVED_HEAD_CHARS + OBSERVED_REDACTION_MARGIN), sensitiveValues))
+      .slice(0, OBSERVED_HEAD_CHARS);
+    const tail = flattenText(stripSensitiveValues(raw.tail.slice(-(OBSERVED_TAIL_CHARS + OBSERVED_REDACTION_MARGIN)), sensitiveValues))
+      .slice(-OBSERVED_TAIL_CHARS);
+    const total = Number.isFinite(raw.total) ? raw.total : head.length + tail.length;
+    const omitted = Math.max(0, total - OBSERVED_HEAD_CHARS - OBSERVED_TAIL_CHARS);
+    return `${head} [... ${omitted} chars omitted ...] ${tail}`;
+  }
+  return clipObservedText(stripSensitiveValues(String(raw?.text ?? '').slice(0, 4 * MAX_OBSERVED_TEXT_CHARS), sensitiveValues));
+}
+
 async function observeSelectors(service, sessionId, selectors, sensitiveValues) {
   let outcome;
   try {
@@ -181,10 +252,7 @@ async function observeSelectors(service, sessionId, selectors, sensitiveValues) 
         return { count: 0, visible: false, text: '', invalid: true };
       }
       const count = Number.isInteger(raw?.count) && raw.count > 0 ? raw.count : 0;
-      const text = stripSensitiveValues(String(raw?.text ?? ''), sensitiveValues)
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, MAX_OBSERVED_TEXT_CHARS);
+      const text = observedText(raw, sensitiveValues);
       return { count, visible: count > 0 && raw?.visible === true, text: count > 0 ? text : '' };
     }),
   };
@@ -237,7 +305,9 @@ function observationMetadata(observe, observed) {
 module.exports = {
   appliedEventsText,
   boundedEventSelector,
+  clipObservedText,
   collectExternalResources,
+  errorTextLines,
   eventOutcomeLine,
   externalResourcesLine,
   normalizeObserveInput,

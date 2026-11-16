@@ -122,6 +122,23 @@ async function probeNvidiaSmiVram({ execFile = nodeExecFile, timeoutMs = DEFAULT
   });
 }
 
+// The device a single-GPU engine lands on: the largest card in a sample, or the
+// summed totals when the sample carries no per-device rows. null when unavailable.
+function largestGpuDevice(sample) {
+  if (!sample || sample.available === false) {
+    return null;
+  }
+  const devices = Array.isArray(sample.devices) ? sample.devices : [];
+  const candidates = devices.filter((device) => Number(device?.totalMb) > 0);
+  if (candidates.length === 0) {
+    return Number(sample.totalMb) > 0
+      ? { usedMb: Number(sample.usedMb) || 0, totalMb: Number(sample.totalMb) }
+      : null;
+  }
+  return candidates.reduce((best, device) => (device.totalMb > best.totalMb ? device : best));
+}
+
 module.exports = {
+  largestGpuDevice,
   probeNvidiaSmiVram,
 };

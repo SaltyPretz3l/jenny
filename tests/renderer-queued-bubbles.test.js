@@ -1,6 +1,6 @@
 'use strict';
 
-// Owner option C (2026-10-20, Claude Code parity): a queued send is its own user bubble in the
+// Owner option C (2026-10-20): a queued send is its own user bubble in the
 // conversation, greyed until it starts, with one line of state and actions under it. Withdraw
 // puts the text back in the composer as a draft; Up in an empty composer takes them all back.
 
@@ -169,4 +169,20 @@ test('re-applying after a timeline write never revives a send the composer has s
   queueView.resyncQueuedBubbles(timeline);
   assert.equal(article(doc, 'user_a').hasAttribute('data-queued-send'), false);
   assert.equal(queueView.resyncQueuedBubbles(doc.createElement('div')).size, 0, 'a timeline never synced stays untouched');
+});
+
+// cost-growth 7: a keystroke re-renders the composer; with nothing queued now or
+// at the last sync, the queued-bubble sync must not scan the whole timeline.
+test('with nothing queued the bubble sync skips the timeline scan after the first clean pass', (t) => {
+  const { doc, timeline } = setup(t);
+  let scans = 0;
+  const queryAll = timeline.querySelectorAll.bind(timeline);
+  timeline.querySelectorAll = (selector) => { scans += 1; return queryAll(selector); };
+  queueView.syncQueuedBubbles({ timeline, rows: [row()], actions: {} });
+  assert.equal(article(doc, 'user_a').hasAttribute('data-queued-send'), true);
+  queueView.syncQueuedBubbles({ timeline, rows: [], actions: {} });
+  assert.equal(article(doc, 'user_a').hasAttribute('data-queued-send'), false, 'the started send is unmarked');
+  scans = 0;
+  for (let key = 0; key < 20; key += 1) queueView.syncQueuedBubbles({ timeline, rows: [], actions: {} });
+  assert.equal(scans, 0);
 });

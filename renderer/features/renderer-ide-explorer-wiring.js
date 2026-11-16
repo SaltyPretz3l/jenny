@@ -12,6 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  // Outside-Workspace documents (row 137) never auto-reveal in the tree.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -244,6 +246,7 @@
       const onceUndo = () => { if (undoRan) return undefined; undoRan = true; return onUndo(); };
       return showToast(message, {
         durationMs: 8000,
+        countdown: typeof onUndo === 'function',
         actions: typeof onUndo === 'function'
           ? [{ id: 'ide-tree-move-undo', label: jt('ide.explorer.undo', 'Undo'), kind: 'primary', onClick: onceUndo }]
           : [],
@@ -330,7 +333,7 @@
 
     function handleActiveFileChanged(event) {
       clearAutoRevealTimer();
-      if (disposed) {
+      if (disposed || isOutsideKey(event?.detail?.path)) {
         return;
       }
       const path = ideStateUtils.normalizePreviewSourcePath?.(event?.detail?.path) || '';

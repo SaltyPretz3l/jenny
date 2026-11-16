@@ -25,6 +25,14 @@
           </svg>
         `;
       }
+      if (action === 'pin') {
+        return `
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M9.5 2.5 13.5 6.5 11.5 7.5 10 10 6 6 8.5 4.5Z"></path>
+            <path d="M6 10 2.5 13.5"></path>
+          </svg>
+        `;
+      }
       if (action === 'edit') {
         return `
           <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -59,6 +67,9 @@
       }
       if (action === 'regenerate') {
         return jt('chat.transcript.regenerateResponse', 'Regenerate this response');
+      }
+      if (action === 'pin') {
+        return jt('chat.transcript.pinToBoard', 'Pin to board');
       }
       if (action === 'edit') {
         return jt('chat.transcript.editYourMessage', 'Edit your message');
@@ -113,8 +124,10 @@
       `;
     }
 
-    function renderMessageHoverRow(message, actionOptions, metaLabel) {
-      const actionModel = buildMessageActionModel(message, actionOptions);
+    function renderMessageHoverRow(message, actionOptions, metaLabel, shortMetaLabel) {
+      // Pin to board (row 150 slice C5): the model is told only while the `project_boards` flag is on.
+      const pinOn = globalThis.rendererChatMessageActionBindings?.pinEnabled?.() === true;
+      const actionModel = buildMessageActionModel(message, pinOn ? { ...actionOptions, pinToBoard: true } : actionOptions);
       const unsavedReplyNotice = typeof unsavedReplyActions.renderUnsavedReplyNotice === 'function'
         ? unsavedReplyActions.renderUnsavedReplyNotice(message, actionModel)
         : '';
@@ -122,11 +135,13 @@
         return unsavedReplyNotice;
       }
 
-      const visibleMetaLabel = String(metaLabel || '').trim();
+      // The line shows the short label (its accessible name); the full label is the tooltip.
+      const fullMetaLabel = String(metaLabel || '').trim();
+      const visibleMetaLabel = String(shortMetaLabel || '').trim() || fullMetaLabel;
       const meta = actionModel.showMeta || visibleMetaLabel
-        ? `<div class="chat-hover-meta" tabindex="0" title="${escapeHtml(visibleMetaLabel)}" aria-label="${escapeHtml(visibleMetaLabel)}">${escapeHtml(visibleMetaLabel)}</div>`
+        ? `<div class="chat-hover-meta" tabindex="0" title="${escapeHtml(fullMetaLabel || visibleMetaLabel)}">${escapeHtml(visibleMetaLabel)}</div>`
         : '<div class="chat-hover-meta chat-hover-meta-empty" aria-hidden="true"></div>';
-      const actions = ['edit', 'branch', 'regenerate', 'copy', 'elaborate']
+      const actions = ['edit', 'branch', 'regenerate', 'copy', 'pin', 'elaborate']
         .map((action) => renderMessageActionButton(message, action, actionModel.actions[action]))
         .join('');
 

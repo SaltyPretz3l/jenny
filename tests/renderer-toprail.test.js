@@ -53,7 +53,7 @@ function pressKey(window, target, key) {
   return event;
 }
 
-test('top rail starts hidden and renders the four tab views in shortcut order; Settings is the gear', async (t) => {
+test('top rail starts hidden and renders the tab views in rail order; Diagnostics and Settings are glyph buttons', async (t) => {
   const { window, doc, controller } = await loadAppWithRail(t);
   const topRail = doc.getElementById('topRail');
   assert.equal(topRail.classList.contains('hidden'), true, 'rail ships hidden until setTopRailVisible is called');
@@ -64,8 +64,8 @@ test('top rail starts hidden and renders the four tab views in shortcut order; S
   const tabs = [...doc.querySelectorAll('#topRailTabs .toprail-tab')];
   assert.deepEqual(
     tabs.map((tab) => tab.dataset.tabId),
-    ['home', 'chat', 'ide', 'logs'],
-    'rail order matches VIEW_TAB_ORDER; Settings is not a tab'
+    ['home', 'chat', 'ide'],
+    'rail order is Home, Chat, Workspace; Diagnostics and Settings are not tabs'
   );
   assert.ok(tabs.every((tab) => !tab.querySelector('svg')), 'the nav is text only');
   assert.equal(tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true').length, 1, 'one tab is the active view');
@@ -78,6 +78,12 @@ test('top rail starts hidden and renders the four tab views in shortcut order; S
   assert.equal(gear.querySelectorAll('svg path').length, 1, 'one cog outline');
   assert.equal(gear.querySelector('svg circle')?.getAttribute('r'), '2.6', 'the gear hub, not the old 2.5 sun');
   assert.equal(doc.querySelector('#topRail circle[r="2.5"]'), null, 'no sun glyph anywhere in the nav');
+  const diagnostics = doc.getElementById('logsTopRailTab');
+  assert.equal(diagnostics.nextElementSibling, gear, 'Diagnostics sits just left of the gear');
+  assert.ok(diagnostics.classList.contains('titlebar-icon-button'));
+  assert.equal(diagnostics.getAttribute('aria-label'), 'Logs', 'named by its model label');
+  assert.equal(diagnostics.getAttribute('title'), 'Logs (Ctrl+4)');
+  assert.equal(diagnostics.querySelectorAll('svg.titlebar-icon path').length, 1, 'one pulse trace');
   assert.deepEqual(
     [...window.rendererTopRailUtils.VIEW_TAB_ORDER],
     ['home', 'chat', 'ide', 'logs', 'settings'],
@@ -89,7 +95,7 @@ test('top rail starts hidden and renders the four tab views in shortcut order; S
   assert.equal(doc.getElementById('topRailTabs').getAttribute('aria-orientation'), 'horizontal');
 });
 
-test('every view tabpanel is labelled by a rail tab; Settings (the gear, not a tab) is a named region', async (t) => {
+test('every view tabpanel is labelled by a rail tab; Diagnostics and Settings (glyph buttons, not tabs) are named regions', async (t) => {
   const { doc } = await loadAppWithRail(t);
   const gear = doc.getElementById('settingsTopRailTab');
   assert.ok(gear, 'the gear renders');
@@ -97,7 +103,13 @@ test('every view tabpanel is labelled by a rail tab; Settings (the gear, not a t
   for (const panel of doc.querySelectorAll('.main-view[role="tabpanel"]')) {
     const labelId = panel.getAttribute('aria-labelledby');
     assert.notEqual(labelId, 'settingsTopRailTab', `${panel.id} is not labelled by the gear button`);
+    assert.notEqual(labelId, 'logsTopRailTab', `${panel.id} is not labelled by the Diagnostics button`);
   }
+  assert.notEqual(doc.getElementById('logsTopRailTab').getAttribute('role'), 'tab');
+  const logsView = doc.getElementById('logsView');
+  assert.equal(logsView.getAttribute('role'), 'region');
+  assert.equal(logsView.getAttribute('aria-labelledby'), null);
+  assert.equal(logsView.getAttribute('aria-label'), 'Diagnostics');
   const settingsView = doc.getElementById('settingsView');
   assert.equal(settingsView.getAttribute('role'), 'region');
   assert.equal(settingsView.getAttribute('aria-labelledby'), null);
@@ -173,11 +185,11 @@ test('horizontal arrow keys move and activate; Home/End jump; Enter activates', 
   assert.deepEqual(activations, ['chat', 'home'], 'ArrowLeft goes back');
 
   pressKey(window, doc.getElementById('homeTopRailTab'), 'ArrowLeft');
-  assert.deepEqual(activations.at(-1), 'logs', 'ArrowLeft wraps from the first tab to the last');
+  assert.deepEqual(activations.at(-1), 'ide', 'ArrowLeft wraps from the first tab to the last');
 
-  pressKey(window, doc.getElementById('logsTopRailTab'), 'End');
-  assert.equal(activations.at(-1), 'logs');
-  pressKey(window, doc.getElementById('logsTopRailTab'), 'Home');
+  pressKey(window, doc.getElementById('ideTopRailTab'), 'End');
+  assert.equal(activations.at(-1), 'ide');
+  pressKey(window, doc.getElementById('ideTopRailTab'), 'Home');
   assert.equal(activations.at(-1), 'home');
 
   const enterEvent = pressKey(window, doc.getElementById('homeTopRailTab'), 'Enter');
@@ -336,5 +348,24 @@ test('the gear activates Settings and carries aria-current while Settings is act
   await waitForUi(window, 20);
   assert.deepEqual(activations, ['settings']);
   assert.equal(gear.getAttribute('aria-current'), 'page');
+  assert.ok([...doc.querySelectorAll('#topRailTabs .toprail-tab')].every((tab) => tab.getAttribute('aria-selected') === 'false'));
+});
+
+test('the Diagnostics button activates the logs view and hands aria-current over from the gear', async (t) => {
+  const { window, doc, controller, activations } = await loadAppWithRail(t);
+  window.__rendererState.ui.activeView = 'settings';
+  controller.renderTopRail();
+  await waitForUi(window, 20);
+  const diagnostics = doc.getElementById('logsTopRailTab');
+  const gear = doc.getElementById('settingsTopRailTab');
+  assert.equal(gear.getAttribute('aria-current'), 'page');
+  assert.equal(diagnostics.hasAttribute('aria-current'), false);
+
+  diagnostics.click();
+  await waitForUi(window, 20);
+  assert.deepEqual(activations, ['logs']);
+  assert.equal(diagnostics.getAttribute('aria-current'), 'page');
+  assert.equal(gear.hasAttribute('aria-current'), false);
+  assert.equal(doc.getElementById('logsTopRailTab'), diagnostics, 'a re-render keeps the same button');
   assert.ok([...doc.querySelectorAll('#topRailTabs .toprail-tab')].every((tab) => tab.getAttribute('aria-selected') === 'false'));
 });

@@ -253,16 +253,19 @@ def _build_messages(
                 )
                 continue
             if vision_images:
-                content_parts: list[dict[str, Any]] = (
-                    [{"type": "text", "text": content}] if has_content else []
-                )
-                content_parts.extend(
+                # Images before the text, the order vision chat templates are
+                # trained on (LFM-VL, Qwen-VL). With the text first, "whats
+                # this?" sat right after the trailing Turn Context row and a 2B
+                # model answered that row instead of the image.
+                content_parts: list[dict[str, Any]] = [
                     {
                         "type": "image_url",
                         "image_url": {"url": image.as_data_uri()},
                     }
                     for image in vision_images
-                )
+                ]
+                if has_content:
+                    content_parts.append({"type": "text", "text": content})
                 normalized.append({"role": "user", "content": content_parts})
                 continue
             if not has_content:

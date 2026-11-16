@@ -31,6 +31,9 @@
     getQueuedSendFromState,
     getOrCreateSendOutbox,
     reconcileAcceptedRegenerate,
+    replyToPendingUserQuestions,
+    findPendingUserQuestionRef,
+    QUESTION_REPLY_MAX_CHARS,
     resolveMessageCopyText,
     stashQueuedSendInState,
     summarizeDurableFailurePreview,
@@ -38,8 +41,8 @@
     'adoptPersistedUserMessageId', 'annotateUserSendFailureInStore', 'buildDurableFailureMessage',
     'buildOptimisticAttachmentMetadata', 'buildSendFailureMetadata', 'cloneJsonLike', 'cloneQueuedAttachments',
     'clipSessionTitle', 'createOptimisticSessionId', 'createSendQueueGuards', 'createTraceToken',
-    'getQueuedSendFromState', 'getOrCreateSendOutbox', 'reconcileAcceptedRegenerate', 'resolveMessageCopyText',
-    'stashQueuedSendInState', 'summarizeDurableFailurePreview',
+    'getQueuedSendFromState', 'getOrCreateSendOutbox', 'reconcileAcceptedRegenerate', 'replyToPendingUserQuestions', 'findPendingUserQuestionRef',
+    'resolveMessageCopyText', 'stashQueuedSendInState', 'summarizeDurableFailurePreview',
   ], 'renderer-send-flow-helpers');
   const { createSendMessageActions } = need(globalThis.rendererSendMessageActions
     || (canRequire ? require('./renderer-send-message-actions') : null), ['createSendMessageActions'], 'renderer-send-message-actions');
@@ -205,8 +208,7 @@
     // is live. Kept here (not in the queue-guards sibling) since two other
     // call sites below also need this exact definition directly.
     function isDockApprovalSteerActive() {
-      return state.ui?.activeView === 'ide'
-        && (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) === true;
+      return (globalThis.rendererChatSurfaceLiveUtils || {}).isDockedChatLive?.(state) === true;
     }
 
     // isSessionBusy / restoreQueuedSendDraft / canQueueForSession: sibling
@@ -370,6 +372,8 @@
       const imagePromptPin = settings.imagePromptPin
         ? imagePromptUtils.sendPin(settings.imagePromptPin, imageEditDraft?.sessionId === requestedSessionId ? imageEditDraft : null)
         : null;
+      // Row 150: a turn typed in the composer docked beside a board carries that board's id; queued sends and retries carry their own.
+      const boardId = (globalThis.rendererChatSurfaceLiveUtils || {}).boardStampForSend?.(state, settings, requestedSessionId) || '';
       if (imagePromptPin && normalizedPrompt.length > imagePromptUtils.MAX_PROMPT_CHARS) {
         setComposerStatusNotice(jt('composer.imagePrompt.tooLong', 'An image prompt can be up to {count} characters.',
           { count: imagePromptUtils.MAX_PROMPT_CHARS }), { owner: 'image-prompt:length', tone: 'warning' });
@@ -378,6 +382,30 @@
       }
       const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const queuedForSend = sessionQueue.getQueuedAttachments(state, requestedSessionId); // pane 0's live array or a pane's record
+      // Row 157: a plain typed message answers a waiting ask_user card instead of queueing behind it.
+      // Anything a reply cannot carry (attachments, @mentions, an image edit, a prompt block) sends as usual.
+      const questionRef = settings.attachImageEditDraft === true && !isOutboxDispatch && normalizedPrompt
+        && !String(settings.editedMessageId || '').trim() && !imagePromptPin && !promptBlock && !settings.skillInvocation
+        && !usesReplayImageAttachments && !(queuedForSend || []).length && imageEditDraft?.sessionId !== requestedSessionId
+        && !(window.rendererIdeMentionAutocomplete?.collectMentionPaths?.(chatInput) || []).length
+        ? findPendingUserQuestionRef(getSessionMessages(requestedSessionId), multiStreamController?.getStreamIdForSession?.(requestedSessionId)) : '';
+      if (questionRef) {
+        if (normalizedPrompt.length > QUESTION_REPLY_MAX_CHARS) {
+          setComposerStatusNotice(jt('chat.questions.replyTooLong', 'A reply to Jenny\'s questions can be up to {count} characters.',
+            { count: QUESTION_REPLY_MAX_CHARS }), { owner: 'questions:reply-length', tone: 'warning' });
+          renderComposerState();
+          return reject('question_reply_too_long', requestedSessionId);
+        }
+        // Clear first so a second Enter during the round trip has nothing to send.
+        const draft = chatInput.value;
+        chatInput.value = ''; syncComposerInputHeight(); syncComposerVisualState();
+        if (await replyToPendingUserQuestions({ questionRef, reply: normalizedPrompt, chat: window.jennyShell?.chat })) {
+          renderComposerState();
+          appendClientLog('INFO', 'chat.questions_answered_from_composer', { sessionId: requestedSessionId.slice(0, 30) });
+          return null;
+        }
+        if (!String(chatInput.value || '').trim()) { chatInput.value = draft; syncComposerInputHeight(); syncComposerVisualState(); }
+      }
       const attachmentBudget = buildAttachmentBudget(usesReplayImageAttachments ? settings.replayImageAttachments : queuedForSend);
       const promptBearingAttachments = attachmentBudget.accepted.filter(
         (entry) => String(entry?.kind || '').trim() !== 'audio'
@@ -466,7 +494,7 @@
         return queueBusySend({
           isEditRegenerate, isOutboxDispatch, queueUntilBackendReady, normalizedPrompt, attachmentBudget,
           requestedSessionId, requestedSession, preserveComposerDraft, prompt, runtimePreferences,
-          skillInvocation, imageEditDraft, promptBlock, imagePromptPin, settings, sessionQueue,
+          skillInvocation, imageEditDraft, promptBlock, imagePromptPin, boardId, settings, sessionQueue,
         });
       }
       if (attachmentBudget.skipped.length) {
@@ -520,7 +548,7 @@
         prompt: effectivePrompt,
         imageEditSnapshot: imageEditDraft,
         visiblePrompt,
-        ...(imagePromptPin ? { imagePromptPin } : {}),
+        ...(imagePromptPin ? { imagePromptPin } : {}), ...(boardId ? { boardId } : {}),
         attachments: acceptedAttachments,
         runtimePreferences,
         toolPreferences,
@@ -541,7 +569,7 @@
       if (durableEligible) {
         const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
           effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
-          runModeProjection, toolPreferences, approvalMode, skillInvocation, imagePromptPin,
+          runModeProjection, toolPreferences, approvalMode, skillInvocation, imagePromptPin, boardId,
           sendReceipt, mentionContentsPromise, preserveComposerDraft });
         sendSlashDispatch.clearAccepted(result, skillInvocation, settings);
         sendSlashDispatch.clearAcceptedImagePrompt(result, imagePromptPin, requestedSessionId, settings);
@@ -575,7 +603,7 @@
         const { optimisticRenderedAtMs, localRenderLatencyMs } = renderOptimisticSend({
           interactiveGuardrailFallback, pendingBatchSnapshot, createdOptimisticSession, optimisticSessionId,
           optimisticTitleSource, visiblePrompt, acceptedAttachments, runtimePreferences, runModeProjection,
-          shouldAnimateActivation, isEditRegenerate, editedMessageId, skillInvocation, imagePromptPin,
+          shouldAnimateActivation, isEditRegenerate, editedMessageId, skillInvocation, imagePromptPin, boardId,
           operationState, preflightState,
         });
         startOptimisticSendIndicator();
@@ -613,7 +641,7 @@
           activeFileContext, mentionContents, normalizedInteractiveResponse,
           interactiveRoundCount: getActiveSession()?.interactive_round_count || 0,
           runModeProjection, toolPreferences, approvalMode, preflightState, optimisticRenderedAtMs,
-          localRenderLatencyMs, skillInvocation, imagePromptPin,
+          localRenderLatencyMs, skillInvocation, imagePromptPin, boardId,
         });
         const chatBridge = window.jennyShell?.chat;
         const startOperation = isEditRegenerate
@@ -697,6 +725,7 @@
       getElaboratePrompt,
       resolveRegenerateRequest,
       resolveMessageCopyText,
+      getFeatureFlags: () => state.features?.featureFlags || {},
       resolveFollowUpActionBlock,
       getCurrentSessionId,
       reconcileAcceptedRegenerate: (payload) => reconcileAcceptedRegenerate(payload, {

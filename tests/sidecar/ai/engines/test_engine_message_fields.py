@@ -8,6 +8,10 @@ channel that does not exist. Pin the closed field set so a future engine
 cannot quietly start depending on fields the builder never fills.
 `images` is filled by `engine_messages()` on the anchored user row when the
 request context carries vision images.
+
+Row 166 brought `is_error` back under that same rule: `engine_messages()` now
+copies it from a failed tool row and the Anthropic Messages serializer sends it
+as the API's `is_error` flag. `error_code` and `metadata` stay deleted.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ def test_engine_message_declares_exactly_the_fields_the_builder_fills() -> None:
         "tool_call_id",
         "name",
         "images",
+        "is_error",
     }
 
 

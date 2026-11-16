@@ -27,7 +27,7 @@
   z-index: calc(var(--z-overlay) + 7);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--image-viewer-bg);
   color: var(--image-viewer-fg);
   font-family: inherit;
@@ -153,6 +153,38 @@ body:has(#imageViewer) .inv-tooltip { z-index: calc(var(--z-overlay) + 8); }
 .image-viewer .image-viewer-icon[data-image-viewer-nav]:hover:enabled { background: var(--image-viewer-surface); }
 .image-viewer [data-image-viewer-nav]:disabled { visibility: hidden; }
 
+/* Filmstrip under the stage; the current picture is full strength with a ring, the others recede. */
+.image-viewer-strip {
+  grid-column: 1;
+  grid-row: 3;
+  display: flex;
+  gap: 6px;
+  justify-content: safe center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 6px 14px;
+  padding-inline: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--image-viewer-track) transparent;
+}
+.image-viewer .image-viewer-strip button {
+  flex: 0 0 auto;
+  inline-size: 52px;
+  block-size: 52px;
+  padding: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--image-viewer-surface);
+  opacity: 0.5;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+.image-viewer .image-viewer-strip button:hover:enabled { opacity: 0.85; }
+.image-viewer .image-viewer-strip button[aria-current="true"] {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--image-viewer-bg), 0 0 0 4px var(--image-viewer-fg);
+}
+.image-viewer-strip img { display: block; inline-size: 100%; block-size: 100%; object-fit: cover; }
+
 .image-viewer-pill {
   position: absolute;
   inset-block-end: 20px;
@@ -257,7 +289,7 @@ body:has(#imageViewer) .inv-tooltip { z-index: calc(var(--z-overlay) + 8); }
 
 .image-viewer-details {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 2 / span 2;
   inline-size: 320px;
   box-sizing: border-box;
   padding-block: 4px 24px;

@@ -184,7 +184,7 @@ test('cancelled bridge result persists before terminal settlement and releases t
 });
 
 test('the sandbox bridge passes every Electron-owned shell-free tool through (seam 17 of a new manifest tool)', () => {
-  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['app_view', 'ask_user', 'away_digest', 'browser', 'chat_configure', 'chat_organize', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'jenny_help', 'project_create', 'project_notes', 'projects_list', 'propose_command', 'propose_session', 'run_command', 'schedule_change', 'schedule_list', 'session_export', 'session_status', 'session_stop', 'session_transcript', 'sessions_list', 'settings_change', 'settings_get', 'suggest_next_step', 'task_board', 'terminal_read']);
+  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['app_view', 'ask_user', 'away_digest', 'browser', 'chat_configure', 'chat_organize', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'jenny_help', 'project_create', 'project_notes', 'projects_list', 'propose_command', 'propose_session', 'run_command', 'schedule_change', 'schedule_list', 'session_export', 'session_prioritize', 'session_status', 'session_stop', 'session_transcript', 'sessions_list', 'settings_change', 'settings_get', 'suggest_next_step', 'task_board', 'terminal_read']);
 });
 test('a refusal retrying cannot fix names its limits and is recorded for the card Run', async () => {
   const { service, options } = fixture('auto');

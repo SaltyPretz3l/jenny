@@ -49,7 +49,17 @@
     const getApprovalSessionIds = () => getMultiStreamController()?.getApprovalPendingSessionIds?.()
       || [...state.pendingToolApprovals.values()].map((approval) => normalizeSessionId(approval?.sessionId)).filter(Boolean);
 
-    const getAttentionStates = (ids) => getMultiStreamController()?.getSessionAttentionStates?.(ids);
+    // The stream controller knows streaming and approval waits; the inbox also knows a question
+    // batch, a failed send and a stuck send, so its states fill in the chats the controller has none for.
+    // A copy only when there is something to merge: this runs on every chrome pass.
+    const getAttentionStates = (ids) => {
+      const streamStates = getMultiStreamController()?.getSessionAttentionStates?.(ids);
+      const waits = state.attentionInboxController?.getSnapshot?.()?.states;
+      if (!waits?.size) return streamStates;
+      const states = new Map(streamStates || []);
+      waits.forEach((value, id) => { if (!states.has(id)) states.set(id, value); });
+      return states;
+    };
 
     const getStreamingSessionIds = () => getMultiStreamController()?.getStreamingSessionIds?.()
       || (normalizeSessionId(state.activeStreamSessionId) ? [normalizeSessionId(state.activeStreamSessionId)] : []);

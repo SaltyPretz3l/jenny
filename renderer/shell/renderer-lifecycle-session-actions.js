@@ -33,6 +33,13 @@
       getComposerSessionStateController,
     } = deps;
 
+    // A new chat starts on Default (the model running now) unless the caller names one; copying the
+    // open chat's pick could load another engine's model on the first send and move the app's engine.
+    function newChatRuntimePreferences(options) {
+      const current = { ...getCurrentRuntimePreferences(), preferredModel: '' };
+      return mergeRequestedRuntimePreferences(current, options.preferences, normalizeReasoningEffort);
+    }
+
     async function handleCreateSession(options = {}) {
       const previousCurrentSessionId = String(state.currentSessionId || '').trim();
       const knownSessionIds = new Set(
@@ -42,7 +49,7 @@
       );
       fwd.clearComposerStatusNotice();
       if (fwd.isAnySendBusy() && typeof options.initialPrompt !== 'string' && options.requireRecord !== true) {
-        const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
+        const runtimePreferences = newChatRuntimePreferences(options);
         const sessionId = createLocalDraftSessionId();
         const timestamp = new Date().toISOString();
         fwd.upsertSessionSummary({
@@ -79,7 +86,7 @@
         appendClientLog('INFO', 'sessions.created_local_draft', { sessionId });
         return sessionId;
       }
-      const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
+      const runtimePreferences = newChatRuntimePreferences(options);
       const payload = await window.jennyShell.sessions.create({
         title: String(options.title || 'New Chat').trim(),
         ...(typeof options.initialPrompt === 'string' ? { initialPrompt: options.initialPrompt } : {}), ...(typeof options.linkedTaskId === 'string' && options.linkedTaskId ? { linkedTaskId: options.linkedTaskId } : {}),

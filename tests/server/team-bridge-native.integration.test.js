@@ -124,7 +124,9 @@ async function createLoopbackServer(t, { onPayload } = {}) {
   return state;
 }
 
-async function startHost(t, h, { server, directPort, allowed = [], seed = seedOf(10), bootSecret = seedOf(13) }) {
+async function startHost(t, h, {
+  server, directPort, allowed = [], seed = seedOf(10), bootSecret = seedOf(13), admit, limits,
+}) {
   const allow = new Set(allowed.map((key) => hex(key)));
   const downs = [];
   const logs = [];
@@ -135,7 +137,8 @@ async function startHost(t, h, { server, directPort, allowed = [], seed = seedOf
     directPort,
     loopbackPort: server.port,
     bootSecret,
-    admit: (key) => (allow.has(hex(key)) ? 'device' : null),
+    limits,
+    admit: admit ?? ((key) => (allow.has(hex(key)) ? 'device' : null)),
     log: (event, fields) => logs.push({ event, fields }),
     onDown: (reason) => downs.push(reason),
   });
@@ -173,6 +176,7 @@ test('the host binary derives its identity from the caller-chosen secret key', O
     alpn: ALPN,
     loopback_port: 9,
     direct_port: null,
+    internet: null,
     limits: {
       max_connections: DEFAULT_LIMITS.maxConnections,
       max_streams_per_connection: DEFAULT_LIMITS.maxStreamsPerConnection,
@@ -180,6 +184,9 @@ test('the host binary derives its identity from the caller-chosen secret key', O
       max_handshakes: DEFAULT_LIMITS.maxHandshakes,
       admit_timeout_ms: DEFAULT_LIMITS.admitTimeoutMs,
       drop_grace_ms: DEFAULT_LIMITS.dropGraceMs,
+      max_waiting: DEFAULT_LIMITS.maxWaiting,
+      max_handshakes_per_source: DEFAULT_LIMITS.maxHandshakesPerSource,
+      refused_cooldown_ms: DEFAULT_LIMITS.refusedCooldownMs,
     },
   });
   await waitFor(() => messages.some((m) => m.t === 'ready'), { timeoutMs: 15_000 });
@@ -232,6 +239,26 @@ test('a stranger is told host_refused and the loopback server sees no connection
   await waitFor(() => host.bridge.stats().refusedConnections >= 1);
   assert.equal(server.connections, 0);
   assert.deepEqual(host.downs, []);
+});
+
+// Review round two, R11-F01: the member is told which turn-away it was, and only the host's own answer is a refusal.
+test('a silent host is host_admit_timeout and a cooled key is host_cooldown, not host_refused', OPTIONS, async (t) => {
+  const h = harness(t);
+  const server = await createLoopbackServer(t);
+  const silentHost = await startHost(t, h, { server, admit: () => new Promise(() => {}), limits: { admitTimeoutMs: 500 } });
+  const waiting = await startMember(h, { host: silentHost, seed: seedOf(31) });
+  await waitFor(() => waiting.bridge.state().state === 'offline', { timeoutMs: 15_000 });
+  assert.deepEqual(waiting.bridge.state(), { state: 'offline', reason: 'host_admit_timeout' });
+  await silentHost.bridge.stop();
+
+  const refusingHost = await startHost(t, h, { server, seed: seedOf(32) });
+  const first = await startMember(h, { host: refusingHost, seed: seedOf(33) });
+  await waitFor(() => first.bridge.state().state === 'offline', { timeoutMs: 15_000 });
+  assert.deepEqual(first.bridge.state(), { state: 'offline', reason: 'host_refused' });
+  const again = await startMember(h, { host: refusingHost, seed: seedOf(33) });
+  await waitFor(() => again.bridge.state().state === 'offline', { timeoutMs: 15_000 });
+  assert.deepEqual(again.bridge.state(), { state: 'offline', reason: 'host_cooldown' });
+  assert.equal(server.connections, 0);
 });
 
 test('drop ends the member with host_refused', OPTIONS, async (t) => {
@@ -341,4 +368,31 @@ test('end to end: a real member reaches the team host through the real binaries'
   const answer = Buffer.concat(chunks).toString();
   assert.equal(answer.startsWith('HTTP/1.1 200'), true);
   assert.equal(answer.includes(deriveTeamId(fx.hostPublicKey)), true);
+});
+
+// Slice 6-6: the real binaries, both stream classes. The loopback server echoes what reaches it, so an answer equal
+// to the request shows the class byte was taken off on the way in and nothing was added on the way out.
+test('6-6: the host says it reads bulk streams, and the ordinary and the bulk port both round-trip', OPTIONS, async (t) => {
+  const h = harness(t);
+  const server = await createLoopbackServer(t);
+  const memberSeed = seedOf(61);
+  const host = await startHost(t, h, { server, allowed: [publicKeyOf(memberSeed)] });
+  assert.equal(host.bridge.bulk(), true, 'the built binary says bulk: 1 in ready');
+  const member = await startMember(h, { host, seed: memberSeed });
+  assert.deepEqual(member.result, { state: 'online', reason: null });
+  const ports = [member.bridge.port(), member.bridge.bulkPort()];
+  assert.ok(ports.every((port) => Number.isInteger(port) && port > 0) && ports[0] !== ports[1]);
+  for (const [index, text] of ['GET /ordinary', 'PUT /bulk'].entries()) {
+    const socket = net.connect({ host: '127.0.0.1', port: ports[index] });
+    socket.on('error', () => {});
+    socket.write(encodeMemberPreamble(member.launchSecret));
+    socket.write(text);
+    assert.equal((await collect(socket, text.length)).toString(), text);
+    socket.destroy();
+  }
+  assert.deepEqual(server.records.map((record) => record.payload.toString()), ['GET /ordinary', 'PUT /bulk']);
+  await waitFor(() => host.bridge.stats().streams === 0);
+  await member.bridge.stop();
+  await host.bridge.stop();
+  assert.equal(h.children.some(alive), false, 'no bridge process left');
 });

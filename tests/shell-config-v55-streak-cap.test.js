@@ -18,13 +18,13 @@ const {
 const { ShellConfigService } = require('../services/shell-config-service');
 
 test('v55 streak-cap constants and normalizer are bounded', async (t) => {
-  assert.equal(AUTO_APPROVE_STREAK_CAP_DEFAULT, 50);
+  assert.equal(AUTO_APPROVE_STREAK_CAP_DEFAULT, 250);
   assert.equal(AUTO_APPROVE_STREAK_CAP_MAX, 500);
   assert.equal(Object.isFrozen(AUTO_APPROVE_STREAK_CAP_DEFAULT), true);
   assert.equal(Object.isFrozen(AUTO_APPROVE_STREAK_CAP_MAX), true);
   for (const [input, expected] of [
     [0, 0], ['0', 0], [1, 1], ['30.9', 30], [900, 500],
-    [-1, 0], ['nope', 50], [NaN, 50], [null, 50], [undefined, 50], [{}, 50],
+    [-1, 0], ['nope', 250], [NaN, 250], [null, 250], [undefined, 250], [{}, 250],
   ]) {
     await t.test(`autoApproveStreakCap ${String(input)}`, () => {
       assert.equal(normalizeAutoApproveStreakCap(input), expected);
@@ -36,8 +36,8 @@ test('v55 migration adds the default and preserves valid forward values', () => 
   const migrated = normalizeState({ version: 54 });
   assert.equal(CONFIG_VERSION, 59);
   assert.equal(migrated.version, 59);
-  assert.equal(migrated.autoApproveStreakCap, 50);
-  assert.equal(normalizeState({ version: 54, autoApproveStreakCap: 250 }).autoApproveStreakCap, 250);
+  assert.equal(migrated.autoApproveStreakCap, 250);
+  assert.equal(normalizeState({ version: 54, autoApproveStreakCap: 120 }).autoApproveStreakCap, 120);
 });
 
 test('cloneState and serializeState round-trip the v55 streak cap', () => {

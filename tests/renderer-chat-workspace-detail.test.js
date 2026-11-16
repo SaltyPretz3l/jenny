@@ -96,6 +96,19 @@ test('background tasks opens Activity through the injected opener, else the open
   assert.equal(h.detail.open({ surface: 'background_tasks', ownerSessionId: 's2', opener: h.el('row1') }), false);
 });
 
+test('background tasks opens the Background tasks panel with the row\'s task id', () => {
+  const seen = [];
+  const h = setup({ openBackgroundTasks: (context) => { seen.push(context); return true; } });
+  const opener = h.el('row0');
+  assert.equal(h.detail.open({ surface: 'background_tasks', ownerSessionId: 's1', opener, resourceRef: 'job:abc123abc123' }), true);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], { ownerSessionId: 's1', opener, taskId: 'job:abc123abc123' });
+  assert.deepEqual(h.clicks, [], 'the Activity button is not clicked once the panel opener is wired');
+  assert.equal(h.detail.open({ surface: 'background_tasks', ownerSessionId: 's1', opener }), true);
+  assert.equal(seen[1].taskId, '');
+  assert.equal(h.detail.getCurrent().surface, 'background_tasks');
+});
+
 test('context and environment click their own pane\'s popover trigger, never another pane\'s', () => {
   const h = setup();
   assert.equal(h.detail.open({ surface: 'context', ownerSessionId: 's2', opener: h.el('row1') }), true);

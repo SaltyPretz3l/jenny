@@ -170,6 +170,7 @@
     const presentation = resolveModule('rendererWorkspacePresentationController', './renderer-workspace-presentation-controller')
       .createWorkspacePresentationController?.({
         getDom, windowRef, escapeHtml, appendClientLog, getActiveView,
+        showWorkspace: typeof d.setActiveView === 'function' ? () => d.setActiveView('ide') : null,
         openPreview: (path, options) => previewStage?.open(path, options),
         openFileMap: () => mapController?.openFileMap(),
         revealInMap: (path) => mapController?.revealInMap?.(path),

@@ -4,7 +4,7 @@
 // --amend / -s, and the single-file `apply --cached` patch gate. Own copy of the
 // tiny repo/service fixtures (the service suites sit at the 600-line test ratchet).
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -16,6 +16,7 @@ const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const { validateSingleFilePatch } = require('../services/workspace-git-service-extras');
 const { runWorkspaceGit } = require('../services/workspace-git-executor');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { buildCommittedRepo, createGitTemplates } = require('./helpers/git-template-repo');
 const { linkDirectory } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
@@ -24,18 +25,15 @@ function git(cwd, args) {
   return execFileAsync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
 }
 
-async function createGitRepo() {
-  const repoRoot = createTrackedTempDir('jenny-workspace-git-extras-');
-  await git(repoRoot, ['init']);
-  await git(repoRoot, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-  await git(repoRoot, ['config', 'user.email', 'jenny@example.invalid']);
-  await git(repoRoot, ['config', 'user.name', 'Jenny Tests']);
-  await git(repoRoot, ['config', 'commit.gpgsign', 'false']);
-  await git(repoRoot, ['config', 'core.autocrlf', 'false']);
-  await fs.writeFile(path.join(repoRoot, 'a.txt'), 'one\ntwo\nthree\n', 'utf8');
-  await git(repoRoot, ['add', 'a.txt']);
-  await git(repoRoot, ['commit', '-m', 'initial']);
-  return repoRoot;
+// Each starting repository is built once per file and copied per case (the git
+// spawns of a fresh fixture dominated the small cases); see git-template-repo.
+const templates = createGitTemplates();
+after(() => templates.dispose());
+
+const buildStandardRepo = (repoRoot) => buildCommittedRepo(repoRoot, { 'a.txt': 'one\ntwo\nthree\n' });
+
+function createGitRepo() {
+  return templates.copy('standard', buildStandardRepo, 'jenny-workspace-git-extras-');
 }
 
 function createService(root, { flag = true, exec, trashItemImpl = null } = {}) {
@@ -124,13 +122,14 @@ describe('reads (row 82 G1)', () => {
 });
 
 describe('stash list / apply / pop / drop (row 82 G1)', () => {
-  async function twoStashes() {
-    const repo = await createGitRepo();
-    await fs.writeFile(path.join(repo, 'a.txt'), 'first edit\n', 'utf8');
-    await git(repo, ['stash', 'push', '-m', 'first']);
-    await fs.writeFile(path.join(repo, 'a.txt'), 'second edit\n', 'utf8');
-    await git(repo, ['stash', 'push', '-m', 'second']);
-    return repo;
+  function twoStashes() {
+    return templates.copy('two-stashes', async (repo) => {
+      await buildStandardRepo(repo);
+      await fs.writeFile(path.join(repo, 'a.txt'), 'first edit\n', 'utf8');
+      await git(repo, ['stash', 'push', '-m', 'first']);
+      await fs.writeFile(path.join(repo, 'a.txt'), 'second edit\n', 'utf8');
+      await git(repo, ['stash', 'push', '-m', 'second']);
+    }, 'jenny-workspace-git-extras-');
   }
 
   test('listStashes returns newest first with index, ref and subject', async () => {
@@ -348,17 +347,18 @@ describe('cleanup wave G2/G3: blameFile and discardFiles', () => {
   });
 
   async function dirtyRepo(tracked, untracked) {
-    const repo = createTrackedTempDir('jenny-workspace-git-discard-');
-    await git(repo, ['init']);
-    for (const args of [['config', 'user.email', 'j@example.invalid'], ['config', 'user.name', 'J'], ['config', 'commit.gpgsign', 'false'], ['config', 'core.autocrlf', 'false']]) await git(repo, args);
-    await fs.mkdir(path.join(repo, 'src'));
     const names = Array.from({ length: tracked }, (_v, i) => `src/f${i} [x].txt`);
-    await Promise.all(names.map((name) => fs.writeFile(path.join(repo, name), `${name}\n`, 'utf8')));
-    await git(repo, ['add', '-A']);
-    await git(repo, ['commit', '-m', 'base']);
-    await Promise.all(names.map((name, i) => (i % 10 === 0 ? fs.rm(path.join(repo, name)) : fs.writeFile(path.join(repo, name), 'edited\n', 'utf8'))));
     const fresh = Array.from({ length: untracked }, (_v, i) => `new${i}.txt`);
-    await Promise.all(fresh.map((name) => fs.writeFile(path.join(repo, name), 'n\n', 'utf8')));
+    const repo = await templates.copy(`dirty-${tracked}-${untracked}`, async (dir) => {
+      await git(dir, ['init']);
+      for (const args of [['config', 'user.email', 'j@example.invalid'], ['config', 'user.name', 'J'], ['config', 'commit.gpgsign', 'false'], ['config', 'core.autocrlf', 'false']]) await git(dir, args);
+      await fs.mkdir(path.join(dir, 'src'));
+      await Promise.all(names.map((name) => fs.writeFile(path.join(dir, name), `${name}\n`, 'utf8')));
+      await git(dir, ['add', '-A']);
+      await git(dir, ['commit', '-m', 'base']);
+      await Promise.all(names.map((name, i) => (i % 10 === 0 ? fs.rm(path.join(dir, name)) : fs.writeFile(path.join(dir, name), 'edited\n', 'utf8'))));
+      await Promise.all(fresh.map((name) => fs.writeFile(path.join(dir, name), 'n\n', 'utf8')));
+    }, 'jenny-workspace-git-discard-');
     return { repo, paths: [...names, ...fresh] };
   }
 

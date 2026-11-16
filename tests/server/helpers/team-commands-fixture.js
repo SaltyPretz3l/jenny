@@ -22,8 +22,11 @@ const { createAuthorizer } = require('../../../server/team/authorize');
 const { createInviteService } = require('../../../server/team/invites');
 const { createFixture } = require('./team-store-fixture');
 
+// `internet` is the host's internet joining setting the commands read (slice 5-3; null is off).
+// `nodes({ store, authorize, logger })` builds the team.node.* module the commands hand off to.
+// `usage` answers the host's usage log (slice 4e GPU use; null is no pool).
 async function createTeamCommandsFixture(t, {
-  addresses = [], limiter = null, withTeamCommands = true, storeOverrides = {},
+  addresses = [], limiter = null, withTeamCommands = true, storeOverrides = {}, internet = () => null, settle = null, nodes = null, usage = null,
 } = {}) {
   const fx = createFixture(null);
   const store = fx.openStore(storeOverrides);
@@ -44,8 +47,8 @@ async function createTeamCommandsFixture(t, {
   if (withTeamCommands) {
     const { createTeamCommands } = require('../../../server/team/team-commands');
     teamCommands = createTeamCommands({
-      store, invites, directory: store.directory, addresses: () => addresses, limiter, clock: fx.clock,
-      logger: fx.logger,
+      store, invites, directory: store.directory, addresses: () => addresses, internet, settle, limiter, clock: fx.clock,
+      logger: fx.logger, ...(nodes ? { nodes: nodes({ store, authorize, logger: fx.logger }) } : {}), ...(usage ? { usage } : {}),
     });
   }
   const router = createCommandRouter({
@@ -77,8 +80,8 @@ async function createTeamCommandsFixture(t, {
     const { invite, ...rest } = answer;
     const text = JSON.stringify(rest);
     for (const key of [...keys, fx.hostKey]) assert.equal(text.includes(key), false, 'an answer carried a key');
-    assert.equal(text.includes('jteam1_'), false, 'an answer carried an invite string outside `invite`');
-    if (invite !== undefined) assert.match(invite, /^jteam1_[A-Za-z0-9_-]+$/u);
+    assert.equal(/jteam\d+_/u.test(text), false, 'an answer carried an invite string outside `invite`');
+    if (invite !== undefined) assert.match(invite, /^jteam[12]_[A-Za-z0-9_-]+$/u);
   }
 
   async function dispatch(seat, cmd) {

@@ -287,6 +287,7 @@
             renderTasksSurface: (surface) => ensureTaskRailController()?.renderRailContent?.(surface) === true,
             renderSubagentsSurface: (surface) => rails.getSubagentRailController()?.renderSubagentsSurface?.(surface) === true,
             renderNotesSurface: (surface) => ensureProjectNotesRail()?.renderRailContent?.(surface) === true,
+            renderBackgroundTasksSurface: (surface) => rails.renderBackgroundTasksSurface(surface),
             renderBrowserSurface: (surface) => rails.getBrowserPanel()?.renderRailContent?.(surface) === true,
             resetFilePreview: () => rails.getFilePreviewController()?.reset?.(),
             panelV2: panelV2Controller,
@@ -393,7 +394,8 @@
     }
     // The session rail's detail entry points (renderer-chat-workspace-detail.js) drive the panels this bridge owns; configured at
     // construction and lazy, so a rail click builds the artifact surface and code review rail on first use.
-    globalRef.rendererChatWorkspaceDetail?.configure?.({ claimOwner: (sessionId) => sidePanel.claim(sessionId), openArtifact: (ref) => openArtifactTarget(ref, { source: 'session-rail' }), openChanges: (context) => { ensureArtifactSurface(); return ensureCodeReviewRail()?.openWorkingTree?.(context) === true; }, closePanel: () => artifactSurfaceController?.collapseArtifactReview?.() });
+    globalRef.rendererChatWorkspaceDetail?.configure?.({ claimOwner: (sessionId) => sidePanel.claim(sessionId), openArtifact: (ref) => openArtifactTarget(ref, { source: 'session-rail' }), openChanges: (context) => { ensureArtifactSurface(); return ensureCodeReviewRail()?.openWorkingTree?.(context) === true; }, closePanel: () => artifactSurfaceController?.collapseArtifactReview?.(),
+      openBackgroundTasks: ({ ownerSessionId, opener, taskId }) => rails.backgroundTasksApi.open({ sessionId: ownerSessionId, opener, taskId }) }); // row 138
 
     function jumpToArtifactSource(...args) {
       return ensureArtifactSurface()?.jumpToArtifactSource?.(...args);

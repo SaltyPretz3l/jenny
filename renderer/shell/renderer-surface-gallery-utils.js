@@ -36,7 +36,7 @@
   ];
   // Foundation/Midnight + the 11 palette files; fallback if appearanceUtils isn't reachable.
   var FALLBACK_PALETTE_IDS = [
-    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'paper',
+    'midnight', 'pewter', 'obsidian', 'darkroom', 'slate', 'chalk', 'aurora', 'paper',
     'woolly', 'lexicon', 'rocko', 'jenny-day', 'jenny-night',
   ];
   var SWEEP_STEPS = 24;
@@ -66,6 +66,7 @@
       'atomic-burst': windowRef.rendererAtomicBurstUtils && windowRef.rendererAtomicBurstUtils.createAtomicBurstController,
       'circuit-trace': windowRef.rendererCircuitTraceUtils && windowRef.rendererCircuitTraceUtils.createCircuitTraceController,
       'context-weave': windowRef.rendererContextWeaveUtils && windowRef.rendererContextWeaveUtils.createContextWeaveController,
+      'aurora-ridge': windowRef.rendererAuroraRidgeUtils && windowRef.rendererAuroraRidgeUtils.createAuroraRidgeController,
     };
   }
 

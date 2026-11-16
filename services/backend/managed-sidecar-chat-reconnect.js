@@ -3,6 +3,7 @@ const {
   SIDECAR_ERROR_CODES,
   SIDECAR_TERMINAL_SUBCODES,
 } = require('./error-codes');
+const { refusalMessageForStatus } = require('./vram-load-preflight');
 const { managedModelKey } = require('../shell-config-engines');
 const { createCancellationError } = require('./chat-stream-terminal-utils');
 
@@ -344,7 +345,7 @@ async function ensureManagedLlamaServerReadyForChat(
     readyStatus = { state: status.state, lastError: String(error?.message || error) };
   }
   if (readyStatus?.state !== 'ready') {
-    const detail = readyStatus?.lastError || readyStatus?.state;
+    const detail = refusalMessageForStatus(service, readyStatus) || readyStatus?.lastError || readyStatus?.state;
     service._emitServiceLog('WARN', 'chat.llama_server_preflight_unavailable', {
       sessionId, streamId, traceId, state: readyStatus?.state, message: detail,
     });
@@ -402,7 +403,7 @@ async function ensureManagedNinferReadyForChat(
     readyStatus = { state: status.state, lastError: String(error?.message || error) };
   }
   if (readyStatus?.state !== 'ready') {
-    const detail = readyStatus?.lastError || readyStatus?.state;
+    const detail = refusalMessageForStatus(service, readyStatus) || readyStatus?.lastError || readyStatus?.state;
     service._emitServiceLog('WARN', 'chat.ninfer_preflight_unavailable', {
       sessionId, streamId, traceId, state: readyStatus?.state, message: detail,
     });

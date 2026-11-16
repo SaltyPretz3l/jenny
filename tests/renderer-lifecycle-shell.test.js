@@ -8,6 +8,7 @@ const {
   loadRendererApp,
   waitForUi,
 } = require('./helpers/renderer-shell-harness');
+const { waitForState } = require('./helpers/shell-shared-wait');
 
 function buildSession(sessionId, overrides = {}) {
   return {
@@ -62,12 +63,13 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   });
 
   doc.getElementById('settingsTopRailTab').click();
-  await waitForUi(window, 40);
-  doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => doc.querySelector('.settings-nav-item[data-settings-section="models"]'));
+  // Offline is Models' Local only group (row 133); Settings opens on Models.
+  doc.querySelector('.settings-nav-item[data-settings-section="models"]').click();
+  await waitForState(window, () => shell.__getListenerCounts().features === 4);
   // Skills rides under Extensions.
   doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => shell.__getListenerCounts().skills === 2);
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
@@ -114,11 +116,12 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   });
 
   doc.getElementById('settingsTopRailTab').click();
-  await waitForUi(window, 40);
-  doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => doc.querySelector('.settings-nav-item[data-settings-section="models"]'));
+  // Offline is Models' Local only group (row 133); Settings opens on Models.
+  doc.querySelector('.settings-nav-item[data-settings-section="models"]').click();
+  await waitForState(window, () => doc.querySelector('.settings-nav-item[data-settings-section="extensions"]'));
   doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => shell.__getListenerCounts().skills === 2);
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
@@ -170,7 +173,8 @@ test('renderer loadSessions prunes stale per-session caches and resets the activ
 
   await shell.__emitBackendStatus({ phase: 'failed', detail: 'sidecar restarted' });
   await shell.__emitBackendStatus({ phase: 'ready', startupStage: 'ready', startupMs: 1 });
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.currentSessionId === 'session-keep' && !rendererState.messagesBySession.has('session-stale') && !rendererState.queuedSendBySession.has('session-stale')
+    && rendererState.pendingToolApprovals.size === 0 && rendererState.activeStreamId === '' && evictCalls.length > 0);
 
   assert.equal(rendererState.currentSessionId, 'session-keep');
   assert.equal(rendererState.messagesBySession.has('session-stale'), false);
@@ -220,9 +224,7 @@ test('overlapping New chat creates keep the second session current and list both
   await firstListStarted;
   newChatButton.click();
 
-  for (let attempt = 0; attempt < 20 && rendererState.currentSessionId !== 'session-overlap-2'; attempt += 1) {
-    await waitForUi(window, 5);
-  }
+  await waitForState(window, () => rendererState.currentSessionId === 'session-overlap-2');
   assert.equal(rendererState.currentSessionId, 'session-overlap-2', 'the second create settles first');
 
   resolveFirstList({ data: [{ ...canonicalSessions[0] }] });
@@ -282,7 +284,7 @@ test('a New chat clicked while the previous one opens its tab ends on the newer 
   chatInput.value = 'draft in the first chat';
   chatInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   newChatButton.click();
-  for (let attempt = 0; attempt < 20 && createCount < 2; attempt += 1) await waitForUi(window, 5);
+  await waitForState(window, () => createCount >= 2);
   releaseFirstPersist();
   await waitForUi(window, 40);
 
@@ -306,7 +308,7 @@ test('a second New chat click reuses the untouched empty chat instead of creatin
 
   const newChatButton = window.document.getElementById('newChatButton');
   newChatButton.click();
-  for (let attempt = 0; attempt < 20 && rendererState.workspace?.activeSessionId !== 'session-empty-1'; attempt += 1) await waitForUi(window, 5);
+  await waitForState(window, () => rendererState.workspace?.activeSessionId === 'session-empty-1');
   newChatButton.click();
   await waitForUi(window, 40);
 
@@ -336,7 +338,7 @@ test('renderer logout clears multi-stream controller state and legacy busy snaps
   });
 
   await shell.__emitAuthState({ authenticated: false, user: null });
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.activeStreamId === '' && rendererState.sendPreflight === null && rendererState.turnEventsBySession.size === 0 && Array.from(multiStreamController.getStreamingSessionIds()).length === 0);
 
   assert.deepEqual(Array.from(multiStreamController.getStreamingSessionIds()), []);
   assert.deepEqual(Array.from(multiStreamController.getPreflightSessionIds()), []);
@@ -364,7 +366,7 @@ test('renderer global error boundary logs all occurrences, dedupes toast noise, 
     lineno: 12,
     colno: 3,
   }));
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.logs.filter((entry) => entry.event === 'renderer.global_error').length >= 2 && /runtime error occurred/i.test(String(toastViewport.textContent || '')));
 
   const globalErrorLogs = rendererState.logs.filter((entry) => entry.event === 'renderer.global_error');
   assert.equal(globalErrorLogs.length, 2);
@@ -407,7 +409,7 @@ test('renderer global error boundary still reports Monaco events when an excepti
   });
 
   window.dispatchEvent(event);
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.logs.filter((entry) => entry.event === 'renderer.global_error').length >= 1 && /runtime error occurred/i.test(String(toastViewport.textContent || '')));
 
   const globalErrorLogs = rendererState.logs.filter((entry) => entry.event === 'renderer.global_error');
   assert.equal(globalErrorLogs.length, 1);
@@ -462,7 +464,7 @@ test('renderer deleting the active session clears stream state and approvals bef
   input.value = 'Delete this active session';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
-  await waitForUi(window, 30);
+  await waitForState(window, () => rendererState.activeStreamId === 'stream-delete-active');
 
   await shell.__emitChat({
     type: 'tool_use',
@@ -482,7 +484,7 @@ test('renderer deleting the active session clears stream state and approvals bef
     toolName: 'Read',
     input: { file_path: 'src/app.js' },
   });
-  await waitForUi(window, 30);
+  await waitForState(window, () => rendererState.toolCallsByStream.size === 1 && rendererState.pendingToolApprovals.size === 1);
 
   assert.equal(
     rendererState.pendingStreams.size,
@@ -504,14 +506,14 @@ test('renderer deleting the active session clears stream state and approvals bef
   );
   assert.ok(menuButton, 'expected the actions menu for the active session');
   menuButton.click();
-  await waitForUi(window, 10);
-  const deleteItem = [...window.document.querySelectorAll('.inv-context-menu-item')]
-    .find((button) => button.textContent.trim() === 'Delete');
+  await waitForState(window, () => [...window.document.querySelectorAll('.inv-context-menu-item')].some((button) => button.textContent.trim() === 'Delete'));
+  const deleteItem = [...window.document.querySelectorAll('.inv-context-menu-item')].find((button) => button.textContent.trim() === 'Delete');
   assert.ok(deleteItem, 'expected the Delete menu item');
   deleteItem.click();
-  await waitForUi(window, 20);
-  window.document.querySelector('[data-toast-action-id="session-delete-now"]').click();
-  await waitForUi(window, 60);
+  await waitForState(window, () => window.document.querySelector('[data-toast-action-id="session-delete-undo"]'));
+  window.document.querySelector('[data-toast-action-id="session-delete-undo"]').closest('.inv-toast').querySelector('[data-toast-dismiss]').click();
+  await waitForState(window, () => shell.__state.cancelCalls.length === 1 && rendererState.activeStreamId === '' && !rendererState.messagesBySession.has('session-delete-active')
+    && !rendererState.queuedSendBySession.has('session-delete-active') && rendererState.toolCallsByStream.size === 0 && rendererState.pendingToolApprovals.size === 0);
 
   assert.deepEqual(shell.__state.cancelCalls, ['stream-delete-active']);
   assert.equal(rendererState.pendingStreams.size, 0);
@@ -548,10 +550,10 @@ test('renderer restores hidden reasoning stream when returning to chat before co
   input.value = 'Navigate while reasoning';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.activeStreamId === 'stream-hidden-reasoning-nav');
 
   logsTab.click();
-  await waitForUi(window, 30);
+  await waitForState(window, () => rendererState.ui.activeView === 'logs');
   assert.equal(rendererState.ui.activeView, 'logs');
 
   await shell.__emitChat({
@@ -566,7 +568,7 @@ test('renderer restores hidden reasoning stream when returning to chat before co
   await waitForUi(window, 30);
 
   window.document.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 60);
+  await waitForState(window, () => rendererState.ui.activeView === 'chat' && /Reading context/.test(String(window.document.getElementById('chatTimeline')?.textContent || '')));
 
   const sessionMessages = rendererState.messagesBySession.get('session-hidden-reasoning-nav') || [];
   const assistantShell = sessionMessages.find((message) => message.id === 'assistant_stream-hidden-reasoning-nav');
@@ -604,7 +606,7 @@ test('renderer keeps live stream text visible when returning to chat before comp
   input.value = 'Navigate while text streams';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
-  await waitForUi(window, 40);
+  await waitForState(window, () => window.__rendererState.activeStreamId === 'stream-hidden-text-nav');
 
   await shell.__emitChat({
     type: 'delta',
@@ -612,11 +614,11 @@ test('renderer keeps live stream text visible when returning to chat before comp
     streamId: 'stream-hidden-text-nav',
     content: 'Visible before nav.',
   });
-  await waitForUi(window, 60);
+  await waitForState(window, () => /Visible before nav\./.test(String(timeline.textContent || '')));
   assert.match(String(timeline.textContent || ''), /Visible before nav\./);
 
   logsTab.click();
-  await waitForUi(window, 30);
+  await waitForState(window, () => window.__rendererState.ui.activeView === 'logs');
 
   await shell.__emitChat({
     type: 'delta',
@@ -624,7 +626,7 @@ test('renderer keeps live stream text visible when returning to chat before comp
     streamId: 'stream-hidden-text-nav',
     content: ' Hidden after nav.',
   });
-  await waitForUi(window, 60);
+  await waitForState(window, () => /Hidden after nav\./.test(String(window.__rendererState.messagesBySession.get('session-hidden-text-nav')?.find((message) => message.streamId === 'stream-hidden-text-nav')?.content || '')));
   assert.match(
     String(
       window.__rendererState.messagesBySession
@@ -636,7 +638,7 @@ test('renderer keeps live stream text visible when returning to chat before comp
   );
 
   window.document.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 80);
+  await waitForState(window, () => window.__rendererState.ui.activeView === 'chat' && /Hidden after nav\./.test(String(window.document.getElementById('chatTimeline')?.textContent || '')));
 
   const restoredTimeline = window.document.getElementById('chatTimeline');
   const text = String(restoredTimeline?.textContent || '');
@@ -648,7 +650,7 @@ test('renderer keeps live stream text visible when returning to chat before comp
 test('bootstrap restores the persisted last-active view across launches', async (t) => {
   const app = await loadRendererTestApp(t, { persistedActiveView: 'home' });
   const { window } = app;
-  await waitForUi(window, 40);
+  await waitForState(window, () => window.__rendererState.ui.activeView === 'home' && window.document.documentElement.dataset.activeView === 'home');
 
   assert.equal(window.__rendererState.ui.activeView, 'home');
   assert.equal(window.document.documentElement.dataset.activeView, 'home');
@@ -657,7 +659,7 @@ test('bootstrap restores the persisted last-active view across launches', async 
 test('bootstrap hydrates the Home companion panel when Home is the restored boot view', async (t) => {
   const app = await loadRendererTestApp(t, { persistedActiveView: 'home' });
   const { window } = app;
-  await waitForUi(window, 60);
+  await waitForState(window, () => window.__rendererState.companion.loaded === true && String(window.document.getElementById('homeOpenLoopStatus')?.textContent || '').trim() !== 'Loading open loops...');
 
   assert.equal(window.__rendererState.ui.activeView, 'home');
   // Regression guard: restoring Home used to set state.ui.activeView directly
@@ -692,7 +694,7 @@ test('bootstrap re-opens the persisted Workspace (IDE) files when IDE is the res
     },
   });
   const { window } = app;
-  await waitForUi(window, 60);
+  await waitForState(window, () => window.__rendererState.ui.activeView === 'ide' && window.__rendererState.ui.ide.openTabs.length === 1 && window.__rendererState.ui.ide.activeTabPath === 'src/foo.js');
 
   assert.equal(window.__rendererState.ui.activeView, 'ide');
   // Regression guard: restoring the IDE view used to set state.ui.activeView
@@ -792,7 +794,7 @@ test('renderer keeps a session visible when backend delete reports deleted false
     content: 'Still here',
   }]);
   await shell.__emitAuthState({ authenticated: true, user: { email: 'dev@example.com' } });
-  await waitForUi(window, 40);
+  await waitForState(window, () => window.document.querySelector(`[data-session-action="menu"][data-session-id="${sessionId}"]`));
 
   const originalDelete = window.jennyShell.sessions.delete;
   window.jennyShell.sessions.delete = async () => ({
@@ -809,13 +811,12 @@ test('renderer keeps a session visible when backend delete reports deleted false
   );
   assert.ok(menuButton, 'expected the actions menu for the test session');
   menuButton.click();
-  await waitForUi(window, 10);
-  const deleteItem = [...window.document.querySelectorAll('.inv-context-menu-item')]
-    .find((button) => button.textContent.trim() === 'Delete');
+  await waitForState(window, () => [...window.document.querySelectorAll('.inv-context-menu-item')].some((button) => button.textContent.trim() === 'Delete'));
+  const deleteItem = [...window.document.querySelectorAll('.inv-context-menu-item')].find((button) => button.textContent.trim() === 'Delete');
   assert.ok(deleteItem, 'expected the Delete menu item');
   deleteItem.click();
-  await waitForUi(window, 20);
-  window.document.querySelector('[data-toast-action-id="session-delete-now"]').click();
+  await waitForState(window, () => window.document.querySelector('[data-toast-action-id="session-delete-undo"]'));
+  window.document.querySelector('[data-toast-action-id="session-delete-undo"]').closest('.inv-toast').querySelector('[data-toast-dismiss]').click();
   await waitForUi(window, 80);
 
   assert.equal(
@@ -851,7 +852,7 @@ test('renderer evicts the least-recent inactive cached sessions after opening mo
   }
 
   await shell.__emitAuthState({ authenticated: true, user: { email: 'dev@example.com' } });
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.messagesBySession.size === 6 && rendererState.currentSessionId === 'session-8');
 
   assert.equal(rendererState.messagesBySession.size, 6);
   assert.equal(rendererState.messagesBySession.has('session-1'), false);
@@ -886,7 +887,7 @@ test('renderer keeps sessions with pending approval state cached even when they 
   });
 
   await shell.__emitAuthState({ authenticated: true, user: { email: 'dev@example.com' } });
-  await waitForUi(window, 40);
+  await waitForState(window, () => rendererState.messagesBySession.size === 6 && rendererState.messagesBySession.has('session-1'));
 
   assert.equal(rendererState.messagesBySession.size, 6);
   assert.equal(rendererState.messagesBySession.has('session-1'), true);
@@ -944,7 +945,7 @@ test('renderer rehydrates pending approval state from the live active-turn snaps
   }]);
 
   await app.reloadRendererApp();
-  await waitForUi(window, 40);
+  await waitForState(window, () => window.__rendererState.pendingToolApprovals.has('call-live') && window.rendererMultiStreamController.getStreamIdForSession('session-live') === 'stream-live');
 
   const rendererState = window.__rendererState;
   const multiStreamController = window.rendererMultiStreamController;

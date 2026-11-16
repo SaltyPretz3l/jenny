@@ -58,7 +58,7 @@
     // artifacts, spawned tasks, calendar blocks, notes rows, proposal cards) never fold into a run.
     const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
       'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
-      'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff', 'report_findings', 'suggest_next_step',
+      'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'subagent_run', 'subagent_batch', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff', 'report_findings', 'suggest_next_step',
     ]);
     // A step waiting on the user ends the run and stays its own open card.
     const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);

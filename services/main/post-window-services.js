@@ -18,15 +18,25 @@ function createPostWindowServiceStarters({
   pdfAddon,
   imageEngine,
   wireSemanticCatalog,
+  log = () => {},
 }) {
+  // Each of these is optional: one that throws must not stop the others or the backend start after them.
+  const guarded = (name, start) => {
+    try {
+      return start();
+    } catch (error) {
+      log('WARN', 'app.post_window_service_failed', { service: name, message: String(error?.message || error) });
+      return null;
+    }
+  };
   let postWindowServicesStarted = false;
   function startPostWindowServices() {
     if (postWindowServicesStarted) return;
     postWindowServicesStarted = true;
-    void pdfAddon.start().catch(() => {});
-    imageEngine.start();
-    void backendService.commandSandbox.start().catch(() => {});
-    wireSemanticCatalog();
+    guarded('pdf_addon', () => void pdfAddon.start().catch(() => {}));
+    guarded('image_engine', () => imageEngine.start());
+    guarded('command_sandbox', () => void backendService.commandSandbox.start().catch(() => {}));
+    guarded('semantic_catalog', () => wireSemanticCatalog());
   }
 
   let sidecarIdleWorkersStarted = false;

@@ -19,6 +19,8 @@ const SURFACE_FAMILIES = Object.freeze([
   // Row 69 Q6 (2026-10-20): the session directory joined Helpers when it left the always-on list.
   { id: 'helpers', section: 'reach', sidecarFamilies: [],
     toolNames: ['delegate', 'sessions_list', 'session_status', 'session_transcript', 'session_stop',
+      // Row 136: Helpers, not always on, so primary-settings-tool-gate.js can deny it to every other chat.
+      'session_prioritize',
       // Row 88: Helpers, not always on, so primary-settings-tool-gate.js can deny them to every other chat.
       'settings_get', 'settings_change',
       // Row 94 P1: same rule, so primary-settings-tool-gate.js can deny them to every other chat.

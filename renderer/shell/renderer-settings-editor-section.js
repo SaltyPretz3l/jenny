@@ -203,8 +203,8 @@
     });
   }
 
-  // A labelled run of rows (the Settings > Advanced limits-group markup).
-  function subgroup(id, label, rows) {
+  // A top-level labelled run of rows (the Settings group markup).
+  function group(id, label, rows) {
     return '<div class="settings-group" role="group" aria-labelledby="settingsEditorGroup-' + id + '" data-editor-group="' + id + '">'
       + '<h4 class="settings-group-heading" id="settingsEditorGroup-' + id + '">' + escapeHtml(label) + '</h4>' + rows.join('') + '</div>';
   }
@@ -219,21 +219,22 @@
     const byKey = {};
     editorDescriptors(() => form).forEach((d) => { byKey[d.key] = d; });
     const row = (key) => binding.renderSettingRow(byKey[key], descriptors.normalizeSettingValue(byKey[key], form[key]));
-    const advanced = ['renderWhitespace', 'rulers', 'formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline',
-      'bracketPairColorization', 'indentGuides', 'stickyScroll', 'folding', 'scrollBeyondLastLine', 'mouseWheelZoom', 'inlineBlame',
-      'terminalScrollback', 'terminalDefaultProfile'].map(row);
+    const advanced = ['renderWhitespace', 'rulers', 'bracketPairColorization', 'indentGuides', 'stickyScroll', 'folding',
+      'scrollBeyondLastLine', 'mouseWheelZoom', 'inlineBlame'].map(row);
     // The delay only applies to the after-delay mode: a dependent sub row, off otherwise.
     const delayRow = binding.renderSettingRow(byKey.autoSaveDelayMs, descriptors.normalizeSettingValue(byKey.autoSaveDelayMs, form.autoSaveDelayMs),
       { sub: true, parentOff: form.autoSaveMode !== 'afterDelay' });
-    const parts = ['fontSize', 'tabSize', 'wordWrap', 'minimap', 'lineNumbers'].map(row).concat([
-      subgroup('cursor', jt('settings.editor.group.cursorAndText', 'Cursor and text'),
+    const parts = [
+      group('general', jt('settings.editor.general.heading', 'General'), ['fontSize', 'tabSize', 'wordWrap', 'minimap', 'lineNumbers'].map(row)),
+      group('cursor', jt('settings.editor.group.cursorAndText', 'Cursor and text'),
         ['fontFamily', 'cursorStyle', 'cursorBlinking', 'cursorSmoothCaretAnimation', 'fontLigatures'].map(row)),
-      subgroup('indentation', jt('settings.editor.group.indentation', 'Indentation'), ['insertSpaces', 'detectIndentation'].map(row)),
-      subgroup('autosave', jt('settings.editor.group.autoSave', 'Auto save'), [row('autoSaveMode'), delayRow]),
-      '<details class="settings-group settings-group--wide settings-editor-advanced">'
-        + '<summary>' + escapeHtml(jt('settings.appearance.advanced.heading', 'Advanced')) + '</summary><div class="settings-editor-advanced-fields">'
-        + advanced.join('') + '</div></details>',
-    ]);
+      group('indentation', jt('settings.editor.group.indentation', 'Indentation'), ['insertSpaces', 'detectIndentation'].map(row)),
+      group('autosave', jt('settings.editor.group.saving', 'Saving'),
+        [row('autoSaveMode'), delayRow].concat(['formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline'].map(row))),
+      group('terminal', jt('settings.editor.group.terminal', 'Terminal'), ['terminalDefaultProfile', 'terminalScrollback'].map(row)),
+      '<details class="settings-fold settings-editor-advanced"><summary>'
+        + escapeHtml(jt('settings.editor.group.advanced', 'Advanced')) + '</summary>' + advanced.join('') + '</details>',
+    ];
     requestTerminalProfiles(() => renderEditorSection({ container, status, ide }));
     const advancedOpen = container.querySelector('details.settings-editor-advanced')?.open === true;
     if (surfaces.paintSlot(container, parts.join('')) && advancedOpen) {

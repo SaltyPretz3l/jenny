@@ -3,7 +3,7 @@
  *
  * Accessible segmented control primitive (UMD). A closed-enum picker
  * rendered as role="radiogroup" with role="radio" options and roving
- * tabindex keyboard navigation (ArrowLeft/ArrowRight/Home/End).
+ * tabindex keyboard navigation (the four arrow keys, Home and End).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -24,6 +24,9 @@
   // A caller with a longer fixed enum (the Home usage range: 1d..All) opts in
   // with opts.maxOptions, capped here so the control never becomes a menu.
   var MAX_OPTIONS_CEILING = 6;
+  // A swatch control (the palette picker) is a row of colour dots, not text
+  // segments, so it may hold a full palette list.
+  var MAX_SWATCH_OPTIONS = 16;
 
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
@@ -43,6 +46,16 @@
       .join(' ');
   }
 
+  // Only plain hex colours reach the style attribute; anything else drops the swatch.
+  function swatchOf(opt) {
+    var pair = opt && opt.swatch;
+    if (!Array.isArray(pair) || pair.length < 2) return null;
+    var bg = String(pair[0]).trim();
+    var accent = String(pair[1]).trim();
+    var hex = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+    return hex.test(bg) && hex.test(accent) ? { bg: bg, accent: accent } : null;
+  }
+
   /**
    * Render a segmented control.
    * @param {Object} opts
@@ -52,6 +65,8 @@
    * @param {string} [opts.value] - Currently selected option value
    * @param {Array<{value:string,label:string,disabled?:boolean,tooltip?:string}>} opts.options - 2..4 options (up to opts.maxOptions)
    * @param {number} [opts.maxOptions] - raise the option ceiling above 4 (capped at 6)
+   * Options may also carry `swatch: [bgHex, accentHex]` (a colour dot instead of text; the label
+   * becomes the accessible name and tooltip, and the ceiling rises to 16) and `groupStart: true`.
    * @param {boolean} [opts.disabled] - Disables the whole group
    * @param {string} [opts.className] - Extra class names
    * @param {Object<string,string>} [opts.dataset] - Extra data-* attrs (key must match /^[a-z][a-z0-9-]*$/)
@@ -60,13 +75,17 @@
   function segmentedControl(opts) {
     var o = opts || {};
     var options = Array.isArray(o.options) ? o.options : [];
-    var maxOptions = Math.min(MAX_OPTIONS_CEILING, Math.max(MAX_OPTIONS, Math.trunc(Number(o.maxOptions)) || 0));
+    var hasSwatch = options.some(function (item) { return swatchOf(item) !== null; });
+    var maxOptions = hasSwatch
+      ? MAX_SWATCH_OPTIONS
+      : Math.min(MAX_OPTIONS_CEILING, Math.max(MAX_OPTIONS, Math.trunc(Number(o.maxOptions)) || 0));
     if (options.length < MIN_OPTIONS || options.length > maxOptions) return '';
 
     var id = sanitizeToken(o.id, '');
     var disabled = Boolean(o.disabled);
     var current = String(o.value == null ? '' : o.value);
     var cls = 'inv-segmented';
+    if (hasSwatch) cls += ' inv-segmented--swatch';
     if (disabled) cls += ' inv-segmented--disabled';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;
@@ -114,17 +133,24 @@
       var isSelected = j === selectedIndex;
       var optCls = 'inv-segmented-option';
       if (isSelected) optCls += ' inv-segmented-option--on';
+      var swatch = swatchOf(opt);
+      var titleText = optTooltip != null ? optTooltip : (swatch ? optLabel : null);
+      var labelHtml = swatch
+        ? '<span class="inv-segmented-swatch" style="--inv-swatch-bg:' + swatch.bg + ';--inv-swatch-accent:' + swatch.accent + '" aria-hidden="true"></span>'
+        : '<span class="inv-segmented-option-label">' + escapeHtml(optLabel) + '</span>';
       rendered += '<button'
         + ' type="button"'
         + ' role="radio"'
         + ' class="' + optCls + '"'
         + ' data-value="' + escapeHtml(optValue) + '"'
-        + (optTooltip != null ? ' title="' + escapeHtml(optTooltip) + '"' : '')
+        + (swatch && opt.groupStart === true ? ' data-group-start="true"' : '')
+        + (swatch ? ' aria-label="' + escapeHtml(optLabel) + '"' : '')
+        + (titleText != null ? ' title="' + escapeHtml(titleText) + '"' : '')
         + ' aria-checked="' + (isSelected ? 'true' : 'false') + '"'
         + ' tabindex="' + (j === tabStopIndex ? '0' : '-1') + '"'
         + (optDisabled ? ' disabled aria-disabled="true"' : '')
         + '>'
-        + '<span class="inv-segmented-option-label">' + escapeHtml(optLabel) + '</span>'
+        + labelHtml
         + '</button>';
     }
 
@@ -222,6 +248,8 @@
     rootEl.addEventListener('keydown', function (event) {
       if (event.isComposing) return;
       var key = event.key;
+      if (key === 'ArrowDown') key = 'ArrowRight';
+      else if (key === 'ArrowUp') key = 'ArrowLeft';
       if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return;
       var option = event.target.closest && event.target.closest('.inv-segmented-option');
       if (!option || option.disabled) return;

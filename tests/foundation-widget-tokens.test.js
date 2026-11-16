@@ -18,10 +18,15 @@ function readImports() {
 }
 
 test('widget token defaults load after foundation before palette overrides', () => {
-  const imports = readImports();
+  // foundation.css is linked once, in the <head> ahead of the boot curtain and
+  // ahead of styles.css, so it still precedes every sheet styles.css imports.
+  const indexHtml = readRepoFile('index.html');
+  const foundationLink = indexHtml.indexOf('href="styles/foundation.css"');
+  assert.ok(foundationLink > 0 && foundationLink < indexHtml.indexOf('href="styles.css"'));
 
-  assert.deepEqual(imports.slice(0, 4), [
-    './styles/foundation.css',
+  const imports = readImports();
+  assert.equal(imports.includes('./styles/foundation.css'), false, 'foundation.css is not loaded twice');
+  assert.deepEqual(imports.slice(0, 3), [
     './styles/foundation-widget-tokens.css',
     './styles/motion.css',
     './styles/palette-paper.css',

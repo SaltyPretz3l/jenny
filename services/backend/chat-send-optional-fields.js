@@ -9,6 +9,7 @@ const { buildApprovedPlanSendFields } = require('./approved-plan-context');
 const { buildProposeSendFields } = require('./propose-mode');
 const { PRIMARY_SESSION_ROLE, isPrimaryRole, primaryChatEnabled } = require('./primary-session');
 const { activeUseRequestFields } = require('../workspace-active-use-tracker');
+const { isProfileContextLength, isTeamEngineModelName, teamModelProfile } = require('./team-engine-models');
 
 // Row 69: whether this turn is the profile's Jenny chat. The primary_chat kill
 // switch (JENNY_ENABLE_PRIMARY_CHAT=0) turns every primary behaviour off, so the
@@ -30,10 +31,30 @@ function safetyRequestFields(service, captured) {
   return captured ? { ...captured } : (chatUi ? { safety_mode: chatUi.safetyMode, auto_approve_streak_cap: chatUi.autoApproveStreakCap } : {});
 }
 
+// An opaque per-request routing token (a turn route, turn-route.js): exactly 43 characters of
+// unpadded base64url, the only shape the sidecar binds. Anything else is omitted, never null.
+const ROUTE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
+function routeTokenFields(token) {
+  return typeof token === 'string' && ROUTE_TOKEN_PATTERN.test(token) ? { route_token: token } : {};
+}
+
+// The optional per-request model profile (sidecar/protocol.py `model_profile`): the serving model's
+// context length and name, so the sidecar sizes the turn for it. The length and name rules are the
+// ones in team-engine-models.js (the sidecar's own, restated once on the JS side). Each invalid member
+// is omitted; nothing valid is {}. Not a secret.
+function modelProfileFields({ id, context_length: contextLength } = {}) {
+  const profile = {};
+  if (isProfileContextLength(contextLength)) profile.context_length = contextLength;
+  if (isTeamEngineModelName(id)) profile.name = id;
+  return Object.keys(profile).length ? { model_profile: profile } : {};
+}
+
 function buildChatSendOptionalFields(service, {
   sessionId, sessionSummary, sessionMessages, planMode, workspaceRoot, safetyPolicy,
 }) {
   return {
+    // A member's turn on a team model carries that model's profile (a host's turn route sets its own later).
+    ...modelProfileFields(teamModelProfile(service) || {}),
     ...activeUseRequestFields(service, workspaceRoot),
     ...buildApprovedPlanSendFields(planMode, sessionMessages),
     ...buildProposeSendFields(service, sessionId, sessionSummary),
@@ -45,6 +66,8 @@ function buildChatSendOptionalFields(service, {
 module.exports = {
   buildChatSendOptionalFields,
   isPrimaryChatTurn,
+  modelProfileFields,
   primaryChatRoleFields,
+  routeTokenFields,
   safetyRequestFields,
 };

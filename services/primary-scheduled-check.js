@@ -15,6 +15,13 @@
  * spends a standing permission. Deferred occurrences live in memory: a restart drops them (the record already
  * says the occurrence fired), which loses one occurrence and never runs one twice. Diagnostics carry ids,
  * reasons and counts only, never the instruction.
+ *
+ * Row 144 (plan SCHEDULED_CHECK_MODEL_FLOOR_2026-11-13.md section 3.1): before the submit, `checkModel` names the
+ * model the check would run on (primary-check-model.js). A fit model is pinned on the request. A model that is not
+ * ready yet is re-asked for up to `pendingGraceMs`. One that is too small or not installed holds the occurrence:
+ * `schedule_held` in Activity and one `held` notice, retried on any model or setting change, on the recheck and
+ * on each settled turn, until it runs, misses its catch-up bound, or the user picks Run anyway (`runHeld`: size
+ * test skipped) or Skip (`skipHeld`). With the floor flag off, the model is still pinned but nothing is held.
  */
 
 const { createHash } = require('node:crypto');
@@ -22,9 +29,11 @@ const { sessionAllowsChatSend } = require('./backend/session-type');
 const { APPLICATION_TURN_SCHEDULED_CHECK } = require('./backend/application-turns');
 const { boundedSet, isTurnSettledEvent, wakeAuthority, wakeTitle } = require('./chat-messaging-wake');
 const { reminderCatchUpLimitMs } = require('./shell-config-followups-schema');
+const { createCheckModelGate } = require('./primary-check-model');
 
 const RUNTIME_ABSENT = Object.freeze({ ok: false, reason: 'runtime_unavailable', acceptance: 'rejected' });
 const DEFER_REASONS = new Set(['session_busy', 'linked_first_turn_pending']);
+const HOLD_REASONS = Object.freeze({ too_small: 'model_too_small', unavailable: 'model_unavailable' });
 const HOUR_MS = 60 * 60000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -63,20 +72,26 @@ function createScheduledCheckOps({
   noteWakeTurn = () => {},
   record = () => {}, // (kind, reminder, reason) -> history entry in the Jenny chat's Activity
   getReminder = () => undefined, // (id) -> the stored reminder, null when gone, undefined when unknown
+  checkModel = null, // async (summary, { override }) -> { status: fit|too_small|unavailable|pending, model, ... }
+  floorEnabled = () => true,
+  notify = () => {}, // ({ type: 'held', reminder_id, label, reason, model } | { type: 'cleared', reminder_id })
   scheduleRecheck = (fn, ms) => { const handle = setTimeout(fn, ms); handle.unref?.(); return handle; },
   busyRecheckMs = 2 * 60000,
+  pendingRecheckMs = 15000,
+  pendingGraceMs = 2 * 60000,
   now = () => Date.now(),
   log = () => {},
   rate = { hour: 12, day: 48 },
   maxDeferred = 64,
 } = {}) {
-  const deferred = new Map(); // reminder id -> { reminder, dueAtMs }
+  const deferred = new Map(); // reminder id -> { reminder, dueAtMs, held?, model?, pendingSince? }
   const inFlight = new Set(); // reminder ids with a submit awaiting its answer
+  const shown = new Set(); // reminder ids with a live `held` notice
   // reminder id -> the last outcome written to Activity; a repeat is only logged, so a check stuck
   // behind Pause or the caps cannot flood the shared history ring (and push out its Undo entries).
   const lastNoted = new Map();
   let fires = []; // submit times (ms) inside the last day
-  let recheckPending = false;
+  let recheckAt = 0; // when the earliest armed recheck fires (0: none armed)
 
   const read = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
   const nowMs = () => read(now, Date.now());
@@ -91,6 +106,7 @@ function createScheduledCheckOps({
       read(() => record(kind, reminder, reason), null);
     }
     log('INFO', 'primary_scheduled_check.outcome', { reminder_id: id, kind, reason, ...(repeat ? { repeat: true } : {}) });
+    return null;
   }
 
   function eligibleSummary(sessionId) {
@@ -112,21 +128,59 @@ function createScheduledCheckOps({
     return at - dueAtMs > reminderCatchUpLimitMs(reminder);
   }
 
-  function armRecheck() {
-    if (recheckPending || !deferred.size) return;
-    recheckPending = true;
-    read(() => scheduleRecheck(() => { recheckPending = false; void retryDeferred(); }, busyRecheckMs), null);
+  function armRecheck(ms = busyRecheckMs) {
+    if (!deferred.size) return;
+    const due = nowMs() + ms;
+    if (recheckAt && recheckAt <= due) return;
+    recheckAt = due;
+    read(() => scheduleRecheck(() => {
+      if (recheckAt === due) recheckAt = 0;
+      void retryDeferred();
+    }, ms), null);
   }
 
-  function defer(reminder, dueAtMs) {
+  function defer(reminder, dueAtMs, extra = {}) {
     if (!deferred.has(reminder.id) && deferred.size >= maxDeferred) return note('schedule_skipped', reminder, 'capacity');
-    boundedSet(deferred, reminder.id, { reminder, dueAtMs }, maxDeferred);
-    log('INFO', 'primary_scheduled_check.deferred', { reminder_id: reminder.id });
-    armRecheck();
+    boundedSet(deferred, reminder.id, { reminder, dueAtMs, ...extra }, maxDeferred);
+    log('INFO', 'primary_scheduled_check.deferred', { reminder_id: reminder.id, ...(extra.held ? { held: extra.held } : {}) });
+    armRecheck(extra.pendingSince !== undefined ? pendingRecheckMs : busyRecheckMs);
     return null;
   }
 
-  async function attempt(snapshot, dueAtMs) {
+  function hold(reminder, dueAtMs, reason, model) {
+    const fresh = lastNoted.get(String(reminder.id)) !== `schedule_held:${reason}` || !shown.has(reminder.id);
+    note('schedule_held', reminder, reason);
+    defer(reminder, dueAtMs, { held: reason, model });
+    if (fresh && deferred.get(reminder.id)?.held) {
+      shown.add(reminder.id);
+      read(() => notify({ type: 'held', reminder_id: reminder.id, label: String(reminder.label || ''), reason, model }), null);
+    }
+    return null;
+  }
+
+  // The model gate (row 144). Returns { model } to run on, or null once the occurrence was deferred or held.
+  async function gate(reminder, dueAtMs, summary, { override, pendingSince, carry }) {
+    if (typeof checkModel !== 'function') return { model: '' };
+    const floor = read(floorEnabled, true) !== false;
+    const answer = await Promise.resolve().then(() => checkModel(summary, { override: override || !floor })).catch(() => null);
+    const status = answer?.status;
+    const model = typeof answer?.model === 'string' ? answer.model : '';
+    if (status === 'fit') return { model };
+    if (!floor) return { model: '' }; // floor off: today's routing whenever the model is not confirmed
+    if (status === 'pending' || !status) {
+      const since = Number.isFinite(pendingSince) ? pendingSince : nowMs();
+      if (nowMs() - since < pendingGraceMs) {
+        defer(reminder, dueAtMs, { ...carry, pendingSince: since });
+        return null;
+      }
+    }
+    // Only a model that was sized and found small is too small; one never confirmed (an engine that did not come
+    // up within the grace) is not available, which offers no Run anyway.
+    hold(reminder, dueAtMs, status === 'too_small' ? HOLD_REASONS.too_small : HOLD_REASONS.unavailable, model);
+    return null;
+  }
+
+  async function attemptOnce(snapshot, dueAtMs, { override = false, pendingSince, held, model } = {}) {
     // A deferred occurrence runs what is stored now: a check deleted, turned off or edited since
     // it came due runs nothing, or its current instruction.
     const live = read(() => getReminder(snapshot.id), undefined);
@@ -135,54 +189,74 @@ function createScheduledCheckOps({
       return null;
     }
     const reminder = live || snapshot;
+    const carry = held ? { held, model, ...(override ? { override } : {}) } : {}; // a held check that waits again stays held
     const sessionId = primary();
     if (!on() || !sessionId) return note('schedule_skipped', reminder, 'disabled');
     if (late(reminder, dueAtMs, nowMs())) return note('schedule_missed', reminder, 'late');
     if (read(() => paused(sessionId), false) === true) {
       // A one-off waits for Resume (Q5); a recurring occurrence is skipped.
-      return reminder.scheduleType === 'once_at' ? defer(reminder, dueAtMs) : note('schedule_skipped', reminder, 'paused');
+      return reminder.scheduleType === 'once_at' ? defer(reminder, dueAtMs, carry) : note('schedule_skipped', reminder, 'paused');
     }
     const summary = eligibleSummary(sessionId);
     if (!summary) return note('schedule_skipped', reminder, 'ineligible');
-    if (inFlight.size || !idle(sessionId)) return defer(reminder, dueAtMs);
-    const at = nowMs();
-    if (rateLimited(at)) return note('schedule_skipped', reminder, 'rate_limited');
-    const request = {
-      sessionId,
-      prompt: scheduledCheckPrompt(reminder, dueAtMs),
-      visiblePrompt: `Scheduled check: ${wakeTitle(reminder.label)}`,
-      applicationTurn: APPLICATION_TURN_SCHEDULED_CHECK,
-      attachments: [],
-      ...wakeAuthority(summary),
-      approvalMode: 'prompt', // Q3: a fired check always asks before any tool, whatever the run mode
-    };
+    if (inFlight.size || !idle(sessionId)) return defer(reminder, dueAtMs, carry);
     inFlight.add(reminder.id);
-    fires.push(at);
     let result;
+    let at = 0;
     try {
-      result = await submitTurn(request, { idempotencyKey: scheduledCheckIdempotencyKey(reminder.id, dueAtMs) });
-    } catch {
-      result = { ok: false, reason: 'runtime_submission_refused' };
+      const picked = await gate(reminder, dueAtMs, summary, { override, pendingSince, carry });
+      if (!picked) return null;
+      at = nowMs();
+      if (rateLimited(at)) return note('schedule_skipped', reminder, 'rate_limited');
+      const authority = wakeAuthority(summary);
+      const request = {
+        sessionId,
+        prompt: scheduledCheckPrompt(reminder, dueAtMs),
+        visiblePrompt: `Scheduled check: ${wakeTitle(reminder.label)}`,
+        applicationTurn: APPLICATION_TURN_SCHEDULED_CHECK,
+        attachments: [],
+        ...authority,
+        ...(picked.model ? { preferredModel: picked.model } : {}),
+        approvalMode: 'prompt', // Q3: a fired check always asks before any tool, whatever the run mode
+      };
+      fires.push(at);
+      try {
+        result = await submitTurn(request, { idempotencyKey: scheduledCheckIdempotencyKey(reminder.id, dueAtMs) });
+      } catch {
+        result = { ok: false, reason: 'runtime_submission_refused' };
+      }
     } finally {
       inFlight.delete(reminder.id);
     }
     if (result?.ok === true) {
       lastNoted.delete(reminder.id);
       if (typeof result.turn_id === 'string') read(() => noteWakeTurn(result.turn_id, 1), null);
-      log('INFO', 'primary_scheduled_check.submitted', { reminder_id: reminder.id, created: result.created !== false });
+      log('INFO', 'primary_scheduled_check.submitted', { reminder_id: reminder.id, created: result.created !== false, ...(override ? { override: true } : {}) });
       return { outcome: 'submitted', turn_id: typeof result.turn_id === 'string' ? result.turn_id : null };
     }
     fires = fires.filter((time) => time !== at);
     const reason = typeof result?.reason === 'string' ? result.reason : 'runtime_submission_refused';
-    if (DEFER_REASONS.has(reason)) return defer(reminder, dueAtMs);
+    if (DEFER_REASONS.has(reason)) return defer(reminder, dueAtMs, carry);
     return note('schedule_skipped', reminder, /^[a-z_]{1,32}$/.test(reason) ? reason : 'refused');
+  }
+
+  // A held notice is withdrawn once its occurrence has left the queue (ran, missed, dropped or skipped).
+  async function attempt(snapshot, dueAtMs, options) {
+    try {
+      return await attemptOnce(snapshot, dueAtMs, options);
+    } finally {
+      if (shown.has(snapshot.id) && !deferred.has(snapshot.id)) {
+        shown.delete(snapshot.id);
+        read(() => notify({ type: 'cleared', reminder_id: snapshot.id }), null);
+      }
+    }
   }
 
   async function retryDeferred() {
     const entries = [...deferred.values()];
     deferred.clear();
-    for (const { reminder, dueAtMs } of entries) {
-      try { await attempt(reminder, dueAtMs); } catch { log('WARN', 'primary_scheduled_check.failed', { reason: 'exception' }); }
+    for (const { reminder, dueAtMs, pendingSince, held, model, override } of entries) {
+      try { await attempt(reminder, dueAtMs, { pendingSince, held, model, override }); } catch { log('WARN', 'primary_scheduled_check.failed', { reason: 'exception' }); }
     }
   }
 
@@ -224,19 +298,61 @@ function createScheduledCheckOps({
     }
   }
 
-  function stats() {
-    return { deferred: deferred.size, fires_last_day: fires.length };
+  // A model was loaded, the model list changed or a model setting was written: held and waiting checks try again.
+  async function onModelsChanged() {
+    const waiting = [...deferred.values()].some((entry) => entry.held || entry.pendingSince !== undefined);
+    if (!waiting) return { outcome: 'none' };
+    await retryDeferred().catch(() => log('WARN', 'primary_scheduled_check.failed', { reason: 'exception' }));
+    return { outcome: 'retried' };
   }
 
-  return { holds, onDue, onTurnSettled, retryDeferred, stats };
+  function takeHeld(reminderId) {
+    const entry = deferred.get(String(reminderId || ''));
+    if (!entry?.held) return null;
+    deferred.delete(entry.reminder.id);
+    return entry;
+  }
+
+  // The user's Run anyway on a held check: this one occurrence skips the size test (every tool still asks).
+  async function runHeld(reminderId) {
+    const entry = takeHeld(reminderId);
+    if (!entry) return { ok: false, reason: 'not_held' };
+    const outcome = await attempt(entry.reminder, entry.dueAtMs, { override: true, held: entry.held, model: entry.model }).catch(() => null);
+    if (outcome?.outcome !== 'submitted') return { ok: false, reason: deferred.has(entry.reminder.id) ? 'still_waiting' : 'not_run' };
+    note('schedule_run_anyway', entry.reminder, 'user');
+    return { ok: true, turn_id: outcome.turn_id };
+  }
+
+  // The user's Skip on a held check: the occurrence is dropped and logged.
+  async function skipHeld(reminderId) {
+    const entry = takeHeld(reminderId);
+    if (!entry) return { ok: false, reason: 'not_held' };
+    note('schedule_skipped', entry.reminder, 'user');
+    if (shown.delete(entry.reminder.id)) read(() => notify({ type: 'cleared', reminder_id: entry.reminder.id }), null);
+    return { ok: true };
+  }
+
+  // Held checks, for a renderer that loads after the notice was sent.
+  function listHeld() {
+    return [...deferred.values()].filter((entry) => entry.held).map((entry) => ({
+      reminder_id: entry.reminder.id, label: String(entry.reminder.label || ''), reason: entry.held, model: entry.model || '',
+    }));
+  }
+
+  function stats() {
+    return { deferred: deferred.size, held: listHeld().length, fires_last_day: fires.length };
+  }
+
+  return { holds, listHeld, onDue, onModelsChanged, onTurnSettled, retryDeferred, runHeld, skipHeld, stats };
 }
 
 // The ports, from the backend service the chat streams and primary controls already hang off.
-function wirePrimaryScheduledChecks(backendService, { log = () => {}, getReminder } = {}) {
+function wirePrimaryScheduledChecks(backendService, { log = () => {}, getReminder, notify } = {}) {
   const store = () => backendService.sessionStore || null;
   const runtime = () => backendService.sessionRuntime || null;
   const flags = () => backendService.featureFlags || {};
   const controls = () => backendService.primaryChatControls || null;
+  const checkModel = createCheckModelGate(backendService);
   const ops = createScheduledCheckOps({
     enabled: () => flags().primary_chat !== false && flags().primary_scheduled_checks !== false,
     primarySessionId: () => controls()?.primarySessionId?.() ?? null,
@@ -252,12 +368,16 @@ function wirePrimaryScheduledChecks(backendService, { log = () => {}, getReminde
     record: (kind, reminder, reason) => controls()?.recordScheduleEvent?.({
       kind, reminder_id: String(reminder.id || ''), label: String(reminder.label || ''), reason,
     }),
+    checkModel,
+    floorEnabled: () => flags().scheduled_check_model_floor !== false,
     log,
     ...(typeof getReminder === 'function' ? { getReminder } : {}),
+    ...(typeof notify === 'function' ? { notify } : {}),
   });
   backendService.on?.('chat-stream', (event) => {
     if (isTurnSettledEvent(event)) void ops.onTurnSettled(event.sessionId || event.session_id);
   });
+  backendService.on?.('backend-status', () => { void ops.onModelsChanged(); });
   backendService.primaryScheduledChecks = ops;
   return ops;
 }

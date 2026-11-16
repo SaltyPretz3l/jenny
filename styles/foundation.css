@@ -125,8 +125,9 @@
   --widget-context-weave-lit-gain: 3;
   --widget-context-weave-motion-scale: 1;
   --widget-context-weave-density: 1;
+  --widget-aurora-ridge-aurora-color: #46e3a0;
+  --widget-aurora-ridge-lamp-color: #ffb85c;
   --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.28);
-  --shadow-accent: 0 12px 30px rgba(109, 130, 255, 0.2);
   --shadow-card: 0 10px 24px rgba(0, 0, 0, 0.22);
   --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.18);
   --shadow-elevated: 0 12px 28px rgba(0, 0, 0, 0.22);
@@ -162,15 +163,17 @@
   --chat-measure-cap: calc(var(--chat-measure-cap-ch) * 1ch * (var(--font-size-prose) / 1em));
   --chat-user-bubble-max-width: clamp(410px, 34vw, 560px);
   --chat-card-max-width: 760px;
-  /* Page widths for the wide pages that lay out groups (Settings, Diagnostics): the page stops at
-     --page-shell-max; groups flow in tracks of at least --page-group-min with --page-group-gap between
-     them (two per row at the default window, three maximized); anything spanning the row stops at
-     --page-wide-max. */
+  /* Page widths. Diagnostics lays out groups: the page stops at --page-shell-max; groups flow in
+     tracks of at least --page-group-min with --page-group-gap between them; anything spanning the
+     row stops at --page-wide-max. Settings is one column (styles/settings-page-grid.css) and reads
+     only the shell and wide widths, and the gap as the offset of its page index. */
   --page-shell-max: 1760px;
   --page-group-min: 500px;
   --page-group-gap: 64px;
   --page-wide-max: 1120px;
-  --chat-sprite-size: 30px;
+  --chat-sprite-size: 40px;
+  /* The rail sprite against the 30 px dot it is drawn from. */
+  --chat-sprite-scale: calc(4 / 3);
   --chat-sprite-rail-offset: clamp(56px, 4.4vw, 64px);
   --composer-dock-bottom: clamp(20px, 3vh, 30px);
   /* 188px ≈ idle composer height (~144px textarea max + controls) plus
@@ -375,7 +378,7 @@
   --font-scale: 1.2;
 
   /* ── Role type scale (the vocabulary components use) ──
-     Claude Code parity at Default. Nothing renders below caption. */
+     Sizes are at Default. Nothing renders below caption. */
   --font-size-caption: calc(12px * var(--font-scale, 1));  /* timestamps, counts, badges, section labels */
   --font-size-footnote: calc(13px * var(--font-scale, 1)); /* tool rows, secondary copy, status bar */
   --font-size-code: calc(13px * var(--font-scale, 1));     /* code blocks, tool output, diffs, terminal */

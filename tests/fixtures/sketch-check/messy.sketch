@@ -1,0 +1,22 @@
+title Order flow
+dir right|down
+group backend Backend services
+group edge
+user User (person)
+web Web shop @globe [in edge]
+api API gateway @nginx in backend
+orders Orders service (note) in backend
+paid (circle)
+start[Order placed]
+check{Stock available?}
+db Database (cylinder) [in backend] [!accent]
+Here is the full flow of the order system:
+part r1 resistor
+user -> web [clicks]
+web -> api request
+api -> Orders place
+orders -> dbb save
+api --> cache warm
+label users Customers
+step Browse: The user opens the shop | user web user -> web
+step Save: Orders are written | orders db orders->db

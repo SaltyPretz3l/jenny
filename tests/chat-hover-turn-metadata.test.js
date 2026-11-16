@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildAssistantMetaLabel, normalizeChatMessages } = require('../renderer/chat/chat-message-utils');
+const { buildAssistantMetaLabel, buildShortAssistantMetaLabel, normalizeChatMessages } = require('../renderer/chat/chat-message-utils');
 const model = require('../renderer/chat/renderer-context-usage-model');
 const { normalizeMessageFields } = require('../services/backend/message-normalization');
 const format = value => value;
@@ -22,7 +22,7 @@ test('long metadata is focusable, fully exposed, escaped, and retains action tar
     assert.equal(dom.window.document.activeElement, meta);
     assert.equal(meta.textContent, text.trim());
     assert.equal(meta.title, text.trim());
-    assert.equal(meta.getAttribute('aria-label'), text.trim());
+    assert.equal(meta.hasAttribute('aria-label'), false);
     assert.equal(meta.querySelector('model'), null);
     for (const button of dom.window.document.querySelectorAll('[data-message-action]')) {
       assert.equal(button.dataset.messageId, 'reply');
@@ -44,8 +44,10 @@ function footer(messages, turn, target = 'b') {
     buildAssistantMetaLabel,
     buildMessageTokenMeta: model.buildMessageTokenMeta,
     formatMessageTokenMeta: usage.formatMessageTokenMeta,
+    buildShortAssistantMetaLabel,
+    formatMessageTokenMetaShort: usage.formatMessageTokenMetaShort,
     formatMessageTerminalTimestamp: format,
-    renderMessageHoverRow: (message, options, label) => { result = { target: message.id, label }; return ''; },
+    renderMessageHoverRow: (message, options, label, shortLabel) => { result = { target: message.id, label, shortLabel }; return ''; },
   } });
   pipeline.buildTurnArticleMarkup(turn, [{ kind: 'assistant_text', primary_message_id: target }], messages, {});
   return result;
@@ -65,6 +67,72 @@ test('article uses terminal event time independently of copy target and survives
   assert.match(footer([{ ...messages[0], content: '1234' }, messages[1]], turn).label, /~2 visible-reply/);
   assert.match(footer([messages[1]], turn).label, /~1 visible-reply/);
   assert.match(footer([{ ...messages[1], model_used: '', content: '123456789' }], turn).label, /Model unknown · ~3/);
+});
+
+test('buildShortAssistantMetaLabel drops Completed and the time qualifier; the full label is unchanged', () => {
+  const fmt = (value) => `@${value}`;
+  const base = { role: 'assistant', content: 'x', model_used: 'm', timestamp: '2026-03-12T14:22:00.000Z' };
+  const complete = { ...base, status: 'complete', finalizedAt: '2026-03-12T14:23:00.000Z' };
+  assert.equal(buildShortAssistantMetaLabel(complete, fmt), '@2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildAssistantMetaLabel(complete, fmt), 'Completed @2026-03-12T14:23:00.000Z · m');
+
+  const cancelled = { ...complete, status: 'error', terminal_status: 'cancelled' };
+  assert.equal(buildShortAssistantMetaLabel(cancelled, fmt), 'Stopped @2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildAssistantMetaLabel(cancelled, fmt), 'Stopped @2026-03-12T14:23:00.000Z · m');
+
+  const failed = { ...complete, status: 'error' };
+  assert.equal(buildShortAssistantMetaLabel(failed, fmt), 'Failed @2026-03-12T14:23:00.000Z · m');
+
+  // Invalid finalizedAt falls back to the message time without the qualifier.
+  const fallback = { ...base, status: 'complete', finalizedAt: 'invalid' };
+  assert.equal(buildShortAssistantMetaLabel(fallback, fmt), '@2026-03-12T14:22:00.000Z · m');
+  assert.equal(buildAssistantMetaLabel(fallback, fmt), 'Completed · message time @2026-03-12T14:22:00.000Z · m');
+
+  // No time at all: the time is omitted, never "time unknown".
+  const noTime = { role: 'assistant', status: 'complete', model_used: 'm' };
+  assert.equal(buildShortAssistantMetaLabel(noTime, fmt), 'm');
+  assert.equal(buildAssistantMetaLabel(noTime, fmt), 'Completed · time unknown · m');
+  const failedNoTime = { ...noTime, status: 'error' };
+  assert.equal(buildShortAssistantMetaLabel(failedNoTime, fmt), 'Failed · m');
+
+  // A missing model keeps "Model unknown".
+  const noModel = { ...complete, model_used: '' };
+  assert.equal(buildShortAssistantMetaLabel(noModel, fmt), '@2026-03-12T14:23:00.000Z · Model unknown');
+
+  // Runtime status prefixes lead like the full label.
+  assert.equal(buildShortAssistantMetaLabel({ ...complete, runtime_status: 'paused' }, fmt), 'Paused @2026-03-12T14:23:00.000Z · m');
+
+  // Same empty cases as the full label.
+  assert.equal(buildShortAssistantMetaLabel({ ...complete, status: 'streaming' }, fmt), '');
+  assert.equal(buildShortAssistantMetaLabel({ role: 'user', content: 'hi' }, fmt), '');
+  assert.equal(buildShortAssistantMetaLabel({ ...complete, kind: 'question_batch' }, fmt), '');
+
+  // A multi-model turn lists every model, like the full label.
+  const turnMessages = [{ model_used: 'one' }, { model_used: 'two' }];
+  assert.equal(buildShortAssistantMetaLabel(complete, fmt, turnMessages), '@2026-03-12T14:23:00.000Z · one, two');
+});
+
+test('formatMessageTokenMetaShort is a plain token count without estimates', () => {
+  assert.equal(usage.formatMessageTokenMetaShort({ messageTokens: 0 }), '');
+  assert.equal(usage.formatMessageTokenMetaShort(undefined), '');
+  assert.equal(usage.formatMessageTokenMetaShort({ messageTokens: 1 }), '1 token');
+  assert.equal(usage.formatMessageTokenMetaShort({ messageTokens: 412, cumulativeTokens: 9000 }), '412 tokens');
+  assert.equal(usage.formatMessageTokenMetaShort({ messageTokens: 2600 }), '2.6k tokens');
+  assert.equal(usage.formatMessageTokenMetaShort({ messageTokens: 3, wholeTurn: true }), '3 tokens');
+  assert.equal(usage.formatMessageTokenMeta({ messageTokens: 412 }), '~412 tokens est.');
+});
+
+test('turn article hands the hover row a short label and keeps the full one', () => {
+  const messages = [
+    { id: 'a', role: 'assistant', status: 'complete', content: '12345678', model_used: 'one' },
+    { id: 'b', role: 'assistant', status: 'complete', content: '1234', model_used: 'two', finalizedAt: '2026-09-08T10:00:00Z' },
+  ];
+  const turn = { turn_id: 'turn', source_message_ids: ['a', 'b'], events: [{ kind: 'complete', status: 'complete', completed_at: '2026-09-08T11:00:00Z' }] };
+  const result = footer(messages, turn);
+  assert.equal(result.shortLabel, '2026-09-08T11:00:00Z · one, two · 3 tokens');
+  assert.match(result.label, /^Completed 2026-09-08T11:00:00Z · one, two · ~3 visible-reply tokens est\. \(whole turn\)$/);
+  const stopped = footer(messages, { turn_id: 't', source_message_ids: ['b'], events: [{ kind: 'error', terminal_status: 'cancelled', completed_at: '2026-09-08T11:00:00Z' }] });
+  assert.match(stopped.shortLabel, /^Stopped 2026-09-08T11:00:00Z · two · \d+ tokens?$/);
 });
 
 test('failed and stopped turn events override completed action messages without losing estimates', () => {

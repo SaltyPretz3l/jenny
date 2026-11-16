@@ -509,3 +509,25 @@ test('double-click reports the tab, the strip drop caret appears and a group tab
   assert.equal(rig.strip.querySelector('.ide-tab-drop-caret'), null);
   assert.equal(tab.classList.contains('ide-tab--dragging'), false);
 });
+
+test('an outside file in a legacy encoding (row 137) is read-only in a secondary group; a Workspace file is not', () => {
+  const registry = require('../renderer/features/renderer-ide-outside-files');
+  const key = 'outside://o0123456789abcdef01234567/legacy.txt';
+  registry.registerMeta(key, { dirLabel: 'D:/Docs', encoding: 'windows-1252', readOnly: true });
+  const previous = globalThis.rendererIdeOutsideFiles;
+  globalThis.rendererIdeOutsideFiles = registry;
+  try {
+    const rig = makeRig({ tabs: ['a.js', key], active: key });
+    rig.models.set(key, { path: key });
+    const applied = [];
+    rig.editor.updateOptions = (options) => applied.push(options);
+    rig.view.showPath(key);
+    assert.equal(rig.editor.model, rig.models.get(key));
+    assert.deepEqual(applied.at(-1), { readOnly: true });
+    rig.view.showPath('a.js');
+    assert.deepEqual(applied.at(-1), { readOnly: false });
+  } finally {
+    globalThis.rendererIdeOutsideFiles = previous;
+    registry.forgetMeta(key);
+  }
+});

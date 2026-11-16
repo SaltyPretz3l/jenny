@@ -190,3 +190,20 @@ test('the highlighted tab is announced through a polite live region (the overlay
   assert.equal(announce.textContent, 'c.js');
   switcher.dispose();
 });
+
+test('an outside-Workspace tab (row 137) shows its name and real folder, never the key', () => {
+  const registry = require('../renderer/features/renderer-ide-outside-files');
+  const key = 'outside://o0123456789abcdef01234567/notes.md';
+  registry.registerMeta(key, { dirLabel: 'D:/Docs', encoding: 'utf-8', readOnly: false });
+  try {
+    const { stage, switcher } = buildSwitcher([key, 'b.js'], fileTabs(key, 'b.js'));
+    switcher.handleTabKey(true);
+    const row = stage.querySelector(`[data-ide-mru-path="${key}"]`);
+    assert.equal(row.querySelector('.ide-picker-name').textContent, 'notes.md');
+    assert.equal(row.querySelector('.ide-picker-path').textContent, 'D:/Docs');
+    assert.equal(stage.querySelector('.ide-picker-path').textContent.includes('outside:'), false);
+    switcher.dispose();
+  } finally {
+    registry.forgetMeta(key);
+  }
+});

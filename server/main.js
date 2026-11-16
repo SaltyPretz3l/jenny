@@ -8,7 +8,7 @@ const { AuthService } = require('./auth-service');
 const { ClientRegistry } = require('./client-registry');
 const { ControlLeases } = require('./control-leases');
 const { createHttpServer } = require('./http-server');
-const { log, acquireConfiguredProfile, createHostCore } = require('./host-core');
+const { log, acquireConfiguredProfile, assertProfileMode, createHostCore } = require('./host-core');
 const { createParentChannel } = require('./team/parent-channel');
 
 // The owner-invite start flags of a team host: at most one, after `--config <path>`.
@@ -51,6 +51,8 @@ async function startHostedServer(configPath, options = {}) {
     return stopPromise;
   };
   try {
+    // A profile a team host owns (it holds team-members.json) is refused before anything listens.
+    assertProfileMode(config);
     assertImportComplete(config.userDataPath);
     const clients = new ClientRegistry();
     const leases = new ControlLeases();

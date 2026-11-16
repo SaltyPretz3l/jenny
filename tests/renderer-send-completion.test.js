@@ -60,6 +60,8 @@ test('browser send utils fail clearly when completion has not loaded', () => {
     getOrCreateSendOutbox: fn,
     reconcileAcceptedRegenerate: fn,
     rejectBusyPluginCommand: fn,
+    replyToPendingUserQuestions: fn,
+    findPendingUserQuestionRef: fn,
     resolveMessageCopyText: fn,
     stashQueuedSendInState: fn,
     summarizeDurableFailurePreview: fn,

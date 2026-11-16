@@ -52,7 +52,6 @@ test('chat composer V2 status and chip selectors live in their focused styleshee
 
   for (const selector of [
     '.composer-failed-send-notice',
-    '.attachment-preview-pill',
   ]) {
     assert.match(affordanceCss, selectorBlockPattern(selector));
     assert.doesNotMatch(composerCss, selectorBlockPattern(selector));

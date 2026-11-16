@@ -69,6 +69,7 @@ const SHELL_CONFIG_PORTABILITY = deepFreeze({
     defaultRunMode: 'Default run mode.',
     uiLanguage: 'Interface language.',
     use24HourTime: 'Clock format.',
+    drawingInstructions: 'Which diagram language the model is told about.',
     safetyMode: 'Safety mode.',
     autoApproveStreakCap: 'Auto-approve streak cap, never restored above the default.',
     unattendedGuardMinutes: 'Unattended guard minutes.',

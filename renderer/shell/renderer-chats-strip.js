@@ -2,6 +2,7 @@
    The 56px collapsed treatment of the chat sessions panel: an icon-only New Chat
    on top, then pinned + recent sessions as monogram chips (state-colored, capped)
    with a hover/focus quick-peek flyout built on the inventory popover primitive.
+   Waiting chats lead; a Needs you mark under New chat opens the inbox flyout.
    Constructed and synced by renderer-top-nav-shell.js; it mounts only while the
    chats panel is collapsed. */
 (function (root, factory) {
@@ -37,10 +38,15 @@
       showMoreChats,
       expandPanel,
       appendClientLog,
+      getNeedsYou,
+      toggleNeedsYou,
+      closeNeedsYou,
     } = deps.callbacks || {};
 
     let stripEl = null;
     let chipsEl = null;
+    let needsEl = null;
+    let _chipsKey = '';
     let peekEl = null;
     let _chipsSignature = '';
     let _peekSessionId = '';
@@ -83,10 +89,10 @@
       return jtn('sidebar.chatsStrip.messageCount', count, { count: count }, '{count} message', '{count} messages');
     }
 
-    // Pinned first (each bucket by recency), archived and pending-delete
-    // sessions excluded, capped — the strip is a glanceable shortlist, not the
-    // full panel.
-    function listChipSessions() {
+    // Chats waiting on the person first (the inbox snapshot's order), then
+    // pinned, then the rest, each bucket by recency; archived and pending-delete
+    // sessions excluded; STRIP_MAX_CHIPS in all. A glanceable shortlist, not the panel.
+    function listChipSessions(snapshot) {
       const sessions = Array.isArray(state.sessions) ? state.sessions : [];
       const pendingDeletes = new Set(
         Array.isArray(state.ui?.pendingSessionDeletes) ? state.ui.pendingSessionDeletes : []
@@ -98,12 +104,22 @@
         const r = stampOf(right);
         return l === r ? 0 : (r < l ? -1 : 1);
       };
-      const live = sessions.filter(
-        (session) => session?.id && !session.archived_at && !pendingDeletes.has(session.id)
-      );
-      const sorted = live.filter((session) => session.pinned === true).sort(byRecency)
-        .concat(live.filter((session) => session.pinned !== true).sort(byRecency));
-      return { items: sorted.slice(0, STRIP_MAX_CHIPS), total: sorted.length };
+      // One pass sorts every live session into its bucket; waiting keeps the snapshot's order.
+      const waitIndex = new Map((snapshot?.waitingSessionIds || []).map((id, index) => [id, index]));
+      const waiting = [];
+      const pinned = [];
+      const recent = [];
+      let total = 0;
+      sessions.forEach((session) => {
+        if (!session?.id || session.archived_at || pendingDeletes.has(session.id)) return;
+        total += 1;
+        if (waitIndex.has(session.id)) waiting.push(session);
+        else (session.pinned === true ? pinned : recent).push(session);
+      });
+      let room = STRIP_MAX_CHIPS;
+      const groups = [waiting.sort((a, b) => waitIndex.get(a.id) - waitIndex.get(b.id)), pinned.sort(byRecency), recent.sort(byRecency)]
+        .map((group) => { const shown = group.slice(0, room); room -= shown.length; return shown; });
+      return { groups, items: groups.flat(), total };
     }
 
     function runtimeSessionIds(methodName, fallback) {
@@ -117,7 +133,7 @@
     // The strip lists recent sessions independently of the expanded panel's
     // query/scope, so runtime state must not depend on mounted history rows.
     // Resolve only the bounded chip ids from canonical runtime collections.
-    function chipStateById(sessionIds) {
+    function chipStateById(sessionIds, snapshot) {
       const map = new Map();
       const ids = Array.isArray(sessionIds) ? sessionIds : [];
       const openIds = Array.isArray(state.workspace?.openSessionIds) ? state.workspace.openSessionIds : [];
@@ -129,7 +145,14 @@
         .map((approval) => String(approval?.sessionId || '').trim())
         .filter(Boolean);
       const approvalIds = runtimeSessionIds('getApprovalPendingSessionIds', fallbackApprovalIds);
-      const attentionStates = rootRef.rendererMultiStreamController?.getSessionAttentionStates?.(ids);
+      let attentionStates = rootRef.rendererMultiStreamController?.getSessionAttentionStates?.(ids);
+      // A question, a failed send or a stuck send waits on the person too: the
+      // inbox snapshot fills in the chats the stream controller has no state for
+      // (a copy, never the controller's own map).
+      if (snapshot?.states?.size) {
+        attentionStates = new Map(attentionStates || []);
+        snapshot.states.forEach((value, id) => { if (!attentionStates.has(id)) attentionStates.set(id, value); });
+      }
       const resolvePresentation = rootRef.rendererWorkspaceChromeUtils?.resolveSessionPresentation;
       const openSet = new Set(openIds.map((id) => String(id || '').trim()).filter(Boolean));
       const streamingSet = new Set(streamingIds.map((id) => String(id || '').trim()).filter(Boolean));
@@ -146,8 +169,8 @@
           }).dominantState);
           return;
         }
-        map.set(id, approvalSet.has(id) ? 'approval'
-          : (streamingSet.has(id) ? 'streaming' : (openSet.has(id) ? 'open' : 'idle')));
+        map.set(id, attentionStates?.get?.(id) || (approvalSet.has(id) ? 'approval'
+          : (streamingSet.has(id) ? 'streaming' : (openSet.has(id) ? 'open' : 'idle'))));
       });
       return map;
     }
@@ -295,6 +318,23 @@
       appendClientLog?.('INFO', 'nav.chats_strip_panel_expand', {});
     }
 
+    function handleNeedsYouClick() {
+      closePeek();
+      toggleNeedsYou?.(needsEl);
+      appendClientLog?.('INFO', 'nav.chats_strip_needs_you', { count: Number(getNeedsYou?.()?.answerable) || 0 });
+    }
+
+    // Hidden while nothing waits; the count and its spoken label follow the snapshot (written only when it moves).
+    function syncNeedsMark(snapshot) {
+      const count = Number(snapshot?.answerable) || 0;
+      if (!needsEl || needsEl.dataset.count === String(count)) return;
+      needsEl.dataset.count = String(count);
+      needsEl.hidden = count === 0;
+      needsEl.querySelector('.chats-strip__needs-count').textContent = count > 0 ? String(count) : '';
+      needsEl.setAttribute('aria-label', jtn('chat.attentionInbox.badgeLabel', count, { count: String(count) },
+        '{count} thing needs you', '{count} things need you'));
+    }
+
     function ensureDom() {
       if (disposed || stripEl || !viewPanel || !documentRef) return;
       const actionButton = rootRef.inventoryActionButton;
@@ -326,6 +366,17 @@
         ariaLabel: jt('sidebar.chatsStrip.newChat', 'New chat'),
         title: jt('sidebar.chatsStrip.newChatShortcut', 'New chat (Ctrl+N)'),
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>',
+      }) + actionButton({
+        id: 'chats-strip-needs-you',
+        plain: true,
+        className: 'chats-strip__needs',
+        domId: 'chatsStripNeedsYou',
+        ariaHaspopup: 'dialog',
+        ariaExpanded: false,
+        ariaControls: 'attentionInboxFlyout',
+        ariaLabel: jt('chat.attentionInbox.badgeTitle', 'Open what needs you'),
+        title: jt('chat.attentionInbox.badgeTitle', 'Open what needs you'),
+        trustedHtml: '<span class="chats-strip__needs-dot" aria-hidden="true"></span><span class="chats-strip__needs-count"></span>',
       })
         + '<div class="chats-strip__chips" id="chatsStripChips"></div>';
       const peekHost = documentRef.createElement('div');
@@ -340,6 +391,8 @@
         });
       viewPanel.appendChild(stripEl);
       chipsEl = stripEl.querySelector('#chatsStripChips');
+      needsEl = stripEl.querySelector('#chatsStripNeedsYou');
+      needsEl.hidden = true;
       peekEl = peekHost.firstElementChild;
       peekEl.setAttribute('role', 'tooltip');
       peekEl.removeAttribute('aria-modal');
@@ -347,6 +400,7 @@
       addListener(peekEl, 'inv-popover-toggle', handlePeekToggle);
       addListener(stripEl.querySelector('#chatsStripPanelToggle'), 'click', handlePanelExpandClick);
       addListener(stripEl.querySelector('#chatsStripNewChat'), 'click', handleNewChatClick);
+      addListener(needsEl, 'click', handleNeedsYouClick);
       addListener(chipsEl, 'click', handleChipClick);
       addListener(chipsEl, 'mouseover', handleChipPointerOver);
       addListener(chipsEl, 'mouseout', handleChipPointerOut);
@@ -359,9 +413,11 @@
     function renderChips() {
       const actionButton = rootRef.inventoryActionButton;
       if (disposed || !chipsEl || typeof actionButton !== 'function') return;
-      const listed = listChipSessions();
+      const snapshot = getNeedsYou?.() || null;
+      const listed = listChipSessions(snapshot);
       const items = listed.items;
-      const stateById = chipStateById(items.map((session) => session.id));
+      const stateById = chipStateById(items.map((session) => session.id), snapshot);
+      _chipsKey = snapshot?.key || '';
       const isOfflineLockdownVisible = (session) => (
         state.features?.featureFlags?.session_offline_lockdown === true
         && session?.lockdown === true
@@ -372,7 +428,8 @@
       // signature-skipped ones); rebuild only when the visible chip facts
       // change so streaming frames cannot churn the strip or its open peek.
       const signature = JSON.stringify({
-        total: listed.total,
+        // Order and group sizes fix the chips and breaks; a waiting state alone is a dot patch.
+        total: listed.total, sizes: listed.groups.map((group) => group.length),
         items: items.map((session) => {
           const displayState = deriveChipDisplayState(session);
           return {
@@ -400,7 +457,7 @@
         ? focusedChip.dataset.stripSessionId
         : '';
       closePeek({ clearSession: false });
-      chipsEl.innerHTML = items.map((session) => {
+      const renderChip = (session) => {
         const title = resolveDefaultTitle(session.title);
         const isActive = session.id === state.currentSessionId;
         const isPluginSession = session.session_type === 'plugin';
@@ -434,14 +491,19 @@
           },
           trustedHtml: `<span class="chats-strip__chip-monogram${usesPhotoIcon ? ' chats-strip__chip-monogram--provider-icon' : ''}" aria-hidden="true">${monogramHtml}</span>${lockdownHtml}`,
         });
-      }).join('') + (listed.total > STRIP_MAX_CHIPS ? actionButton({
+      };
+      const moreCount = listed.total - items.length;
+      // A hairline break between non-empty groups: whitespace and one rule, no box.
+      chipsEl.innerHTML = listed.groups.filter((group) => group.length)
+        .map((group) => group.map(renderChip).join(''))
+        .join('<span class="chats-strip__break" aria-hidden="true"></span>') + (moreCount > 0 ? actionButton({
         id: 'chats-strip-more',
         plain: true,
         className: 'chats-strip__chip chats-strip__more',
-        ariaLabel: jt('sidebar.chatsStrip.showMoreChats', 'Show {count} more chats', { count: listed.total - STRIP_MAX_CHIPS }),
+        ariaLabel: jt('sidebar.chatsStrip.showMoreChats', 'Show {count} more chats', { count: moreCount }),
         title: jt('sidebar.chatsStrip.expandAndSearch', 'Expand and search chats'),
         dataset: { 'strip-more': 'true' },
-        trustedHtml: `<span aria-hidden="true">+${listed.total - STRIP_MAX_CHIPS}</span>`,
+        trustedHtml: `<span aria-hidden="true">+${moreCount}</span>`,
       }) : '');
       chipsEl.querySelector('.chats-strip__chip--active')?.setAttribute('aria-current', 'true');
       patchRuntimeState();
@@ -475,6 +537,7 @@
           closePeek();
           stripEl.hidden = true;
         }
+        closeNeedsYou?.();
         return;
       }
       ensureDom();
@@ -487,8 +550,12 @@
     // Resolve canonical state only for the mounted chips (at most 12).
     function patchRuntimeState() {
       if (disposed || !stripEl || stripEl.hidden || !chipsEl) return;
+      const snapshot = getNeedsYou?.() || null;
+      syncNeedsMark(snapshot);
+      // Who waits decides which chips lead: a moved snapshot is a structural change.
+      if ((snapshot?.key || '') !== _chipsKey) { renderChips(); return; }
       const chips = [...chipsEl.querySelectorAll('[data-strip-session-id]')];
-      const stateById = chipStateById(chips.map((chip) => chip.dataset.stripSessionId));
+      const stateById = chipStateById(chips.map((chip) => chip.dataset.stripSessionId), snapshot);
       chips.forEach((chip) => {
         chip.dataset.sessionDominantState = stateById.get(chip.dataset.stripSessionId) || 'idle';
         const label = rootRef.rendererWorkspaceChromeUtils?.sessionStatusLabel?.(chip.dataset.sessionDominantState) || '';
@@ -516,6 +583,8 @@
       peekEl?.remove();
       stripEl = null;
       chipsEl = null;
+      needsEl = null;
+      _chipsKey = '';
       peekEl = null;
       _chipsSignature = '';
       _peekSessionId = '';

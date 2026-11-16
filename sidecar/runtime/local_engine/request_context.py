@@ -369,6 +369,36 @@ def set_next_provider_call_purpose(engine: Any, purpose: str) -> None:
     binding.context[_PROVIDER_CALL_PURPOSE_KEY] = str(purpose or "").strip()
 
 
+_THINKING_BUDGET_SCALE_KEY = "thinking_budget_scale"
+
+
+def set_thinking_budget_scale(engine: Any, scale: float | None) -> None:
+    """Scale the thinking-guard budget of the generation now starting.
+
+    The router sets it at the start of every tool-loop generation (``None``
+    clears it), so the engine's guard and the router's guard for one call read
+    the same value. A thinking-budget continuation leg gets a fraction of the
+    first leg's budget (session review F1, 2026-11-11). No-op without an
+    active request binding.
+    """
+    binding = _current_binding(engine)
+    if binding is None:
+        return
+    if scale is None or not math.isfinite(scale) or not 0 < scale < 1:
+        binding.context.pop(_THINKING_BUDGET_SCALE_KEY, None)
+    else:
+        binding.context[_THINKING_BUDGET_SCALE_KEY] = float(scale)
+
+
+def thinking_budget_scale(engine: Any) -> float:
+    """The scale set by :func:`set_thinking_budget_scale`, or 1.0."""
+    binding = _current_binding(engine)
+    if binding is None:
+        return 1.0
+    value = binding.context.get(_THINKING_BUDGET_SCALE_KEY)
+    return float(value) if isinstance(value, float) and 0 < value < 1 else 1.0
+
+
 def consume_provider_call_purpose(engine: Any) -> str | None:
     """Pop the purpose set by :func:`set_next_provider_call_purpose`, if any."""
     binding = _current_binding(engine)

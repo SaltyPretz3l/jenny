@@ -47,10 +47,20 @@
     // its sequence number is not one: sorting the two together once put a final
     // answer in the middle of its turn. Such an event sorts just after the
     // latest message its turn had reached when it was recorded (the list is in
-    // recorded order). A turn that has reached no message keeps the sequence.
+    // recorded order). One recorded before any message of its turn sorts just
+    // ahead of the turn's first anchored event. A turn with no message at all
+    // keeps the sequence.
     function resolveSortPositions(normalizedEvents, messageIndexById, intraOrderByEventId) {
       const positions = new Map();
       const latestByTurnId = new Map();
+      const leadingByTurnId = new Map();
+      for (const entry of normalizedEvents) {
+        const leading = leadingByTurnId.get(entry.turnId) || { count: 0, first: null };
+        if (!leading.first && messageIndexById.has(entry.anchorMessageId)) leading.first = entry;
+        else if (!leading.first) leading.count += 1;
+        leadingByTurnId.set(entry.turnId, leading);
+      }
+      const leadingSeen = new Map();
       for (const entry of normalizedEvents) {
         const intraOrder = Number(intraOrderByEventId.get(entry.eventId)) || 0;
         const latest = latestByTurnId.get(entry.turnId);
@@ -65,6 +75,12 @@
           // Strictly between that message's event and its next one, in recorded order.
           latest.followers += 1;
           positions.set(entry, [latest.messageIndex, latest.intraOrder + 1 - 1 / (latest.followers + 1)]);
+        } else if (leadingByTurnId.get(entry.turnId).first) {
+          const { count, first } = leadingByTurnId.get(entry.turnId);
+          const seen = (leadingSeen.get(entry.turnId) || 0) + 1;
+          leadingSeen.set(entry.turnId, seen);
+          const firstIntraOrder = Number(intraOrderByEventId.get(first.eventId)) || 0;
+          positions.set(entry, [Number(messageIndexById.get(first.anchorMessageId)), firstIntraOrder - 1 + seen / (count + 1)]);
         } else {
           positions.set(entry, [entry.eventSeq, intraOrder]);
         }
@@ -109,7 +125,10 @@
             .map((value) => normalizeId(value))
             .filter(Boolean)
         ));
-        const anchorMessageId = primaryMessageId || sourceMessageIds.find((messageId) => messageIndexById.has(messageId)) || '';
+        // A primary id no saved message has (main's `assistant_<stream>` against
+        // the saved `_seg<N>`) yields to a source id that names a real message.
+        const anchorMessageId = (messageIndexById.has(primaryMessageId) ? primaryMessageId : '')
+          || sourceMessageIds.find((messageId) => messageIndexById.has(messageId)) || primaryMessageId || '';
         const eventSeq = Number(sourceEvent && sourceEvent.event_seq);
         const normalizedEvent = {
           sourceEvent,
@@ -439,13 +458,31 @@
       }
       const liveTree = buildTurnTreeFromMessages(uncoveredStreamMessages, threadTree);
       const liveTurns = Array.isArray(liveTree && liveTree.turns) ? liveTree.turns : [];
+      // A message-built turn takes its place in the chat, ahead of the first turn
+      // that starts after it: a turn whose events were compacted away is older
+      // than the covered turns, and the newest turn must stay last.
+      const messageIndexById = new Map(messages.map((message, index) => [normalizeId(message && message.id), index]));
+      const firstIndexByTurn = new Map();
+      const firstIndexOf = (turn) => {
+        if (!firstIndexByTurn.has(turn)) {
+          firstIndexByTurn.set(turn, Math.min(...(turn.source_message_ids || [])
+            .map((id) => messageIndexById.get(normalizeId(id))).filter((index) => index !== undefined), Infinity));
+        }
+        return firstIndexByTurn.get(turn);
+      };
       for (const liveTurn of liveTurns) {
         const liveTurnId = normalizeId(liveTurn && liveTurn.turn_id);
         if (!liveTurnId || turnById[liveTurnId]) {
           continue;
         }
         turnById[liveTurnId] = liveTurn;
-        turns.push(liveTurn);
+        const liveFirst = firstIndexOf(liveTurn);
+        // The streaming turn is the newest: one look at the last turn, no scan.
+        const last = turns[turns.length - 1];
+        const before = Number.isFinite(liveFirst) && last && firstIndexOf(last) > liveFirst
+          ? turns.findIndex((turn) => Number.isFinite(firstIndexOf(turn)) && firstIndexOf(turn) > liveFirst) : -1;
+        if (before === -1) turns.push(liveTurn);
+        else turns.splice(before, 0, liveTurn);
       }
       const liveByMessageId = liveTree && liveTree.byMessageId && typeof liveTree.byMessageId === 'object'
         ? liveTree.byMessageId

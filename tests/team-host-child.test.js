@@ -9,8 +9,10 @@
 // ended only through the handle this test holds.
 //
 // Skipped, with the reason printed, when jenny-team-bridge is not built in this
-// checkout, or on a platform other than Windows and Linux. The host has no
-// model endpoint and starts no sidecar (owner decision E19).
+// checkout, or on a platform other than Windows and Linux. Deploy turns the GPU
+// pool on (slice 4a-5), so with this checkout's .venv the host starts a real
+// hosted sidecar on it; the test proves that sidecar ends with the stop and with
+// a killed host. Without a .venv no interpreter is written and no sidecar starts.
 
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
@@ -83,7 +85,8 @@ function childPids(pid, name) {
   }).map(Number);
 }
 
-// The Linux profile lock's interpreter: this checkout's .venv (Windows needs none).
+// The desktop sidecar's interpreter as a source checkout gives it: this checkout's .venv. Deploy writes it
+// on Windows and Linux (slice 4a-5); the hosted sidecar runs on it, and on Linux the profile lock.
 function lockPython() {
   const local = path.join(__dirname, '..', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   return fs.existsSync(local) ? local : null;
@@ -132,6 +135,11 @@ test('a real team host child: Deploy, ready, the owner joins over loopback, stop
     assert.equal(service.snapshot().teams[0].role, 'owner');
     const pid = children[0].pid;
     assert.equal(alive(pid), true);
+    // Slice 4a-5: the hosted sidecar, a venv python.exe and (on Windows) its base interpreter.
+    const sidecars = childPids(pid, 'python');
+    for (const id of [...sidecars]) sidecars.push(...childPids(id, 'python'));
+    t.diagnostic(`python under the host: ${JSON.stringify(sidecars)}`);
+    if (lockPython()) assert.ok(sidecars.length >= 1, 'with an interpreter the pool host starts its sidecar');
 
     const stopBegun = Date.now();
     const stopped = await controller.handle('hostStop', {});
@@ -142,6 +150,9 @@ test('a real team host child: Deploy, ready, the owner joins over loopback, stop
     assert.equal(stopped.host.reason, null, 'stopped in time, not ended by the handle');
     assert.ok(stopMs < STOP_BOUND_MS, `the stop took ${stopMs} ms`);
     assert.ok(await waitUntil(() => !alive(pid), { attempts: 100, interval: 50 }), 'the host process is gone');
+    assert.ok(await waitUntil(() => sidecars.every((id) => !alive(id)), { attempts: 100, interval: 10 }),
+      `the sidecar outlived the stop: ${JSON.stringify(sidecars.filter(alive))}`);
+    assert.ok(Date.now() - stopBegun < STOP_BOUND_MS, 'the sidecar ended inside the stop bound');
     assert.notEqual(children[0].exitCode, null);
     assert.deepEqual(controller.resources(), { child: false, timers: 0, childListeners: 0 });
 
@@ -151,11 +162,15 @@ test('a real team host child: Deploy, ready, the owner joins over loopback, stop
     const hostPid = children[1].pid;
     const bridges = childPids(hostPid, 'jenny-team-bridge');
     assert.equal(bridges.length, 1, `one bridge child of the host: ${JSON.stringify(bridges)}`);
+    const killedSidecars = childPids(hostPid, 'python');
+    for (const id of [...killedSidecars]) killedSidecars.push(...childPids(id, 'python'));
     process.kill(hostPid);
     assert.ok(await waitUntil(() => !alive(hostPid), { attempts: 100, interval: 50 }), 'the host is gone');
     const bridgeBegun = Date.now();
     assert.ok(await waitUntil(() => !alive(bridges[0]), { attempts: 200, interval: 50 }), 'the bridge exits with its parent');
     t.diagnostic(`the bridge exited ${Date.now() - bridgeBegun} ms after its host was killed`);
+    assert.ok(await waitUntil(() => killedSidecars.every((id) => !alive(id)), { attempts: 200, interval: 50 }),
+      `a killed host's sidecar is left: ${JSON.stringify(killedSidecars.filter(alive))}`);
     assert.ok(await waitUntil(() => controller.snapshot().state === 'failed', { attempts: 100, interval: 50 }));
     assert.equal(controller.snapshot().reason, 'team_host_exited');
 

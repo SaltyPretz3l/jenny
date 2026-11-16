@@ -40,7 +40,8 @@
         && !currentRow.contains(candidate)
         && !candidate.contains(currentRow));
       if (nextRow) {
-        return nextRow.querySelector('.tool-approve-btn, .tool-deny-btn') || nextRow;
+        // Not onto "Allow all" (row 166 D10): a reflex Enter must not answer a whole round.
+        return nextRow.querySelector('.tool-approve-btn:not([data-approval-round]), .tool-deny-btn') || nextRow;
       }
       const composerInput = doc && typeof doc.getElementById === 'function'
         ? doc.getElementById('chatInput')

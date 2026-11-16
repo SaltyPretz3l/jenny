@@ -16,6 +16,7 @@ module.exports = Object.freeze({
   'chat.getActiveTurnState': invokeMethod('chat:get-active-turn-state'),
   'chat.cancelStream': invokeMethod('chat:cancel-stream'),
   'chat.compactNow': invokeMethod('chat:compact-now'),
+  'chat.firstSession': invokeMethod('chat:first-session'),
   'chat.hasPendingUserQuestions': invokeMethod('chat:has-pending-user-questions'),
   'chat.answerUserQuestions': invokeMethod('chat:answer-user-questions'),
   'chat.declineUserQuestions': invokeMethod('chat:decline-user-questions'),
@@ -47,12 +48,17 @@ module.exports = Object.freeze({
   'clipboard.writeText': invokeMethod('clipboard:write-text'),
   // F4/F5/F6: save-file IPC for renderer-built content
   'dialog.saveFile': invokeMethod('dialog:save-file'),
-  // backgroundJobs.*: visibility, kill and the finished-job output tail for
-  // backgrounded run_command jobs (W2-2). Snapshots push over the bridge-event
-  // bus (main-workspace window only); kill and readOutput are
-  // trusted-sender-authorized in services/main/ipc-registration/workspace-ipc.js.
+  // backgroundJobs.*: visibility, kill, the output tail (live while running,
+  // row 138) and Clear finished for backgrounded run_command jobs (W2-2).
+  // Snapshots push over the bridge-event bus (main-workspace window only);
+  // kill, readOutput and clearFinished are trusted-sender-authorized in
+  // services/main/ipc-registration/workspace-ipc.js.
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
   'backgroundJobs.readOutput': invokeMethod('background-jobs:read-output'),
+  'backgroundJobs.clearFinished': invokeMethod('background-jobs:clear-finished'),
   'backgroundJobs.onChanged': subscribeMethod('background-jobs:changed'),
+  // sketch.openFile: may a drawing's file node open this path? Checked against the session's own project root
+  // (services/main/sketch-ipc-registration.js); resolves { ok, relativePath, line, projectId } or { ok: false, reason }.
+  'sketch.openFile': invokeMethod('sketch:open-file'),
 });

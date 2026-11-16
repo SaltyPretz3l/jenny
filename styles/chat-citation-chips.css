@@ -1,56 +1,130 @@
-/* Inline source-citation chips (C1 title pills) — CITATION_CHIPS_SPEC.md.
-   Rendered beneath assistant turns that cited the web (source_citations
-   turn-event kind, flag `source_citations`). All colors are palette vars —
-   zero per-palette rules by construction. NOTE: styles/chat-citation-v2.css
-   (#message:/#tool: in-chat anchors) is a DIFFERENT feature — do not merge. */
+/* Numbered source references (row 154): inline superscript numbers in the
+   answer text and one sources list under the final answer. Markup contract in
+   renderer/chat/renderer-citation-chips-utils.js; the hover card and the lit
+   list entry live in renderer-source-card.js / chat-source-card.css. All
+   colors are palette vars, so every palette works by construction. No bars,
+   pills, cards or hairlines. NOTE: styles/chat-citation-v2.css (#message:/#tool:
+   in-chat anchors) is a DIFFERENT feature, do not merge. */
 
-.citation-chips-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
-  padding-top: 10px;
-  margin-top: 12px;
+.source-ref {
+  font-size: 0.72em;
+  vertical-align: super;
+  line-height: 0;
+  margin-inline-start: 1px;
+  font-variant-numeric: tabular-nums;
 }
 
-.citation-chip {
-  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px 3px 8px;
-  border-radius: var(--tl-radius-chip);
-  max-width: 210px;
+.source-ref-link {
+  color: var(--accent);
   text-decoration: none;
-  font-size: var(--tl-font-meta);
-  font-weight: var(--tl-weight-body);
-  background: color-mix(in srgb, var(--surface-input-background) 92%, transparent);
-  border: 1px solid var(--border-default);
-  color: var(--text-secondary);
+  padding: 0 1px;
+  border-radius: 3px;
 }
 
-.citation-chip:hover {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-default) 60%);
+.source-ref-link:visited {
+  color: var(--accent);
+}
+
+.source-ref-link:hover,
+.source-ref-link:focus-visible {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   text-decoration: none;
 }
 
-/* Visited identical to rest — no visited-purple in chat (spec). */
-.citation-chip:visited {
-  color: var(--text-secondary);
+.source-ref-link:focus-visible {
+  outline: 2px solid var(--focus-outline);
 }
 
-.citation-chip:visited:hover {
-  color: var(--text-primary);
+.source-list {
+  margin-top: 16px;
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
 }
 
-.citation-chip svg {
-  flex: none;
+.source-list-cited,
+.source-list-also {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.citation-chip-title {
+.source-list-also {
+  margin-top: 4px;
+}
+
+.source-list-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 4px;
+  padding: 2px 0;
+  border-radius: 6px;
+  transition: background-color var(--transition-fast);
+}
+
+.source-list-item.is-lit {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.source-list--plain .source-list-item,
+.source-list-also .source-list-item {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.source-list-num {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  padding-inline-end: 6px;
+}
+
+.source-list-body {
+  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.source-list-title {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.source-list-title:visited {
+  color: var(--text-secondary);
+}
+
+.source-list-title:hover,
+.source-list-title:focus-visible {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.source-list-site {
+  color: var(--text-muted);
+  margin-inline-start: 8px;
+}
+
+.source-list-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.source-list-toggle:hover,
+.source-list-toggle:focus-visible {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-list-item {
+    transition: none;
+  }
 }

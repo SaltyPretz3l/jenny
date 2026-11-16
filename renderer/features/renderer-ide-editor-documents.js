@@ -84,7 +84,7 @@
     // API when the host runs Monaco (null on the textarea fallback path).
     // Content comes from workspaceFs.readFile; the store owns the buffer from
     // here until the document is deleted.
-    function openFile({ path, content, mtimeMs, eol, encoding, monacoApi = null }) {
+    function openFile({ path, content, mtimeMs, eol, encoding, readOnly = false, monacoApi = null }) {
       const normalizedPath = String(path || '');
       const text = String(content ?? '');
       let doc = getDoc(normalizedPath); const wasDirty = doc?.dirty === true;
@@ -112,6 +112,7 @@
       }
       // The desktop read keeps a UTF-8 BOM as a leading U+FEFF; the versioned read reports it.
       doc.bom = encoding === 'utf-8-bom' || text.charCodeAt(0) === 0xfeff;
+      doc.readOnly = readOnly === true; // an outside file in a legacy encoding (row 137); the host locks the editor
       // Large/minified files: degrade Monaco chrome + exclude from auto-context.
       // Cache the O(n) classification per-doc keyed by a content fingerprint (not
       // just length, so a same-length rewrite recomputes); re-scan only on change.

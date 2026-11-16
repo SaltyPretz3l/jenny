@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping
 
 from sidecar.ai.error_codes import CMP_RESOURCE_EXCEEDED, CMP_TOOL_EXECUTION_FAILED
-from sidecar.ai.routing.tool_resource_deferral import ToolResourceDeferred, ToolResourceWait
+from sidecar.ai.routing.tool_resource_deferral import (
+    ToolResourceDeferred,
+    ToolResourceWait,
+    resource_busy_message,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.protocol import API_VERSION, JSONRPC_VERSION, RUNTIME_OPERATION_METHOD
 from sidecar.runtime.multiplexer import ApprovalResponseCancelledError
@@ -64,8 +68,7 @@ def _failure(
     return cls(
         code=CMP_RESOURCE_EXCEEDED if waiting else CMP_TOOL_EXECUTION_FAILED,
         message=(
-            f"Tool resource capacity is busy: {normalized}. "
-            "The call did not start; repeat it unchanged."
+            resource_busy_message(normalized)
             if waiting
             else _REJECTION_SENTENCES.get(
                 normalized, f"Tool resource admission failed: {normalized}"

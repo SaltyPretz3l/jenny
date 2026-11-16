@@ -267,6 +267,15 @@ INFERENCE_PERFORMANCE_METHOD = "inference.performance"
 # is dropped silently and never fails or changes the turn. The token is a
 # secret: never logged or echoed. See sidecar/ai/engines/request_route.py.
 ROUTE_TOKEN_HEADER = "X-Jenny-Route-Token"
+# Additive optional chat.send field, following WO-26 / D3 (no new method, no
+# notification): ``params.model_profile`` = {context_length?: int 2048..1048576,
+# name?: printable ASCII, at most 128 chars}, the caller's bound for this one
+# request. Each malformed member is dropped on its own, silently, and never fails
+# or changes the turn. Only the openai-compatible engine family honours it: its
+# context length is min(loaded, context_length) (never raised), and ``name`` is the
+# model its chat contract and thinking support are detected from; the upstream
+# ``model`` stays the loaded one. Every other engine ignores it. Not a secret.
+# See sidecar/ai/engines/request_model_profile.py.
 CHAT_TOKEN_METHOD = "chat.token"
 # Streamed assistant text token. Required payload: ``delta`` and ``role``.
 # Optional additive payload: ``sequence`` (monotonic token index) so Electron

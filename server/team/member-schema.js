@@ -1,19 +1,24 @@
 'use strict';
 
-// The schema of team-members.json (version 2): closed-field validation of the
+// The schema of team-members.json (version 4): closed-field validation of the
 // whole document, the owner invariant, the limits this store owns, and the
 // invite expiry table. Pure functions; nothing here touches the disk.
 //
 // Version 2 adds `projects`, who is in which shared project (TEAM_PROJECTS_SPEC
-// P1). A version 1 document is upgraded explicitly by `upgradeDocument`: it is
-// validated by the version 1 rules, gains `projects: []`, and is written as
-// version 2 by the store's next commit. Anything newer fails closed.
+// P1). Version 3 adds `team.model`, the owner's team model (row 123 slice 4e;
+// null is Automatic). Version 4 adds each invite's `name_refusals`, the host's
+// count of joins it refused because the name was taken (owner decision E79,
+// at most MAX_NAME_REFUSALS). An older document is upgraded explicitly by
+// `upgradeDocument`: it is validated by its own version's rules, gains what the
+// later versions add (`projects: []` from version 1, `team.model: null` from
+// version 1 or 2, `name_refusals: 0` on every invite from version 1 to 3), and
+// is written as version 4 by the store's next commit. Anything newer fails closed.
 
 const {
   ID_PATTERNS, isId, isPublicKey, deriveTeamId,
 } = require('./ids');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 const ROLES = Object.freeze(['owner', 'member', 'read_only']);
 const PROJECT_ROLES = Object.freeze(['admin', 'writer', 'reader']);
 const PROJECT_STATES = Object.freeze(['active', 'deleting']);
@@ -27,6 +32,15 @@ const MEMBER_STATES = Object.freeze(['pending', 'active', 'revoked']);
 const DEVICE_STATES = Object.freeze(['active', 'revoked']);
 // `created_by` of an invite minted by the local command (first owner, recovery).
 const LOCAL_ACTOR = 'local';
+// The actor the local command (`--team-init`, `--team-recover`) passes to the
+// store. A symbol: no wire message, JSON document or directory record can carry
+// it, so no remote principal can stand in for the local command. Never stored:
+// the local command's audit entries record a null actor.
+const LOCAL_COMMAND = Symbol('team.local_command');
+// The team model's id (version 3): printable ASCII with no space at either edge,
+// at most 128 characters. The one copy of the rule: the store's transition and
+// the member's own IPC check use isTeamModel.
+const TEAM_MODEL_PATTERN = /^[\x21-\x7e](?:[\x20-\x7e]{0,126}[\x21-\x7e])?$/u;
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -47,6 +61,8 @@ const LIMITS = Object.freeze({
   MAX_DEVICE_RECORDS: 320,
   MAX_INVITE_RECORDS: 8 + 16 + 8,
   MAX_PROJECTS: 64,
+  // E79: the taken-name refusals one invite answers before the next one spends it.
+  MAX_NAME_REFUSALS: 5,
 });
 
 // Expiry defaults and maxima per invite kind (design spec, Invites and joining).
@@ -60,14 +76,17 @@ const INVITE_KINDS = Object.freeze({
 const KEY_SETS = Object.freeze({
   document_v1: ['schema_version', 'rev', 'team', 'members', 'devices', 'invites'],
   document: ['schema_version', 'rev', 'team', 'members', 'devices', 'invites', 'projects'],
+  team_v2: ['team_id', 'host_public_key', 'name', 'created_at'],
   project: ['project_id', 'created_by', 'created_at', 'state', 'members'],
   project_member: ['member_id', 'role', 'added_by', 'added_at'],
-  team: ['team_id', 'host_public_key', 'name', 'created_at'],
+  team: ['team_id', 'host_public_key', 'name', 'created_at', 'model'],
   member: ['member_id', 'display_name', 'role', 'state', 'created_at', 'admitted_at', 'admitted_by',
     'revoked_at', 'revoked_by'],
   device: ['device_id', 'member_id', 'public_key', 'label', 'state', 'created_at', 'last_seen_at'],
-  invite: ['invite_id', 'invite_public_key', 'role', 'member_id', 'created_by', 'created_at', 'expires_at',
+  invite_v3: ['invite_id', 'invite_public_key', 'role', 'member_id', 'created_by', 'created_at', 'expires_at',
     'used_at', 'revoked_at'],
+  invite: ['invite_id', 'invite_public_key', 'role', 'member_id', 'created_by', 'created_at', 'expires_at',
+    'used_at', 'revoked_at', 'name_refusals'],
 });
 
 function isPlainObject(value) {
@@ -109,12 +128,52 @@ function isCleanText(value, maxChars = LIMITS.MAX_NAME_CHARS) {
   return length >= 1 && length <= maxChars;
 }
 
+// The stricter rule for text as it comes in (a joiner's display name, a device
+// label, a rename), never on load: a stored file keeps loading under
+// `isCleanText` (R01-F04). Something visible must remain once default-ignorable,
+// separator, format and braille-blank code points are gone, and a
+// default-ignorable code point is refused unless it is a joiner (scripts and
+// emoji need them), a text or emoji presentation selector right after a
+// pictograph or a keycap base, or a variation selector right after a Han
+// character (ideographic variants people write their names with).
+// The source stays ASCII: every code point is an escape a formatter cannot drop.
+const IGNORABLE = String.raw`\p{Default_Ignorable_Code_Point}`;
+const IS_IGNORABLE = new RegExp(`^${IGNORABLE}$`, 'u');
+const NOT_VISIBLE = new RegExp(String.raw`[${IGNORABLE}\p{Z}\p{Cf}\u{2800}]`, 'gu');
+const JOINERS = new Set(['\u{200C}', '\u{200D}']);
+const PRESENTATION = new Set(['\u{FE0E}', '\u{FE0F}']);
+const EMOJI_BASE = /^[\p{Extended_Pictographic}0-9#*]$/u;
+const HAN = /^\p{Script=Han}$/u;
+const VARIATION_SELECTOR = /^[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]$/u;
+
+function allowedIgnorable(point, previous) {
+  if (JOINERS.has(point)) return true;
+  if (previous === undefined) return false;
+  if (HAN.test(previous)) return VARIATION_SELECTOR.test(point);
+  return PRESENTATION.has(point) && EMOJI_BASE.test(previous);
+}
+
+function isInputText(value, maxChars = LIMITS.MAX_NAME_CHARS) {
+  if (!isCleanText(value, maxChars) || value.replace(NOT_VISIBLE, '').length === 0) return false;
+  const points = [...value];
+  return points.every((point, index) => !IS_IGNORABLE.test(point) || allowedIgnorable(point, points[index - 1]));
+}
+
+// What two display names are compared by: NFKC, then everything the visible
+// test ignores removed (spaces and U+2800 included), then case folded fully
+// (lower, upper, lower: "STRASSE" and "strasse" with a sharp s, and a final
+// sigma against a sigma, compare equal).
+function displayNameKey(value) {
+  return value.normalize('NFKC').replace(NOT_VISIBLE, '').toLowerCase().toUpperCase().toLowerCase();
+}
+
 function emptyDocument({ hostPublicKey, teamName, now }) {
   return {
     schema_version: SCHEMA_VERSION,
     rev: 0,
     team: {
       team_id: deriveTeamId(hostPublicKey), host_public_key: hostPublicKey, name: teamName, created_at: now,
+      model: null,
     },
     members: [],
     devices: [],
@@ -131,10 +190,15 @@ function fail(reason, schema = false) {
   return { ok: false, reason, schema };
 }
 
+function isTeamModel(value) {
+  return typeof value === 'string' && TEAM_MODEL_PATTERN.test(value);
+}
+
 function validateTeam(team) {
   if (!isPlainObject(team) || !hasExactKeys(team, KEY_SETS.team)) return false;
   if (!isPublicKey(team.host_public_key)) return false;
   if (team.team_id !== deriveTeamId(team.host_public_key)) return false;
+  if (!(team.model === null || isTeamModel(team.model))) return false;
   return isCleanText(team.name) && isCount(team.created_at);
 }
 
@@ -165,6 +229,7 @@ function validateInvite(invite) {
   if (!ROLES.includes(invite.role) || !isNullOrId('member', invite.member_id)) return false;
   if (invite.created_by !== LOCAL_ACTOR && !ID_PATTERNS.member.test(invite.created_by)) return false;
   if (!isCount(invite.created_at) || !isCount(invite.expires_at) || invite.expires_at <= invite.created_at) return false;
+  if (!isCount(invite.name_refusals) || invite.name_refusals > LIMITS.MAX_NAME_REFUSALS) return false;
   return isNullOrCount(invite.used_at) && isNullOrCount(invite.revoked_at);
 }
 
@@ -212,7 +277,9 @@ function validateRelations(doc) {
     keys.add(invite.invite_public_key);
     if (invite.member_id !== null && !byId.has(invite.member_id)) return fail('invite_relation_invalid');
     const live = invite.used_at === null && invite.revoked_at === null;
-    if (live) outstanding += 1;
+    // A local command's invite (first owner, recovery) is outside the cap, so a
+    // full list never locks out recovery; the record cap still bounds the list.
+    if (live && invite.created_by !== LOCAL_ACTOR) outstanding += 1;
     // The first-owner invite is valid only while the store holds zero members.
     if (live && invite.role === 'owner' && invite.member_id === null && doc.members.length > 0) {
       return fail('invite_relation_invalid');
@@ -290,13 +357,23 @@ function validateBody(doc) {
 }
 
 // The explicit migration. Returns { ok: true, doc, upgraded } with a fresh
-// version 2 document, or the failure `validateDocument` would give. A version 1
-// document must pass every version 1 rule before it gains `projects: []`; the
-// caller's object is never changed.
+// version 4 document, or the failure `validateDocument` would give. A version 1
+// to 3 document must have exactly its own version's fields before it gains
+// `projects: []` (from 1), `team.model: null` (from 1 or 2) and `name_refusals: 0`
+// on every invite, and then pass every rule; the caller's object is never changed.
 function upgradeDocument(doc) {
-  if (isPlainObject(doc) && doc.schema_version === 1) {
-    if (!hasExactKeys(doc, KEY_SETS.document_v1)) return fail('unknown_field');
-    const upgraded = { ...doc, schema_version: SCHEMA_VERSION, projects: [] };
+  if (isPlainObject(doc) && [1, 2, 3].includes(doc.schema_version)) {
+    const keys = doc.schema_version === 1 ? KEY_SETS.document_v1 : KEY_SETS.document;
+    if (!hasExactKeys(doc, keys)) return fail('unknown_field');
+    const teamKeys = doc.schema_version === 3 ? KEY_SETS.team : KEY_SETS.team_v2;
+    if (!isPlainObject(doc.team) || !hasExactKeys(doc.team, teamKeys)) return fail('team_invalid');
+    if (!Array.isArray(doc.invites) || doc.invites.length > LIMITS.MAX_INVITE_RECORDS
+      || !doc.invites.every((invite) => isPlainObject(invite) && hasExactKeys(invite, KEY_SETS.invite_v3))) {
+      return fail('invite_invalid');
+    }
+    const upgraded = { ...doc, schema_version: SCHEMA_VERSION, team: { ...doc.team, model: doc.team.model ?? null },
+      invites: doc.invites.map((invite) => ({ ...invite, name_refusals: 0 })) };
+    if (doc.schema_version === 1) upgraded.projects = [];
     const checked = validateBody(upgraded);
     return checked.ok ? { ok: true, doc: upgraded, upgraded: true } : checked;
   }
@@ -313,13 +390,17 @@ module.exports = {
   PROJECT_ID_PATTERN,
   GENERAL_PROJECT_ID,
   LOCAL_ACTOR,
+  LOCAL_COMMAND,
   LIMITS,
   INVITE_KINDS,
   hasExactKeys,
   isCleanText,
+  isInputText,
+  displayNameKey,
   isCount,
   isPlainObject,
   isProjectId,
+  isTeamModel,
   emptyDocument,
   upgradeDocument,
   validateDocument,

@@ -22,6 +22,8 @@
     composerHoloId: 'on',
     fontScaleId: 'default',
     chatWidthId: 'standard',
+    // Team chat density (row 123, slice 2a-5b): the root's data-team-density.
+    teamDensityId: 'comfortable',
     // The boot curtain's starfield (status loader, 2026-09-29). Default on;
     // a record written before the field existed normalizes to on, which is
     // the whole migration: no other field changes, so it is lossless.
@@ -86,6 +88,11 @@
       id: 'chalk', scheme: 'light',
       label: jt('appearance.palette.chalk.name', 'Chalk'),
       description: jt('appearance.palette.chalk.description', 'One solid chalk-white canvas: Slate in daylight, with no gradients or background effect and a deep slate-blue accent.'),
+    },
+    aurora: {
+      id: 'aurora', scheme: 'dark',
+      label: jt('appearance.palette.aurora.name', 'Aurora'),
+      description: jt('appearance.palette.aurora.description', 'Night on a snow ridge: deep snow-shadow blue, cold white text, an aurora-green accent and lamp amber.'),
     },
     paper: {
       id: 'paper', scheme: 'light',
@@ -192,6 +199,7 @@
      Standard default; Narrow is one click away. The Wide preset added later
      (row 92) is stored as `full`, so an old `wide` never turns it on. */
   var LEGACY_CHAT_WIDTH_IDS = { default: 'standard', wide: 'standard' };
+  var TEAM_DENSITY_IDS = { comfortable: true, compact: true };
   var SURFACE_EFFECT_PRESETS = {
     none: {
       id: 'none',
@@ -325,6 +333,26 @@
       ]),
       freshInstallCandidate: false,
     },
+    'aurora-ridge': {
+      id: 'aurora-ridge',
+      label: jt('appearance.effect.surface.auroraRidge.name', 'Aurora Ridge'),
+      description: jt('appearance.effect.surface.auroraRidge.description', 'A still painted night: spruces under snow, a lit cabin and the aurora overhead.'),
+      contractVersion: 3,
+      inputMode: 'manager',
+      // Owner pick 2026-11-13: version 1 is a still painting with no motion,
+      // no pointer response and no reaction to the model.
+      activityMode: 'none',
+      renderer: 'canvas2d',
+      interaction: Object.freeze({ hover: false, click: false, press: false, captureOnPress: false }),
+      costClass: 'low',
+      paletteSupport: 'all',
+      recommendedPalettes: Object.freeze(['aurora']),
+      requiredTokens: Object.freeze([
+        '--widget-aurora-ridge-aurora-color',
+        '--widget-aurora-ridge-lamp-color',
+      ]),
+      freshInstallCandidate: false,
+    },
   };
 
   var COMPOSER_HOLO_OPTIONS = {
@@ -441,6 +469,17 @@
         composerHoloId: 'on',
       },
     },
+    aurora: {
+      id: 'aurora',
+      label: jt('appearance.palette.auroraTheme.name', 'Aurora'),
+      description: jt('appearance.palette.auroraTheme.description', 'A painted night behind the chat: a snow ridge under the aurora, with aurora-green accents.'),
+      preferences: {
+        paletteId: 'aurora',
+        typographyId: 'technical',
+        surfaceEffectId: 'aurora-ridge',
+        composerHoloId: 'on',
+      },
+    },
     lexicon: {
       id: 'lexicon',
       label: jt('appearance.palette.lexiconTheme.name', 'Lexicon'),
@@ -493,6 +532,10 @@
     });
   }
 
+  // The rows of Settings > Appearance: what its Reset restores and what enables it. A preference that
+  // shares the store but sits on another page (chat width, title-bar load, side panel) is not listed.
+  var APPEARANCE_PAGE_KEYS = ['paletteId', 'typographyId', 'surfaceEffectId', 'composerHoloId', 'fontScaleId', 'startupAnimation', 'teamDensityId'];
+
   function getDefaultAppearancePreferences() {
     return Object.assign({}, DEFAULT_FRESH_APPEARANCE);
   }
@@ -544,6 +587,7 @@
       composerHoloId: normalizeBinaryHoloId(source.composerHoloId),
       fontScaleId: normalizePresetId(source.fontScaleId, FONT_SCALE_PRESETS, DEFAULT_APPEARANCE.fontScaleId),
       chatWidthId: normalizeChatWidthId(source.chatWidthId),
+      teamDensityId: normalizePresetId(source.teamDensityId, TEAM_DENSITY_IDS, DEFAULT_APPEARANCE.teamDensityId),
       startupAnimation: source.startupAnimation === false ? false : DEFAULT_APPEARANCE.startupAnimation,
       titlebarLoad: source.titlebarLoad === true,
       artifactAutoOpen: source.artifactAutoOpen === true,
@@ -604,6 +648,7 @@
     rocko: ['#0c1e1b', '#f0e4cc', '#8db8b0', '#3dbfab', '#e8641a'],
     slate: ['#15181c', '#f6f7f9', '#d0d5dc', '#86c3e4', '#7fb6dd'],
     chalk: ['#f3f5f7', '#15181c', '#3d4651', '#0e7490', '#1f6fa8'],
+    aurora: ['#0f1925', '#eef4f7', '#c6d4de', '#74bde0', '#5fd3a0'],
     woolly: ['#e4d8c2', '#2c2417', '#5e4f38', '#3888cc', '#388626'],
   };
 
@@ -766,6 +811,7 @@
     rootElement.dataset.threadStyle = 'subtle';
     rootElement.dataset.fontScale = normalized.fontScaleId;
     rootElement.dataset.chatWidth = normalized.chatWidthId;
+    rootElement.dataset.teamDensity = normalized.teamDensityId;
     // Read by the boot curtain (renderer-lifecycle-progress-utils.js) at mount;
     // theme-bootstrap.js applies this before first paint.
     rootElement.dataset.startupAnimation = normalized.startupAnimation ? 'on' : 'off';
@@ -830,8 +876,12 @@
     return [
       { id: 'appearanceComposerHoloToggle', label: jt('settings.appearance.holographicTypingBorderLabel', 'Holographic typing border'), checked: composerHoloOption.id !== 'off' },
       { id: 'appearanceStartupAnimationToggle', checked: appearancePreferences.startupAnimation !== false, disabled: startupAnimationFlagOff },
-      { id: 'appearanceTitlebarLoadToggle', checked: appearancePreferences.titlebarLoad === true },
     ];
+  }
+
+  // Row 133: the title-bar load switch is stored with the appearance but drawn in General › Machine status.
+  function getMachineStatusToggleFields({ appearancePreferences }) {
+    return [{ id: 'appearanceTitlebarLoadToggle', checked: appearancePreferences.titlebarLoad === true }];
   }
 
   function saveAppearancePreferences(storage, preferences) {
@@ -857,9 +907,11 @@
     applyAppearanceToDocument: applyAppearanceToDocument,
     resolvePaletteBootColors: resolvePaletteBootColors,
     resolvePaletteScheme: resolvePaletteScheme,
+    APPEARANCE_PAGE_KEYS: APPEARANCE_PAGE_KEYS,
     getDefaultAppearancePreferences: getDefaultAppearancePreferences,
     getComposerHoloOptions: getComposerHoloOptions,
     getAppearanceToggleFields: getAppearanceToggleFields,
+    getMachineStatusToggleFields: getMachineStatusToggleFields,
     getPalettePresets: getPalettePresets,
     getSurfaceEffectPresets: getSurfaceEffectPresets,
     getThemeBundles: getThemeBundles,

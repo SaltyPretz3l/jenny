@@ -25,9 +25,10 @@ import os
 import re
 import sys
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Callable, Generator, Protocol, Sequence
+from typing import IO, Callable, Generator, Iterator, Protocol, Sequence
 
 from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins.file_state import (
@@ -51,7 +52,13 @@ from sidecar.ai.tools.builtins.handle_containment import (
     verify_handle_within,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io, hosted_file_io_enabled
+from sidecar.ai.tools.hosted_file_io import (
+    hosted_file_io_enabled,
+    hosted_file_io_identity,
+    hosted_win32_files_enabled,
+    scoped_hosted_file_io,
+    set_hosted_win32_files,
+)
 
 WORKER_PROTOCOL_MAX_LINE_CHARS = 64 * 1024
 WORKER_READY_MESSAGE = {"status": "ready"}
@@ -147,15 +154,15 @@ def run_worker_request(request: object) -> dict[str, object]:
                 retryable=True,
             )
         compiled = re.compile(pattern_value, int(request.get("flags", 0)))
-        workspace_root = _configure_root(request)
-        result = search_file(
-            Path(path_value),
-            compiled,
-            workspace_root,
-            int(request.get("context_lines", 0)),
-            int(request.get("max_output_matches", 0)),
-            int(request.get("max_output_bytes", 0)),
-        )
+        with _request_root(request) as workspace_root:
+            result = search_file(
+                Path(path_value),
+                compiled,
+                workspace_root,
+                int(request.get("context_lines", 0)),
+                int(request.get("max_output_matches", 0)),
+                int(request.get("max_output_bytes", 0)),
+            )
     except ToolExecutionFailure as error:
         return worker_error_response(
             code=error.code,
@@ -171,14 +178,39 @@ def run_worker_request(request: object) -> dict[str, object]:
     return worker_ok_response(result)
 
 
-def _configure_root(request: dict[str, object]) -> Path | None:
+def hosted_request_fields() -> dict[str, object]:
+    """The parent's hosted state for one worker request: the mode, the Windows
+    switch and the active scope's root identity, which the worker pins with."""
+    device_id, inode = hosted_file_io_identity()
+    return {
+        "hosted_file_io": hosted_file_io_enabled(),
+        "hosted_win32_files": hosted_win32_files_enabled(),
+        "workspace_device_id": device_id,
+        "workspace_inode": inode,
+    }
+
+
+def _identity_field(request: dict[str, object], key: str) -> str | None:
+    value = request.get(key)
+    return value if isinstance(value, str) else None
+
+
+@contextmanager
+def _request_root(request: dict[str, object]) -> Iterator[Path | None]:
+    """Pin the request's root in this worker for the request, and release it after.
+
+    The root and identity come from the parent's trusted scope; a missing
+    identity is refused by a backend that needs one (Windows)."""
     value = request.get("workspace_root")
     workspace_root = Path(value) if isinstance(value, str) and value else None
-    configure_hosted_file_io(
+    set_hosted_win32_files(request.get("hosted_win32_files") is True)
+    with scoped_hosted_file_io(
         str(workspace_root) if workspace_root else None,
         enabled=request.get("hosted_file_io") is True,
-    )
-    return workspace_root
+        expected_device_id=_identity_field(request, "workspace_device_id"),
+        expected_inode=_identity_field(request, "workspace_inode"),
+    ):
+        yield workspace_root
 
 
 # --- Batched scan: worker side -------------------------------------------------
@@ -206,10 +238,21 @@ def run_scan_batch_request(request: dict[str, object], emit: Callable[[object], 
             retryable=True,
         ))
         return
+    with ExitStack() as root_scope:
+        settings = _scan_settings(request, files, emit, root_scope)
+        if settings is None:
+            return
+        _scan_files(files, *settings, emit)
+
+
+def _scan_settings(
+    request: dict[str, object], files: list[str], emit: Callable[[object], None],
+    root_scope: ExitStack,
+) -> tuple[_ScanSettings, int, int] | None:
     try:
         pattern = str(request["pattern"])
         flags = int(str(request.get("flags", 0)))
-        workspace_root = _configure_root(request)
+        workspace_root = root_scope.enter_context(_request_root(request))
         hosted = request.get("hosted_file_io") is True
         settings = _ScanSettings(
             compiled=re.compile(pattern, flags),
@@ -230,7 +273,14 @@ def run_scan_batch_request(request: dict[str, object], emit: Callable[[object], 
         )
         for _ in files:
             emit(failure)
-        return
+        return None
+    return settings, remaining_matches, remaining_bytes
+
+
+def _scan_files(
+    files: list[str], settings: _ScanSettings, remaining_matches: int, remaining_bytes: int,
+    emit: Callable[[object], None],
+) -> None:
     for path_value in files:
         response, result = scan_one_file(
             Path(path_value), settings, remaining_matches, remaining_bytes
@@ -361,7 +411,7 @@ def scan_text_batches(  # noqa: PLR0913
     """
     remaining_matches, remaining_bytes = max_output_matches, max_output_bytes
     index = 0
-    hosted = hosted_file_io_enabled()
+    hosted = hosted_request_fields()
     while index < len(paths):
         chunk = _next_chunk(paths, index)
         worker.send(
@@ -371,7 +421,7 @@ def scan_text_batches(  # noqa: PLR0913
                 "pattern": compiled.pattern,
                 "flags": int(compiled.flags),
                 "workspace_root": str(workspace_root) if workspace_root is not None else "",
-                "hosted_file_io": hosted,
+                **hosted,
                 "context_lines": context_lines,
                 "max_output_matches": remaining_matches,
                 "max_output_bytes": remaining_bytes,

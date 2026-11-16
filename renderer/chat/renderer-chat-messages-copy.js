@@ -192,14 +192,27 @@
       case 'schedule_cancelled': return jt('chat.primary.kind.schedule_cancelled', 'Check deleted');
       case 'schedule_skipped': return jt('chat.primary.kind.schedule_skipped', 'Check skipped');
       case 'schedule_missed': return jt('chat.primary.kind.schedule_missed', 'Check missed');
-      case 'schedule_fired': return jt('chat.primary.kind.schedule_fired', 'Check ran');
+      case 'schedule_fired': case 'schedule_run_anyway': return jt('chat.primary.kind.schedule_fired', 'Check ran');
+      case 'schedule_held': return jt('chat.primary.held.title', 'Scheduled check waiting');
       default: return '';
     }
+  }
+
+  // Row 144: model-floor entries are whole sentences naming the check.
+  function scheduleModelFloorDetail(entry) {
+    const label = clip(String(entry.title || '').trim(), 120) || jt('chat.primary.held.fallbackLabel', 'Scheduled check');
+    if (entry.kind === 'schedule_held' && entry.reason === 'model_too_small') return jt('chat.primary.schedule.held.tooSmall', 'Scheduled check “{label}” is waiting: the model is too small', { label });
+    if (entry.kind === 'schedule_held' && entry.reason === 'model_unavailable') return jt('chat.primary.schedule.held.unavailable', 'Scheduled check “{label}” is waiting: the model is not available', { label });
+    if (entry.kind === 'schedule_run_anyway' && entry.reason === 'user') return jt('chat.primary.schedule.runAnyway', 'Scheduled check “{label}” ran on a small model because you chose Run anyway', { label });
+    if (entry.kind === 'schedule_skipped' && entry.reason === 'user') return jt('chat.primary.schedule.skippedByUser', 'Scheduled check “{label}” was skipped by you', { label });
+    return '';
   }
 
   // Why a check was skipped or missed, else who made the change ('' when the entry says neither).
   function scheduleDetail(entry) {
     if (!isObject(entry) || !String(entry.kind || '').startsWith('schedule_')) return '';
+    const floor = scheduleModelFloorDetail(entry);
+    if (floor) return floor;
     switch (entry.reason) {
       case 'paused': return jt('chat.primary.schedule.reason.paused', 'Jenny was paused.');
       case 'late': return jt('chat.primary.schedule.reason.late', 'Jenny was not running when it was due.');

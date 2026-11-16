@@ -39,6 +39,8 @@ const {
 const {
   MCP_CONFIG_SCHEMA_VERSION: MCP_SERVERS_SCHEMA_VERSION,
 } = require('../mcp-config-store');
+// board-ids.js, not the board model: the registry loads at startup and the model stays lazy.
+const { BOARD_SCHEMA_VERSION } = require('../boards/board-ids');
 
 function normalizeVersionValue(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -238,6 +240,15 @@ function getElectronSchemaVersions() {
       version: MCP_SERVERS_SCHEMA_VERSION,
       forward_policy: 'migrate_legacy_preserve_future_block_write',
       source: 'services/mcp-config-store.js',
+    }),
+    makeEntry({
+      id: 'electron.project_boards',
+      surface: 'Project board documents, undo journals and the board index',
+      owner: 'electron',
+      kind: 'json_schema',
+      version: BOARD_SCHEMA_VERSION,
+      forward_policy: 'preserve_future_block_write',
+      source: 'services/boards/board-store.js',
     }),
   ].filter(Boolean);
 }

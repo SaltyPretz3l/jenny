@@ -29,6 +29,7 @@ const DEFAULT_LOCAL_ENGINES = Object.freeze({
       lastUsedTag: '',
       lastPickDir: '',
       libraryRoots: Object.freeze([]),
+      runtimeRoots: Object.freeze([]),
       perModel: Object.freeze({}),
     }),
   }),
@@ -143,6 +144,27 @@ function managedModelKey(tag) {
   return canonicalizeModelToken(String(tag || '').replace(/:/g, '-'));
 }
 
+// A folder list (GGUF library folders, runtime folders): local absolute
+// paths up to 512 characters, deduped case-insensitively, order kept, capped.
+// Existence is not checked here.
+function normalizeFolderList(value, cap) {
+  const folders = [];
+  const seen = new Set();
+  for (const item of Array.isArray(value) ? value : []) {
+    const folder = typeof item === 'string' ? normalizeString(item) : '';
+    const key = folder.toLowerCase();
+    if (!isLocalAbsolutePath(folder) || folder.length > 512 || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    folders.push(folder);
+    if (folders.length >= cap) {
+      break;
+    }
+  }
+  return folders;
+}
+
 function normalizeManagedLlamaServer(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const profileIdRaw = typeof source.profileId === 'string'
@@ -159,22 +181,10 @@ function normalizeManagedLlamaServer(value) {
   const lastPickDir = isLocalAbsolutePath(lastPickDirRaw) && lastPickDirRaw.length <= 512
     ? lastPickDirRaw
     : '';
-  const libraryRoots = [];
-  const seenLibraryRoots = new Set();
-  for (const value of Array.isArray(source.libraryRoots) ? source.libraryRoots : []) {
-    const root = typeof value === 'string' ? normalizeString(value) : '';
-    const key = root.toLowerCase();
-    if (!isLocalAbsolutePath(root)
-      || root.length > 512
-      || seenLibraryRoots.has(key)) {
-      continue;
-    }
-    seenLibraryRoots.add(key);
-    libraryRoots.push(root);
-    if (libraryRoots.length >= 16) {
-      break;
-    }
-  }
+  const libraryRoots = normalizeFolderList(source.libraryRoots, 16);
+  // Row 142: folders main may run llama-server builds from. Only a main dialog
+  // adds one (llama-server-runtime.js reconcileRuntimeRoots).
+  const runtimeRoots = normalizeFolderList(source.runtimeRoots, 8);
   const rawPerModel = source.perModel
     && typeof source.perModel === 'object'
     && !Array.isArray(source.perModel)
@@ -245,6 +255,7 @@ function normalizeManagedLlamaServer(value) {
       && perModel[lastUsedTag].engine === 'llama-server' ? lastUsedTag : '',
     lastPickDir,
     libraryRoots,
+    runtimeRoots,
     perModel,
   };
 }

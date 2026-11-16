@@ -8,11 +8,13 @@
 // them, and runs ONLY those tests -- *.py through `pytest -q`, everything else
 // through run-node-tests-safe.js, failing if either lane fails. This is a
 // convenience/speed lane, not a correctness gate: any ambiguity (an unmapped
-// source, no changed sources, or git being unavailable) falls back to the full
-// stable lane (`tests/` under --parallel-only, plus the sidecar fast lane when
-// Python selection is uncertain) so a narrow selection NEVER
-// silently under-runs coverage. Adds no dependency; does not modify the
-// working tree.
+// source, no changed sources, or git being unavailable) falls back to the fast
+// lane (`tests/` under --fast-only: the stable lane minus tests/.slow-lane.json)
+// plus every test the map did select, named so the fast lane cannot leave it
+// out, plus the sidecar fast lane when Python selection is uncertain. The slow
+// files nothing mapped to wait for `npm test` or the gate (owner pick D2,
+// 2026-11-11, the test lanes plan). Adds no
+// dependency; does not modify the working tree.
 //
 // Usage:
 //   node scripts/select-affected-tests.js              # run the affected lane (or fall back)
@@ -97,7 +99,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
   const { sources, reason } = collect(root);
 
   if (reason) {
-    const bannerLine = '[affected] git unavailable -> falling back to stable lane';
+    const bannerLine = '[affected] git unavailable -> falling back to the fast lane';
     return {
       mode: 'fallback',
       pythonFallback: true,
@@ -108,12 +110,12 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
       combinedCount: 0,
       unmappedSources: [],
       bannerLine,
-      fallbackReason: `git unavailable (${reason}) -- falling back to the stable lane`,
+      fallbackReason: `git unavailable (${reason}) -- falling back to the fast lane`,
     };
   }
 
   if (sources.length === 0) {
-    const bannerLine = '[affected] 0 sources -> falling back to stable lane';
+    const bannerLine = '[affected] 0 sources -> falling back to the fast lane';
     return {
       mode: 'fallback',
       pythonFallback: true,
@@ -124,7 +126,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
       combinedCount: 0,
       unmappedSources: [],
       bannerLine,
-      fallbackReason: 'no changed sources detected -- falling back to the stable lane',
+      fallbackReason: 'no changed sources detected -- falling back to the fast lane',
     };
   }
 
@@ -156,7 +158,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
   if (unmappedSources.length > 0) {
     const bannerLine =
       `[affected] ${sources.length} sources -> ${testsInOrder.length} tests ${countsSuffix}; ` +
-      `${unmappedSources.length} unmapped -> falling back to stable lane`;
+      `${unmappedSources.length} unmapped -> falling back to the fast lane`;
     return {
       mode: 'fallback',
       pythonFallback: unmappedSources.some((source) => source.startsWith('sidecar/') && source.endsWith('.py')),
@@ -169,7 +171,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
       bannerLine,
       fallbackReason:
         `${unmappedSources.length} changed source${unmappedSources.length === 1 ? '' : 's'} unmapped ` +
-        `(${unmappedSources.join(', ')}) -- falling back to the stable lane`,
+        `(${unmappedSources.join(', ')}) -- falling back to the fast lane`,
     };
   }
 
@@ -206,7 +208,9 @@ function buildLanePlan(plan) {
   if (plan.mode === 'fallback') {
     const fallbackPyTests = [...new Set([...(plan.pythonFallback ? [SIDECAR_FAST_TEST] : []), ...pyTests])];
     return {
-      nodeArgs: ['tests/', '--parallel-only', `--timeout-ms=${STABLE_TIMEOUT_MS}`],
+      // Named files always run under --fast-only, so the mapped tests keep
+      // their coverage even when they are slow-listed or one-at-a-time.
+      nodeArgs: ['tests/', ...nodeTests, '--fast-only', `--timeout-ms=${STABLE_TIMEOUT_MS}`],
       pytestArgs: fallbackPyTests.length > 0 ? ['-m', 'pytest', '-q', ...fallbackPyTests] : null,
     };
   }
@@ -232,13 +236,13 @@ function runLane(executable, args) {
 
 function runChild(plan) {
   const { nodeArgs, pytestArgs } = buildLanePlan(plan);
-  const { nodeTests } = partitionTests(plan.mode === 'affected' ? plan.tests : []);
+  const { nodeTests } = partitionTests(plan.tests);
   let nodeExit = 0;
   let pyExit = 0;
   if (nodeArgs) {
     const laneLabel = plan.mode === 'affected'
       ? `${nodeTests.length} test file(s)`
-      : 'stable lane (tests/ --parallel-only)';
+      : `fast lane (tests/ --fast-only) plus ${nodeTests.length} mapped test file(s)`;
     console.log(`[affected] node lane: ${laneLabel} -> run-node-tests-safe.js`);
     nodeExit = runLane(process.execPath, [path.join(ROOT, RUNNER_PATH), ...nodeArgs]);
   }
@@ -267,8 +271,8 @@ function main() {
   }
 
   if (dryRun) {
+    const { nodeTests, pyTests } = partitionTests(plan.tests);
     if (plan.mode === 'affected') {
-      const { nodeTests, pyTests } = partitionTests(plan.tests);
       console.log(
         `[affected] dry-run: would run ${plan.tests.length} test file(s) ` +
         `(node:${nodeTests.length} python:${pyTests.length}):`
@@ -276,8 +280,10 @@ function main() {
       for (const test of nodeTests) console.log(`  [node]   ${test}`);
       for (const test of pyTests) console.log(`  [python] ${test}`);
     } else {
-      console.log('[affected] dry-run: would run the stable lane (tests/ --parallel-only)');
       const { pytestArgs } = buildLanePlan(plan);
+      console.log(
+        `[affected] dry-run: would run the fast lane (tests/ --fast-only) plus ${nodeTests.length} mapped test file(s)`
+      );
       if (pytestArgs) console.log(`[affected] dry-run: python lane: ${pytestArgs.slice(3).join(', ')}`);
     }
     process.exitCode = 0;

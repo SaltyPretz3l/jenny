@@ -34,6 +34,7 @@
   function noop() {}
 
   const MAX_RESULTS = 50;
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null); // row 137: outside-Workspace keys show name + folder
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -362,7 +363,7 @@
       const out = [];
       for (const path of files) {
         if (typeof scorer === 'function') {
-          const match = scorer(path, query);
+          const match = scorer(outsideDocs()?.displayPathFor(path) ?? path, query);
           if (match) {
             out.push({ path, ranges: match.ranges });
           }
@@ -430,13 +431,14 @@
     }
 
     function buildRecentRowMarkup(match, index, selected) {
-      const highlight = typeof paletteUtils.highlightRanges === 'function'
+      const meta = outsideDocs()?.describe(match.path);
+      const highlight = meta ? escapeHtml(meta.dirLabel) : typeof paletteUtils.highlightRanges === 'function'
         ? paletteUtils.highlightRanges(match.path, match.ranges, escapeHtml)
         : escapeHtml(match.path);
-      const name = match.path.split('/').pop() || match.path;
+      const name = meta ? meta.name : match.path.split('/').pop() || match.path;
       return `<div class="ide-picker-row ide-recent-files-row${selected ? ' ide-picker-row--selected ide-recent-files-row--selected' : ''}"`
         + ` role="option" aria-selected="${selected ? 'true' : 'false'}"`
-        + ` data-ide-recent-files-path="${escapeHtml(match.path)}" title="${escapeHtml(match.path)}">`
+        + ` data-ide-recent-files-path="${escapeHtml(match.path)}" title="${escapeHtml(meta ? meta.fullPath : match.path)}">`
         + `<span class="ide-picker-name ide-recent-files-name">${escapeHtml(name)}</span>`
         + `<span class="ide-picker-path ide-recent-files-path">${highlight}</span>`
         + '</div>';

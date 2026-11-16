@@ -163,16 +163,19 @@ test('the preload bridge materializes all ten workspaceRecovery methods', async 
   ]);
 });
 
-test('llamaServer invoke descriptors use the eight canonical unique channels', () => {
+test('llamaServer invoke descriptors use the eleven canonical unique channels', () => {
   const expected = {
-    'llamaServer.getStatus': 'llama-server:status',
-    'llamaServer.start': 'llama-server:start',
-    'llamaServer.stop': 'llama-server:stop',
-    'llamaServer.restart': 'llama-server:restart',
-    'llamaServer.listLocalGgufs': 'llama-server:list-local-ggufs',
-    'llamaServer.chooseGguf': 'llama-server:choose-gguf',
-    'llamaServer.chooseLibraryFolder': 'llama-server:choose-library-folder',
-    'llamaServer.chooseRuntime': 'llama-server:choose-runtime',
+    'llamaServer.getStatus': 'llama-server:status', 'llamaServer.start': 'llama-server:start',
+    'llamaServer.stop': 'llama-server:stop', 'llamaServer.restart': 'llama-server:restart',
+    'llamaServer.listLocalGgufs': 'llama-server:list-local-ggufs', 'llamaServer.chooseGguf': 'llama-server:choose-gguf',
+    'llamaServer.chooseLibraryFolder': 'llama-server:choose-library-folder', 'llamaServer.chooseRuntime': 'llama-server:choose-runtime',
+    'llamaServer.chooseRuntimeFolder': 'llama-server:choose-runtime-folder',
+    'llamaServer.runtimeOptions': 'llama-server:runtime-options',
+    'llamaServer.useRuntimeBuild': 'llama-server:use-runtime-build',
+    'llamaServer.runtimeDownloadStart': 'llama-server:runtime-download-start',
+    'llamaServer.runtimeDownloadStatus': 'llama-server:runtime-download-status',
+    'llamaServer.runtimeDownloadCancel': 'llama-server:runtime-download-cancel',
+    'llamaServer.runtimeFolderSummary': 'llama-server:runtime-folder-summary',
   };
   const channels = Object.entries(expected).map(([methodPath, channel]) => {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel });
@@ -274,11 +277,14 @@ test('ipc contract exposes a stable sorted method inventory', () => {
     'llamaServer.chooseGguf',
     'llamaServer.chooseLibraryFolder',
     'llamaServer.chooseRuntime',
+    'llamaServer.chooseRuntimeFolder',
     'llamaServer.getStatus',
     'llamaServer.listLocalGgufs',
     'llamaServer.restart',
+    'llamaServer.runtimeOptions',
     'llamaServer.start',
     'llamaServer.stop',
+    'llamaServer.useRuntimeBuild',
   ]) {
     assert.ok(invokePaths.includes(methodPath));
   }
@@ -510,7 +516,7 @@ test('Settings memory page descriptors pin the W4 invoke channels', () => {
   }
 });
 
-test('primaryChat descriptors pin the sixteen invoke channels and the changed subscription', () => {
+test('primaryChat descriptors pin the twenty invoke channels and the two subscriptions', () => {
   const invoke = {
     getState: 'primary-chat:get-state',
     activity: 'primary-chat:activity',
@@ -519,22 +525,22 @@ test('primaryChat descriptors pin the sixteen invoke channels and the changed su
     resume: 'primary-chat:resume',
     grantLaunch: 'primary-chat:grant-launch',
     revokeLaunch: 'primary-chat:revoke-launch',
-    addRule: 'primary-chat:add-rule',
-    revokeRule: 'primary-chat:revoke-rule',
+    addRule: 'primary-chat:add-rule', revokeRule: 'primary-chat:revoke-rule',
     reset: 'primary-chat:reset',
     forgetPreview: 'primary-chat:forget-preview',
     undoSettingChange: 'primary-chat:undo-setting-change',
     undoChatChange: 'primary-chat:undo-chat-change',
     getFullAuto: 'primary-chat:get-full-auto',
     armFullAuto: 'primary-chat:arm-full-auto',
-    disarmFullAuto: 'primary-chat:disarm-full-auto',
+    disarmFullAuto: 'primary-chat:disarm-full-auto', setModels: 'primary-chat:set-models', heldChecks: 'primary-chat:held-checks',
+    runHeldCheck: 'primary-chat:run-held-check', skipHeldCheck: 'primary-chat:skip-held-check',
   };
   for (const [method, channel] of Object.entries(invoke)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel }, method);
   }
   assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onChanged'], { kind: 'subscribe', channel: 'primary-chat:changed' });
-  const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('primaryChat.'));
-  assert.equal(keys.length, 17);
+  assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onCheckHeld'], { kind: 'subscribe', channel: 'primary-chat:check-held' });
+  assert.equal(Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('primaryChat.')).length, 22);
 });
 
 test('row 94 descriptor pins the sessions changed subscription', () => {
@@ -578,11 +584,12 @@ test('apiProviders descriptors pin the ten invoke channels and the changed subsc
   assert.equal(keys.some((key) => /get-?key|readKey/i.test(key)), false);
 });
 
-test('backgroundJobs descriptors pin the snapshot, kill, output-tail and changed channels', () => {
+test('backgroundJobs descriptors pin the snapshot, kill, output-tail, clear-finished and changed channels', () => {
   const expected = {
     'backgroundJobs.getState': { kind: 'invoke', channel: 'background-jobs:get-state' },
     'backgroundJobs.kill': { kind: 'invoke', channel: 'background-jobs:kill' },
     'backgroundJobs.readOutput': { kind: 'invoke', channel: 'background-jobs:read-output' },
+    'backgroundJobs.clearFinished': { kind: 'invoke', channel: 'background-jobs:clear-finished' },
     'backgroundJobs.onChanged': { kind: 'subscribe', channel: 'background-jobs:changed' },
   };
   for (const [method, descriptor] of Object.entries(expected)) {

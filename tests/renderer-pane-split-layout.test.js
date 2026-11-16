@@ -47,10 +47,10 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'artifactReviewRevealButton', 'artifactReviewRevertButton', 'artifactReviewSaveButton',
   'artifactReviewStatus', 'artifactSplitViewToggle', 'attachmentNotice', 'attachmentTray',
   'chatAssistantSprite', 'chatContextPanel', 'chatInput', 'chatOriginChip',
-  'chatOriginLabel', 'chatScrollSentinel', 'chatSearchOverlayHost', 'chatSelectionOverlayHost',
+  'chatOriginLabel', 'chatScrollSentinel', 'chatSelectionOverlayHost',
   'chatSpriteLayer', 'chatSurface', 'chatSurfaceEffectLeft', 'chatSurfaceEffects',
   'chatThreadColumn', 'chatThreadScroll', 'chatThreadStage', 'chatTimeline',
-  'chatTimelineUtilityCluster', 'composerAttachShortcut', 'composerAttachmentPreviewPill',
+  'chatTimelineUtilityCluster', 'composerAttachShortcut',
   'composerContextUsageSlot', 'composerEffortDisabledReason', 'composerEffortSelect',
   'composerGearPostureDot', 'composerHelpText', 'composerHolo', 'composerModeChips',
   'composerModeChipsAnnouncer', 'composerModelDisabledReason', 'composerModelPillSlot',
@@ -61,7 +61,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'composerV2FailedSendNotice', 'composerWrap',
   // Row 115 slice 2a: the context panel keeps only its <aside> and scroll host (Activity's); its sections,
   // toggle and diagnostic log are gone.
-  'heroAvatar', 'heroRuntimeHint', 'heroStack',
+  'heroRuntimeHint', 'heroStack',
   'heroStage', 'heroSubtitle', 'heroTitle', 'jumpToBottomButton',
   'jumpToTopButton', 'pluginSessionFallback', 'runtimeQueue',
   'sendButton', 'sendOutbox', 'stopStreamButton', 'subagentInspector',
@@ -95,13 +95,14 @@ const CHAT_PANEL_IDS = ['composerChatChipHost', 'composerChatPanel', 'composerCh
   'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
 const REMOVED_GEAR_IDS = ['composerSettingsButton', 'composerSettingsDisabledReason', 'composerGearPostureDot', 'composerRunModeHint'];
 
-// The three resolution groups for a clone of #chatPaneTemplate. 19 + 7 + 3 = 29
+// The three resolution groups for a clone of #chatPaneTemplate. 18 + 7 + 3 = 28
 // (2026-09-29: timelineCollapseExpandToggle retired with transcript views;
-// row 63, 2026-10-19: the Commands button folds into the + menu).
+// row 63, 2026-10-19: the Commands button folds into the + menu; row 156,
+// 2026-11-14: the find field moves into the session bar, chatSearchOverlayHost retires).
 // Hosts a second pane owns (present in the template; W2-2b adds attachmentTray,
 // W3-2 adds subagentInspector).
 const TEMPLATE_HOST_NAMES = Object.freeze([
-  'chatPaneKicker', 'heroStage', 'chatThreadStage', 'chatSearchOverlayHost',
+  'chatPaneKicker', 'heroStage', 'chatThreadStage',
   'chatSelectionOverlayHost', 'chatSurface', 'chatThreadScroll', 'chatThreadColumn',
   'chatSpriteLayer', 'chatAssistantSprite', 'chatOriginChip', 'chatOriginLabel', 'chatTimeline',
   'chatScrollSentinel', 'chatTimelineUtilityCluster', 'composerWrap',
@@ -116,7 +117,7 @@ const RUNTIME_BUILT_CONTROL_NAMES = Object.freeze([
   'composerAttachShortcut', 'composerSettingsGroup',
 ]);
 // Split view W3-1 (deliberate pin change): pane 1's template carries its own
-// preview pill, composer status notice and failed-send notice, named after
+// composer status notice and failed-send notice, named after
 // pane 0's ids. They are NOT pane node names: pane 0 keeps reaching its nodes
 // by id and gains no data-chat-node (one pane stays byte-identical), so
 // CHAT_PANE_NODE_NAMES and the 19 + 9 + 3 split are unchanged and the pane
@@ -124,7 +125,7 @@ const RUNTIME_BUILT_CONTROL_NAMES = Object.freeze([
 // Row 59 checkpoint 4 adds composerMessageStrip (the addressed-message strip above the status
 // notice) on the same terms: pane 0 by id, the template by data-chat-node.
 const PANE_TEMPLATE_NOTICE_NAMES = Object.freeze([
-  'composerAttachmentPreviewPill', 'composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice',
+  'composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice',
 ]);
 // View-level grid columns that stay pane 0's until Wave 2 gives the artifact
 // panel to a pane.
@@ -155,13 +156,13 @@ function cloneTemplateInto(documentRef) {
   return paneRoot;
 }
 
-test('the three resolution groups partition CHAT_PANE_NODE_NAMES (19 + 7 + 3 = 29)', () => {
+test('the three resolution groups partition CHAT_PANE_NODE_NAMES (18 + 7 + 3 = 28)', () => {
   const groups = [...TEMPLATE_HOST_NAMES, ...RUNTIME_BUILT_CONTROL_NAMES, ...PANE_ZERO_ONLY_COLUMN_NAMES];
-  assert.equal(TEMPLATE_HOST_NAMES.length, 19);
+  assert.equal(TEMPLATE_HOST_NAMES.length, 18);
   assert.equal(RUNTIME_BUILT_CONTROL_NAMES.length, 7);
   assert.equal(PANE_ZERO_ONLY_COLUMN_NAMES.length, 3);
   assert.equal(new Set(groups).size, groups.length, 'no name sits in two groups');
-  assert.equal(CHAT_PANE_NODE_NAMES.length, 29, 'row 118 removes jumpToLastPromptButton: 30 -> 29; W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32; row 63 retires composerTerminalShortcut: 31; the merged jump control retires composerWayfinderHost: 30');
+  assert.equal(CHAT_PANE_NODE_NAMES.length, 28, 'row 156 retires chatSearchOverlayHost: 29 -> 28; row 118 removes jumpToLastPromptButton: 30 -> 29; W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32; row 63 retires composerTerminalShortcut: 31; the merged jump control retires composerWayfinderHost: 30');
   assert.deepEqual([...groups].sort(), [...CHAT_PANE_NODE_NAMES].sort());
 });
 
@@ -170,7 +171,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 85); // less the last-prompt button (row 118, 2026-11-09); 107 less the six context panel ids (its sections, toggle and diagnostic log retired, row 115 slice 2a, 2026-11-09), less composerWayfinderHost (the merged jump control, 2026-11-09), less backgroundJobsStrip (background jobs moved to the session rail, 2026-11-01), less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 82); // less the never-visible hero avatar id (empty-chat hero direction A, 2026-11-15), less chatSearchOverlayHost (the find field moved into the session bar, row 156, 2026-11-14), less the attachment preview pill (row 153, 2026-11-14), less the last-prompt button (row 118, 2026-11-09); 107 less the six context panel ids (its sections, toggle and diagnostic log retired, row 115 slice 2a, 2026-11-09), less composerWayfinderHost (the merged jump control, 2026-11-09), less backgroundJobsStrip (background jobs moved to the session rail, 2026-11-01), less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),
@@ -286,7 +287,6 @@ test('resolver: a cloned template resolves exactly the 19 hosts and null for the
     ['chatPaneKicker', 'heroStage', 'chatThreadStage', 'chatTimelineUtilityCluster', 'composerWrap']
   );
   assert.equal(resolved.chatPaneKicker.hasAttribute('hidden'), true);
-  assert.equal(resolved.chatSearchOverlayHost.hasAttribute('hidden'), true);
   assert.equal(resolved.chatSelectionOverlayHost.hasAttribute('hidden'), true);
   assert.equal(resolved.chatInput.tagName.toLowerCase(), 'textarea');
   assert.equal(resolved.chatInput.hasAttribute('aria-describedby'), false, 'its target would be an id');
@@ -317,20 +317,25 @@ test('resolver: a cloned template resolves exactly the 19 hosts and null for the
   ]) {
     assert.equal(paneRoot.querySelector(selector), null, `${selector} is a pane-0 singleton`);
   }
-  // W2-2b: the attachment tray is per pane, in pane 0's position (inside the
-  // composer wrap, before the composer). W3-1: so are the preview pill, the
-  // status notice and the failed-send notice, in pane 0's relative order.
+  // W2-2b: the attachment tray is per pane, in pane 0's position (the first
+  // child of the composer's main column, above the entry row). W3-1: so are the
+  // status notice and the failed-send notice, in pane 0's relative order, in
+  // the composer wrap before the composer.
   const trays = paneRoot.querySelectorAll('.attachment-tray');
   assert.equal(trays.length, 1, 'the template carries one attachment tray');
   assert.equal(trays[0].getAttribute('data-chat-node'), 'attachmentTray');
   assert.equal(trays[0].classList.contains('hidden'), true);
   assert.equal(trays[0].getAttribute('aria-live'), 'polite');
   const wrap = paneRoot.querySelector('[data-chat-node="composerWrap"]');
-  assert.equal(trays[0].parentElement, wrap);
+  const composerMain = paneRoot.querySelector('.composer-main');
+  assert.equal(trays[0].parentElement, composerMain);
+  assert.equal(composerMain.firstElementChild, trays[0], 'the tray is the first child of the composer main column');
+  assert.equal(trays[0].getAttribute('role'), 'group');
+  assert.equal(trays[0].getAttribute('aria-label'), 'Attachments');
   assert.deepEqual(
     [...wrap.children].map((child) => child.getAttribute('data-chat-node') || child.className),
-    ['composerAttachmentPreviewPill', 'attachmentTray', 'composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice', 'composer'],
-    'the template wrap keeps pane 0\'s order: pill, tray, message strip, status notice, failed-send notice, composer'
+    ['composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice', 'composer'],
+    'the template wrap keeps pane 0\'s order: message strip, status notice, failed-send notice, composer'
   );
   const paneZeroWrap = documentRef.getElementById('composerWrap');
   for (const name of PANE_TEMPLATE_NOTICE_NAMES) {

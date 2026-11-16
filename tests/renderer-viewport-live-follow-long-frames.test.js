@@ -268,3 +268,142 @@ test('viewport controller: a render-driven flip near the bottom keeps a stale re
     harness.restore();
   }
 });
+
+function createFollowHarness(options = {}) {
+  return createViewportControllerHarness({
+    deferAnimationFrame: true,
+    autoScrollThread: true,
+    ...options,
+    deriveFollowLatestFromScroll(metrics) {
+      const gap = (Number(metrics.scrollHeight) || 0)
+        - ((Number(metrics.scrollTop) || 0) + (Number(metrics.clientHeight) || 0));
+      return gap <= 48;
+    },
+  });
+}
+
+// Review 2026-11-12 (scroll-follow 1): the intent flag was never spent by Send's
+// setFollowLatest(true), so the next chunk read the old gesture as a scroll-away.
+test('viewport controller: Send from a scrolled-up position follows the reply; a later scroll-away still releases', (t) => {
+  freezeClock(t);
+  const harness = createFollowHarness();
+  try {
+    spendOpenLanding(harness);
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+
+    harness.setScrollMetrics({ scrollTop: 300 });
+    harness.controller.syncThreadScrollState({
+      scrollTop: 300, scrollHeight: 1000, clientHeight: 400, userInitiated: true, direction: 'up',
+    });
+    assert.equal(harness.state.ui.followLatest, false, 'the scroll-away releases follow');
+    harness.controller.noteScrollInputIntent(); // a trailing frame of the same wheel gesture
+
+    harness.controller.setFollowLatest(true); // Send in the same chat
+    harness.setScrollMetrics({ scrollHeight: 1300 }); // the user row and the first chunk
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-2' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.state.ui.followLatest, true, 'the old gesture must not release the new reply');
+    assert.ok(harness.chatThreadScroll.scrollTop > 300, 'follow moves toward the new reply');
+
+    const awayTop = harness.chatThreadScroll.scrollTop - 100;
+    harness.setScrollMetrics({ scrollTop: awayTop });
+    harness.controller.syncThreadScrollState({
+      scrollTop: awayTop, scrollHeight: 1300, clientHeight: 400, userInitiated: true, direction: 'up',
+    });
+    assert.equal(harness.state.ui.followLatest, false, 'a deliberate scroll-away after Send releases at once');
+  } finally {
+    harness.restore();
+  }
+});
+
+// Review 2026-11-12 (scroll-follow 4): an old gesture defeated the HB-006
+// snap-back, so a whole-timeline rewrite that clamped to the top stayed there.
+test('a structural clamp to the top snaps back even when a reader gesture is long past', (t) => {
+  const clock = freezeClock(t);
+  const scrollContainer = scroller({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+  const { frames, liveFollow, state } = createLiveFollow(scrollContainer);
+
+  liveFollow.startLiveStreamingFollow();
+  liveFollow.noteUserScrollIntent(); // a wheel touch at the bottom while the reply grew
+  clock.advance(5000);
+  scrollContainer.scrollTop = 0;
+  scrollContainer.scrollHeight = 1100;
+  liveFollow.startLiveStreamingFollow();
+
+  assert.equal(state.ui.followLatest, true, 'a stale gesture is not a fresh scroll-away');
+  assert.equal(scrollContainer.scrollTop, 700, 'one write puts the viewport back at the bottom');
+  assert.equal(frames.length, 0);
+});
+
+test('viewport controller: a reader-tagged downward frame (the animator echo) does not arm a scroll-away', (t) => {
+  freezeClock(t);
+  const harness = createFollowHarness();
+  try {
+    spendOpenLanding(harness);
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    harness.controller.syncThreadScrollState({
+      scrollTop: 600, scrollHeight: 1000, clientHeight: 400, userInitiated: true, direction: 'down',
+    });
+
+    harness.setScrollMetrics({ scrollTop: 0, scrollHeight: 1100 }); // a rewrite clamped to the top
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.state.ui.followLatest, true);
+    assert.equal(harness.chatThreadScroll.scrollTop, 700, 'the clamp snaps back to the bottom');
+  } finally {
+    harness.restore();
+  }
+});
+
+// Review 2026-11-12 (scroll-follow 3): the reduced-motion snap never looked
+// at reader input, so a chunk sync queued before the wheel undid the notch.
+test('viewport controller: reduced motion never undoes a wheel notch away from the bottom', (t) => {
+  freezeClock(t);
+  const harness = createFollowHarness({ reducedMotion: true });
+  try {
+    spendOpenLanding(harness);
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.chatThreadScroll.scrollTop, 600);
+
+    harness.controller.noteScrollInputIntent();
+    harness.setScrollMetrics({ scrollTop: 500, scrollHeight: 1040 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.chatThreadScroll.scrollTop, 500, 'the notch stays where the reader put it');
+    assert.equal(harness.state.ui.followLatest, false, 'and releases follow');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('viewport controller: reduced motion still snaps a following reader with no input to the bottom', (t) => {
+  freezeClock(t);
+  const harness = createFollowHarness({ reducedMotion: true });
+  try {
+    spendOpenLanding(harness);
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    harness.setScrollMetrics({ scrollHeight: 1200 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.chatThreadScroll.scrollTop, 800);
+    assert.equal(harness.state.ui.followLatest, true);
+  } finally {
+    harness.restore();
+  }
+});

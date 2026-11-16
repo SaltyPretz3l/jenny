@@ -7,11 +7,11 @@
  *   noModel      no usable route: pick a model (the recommended fit first)
  *   downloading  a pull is in flight: progress, ETA, Cancel
  *   failed       the classified load failure (item 1) with its matching fix
- *   ready        today's hero, naming the model that loads on first message
+ *   ready        "New chat in {project}", then its folder and the model note
  *
- * `heroCopy(view)` is pure: a view object in, `{ title, subtitle, actionsHtml,
- * hint, composerLine }` out. Deriving the view from app state and binding the
- * actions live beside it (added by the S5 behaviour slice). No DOM here.
+ * `heroCopy(view)` is pure: a view object in, `{ title, subtitle,
+ * actionsHtml, hint, hintAction, composerLine }` out; the chrome builds the
+ * hint's link from hintAction. No DOM here.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -44,6 +44,14 @@
     || function (key, count, params, one, other) { return jt.call(null, key, count === 1 ? one : other, params); };
 
   const STATES = Object.freeze(['noModel', 'downloading', 'failed', 'ready']);
+  const GENERAL_PROJECT_ID = 'project_general';
+
+  // The words around one placeholder of a translated sentence; null if it is missing.
+  function splitOnPlaceholder(template, name) {
+    const token = `{${name}}`;
+    const at = String(template).indexOf(token);
+    return at < 0 ? null : { lead: template.slice(0, at), tail: template.slice(at + token.length) };
+  }
 
   function formatSize(bytes) {
     const value = Number(bytes);
@@ -92,6 +100,9 @@
         ? jt('hero.noModel.fitsWithSize', '{model} fits this computer ({size} download).', { model: recommended.tag, size })
         : jt('hero.noModel.fits', '{model} fits this computer.', { model: recommended.tag }));
     }
+    const label = jt('hero.noModel.cloudSignInLink', 'sign in with ChatGPT');
+    const sentence = jt('hero.noModel.cloudSignIn', 'Or {link}.');
+    const around = splitOnPlaceholder(sentence, 'link');
     return {
       title: jt('hero.noModel.title', 'Pick a model to start'),
       subtitle: subtitle.join(' '),
@@ -99,7 +110,11 @@
         ? button('primary', jt('hero.noModel.download', 'Download {model}', { model: recommended.tag }), 'download', recommended.tag)
         : '')
         + button(recommended ? 'secondary' : 'primary', jt('hero.noModel.browse', 'Browse models'), 'browse', ''),
-      hint: jt('hero.noModel.cloudHint', 'Or sign in with ChatGPT in Settings › Cloud models.'),
+      hint: around ? around.lead + label + around.tail : sentence,
+      hintAction: around && typeof actionButton === 'function' ? {
+        action: 'cloud', label, lead: around.lead, tail: around.tail,
+        html: actionButton({ plain: true, className: 'hero-hint-link', label, dataset: { 'hero-action': 'cloud' } }),
+      } : null,
       composerLine: jt('hero.noModel.composerLine', 'Send turns on once a model is ready.'),
     };
   }
@@ -116,7 +131,8 @@
     else if (Number.isFinite(Number(pull.percent)) && Number(pull.percent) > 0) {
       progress = jt('hero.downloading.percent', '{percent}% so far.', { percent: Math.round(Number(pull.percent)) });
     }
-    const wait = jt('hero.downloading.subtitle', "You can write your first message now; Jenny replies once it's in.");
+    // Send is off during a download (the composer's send gate).
+    const wait = jt('hero.downloading.writeNow', 'Write your first message now; you can send it when the download finishes.');
     return {
       title: jt('hero.downloading.title', 'Getting {model} ready', { model }),
       subtitle: progress ? `${progress} ${wait}` : wait,
@@ -149,30 +165,30 @@
     };
   }
 
+  // Direction A (owner, 2026-11-15): the ready hero names where the chat is.
   function readyCopy(view) {
     const model = String(view.model || '');
+    const name = String(view.project?.name || '').trim();
+    const path = name ? String(view.project.path || '').trim() : '';
+    const facts = [];
+    if (path) facts.push(path);
+    if (view.loaded !== true && model) facts.push(jt('hero.ready.hint', '{model} loads with your first message', { model }));
     return {
-      title: jt('chat.pipelineChrome.newSession', 'New session'),
-      subtitle: jt('chat.pipelineChrome.askToBegin', 'Ask Jenny anything to begin'),
+      title: name ? jt('hero.ready.titleInProject', 'New chat in {project}', { project: name }) : jt('hero.ready.title', 'New chat'),
+      subtitle: '',
       actionsHtml: '',
-      hint: view.loaded === true || !model
-        ? ''
-        : jt('hero.ready.hint', '{model} loads with your first message', { model }),
+      hint: facts.join(' · '),
       composerLine: '',
     };
   }
 
   // view: { kind, model, loaded, recommended: {tag, downloadSizeMb}|null,
   //         pull: {tag, percent, completedBytes, totalBytes, startedAt}|null,
-  //         failure: <classified failure>|null, now }
+  //         failure: <classified failure>|null, now, project: {name, path}|null }
   function heroCopy(view) {
     const safe = view && typeof view === 'object' ? view : {};
-    switch (safe.kind) {
-      case 'noModel': return noModelCopy(safe);
-      case 'downloading': return downloadingCopy(safe);
-      case 'failed': return failedCopy(safe);
-      default: return readyCopy(safe);
-    }
+    const copy = { noModel: noModelCopy, downloading: downloadingCopy, failed: failedCopy }[safe.kind] || readyCopy;
+    return { hintAction: null, ...copy(safe) };
   }
 
   // The setup-incomplete footnote: only when a reply can actually happen.
@@ -223,7 +239,8 @@
       try {
         if (action === 'download') return await d.startPull?.(tag);
         if (action === 'cancel-download') return await d.cancelPull?.(tag);
-        if (action === 'browse' || action === 'showFits') return d.openSettingsSection?.('models');
+        // cloud: the ChatGPT sign-in row is in Settings › Models.
+        if (action === 'browse' || action === 'showFits' || action === 'cloud') return d.openSettingsSection?.('models');
         const failure = reader.readModelLoadFailure(d.state?.backend);
         if (!failure) return;
         switch (action) {
@@ -247,5 +264,36 @@
     });
   }
 
-  return { STATES, heroCopy, setupFootnote, etaSeconds, etaText, deriveHeroView, bindHeroActions };
+  // getSessionProject(session): { name, path } over the lazy project switcher; null for
+  // General, primary and plugin chats and until the list knows the project.
+  function createSessionProjectLookup(d = {}) {
+    const listeners = new Set();
+    let switcher = null, requested = false, unsubscribe = null, disposed = false;
+    const notify = () => { if (!disposed) listeners.forEach((listener) => listener()); };
+    function request() {
+      requested = true;
+      new Promise((resolve) => resolve(d.getProjectSwitcher())).then((found) => {
+        if (disposed) return;
+        if (!found) { requested = false; return; } // not loaded yet: the next empty project chat asks again
+        switcher = found;
+        unsubscribe = found.onProjectsChanged?.(notify) || null;
+        return Promise.resolve(found.refreshProjects?.({ force: false })).catch(() => {}).then(notify);
+      }).catch(() => { requested = false; });
+    }
+    function getSessionProject(session) {
+      const id = String(session?.project_id || '').trim();
+      if (disposed || !id || id === GENERAL_PROJECT_ID || session.session_type === 'plugin' || d.isPrimarySession?.(session)) return null;
+      if (!switcher) { if (!requested && d.getProjectSwitcher) request(); return null; }
+      const project = switcher.projectById?.(id);
+      const name = String(project?.name || '').trim();
+      return name ? { name, path: String(project.rootPath || '').trim() } : null;
+    }
+    d.registerCleanup?.(() => { disposed = true; listeners.clear(); unsubscribe?.(); switcher = null; });
+    return {
+      getSessionProject,
+      onProjectsChanged: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    };
+  }
+
+  return { STATES, heroCopy, setupFootnote, etaSeconds, etaText, deriveHeroView, bindHeroActions, createSessionProjectLookup };
 });

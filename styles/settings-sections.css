@@ -74,7 +74,7 @@
   color: var(--text-primary);
   font-size: var(--font-size-title);
   font-family: var(--font-family-display);
-  letter-spacing: 0;
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -132,7 +132,3 @@
   font-weight: 500;
 }
 
-/* Hide the Offline Intelligence status host when it has nothing to say. */
-#offlineStatus:empty {
-  display: none;
-}

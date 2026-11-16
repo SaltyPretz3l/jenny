@@ -59,6 +59,7 @@ function createRuntimeChatOperations(adapter, { work, route, context, assertCurr
     binding: context.binding,
     sandboxCommands: adapter.service.commandSandbox?.enabled === true || adapter.service.hostMode === 'server',
     onSettled,
+    log: (level, event, details) => adapter.service._emitServiceLog?.(level, event, details),
   } });
   registerRuntimeChildCapability({ binding: context.binding, gateway, runtime: adapter.service.sessionRuntime,
     work, assertCurrent: check });

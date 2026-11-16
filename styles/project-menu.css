@@ -80,8 +80,35 @@
 .project-menu-check {
   flex: 0 0 14px;
   width: 14px;
-  text-align: center;
+  height: 14px;
   color: var(--accent);
+}
+
+.project-menu-check svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The chat's own project: "you are here", so it keeps its text colour and
+ * only loses the pointer and the hover fill. */
+.project-menu-row.project-menu-row--here {
+  color: var(--text-primary);
+}
+
+/* Why nothing can be picked right now (a busy chat), under the heading. */
+.project-menu-note {
+  margin: 0 var(--space-3) var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
 }
 
 .project-menu-main {

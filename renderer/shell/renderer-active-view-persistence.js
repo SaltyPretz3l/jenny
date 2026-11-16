@@ -15,7 +15,10 @@
   var ACTIVE_VIEW_STORAGE_KEY = 'jenny.ui.activeView';
   // Removed top-level surfaces fall through to chat, except Memory: its
   // persisted view migrates to the restored Settings > Memory section.
-  var PERSISTABLE_VIEW_IDS = ['home', 'chat', 'ide', 'logs', 'settings'];
+  // 'team' persists too; a saved Team view with no Team tab falls back to chat
+  // once the tab's gate knows (renderer-top-nav-shell.js createTeamTabGate). 'board' (row 150, B4)
+  // persists the same way and falls back to chat once the flags say project_boards is off.
+  var PERSISTABLE_VIEW_IDS = ['home', 'chat', 'ide', 'logs', 'settings', 'team', 'board'];
 
   function resolveActiveViewStorage() {
     try {

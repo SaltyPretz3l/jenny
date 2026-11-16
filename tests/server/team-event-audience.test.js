@@ -292,3 +292,25 @@ test('the command router publish wrapper forwards options and swallows a refused
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Slice 6-3 (TEAM_MODEL_SHARING_SPEC "Events"): the two model types are publisher-scoped on a team host; their
+// sink (server/team/model-sharing.js) publishes them live only, to the relay's audience, under the #team chat bucket.
+test('slice 6-3: team_model_offer and team_model_transfer pass the scope with an audience, are dropped without one', () => {
+  const { createEventScope } = require('../../server/team/event-scope');
+  const logs = [];
+  const scope = createEventScope({ sessionScope: { audience: () => new Set() }, logger: (...args) => logs.push(args) });
+  for (const type of ['team_model_offer', 'team_model_transfer']) {
+    const options = { audience: new Set([ALICE]), bucket: 'teamchat:chan_team', ephemeral: true };
+    assert.equal(scope(type, { offer_id: 'offer_x' }, options), options, type);
+    assert.equal(scope(type, { offer_id: 'offer_x' }), null, `${type} with no audience is dropped`);
+  }
+  const events = new EventStream({ bootEpoch: 'boot' });
+  const alice = attach(events, { identity: identityFor(ALICE) });
+  const bob = attach(events, { identity: identityFor(BOB) });
+  events.publish('team_model_offer', { offer_id: 'offer_x', display_name: 'Marker Model' },
+    { audience: new Set([ALICE]), bucket: 'teamchat:chan_team', ephemeral: true });
+  assert.deepEqual(types(alice.response), ['team_model_offer']);
+  assert.equal(joined(bob.response).includes('Marker Model'), false, 'a non-party sees no model event and no name');
+  assert.equal(attach(events, { identity: identityFor(ALICE), cursor: 0 }).response.frames.length, 0, 'never replayed');
+  events.dispose();
+});

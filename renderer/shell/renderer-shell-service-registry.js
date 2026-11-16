@@ -77,6 +77,7 @@
       renderSettings = noop,
       renderComposerState = noop,
       syncComposerInputHeight = noop,
+      mergePreparedAttachments = noop,
       loadSessions = noopAsync,
       openSession = noopAsync,
       scrollMessageIntoView = noopFalse,
@@ -273,11 +274,7 @@
         },
         getDom: function getOfflineDom() {
           return {
-            offlineSummary: documentRef?.getElementById?.('offlineSummary') || null,
-            offlineStatus: documentRef?.getElementById?.('offlineStatus') || null,
             offlineLocalOnlyList: documentRef?.getElementById?.('offlineLocalOnlyList') || null,
-            offlineModelStatus: documentRef?.getElementById?.('offlineModelStatus') || null,
-            offlineModelActions: documentRef?.getElementById?.('offlineModelActions') || null,
           };
         },
         callbacks: {
@@ -374,6 +371,7 @@
         activateWorkspaceSession: (...args) => activateWorkspaceSession(...args),
         handleCreateSession: (...args) => handleCreateSessionWithWorkspace(...args),
         syncComposerInputHeight: (...args) => syncComposerInputHeight(...args),
+        mergePreparedAttachments: (...args) => mergePreparedAttachments(...args),
         renderComposerState: (...args) => renderComposerState(...args),
         renderAll: (...args) => renderAll(...args),
         refreshWorkspaceRootDependents: (...args) => refreshWorkspaceRootDependents(...args),
@@ -770,11 +768,12 @@
     const renderIdeSafe = ideSafe((...args) => ensureIdeController()?.renderIde?.(...args));
     const activateIdeSafe = ideSafe((...args) => ideRefresh || ensureIdeController()?.activateIde?.(...args), { retry: true });
     const layoutIdeEditorSafe = ideSafe((...args) => ensureIdeController()?.layoutIdeEditor?.(...args));
-    const reconcileChatDockHostSafe = () => { try { return ideController?.chatDock?.reconcile?.() === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reconcile_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // chat render must not construct the IDE controller
-    const prepareChatDockSessionTransitionSafe = (...args) => { try { return ideController?.chatDock?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
-    const revealIdeChangesSafe = (target) => { try { return ideController?.chatDock?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
+    const sharedChatDock = () => windowRef.rendererIdeChatDock?.getSharedChatDock?.(state) || ideController?.chatDock || null; // one controller for every page that docks the chat (row 150)
+    const reconcileChatDockHostSafe = () => { try { return sharedChatDock()?.reconcile?.() === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reconcile_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // chat render must not construct the IDE controller
+    const prepareChatDockSessionTransitionSafe = (...args) => { try { return sharedChatDock()?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
+    const revealIdeChangesSafe = (target) => { try { return sharedChatDock()?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
-    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const revealIdePathSafe = openIdeAfterLoad('revealInExplorer'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); const openIdeTerminalSafe = openIdeAfterLoad('openTerminalPanel'); const runIdeTaskTerminalSafe = openIdeAfterLoad('runInTaskTerminal');
+    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const revealIdePathSafe = openIdeAfterLoad('revealInExplorer'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); const openIdeTerminalSafe = openIdeAfterLoad('openTerminalPanel'); const runIdeTaskTerminalSafe = openIdeAfterLoad('runInTaskTerminal'); const openIdeOutsideFilesSafe = openIdeAfterLoad('openOutsideFiles');
     const closeIdeBottomPanelSafe = () => { try { return ideController?.closeBottomPanel?.() === true; } catch (_error) { return false; } }; // app_view close: never builds the IDE; // an explicit user click may construct it
 
     const companionHandlers = shellStateRuntimeUtils.createCompanionSafeHandlers?.({
@@ -855,7 +854,7 @@
       ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
-      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, revealIdePathSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
+      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, revealIdePathSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeTerminalSafe, runIdeTaskTerminalSafe, openIdeOutsideFilesSafe, closeIdeBottomPanelSafe,
       getIdeCommandItemsSafe,
       openIdeHelpOverlaySafe,
       refreshCompanionStateSafe,

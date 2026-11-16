@@ -21,7 +21,6 @@
 // an explicit model load, and by the health-pill Restart row — is the recovery
 // gate, so a permanently failing binary cannot restart-loop.
 
-const fs = require('fs');
 const { peekCapabilities, probeCapabilitiesAsync, supportsPrefillProgress } = require('../backend/llama-server-capabilities');
 const path = require('path');
 
@@ -43,9 +42,10 @@ const { planLaunchMemory } = require('../backend/llama-server-memory-fit');
 const {
   createRuntimePickRegistry,
   describeRuntimeLabel,
-  resolveLaunchRuntime,
-  runtimeFolderToken,
+  resolveModelRuntime,
+  vanishedRuntimeError,
 } = require('./llama-server-runtime');
+const { createRuntimeChooser } = require('./llama-server-runtime-choice');
 
 const STATES = Object.freeze(['stopped', 'starting', 'ready', 'stopping', 'crashed']);
 const MTP_MODES = Object.freeze(['off', 'mtp', 'ngram']);
@@ -123,11 +123,13 @@ function createLlamaServerManager({
   resolveSettingsImpl = resolveLlamaServerSettings,
   loadProfileImpl = loadLlamaServerProfile,
   buildFeatureFlagsImpl = buildFeatureFlags,
+  createRuntimeChooserImpl = createRuntimeChooser,
   now = Date.now,
 } = {}) {
   let state = 'stopped';
   let handle = null;
   let startupAbortController = null;
+  let startupEpoch = 0;
   let generation = 0;
   // The normalized spec the current (or last) launch was steered by; restart()
   // and a crash recovery without a spec relaunch exactly this.
@@ -139,6 +141,14 @@ function createLlamaServerManager({
   // Builds the user picked this session (llama-server-runtime.js); the
   // engines.updateSettings write accepts a new runtime path only from here.
   const runtimePicks = createRuntimePickRegistry();
+  // Row 142: runtime folders main's dialog returned this session, and the
+  // automatic build for a model the bundled build cannot read.
+  const runtimeFolderPicks = createRuntimePickRegistry();
+  const resolveBundledPath = () => lifecycle.resolveBinaryPath?.({ repoRoot: rootDir, resourcesPath: processRef.resourcesPath }) || '';
+  const runtimeChooser = createRuntimeChooserImpl({
+    userDataPath: () => resolveUserDataPath(), getManaged: () => managedSettings(), resolveBundledPath, log,
+    isEnabled: () => buildFeatureFlagsImpl(processRef.env, getShellConfigService()?.getState?.()?.featureOverrides || {}).auto_runtime_pick === true,
+  });
   // The executable the tracked server was spawned from. Main-only: getStatus()
   // crosses IPC, so the status carries just the bounded runtimeLabel.
   let runningBinaryPath = '';
@@ -161,7 +171,7 @@ function createLlamaServerManager({
     accelerationDrafter: '',
     contextSize: 0, servedContextSize: 0,
     mmproj: '',
-    runtimeLabel: '',
+    runtimeLabel: '', runtimeAuto: false,
     reused: false,
     identityRetained: false,
     identityReused: false,
@@ -184,7 +194,7 @@ function createLlamaServerManager({
       runningModelTag = '';
     }
     Object.assign(status, patch, {
-      ...(down ? { mmproj: '', runtimeLabel: '' } : {}),
+      ...(down ? { mmproj: '', runtimeLabel: '', runtimeAuto: false } : {}),
       changedAt: now(),
     });
     // The observer's return value (a promise for the 'ready' re-brokering of
@@ -238,6 +248,7 @@ function createLlamaServerManager({
   }
 
   function abortStartup() {
+    startupEpoch += 1; // also retires a launch still probing builds (launchFromSpec)
     if (startupAbortController) {
       startupAbortController.abort();
       startupAbortController = null;
@@ -276,20 +287,10 @@ function createLlamaServerManager({
       : null;
   }
 
-  // The executable a launch of this model would run: env override > the
-  // model's saved build > bundled. Resolved once per launch so the spawn and
-  // the acceleration probe can never disagree.
-  function resolveRuntimeFor(settings, managed, modelTag) {
+  // env override > the model's saved build > the automatic build > bundled.
+  function resolveRuntimeFor(settings, managed, modelTag, modelPath) {
     const entry = persistedEntryFor(managed, modelTag);
-    const runtime = resolveLaunchRuntime({
-      binaryOverride: settings.binaryOverride,
-      runtimePath: typeof entry?.runtimePath === 'string' ? entry.runtimePath : '',
-      resolveBundledPath: () => lifecycle.resolveBinaryPath?.({
-        repoRoot: rootDir,
-        resourcesPath: processRef.resourcesPath,
-      }) || '',
-    });
-    return { runtime, runtimeBuild: Number(entry?.runtimeBuild) || 0 };
+    return resolveModelRuntime({ settings, entry, modelPath, chooser: runtimeChooser, resolveBundledPath });
   }
 
   // Builds everything the launch needs from (explicit spec) > (env) > (persisted
@@ -329,7 +330,7 @@ function createLlamaServerManager({
     if (modelError) {
       return { settings, profileError: '', profileId, modelTag, modelError };
     }
-    const { runtime, runtimeBuild } = resolveRuntimeFor(settings, managed, modelTag);
+    const { runtime, runtimeBuild } = resolveRuntimeFor(settings, managed, modelTag, modelPath);
     if (runtime.error) {
       // A saved build that is gone fails the launch: nothing is spawned or
       // probed, and it never falls back to the bundled build.
@@ -455,27 +456,6 @@ function createLlamaServerManager({
     });
   }
 
-  // A saved build deleted or renamed after the plan resolved it fails the spawn
-  // with a generic error: name it the way the plan would have, and never spawn
-  // the missing file again for the unaccelerated retry.
-  function vanishedRuntimeError(launchOptions) {
-    if (launchOptions.runtimeSource !== 'saved') {
-      return '';
-    }
-    try {
-      if (fs.statSync(launchOptions.binaryPath).isFile()) {
-        return '';
-      }
-    } catch (error) {
-      // Only a build that is gone; a refused stat (antivirus, permissions)
-      // proves nothing, so the usual retry decides.
-      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
-        return '';
-      }
-    }
-    return `llama_server_runtime_missing:${runtimeFolderToken(launchOptions.binaryPath)}`;
-  }
-
   async function launch(plan, launchExtras = {}) {
     const { accel, profile, launchOptions } = plan;
     if (!reconcileCleanup()) {
@@ -491,6 +471,9 @@ function createLlamaServerManager({
     }
     if (plan.runtimeShadowed) {
       log('WARN', 'llama.server.runtime_env_shadowed', { model: managedModelKey(plan.modelTag) });
+    }
+    if (launchOptions.runtimeSource === 'auto') {
+      log('INFO', 'llama.server.runtime_auto', { model: managedModelKey(plan.modelTag), runtime: launchOptions.runtimeLabel });
     }
     if (accel.reason !== 'flag_off') {
       log('INFO', 'llama.server.acceleration_resolved', {
@@ -627,6 +610,7 @@ function createLlamaServerManager({
         servedContextSize: nextHandle.reused ? 0 : spawnOptions.contextSize, // after the memory plan's cap
         mmproj: nextHandle.reused ? 'unknown' : String(nextHandle.mmproj || ''),
         runtimeLabel: nextHandle.reused ? 'unknown' : String(launchOptions.runtimeLabel || ''),
+        runtimeAuto: !nextHandle.reused && launchOptions.runtimeSource === 'auto',
         identityRetained: false,
         identityReused: reuseIdentity,
         lastError: '',
@@ -693,9 +677,14 @@ function createLlamaServerManager({
     return launch(plan);
   }
 
-  function launchFromSpec(spec) {
+  // Every fresh launch probes the trusted builds first (row 142), so the plan
+  // and later relaunch checks read the same cached choice.
+  async function launchFromSpec(spec) {
     lastSpec = spec;
-    return launchFromPlan(resolveLaunchPlan(spec));
+    const epoch = startupEpoch;
+    await runtimeChooser.prepare();
+    // A stop or restart that arrived while the builds were probed retires this launch.
+    return epoch === startupEpoch ? launchFromPlan(resolveLaunchPlan(spec)) : getStatus();
   }
 
   // Would a ready server have to be replaced to honor `spec`? A spec that
@@ -730,7 +719,8 @@ function createLlamaServerManager({
     if (runningBinaryPath) {
       const managed = managedSettings();
       const settings = resolveSettingsImpl({ env: processRef.env, repoRoot: rootDir, managed });
-      const { runtime } = resolveRuntimeFor(settings, managed, spec.modelTag || runningModelTag || status.alias);
+      const { runtime } = resolveRuntimeFor(settings, managed, spec.modelTag || runningModelTag || status.alias,
+        spec.modelPath || status.modelPath);
       if (runtime.error || runtime.binaryPath !== runningBinaryPath) {
         return true;
       }
@@ -997,6 +987,8 @@ function createLlamaServerManager({
     supportsPrefillProgress: () => state === 'ready' && Boolean(runningBinaryPath)
       && supportsPrefillProgress(peekCapabilities(runningBinaryPath)),
     restart,
+    runtimeChooser,
+    runtimeFolderPicks,
     runtimePicks,
     settled,
     start: ensureRunning,

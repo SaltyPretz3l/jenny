@@ -36,9 +36,11 @@ _REQUIRED_RESULT_FIELDS = _RESULT_FIELDS - {"reason"}
 _ADMIT_TIMEOUT_SECONDS = 30.0
 # A chat turn re-admits every model generation; the lane may be busy with
 # another chat between two iterations, so it waits (bounded) instead of failing.
-# The cap stays under Electron's local stream idle watchdog (660 s + margin,
-# services/backend/chat-stream-admission.js), which a silent wait would trip.
-_MAX_CAPACITY_WAIT_SECONDS = 10 * 60.0
+# Behind a chat that was put first (row 136) the wait lasts as long as that
+# chat's task. Electron parks the turn's watchdogs while the admit answers
+# `waiting` and the wait is credited back to the working-time deadline, so the
+# cap is only a backstop for a lane that never frees.
+_MAX_CAPACITY_WAIT_SECONDS = 4 * 60 * 60.0
 _CAPACITY_WAIT_REASONS = frozenset({"lane_capacity", "downstream_capacity"})
 _CAPACITY_BACKOFF_START_SECONDS = 0.1
 _CAPACITY_BACKOFF_MAX_SECONDS = 1.0

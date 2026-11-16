@@ -89,6 +89,7 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
         max_results=max_results,
         searched_root=search_root.relative_to(workspace.require_root()).as_posix(),
     )
+    search_state.context_lines_clamped = _context_lines_over_limit(arguments)
     started_at = _monotonic_seconds()
     worker = _RegexSearchWorker()
     worker.prestart()  # its start overlaps the git ignore inventory and the walk
@@ -315,6 +316,7 @@ class _SearchState:
         self.large_file_message: str | None = None
         self.searched_root = searched_root
         self.ignored_directories_skipped = 0
+        self.context_lines_clamped = False
 
     @property
     def remaining_output_matches(self) -> int:
@@ -612,7 +614,21 @@ def _build_result(*, pattern: str, state: _SearchState) -> ToolHandlerResult:
     )
 
 
+def _context_lines_over_limit(arguments: dict[str, object]) -> bool:
+    """The schema no longer rejects a large context_lines; the handler clamps it."""
+    value = arguments.get("context_lines")
+    return isinstance(value, int) and not isinstance(value, bool) and value > MAX_CONTEXT_LINES
+
+
 def _result_notes(state: _SearchState) -> str:
+    clamp_note = f"context_lines clamped to {MAX_CONTEXT_LINES} (maximum)."
+    scan_notes = _scan_notes(state)
+    if not state.context_lines_clamped:
+        return scan_notes
+    return "\n".join(part for part in (scan_notes, clamp_note) if part)
+
+
+def _scan_notes(state: _SearchState) -> str:
     notes: list[str] = []
     if state.total_match_count > state.returned_match_count:
         notes.append(

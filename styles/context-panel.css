@@ -67,6 +67,10 @@
     width var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/* Beside the side panel its own border is the divider; a resting centre line drew a second line next to it.
+   The line still shows on hover, drag and focus, and stays between two chat panes (.chat-pane-resizer). */
+.artifact-review-resizer:not(.chat-pane-resizer)::before { background: transparent; }
+
 .artifact-review-resizer:hover::before,
 .artifact-review-resizer.dragging::before,
 .artifact-review-resizer:focus-visible::before {

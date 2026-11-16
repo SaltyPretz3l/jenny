@@ -106,3 +106,28 @@ test('wrap toggle click and non-button keyboard activation update block state', 
   assert.equal(keyboardToggle.getAttribute('aria-pressed'), 'true');
   dom.window.close();
 });
+
+test('the Copy button of a plain thinking block copies that block', async (t) => {
+  const previousDocument = global.document;
+  const previousNavigatorDescriptor = Object.getOwnPropertyDescriptor(global, 'navigator');
+  t.after(() => {
+    global.document = previousDocument;
+    if (previousNavigatorDescriptor) Object.defineProperty(global, 'navigator', previousNavigatorDescriptor);
+    else delete global.navigator;
+  });
+  const dom = new JSDOM('<div class="thinking-code-host"><pre class="thinking-code"><code>const a = 1;</code></pre>'
+    + '<button type="button" class="inv-codeblock-copy thinking-code-copy" aria-label="Copy code">Copy</button></div>');
+  global.document = dom.window.document;
+  const copied = [];
+  Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
+  Object.defineProperty(global.navigator, 'clipboard', {
+    value: { writeText: (text) => { copied.push(text); return Promise.resolve(); } },
+    configurable: true,
+  });
+  CodeBlock.initCopyHandlers(dom.window.document);
+  dom.window.document.querySelector('.thinking-code-copy').click();
+  await Promise.resolve();
+  assert.equal(copied.length, 1);
+  assert.equal(copied[0].trim(), 'const a = 1;');
+  dom.window.close();
+});

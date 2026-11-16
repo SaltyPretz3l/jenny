@@ -173,7 +173,10 @@
         : null,
     }) || {
       checkUserQuestionsLiveness() {},
-      handleSubmitKeydown() { return false; },
+      handleFieldChange() {},
+      handleFieldInput() {},
+      handleKeydown() { return false; },
+      handleOtherRowClick() {},
       submitUserQuestions() {},
       dispose() {},
     };
@@ -185,17 +188,9 @@
 
     function bindTranscriptEvents(registerListener, listenerOptions, bindAbortController) {
       registerListener(chatTimeline, 'click', async (event) => {
-        const questionOption = event.target.closest('[data-user-question-option], [data-user-question-other-toggle]');
-        if (questionOption) {
-          const questionNode = questionOption.closest('[data-user-question-id]');
-          const otherToggle = questionNode?.querySelector?.('[data-user-question-other-toggle]');
-          const otherInput = questionNode?.querySelector?.('[data-user-question-other-input]');
-          if (otherInput) {
-            otherInput.disabled = otherToggle?.checked !== true;
-            if (!otherInput.disabled) otherInput.focus();
-          }
-          return;
-        }
+        // Option picks refresh through the delegated change listener below.
+        userQuestionsActions.handleOtherRowClick(event);
+        if (event.target.closest('[data-user-question-option], [data-user-question-other-toggle]')) return;
 
         const questionsAction = event.target.closest('.user-questions-submit-btn, .user-questions-decline-btn');
         if (questionsAction) {
@@ -431,7 +426,7 @@
 
       registerListener(chatTimeline, 'keydown', (event) => {
         const questionBlock = event.target.closest('.user-questions-block');
-        if (userQuestionsActions.handleSubmitKeydown(event, questionBlock)) {
+        if (userQuestionsActions.handleKeydown(event, questionBlock)) {
           return;
         }
         if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -493,6 +488,8 @@
         img.closest('.inv-artifact-figure')?.setAttribute('data-inv-artifact-image-state', 'unavailable');
         img.closest('.inv-artifact-figure-frame')?.setAttribute('aria-disabled', 'true');
       }, { ...listenerOptions, capture: true });
+      registerListener(chatTimeline, 'input', userQuestionsActions.handleFieldInput, listenerOptions);
+      registerListener(chatTimeline, 'change', userQuestionsActions.handleFieldChange, listenerOptions);
       registerListener(chatTimeline, 'pointerover', checkQuestionsFromEvent, listenerOptions);
       registerListener(chatTimeline, 'focusin', checkQuestionsFromEvent, listenerOptions);
       chatTimeline.querySelectorAll('.user-questions-block[data-question-ref]').forEach(
@@ -507,6 +504,12 @@
         // Row 115: the More button (Back to prompt, views, Wide transcript, Activity, Tasks and Notes when short of room); its width observer ends with the bind.
         globalThis.rendererTranscriptViewUtils?.mountTranscriptViewControl?.({
           cluster: utilityCluster, getSessionId, registerListener, listenerOptions, signal: bindAbortController?.signal, promptJump,
+          // Row 138: the right-hand rail, for the Subagents, Changes and Change pictures toggles.
+          panels: {
+            railMode: () => (state.ui?.artifactReview?.enabled === true && state.ui?.activeView === 'chat' ? String(state.ui.artifactReview.mode || '') : ''),
+            closeRail: () => doc?.getElementById?.('artifactReviewCollapseButton')?.click?.(), // the panel's own Close control
+            featureEnabled: (key) => state.features?.featureFlags?.[key] !== false,
+          },
         });
         // Row 115: the session bar's title, in the same cluster; not mounted for a pane hosted in the IDE dock.
         globalThis.rendererSessionBar?.mountSessionBar?.({ pane: utilityCluster.parentElement, cluster: utilityCluster, chatTimeline, getSessionId, windowRef, jt,

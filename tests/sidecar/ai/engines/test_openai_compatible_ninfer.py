@@ -370,8 +370,8 @@ def test_synthetic_ninfer_vision_props_and_image_payload(make_engine, monkeypatc
     if vision:
         image = VisionImage("image/png", 1, 1, 1, b"synthetic-image")
         content = [
-            {"type": "text", "text": "Describe this image."},
             {"type": "image_url", "image_url": {"url": image.as_data_uri()}},
+            {"type": "text", "text": "Describe this image."},
         ]
         _drain(engine.stream(prompt="", max_tokens=64, messages=[{"role": "user", "content": "Describe this image.", "images": [image]}]))
         assert sent[-1]["messages"][-1]["content"] == content

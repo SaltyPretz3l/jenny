@@ -1,6 +1,6 @@
 'use strict';
 
-/* primaryChat.* IPC registration (row 76 slice S2; row 88 adds undoSettingChange; row 87 adds two rule channels): the sixteen descriptor-backed
+/* primaryChat.* IPC registration (row 76 slice S2; row 88 adds undoSettingChange; row 87 adds two rule channels): the seventeen descriptor-backed
  * channels, the trusted-sender gate, closed-schema validation before any service
  * call, the service-answer mapping, the failure envelope when a service is absent
  * or throws, and the lazy reset-module dispatch. The controls service, the
@@ -33,6 +33,10 @@ const CHANNELS = {
   getFullAuto: 'primary-chat:get-full-auto',
   armFullAuto: 'primary-chat:arm-full-auto',
   disarmFullAuto: 'primary-chat:disarm-full-auto',
+  setModels: 'primary-chat:set-models',
+  heldChecks: 'primary-chat:held-checks',
+  runHeldCheck: 'primary-chat:run-held-check',
+  skipHeldCheck: 'primary-chat:skip-held-check',
 };
 const PERMISSION_ID = `lp_${'a'.repeat(32)}`;
 const UNDO_ID = `sc_${'c'.repeat(32)}`;
@@ -76,11 +80,11 @@ function register({ allow = true, backendService, loadReset } = {}) {
 
 const V1 = { schema_version: 1 };
 
-test('exactly the sixteen descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
+test('exactly the twenty descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
   const { handlers } = register({ backendService: {} });
   // Row 94 P3: plus app_view's two report channels, which answer `{ok}` straight from the app-view port.
   assert.deepEqual([...handlers.keys()].sort(), [...Object.values(CHANNELS), 'app-view:report-layout', 'app-view:report-outcome', 'terminal-tools:report-run'].sort());
-  assert.equal(Object.keys(METHODS).length, 16);
+  assert.equal(Object.keys(METHODS).length, 20);
   assert.equal(Object.isFrozen(METHODS), true);
   for (const [method, channel] of Object.entries(CHANNELS)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel });
@@ -265,6 +269,8 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
     [CHANNELS.undoSettingChange, { ...V1, change_id: UNDO_ID }], [CHANNELS.undoChatChange, { ...V1, change_id: UNDO_ID }],
     [CHANNELS.addRule, ADD_RULE], [CHANNELS.revokeRule, { ...V1, rule_id: RULE_ID }],
     [CHANNELS.getFullAuto, V1], [CHANNELS.armFullAuto, V1], [CHANNELS.disarmFullAuto, V1],
+    [CHANNELS.setModels, { ...V1, model: 'm' }], [CHANNELS.heldChecks, V1],
+    [CHANNELS.runHeldCheck, { ...V1, reminder_id: 'check-1' }], [CHANNELS.skipHeldCheck, { ...V1, reminder_id: 'check-1' }],
   ]) {
     assert.deepEqual(await missing.invoke(channel, payload), expected, channel);
   }
@@ -272,12 +278,13 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
   const backend = fakeBackend([], {
     primaryChatControls: {
       getState: boom, pause: boom, resume: boom, grantLaunch: boom, revokeLaunch: boom,
-      listActionRules: boom, addActionRule: boom, revokeActionRule: boom,
+      listActionRules: boom, addActionRule: boom, revokeActionRule: boom, setModels: boom,
     },
     primaryActivityLog: { list: boom, permissions: boom },
     primarySettings: { undo: boom },
     primaryChatManage: { undo: boom },
     primaryFullAuto: { getState: boom, arm: boom, disarm: boom },
+    primaryScheduledChecks: { listHeld: () => { throw new Error('secret path C:\\Users\\x'); }, runHeld: boom, skipHeld: boom },
   });
   const loadReset = () => ({ resetPrimaryChat: boom, forgetPreview: boom });
   const throwing = register({ backendService: backend, loadReset });
@@ -285,7 +292,9 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
     const payload = channel === CHANNELS.grantLaunch ? { ...V1, project_id: '*' }
       : channel === CHANNELS.revokeLaunch ? { ...V1, permission_id: PERMISSION_ID }
         : channel === CHANNELS.addRule ? ADD_RULE : channel === CHANNELS.revokeRule ? { ...V1, rule_id: RULE_ID }
-        : [CHANNELS.undoSettingChange, CHANNELS.undoChatChange].includes(channel) ? { ...V1, change_id: UNDO_ID } : V1;
+        : channel === CHANNELS.setModels ? { ...V1, model: 'm' }
+        : [CHANNELS.runHeldCheck, CHANNELS.skipHeldCheck].includes(channel) ? { ...V1, reminder_id: 'check-1' }
+          : [CHANNELS.undoSettingChange, CHANNELS.undoChatChange].includes(channel) ? { ...V1, change_id: UNDO_ID } : V1;
     const result = await throwing.invoke(channel, payload);
     assert.deepEqual(result, expected, channel);
     assert.doesNotMatch(JSON.stringify(result), /secret|Users/u);
@@ -345,4 +354,64 @@ test('the contract validators accept the documented boundaries and reject everyt
   assert.equal(contract.validateEmptyRequest([]).ok, false);
   assert.deepEqual(contract.succeed({ x: 1 }), { schema_version: 1, ok: true, x: 1 });
   assert.equal(contract.SCHEMA_VERSION, 1);
+});
+
+test('setModels validates the closed payload before the controls and maps their answers (model pins)', async () => {
+  const calls = [];
+  let answer = { ok: true, changed: true, model: 'qwen3.8:27b', check_model: '' };
+  const backendService = fakeBackend(calls, {
+    primaryChatControls: { setModels: async (value) => { calls.push(['setModels', value]); return answer; } },
+  });
+  const { invoke } = register({ backendService });
+  const bad = [
+    undefined, V1, { schema_version: 1, extra: 'x' }, { schema_version: 1, model: 'm', extra: 'x' }, { schema_version: 1, model: 7 },
+    { schema_version: 1, check_model: null }, { schema_version: 1, model: ['m'] }, { schema_version: 1, model: 'a'.repeat(201) },
+    { schema_version: 2, model: 'm' }, { model: 'm' },
+  ];
+  for (const payload of bad) {
+    const result = await invoke(CHANNELS.setModels, payload);
+    assert.equal(result.code, CODES.INVALID_REQUEST, JSON.stringify(payload));
+    assert.equal(result.reason, 'invalid_request');
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await invoke(CHANNELS.setModels, { schema_version: 1, model: 'qwen3.8:27b' }), {
+    schema_version: 1, ok: true, changed: true, model: 'qwen3.8:27b', check_model: '',
+  });
+  await invoke(CHANNELS.setModels, { schema_version: 1, check_model: 'c', model: '' });
+  await invoke(CHANNELS.setModels, { schema_version: 1, check_model: 'a'.repeat(200) });
+  assert.deepEqual(calls, [
+    ['setModels', { model: 'qwen3.8:27b' }],
+    ['setModels', { model: '', check_model: 'c' }],
+    ['setModels', { check_model: 'a'.repeat(200) }],
+  ]);
+  answer = { ok: false, reason: 'disabled' };
+  assert.equal((await invoke(CHANNELS.setModels, { schema_version: 1, model: 'm' })).code, CODES.DISABLED);
+  answer = { ok: false, reason: 'unavailable' };
+  assert.equal((await invoke(CHANNELS.setModels, { schema_version: 1, model: 'm' })).code, CODES.UNAVAILABLE);
+  const noService = register({ backendService: {} });
+  assert.equal((await noService.invoke(CHANNELS.setModels, { schema_version: 1, model: 'm' })).code, CODES.UNAVAILABLE);
+});
+
+test('held scheduled checks: list, Run anyway and Skip reach the check port; refusals ride the success envelope (row 144)', async () => {
+  const calls = [];
+  const held = [{ reminder_id: 'check-1', label: 'Overnight', reason: 'model_too_small', model: 'lfm3-omni-2b' }];
+  const backend = fakeBackend([], {
+    primaryScheduledChecks: {
+      listHeld: () => held,
+      runHeld: async (id) => { calls.push(['run', id]); return id === 'check-1' ? { ok: true, turn_id: 't1' } : { ok: false, reason: 'not_held' }; },
+      skipHeld: async (id) => { calls.push(['skip', id]); return id === 'check-1' ? { ok: true } : { ok: false, reason: 'not_held' }; },
+    },
+  });
+  const { invoke } = register({ backendService: backend });
+  assert.deepEqual(await invoke(CHANNELS.heldChecks, V1), { schema_version: 1, ok: true, held });
+  assert.deepEqual(await invoke(CHANNELS.runHeldCheck, { ...V1, reminder_id: 'check-1' }), { schema_version: 1, ok: true, turn_id: 't1', ran: true });
+  assert.deepEqual(await invoke(CHANNELS.runHeldCheck, { ...V1, reminder_id: 'other' }), { schema_version: 1, ok: true, ran: false, reason: 'not_held' });
+  assert.deepEqual(await invoke(CHANNELS.skipHeldCheck, { ...V1, reminder_id: 'check-1' }), { schema_version: 1, ok: true, skipped: true });
+  assert.deepEqual(await invoke(CHANNELS.skipHeldCheck, { ...V1, reminder_id: 'other' }), { schema_version: 1, ok: true, skipped: false, reason: 'not_held' });
+  for (const bad of [{ ...V1 }, { ...V1, reminder_id: '' }, { ...V1, reminder_id: 'a'.repeat(129) }, { ...V1, reminder_id: 'a\u0001' },
+    { ...V1, reminder_id: 'check-1', extra: 1 }, { reminder_id: 'check-1' }, { ...V1, reminder_id: 7 }]) {
+    assert.equal((await invoke(CHANNELS.runHeldCheck, bad)).code, CODES.INVALID_REQUEST, JSON.stringify(bad));
+  }
+  assert.equal((await invoke(CHANNELS.heldChecks, { ...V1, extra: true })).code, CODES.INVALID_REQUEST);
+  assert.deepEqual(calls, [['run', 'check-1'], ['run', 'other'], ['skip', 'check-1'], ['skip', 'other']]);
 });

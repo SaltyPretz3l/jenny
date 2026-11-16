@@ -2,8 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { EventEmitter } = require('node:events');
-
 const {
   FIELD_LIMITS,
   MAX_LIVE_NOTIFICATIONS,
@@ -11,119 +9,7 @@ const {
   isRuntimeChildSession,
   normalizeNotificationCandidate,
 } = require('../services/main/desktop-notifier');
-
-function createWindow({ visible = true, focused = false, minimized = false } = {}) {
-  const win = new EventEmitter();
-  Object.assign(win, {
-    visible,
-    focused,
-    minimized,
-    destroyed: false,
-    restoreCalls: 0,
-    focusCalls: 0,
-    isVisible() { return this.visible; },
-    isFocused() { return this.focused; },
-    isMinimized() { return this.minimized; },
-    isDestroyed() { return this.destroyed; },
-    restore() { this.restoreCalls += 1; this.minimized = false; },
-    focus() { this.focusCalls += 1; },
-  });
-  return win;
-}
-
-function createHarness({
-  settings = { onlyWhenUnfocused: true },
-  flag = true,
-  supported = true,
-  factoryError = null,
-  mainWindow = createWindow(),
-  authorizeSender = () => true,
-  primarySessionId = null,
-  chatUi = {},
-  nowMs = new Date(2026, 10, 2, 12, 0).getTime(),
-} = {}) {
-  const state = {
-    settings, flag, supported, factoryError, mainWindow, childSessions: new Set(), childLookupError: null,
-    primarySessionId, chatUi, nowMs,
-  };
-  const notifications = [];
-  const bridgeEvents = [];
-  const logs = [];
-  const ipcListeners = new Map();
-  const ipcMainLike = {
-    on(channel, listener) { ipcListeners.set(channel, listener); },
-    removeListener(channel, listener) {
-      if (ipcListeners.get(channel) === listener) ipcListeners.delete(channel);
-    },
-  };
-  const notifier = createDesktopNotifier({
-    getShellConfigService: () => ({
-      getWindowUiState() {
-        if (state.settingsError) throw state.settingsError;
-        return { appZoomPercent: 100, notifications: state.settings };
-      },
-      getChatUiState() {
-        if (state.chatUiError) throw state.chatUiError;
-        return state.chatUi;
-      },
-    }),
-    isPrimarySession: (sessionId) => {
-      state.primaryLookups = (state.primaryLookups || 0) + 1;
-      return sessionId === state.primarySessionId;
-    },
-    now: () => state.nowMs,
-    isChildSession: (sessionId) => {
-      if (state.childLookupError) throw state.childLookupError;
-      return state.childSessions.has(sessionId);
-    },
-    getMainWindow: () => state.mainWindow,
-    notificationFactory(options) {
-      if (state.factoryError) throw state.factoryError;
-      const listeners = new Map();
-      const notification = {
-        options,
-        showCalls: 0,
-        closeCalls: 0,
-        on(event, listener) { listeners.set(event, listener); },
-        show() { this.showCalls += 1; },
-        close() {
-          this.closeCalls += 1;
-          listeners.get('close')?.();
-        },
-        click() { listeners.get('click')?.(); },
-        emitClose() { listeners.get('close')?.(); },
-      };
-      notifications.push(notification);
-      return notification;
-    },
-    isSupported: () => state.supported,
-    sendBridgeEvent: (event, payload) => bridgeEvents.push({ event, payload }),
-    log: (level, event, details) => logs.push({ level, event, details }),
-    isEnabled: () => state.flag,
-    ipcMainLike,
-    authorizeSender,
-  });
-  return {
-    state,
-    notifications,
-    bridgeEvents,
-    logs,
-    ipcListeners,
-    notifier,
-    logsFor: (event) => logs.filter((entry) => entry.event === event),
-  };
-}
-
-function candidate(overrides = {}) {
-  return {
-    category: 'replies',
-    key: 'turn-1',
-    sessionId: 'session-1',
-    title: 'Reply ready',
-    body: 'Trip planning',
-    ...overrides,
-  };
-}
+const { createWindow, createHarness, candidate } = require('./helpers/desktop-notifier-harness');
 
 function assertSuppressed(harness, reason, category = 'replies') {
   assert.equal(harness.notifications.length, 0);
@@ -322,7 +208,7 @@ test('candidate normalization clips fields, strips control characters and drops 
   assert.ok(normalized.title.startsWith('Reply ready'));
   assert.equal(normalized.body.length, FIELD_LIMITS.body);
   assert.equal(normalized.preview.length, FIELD_LIMITS.preview);
-  assert.deepEqual(FIELD_LIMITS, { key: 120, sessionId: 80, title: 120, body: 240, preview: 240 });
+  assert.deepEqual(FIELD_LIMITS, { key: 120, sessionId: 80, title: 120, body: 240, preview: 240, conversation: 120, sender: 80 });
 
   const sparse = normalizeNotificationCandidate({ category: 'questions', key: 'q', title: 'Question' });
   assert.deepEqual(sparse, { category: 'questions', key: 'q', sessionId: '', title: 'Question', body: '' });
@@ -596,4 +482,96 @@ test('a failing quiet-hours read logs once and lets the toast through', () => {
   assert.equal(h.notifier.notify(candidate({ key: 'turn:a', sessionId: 'primary' })), true);
   assert.equal(h.notifier.notify(candidate({ key: 'turn:b', sessionId: 'primary' })), true);
   assert.equal(h.logsFor('desktop_notifier.quiet_hours_failed').length, 1);
+});
+
+// Row 123 slice 2a-6c: team messages.
+const TEAM_ID = 'team_BBBBBBBBBBBBBBBBBBBBBB';
+const teamMessage = (n, over = {}) => candidate({ category: 'team', key: `team:msg_${n}`, sessionId: undefined, teamId: TEAM_ID, channelId: 'chan_jenny',
+  messageId: `msg_${n}`, seq: n, title: 'Maya in #jenny', body: 'New message', sender: 'Maya', conversation: '#jenny', preview: `line ${n}`, ...over });
+
+test('a team candidate keeps only well-formed routing ids, needs a team and a channel, and keeps its preview', () => {
+  const c = normalizeNotificationCandidate(teamMessage(4, { threadRootId: 'msg_1', memberId: 'member_x', invite: 'jteam1_x', seq: 2.5 }));
+  assert.deepEqual(c, { category: 'team', key: 'team:msg_4', sessionId: '', title: 'Maya in #jenny', body: 'New message', preview: 'line 4', teamId: TEAM_ID, channelId: 'chan_jenny',
+    messageId: 'msg_4', threadRootId: 'msg_1', conversation: '#jenny', sender: 'Maya', group: 'conversation' });
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { messageId: 'msg 4/../x' })).messageId, undefined, 'a malformed id is dropped');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { channelId: '' })), null, 'no channel, no toast');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { sessionId: 'session-1' })), null, 'a team toast never names a chat');
+  const long = normalizeNotificationCandidate(teamMessage(4, { title: 'x'.repeat(300), conversation: 'c'.repeat(300), sender: 's'.repeat(300) }));
+  assert.deepEqual([long.title.length, long.conversation.length, long.sender.length], [120, 120, 80], 'the limits as numbers, not read back from the module');
+});
+
+// Fix list item 18: the routing ids at their bound, and a hostile name.
+test('item 18: an over-length or malformed routing id is dropped (team and channel refuse the toast); bidi overrides go with control characters', () => {
+  const at = (n) => 'm'.repeat(n);
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { messageId: at(160) })).messageId, at(160), 'at the bound');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { messageId: at(161) })).messageId, undefined, 'past it');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { teamId: 'team_B/../x' })), null, 'a malformed team refuses the toast');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { teamId: at(161) })), null);
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { threadRootId: 'msg 1' })).threadRootId, undefined, 'a malformed thread root is dropped');
+  assert.equal(normalizeNotificationCandidate(teamMessage(4, { threadRootId: 7 })).threadRootId, undefined);
+  const hostile = normalizeNotificationCandidate(teamMessage(4, { sender: 'Ma\u202Eya <b>&\u0007', conversation: '#a\u2066b\u2069<i>', title: '\u202Dx' }));
+  assert.deepEqual([hostile.sender, hostile.conversation, hostile.title], ['Maya <b>&', '#ab<i>', 'x'], 'kept as text (a toast is not HTML), reordering characters stripped');
+});
+
+test('item 18: the counted title and senders line are clipped to the title and body limits', () => {
+  const h = createHarness();
+  const name = (c) => c.repeat(80);
+  h.notifier.notify(teamMessage(1, { conversation: '#' + 'j'.repeat(119), sender: name('a') }));
+  for (const [n, c] of [[2, 'b'], [3, 'c'], [4, 'd']]) h.notifier.notify(teamMessage(n, { conversation: '#' + 'j'.repeat(119), sender: name(c) }));
+  const { title, body } = h.notifications[3].options;
+  assert.equal(title.length, 120);
+  assert.ok(title.startsWith('4 new messages in #jjj'));
+  assert.equal(body.length, 240);
+  assert.ok(body.startsWith(name('a') + ', ' + name('b')));
+});
+
+// Fix list item 17: preview off, the senders line, focus, and the counted toast's click.
+test('item 17: preview off shows the body; focus starts a fresh count; the counted toast opens the newest message', () => {
+  const h = createHarness({ settings: { onlyWhenUnfocused: true, replyPreview: false } });
+  h.notifier.notify(teamMessage(1));
+  assert.deepEqual(h.notifications[0].options, { title: 'Maya in #jenny', body: 'New message', silent: false }, 'no preview with the switch off');
+  h.notifier.notify(teamMessage(2, { sender: 'Dot', threadRootId: 'msg_1' }));
+  assert.deepEqual([h.notifications[1].options.title, h.notifications[1].options.body], ['2 new messages in #jenny', 'Maya, Dot']);
+  h.notifications[1].click();
+  assert.deepEqual(h.bridgeEvents.at(-1).payload, { sessionId: '', category: 'team', key: 'team:msg_2', teamId: TEAM_ID, channelId: 'chan_jenny', messageId: 'msg_2', threadRootId: 'msg_1', seq: 2 },
+    'the newest message, with its thread');
+  h.notifier.notify(teamMessage(3));
+  h.notifier.notify(teamMessage(4, { sender: 'Ann' }));
+  assert.equal(h.notifications[3].options.title, '2 new messages in #jenny');
+  h.state.mainWindow.emit('focus');
+  h.notifier.notify(teamMessage(5, { sender: 'Lee' }));
+  assert.deepEqual([h.notifications[4].options.title, h.notifications[4].options.body], ['Maya in #jenny', 'New message'], 'focusing the window resets the count');
+});
+
+test('a click on a team toast sends only its routing ids back; the switch off suppresses team only', () => {
+  const h = createHarness({ settings: { onlyWhenUnfocused: true, replyPreview: true } });
+  assert.equal(h.notifier.notify(teamMessage(4, { threadRootId: 'msg_1' })), true);
+  assert.deepEqual(h.notifications[0].options, { title: 'Maya in #jenny', body: 'line 4', silent: false });
+  h.notifications[0].click();
+  assert.deepEqual(h.bridgeEvents, [{ event: 'notifications.onOpen', payload: { sessionId: '', category: 'team', key: 'team:msg_4',
+    teamId: TEAM_ID, channelId: 'chan_jenny', messageId: 'msg_4', threadRootId: 'msg_1', seq: 4 } }]);
+  const off = createHarness({ settings: { categories: { team: false } } });
+  assert.equal(off.notifier.notify(teamMessage(5)), false);
+  assertSuppressed(off, 'category_off', 'team');
+  assert.equal(off.notifier.notify(candidate()), true, 'replies still toast');
+});
+
+test('team messages in one channel share one counted toast naming three senders, until a click; channels count apart', () => {
+  const h = createHarness();
+  h.notifier.notify(teamMessage(1));
+  h.notifier.notify(teamMessage(2, { sender: 'Dot' }));
+  assert.deepEqual(h.notifications[1].options, { title: '2 new messages in #jenny', body: 'Maya, Dot', silent: false });
+  h.notifier.notify(teamMessage(3, { sender: 'Maya' }));
+  h.notifier.notify(teamMessage(4, { sender: 'Ann' }));
+  h.notifier.notify(teamMessage(5, { sender: 'Lee' }));
+  h.notifier.notify(teamMessage(6, { sender: 'Kim' }));
+  assert.deepEqual([h.notifications[5].options.title, h.notifications[5].options.body], ['6 new messages in #jenny', 'Maya, Dot, Ann and 2 others']);
+  assert.equal(h.notifier.getLiveCount(), 1);
+  h.notifier.notify(teamMessage(7, { channelId: 'chan_other', conversation: '#other', title: 'Maya in #other' }));
+  assert.equal(h.notifications[6].options.title, 'Maya in #other', 'another channel counts on its own');
+  h.notifications[5].click();
+  h.notifier.notify(teamMessage(8));
+  assert.equal(h.notifications[7].options.title, 'Maya in #jenny', 'a click resets the count');
+  const bytes = JSON.stringify(h.notifications.map((n) => n.options)) + JSON.stringify(h.logs);
+  for (const secret of ['member_', 'jteam1_', 'device_']) assert.equal(bytes.includes(secret), false, secret);
 });

@@ -59,9 +59,10 @@ test('managed sidecar config forwards normalized safety mode and UI language', (
 
   const defaults = buildManagedSidecarConfig(service);
   assert.equal(defaults.safety_mode, 'normal');
-  assert.equal(defaults.auto_approve_streak_cap, 50);
+  assert.equal(defaults.auto_approve_streak_cap, 250);
   assert.equal(defaults.ui_language, 'en');
   assert.equal(defaults.use_24_hour_time, false);
+  assert.equal(defaults.drawing_instructions, 'short');
 
   service.configService = {
     getChatUiState: () => ({ safetyMode: 'paranoid', autoApproveStreakCap: 75, uiLanguage: 'ja', use24HourTime: true }),
@@ -71,6 +72,11 @@ test('managed sidecar config forwards normalized safety mode and UI language', (
   assert.equal(configured.auto_approve_streak_cap, 75);
   assert.equal(configured.ui_language, 'ja');
   assert.equal(configured.use_24_hour_time, true);
+
+  for (const [stored, sent] of [['full', 'full'], ['mermaid', 'mermaid'], ['short', 'short'], ['bogus', 'short'], [undefined, 'short']]) {
+    service.configService = { getChatUiState: () => ({ drawingInstructions: stored }) };
+    assert.equal(buildManagedSidecarConfig(service).drawing_instructions, sent, String(stored));
+  }
 
   service.configService = { getChatUiState: () => ({ autoApproveStreakCap: 0 }) };
   assert.equal(buildManagedSidecarConfig(service).auto_approve_streak_cap, 0);
@@ -961,7 +967,8 @@ test('managed sidecar resolveModel lazy-loads the ollama fallback model after st
     async modelsList(engineType) {
       assert.equal(engineType, 'ollama');
       return {
-        models: ['qwen3.5:9b', 'llava:7b'],
+        // The fallback model is installed: a default that is not installed is refused, never pulled.
+        models: ['qwen3.5:9b', 'llava:7b', DEFAULT_MANAGED_OLLAMA_FALLBACK_MODEL],
         available: true,
         reason: '',
       };

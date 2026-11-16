@@ -119,10 +119,13 @@
   // the scratchpad capture popover). Declared here so the renderPinnedNotes
   // chrome callback can close over it before its creation site runs.
   let pinController = null;
+  // The empty hero names the chat's project: one lookup for every pane, torn down with the renderer.
+  const heroProjects = window.rendererHeroModelState?.createSessionProjectLookup?.({ registerCleanup: registerRendererCleanup,
+    getProjectSwitcher: () => ctx.getProjectSwitcher?.(), isPrimarySession: (s) => window.stringUtils?.isPrimarySession?.(s) });
   /* renderPipelineController */
   const buildRenderPipeline = (pane = {}) => renderPipelineUtils.createRenderPipeline?.({
     state, constants: { MESSAGE_STATUS, ACTIVITY_SCOPE },
-    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, jumpToTopButton, jumpToBottomButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel, ...pane.dom },
+    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, jumpToTopButton, jumpToBottomButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel, ...pane.dom },
     callbacks: {
       escapeHtml, getLatestAssistantMessageId, getLatestReplyAssistantMessageId, getLatestUserMessageId, resolveRegenerateRequest, buildAssistantMetaLabel, shouldShowThinkingToggle,
       buildLogViewModel, getActivitySnapshot, getMostRecentActivity, isActivityBusy, applyActivityAttributes,
@@ -180,6 +183,7 @@
       rollbackChatTimelineRowModel: (...a) => rollbackChatTimelineRowModel(...a),
       refreshActiveSurfaceEffect: (...a) => refreshActiveSurfaceEffect(...a), onSurfaceLifecycleSync: (...a) => (typeof onSurfaceLifecycleSync === 'function' ? onSurfaceLifecycleSync(...a) : undefined),
       appendClientLog: (...a) => appendClientLog(...a),
+      getSessionProject: (s) => heroProjects?.getSessionProject(s) || null, onProjectsChanged: (fn) => heroProjects?.onProjectsChanged(fn),
       renderHeader: (...a) => _extRenderHeader(...a), syncPaneLayout: (kind) => ctx.getPaneComposition?.()?.syncPaneLayout?.(kind), ...pane.overrides,
     },
     controllers: { thinkingController, reducedMotionQuery, thinkingIndicator, logRenderer: logRendererController, scrollCoordinator: chatScrollCoordinator,

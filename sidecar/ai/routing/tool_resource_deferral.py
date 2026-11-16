@@ -303,15 +303,25 @@ class ToolLoopSuspended(Exception):
         self.checkpoint_ref = dict(checkpoint_ref)
 
 
+def resource_busy_message(reason: str) -> str:
+    """The model-facing sentence for a call refused because a resource was held.
+
+    Session review F6 (2026-11-11): the model read the bare "capacity is busy"
+    as the stale-read guard and re-read the file; say plainly that it is not.
+    """
+    return (
+        f"Tool resource capacity is busy: {reason} (another operation held a file, folder "
+        "or slot this call needs; not a stale read, and nothing changed). "
+        "The call did not start; repeat it unchanged."
+    )
+
+
 def resource_wait_failure(wait: ToolResourceWait) -> ToolExecutionFailure:
     """Preserve the legacy retryable failure when continuation is unavailable."""
 
     return ToolExecutionFailure(
         code=CMP_RESOURCE_EXCEEDED,
-        message=(
-            f"Tool resource capacity is busy: {wait.reason or 'resource_capacity'}. "
-            "The call did not start; repeat it unchanged."
-        ),
+        message=resource_busy_message(wait.reason or "resource_capacity"),
         retryable=True,
         error_details={"failure_class": "transient"},
     )

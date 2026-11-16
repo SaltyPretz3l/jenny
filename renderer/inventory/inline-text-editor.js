@@ -21,25 +21,38 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var escapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  /**
-   * Build the markup for an inline user-message editor.
-   *
-   * @param {object} input
-   * @param {string} input.messageId  — value bound to data-message-id and data-edit-target-message-id
-   * @param {string} [input.draftText] — initial textarea value (pre-escaped is fine; we escape)
-   * @param {boolean} [input.committing] — when true, disables the controls + sets aria-busy
-   * @param {string} [input.ariaLabel] — accessibility label for the textarea (default "Edit your message")
-   * @param {number} [input.maxLength] — textarea maxlength (default 32000)
-   * @param {number} [input.rows] — initial textarea row count (default 3)
-   * @param {string} [input.cancelLabel] — Cancel button text (default "Cancel")
-   * @param {string} [input.saveLabel] — Save button text (default "Save")
-   * @returns {string} HTML markup string
-   */
+  // Resend is disabled while the draft equals the original exactly (commitEdit's
+  // check) or is blank with no image to replay; shared with the controller.
+  function resolveInlineEditorSaveState(input) {
+    var settings = input || {};
+    var draft = String(settings.draftText == null ? '' : settings.draftText);
+    var original = settings.originalText == null ? draft : String(settings.originalText);
+    var resendTitle = jt('inventory.inlineTextEditor.resendTitle', 'Resend (Ctrl+Enter)');
+    if (settings.committing === true) {
+      return { disabled: true, title: resendTitle, label: jt('inventory.inlineTextEditor.resending', 'Resending\u2026') };
+    }
+    var disabled = draft === original || (draft.trim() === '' && settings.hasReplayImages !== true);
+    return {
+      disabled: disabled,
+      title: disabled ? jt('inventory.inlineTextEditor.unchangedTitle', 'Change the message to resend it') : resendTitle,
+      label: jt('inventory.inlineTextEditor.resend', 'Resend'),
+    };
+  }
+
+  // The footer's line: text files that cannot be resent, else what resending replaces, else the keys.
+  function resolveImpactText(settings, names) {
+    if (names.length === 1) return jt('inventory.inlineTextEditor.textFileNotResent', '{name} can\u2019t be resent. Attach it again in the composer if Jenny still needs it.', { name: String(names[0]) });
+    if (names.length > 1) return jt('inventory.inlineTextEditor.textFilesNotResent', '{count} text files can\u2019t be resent. Attach them again in the composer if Jenny still needs them.', { count: names.length });
+    return Number(settings.affectedCount) > 1
+      ? jt('inventory.inlineTextEditor.replacesLater', 'Replaces everything after this message.')
+      : jt('inventory.inlineTextEditor.keysHint', 'Ctrl+Enter resends \u00b7 Esc cancels');
+  }
+
+  // The edited bubble, then the footer that takes the hover row's place.
   function buildInlineUserMessageEditorMarkup(input) {
     var settings = input || {};
     var id = String(settings.messageId || '');
@@ -47,42 +60,48 @@
     var committing = settings.committing === true;
     var ariaLabel = String(settings.ariaLabel || jt('inventory.inlineTextEditor.ariaLabel', 'Edit your message'));
     var maxLength = Number.isFinite(settings.maxLength) ? settings.maxLength : 32000;
-    var rows = Number.isFinite(settings.rows) ? settings.rows : 3;
-    var cancelLabel = String(settings.cancelLabel || 'Cancel');
-    var saveLabel = String(settings.saveLabel || 'Save');
-    var affectedCount = Math.max(Math.floor(Number(settings.affectedCount) || 0), 0);
-    var disabledAttr = committing ? ' disabled' : '';
-    var ariaBusyAttr = committing ? ' aria-busy="true"' : '';
+    var rows = Number.isFinite(settings.rows) ? settings.rows : 1;
+    var saveState = resolveInlineEditorSaveState({
+      draftText: draft,
+      originalText: settings.originalText,
+      hasReplayImages: settings.hasReplayImages === true,
+      committing: committing,
+    });
+    var names = !committing && Array.isArray(settings.textAttachmentNames) ? settings.textAttachmentNames : [];
+    // While resending the button says so; the line stays empty.
+    var impact = { text: committing ? '' : resolveImpactText(settings, names), warning: names.length > 0 };
+    var busyAttr = committing ? ' aria-busy="true"' : '';
+    var escapedId = escapeHtml(id);
     return [
       '<div class="chat-bubble chat-bubble-editing"',
-      ' data-message-id="', escapeHtml(id), '"',
-      ' data-pin-fade-trigger="user"',
-      ariaBusyAttr, '>',
+      ' data-message-id="', escapedId, '"',
+      ' data-pin-fade-trigger="user" dir="auto"',
+      busyAttr, '>',
       '<textarea class="chat-bubble-editor"',
       ' dir="auto"',
       ' spellcheck="true"',
       ' maxlength="', String(maxLength), '"',
       ' rows="', String(rows), '"',
       ' aria-label="', escapeHtml(ariaLabel), '"',
-      ' data-edit-target-message-id="', escapeHtml(id), '"',
-      disabledAttr, '>',
+      ' data-edit-target-message-id="', escapedId, '"',
+      committing ? ' readonly' : '', busyAttr, '>',
       escapeHtml(draft),
       '</textarea>',
-      affectedCount > 0
-        ? '<p class="chat-bubble-editor-impact">' + escapeHtml(jtn('inventory.inlineTextEditor.affectedMessages', affectedCount, { count: affectedCount }, 'Affects {count} existing message: this message and all later history.', 'Affects {count} existing messages: this message and all later history.')) + '</p>'
-        : '',
-      '<div class="chat-bubble-editor-actions">',
-      '<button type="button" class="chat-bubble-editor-cancel"',
+      '</div>',
+      '<div class="chat-bubble-editor-foot" data-edit-foot-message-id="', escapedId, '">',
+      '<span class="chat-bubble-editor-impact', impact.warning ? ' is-warning' : '', '">', escapeHtml(impact.text), '</span>',
+      '<span class="chat-bubble-editor-actions">',
+      '<button type="button" class="btn btn--ghost btn--sm chat-bubble-editor-cancel"',
       ' data-edit-action="cancel"',
       ' title="', escapeHtml(jt('inventory.inlineTextEditor.cancelTitle', 'Cancel edit (Esc)')), '"',
-      ' data-message-id="', escapeHtml(id), '"',
-      disabledAttr, '>', escapeHtml(cancelLabel), '</button>',
-      '<button type="button" class="chat-bubble-editor-save"',
+      ' data-message-id="', escapedId, '"',
+      committing ? ' disabled' : '', '>', escapeHtml(jt('inventory.inlineTextEditor.cancel', 'Cancel')), '</button>',
+      '<button type="button" class="btn btn--primary btn--sm chat-bubble-editor-save"',
       ' data-edit-action="save"',
-      ' title="', escapeHtml(jt('inventory.inlineTextEditor.saveTitle', 'Save and resend (Ctrl+Enter)')), '"',
-      ' data-message-id="', escapeHtml(id), '"',
-      disabledAttr, '>', escapeHtml(saveLabel), '</button>',
-      '</div>',
+      ' title="', escapeHtml(saveState.title), '"',
+      ' data-message-id="', escapedId, '"',
+      saveState.disabled ? ' disabled' : '', busyAttr, '>', escapeHtml(saveState.label), '</button>',
+      '</span>',
       '</div>',
     ].join('');
   }
@@ -126,5 +145,6 @@
   return {
     buildInlineNoteFieldMarkup: buildInlineNoteFieldMarkup,
     buildInlineUserMessageEditorMarkup: buildInlineUserMessageEditorMarkup,
+    resolveInlineEditorSaveState: resolveInlineEditorSaveState,
   };
 });

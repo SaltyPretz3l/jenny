@@ -238,6 +238,32 @@ test('a local failure artifact plus a newly hydrated assistant result: artifact 
   );
 });
 
+// order-terminal #6: the kept failure bubble lands where its turn is, not at
+// the tail below a later prompt.
+test('a kept failure artifact stays at its turn position, ahead of a later prompt', () => {
+  const { utils } = createHarness();
+  const partial = { id: 'assistant_stream_1', role: 'assistant', status: 'error', streamId: 'stream_1', content: 'partial' };
+  const merged = utils.mergeTerminalHydratedMessages(
+    [{ id: 'u1', role: 'user', content: 'first' }, partial, { id: 'u2', role: 'user', content: 'second' }],
+    [{ id: 'u1', role: 'user', content: 'first' }, { id: 'u2', role: 'user', content: 'second' }],
+    { sessionId: 'session-artifact-order', streamId: 'stream_1' },
+  );
+  assert.deepEqual(ids(merged), ['u1', 'assistant_stream_1', 'u2']);
+});
+
+// identity-retry #5: a hydrated prompt already matched by id is no twin for a
+// new local prompt with the same words; the repeated prompt survives.
+test('a repeated prompt the snapshot lost survives when the earlier one matched by id', () => {
+  const { utils } = createHarness();
+  const merged = utils.mergeTerminalHydratedMessages(
+    [{ id: 'u1', role: 'user', content: 'continue' }, { id: 'a1', role: 'assistant', content: 'first reply' },
+      { id: 'user_local_2', role: 'user', content: 'continue' }],
+    [{ id: 'u1', role: 'user', content: 'continue' }, { id: 'a1', role: 'assistant', content: 'first reply' }],
+    { sessionId: 'session-repeat', streamId: 'stream-2' },
+  );
+  assert.deepEqual(ids(merged), ['u1', 'a1', 'user_local_2']);
+});
+
 test('a complete unsaved reply survives terminal hydration when no canonical twin exists', () => {
   const { utils } = createHarness();
   const unsaved = {

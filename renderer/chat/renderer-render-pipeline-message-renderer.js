@@ -350,7 +350,7 @@
         return performFullMessageRender(...args);
       }
 
-      function patchVisibleStreamingArticle(streamingMessage, articleOverride) {
+      function patchVisibleStreamingArticle(streamingMessage, articleOverride, rewriteReason = '') {
         return patchStreamingArticle({
           messages,
           latestAssistantMessageId,
@@ -363,6 +363,7 @@
           threadExpansionSignature,
           noteStructuralRewrite,
           recordStreamingArticleRebuild,
+          rewriteReason,
         }, streamingMessage, articleOverride);
       }
 
@@ -598,6 +599,9 @@
           return;
         }
         const streamingRowTarget = resolveProjectionStreamingRowTarget(projectionContext);
+        // Named before the commit below resets the stream-reveal state.
+        const rewriteReason = String(describeStreamRevealPatchBlock({ currentSessionId: paneSessionId, messages,
+          latestAssistantMessageId, structureSignature, streamingMessage: derived.streamingMessage }) || 'unclassified');
         commitStreamRevealFullRender({
           currentSessionId: paneSessionId,
           structureSignature,
@@ -608,7 +612,7 @@
           activeTurnStructureHash: projectionContext?.activeTurnStructureHash || 0,
           activeTurnTailFingerprint: projectionContext?.activeTurnTailFingerprint || '',
         });
-        if (!patchVisibleStreamingArticle(derived.streamingMessage, hasStreamingArticle)) {
+        if (!patchVisibleStreamingArticle(derived.streamingMessage, hasStreamingArticle, rewriteReason)) {
           // The rebuild refused to collapse a row-model article (HB-006):
           // committing the signatures here would freeze the stale DOM.
           commitSignatureHoldFullRender('streaming_article_rewrite_refused');
@@ -616,6 +620,7 @@
         return;
       }
 
+      uiRuntime.activeTurnRootDecline = '';
       if (
         !forceFullRender
         && !projectionRevisionChanged
@@ -663,7 +668,9 @@
         }
       }
 
-      noteStreamRender('full', resolveFullRenderReason('final_full_render'));
+      // A declined active-turn-root fast path names its own reason.
+      const declined = String(uiRuntime.activeTurnRootDecline || '');
+      noteStreamRender('full', declined ? `active_turn_root:${declined}` : resolveFullRenderReason('final_full_render'));
       renderFullTimeline(
         messages,
         threadTree,

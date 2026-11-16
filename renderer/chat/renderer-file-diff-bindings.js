@@ -91,6 +91,11 @@
     setFileDiffExpanded(diffId, nextExpanded);
     row.dataset.expanded = nextExpanded ? 'true' : 'false';
     toggleNode.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+    // The accessible name follows the state; a toggle built without the labels keeps its own.
+    const label = nextExpanded ? toggleNode.dataset?.labelHide : toggleNode.dataset?.labelShow;
+    const title = nextExpanded ? toggleNode.dataset?.titleHide : toggleNode.dataset?.titleShow;
+    if (label) toggleNode.setAttribute('aria-label', label);
+    if (title) toggleNode.setAttribute('title', title);
     body.hidden = !nextExpanded;
     return nextExpanded;
   }

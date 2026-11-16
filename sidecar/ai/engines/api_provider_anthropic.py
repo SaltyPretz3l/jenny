@@ -24,7 +24,7 @@ from sidecar.ai.engines.api_provider_anthropic_wire import (
     build_request,
     output_cap,
     static_headers,
-    thinking_effort,
+    thinking_plan,
 )
 from sidecar.ai.engines.base import (
     BaseEngine,
@@ -206,8 +206,9 @@ class ApiProviderAnthropicEngine(BaseEngine):
         )
 
     def clear_request_context(self, *, request_id: str | None = None) -> None:
-        # Signed thinking blocks live exactly as long as the request that produced them.
-        self._replay.release(str(request_id or "").strip() or active_request_id(self))
+        # The held thinking blocks stay: an approval pause clears this context, and the
+        # resume replays them under the same request id. The cache's own bounds and
+        # ``release_request_state`` end their life.
         _clear_shared_request_context(self, request_id=request_id)
 
     def release_request_state(self, request_id: str) -> None:
@@ -264,8 +265,10 @@ class ApiProviderAnthropicEngine(BaseEngine):
         check_cancelled(cancel_handle)
         if not self._ready or self._wire_model is None:
             raise RuntimeError(_ENGINE_NOT_READY)
-        thinking, effort = thinking_effort(
-            reasoning_effort, supported=bool(self._limits["reasoning"])
+        thinking = thinking_plan(
+            reasoning_effort,
+            supported=bool(self._limits["reasoning"]),
+            model=self._wire_model,
         )
         request_key = active_request_id(self)
         cap = self.get_model_max_output_tokens() or max(1, int(max_tokens))
@@ -277,20 +280,19 @@ class ApiProviderAnthropicEngine(BaseEngine):
             messages=messages,
             tools=tools,
             thinking=thinking,
-            effort=effort,
             vision=bool(self._limits["vision"]),
             replay=self._replay.snapshot(request_key),
         )
         self._record(
             "record_provider_request",
-            think_enabled=thinking,
+            think_enabled=thinking.adaptive,
             num_predict=payload["max_tokens"],
             temperature=0.0,
             message_count=len(payload["messages"]),
             tool_count=len(payload.get("tools", ())),
             tool_capable=bool(self._limits["tools"]),
             purpose=consume_provider_call_purpose(self) or "turn",
-            provider_reasoning_effort=effort,
+            provider_reasoning_effort=thinking.effort,
         )
         finalizer = ProviderCallFinalizer(self)
         try:
@@ -306,6 +308,10 @@ class ApiProviderAnthropicEngine(BaseEngine):
                 on_first_chunk=lambda: self._record("record_first_chunk"),
             )
             result = outcome.result
+            if outcome.input_transformations:
+                self._record(
+                    "record_input_transformations", counts=outcome.input_transformations
+                )
             if outcome.replay_blocks and request_key:
                 self._replay.store(
                     request_key, [call.call_id for call in result.tool_calls], outcome.replay_blocks

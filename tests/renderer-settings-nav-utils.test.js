@@ -24,12 +24,14 @@ function setupDom() {
         <div id="settingsContentPanel" role="tabpanel" aria-labelledby="settingsNav-models">
         <div class="settings-content-scroll">
           <section class="settings-card" data-settings-section="models"></section>
-          <section class="settings-card" data-settings-section="context"></section>
+          <section class="settings-card" data-settings-section="permissions"></section>
+          <section class="settings-card" data-settings-section="chat"></section>
           <section class="settings-card" data-settings-section="tools"></section>
           <section class="settings-card" data-settings-section="proactive"></section>
           <section class="settings-card" data-settings-section="usage"></section>
           <section class="settings-card" data-settings-section="extensions"></section>
           <section class="settings-card" data-settings-section="account"></section>
+          <section class="settings-card" data-settings-section="aboutUpdates"></section>
           <section class="settings-card" data-settings-section="harness"></section>
           <section class="settings-card" data-settings-section="diagnostics"></section>
           <section class="settings-card" data-settings-section="dev_diagnostics"></section>
@@ -156,7 +158,7 @@ test('keyboard traverses every visible group and wraps', () => {
     controller.bind();
     for (const [from, key, to] of [
       ['advanced', 'ArrowDown', 'readiness'], ['readiness', 'ArrowUp', 'advanced'],
-      ['models', 'ArrowUp', 'readiness'], ['account', 'ArrowDown', 'advanced'],
+      ['models', 'ArrowUp', 'readiness'], ['models', 'ArrowDown', 'permissions'], ['account', 'ArrowDown', 'aboutUpdates'], ['aboutUpdates', 'ArrowDown', 'advanced'],
       ['models', 'Home', 'readiness'], ['models', 'End', 'advanced'],
     ]) {
       const item = document.querySelector('.settings-nav [data-settings-section="' + from + '"]');
@@ -207,6 +209,28 @@ test('settings nav falls back when a hidden dev-only advanced section is request
 
     assert.equal(state.ui.activeSettingsSection, 'models');
     assert.equal(document.querySelector('[data-settings-section="models"]').getAttribute('aria-selected'), 'true');
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('settings nav resolves a hidden feature-flagged section to the default one, and says so before any switch', () => {
+  const harness = setupDom();
+  try {
+    const state = { ui: { activeSettingsSection: 'usage' } };
+    const settingsNav = document.querySelector('.settings-nav');
+    const settingsContentScroll = document.querySelector('.settings-content-scroll');
+    const controller = createSettingsNavController({ state, settingsNav, settingsContentScroll });
+    controller.bind();
+    const team = document.querySelector('.settings-nav-item[data-settings-section="team"]');
+    assert.ok(team.hasAttribute('data-feature-flag') && team.hidden, 'the rendered Team item is flagged and hidden');
+    assert.equal(controller.resolveSectionId('team'), 'models');
+    assert.equal(controller.resolveSectionId('usage'), 'usage');
+    assert.equal(state.ui.activeSettingsSection, 'usage', 'asking does not move the section');
+    assert.equal(controller.setActiveSection('team'), 'models', 'a switch answers the section it showed');
+    assert.equal(state.ui.activeSettingsSection, 'models');
+    team.hidden = false;
+    assert.equal(controller.resolveSectionId('team'), 'team', 'shown once the flag is on');
   } finally {
     harness.cleanup();
   }
@@ -279,11 +303,18 @@ test('settings nav logs storage failures without blocking section activation', (
   }
 });
 
-test('production rail renders six uniform groups without disclosure or dividers', () => {
+test('production rail renders five groups, the first unlabelled, without disclosure or dividers', () => {
   const dom = new JSDOM(buildSettingsNavMarkup(getSettingsGroups(), 'models'));
   const doc = dom.window.document;
-  assert.deepEqual([...doc.querySelectorAll('.settings-nav-group')].map(group => group.dataset.settingsNavGroup), ['modelTools', 'work', 'context', 'app', 'system', 'developer']);
-  assert.equal(doc.querySelectorAll('.settings-nav-group > .settings-nav-label').length, 6);
+  assert.deepEqual([...doc.querySelectorAll('.settings-nav-group')].map(group => group.dataset.settingsNavGroup), ['overview', 'jenny', 'app', 'work', 'system']);
+  assert.deepEqual([...doc.querySelectorAll('.settings-nav-group > .settings-nav-label')].map(label => label.textContent), ['Jenny', 'App', 'Work', 'System']);
+  // The overview group (Readiness) has no heading, so its tab has nothing to be described by.
+  const overview = doc.querySelector('[data-settings-nav-group="overview"]');
+  assert.equal(overview.querySelector('.settings-nav-label'), null);
+  assert.equal(overview.querySelector('[data-settings-section="readiness"]').hasAttribute('aria-describedby'), false);
+  for (const item of doc.querySelectorAll('[data-settings-nav-group]:not([data-settings-nav-group="overview"]) .settings-nav-item')) {
+    assert.equal(doc.getElementById(item.getAttribute('aria-describedby')).textContent.trim().length > 0, true, item.dataset.settingsSection);
+  }
   assert.equal(doc.querySelector('#settingsAdvancedToggle, #settingsAdvancedItems, .settings-nav-divider, .settings-nav-item-child'), null);
   dom.window.close();
 });
@@ -294,8 +325,13 @@ test('picker groups visible sections and follows every navigation route and runt
     const picker = document.getElementById('settingsNavPicker');
     assert.ok(picker);
     assert.equal(picker.getAttribute('aria-label'), 'Settings section');
-    assert.deepEqual([...picker.querySelectorAll('optgroup')].map(group => [group.label, [...group.children].map(option => option.value)]), getSettingsGroups().map(group => [group.label, group.sections.map(section => section.id)]));
-    for (const id of ['skills', 'dataPrivacy', 'aboutUpdates', 'runtimeLimits']) assert.equal(picker.querySelector('option[value="' + id + '"]'), null);
+    assert.deepEqual([...picker.querySelectorAll('optgroup')].map(group => [group.label, [...group.children].map(option => option.value)]), getSettingsGroups().filter(group => group.label).map(group => [group.label, group.sections.map(section => section.id)]));
+    // Readiness has no group heading: it is a plain option ahead of the optgroups, never an empty optgroup.
+    assert.equal(picker.querySelector('optgroup[label=""]'), null);
+    assert.equal(picker.firstElementChild.tagName, 'OPTION');
+    assert.equal(picker.firstElementChild.value, 'readiness');
+    assert.equal(picker.firstElementChild.textContent, 'Readiness');
+    for (const id of ['skills', 'dataPrivacy', 'runtimeLimits', 'offline', 'home', 'dictation', 'context', 'jennyChat']) assert.equal(picker.querySelector('option[value="' + id + '"]'), null);
     const state = { ui: { activeSettingsSection: 'models' } };
     const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
     controller.bind();
@@ -308,15 +344,15 @@ test('picker groups visible sections and follows every navigation route and runt
     picker.value = 'tools';
     picker.dispatchEvent(new window.Event('change', { bubbles: true }));
     assert.equal(state.ui.activeSettingsSection, 'tools');
-    document.querySelector('.settings-nav [data-settings-section="context"]').click();
-    assert.equal(picker.value, 'context');
+    document.querySelector('.settings-nav [data-settings-section="chat"]').click();
+    assert.equal(picker.value, 'chat');
     document.querySelector('.settings-nav [data-settings-section="models"]').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     assert.equal(picker.value, 'readiness');
     controller.setActiveSection('dataPrivacy');
     assert.equal(picker.value, 'account');
     controller.setActiveSection('runtimeLimits');
     assert.equal(picker.value, 'advanced');
-    for (const [id, host] of [['dataPrivacy', 'account'], ['aboutUpdates', 'account'], ['runtimeLimits', 'advanced']]) {
+    for (const [id, host] of [['dataPrivacy', 'account'], ['aboutUpdates', 'aboutUpdates'], ['permissions', 'permissions'], ['runtimeLimits', 'advanced'], ['context', 'chat'], ['jennyChat', 'chat'], ['dictation', 'chat'], ['offline', 'models']]) {
       localStorage.setItem('jenny.settings.activeSection', id);
       controller.restoreActiveSection();
       assert.equal(state.ui.activeSettingsSection, host);
@@ -436,7 +472,7 @@ test('settings nav leaves the current section active when a dirty-state guard re
   }
 });
 
-test('host navigation reveals both Profile companions and readies lazy Developer companions', async () => {
+test('host navigation reveals the Data & privacy companion, opens About as its own page and readies lazy Limits companions', async () => {
   const harness = setupDom();
   try {
     const { createSettingsShellController } = require('../renderer/shell/renderer-settings-shell-controller');
@@ -466,10 +502,12 @@ test('host navigation reveals both Profile companions and readies lazy Developer
     assert.equal(state.ui.activeSettingsSection, 'account');
     assert.deepEqual([...document.querySelectorAll('.settings-card.settings-section-active')].map(card => card.dataset.settingsSection), ['account'], 'a folded-in section has no card of its own; its host card is the page');
     controller.navigateSettingsSection('aboutUpdates');
-    assert.equal(document.getElementById('settingsNavPicker').value, 'account');
+    assert.equal(document.getElementById('settingsNavPicker').value, 'aboutUpdates');
+    assert.deepEqual([...document.querySelectorAll('.settings-card.settings-section-active')].map(card => card.dataset.settingsSection), ['aboutUpdates']);
     controller.navigateSettingsSection('runtimeLimits');
     assert.equal(state.ui.activeSettingsSection, 'advanced');
-    assert.deepEqual(readied, ['advanced', 'runtimeLimits']);
+    // Settings is the view at bind, so the boot page (Models) readies its Local only companion first.
+    assert.deepEqual(readied, ['offline', 'advanced', 'runtimeLimits']);
     // F14: the Limits page (advanced) refreshes on reveal too, so a lock taken
     // while a reply ran is re-read.
     assert.deepEqual(shown, ['runtimeLimits', 'advanced']);
@@ -477,7 +515,7 @@ test('host navigation reveals both Profile companions and readies lazy Developer
     assert.equal(controller.isSectionInitialized('runtimeLimits'), true);
     controller.navigateSettingsSection('models');
     controller.navigateSettingsSection('advanced');
-    assert.deepEqual(readied, ['advanced', 'runtimeLimits'], 'lazy bindings run once');
+    assert.deepEqual(readied, ['offline', 'advanced', 'runtimeLimits'], 'lazy bindings run once');
     assert.deepEqual(shown, ['runtimeLimits', 'advanced', 'runtimeLimits', 'advanced'], 'companion refreshes on every reveal');
     controller.dispose();
   } finally { harness.cleanup(); }
@@ -503,12 +541,20 @@ test('keyboard stepping and the picker skip rail items the search box filtered o
       assert.equal(state.ui.activeSettingsSection, to, `${key} from ${from}`);
     }
     // A filtered item still loses the active state when another page is picked.
-    navItem('context').classList.add('active');
+    navItem('chat').classList.add('active');
     controller.setActiveSection('tools');
-    assert.equal(navItem('context').classList.contains('active'), false);
+    assert.equal(navItem('chat').classList.contains('active'), false);
     const picker = document.getElementById('settingsNavPicker');
     picker.dispatchEvent(new window.Event('focus'));
-    assert.equal(picker.querySelector('option[value="context"]').hidden, true);
+    assert.equal(picker.querySelector('option[value="chat"]').hidden, true);
     assert.equal(picker.querySelector('option[value="account"]').hidden, false);
   } finally { harness.cleanup(); }
+});
+
+// The rail item sets its own display, which outranks the hidden attribute unless the sheet says otherwise:
+// a page whose feature flag is off (Team) must not show in the rail.
+test('a rail item carrying the hidden attribute is not displayed', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'styles', 'settings-nav.css'), 'utf8');
+  const rule = css.match(/\.settings-nav-item\[hidden\][^{]*\{([^}]*)\}/);
+  assert.ok(rule && /display:\s*none/.test(rule[1]), 'styles/settings-nav.css hides .settings-nav-item[hidden]');
 });

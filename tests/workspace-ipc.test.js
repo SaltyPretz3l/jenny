@@ -879,11 +879,3 @@ test('main shell config refresh reasons exclude model-tuning transactions with t
   assert.equal(mainModule.shouldRefreshManagedConfigForShellConfigReason('compaction_tuning_updated'), false);
   assert.equal(mainModule.shouldRefreshManagedConfigForShellConfigReason('unrelated_change'), false);
 });
-
-test('main module no longer exports the removed comet overlay helpers', () => {
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
-
-  for (const name of ['isCometOverlayEnabled', 'normalizeCometOverlayPresencePayload', 'handleCometOverlayToggle']) {
-    assert.equal(Object.hasOwn(mainModule, name), false, `${name} must not survive the comet removal`);
-  }
-});

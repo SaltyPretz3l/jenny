@@ -19,6 +19,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { waitForState } = require('./helpers/shell-shared-wait');
 
 function buildSummary(id, title) {
   return {
@@ -96,10 +97,10 @@ async function openTwoPanes(t) {
   t.after(() => app.dispose());
   const { window } = app;
   const doc = window.document;
-  await waitForUi(window, 150);
+  await waitForState(window, () => window.__rendererState.currentSessionId === 'session-a' && /Wrote alpha\.py/.test(doc.getElementById('chatTimeline')?.textContent || ''));
   const composition = window.rendererAppPaneComposition.getPaneComposition();
   assert.equal(composition.toggleSplit(), true, 'precondition: the chord opens session-b beside');
-  await waitForUi(window, 150);
+  await waitForState(window, () => /Wrote beta\.py/.test(composition.getPane(1)?.root.textContent || ''));
   const pane1 = composition.getPane(1);
   assert.ok(pane1, 'pane 1 is mounted');
   const state = window.__rendererState;
@@ -210,7 +211,11 @@ test('closing the pane that owns the panel closes it without the per-chat dismis
   assert.equal(panel.classList.contains('hidden'), false, 'precondition: the panel shows pane 1\'s artifact');
 
   doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
-  await waitForUi(window, 120);
+  await waitForState(window, () => composition.getPane(1) === null && panel.classList.contains('hidden') && state.ui.artifactReview.enabled === false
+    && state.ui.sidePanelOwnerSessionId === '' && !doc.querySelector('.side-panel-owner-line'));
+  // Some checks below are about what must NOT follow the close (a dismissal being recorded or
+  // saved), so they keep a settle after the state has flipped.
+  await waitForUi(window, 60);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
   assert.equal(panel.classList.contains('hidden'), true, 'the panel closed');
   assert.equal(state.ui.artifactReview.enabled, false);
@@ -241,7 +246,7 @@ test('one pane: an open carries no From line and never writes an owner', async (
   t.after(() => app.dispose());
   const { window } = app;
   const doc = window.document;
-  await waitForUi(window, 150);
+  await waitForState(window, () => window.__rendererState.currentSessionId === 'session-a' && /Wrote alpha\.py/.test(doc.getElementById('chatTimeline')?.textContent || ''));
   await clickInPane(window, placeChip(doc.getElementById('chatTimeline'), 'art_session-a'));
   assert.equal(doc.getElementById('artifactReviewPanel').classList.contains('hidden'), false);
   assert.equal(window.__rendererState.artifacts.selectedSessionId, 'session-a');
@@ -309,16 +314,16 @@ test('closing the pane that owns an open Activity panel collapses it', async (t)
   assert.equal(doc.getElementById('contextPanelOpenToggle'), null, 'no bar button opens the context panel any more');
   state.features = { ...(state.features || {}), featureFlags: { ...(state.features?.featureFlags || {}), activity_monitor: true } };
   pane1.dom.chatInput.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
-  await waitForUi(window, 80);
+  await waitForState(window, () => state.currentSessionId === 'session-b' && doc.querySelector('[data-activity-open]'));
   const open = doc.querySelector('[data-activity-open]');
   assert.ok(open, 'Activity keeps its node in the bar even though CSS hides it');
   open.hidden = false;
   open.click();
-  await waitForUi(window, 80);
+  await waitForState(window, () => !contextPanel.classList.contains('collapsed') && state.ui.sidePanelOwnerSessionId === 'session-b');
   assert.equal(contextPanel.classList.contains('collapsed'), false, 'precondition: Activity opened the panel');
   assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'the explicit open claimed the panel for the focused chat');
   doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
-  await waitForUi(window, 120);
+  await waitForState(window, () => contextPanel.classList.contains('collapsed'));
   assert.equal(contextPanel.classList.contains('collapsed'), true, 'the panel collapsed with its owner');
 });
 

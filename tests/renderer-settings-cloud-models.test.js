@@ -10,6 +10,7 @@ const {
   createCloudModelsController,
   normalizeCodexState,
 } = require('../renderer/shell/renderer-settings-cloud-models.js');
+const servicesModule = require('../renderer/shell/model-library/model-library-services');
 
 function inventoryFixture() {
   return {
@@ -36,19 +37,35 @@ function cloudState({ auth = 'signed_out', enabled = true, localOnly = false, er
   };
 }
 
+// The controls live in two hosts (the drawer bodies of the ChatGPT and Codex CLI rows). Most cases
+// place both hosts in the page so they can read them through one wrapper; the drawer cases below
+// open the real drawers.
 function harness(bridge, codexBridge = { async getState() { return { status: 'unavailable', code: 'auth_required_or_cli_missing' }; } }) {
-  const dom = new JSDOM('<!doctype html><div id="cloudModelsHost"></div>', { pretendToBeVisual: true, url: 'http://localhost/' });
-  const host = dom.window.document.getElementById('cloudModelsHost');
+  const dom = new JSDOM('<!doctype html><div id="host"><div id="cloudModelsChatgptHost"></div><div id="cloudModelsCodexHost"></div></div>', { pretendToBeVisual: true, url: 'http://localhost/' });
+  const host = dom.window.document.getElementById('host');
   dom.window.inventoryTextField = require('../renderer/inventory/text-field');
   const controller = createCloudModelsController({
     windowRef: dom.window,
     documentRef: dom.window.document,
-    host,
     inventory: inventoryFixture(),
     getBridge: () => bridge,
     getCodexBridge: () => codexBridge,
   });
   return { dom, host, controller };
+}
+
+// The real thing: the services table and its shared drawer, the controls rendered into the drawer bodies.
+function drawerHarness(t, bridge, codexBridge = { async getState() { return { status: 'ready', code: 'ready' }; } }) {
+  const dom = new JSDOM('<!doctype html><body><div id="modelServicesHost"></div></body>', { pretendToBeVisual: true, url: 'http://localhost/' });
+  const doc = dom.window.document;
+  dom.window.inventoryTextField = require('../renderer/inventory/text-field');
+  const services = servicesModule.createModelLibraryServices({ documentRef: doc, windowRef: dom.window });
+  const controller = createCloudModelsController({
+    windowRef: dom.window, documentRef: doc, inventory: inventoryFixture(), services: () => services,
+    getBridge: () => bridge, getCodexBridge: () => codexBridge,
+  });
+  t.after(() => { controller.dispose(); services.dispose(); dom.window.close(); });
+  return { dom, doc, services, controller };
 }
 
 async function settle() {
@@ -436,3 +453,83 @@ for (const [reason, message] of [
     assert.equal(host.querySelector('[data-action="cloudModelsChatgptSignIn"]').textContent, 'Try again');
   });
 }
+
+// ---------- drawers: the controls moved from the page into the Manage drawers ----------
+
+test('the ChatGPT drawer holds the account row, paste block and switch, bound on the drawer host', async (t) => {
+  const calls = [];
+  const bridge = {
+    async getState() { return cloudState(); },
+    chatgptSignIn() { calls.push('sign-in'); return new Promise(() => {}); },
+    async chatgptExtendPending() { return { ok: true, deadlineMs: Date.now() + 600000 }; },
+  };
+  const { dom, doc, services, controller } = drawerHarness(t, bridge);
+  controller.bind();
+  await settle();
+  assert.equal(doc.getElementById('cloudModelsChatgptHost'), null, 'nothing renders until the drawer opens');
+  services.open('chatgpt');
+  const body = services.drawerBody();
+  assert.match(body.querySelector('.mp-quiet').textContent, /Uses your ChatGPT subscription\. Signing in opens your browser/);
+  const host = body.querySelector('#cloudModelsChatgptHost');
+  assert.ok(host.querySelector('[data-settings-field="cloudModelsChatgptAccount"]'));
+  assert.ok(host.querySelector('[data-inv-toggle="chatgptModelsEnabledToggle"]'));
+  assert.equal(doc.querySelector('#modelServicesHost [data-action]'), null, 'the table rows carry no cloud control');
+  click(dom, host, 'cloudModelsChatgptSignIn');
+  await settle();
+  assert.deepEqual(calls, ['sign-in']);
+  assert.equal(host.querySelector('[data-settings-field="cloudModelsChatgptAccount"]').dataset.cloudAuthState, 'connecting');
+  // The paste block keeps its value and focus across a repaint in the drawer.
+  click(dom, host, 'cloudModelsChatgptPasteOpen');
+  await settle();
+  const input = host.querySelector('[data-paste-field]');
+  input.focus();
+  input.value = 'http://localhost:1455/auth/callback?code=typed';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  controller.render();
+  const after = host.querySelector('[data-paste-field]');
+  assert.equal(after.value, 'http://localhost:1455/auth/callback?code=typed');
+  assert.equal(doc.activeElement, after);
+});
+
+test('closing and reopening the ChatGPT drawer rebinds the new host once and the switch still writes', async (t) => {
+  const written = [];
+  const bridge = {
+    async getState() { return cloudState({ auth: 'signed_in' }); },
+    async chatgptSignOut() { written.push('sign-out'); return { ok: true, state: cloudState() }; },
+    async setChatgptEnabled(value) { written.push(value); return { ok: true, state: cloudState({ auth: 'signed_in', enabled: value }) }; },
+  };
+  const { dom, services, controller } = drawerHarness(t, bridge);
+  controller.bind();
+  await settle();
+  services.open('chatgpt');
+  const first = services.drawerBody().querySelector('#cloudModelsChatgptHost');
+  services.close();
+  services.open('chatgpt');
+  const host = services.drawerBody().querySelector('#cloudModelsChatgptHost');
+  assert.notEqual(host, first, 'a fresh host per open');
+  host.querySelector('[data-inv-toggle="chatgptModelsEnabledToggle"]').dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
+    bubbles: true, detail: { id: 'chatgptModelsEnabledToggle', checked: false },
+  }));
+  await settle();
+  assert.deepEqual(written, [false], 'one write, not one per open');
+  click(dom, services.drawerBody(), 'cloudModelsChatgptSignOut');
+  await settle();
+  assert.deepEqual(written, [false, 'sign-out']);
+});
+
+test('the Codex CLI drawer holds its row and Check again reaches the bridge', async (t) => {
+  let refreshed = 0;
+  const codexBridge = { async getState() { return { status: 'unavailable', code: 'codex_cli_unavailable' }; }, async refresh() { refreshed += 1; return { status: 'ready', code: 'ready' }; } };
+  const { dom, doc, services, controller } = drawerHarness(t, { async getState() { return cloudState(); } }, codexBridge);
+  controller.bind();
+  await settle();
+  services.open('codex');
+  const body = services.drawerBody();
+  assert.match(body.querySelector('.mp-quiet').textContent, /Uses the codex command and its own login\. Jenny never reads that login\. Run codex login in a terminal, then check again\./);
+  assert.ok(body.querySelector('#cloudModelsCodexHost [data-settings-field="cloudModelsCodexCli"]'));
+  assert.equal(doc.getElementById('cloudModelsChatgptHost'), null);
+  click(dom, body, 'cloudModelsCodexRefresh');
+  await settle();
+  assert.equal(refreshed, 1);
+  assert.equal(services.drawerBody().querySelector('[data-settings-field="cloudModelsCodexCli"]').dataset.cloudCodexState, 'ready');
+});

@@ -550,3 +550,30 @@ test('streaming canonical image references use their pane session and refresh un
     assert.equal(rendered.streamChangedStart, 0);
   } finally { dom.window.close(); }
 });
+
+test('an image-reference rewrite is patched when only the artifact metadata changed', () => {
+  const { createImmediateRevealController } = require('./helpers/renderer-stream-reveal-harness');
+  const sessionId = 'sess_image_ref';
+  const message = { id: 'assistant_img', role: 'assistant', status: 'streaming', content: '![chart](out/chart.png)' };
+  const messages = [{ id: 'user_img', role: 'user', content: 'draw' }, message];
+  const state = { currentSessionId: sessionId, messagesBySession: new Map([[sessionId, messages]]), features: { featureFlags: {} } };
+  const unit = { html: '<p><img src="out/chart.png" alt="chart"></p>', fingerprint: 'u0' };
+  let call = 0;
+  const { controller } = createImmediateRevealController('<div id="timeline"></div>', {
+    state,
+    renderStreamingMarkdownUnits: () => {
+      call += 1;
+      return { html: unit.html, units: [unit], fingerprints: ['u0'], changedStartIndex: call === 1 ? 0 : -1 };
+    },
+  });
+  const first = controller.buildStreamingBubbleMarkup(message);
+  assert.equal(first.streamChangedStart, 0);
+  assert.match(first.bubbleInnerHtml, /<img/);
+  messages.push({
+    id: 'tool_img', role: 'tool', kind: 'tool_result',
+    tool_result: { generated_artifacts: [{ artifact_kind: 'image', artifact_id: 'art_1', display_path: 'out/chart.png' }] },
+  });
+  const second = controller.buildStreamingBubbleMarkup(message);
+  assert.doesNotMatch(second.bubbleInnerHtml, /<img/, 'the rewrite replaced the raw image');
+  assert.equal(second.streamChangedStart, 0, 'the unit holding the rewritten image is patched');
+});

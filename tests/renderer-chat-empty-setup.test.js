@@ -8,14 +8,14 @@ const { createChatsPanelController } = require('../renderer/shell/renderer-chats
 const actionButton = require('../renderer/inventory/action-button');
 const segmentedControl = require('../renderer/inventory/segmented-control');
 
-function heroHarness(t, steps, resume = () => {}) {
+function heroHarness(t, steps, resume = () => {}, projects = null) {
   const previousResume = globalThis.jennySetupResume;
   const previousActionButton = globalThis.inventoryActionButton;
   globalThis.jennySetupResume = resume;
   globalThis.inventoryActionButton = actionButton;
   const page = new JSDOM('<body>' + [0, 1].map((id) => `
     <div class="hero-stage" data-pane="${id}"><div class="hero-stack">
-      <div class="hero-avatar"></div><h1 class="hero-title"></h1>
+      <h1 class="hero-title"></h1>
       <p class="hero-subtitle"></p><p class="hero-runtime-hint hidden"></p>
     </div></div>`).join('') + '<textarea></textarea></body>');
   const state = {
@@ -23,13 +23,17 @@ function heroHarness(t, steps, resume = () => {}) {
     setup: { loaded: true, setupComplete: false, steps },
     backend: { phase: 'ready' }, status: { model_loaded: false },
   };
+  const projectCallbacks = projects ? {
+    getSessionProject: (session) => projects.lookup(session),
+    onProjectsChanged: (listener) => { projects.listeners.add(listener); return () => projects.listeners.delete(listener); },
+  } : {};
   const pipelines = Array.from(page.window.document.querySelectorAll('.hero-stage'), (hero) => createChromePipeline({
     state,
     dom: {
-      heroAvatar: hero.querySelector('.hero-avatar'), heroTitle: hero.querySelector('.hero-title'),
+      heroTitle: hero.querySelector('.hero-title'),
       heroSubtitle: hero.querySelector('.hero-subtitle'), heroRuntimeHint: hero.querySelector('.hero-runtime-hint'),
     },
-    callbacks: { getVisibleSessionMessages: () => state.messages || [] },
+    callbacks: { getVisibleSessionMessages: () => state.messages || [], ...projectCallbacks },
   }));
   t.after(() => {
     pipelines.forEach((pipeline) => pipeline.dispose?.());
@@ -80,7 +84,7 @@ test('empty heroes follow model state per pane, clear on other branches, and ren
   for (const hero of document.querySelectorAll('.hero-stage')) {
     assert.equal(hero.dataset.modelState, 'noModel');
     assert.equal(hero.querySelector('.hero-title').textContent, 'Pick a model to start');
-    assert.equal(hero.querySelectorAll('[data-hero-action]').length, 2);
+    assert.equal(hero.querySelectorAll('.hero-actions [data-hero-action]').length, 2);
     assert.match(hero.querySelector('.hero-runtime-hint').textContent, /ChatGPT/);
   }
   const nodes = [...document.querySelectorAll('.hero-actions, [data-hero-action]')];
@@ -166,7 +170,9 @@ test('setup actions hide for ready, populated, and provider heroes', (t) => {
   state.messages = [{ kind: 'user', content: 'Hello' }];
   render();
   assert.ok(button.classList.contains('hidden'));
-  assert.equal(document.querySelector('.hero-title').textContent, 'Existing chat');
+  // With messages the stack is invisible: the hero writes nothing new and leaves the accessibility tree.
+  assert.equal(document.querySelector('.hero-title').textContent, 'Pick a model to start');
+  assert.equal(document.querySelector('.hero-stage').getAttribute('aria-hidden'), 'true');
   state.sessions[0].session_type = 'plugin';
   state.messages = [];
   render();
@@ -185,6 +191,131 @@ test('chrome teardown removes the Resume setup listener and its owned nodes', (t
   assert.equal(calls, 0);
   assert.equal(document.querySelector('[data-pane="0"] button'), null);
   assert.equal(document.querySelector('[data-pane="0"] .hero-setup-footnote'), null);
+});
+
+// Direction A (owner, 2026-11-15): the ready title names the chat's project and
+// one plain facts line gives its folder and the model note.
+function projectHarness(t, { loaded = true, projectList = null } = {}) {
+  const known = projectList || { p1: { name: 'jenny', path: 'D:\\Work\\jenny' } };
+  const projects = {
+    listeners: new Set(),
+    loaded,
+    lookup(session) {
+      const id = String(session?.project_id || '');
+      return projects.loaded && known[id] ? known[id] : null;
+    },
+    fire() { projects.listeners.forEach((listener) => listener()); },
+  };
+  const harness = heroHarness(t, undefined, () => {}, projects);
+  const { state } = harness;
+  state.setup.setupComplete = true;
+  state.modelList = { available: true, data: [{ id: 'fit:3b' }] };
+  state.status = { model: 'fit:3b', model_loaded: false };
+  state.sessions = [{ id: 'chat', project_id: 'p1' }];
+  state.currentSessionId = 'chat';
+  return { ...harness, projects };
+}
+
+const heroOf = (document, pane) => document.querySelector(`[data-pane="${pane}"]`);
+const factsOf = (hero) => hero.querySelector('.hero-runtime-hint');
+
+test('a project chat names the project in the title and gives its folder and the model note on one line', (t) => {
+  const { document, state, render } = projectHarness(t);
+  render();
+  for (const hero of document.querySelectorAll('.hero-stage')) {
+    const title = hero.querySelector('.hero-title');
+    assert.equal(title.textContent, 'New chat in jenny');
+    assert.equal(title.tagName, 'H1');
+    assert.equal(title.childElementCount, 0, 'the title is plain text');
+    assert.equal(factsOf(hero).textContent, 'D:\\Work\\jenny · fit:3b loads with your first message');
+    assert.equal(factsOf(hero).classList.contains('hidden'), false);
+    assert.equal(hero.querySelector('.hero-subtitle').classList.contains('hidden'), true, 'no subtitle in the ready state');
+  }
+  state.status.model_loaded = true;
+  render();
+  assert.equal(factsOf(heroOf(document, 0)).textContent, 'D:\\Work\\jenny', 'a loaded model leaves the folder alone');
+  state.sessions[0].project_id = 'project_general';
+  render();
+  assert.equal(heroOf(document, 0).querySelector('.hero-title').textContent, 'New chat');
+  assert.equal(factsOf(heroOf(document, 0)).classList.contains('hidden'), true, 'General with a loaded model: nothing to say');
+  state.status.model_loaded = false;
+  render();
+  assert.equal(factsOf(heroOf(document, 1)).textContent, 'fit:3b loads with your first message');
+});
+
+test('the title re-renders idempotently and waits for the project list, then names the project', (t) => {
+  const { document, render, projects } = projectHarness(t, { loaded: false });
+  render();
+  assert.equal(heroOf(document, 0).querySelector('.hero-title').textContent, 'New chat', 'never a placeholder name');
+  assert.equal(factsOf(heroOf(document, 0)).textContent, 'fit:3b loads with your first message');
+  projects.loaded = true;
+  projects.fire();
+  for (const hero of document.querySelectorAll('.hero-stage')) {
+    assert.equal(hero.querySelector('.hero-title').textContent, 'New chat in jenny');
+  }
+  const observer = new document.defaultView.MutationObserver(() => {});
+  observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+  render();
+  assert.equal(observer.takeRecords().length, 0, 'the same project must not rebuild the title');
+  observer.disconnect();
+});
+
+test('a project name and path are text, never markup', (t) => {
+  const { document, render } = projectHarness(t, {
+    projectList: { p1: { name: '<img src=x onerror=1>', path: 'C:\\<b>x</b>' } },
+  });
+  render();
+  const hero = heroOf(document, 0);
+  assert.equal(hero.querySelector('img'), null);
+  assert.equal(hero.querySelector('b'), null);
+  assert.equal(hero.querySelector('.hero-title').textContent, 'New chat in <img src=x onerror=1>');
+  assert.match(factsOf(hero).textContent, /^C:\\<b>x<\/b> · /);
+});
+
+test('no model: the subtitle shows and the cloud hint carries a sign-in link button', (t) => {
+  const { document, state, render } = projectHarness(t);
+  state.modelList = { available: true, data: [] };
+  render();
+  for (const hero of document.querySelectorAll('.hero-stage')) {
+    assert.equal(hero.querySelector('.hero-subtitle').classList.contains('hidden'), false);
+    assert.equal(hero.querySelector('.hero-title').textContent, 'Pick a model to start');
+    const link = factsOf(hero).querySelector('button[data-hero-action="cloud"]');
+    assert.ok(link, 'the ChatGPT hint is a link');
+    assert.equal(link.type, 'button');
+    assert.equal(link.textContent, 'sign in with ChatGPT');
+    assert.equal(factsOf(hero).textContent, 'Or sign in with ChatGPT.');
+  }
+  const link = factsOf(heroOf(document, 0)).querySelector('button');
+  render();
+  assert.equal(factsOf(heroOf(document, 0)).querySelector('button'), link, 'the same hint keeps its link node');
+  state.modelList.data = [{ id: 'fit:3b' }];
+  render();
+  assert.equal(factsOf(heroOf(document, 0)).querySelector('button'), null);
+});
+
+test('dispose removes the project-change subscription', (t) => {
+  const { document, pipelines, projects } = projectHarness(t, { loaded: false });
+  pipelines.forEach((pipeline) => pipeline.renderHero());
+  assert.equal(projects.listeners.size, 2, 'one subscription per pane');
+  pipelines.forEach((pipeline) => pipeline.dispose());
+  assert.equal(projects.listeners.size, 0);
+  projects.loaded = true;
+  projects.fire();
+  assert.equal(heroOf(document, 0).querySelector('.hero-title').textContent, 'New chat', 'no render after dispose');
+});
+
+test('neither hero in index.html carries the retired avatar, and both start on "New chat"', () => {
+  const page = new JSDOM(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8'));
+  const document = page.window.document;
+  const heroes = [document.getElementById('heroStage'), document.getElementById('chatPaneTemplate').content.querySelector('.hero-stage')];
+  for (const hero of heroes) {
+    assert.equal(hero.querySelector('[class*="avatar"], [id*="Avatar"]'), null);
+    assert.equal(hero.querySelector('.hero-title').textContent, 'New chat');
+    assert.equal(hero.querySelector('.hero-title').dataset.i18n, 'hero.ready.title');
+    assert.equal(hero.querySelector('.hero-subtitle').textContent, '');
+    assert.equal(hero.querySelector('.hero-subtitle').hasAttribute('data-i18n'), false);
+  }
+  page.window.close();
 });
 
 function sidebarHarness(t, headerAction = true) {

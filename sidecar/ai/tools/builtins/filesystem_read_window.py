@@ -24,6 +24,58 @@ MAX_PAGINATED_OUTPUT_BYTES = MAX_READ_BYTES
 # stops at whole lines inside this budget and says where to continue instead;
 # the rest of the 16,000 is headroom for the header.
 READ_OUTPUT_CHAR_BUDGET = 15_000
+# A selected line longer than this is returned clipped, with its true length.
+READ_FILE_MAX_LINE_CHARS = 2000
+# Four bytes cover any UTF-8 character, so this prefix always holds the first
+# READ_FILE_MAX_LINE_CHARS characters of a line however long the line is.
+_LINE_PREFIX_BYTES = READ_FILE_MAX_LINE_CHARS * 4
+_UTF8_CONTINUATION = bytes(range(0x80, 0xC0))
+
+
+class ClippedLine(str):
+    """A line cut to READ_FILE_MAX_LINE_CHARS; the type is how the header counts them."""
+
+
+def _clipped_line(head: str, true_chars: int, terminator: str) -> ClippedLine:
+    return ClippedLine(f"{head} [line clipped: {true_chars} chars]{terminator}")
+
+
+def clip_long_line(line: str) -> str:
+    """Return ``line`` unchanged, or clipped with its true length when it is too long."""
+    body = line.rstrip("\r\n")
+    if isinstance(line, ClippedLine) or len(body) <= READ_FILE_MAX_LINE_CHARS:
+        return line
+    return _clipped_line(body[:READ_FILE_MAX_LINE_CHARS], len(body), line[len(body) :])
+
+
+class StreamedLineBuilder:
+    """Builds one line from byte pieces while keeping only a prefix of it.
+
+    The streaming read feeds a line's bytes chunk by chunk, so a 1.7 MB single-line
+    file never sits in memory. ``finish`` returns the line text, clipped like
+    ``clip_long_line``. Characters are counted by UTF-8 lead bytes, so a character
+    split across two chunks counts once.
+    """
+
+    def __init__(self) -> None:
+        self._prefix = bytearray()
+        self._chars = 0
+
+    def feed(self, piece: bytes) -> None:
+        self._chars += len(piece.translate(None, _UTF8_CONTINUATION))
+        room = _LINE_PREFIX_BYTES - len(self._prefix)
+        if room > 0:
+            self._prefix += piece[:room]
+
+    def finish(self, terminator: bytes = b"") -> str:
+        chars, prefix = self._chars, bytes(self._prefix)
+        self._prefix.clear()
+        self._chars = 0
+        end = terminator.decode("utf-8")
+        if chars <= READ_FILE_MAX_LINE_CHARS:
+            return prefix.decode("utf-8") + end
+        head = prefix.decode("utf-8", errors="ignore")[:READ_FILE_MAX_LINE_CHARS]
+        return _clipped_line(head, chars, end)
 
 
 def build_read_window_result(  # noqa: PLR0913 - keyword-only result fields.
@@ -41,7 +93,10 @@ def build_read_window_result(  # noqa: PLR0913 - keyword-only result fields.
     encoding: str = "utf-8",
     whole_file_read: bool = False,
 ) -> ToolHandlerResult:
-    selected_lines, truncated_by_budget = _fit_output_budget(selected_lines)
+    selected_lines, truncated_by_budget = _fit_output_budget(
+        [clip_long_line(line) for line in selected_lines]
+    )
+    clipped_line_count = sum(isinstance(line, ClippedLine) for line in selected_lines)
     returned_line_count = len(selected_lines)
     returned_line_start = (offset + 1) if selected_lines else None
     returned_line_end = (offset + returned_line_count) if selected_lines else None
@@ -52,8 +107,10 @@ def build_read_window_result(  # noqa: PLR0913 - keyword-only result fields.
     total_label = str(total_lines) if totals_known else f"at least {total_lines}"
     header_lines = [
         f"path: {relative_path}",
-        f"requested: offset={offset}, limit={requested_limit}",
-        f"returned: lines {returned_range} of {total_label}",
+        f"requested: offset={offset}, limit={requested_limit} "
+        f"(offset is 0-based; first line returned is {offset + 1})",
+        f"returned: lines {returned_range} of {total_label}"
+        + _clipped_label(clipped_line_count),
     ]
     if not totals_known:
         header_lines.append("totals_known: false; stopped after the requested window")
@@ -81,6 +138,7 @@ def build_read_window_result(  # noqa: PLR0913 - keyword-only result fields.
             totals_known
             and offset == 0
             and not truncated_by_bytes
+            and not clipped_line_count
             and returned_line_count == total_lines
         )
     )
@@ -108,11 +166,17 @@ def build_read_window_result(  # noqa: PLR0913 - keyword-only result fields.
         "truncated_by_output_budget": truncated_by_budget,
         "read_snapshot": snapshot.to_metadata(),
     }
-    if whole_file_read and truncated_by_budget:
+    if whole_file_read and (truncated_by_budget or clipped_line_count):
         # A full snapshot whose text the model only partly saw: the same flag
         # the router sets when it cuts a full read (tool_execution_outcomes).
         metadata["content_display_truncated"] = True
     return ToolHandlerResult(output=output, success=True, metadata=metadata)
+
+
+def _clipped_label(count: int) -> str:
+    if not count:
+        return ""
+    return f", {count} long line{'' if count == 1 else 's'} clipped"
 
 
 def _fit_output_budget(lines: list[str]) -> tuple[list[str], bool]:

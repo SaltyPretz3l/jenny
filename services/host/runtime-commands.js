@@ -17,12 +17,53 @@ function applicationFailure(value, command) {
     : /stale|conflict|not_found/.test(reason) ? 'conflict' : 'unavailable', reason, command.request_id);
 }
 function createRuntimeCommandDispatcher({ applicationService: app, authorization, transaction, result } = {}) {
+  // Slice 3-2: `allows` is the router's per-row check through the one authorize
+  // function (a dispatcher built without it sees nothing); `teamHost` turns on
+  // the read-path filters, which the single-owner host never runs.
   const { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity,
-    trustedAuthor = () => undefined } = authorization;
+    trustedAuthor = () => undefined, allows = () => false, teamHost = false } = authorization;
   const { runReceipt } = transaction;
   const { bumpRevision, publish, trustedChatOptions } = result;
-  function ownedWork(command) {
-    const detail = app.getWork({ work_id: command.params.work_id });
+  const sees = (command, context, sessionId) => allows(command, context, 'session.read',
+    { kind: 'session', id: typeof sessionId === 'string' ? sessionId : '' });
+  // Client-chosen scope ids in a snapshot request are checked like any other id.
+  function snapshotScopeFailure(command, context) {
+    const { session_id: sessionId, project_id: projectId } = command.params || {};
+    if ((sessionId !== undefined && !sees(command, context, sessionId)) || (projectId !== undefined
+      && !allows(command, context, 'project.read', { kind: 'project', id: typeof projectId === 'string' ? projectId : '' }))) {
+      return hostFailure('forbidden', 'team_not_found', command.request_id);
+    }
+    return null;
+  }
+  // Team host: no id, title, count or state from work the caller cannot see. The
+  // lane and resource counts are host-wide, so they go; an unscoped cursor's
+  // offset and a Runs row's queue position count hidden rows, so they go.
+  // `truncated` passes through: hidden rows may have used the window.
+  function scopeSnapshot(value, command, context) {
+    const rows = Array.isArray(value.work) ? value.work : [];
+    const work = rows.filter((row) => sees(command, context, row?.session_id)).map((row) => {
+      const blocking = row.admission_wait?.blocking_session_id;
+      const shown = blocking && !sees(command, context, blocking)
+        ? { ...row, admission_wait: { ...row.admission_wait, blocking_session_id: null } } : row;
+      return Object.hasOwn(shown, 'queue_position') ? { ...shown, queue_position: null } : shown;
+    });
+    const scoped = typeof command.params?.session_id === 'string';
+    return { ...value, lanes: { ...value.lanes, counts: null }, resources: { ...value.resources, counts: null }, work,
+      next_cursor: scoped ? value.next_cursor ?? null : null };
+  }
+  // getWork and getResult: the work is read once and shared. On a team host,
+  // work in a conversation the caller cannot see answers exactly as the runtime
+  // answers work that does not exist.
+  function inspectWork(method, command, context) {
+    const detail = teamHost || command.session_id ? app.getWork({ work_id: command.params.work_id }) : null;
+    if (teamHost && !sees(command, context, detail?.work?.session_id)) {
+      return { ok: false, error: { reason: method === 'getWork' ? 'runtime_work_not_found' : 'runtime_result_unavailable' } };
+    }
+    if (command.session_id) ownedWork(command, detail);
+    const sameRead = method === 'getWork' && detail && Object.keys(command.params).length === 1;
+    return sameRead ? detail : app[method](command.params);
+  }
+  function ownedWork(command, detail = app.getWork({ work_id: command.params.work_id })) {
     if (detail?.work?.session_id !== command.session_id) {
       const error = new Error('runtime_work_session_mismatch');
       error.routerFailure = hostFailure('forbidden', 'runtime_work_session_mismatch', command.request_id);
@@ -36,9 +77,13 @@ function createRuntimeCommandDispatcher({ applicationService: app, authorization
     const method = command.operation.slice('sessionRuntime.'.length);
     if (!RUNTIME_LEASE_OPERATIONS.has(command.operation) && !RUNTIME_GLOBAL_MUTATIONS.has(command.operation)) {
       try {
-        if (method !== 'getSnapshot' && command.session_id) ownedWork(command);
-        const value = app[method](command.params);
-        return value?.ok ? { ok: true, runtime: value } : applicationFailure(value, command);
+        if (method === 'getSnapshot') {
+          const hidden = snapshotScopeFailure(command, context);
+          if (hidden) return hidden;
+        }
+        const value = method === 'getSnapshot' ? app.getSnapshot(command.params) : inspectWork(method, command, context);
+        if (!value?.ok) return applicationFailure(value, command);
+        return { ok: true, runtime: teamHost && method === 'getSnapshot' ? scopeSnapshot(value, command, context) : value };
       } catch (error) {
         return error.routerFailure || hostFailure('unavailable', 'runtime_inspection_unavailable', command.request_id);
       }

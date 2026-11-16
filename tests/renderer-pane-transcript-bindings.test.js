@@ -18,8 +18,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp } = require('./helpers/renderer-shell-harness');
 const { withExactApproval } = require('./helpers/exact-approval-fixtures');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
+const { flushFrames } = require('./helpers/replay-chat-stream');
+
+// Every wait names the state it stands for and fails the case with a message
+// when it never arrives; `settle` then lets the frame-scheduled renders that
+// state kicked off finish, so a "nothing else happened" assertion still reads
+// a quiet DOM.
+const waitFor = (window, predicate, message) => waitForUiState(window, predicate, {
+  timeoutMs: 20_000, stepMs: 10, message: `timed out waiting for ${message}`,
+});
+const settle = (window) => flushFrames(window, 2);
 
 function buildSummary(id, title) {
   return {
@@ -82,11 +93,15 @@ async function openTwoPanes(t, extraShell = {}, { beforeOpen } = {}) {
   t.after(() => app.dispose());
   const { window } = app;
   const doc = window.document;
-  await waitForUi(window, 150);
+  await waitFor(window, () => doc.querySelector('#chatTimeline [data-message-id="assistant_session-a"]')
+    && doc.querySelector('.workspace-rail-tab[data-session-id="session-b"]'), 'pane 0 to paint session-a and the rail to list session-b');
+  await settle(window);
   const before = typeof beforeOpen === 'function' ? beforeOpen(window) : null;
   const composition = window.rendererAppPaneComposition.getPaneComposition();
   assert.equal(composition.toggleSplit(), true, 'precondition: the chord opens session-b beside');
-  await waitForUi(window, 150);
+  await waitFor(window, () => composition.getPane(1)?.dom.chatTimeline.querySelector('[data-message-id="assistant_session-b"]'),
+    'pane 1 to mount and paint session-b');
+  await settle(window);
   const pane1 = composition.getPane(1);
   assert.ok(pane1, 'pane 1 is mounted');
   assert.equal(window.__rendererState.panes.panes[1].sessionId, 'session-b');
@@ -98,7 +113,8 @@ async function sendFromPaneOne(window, pane1, text) {
   pane1.dom.chatInput.value = text;
   pane1.dom.chatInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   pane1.sendButton.click();
-  await waitForUi(window, 60);
+  await waitFor(window, () => window.__rendererState.activeStreamId !== '', 'pane 1\'s send to start a stream');
+  await settle(window);
 }
 
 const streamIntoB = {
@@ -116,7 +132,8 @@ test('copy in pane 1 copies pane 1\'s message, not the focused pane\'s', async (
   const copy = pane1.dom.chatTimeline.querySelector('[data-message-action="copy"][data-message-id="assistant_session-b"]');
   assert.ok(copy, 'precondition: pane 1 renders a copy action for its assistant reply');
   copy.click();
-  await waitForUi(window, 40);
+  await waitFor(window, () => writes.length > 0, 'the clipboard write');
+  await settle(window);
   assert.equal(writes.length, 1, 'exactly one clipboard write');
   assert.match(writes[0], /Answer from pane one\./);
   assert.equal(window.__rendererState.currentSessionId, 'session-a', 'the copy never moved focus');
@@ -127,15 +144,15 @@ test('a tool row toggle in pane 1 expands pane 1\'s row and leaves pane 0\'s tim
   const { window, doc, pane1 } = await openTwoPanes(t, streamIntoB);
   const shell = window.jennyShell;
   await sendFromPaneOne(window, pane1, 'run a command');
-  const emit = async (payload) => {
-    await shell.__emitChat({ sessionId: 'session-b', streamId: 'stream-b', ...payload });
-    await waitForUi(window, 70);
-  };
+  const rowSelector = '[data-tool-call-id="call-b"].tool-call-row, [data-call-id="call-b"]';
+  const emit = (payload) => shell.__emitChat({ sessionId: 'session-b', streamId: 'stream-b', ...payload });
   await emit({ type: 'started' });
+  await settle(window);
   await emit({ type: 'tool_use', callId: 'call-b', toolName: 'run_command', summary: 'run_command node -v', input: { command: 'node -v' }, status: 'running' });
+  await waitFor(window, () => pane1.dom.chatTimeline.querySelector(rowSelector), 'pane 1 to render the running tool row');
   await emit({ type: 'tool_result', callId: 'call-b', toolName: 'run_command', input: { command: 'node -v' }, summary: 'run_command node -v',
     content: 'v22.0.0', isError: false, approvalState: 'auto', durationMs: 5, metadata: { exitCode: 0 } });
-  const rowSelector = '[data-tool-call-id="call-b"].tool-call-row, [data-call-id="call-b"]';
+  await settle(window);
   const row = pane1.dom.chatTimeline.querySelector(rowSelector);
   assert.ok(row, 'precondition: pane 1 renders the tool row');
   const toggle = row.querySelector('.tool-call-header, [data-tool-row-toggle]');
@@ -145,8 +162,10 @@ test('a tool row toggle in pane 1 expands pane 1\'s row and leaves pane 0\'s tim
   const pane0Timeline = doc.getElementById('chatTimeline');
   const before = pane0Timeline.innerHTML;
   toggle.click();
-  await waitForUi(window, 60);
-  const after = pane1.dom.chatTimeline.querySelector(rowSelector).querySelector('.tool-call-header, [data-tool-row-toggle]');
+  const toggleOf = () => pane1.dom.chatTimeline.querySelector(rowSelector)?.querySelector('.tool-call-header, [data-tool-row-toggle]');
+  await waitFor(window, () => toggleOf()?.getAttribute('aria-expanded') === 'true', 'pane 1\'s row to expand');
+  await settle(window);
+  const after = toggleOf();
   assert.equal(after.getAttribute('aria-expanded'), 'true', 'pane 1\'s row expanded');
   assert.equal(pane0Timeline.innerHTML, before, 'pane 0\'s timeline is byte-identical');
 });
@@ -160,20 +179,26 @@ test('an inline approval in pane 1 resolves pane 1\'s approval', async (t) => {
   const shell = window.jennyShell;
   await sendFromPaneOne(window, pane1, 'write a file');
   await shell.__emitChat({ type: 'started', sessionId: 'session-b', streamId: 'stream-b' });
+  await settle(window);
   const approvalNeeded = { type: 'tool_approval_needed', sessionId: 'session-b', streamId: 'stream-b',
     callId: 'call-write-b', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'b.txt', content: 'x' } };
   // Without the backend's exact presentation (a rehydrated approval's shape) pane 1 offers no Allow.
   await shell.__emitChat(approvalNeeded);
-  await waitForUi(window, 80);
+  await waitFor(window, () => pane1.dom.chatTimeline.querySelector('[data-approval-exact-unavailable="missing"]'),
+    'pane 1 to render the approval card without an exact presentation');
+  await settle(window);
   assert.equal(pane1.dom.chatTimeline.querySelector('.tool-approve-btn'), null, 'no Allow without the exact presentation');
   assert.ok(pane1.dom.chatTimeline.querySelector('[data-approval-exact-unavailable="missing"]'));
   await shell.__emitChat(withExactApproval(approvalNeeded));
-  await waitForUi(window, 80);
+  await waitFor(window, () => pane1.dom.chatTimeline.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)'),
+    'pane 1 to offer Allow once the exact presentation arrives');
+  await settle(window);
   assert.equal(doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), null, 'pane 0 shows no approval card');
   const allow = pane1.dom.chatTimeline.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)');
   assert.ok(allow, 'precondition: pane 1 renders the approval card');
   allow.click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => approveCalls.length > 0, 'the approval call');
+  await settle(window);
   assert.deepEqual(approveCalls, ['approval-b']);
   assert.equal(window.__rendererState.currentSessionId, 'session-a', 'the approval never moved focus');
 });
@@ -183,7 +208,8 @@ test('Enter in pane 1\'s composer sends to pane 1\'s session', async (t) => {
   pane1.dom.chatInput.value = 'enter from the side pane';
   pane1.dom.chatInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   pane1.dom.chatInput.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  await waitForUi(window, 60);
+  await waitFor(window, () => window.jennyShell.__state.chatCalls.length > 0, 'the Enter send to reach the chat bridge');
+  await settle(window);
   const chatCalls = window.jennyShell.__state.chatCalls;
   assert.equal(chatCalls.length, 1);
   assert.equal(chatCalls[0].sessionId, 'session-b');
@@ -214,7 +240,8 @@ test('after both panes mount, New chat, Home and the window keydown keep exactly
   const create = window.jennyShell.sessions.create;
   window.jennyShell.sessions.create = (...args) => { creates.push(args); return create(...args); };
   doc.getElementById('newChatButton').click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => creates.length > 0, 'the New chat click to create a session');
+  await settle(window);
   assert.equal(creates.length, 1, 'one click, one session');
 });
 
@@ -229,7 +256,8 @@ test('unmounting pane 1 releases every listener it registered on a node that out
   const layoutClose = doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close');
   assert.ok(layoutClose, 'precondition: pane 1 carries its close glyph');
   layoutClose.click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
+  await settle(window);
   tracker.restore();
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
   const outlives = (entry) => entry.target === window || entry.target === doc
@@ -249,7 +277,8 @@ test('closing pane 1 leaves pane 0\'s file-diff registry (expansion overrides) i
   assert.equal(fileDiff.registerFileDiffContext({ diffId: 'diff-a', sessionId: 'session-a', materialize: () => {}, expanded: true }), true);
   assert.equal(fileDiff.getFileDiffExpanded('diff-a'), true, 'precondition: pane 0 holds an expanded override');
   doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
+  await settle(window);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
   assert.equal(fileDiff.getFileDiffExpanded('diff-a'), true, 'pane 1\'s teardown did not clear the shared registry');
 });
@@ -263,14 +292,16 @@ test('selection in pane 1 mounts the action bar in pane 1\'s own host; an Esc ex
   const handle = pane1.dom.chatTimeline.querySelector('[data-select-message-id="assistant_session-b"]');
   assert.ok(handle, 'precondition: pane 1 renders the selection handle');
   handle.click();
-  await waitForUi(window, 40);
+  await waitFor(window, () => paneHost.querySelector('.selection-action-bar, [role="toolbar"]'), 'pane 1\'s action bar to mount');
+  await settle(window);
   assert.deepEqual(window.__rendererState.ui.selectedMessageIdsBySession.get('session-b') && [...window.__rendererState.ui.selectedMessageIdsBySession.get('session-b')], ['assistant_session-b'], 'pane 1 selected in its own session');
   assert.ok(paneHost.querySelector('.selection-action-bar, [role="toolbar"]'), 'the bar mounted in pane 1\'s host');
   assert.equal(paneHost.hidden, false);
   assert.equal(doc.getElementById('chatSelectionOverlayHost').children.length, 0, 'pane 0\'s host stays empty');
 
   doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  await waitForUi(window, 40);
+  await waitFor(window, () => window.__rendererState.ui.selectionModePaneId === null && paneHost.children.length === 0, 'Esc to exit selection mode and unmount the bar');
+  await settle(window);
   assert.equal(window.__rendererState.ui.selectionModePaneId, null);
   assert.equal(paneHost.children.length, 0, 'pane 1\'s bar unmounted with its mode');
   assert.equal(paneHost.hidden, true);
@@ -283,7 +314,8 @@ async function selectInPaneOne(window, composition, pane1) {
   const handle = pane1.dom.chatTimeline.querySelector('[data-select-message-id="assistant_session-b"]');
   assert.ok(handle, 'precondition: pane 1 renders the selection handle');
   handle.click();
-  await waitForUi(window, 40);
+  await waitFor(window, () => window.__rendererState.ui.selectedMessageIdsBySession.get('session-b')?.size > 0, 'pane 1 to record its selection');
+  await settle(window);
 }
 
 test('pane 1 selecting leaves pane 0\'s articles without selection markup', async (t) => {
@@ -292,7 +324,7 @@ test('pane 1 selecting leaves pane 0\'s articles without selection markup', asyn
   // Even a selection set recorded for pane 0's session renders nothing there.
   window.__rendererState.ui.selectedMessageIdsBySession.set('session-a', new Set(['assistant_session-a']));
   composition.renderSessionPane('session-a', 'messages');
-  await waitForUi(window, 60);
+  await settle(window);
   const paneZeroTimeline = doc.getElementById('chatTimeline');
   assert.ok(paneZeroTimeline.querySelector('[data-message-id="assistant_session-a"]'), 'precondition: pane 0 renders its transcript');
   assert.equal(paneZeroTimeline.querySelector('[data-select-message-id], [data-selected]'), null, 'no checkbox or data-selected in pane 0');
@@ -312,7 +344,8 @@ test('a send in pane 0 leaves pane 1 selecting', async (t) => {
   input.value = 'hello from pane zero';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   doc.getElementById('sendButton').click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => started.includes('session-a'), 'pane 0\'s send to start a stream in session-a');
+  await settle(window);
   assert.ok(started.includes('session-a'), 'precondition: pane 0 sent into session-a');
   assert.equal(window.__rendererState.ui.selectionModePaneId, 1, 'pane 0\'s stream start does not exit pane 1\'s mode');
   assert.deepEqual([...(window.__rendererState.ui.selectedMessageIdsBySession.get('session-b') || [])], ['assistant_session-b']);
@@ -323,7 +356,8 @@ test('closing pane 1 while it selects exits the mode and leaves no bar', async (
   const { window, doc, composition, pane1 } = await openTwoPanes(t);
   await selectInPaneOne(window, composition, pane1);
   doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
+  await settle(window);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
   assert.equal(window.__rendererState.ui.selectionModePaneId, null, 'the owner\'s dispose exited the mode');
   assert.equal(doc.getElementById('chatSelectionOverlayHost').children.length, 0, 'pane 0 mounts no bar');
@@ -348,7 +382,9 @@ test('Shift+Click on a pane 1 message enters select mode in pane 1 only; a secon
   const { window, doc, pane1 } = await openTwoPanes(t);
   const ui = window.__rendererState.ui;
   const down = shiftClickIn(window, messageBody(pane1.dom.chatTimeline, 'user_session-b'));
-  await waitForUi(window, 60);
+  await waitFor(window, () => ui.selectionModePaneId === 1 && pane1.root.querySelector('[data-chat-node="chatSelectionOverlayHost"] .selection-action-bar'),
+    'Shift+Click to enter select mode in pane 1');
+  await settle(window);
   assert.equal(down.defaultPrevented, true, 'no native text selection starts');
   assert.equal(ui.selectionModePaneId, 1, 'pane 1 owns the mode');
   assert.deepEqual([...ui.selectedMessageIdsBySession.get('session-b')], ['user_session-b']);
@@ -358,11 +394,13 @@ test('Shift+Click on a pane 1 message enters select mode in pane 1 only; a secon
   assert.ok(pane1.root.querySelector('[data-chat-node="chatSelectionOverlayHost"] .selection-action-bar'), 'pane 1 mounts its bar');
 
   shiftClickIn(window, messageBody(pane1.dom.chatTimeline, 'assistant_session-b'));
-  await waitForUi(window, 60);
+  await waitFor(window, () => ui.selectedMessageIdsBySession.get('session-b')?.size === 2, 'the second Shift+Click to extend the range');
+  await settle(window);
   assert.deepEqual([...ui.selectedMessageIdsBySession.get('session-b')].sort(), ['assistant_session-b', 'user_session-b'], 'the range extends');
 
   doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  await waitForUi(window, 40);
+  await waitFor(window, () => ui.selectionModePaneId === null && !pane1.dom.chatTimeline.querySelector('[data-select-message-id]'), 'Esc to exit select mode');
+  await settle(window);
   assert.equal(ui.selectionModePaneId, null, 'Esc exits');
   assert.equal(pane1.dom.chatTimeline.querySelector('[data-select-message-id]'), null);
 });
@@ -378,7 +416,7 @@ test('Shift+Click on a message action button or link does not enter select mode'
   link.textContent = 'a link';
   messageBody(pane1.dom.chatTimeline, 'assistant_session-b').appendChild(link);
   const linkDown = shiftClickIn(window, link);
-  await waitForUi(window, 40);
+  await flushFrames(window, 3);
   assert.equal(down.defaultPrevented, false);
   assert.equal(linkDown.defaultPrevented, false);
   assert.equal(window.__rendererState.ui.selectionModePaneId, null);

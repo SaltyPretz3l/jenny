@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "updatedAt": "2026-11-12",
+  "_comment": "PROVENANCE MANIFEST for the companion files Jenny can install beside a GGUF chat model: its MTP drafter (mtp-*.gguf) and its vision projector (mmproj*.gguf). Nothing here is downloaded unless the user asks. A file comes from https://huggingface.co/<repo>/resolve/<revision>/<repoPath>, derived from those three fields and never stored; the revision is a pinned commit, and the size and sha256 are verified before the file is used. It is saved as saveAs, a name the launch rules pair with the model in any folder. Refresh an entry with scripts/dev/refresh_gguf_companions.py and have a person review it. How match reads: architecture must equal the model header's general.architecture; then a header base-model repo (general.base_model.N.repo_url) listed in baseModelRepos, or a general.basename listed in basenames, picks the entry; with no readable header the file name's family (modelFamily) must be in fileFamilies. Header strings are only compared, never used to build a path. A drafter is valid only for a family the acceleration catalog lists as mtp yes with a separate drafter. gainOverBuiltInPct and vramOverBuiltInMb are the measured speed-up and extra VRAM of the separate drafter over the MTP head built into the model (RTX 5090, llama.cpp b12098, 2026-11-12); an entry without a measurement is not offered to a model that already has a built-in head. vramMb is the file's estimated VRAM cost.",
+  "entries": [
+    {
+      "id": "qwen3.8-27b",
+      "family": "qwen38",
+      "match": {
+        "architecture": "qwen35",
+        "baseModelRepos": [
+          "Qwen/Qwen3.8-27B"
+        ],
+        "basenames": [
+          "Qwen3.8-27B"
+        ],
+        "fileFamilies": [
+          "qwen3.8-27b"
+        ]
+      },
+      "drafter": {
+        "repo": "unsloth/Qwen3.8-27B-GGUF",
+        "revision": "4af51b3542f775b0a8e4b310bfb3f17e01c306c9",
+        "repoPath": "MTP/mtp-Qwen3.8-27B-Q4_0.gguf",
+        "saveAs": "mtp-Qwen3.8-27B-Q4_0.gguf",
+        "bytes": 1369590656,
+        "sha256": "50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e",
+        "vramMb": 3072,
+        "gainOverBuiltInPct": 10.8,
+        "vramOverBuiltInMb": 800
+      },
+      "projector": {
+        "repo": "unsloth/Qwen3.8-27B-GGUF",
+        "revision": "4af51b3542f775b0a8e4b310bfb3f17e01c306c9",
+        "repoPath": "mmproj-F16.gguf",
+        "saveAs": "mmproj-Qwen3.8-27B-F16.gguf",
+        "bytes": 927607488,
+        "sha256": "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e",
+        "vramMb": 1100
+      }
+    },
+    {
+      "id": "gemma-4-12b-it",
+      "family": "gemma4",
+      "match": {
+        "architecture": "gemma4",
+        "baseModelRepos": [
+          "google/gemma-4-12B-it-qat-q4_0-unquantized"
+        ],
+        "basenames": [
+          "gemma-4-12B-it"
+        ],
+        "fileFamilies": [
+          "gemma-4-12b-it-qat",
+          "gemma-4-12b-it"
+        ]
+      },
+      "drafter": {
+        "repo": "unsloth/gemma-4-12B-it-qat-GGUF",
+        "revision": "980b060c40a8539ac159e0501a3e0f66a6365af3",
+        "repoPath": "mtp-gemma-4-12B-it.gguf",
+        "saveAs": "mtp-gemma-4-12B-it.gguf",
+        "bytes": 253708800,
+        "sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+        "vramMb": 512
+      },
+      "projector": {
+        "repo": "unsloth/gemma-4-12B-it-qat-GGUF",
+        "revision": "980b060c40a8539ac159e0501a3e0f66a6365af3",
+        "repoPath": "mmproj-F16.gguf",
+        "saveAs": "mmproj-gemma-4-12B-it-F16.gguf",
+        "bytes": 175115840,
+        "sha256": "ecc4e93128da8363b7dbf2193eab98cf1142353f52ceaa0c95c0872997aaadd3",
+        "vramMb": 400
+      }
+    },
+    {
+      "id": "gemma-4-31b-it",
+      "family": "gemma4",
+      "match": {
+        "architecture": "gemma4",
+        "baseModelRepos": [
+          "google/gemma-4-31B-it"
+        ],
+        "basenames": [
+          "Gemma-4-31B-It"
+        ],
+        "fileFamilies": [
+          "gemma-4-31b-it"
+        ]
+      },
+      "drafter": {
+        "repo": "unsloth/gemma-4-31B-it-GGUF",
+        "revision": "c1ac76e99d5513b141e8adde7288b85c3f9c32ec",
+        "repoPath": "mtp-gemma-4-31B-it.gguf",
+        "saveAs": "mtp-gemma-4-31B-it.gguf",
+        "bytes": 514687104,
+        "sha256": "5ae8b0117bed601e8924c6305bd5b0585de361d51f0e77091bcb4252cf1f27de",
+        "vramMb": 512
+      },
+      "projector": {
+        "repo": "unsloth/gemma-4-31B-it-GGUF",
+        "revision": "c1ac76e99d5513b141e8adde7288b85c3f9c32ec",
+        "repoPath": "mmproj-F16.gguf",
+        "saveAs": "mmproj-gemma-4-31B-it-F16.gguf",
+        "bytes": 1198957024,
+        "sha256": "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb",
+        "vramMb": 1400
+      }
+    },
+    {
+      "id": "gemma-4-e4b-it",
+      "family": "gemma4",
+      "match": {
+        "architecture": "gemma4",
+        "baseModelRepos": [
+          "google/gemma-4-E4B-it"
+        ],
+        "basenames": [
+          "Gemma-4-E4B-It"
+        ],
+        "fileFamilies": [
+          "gemma-4-e4b-it"
+        ]
+      },
+      "drafter": {
+        "repo": "unsloth/gemma-4-E4B-it-GGUF",
+        "revision": "bfc15c382204943c3a8fff0c750b94ae2364d7a3",
+        "repoPath": "mtp-gemma-4-E4B-it.gguf",
+        "saveAs": "mtp-gemma-4-E4B-it.gguf",
+        "bytes": 98653248,
+        "sha256": "b6a723115efa510d3b3215db1e26790dae84cd08c2134a764f3d194f1f0c3376",
+        "vramMb": 512
+      },
+      "projector": {
+        "repo": "unsloth/gemma-4-E4B-it-GGUF",
+        "revision": "bfc15c382204943c3a8fff0c750b94ae2364d7a3",
+        "repoPath": "mmproj-F16.gguf",
+        "saveAs": "mmproj-gemma-4-E4B-it-F16.gguf",
+        "bytes": 990372672,
+        "sha256": "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51",
+        "vramMb": 1200
+      }
+    }
+  ]
+}

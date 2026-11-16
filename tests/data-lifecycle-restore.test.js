@@ -72,6 +72,8 @@ async function createPlainArchive(root, createdAt = new Date('2026-08-03T00:00:0
   return { destinationRoot, archivePath: result.archivePath };
 }
 
+const BOARD = 'board_00000000-0000-4000-8000-000000000001';
+const PICTURE = 'a'.repeat(64);
 async function createNotesArchive(root) {
   const destinationRoot = path.join(root, 'Jenny Archives');
   const noteBytes = Buffer.from(JSON.stringify({ version: 1, projectId: 'project_abc', text: 'kept', revision: 1, updatedAt: '', updatedBy: 'user', journal: [] }));
@@ -85,13 +87,24 @@ async function createNotesArchive(root) {
       { logicalPath: 'notes/nope.json', category: 'memory', data: noteBytes },
       // Nested under notes/: skipped.
       { logicalPath: 'notes/deeper/project_abc.json', category: 'memory', data: noteBytes },
+      { logicalPath: `boards/${BOARD}.json`, category: 'boards', data: noteBytes },
+      { logicalPath: 'boards/index.json', category: 'boards', data: noteBytes },
+      // Not a live board file name, and nested: skipped.
+      { logicalPath: `boards/${BOARD}.json.1760000000000.0123456789ab.tmp`, category: 'boards', data: noteBytes },
+      { logicalPath: `boards/deeper/${BOARD}.json`, category: 'boards', data: noteBytes },
+      // Board pictures: a <sha256>.<ext> name and the index are restored; a temp, another name or a nested one is not.
+      { logicalPath: `board-assets/${PICTURE}.png`, category: 'boards', data: noteBytes },
+      { logicalPath: 'board-assets/unreferenced.json', category: 'boards', data: noteBytes },
+      { logicalPath: `board-assets/${PICTURE}.png.1760000000000.0123456789ab.tmp`, category: 'boards', data: noteBytes },
+      { logicalPath: 'board-assets/picture.svg', category: 'boards', data: noteBytes },
+      { logicalPath: `board-assets/deeper/${PICTURE}.png`, category: 'boards', data: noteBytes },
     ],
   });
   return { destinationRoot, archivePath: result.archivePath };
 }
 
 describe('restore service', () => {
-  it('restores per-project notes into project-notes/ and skips entries that are not note files', async () => {
+  it('restores per-project notes into project-notes/ and boards into boards/, skipping entries that are not their files', async () => {
     const root = makeTempRoot();
     try {
       const userDataPath = path.join(root, 'profile');
@@ -106,6 +119,8 @@ describe('restore service', () => {
       assert.equal(fs.existsSync(path.join(userDataPath, 'project-notes', 'nope.json')), false);
       assert.equal(fs.existsSync(path.join(userDataPath, 'project-notes', 'deeper')), false);
       assert.equal(fs.existsSync(path.join(userDataPath, 'notes')), false);
+      assert.deepEqual(fs.readdirSync(path.join(userDataPath, 'boards')).sort(), [`${BOARD}.json`, 'index.json']);
+      assert.deepEqual(fs.readdirSync(path.join(userDataPath, 'board-assets')).sort(), [`${PICTURE}.png`, 'unreferenced.json']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

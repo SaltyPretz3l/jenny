@@ -72,12 +72,13 @@ test('getSettingsFieldCopy returns entries by id and null for unknown ids', () =
 
 test('chat UI settings fields carry searchable copy in their owning sections', () => {
   const expectedSections = {
-    uiLanguageSelect: 'appearance',
-    safetyModeSelect: 'tools',
-    unattendedGuardMinutesInput: 'tools',
-    autoApproveStreakCapInput: 'tools',
-    digestQuietStartSelect: 'jennyChat',
-    digestQuietEndSelect: 'jennyChat',
+    uiLanguageSelect: 'general',
+    safetyModeSelect: 'permissions',
+    defaultRunModeSelect: 'permissions',
+    unattendedGuardMinutesInput: 'permissions',
+    autoApproveStreakCapInput: 'permissions',
+    digestQuietStartSelect: 'notifications',
+    digestQuietEndSelect: 'notifications',
     primaryDigestsToggle: 'jennyChat',
   };
   for (const [id, sectionId] of Object.entries(expectedSections)) {

@@ -3,7 +3,9 @@
  *
  * Modal dialog primitive for surfacing read-only help content (keyboard
  * shortcut catalog, about pane, etc.). Caller passes a title and a
- * pre-composed bodyHtml string. The primitive owns:
+ * pre-composed bodyHtml string. Optional extensions: headerHtml (trusted markup
+ * between title and close), size:'wide', initialFocusSelector and onRender.
+ * The primitive owns:
  *   - the scrim + dialog container
  *   - the close `<button>` (so this remains the inventory file holding the
  *     raw HTML primitive)
@@ -130,6 +132,10 @@
       var titleId = sanitizeToken(conf.titleId, hostId + '-title');
       var bodyHtml = typeof conf.bodyHtml === 'string' ? conf.bodyHtml : '';
       var closeLabel = String(conf.closeLabel || 'Close').trim() || 'Close';
+      var headerHtml = typeof conf.headerHtml === 'string' ? conf.headerHtml : '';
+      var wide = conf.size === 'wide';
+      var initialFocusSelector = typeof conf.initialFocusSelector === 'string' ? conf.initialFocusSelector : '';
+      var onRender = typeof conf.onRender === 'function' ? conf.onRender : null;
       currentOnClose = typeof conf.onClose === 'function' ? conf.onClose : null;
 
       var host = ensureHost();
@@ -137,7 +143,7 @@
       savedFocusEl = doc.activeElement;
 
       host.innerHTML = '<div'
-        + ' class="inv-help-overlay-dialog"'
+        + (wide ? ' class="inv-help-overlay-dialog inv-help-overlay-dialog--wide"' : ' class="inv-help-overlay-dialog"')
         + ' role="dialog"'
         + ' aria-modal="true"'
         + ' aria-labelledby="' + escapeHtml(titleId) + '"'
@@ -147,6 +153,8 @@
         + '<h2 class="inv-help-overlay-title" id="' + escapeHtml(titleId) + '">'
         + escapeHtml(titleText)
         + '</h2>'
+        // headerHtml is trusted, caller-escaped markup (e.g. a search field).
+        + (headerHtml ? '<div class="inv-help-overlay-header-extra">' + headerHtml + '</div>' : '')
         + '<button'
         + ' type="button"'
         + ' class="inv-help-overlay-close"'
@@ -189,8 +197,17 @@
         doc.addEventListener('keydown', handleKeydown, true);
       }
 
+      if (onRender) {
+        try { onRender(dialogEl); } catch (_e) { /* swallow */ }
+      }
+
       try {
-        if (closeButtonEl) closeButtonEl.focus();
+        var initialTarget = null;
+        if (initialFocusSelector && dialogEl) {
+          try { initialTarget = dialogEl.querySelector(initialFocusSelector); } catch (_e) { initialTarget = null; }
+        }
+        var focusTarget = initialTarget || closeButtonEl;
+        if (focusTarget) focusTarget.focus();
       } catch (_e) { /* ignore */ }
     }
 

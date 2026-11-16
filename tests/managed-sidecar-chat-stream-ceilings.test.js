@@ -15,6 +15,8 @@ const assert = require('node:assert/strict');
 const {
   buildAutomaticCompactionSendContext,
   createChatStreamWatchdog,
+  createModelWaitClock,
+  createModelWaitNotice,
   resolveChatStreamCeilings,
 } = require('../services/backend/managed-sidecar-chat-helpers');
 const {
@@ -61,10 +63,10 @@ test('local and unknown engine types use finite local ceilings', () => {
     const ceilings = resolveChatStreamCeilings(engineType);
     assert.deepEqual(
       ceilings,
-      // 2026-09-30: default local working time is 3600s. Idle caps at the
+      // 2026-11-11: default local working time is 7200s. Idle caps at the
       // 660s activity ceiling + 60s margin so hang detection stays in minutes;
       // only the absolute backstop scales with the wall budget.
-      { idleTimeoutMs: 720_000, absoluteTimeoutMs: 3_660_000 },
+      { idleTimeoutMs: 720_000, absoluteTimeoutMs: 7_260_000 },
       `engineType=${String(engineType)}`
     );
   }
@@ -303,4 +305,139 @@ test('cloud ceilings stay strictly wider than the sidecar cloud budgets', () => 
   assert.ok(cloud.absoluteTimeoutMs > SIDECAR_CLOUD_WALL_MS);
   // Idle watchdog must outlast a single fully-silent cloud tool call.
   assert.ok(cloud.idleTimeoutMs > SIDECAR_CLOUD_TOOL_TIMEOUT_MS);
+});
+
+test('a model request waiting for the lane parks the clocks until it is granted or the asking stops (row 136)', () => {
+  const events = [];
+  const timers = [];
+  const clock = createModelWaitClock({
+    suspend: () => { events.push('suspend'); return () => events.push('resume'); },
+    livenessMs: 15_000,
+    setTimer: (callback, delay) => {
+      const handle = { callback, delay, cleared: false, unref() {} };
+      timers.push(handle);
+      return handle;
+    },
+    clearTimer: (handle) => { handle.cleared = true; },
+  });
+  const admit = { kind: 'inference', phase: 'admit' };
+  const held = { status: 'waiting', reason: 'lane_capacity' };
+  assert.equal(clock.note(admit, held), held);
+  clock.note(admit, held);
+  // One pause covers the whole wait; each poll only renews the liveness timer.
+  assert.deepEqual(events, ['suspend']);
+  assert.deepEqual(timers.filter((handle) => !handle.cleared).map((handle) => handle.delay), [15_000]);
+  // Only this request's next admit answer ends it.
+  clock.note({ kind: 'tool', phase: 'admit' }, { status: 'granted' });
+  clock.note({ kind: 'inference', phase: 'settle' }, { status: 'settled' });
+  assert.deepEqual(events, ['suspend']);
+  clock.note(admit, { status: 'granted' });
+  assert.deepEqual(events, ['suspend', 'resume']);
+  assert.equal(timers.every((handle) => handle.cleared), true);
+  // The sidecar stops asking (it died or gave up): the clocks come back by themselves.
+  clock.note(admit, held);
+  timers.at(-1).callback();
+  assert.deepEqual(events, ['suspend', 'resume', 'suspend', 'resume']);
+  // A wait the sidecar does not poll through is never parked.
+  clock.note(admit, { status: 'waiting', reason: 'lane_quarantined' });
+  assert.equal(events.length, 4);
+  // The end of the request resumes once, and a late answer parks nothing on a finished turn.
+  clock.note(admit, held);
+  clock.close();
+  clock.close();
+  assert.equal(clock.note(admit, held), held);
+  assert.deepEqual(events.slice(4), ['suspend', 'resume']);
+  // A clock that cannot be parked or resumed never loses the admission answer.
+  const broken = createModelWaitClock({ suspend: () => { throw new Error('transport gone'); } });
+  assert.equal(broken.note(admit, held), held);
+  const granted = { status: 'granted' };
+  const stuck = createModelWaitClock({ suspend: () => () => { throw new Error('watchdog gone'); },
+    setTimer: () => ({ unref() {} }), clearTimer: () => {} });
+  stuck.note(admit, held);
+  assert.equal(stuck.note(admit, granted), granted);
+});
+
+test('a model wait is announced after the notice delay, again when its reason changes, and when it ends (row 136)', () => {
+  const told = [];
+  let nowMs = 0;
+  let wait = { blockingSessionId: 'chat_a', heldForFirst: false, firstSetBy: '' };
+  const make = () => createModelWaitClock({
+    suspend: () => () => {}, setTimer: () => ({ unref() {} }), clearTimer: () => {},
+    now: () => nowMs, describe: () => wait, announce: (value) => told.push(value),
+  });
+  const clock = make();
+  const admit = { kind: 'inference', phase: 'admit' };
+  const held = { status: 'waiting', reason: 'lane_capacity' };
+  clock.note(admit, held);
+  nowMs = 2_999;
+  clock.note(admit, held);
+  // A handover that takes a moment says nothing, and ends without a notice.
+  clock.note(admit, { status: 'granted' });
+  assert.deepEqual(told, []);
+  nowMs = 10_000;
+  clock.note(admit, held);
+  nowMs = 13_000;
+  clock.note(admit, held);
+  clock.note(admit, held);
+  assert.deepEqual(told, [wait]);
+  wait = { blockingSessionId: 'chat_a', heldForFirst: true, firstSetBy: 'user' };
+  clock.note(admit, held);
+  assert.deepEqual(told.at(-1), wait);
+  clock.note(admit, { status: 'granted' });
+  assert.deepEqual(told.map((value) => value && value.heldForFirst), [false, true, null]);
+  // A wait that is not behind another chat (the reply's own helper has the model) is not
+  // announced, and one that turns into that ends its line.
+  const own = make();
+  const named = wait;
+  wait = null;
+  own.note(admit, held);
+  nowMs += 5_000;
+  own.note(admit, held);
+  assert.equal(told.length, 3);
+  wait = named;
+  own.note(admit, held);
+  wait = null;
+  own.note(admit, held);
+  assert.deepEqual(told.slice(3), [named, null]);
+  wait = named;
+  // The end of the request ends an announced wait too: a reply that pauses gets no terminal event.
+  const closing = make();
+  closing.note(admit, held);
+  nowMs += 5_000;
+  closing.note(admit, held);
+  assert.equal(told.length, 6);
+  closing.close();
+  closing.close();
+  assert.deepEqual(told.slice(6), [null]);
+  // A notice that cannot be described or sent never costs the admission answer.
+  for (const describe of [() => { throw new Error('lanes gone'); }, () => named]) {
+    let ticks = 0;
+    const broken = createModelWaitClock({ suspend: () => () => {}, setTimer: () => ({ unref() {} }),
+      clearTimer: () => {}, now: () => (ticks += 5_000), describe,
+      announce: () => { throw new Error('window gone'); } });
+    assert.equal(broken.note(admit, held), held);
+  }
+});
+
+test('the model wait notice names the blocker and who put it first (row 136)', () => {
+  const emitted = [];
+  const service = { emit: (channel, payload) => emitted.push([channel, payload]),
+    sessionRuntime: { lanes: { firstSession: () => ({ session_id: 'chat_a', set_by: 'primary', set_at: 1 }) } } };
+  const runtime = { getEventBase: () => ({ streamId: 'stream_b', sessionId: 'chat_b' }) };
+  let wait = { blocking_session_id: 'chat_a', held_for_first: true };
+  const notice = createModelWaitNotice(service, runtime, { inferenceWait: () => wait });
+  assert.deepEqual(notice.describe(), { blockingSessionId: 'chat_a', heldForFirst: true, firstSetBy: 'primary' });
+  wait = { blocking_session_id: null, held_for_first: false };
+  assert.deepEqual(notice.describe(), { blockingSessionId: '', heldForFirst: false, firstSetBy: '' });
+  // Nothing to say when the gateway names no wait behind another chat, or keeps none at all.
+  wait = null;
+  assert.equal(notice.describe(), null);
+  assert.equal(createModelWaitNotice(service, runtime, null).describe(), null);
+  notice.announce({ blockingSessionId: 'chat_a', heldForFirst: false, firstSetBy: '' });
+  notice.announce(null);
+  assert.deepEqual(emitted, [
+    ['chat-stream', { type: 'model_waiting', waitState: 'waiting', blockingSessionId: 'chat_a', heldForFirst: false,
+      firstSetBy: '', streamId: 'stream_b', sessionId: 'chat_b' }],
+    ['chat-stream', { type: 'model_waiting', waitState: 'granted', streamId: 'stream_b', sessionId: 'chat_b' }],
+  ]);
 });

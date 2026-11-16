@@ -98,31 +98,6 @@ function bindCard(dom, calls, options = {}) {
   };
 }
 
-function installFakeWindowTimers(window) {
-  const timers = new Map();
-  let nextId = 1;
-  window.setTimeout = (callback, delay) => {
-    const id = nextId;
-    nextId += 1;
-    timers.set(id, { callback, delay });
-    return id;
-  };
-  window.clearTimeout = (id) => {
-    timers.delete(id);
-  };
-  return {
-    pendingCount: () => timers.size,
-    runNext() {
-      const entry = timers.entries().next().value;
-      if (!entry) return false;
-      const [id, timer] = entry;
-      timers.delete(id);
-      timer.callback();
-      return true;
-    },
-  };
-}
-
 test('renders escaped bounded editorial questions with native controls and functional hooks', () => {
   const hostilePrompt = '<script>alert("x")</script>' + 'x'.repeat(1000);
   const html = renderCard({
@@ -144,22 +119,36 @@ test('renders escaped bounded editorial questions with native controls and funct
   assert.equal(doc.querySelectorAll('[data-user-question-id="single"] [data-user-question-option]').length, 8);
   assert.equal(doc.querySelector('[data-user-question-id="single"] [data-user-question-option]').type, 'radio');
   assert.equal(doc.querySelector('[data-user-question-id="multi"] [data-user-question-option]').type, 'checkbox');
-  assert.equal(doc.querySelector('[data-user-question-id="single"] [data-user-question-other-input]').disabled, true);
-  assert.ok(doc.querySelector('[data-user-question-id="free"] [data-user-question-free-text]'));
+  assert.equal(doc.querySelector('[data-user-question-id="single"] [data-user-question-other-input]').disabled, false);
+  assert.equal(doc.querySelector('[data-user-question-other-input]').getAttribute('placeholder'), 'Something else…');
+  assert.equal(doc.querySelector('.user-questions-other-option').tagName, 'LABEL');
+  assert.equal(doc.querySelector('.user-questions-other-option [data-user-question-other-toggle]').type, 'radio');
+  const freeText = doc.querySelector('[data-user-question-id="free"] [data-user-question-free-text]');
+  assert.equal(freeText.tagName, 'TEXTAREA');
+  assert.equal(freeText.getAttribute('placeholder'), 'Type your answer');
+  assert.equal(freeText.getAttribute('rows'), '1');
+  const keys = Array.from(doc.querySelectorAll('[data-user-question-id="single"] .user-questions-key')).map((key) => key.textContent);
+  assert.deepEqual(keys, ['1', '2', '3', '4', '5', '6', '7', '8', '9'], 'eight options plus Other are numbered 1 to 9');
   assert.equal(doc.querySelector('[data-user-question-id="single"] [data-user-question-option]').value, '<b>Alpha</b>');
-  assert.equal(doc.querySelector('.user-questions-eyebrow').textContent, 'Questions');
-  assert.equal(doc.querySelector('.user-questions-choose-any').textContent, ' — choose any');
+  assert.equal(doc.querySelector('.user-questions-kicker').textContent, 'Jenny is asking0 of 4 answered');
+  assert.ok(doc.querySelector('.user-questions-kicker .user-questions-dot[aria-hidden="true"]'));
+  assert.equal(doc.querySelector('.user-questions-progress').getAttribute('aria-live'), 'polite');
+  assert.equal(doc.querySelector('.user-questions-choose-any').textContent, ' · choose any');
+  assert.equal(doc.querySelector('[data-user-question-id="multi"] .user-questions-prompt-text').textContent, 'Pick many');
+  assert.equal(doc.querySelector('.user-questions-submit-btn').disabled, true, 'nothing is answered yet');
+  assert.equal(doc.querySelector('.user-questions-decline-btn').disabled, false);
   assert.equal(doc.querySelector('.user-questions-submit-btn').getAttribute('aria-label'), 'Submit your answers');
   assert.equal(doc.querySelector('.user-questions-submit-btn').title, 'Submit your answers');
   assert.equal(doc.querySelector('.user-questions-decline-btn').textContent, 'Skip');
   assert.equal(doc.querySelector('.user-questions-decline-btn').getAttribute('aria-label'), 'Skip these questions');
   assert.equal(doc.querySelector('.user-questions-decline-btn').title, 'Skip these questions');
-  assert.equal(doc.querySelector('.user-questions-enter-hint').textContent, 'Enter ↵');
+  assert.equal(doc.querySelector('.user-questions-enter-hint').textContent, 'Enter to submit · Shift+Enter for a new line');
+  assert.doesNotMatch(html, />Questions<|Other:|Enter ↵|user-questions-header|user-questions-eyebrow|user-questions-rule/);
   assert.doesNotMatch(html, /ask-card|interactive-option-button|interactive-question-prompt|interactive-card-actions/);
   dom.window.close();
 });
 
-test('Other selection gates its text input and Submit assembles normalized answer shapes', async (t) => {
+test('Submit assembles normalized answer shapes from an always-enabled Other field', async (t) => {
   const dom = new JSDOM(`<!doctype html><body><input id="chatInput"><div id="chatTimeline">${renderCard()}</div></body>`);
   const calls = { answer: [], decline: [] };
   const harness = bindCard(dom, calls);
@@ -167,14 +156,15 @@ test('Other selection gates its text input and Submit assembles normalized answe
   const { window } = dom;
   const root = harness.chatTimeline;
 
-  const singleOther = root.querySelector('[data-user-question-id="single"] [data-user-question-other-toggle]');
   const singleOtherInput = root.querySelector('[data-user-question-id="single"] [data-user-question-other-input]');
-  singleOther.click();
   assert.equal(singleOtherInput.disabled, false);
   singleOtherInput.value = 'Custom editor';
+  singleOtherInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   root.querySelector('[data-user-question-id="multi"] [data-user-question-option][value="One"]').click();
   root.querySelector('[data-user-question-id="multi"] [data-user-question-option][value="Two"]').click();
-  root.querySelector('[data-user-question-id="free"] [data-user-question-free-text]').value = 'Free form';
+  const free = root.querySelector('[data-user-question-id="free"] [data-user-question-free-text]');
+  free.value = 'Free form';
+  free.dispatchEvent(new window.Event('input', { bubbles: true }));
 
   const submit = root.querySelector('.user-questions-submit-btn');
   submit.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -230,9 +220,7 @@ test('plain Enter submits once from question inputs and prevents the key event',
     const calls = { answer: [], decline: [] };
     const harness = bindCard(dom, calls);
     t.after(harness.cleanup);
-    if (selector.includes('other-input')) {
-      harness.chatTimeline.querySelector('[data-user-question-other-toggle]').click();
-    }
+    harness.chatTimeline.querySelector('[data-user-question-id="multi"] [data-user-question-option]').click();
     const event = new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     harness.chatTimeline.querySelector(selector).dispatchEvent(event);
     assert.equal(event.defaultPrevented, true);
@@ -285,12 +273,13 @@ test('answer and Skip false outcomes become persistent stale receipts and surfac
     });
     t.after(harness.cleanup);
     const selector = decline ? '.user-questions-decline-btn' : '.user-questions-submit-btn';
+    harness.chatTimeline.querySelector('[data-user-question-option]').click();
     harness.chatTimeline.querySelector(selector).click();
     await new Promise((resolve) => setImmediate(resolve));
 
     const block = harness.chatTimeline.querySelector('.user-questions-block');
     assert.equal(block.dataset.userQuestionsStale, 'true');
-    assert.match(block.querySelector('.user-questions-receipt').textContent, /Questions no longer active/);
+    assert.match(block.querySelector('.user-questions-receipt').textContent, /These questions are no longer active/);
     assert.equal(block.querySelector('button, input'), null);
     const message = harness.state.messagesBySession.get('session-1')[0];
     assert.equal(message.tool_call.status, 'completed');
@@ -334,6 +323,7 @@ test('a resolution-requiring current session id stamps stale through session-mes
   });
   t.after(harness.cleanup);
 
+  harness.chatTimeline.querySelector('[data-user-question-option]').click();
   harness.chatTimeline.querySelector('.user-questions-submit-btn').click();
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -344,41 +334,6 @@ test('a resolution-requiring current session id stamps stale through session-mes
   assert.deepEqual([...state.sessionMessageAccessOrder.keys()], ['session-1']);
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0][0], 'session-1');
-});
-
-test('pending question blocks become stalled after one timer', (t) => {
-  const dom = new JSDOM(`<!doctype html><body><input id="chatInput"><div id="chatTimeline">${renderCard()}</div></body>`);
-  const fakeTimers = installFakeWindowTimers(dom.window);
-  const harness = bindCard(dom, { answer: [], decline: [] });
-  t.after(harness.cleanup);
-  const block = harness.chatTimeline.querySelector('.user-questions-block');
-
-  assert.equal(fakeTimers.pendingCount(), 1);
-  block.dispatchEvent(new dom.window.Event('pointerover', { bubbles: true }));
-  block.dispatchEvent(new dom.window.Event('focusin', { bubbles: true }));
-  assert.equal(fakeTimers.pendingCount(), 1);
-  assert.equal(fakeTimers.runNext(), true);
-  assert.equal(fakeTimers.pendingCount(), 0);
-  assert.equal(block.dataset.stalled, 'true');
-});
-
-test('submit dispatch and binding disposal cancel pending stalled timers', () => {
-  const submitDom = new JSDOM(`<!doctype html><body><input id="chatInput"><div id="chatTimeline">${renderCard()}</div></body>`);
-  const submitTimers = installFakeWindowTimers(submitDom.window);
-  const submitHarness = bindCard(submitDom, { answer: [], decline: [] }, {
-    answerResult: new Promise(() => {}),
-  });
-  assert.equal(submitTimers.pendingCount(), 1);
-  submitHarness.chatTimeline.querySelector('.user-questions-submit-btn').click();
-  assert.equal(submitTimers.pendingCount(), 0);
-  submitHarness.cleanup();
-
-  const disposeDom = new JSDOM(`<!doctype html><body><input id="chatInput"><div id="chatTimeline">${renderCard()}</div></body>`);
-  const disposeTimers = installFakeWindowTimers(disposeDom.window);
-  const disposeHarness = bindCard(disposeDom, { answer: [], decline: [] });
-  assert.equal(disposeTimers.pendingCount(), 1);
-  disposeHarness.cleanup();
-  assert.equal(disposeTimers.pendingCount(), 0);
 });
 
 test('lazy and initial liveness checks stale dead cards while an absent IPC is a no-op', async (t) => {
@@ -393,7 +348,7 @@ test('lazy and initial liveness checks stale dead cards while an absent IPC is a
     .dispatchEvent(new pointerDom.window.Event('pointerover', { bubbles: true }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(pointerCalls.liveness, 1);
-  assert.match(pointerHarness.chatTimeline.querySelector('.user-questions-receipt').textContent, /Questions no longer active/);
+  assert.match(pointerHarness.chatTimeline.querySelector('.user-questions-receipt').textContent, /These questions are no longer active/);
 
   const sweepDom = new JSDOM(`<!doctype html><body><input id="chatInput"><div id="chatTimeline">${renderCard()}</div></body>`);
   const sweepCalls = { answer: [], decline: [], liveness: 0 };
@@ -442,47 +397,85 @@ test('a rejected liveness probe re-arms so the next hover retries instead of bur
   target.dispatchEvent(new dom.window.Event('pointerover', { bubbles: true }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.liveness, 2);
-  assert.match(harness.chatTimeline.querySelector('.user-questions-receipt').textContent, /Questions no longer active/);
+  assert.match(harness.chatTimeline.querySelector('.user-questions-receipt').textContent, /These questions are no longer active/);
 });
 
-test('answered receipts render single, multi, Other, missing, and escaped content', () => {
+test('answered receipts render single, multi, Other, missing, and escaped content in full', () => {
+  const long = 'long answer '.repeat(40).trim();
   const html = renderUserQuestionsReceipt({
     toolCallId: 'call-<receipt>',
     resultKind: 'user_questions_answered',
     questions: [
       { id: 'single', prompt: '<script>Pick one</script>', options: ['Alpha'], multi_select: false, allow_other: false },
-      { id: 'multi', prompt: 'Pick many', options: ['One', 'Two'], multi_select: true, allow_other: false },
       { id: 'other', prompt: 'Other choice', options: ['Known'], multi_select: false, allow_other: true },
       { id: 'missing', prompt: 'Optional note', options: [], multi_select: false, allow_other: false },
+      { id: 'long', prompt: 'Why', options: [], multi_select: false, allow_other: false },
     ],
     answers: [
       { id: 'single', value: 'Alpha' },
-      { id: 'multi', value: ['One', 'Two'] },
-      { id: 'other', value: 'Known', other: '<img src=x onerror=alert(1)>' },
+      { id: 'other', value: ['Known', 'Second'], other: '<img src=x onerror=alert(1)>' },
+      { id: 'long', value: long },
     ],
   });
   const dom = new JSDOM(`<div>${html}</div>`);
   const receipt = dom.window.document.querySelector('.user-questions-receipt');
-  const lines = Array.from(receipt.querySelectorAll('.user-questions-receipt-line')).map((line) => line.textContent);
+  const lines = Array.from(receipt.querySelectorAll('.user-questions-receipt-line')).map((line) => [
+    line.querySelector('.user-questions-receipt-prompt').textContent,
+    line.querySelector('.user-questions-receipt-answer').textContent,
+  ]);
 
   assert.equal(receipt.dataset.toolCallId, 'call-<receipt>');
-  assert.equal(receipt.querySelector('.user-questions-receipt-status').textContent, 'Answered 4 questions');
+  assert.equal(receipt.querySelector('.user-questions-receipt-status').textContent, '✓You answered 3 questions', 'a skipped question is not counted');
+  assert.equal(receipt.querySelector('.user-questions-receipt-mark').textContent, '✓');
   assert.deepEqual(lines, [
-    '<script>Pick one</script> — Alpha',
-    'Pick many — One, Two',
-    'Other choice — Known, Other: <img src=x onerror=alert(1)>',
-    'Optional note — (no answer)',
+    ['<script>Pick one</script>', 'Alpha'],
+    ['Other choice', 'Known, Second, Other: <img src=x onerror=alert(1)>'],
+    ['Optional note', 'Skipped'],
+    ['Why', long],
   ]);
+  const skipped = receipt.querySelectorAll('.user-questions-receipt-answer.is-skipped');
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].textContent, 'Skipped');
+  assert.equal(receipt.querySelector('.user-questions-receipt-rule'), null);
   assert.equal(receipt.querySelectorAll('script, img').length, 0);
+  assert.doesNotMatch(html, /…|text-overflow|ellipsis/);
+  dom.window.close();
+});
+
+test('a reply receipt shows the typed reply in full, then the prompts it answered', () => {
+  const reply = '<b>Use Postgres</b> because of the audit trail. ' + 'x'.repeat(2500);
+  const html = renderUserQuestionsReceipt({
+    toolCallId: 'call-1',
+    resultKind: 'user_questions_answered',
+    reply,
+    questions: [{ id: 'db', prompt: 'Which database?', options: ['A'], multi_select: false, allow_other: false }],
+    answers: [],
+  });
+  const dom = new JSDOM(`<div>${html}</div>`);
+  const doc = dom.window.document;
+  assert.equal(doc.querySelector('.user-questions-receipt-status').textContent, '✓You replied in your own words');
+  const shown = doc.querySelector('.user-questions-receipt-reply').textContent;
+  assert.ok(shown.startsWith('<b>Use Postgres</b> because'));
+  assert.equal(shown.length, 2000, 'the reply is bounded');
+  assert.equal(doc.querySelectorAll('b').length, 0);
+  assert.deepEqual(Array.from(doc.querySelectorAll('.user-questions-receipt-prompt')).map((node) => node.textContent), ['Which database?']);
+  assert.equal(doc.querySelector('.user-questions-receipt-answer'), null);
+  const blank = renderUserQuestionsReceipt({ toolCallId: 'c', resultKind: 'user_questions_answered', reply: '   ', questions: [{ id: 'a', prompt: 'Q' }], answers: [] });
+  assert.match(blank, /You skipped Jenny&#39;s questions/, 'a blank reply with no answers reads as skipped');
   dom.window.close();
 });
 
 test('receipt renders skipped and stale states and rejects unknown result kinds', () => {
   const skipped = renderUserQuestionsReceipt({ toolCallId: 'call-1', resultKind: 'user_questions_declined' });
   const stale = renderUserQuestionsReceipt({ toolCallId: 'call-1', resultKind: 'unknown', stale: true });
-  assert.match(skipped, /Questions skipped/);
-  assert.match(stale, /Questions no longer active/);
+  assert.match(skipped, /–<\/span>You skipped Jenny&#39;s questions/);
+  assert.match(stale, /–<\/span>These questions are no longer active/);
+  assert.doesNotMatch(stale, /user-questions-receipt-line/, 'no prompts were given');
   assert.equal(renderUserQuestionsReceipt({ toolCallId: 'call-1', resultKind: 'unknown' }), '');
+  const withPrompts = new JSDOM(`<div>${renderUserQuestionsReceipt({
+    toolCallId: 'call-1', stale: true, questions: [{ id: 'a', prompt: 'First?' }, { id: 'b', prompt: 'Second?' }],
+  })}</div>`).window.document;
+  assert.deepEqual(Array.from(withPrompts.querySelectorAll('.user-questions-receipt-prompt')).map((node) => node.textContent), ['First?', 'Second?']);
 });
 
 test('settled ask_user rows with stamped results render receipts, never pending or generic tool markup', () => {
@@ -516,7 +509,7 @@ test('settled ask_user rows with stamped results render receipts, never pending 
     ...row,
     payload: { ...row.payload, user_questions_result_kind: 'user_questions_declined' },
   }, [message], { messageById: new Map([[message.id, message]]) });
-  assert.match(skippedHtml, /Questions skipped/);
+  assert.match(skippedHtml, /You skipped Jenny&#39;s questions/);
   assert.doesNotMatch(skippedHtml, /tool-call-row/);
 });
 
@@ -543,7 +536,7 @@ test('stale-marked ask_user rows render the stale receipt from tool_call state a
 
   const html = renderUtils.buildToolCallRowMarkup(row, [message], { messageById: new Map([[message.id, message]]) });
   assert.match(html, /user-questions-receipt/);
-  assert.match(html, /Questions no longer active/);
+  assert.match(html, /These questions are no longer active/);
   assert.doesNotMatch(html, /user-questions-block|tool-call-row/);
 });
 

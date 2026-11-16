@@ -196,39 +196,38 @@ test('reader scroll intent ends the hold, disconnects the observer and stops re-
   assert.equal(rig.calls.snaps.length, 1);
 });
 
-test('the hold ends 400 ms after the last timeline height change', (t) => {
+// Owner decision 2026-11-12: a latched reader who has not touched the scroll is
+// re-pinned on late growth (a diagram or image that renders after a quiet spell).
+test('a quiet spell does not end the hold: growth that arrives late still re-pins', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const rig = createRig();
   t.after(() => rig.restore());
 
   rig.sync();
-  t.mock.timers.tick(300);
-  rig.growTimeline(6000);
-  t.mock.timers.tick(300);
-  rig.growTimeline(7000);
-  assert.equal(rig.calls.snaps.length, 3, 'still held 600 ms in, because the height kept changing');
-
-  t.mock.timers.tick(400);
-  assert.equal(rig.observers[0].disconnectCalls, 1, 'quiet for 400 ms ends the hold');
-  rig.sync();
-  assert.equal(rig.calls.glides, 1, 'after the hold a sync follows normally again');
+  t.mock.timers.tick(900);
+  assert.equal(rig.observers[0].disconnectCalls, 0, 'still held after 900 ms of quiet');
+  rig.growTimeline(5300);
+  assert.equal(rig.scroll.scrollTop, 4900, 'the late diagram is re-pinned to the bottom');
+  assert.equal(rig.calls.snaps.length, 2);
 });
 
-test('the hold never outlives two seconds, however long the height keeps changing', (t) => {
+test('the hold never outlives ten seconds, however long the height keeps changing', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const rig = createRig();
   t.after(() => rig.restore());
 
   rig.sync();
   let height = 5000;
-  for (let elapsed = 0; elapsed < 1800; elapsed += 200) {
+  for (let elapsed = 0; elapsed < 9800; elapsed += 200) {
     t.mock.timers.tick(200);
     height += 100;
     rig.growTimeline(height);
   }
-  assert.equal(rig.observers[0].disconnectCalls, 0, 'still held at 1.8 s');
+  assert.equal(rig.observers[0].disconnectCalls, 0, 'still held at 9.8 s');
   t.mock.timers.tick(200);
-  assert.equal(rig.observers[0].disconnectCalls, 1, 'ended at 2 s');
+  assert.equal(rig.observers[0].disconnectCalls, 1, 'ended at 10 s');
+  rig.sync();
+  assert.equal(rig.calls.glides, 1, 'after the hold a sync follows normally again');
   const snapsAtEnd = rig.calls.snaps.length;
   rig.growTimeline(height + 500);
   assert.equal(rig.calls.snaps.length, snapsAtEnd);

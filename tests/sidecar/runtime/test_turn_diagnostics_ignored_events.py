@@ -121,3 +121,27 @@ def test_counts_clamp_at_the_diagnostic_ceiling() -> None:
     shape = _snapshot({"ignored_event_types": {"a.b": 10**12}})
 
     assert shape["ignored_event_types"]["a.b"] == 1_000_000_000
+
+
+def test_input_transformations_sum_over_a_turn_under_the_histogram_bounds() -> None:
+    store = TurnDiagnosticsStore()
+    store.begin_turn(request_id="req-diag", session_id=None, mode="assist")
+
+    store.record_input_transformations(request_id="req-diag", counts={})
+    assert "input_transformations" not in (store.get_snapshot_for_request("req-diag") or {})
+
+    store.record_input_transformations(
+        request_id="req-diag", counts={"thinking_dropped.prefix_binding_mismatch": 2}
+    )
+    store.record_input_transformations(
+        request_id="req-diag",
+        counts={"thinking_dropped.prefix_binding_mismatch": 1, "<script>": 3, "a.b": 0},
+    )
+    store.record_input_transformations(request_id="req-other", counts={"a.b": 1})
+
+    snapshot = store.get_snapshot_for_request("req-diag")
+    assert snapshot is not None
+    assert snapshot["input_transformations"] == {
+        "thinking_dropped.prefix_binding_mismatch": 3,
+        "unsafe": 3,
+    }

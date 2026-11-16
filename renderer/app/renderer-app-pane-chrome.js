@@ -14,7 +14,7 @@
  *     autosizeInput(input), insertButton(host, buttonOptions), buildPaneDom(rootEl, paneDom, pane)
  *
  * deps: state, layoutController, options (the composition's injected options,
- * read late: attachment utils/callbacks, composerV2Render, getComposerSessionState,
+ * read late: attachment utils/callbacks, getComposerSessionState,
  * TOAST_SOURCE), root, doc, jt, actionButton, call, paneDrafts, panes (the
  * composition's Map), paneSessionId, pane0Root.
  */
@@ -114,7 +114,7 @@
         dom: { attachmentTray: pane.dom.attachmentTray, composerAttachShortcut: pane.dom.composerAttachShortcut, chatInput: pane.dom.chatInput, chatView: pane.root },
         callbacks: Object.assign({}, queue, {
           renderAttachmentTray: function () { syncPaneComposer(pane); },
-          setDropActive: function (active) { pane.dragDepth = active ? 1 : 0; syncPaneAttachments(pane); },
+          setDropActive: function (active) { var next = active ? 1 : 0; if ((pane.dragDepth || 0) === next) return; pane.dragDepth = next; syncPaneAttachments(pane); },
           renderComposerPopover: noop,
           updateComposerSafeOffset: noop, closeComposerPopover: noop,
         }),
@@ -128,22 +128,14 @@
        inside the pane root only. ── */
     function resolvePaneNotices(rootEl) {
       var q = function (name) { return rootEl.querySelector('[data-chat-node="' + name + '"]'); };
-      return { pill: q('composerAttachmentPreviewPill'), status: q('composerStatusNotice'), failed: q('composerV2FailedSendNotice') };
+      return { status: q('composerStatusNotice'), failed: q('composerV2FailedSendNotice') };
     }
 
-    /* The pill and the failed-send notice exist only where pane 0 mounted its
-       own (composer v2 on); pane 1 mirrors that and builds its own renderers. */
+    /* The failed-send notice exists only where pane 0 mounted its own
+       (composer v2 on); pane 1 mirrors that and builds its own renderer. */
     function mountPaneNotices(pane, getSessionId) {
-      var render = options.composerV2Render || root.rendererComposerV2Render;
       var zero = pane0Root();
       var mirrorsOn = function (id) { var node = zero && zero.querySelector('#' + id); return Boolean(node && node.dataset.composerV2 === 'on'); };
-      if (pane.notices.pill && pane.dom.attachmentTray && mirrorsOn('composerAttachmentPreviewPill')
-        && render && typeof render.createComposerAttachmentTrayPreviewRenderer === 'function') {
-        pane.notices.pill.dataset.composerV2 = 'on';
-        try {
-          pane.previewPill = render.createComposerAttachmentTrayPreviewRenderer({ tray: pane.dom.attachmentTray, pill: pane.notices.pill });
-        } catch (_error) { pane.previewPill = null; }
-      }
       if (pane.notices.failed && pane.dom.chatTimeline && mirrorsOn('composerV2FailedSendNotice')) {
         pane.failedSendNotice = call('mountFailedSendNotice', {
           noticeNode: pane.notices.failed,
@@ -213,7 +205,6 @@
         chatView: rootEl,
         composer: pane.composer,
         heroStack: q('.hero-stack'),
-        heroAvatar: q('.hero-avatar'),
         heroTitle: q('.hero-title'),
         heroSubtitle: q('.hero-subtitle'),
         heroRuntimeHint: q('.hero-runtime-hint'),
@@ -260,8 +251,6 @@
         dataset: { 'chat-node': 'composerAttachShortcut' },
         trustedHtml: ICON_ATTACH,
       });
-      var pane0Tray = pane0Root() && pane0Root().querySelector('[data-chat-node="attachmentTray"]');
-      if (paneDom.attachmentTray && pane0Tray) paneDom.attachmentTray.dataset.composerV2 = pane0Tray.dataset.composerV2 || 'off';
       pane.notices = resolvePaneNotices(rootEl);
       if (toolbarLeft && doc) {
         pane.queuedNotice = doc.createElement('span');

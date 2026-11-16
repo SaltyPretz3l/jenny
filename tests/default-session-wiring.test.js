@@ -1,7 +1,8 @@
 /**
  * services/main/default-session-wiring.js — the app-ready composite that pins
- * the deny-by-default permission guard, the display-media source picker, and
- * the jenny-artifact:// one-shot document protocol on one Electron session.
+ * the deny-by-default permission guard, the display-media source picker, the
+ * jenny-artifact:// one-shot document protocol and the jenny-sketch:// frame
+ * files on one Electron session.
  * Uses fake session/desktopCapturer/ipcMain seams; the individual owners have
  * their own deep suites (default-session-permission-guard.test.js,
  * display-media-source-handler.test.js, artifact-frame-protocol.test.js).
@@ -28,7 +29,7 @@ function makeFakeSession() {
   };
 }
 
-test('installs guard, display-media handler, and artifact protocol on the given session', () => {
+test('installs guard, display-media handler, and the two frame protocols on the given session', () => {
   const session = makeFakeSession();
   const ipcChannels = [];
   const logs = [];
@@ -43,7 +44,7 @@ test('installs guard, display-media handler, and artifact protocol on the given 
 
   assert.equal(session.calls.permissionRequest, 1, 'permission request handler installed');
   assert.equal(session.calls.displayMedia, 1, 'display-media request handler installed');
-  assert.deepEqual(session.calls.protocolHandle, ['jenny-artifact'], 'artifact protocol registered on the session');
+  assert.deepEqual(session.calls.protocolHandle, ['jenny-artifact', 'jenny-sketch'], 'artifact and sketch frame protocols registered on the session');
   assert.ok(ipcChannels.includes('artifact-frame:stage'), 'artifact staging invoke handler registered');
   assert.ok(logs.includes('session.permission_guard_installed'), 'guard install logged');
 

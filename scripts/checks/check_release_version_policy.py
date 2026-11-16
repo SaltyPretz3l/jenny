@@ -34,6 +34,14 @@ PRELOAD_BUILD_MARKERS = (
     "npm run release:windows",
 )
 
+# The sketch-block drawing bundle (sketch-frame.bundle.js) is gitignored like the preload
+# bundle and ships through the same root glob, so each packaging job builds it first.
+SKETCH_BUILD_MARKERS = (
+    "npm run build:sketch",
+    "npm run pack:",
+    "npm run release:windows",
+)
+
 # The team bridge binary ships as resources/sidecar/jenny-team-bridge on every OS, so
 # each job that runs electron-builder builds it first (the pack:/release: scripts embed it).
 TEAM_BRIDGE_BUILD_MARKERS = (
@@ -52,34 +60,41 @@ REQUIRED_SCRIPTS = {
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
     "build:launcher": "python scripts/packaging/build_native_launcher.py",
     "build:team-bridge": "python scripts/packaging/build_team_bridge.py",
+    "build:file-access": "python scripts/packaging/build_file_access.py",
+    "build:sketch": "node scripts/build/build-sketch.js",
+    "build:sketch:force": "node scripts/build/build-sketch.js --force",
     "pack:dir": (
-        "npm run build:preload && npm run check:python-runtime-bundle && "
+        "npm run build:preload && npm run build:sketch && "
+        "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
         "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
-        "npm run sbom:sidecar && "
+        "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder --dir "
         "--config electron-builder.yml --publish never"
     ),
     "pack:release": (
-        "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run build:preload:force && npm run build:sketch:force && "
+        "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
         "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
-        "npm run sbom:sidecar && "
+        "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder "
         "--config electron-builder.yml --publish never"
     ),
     "pack:linux": (
-        "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run build:preload:force && npm run build:sketch:force && "
+        "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
         "npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && "
         "npm exec -- electron-builder --linux "
         "--config electron-builder.yml --publish never"
     ),
     "release:windows": (
-        "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run build:preload:force && npm run build:sketch:force && "
+        "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
         "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
-        "npm run sbom:sidecar && "
+        "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "
         "--config electron-builder.yml --publish never"
     ),
@@ -331,9 +346,10 @@ def _builder_follows(run: str, markers: tuple[str, ...], builder_start: int) -> 
 def _validate_job_build_order(
     workflow_path: str, job_name: str, steps: list[dict[str, object]]
 ) -> list[str]:
-    """Each electron-builder call needs the preload bundle and the team bridge built before it."""
+    """Each electron-builder call needs the preload and sketch bundles and the team bridge first."""
     violations: list[str] = []
     preload_built = False
+    sketch_built = False
     bridge_built = False
     for step in steps:
         run = str(step.get("run") or "")
@@ -346,6 +362,13 @@ def _validate_job_build_order(
                     "without a preceding team bridge build "
                     "('python scripts/packaging/build_team_bridge.py')"
                 )
+            if not sketch_built and not _builder_follows(
+                run, SKETCH_BUILD_MARKERS, builder.start()
+            ):
+                violations.append(
+                    f"{workflow_path} job {job_name!r} runs electron-builder "
+                    "without a preceding 'npm run build:sketch' command"
+                )
             if preload_built or _builder_follows(run, PRELOAD_BUILD_MARKERS, builder.start()):
                 continue
             violations.append(
@@ -353,6 +376,7 @@ def _validate_job_build_order(
                 "without a preceding 'npm run build:preload' command"
             )
         preload_built = preload_built or any(marker in run for marker in PRELOAD_BUILD_MARKERS)
+        sketch_built = sketch_built or any(marker in run for marker in SKETCH_BUILD_MARKERS)
         bridge_built = bridge_built or any(marker in run for marker in TEAM_BRIDGE_BUILD_MARKERS)
     return violations
 

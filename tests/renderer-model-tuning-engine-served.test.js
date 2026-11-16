@@ -38,7 +38,7 @@ test('a server drafting with the embedded head replaces the drafter-missing note
 
   const stopped = deriveView(null);
   assert.equal(stopped.servingEmbeddedHead, false);
-  assert.equal(engineUtils.engineNote(stopped), 'Drafter file missing \u00b7 falls back to plain decoding');
+  assert.equal(engineUtils.engineNote(stopped), 'No drafter file yet. MTP falls back to plain decoding');
 
   const otherModel = deriveView({ state: 'ready', alias: 'other-model', accelerationMode: 'mtp', accelerationReason: 'mtp_embedded' });
   assert.equal(otherModel.servingEmbeddedHead, false);

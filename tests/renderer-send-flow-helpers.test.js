@@ -9,9 +9,13 @@ const {
   cloneJsonLike,
   cloneQueuedAttachments,
   clipSessionTitle,
+  findPendingUserQuestionRef,
+  replyToPendingUserQuestions,
   resolveMessageCopyText,
   summarizeDurableFailurePreview,
+  syncQuestionReplyPlaceholder,
 } = require('../renderer/chat/renderer-send-flow-helpers');
+const { createControllerHarness } = require('./helpers/send-controller-harness');
 
 function makeMessageStore(initial) {
   const map = new Map(Object.entries(initial || {}));
@@ -34,6 +38,16 @@ test('send-flow helpers normalize titles and copy text from visible message segm
     content: 'fallback',
   }), 'hello world');
   assert.equal(resolveMessageCopyText({ visible_segments: [], content: 'fallback' }), 'fallback');
+});
+
+test('copy text drops source markers only when the source_citations flag is on', () => {
+  const message = { role: 'assistant', visible_segments: [{ text: 'Fact [web:1] and more【web:2】 and [web:1,3].' }], content: 'ignored' };
+  assert.equal(resolveMessageCopyText(message, { source_citations: true }), 'Fact and more and.');
+  assert.equal(resolveMessageCopyText({ role: 'assistant', content: 'Plain [web:2] text' }, { source_citations: true }), 'Plain text');
+  assert.equal(resolveMessageCopyText({ role: 'user', content: 'My note [web:2]' }, { source_citations: true }), 'My note [web:2]', 'a user message keeps what was typed');
+  assert.equal(resolveMessageCopyText(message, { source_citations: false }), 'Fact [web:1] and more【web:2】 and [web:1,3].');
+  assert.equal(resolveMessageCopyText(message), 'Fact [web:1] and more【web:2】 and [web:1,3].');
+  assert.equal(resolveMessageCopyText({ role: 'assistant', content: 'Keep\n\n[web:1] para' }, { source_citations: true }), 'Keep\n\n para');
 });
 
 test('send-flow clone helpers scrub unsafe keys and tolerate cycles', () => {
@@ -201,4 +215,136 @@ test('adoptPersistedUserMessageId is a no-op for equal ids, missing rows, or emp
 
   const emptyStore = makeMessageStore({});
   assert.equal(adoptPersistedUserMessageId(emptyStore, 'session-1', 'user_local_111', 'user_stream-x'), false);
+});
+
+// Row 157: a message typed while an ask_user card waits answers the card.
+function pendingQuestion(overrides = {}) {
+  return {
+    id: 'tool_use_call-q', role: 'tool', kind: 'tool_use',
+    tool_call: {
+      tool_name: 'ask_user', status: 'pending_user_input', question_ref: 'question_ref_1',
+      parent_stream_id: 'stream-1', ...overrides,
+    },
+  };
+}
+
+test('findPendingUserQuestionRef finds the live turn\'s waiting card and nothing else', () => {
+  const user = { id: 'u1', role: 'user', content: 'Set up a backup' };
+  assert.equal(findPendingUserQuestionRef([user, pendingQuestion()], 'stream-1'), 'question_ref_1');
+  assert.equal(findPendingUserQuestionRef([user, pendingQuestion()], ''), '', 'no live turn');
+  assert.equal(findPendingUserQuestionRef([user, pendingQuestion()], 'stream-2'), '', 'another turn');
+  assert.equal(findPendingUserQuestionRef([pendingQuestion(), user], 'stream-1'), '', 'older than the last user message');
+  for (const overrides of [{ status: 'completed' }, { user_questions_stale: true }, { user_questions_withdrawn: true },
+    { tool_name: 'exit_plan_mode' }, { question_ref: '' }]) {
+    assert.equal(findPendingUserQuestionRef([user, pendingQuestion(overrides)], 'stream-1'), '', JSON.stringify(overrides));
+  }
+});
+
+test('replyToPendingUserQuestions answers with the reply and reports whether the waiter took it', async () => {
+  const sent = [];
+  const chat = { async answerUserQuestions(ref, payload) { sent.push([ref, payload]); return true; } };
+  const questionRef = 'question_ref_1';
+  assert.equal(await replyToPendingUserQuestions({ questionRef, reply: '  Use the NAS  ', chat }), true);
+  assert.deepEqual(sent, [['question_ref_1', { reply: 'Use the NAS' }]]);
+  assert.equal(await replyToPendingUserQuestions({ questionRef, reply: 'x'.repeat(2001), chat }), false,
+    'never longer than the tool keeps');
+  assert.equal(await replyToPendingUserQuestions({ questionRef: '', reply: 'hi', chat }), false);
+  assert.equal(await replyToPendingUserQuestions({ questionRef, reply: '   ', chat }), false);
+  assert.equal(await replyToPendingUserQuestions({
+    questionRef, reply: 'hi', chat: { async answerUserQuestions() { return false; } },
+  }), false, 'a waiter already gone');
+  assert.equal(await replyToPendingUserQuestions({
+    questionRef, reply: 'hi', chat: { async answerUserQuestions() { throw new Error('ipc'); } },
+  }), false);
+  assert.equal(sent.length, 1);
+});
+
+test('syncQuestionReplyPlaceholder swaps the placeholder while questions wait and restores it after', () => {
+  const input = { placeholder: 'Message Jenny...', dataset: {} };
+  syncQuestionReplyPlaceholder(input, true);
+  assert.equal(input.placeholder, 'Or answer in your own words…');
+  syncQuestionReplyPlaceholder(input, true);
+  syncQuestionReplyPlaceholder(input, false);
+  assert.equal(input.placeholder, 'Message Jenny...');
+  assert.deepEqual(input.dataset, {});
+  syncQuestionReplyPlaceholder(input, false);
+  assert.equal(input.placeholder, 'Message Jenny...');
+
+  // A placeholder rewritten while swapped out (a locale or mode change) is the one restored.
+  syncQuestionReplyPlaceholder(input, true);
+  input.placeholder = 'Plan with Jenny...';
+  syncQuestionReplyPlaceholder(input, true);
+  assert.equal(input.placeholder, 'Or answer in your own words…');
+  syncQuestionReplyPlaceholder(input, false);
+  assert.equal(input.placeholder, 'Plan with Jenny...');
+  syncQuestionReplyPlaceholder(input, true);
+  input.placeholder = 'Ask about this file...';
+  syncQuestionReplyPlaceholder(input, false);
+  assert.equal(input.placeholder, 'Ask about this file...', 'a rewrite after the card leaves is kept');
+  assert.deepEqual(input.dataset, {});
+});
+
+function questionHarness(t, options = {}) {
+  const messages = [{ id: 'u1', role: 'user', content: 'Set up a backup' }, pendingQuestion()];
+  const harness = createControllerHarness(messages, { chatInputValue: options.text ?? 'Use the NAS', isSessionStreaming: true });
+  t.after(() => harness.restore());
+  harness.state.activeStreamSessionId = 'session-1';
+  harness.multiStreamController.registerStream('session-1', 'stream-1');
+  const answered = [];
+  const inputDuringAnswer = [];
+  global.window.jennyShell.chat.answerUserQuestions = async (ref, payload) => {
+    answered.push([ref, payload]);
+    inputDuringAnswer.push(harness.chatInput.value);
+    return options.waiterGone !== true;
+  };
+  return { ...harness, answered, inputDuringAnswer };
+}
+
+test('a typed composer send while a card waits answers it and clears the composer', async (t) => {
+  const harness = questionHarness(t);
+  const result = await harness.controller.startPromptSend('Use the NAS', { attachImageEditDraft: true });
+  assert.equal(result, null);
+  assert.deepEqual(harness.answered, [['question_ref_1', { reply: 'Use the NAS' }]]);
+  assert.equal(harness.chatInput.value, '');
+  assert.deepEqual(harness.inputDuringAnswer, [''], 'cleared before the round trip, so a second Enter sends nothing');
+  assert.equal(harness.calls.startStream.length, 0);
+  assert.equal(harness.state.queuedSendBySession.size, 0, 'nothing was queued behind the card');
+  assert.ok(harness.calls.logs.some((entry) => entry.event === 'chat.questions_answered_from_composer'));
+});
+
+test('a send the card does not take goes on as usual', async (t) => {
+  const gone = questionHarness(t, { waiterGone: true });
+  await gone.controller.startPromptSend('Use the NAS', { attachImageEditDraft: true });
+  assert.equal(gone.answered.length, 1);
+  assert.equal(gone.inputDuringAnswer[0], '');
+  assert.equal(gone.calls.logs.some((entry) => entry.event === 'chat.questions_answered_from_composer'), false);
+
+  const mention = questionHarness(t);
+  global.window.rendererIdeMentionAutocomplete = { collectMentionPaths: () => ['src/app.js'] };
+  t.after(() => { delete global.window?.rendererIdeMentionAutocomplete; });
+  await mention.controller.startPromptSend('Look at @src/app.js', { attachImageEditDraft: true });
+  assert.equal(mention.answered.length, 0, 'an @mention carries a file the reply cannot');
+  delete global.window.rendererIdeMentionAutocomplete;
+
+  const programmatic = questionHarness(t);
+  await programmatic.controller.startPromptSend('Please continue', { preserveComposerDraft: true });
+  assert.equal(programmatic.answered.length, 0, 'only a typed composer send answers the card');
+
+  const withAttachment = questionHarness(t);
+  withAttachment.state.attachments.queued = [{ id: 'a1', kind: 'file', displayName: 'notes.txt' }];
+  await withAttachment.controller.startPromptSend('Here is the list', { attachImageEditDraft: true });
+  assert.equal(withAttachment.answered.length, 0, 'a send with an attachment is a message, not an answer');
+});
+
+test('a reply longer than the card keeps stays in the composer with a notice', async (t) => {
+  const long = 'x'.repeat(2001);
+  const harness = questionHarness(t, { text: long });
+  const result = await harness.controller.startPromptSend(long, { attachImageEditDraft: true });
+  assert.equal(result?.reason, 'question_reply_too_long');
+  assert.equal(harness.answered.length, 0);
+  assert.equal(harness.chatInput.value, long, 'the draft is kept');
+  assert.equal(harness.calls.startStream.length, 0);
+  assert.equal(harness.state.queuedSendBySession.size, 0, 'not queued behind the card');
+  assert.ok(harness.calls.composerNotices.some((entry) => entry.options.owner === 'questions:reply-length'
+    && entry.message.includes('2000')));
 });

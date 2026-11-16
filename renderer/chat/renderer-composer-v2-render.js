@@ -10,7 +10,6 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton, inventoryChip, composerState) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const BLOCKED_SEND_REASONS = Object.freeze({
     NO_SESSION: jt('composer.sendBlocked.noSession', 'Start a conversation first.'),
     NOT_AUTHENTICATED: jt('composer.sendBlocked.notAuthenticated', 'Sign in to send messages.'),
@@ -302,61 +301,6 @@
         if (onCycle) chip.removeEventListener('click', onCycle);
         chip.remove();
         if (segments) segments.remove();
-      },
-    };
-  }
-
-  function createComposerAttachmentTrayPreviewRenderer(deps) {
-    const tray = deps && deps.tray;
-    const pill = deps && deps.pill;
-    if (!tray) {
-      throw new Error('createComposerAttachmentTrayPreviewRenderer: deps.tray is required');
-    }
-    if (!pill) {
-      throw new Error('createComposerAttachmentTrayPreviewRenderer: deps.pill is required');
-    }
-    const doc = tray.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    const win = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
-    const MutationObserverCtor = (win && win.MutationObserver)
-      || (typeof MutationObserver !== 'undefined' ? MutationObserver : null);
-
-    let lastCount = -1;
-
-    function readQueuedCount() {
-      const chips = tray.querySelectorAll('.attachment-chip:not(.attachment-chip-clear)');
-      return chips.length;
-    }
-
-    function update() {
-      const count = readQueuedCount();
-      if (count === lastCount) return;
-      lastCount = count;
-      if (count > 0) {
-        pill.textContent = jtn('composer.attachments.queuedCount', count, { count }, 'Queued ({count})', 'Queued ({count})').replace('{count}', () => String(count));
-        pill.classList.remove('hidden');
-      } else {
-        pill.textContent = '';
-        pill.classList.add('hidden');
-      }
-    }
-
-    let observer = null;
-    if (MutationObserverCtor) {
-      observer = new MutationObserverCtor(update);
-      observer.observe(tray, { childList: true, attributes: true, attributeFilter: ['class'] });
-    }
-
-    update();
-
-    return {
-      refresh: update,
-      destroy() {
-        if (observer) {
-          try { observer.disconnect(); } catch (_err) { /* noop */ }
-          observer = null;
-        }
-        pill.textContent = '';
-        pill.classList.add('hidden');
       },
     };
   }
@@ -826,7 +770,6 @@
   return {
     createComposerModeChipsRenderer,
     createRunModeSwitcherRenderer,
-    createComposerAttachmentTrayPreviewRenderer,
     createComposerBlockedSendTooltipRenderer,
     createComposerFailedSendNoticeRenderer,
     describeModelLoading,

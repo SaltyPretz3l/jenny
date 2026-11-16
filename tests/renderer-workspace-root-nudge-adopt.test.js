@@ -169,10 +169,13 @@ test('a refused adoption keeps the chip, names the failure, and leaves the chat 
   await settle();
 
   assert.ok(chip(dom));
-  assert.match(chip(dom).textContent, /Could not use Ascend: The session must be idle/);
+  assert.match(chip(dom).textContent, /Couldn't put this chat in Ascend\./);
+  assert.doesNotMatch(chip(dom).textContent, /session_busy|must be idle/, 'the raw reason stays out of the line');
+  assert.equal(useFolderButton(dom).textContent, 'Try again');
   assert.equal(useFolderButton(dom).disabled, false);
   assert.equal(state.sessions[0].project_id, 'project_general');
   assert.deepEqual(logs.map(([, event]) => event), ['workspace_root_nudge.adopt_failed']);
+  assert.match(logs[0][2].message, /must be idle/, 'the reason is in the log');
 });
 
 test('an adoption result arriving after disposal cannot touch the page', async (t) => {

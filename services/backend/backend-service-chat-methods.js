@@ -57,7 +57,7 @@ const chatMethods = {
     toolPreferences,
     approvalMode,
     debugOptions,
-    clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
+    clientTiming, skillInvocation, imagePromptPin, boardId, editedMessageId, failureRetry,
     } = payload || {};
     // Runtime admission owns routed GPU/provider checks when composed. Minimal
     // embedded hosts retain the legacy entry check.
@@ -80,7 +80,7 @@ const chatMethods = {
       toolPreferences,
       approvalMode,
       debugOptions,
-      clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
+      clientTiming, skillInvocation, imagePromptPin, boardId, editedMessageId, failureRetry,
     }, options);
   },
 
@@ -127,6 +127,24 @@ const chatMethods = {
   // message-mapping logic (kept there to stay under the file-size cap here).
   async compactContextNow(sessionId) {
     return _compactContextNow(this, sessionId);
+  },
+
+  // Row 136 "Finish this first": the chat whose task goes first on the model. `set` is the
+  // person's pick for a chat with a reply running, `clear` lifts that chat's pick, anything
+  // else only reads. The lanes own the rule; first status also ends by itself.
+  firstChatSession({ action, sessionId } = {}) {
+    const lanes = this.sessionRuntime?.lanes;
+    if (typeof lanes?.firstSession !== 'function') return { status: 'unavailable', first: null };
+    let outcome = { status: 'ok' };
+    try {
+      if (action === 'set') outcome = lanes.setFirstSession(sessionId, { setBy: 'user' });
+      else if (action === 'clear') lanes.clearFirstSession(sessionId || null);
+    } catch (_error) {
+      outcome = { status: 'rejected', reason: 'session_invalid' };
+    }
+    const first = lanes.firstSession();
+    return { status: outcome.status, ...(outcome.reason ? { reason: outcome.reason } : {}),
+      first: first ? { sessionId: first.session_id, setBy: first.set_by } : null };
   },
 
   // /handoff: an off-transcript handoff note from the same prepared history.

@@ -14,13 +14,17 @@ function compareOrdinal(left, right) {
 }
 
 function parseArguments(argv) {
-  const options = { localesDir: path.join(process.cwd(), 'locales'), only: null, strict: false };
+  const options = { localesDir: path.join(process.cwd(), 'locales'), only: null, strict: false, baseEnglish: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--locales-dir') {
       const value = argv[index += 1];
       if (!value) throw new Error('--locales-dir requires a path');
       options.localesDir = path.resolve(value);
+    } else if (argument === '--base-english') {
+      const value = argv[index += 1];
+      if (!value) throw new Error('--base-english requires a path');
+      options.baseEnglish = path.resolve(value);
     } else if (argument === '--only') options.only = argv[index += 1] || '';
     else if (argument === '--strict') options.strict = true;
     else throw new Error(`unknown argument: ${argument}`);
@@ -61,6 +65,20 @@ function familiesFor(strings) {
     families.set(base, family);
   }
   return families;
+}
+
+// Families whose English text or plural shape differs from an earlier English
+// catalog: every translation of them is stale until the translation pass.
+function movedFamilies(baseEnglish, english) {
+  const before = familiesFor(baseEnglish);
+  const moved = new Set();
+  for (const [base, family] of familiesFor(english)) {
+    const old = before.get(base);
+    const same = old && old.size === family.size
+      && [...family].every(([category, entry]) => old.has(category) && old.get(category).value === entry.value);
+    if (!same) moved.add(base);
+  }
+  return moved;
 }
 
 function placeholders(value) {
@@ -122,7 +140,51 @@ function validateValue(filename, key, translated, english, failures, warnings, a
   }
 }
 
-function validateCatalog(tag, strings, englishStrings, { strict = false } = {}) {
+function validateFamily(filename, base, translatedFamily, englishFamily, pluralCategories, failures, warnings) {
+  const englishIsPlural = [...englishFamily.keys()].some((category) => category !== null);
+  const translatedIsPlural = [...translatedFamily.keys()].some((category) => category !== null);
+  if (!englishIsPlural && translatedIsPlural) {
+    failures.push(`${filename}:${base}: plural variants are not allowed for a non-plural English key`);
+    return;
+  }
+  if (englishIsPlural) {
+    const actualCategories = [...translatedFamily.keys()]
+      .filter((category) => category !== null)
+      .sort(compareOrdinal);
+    const expectedCategories = [...pluralCategories].sort(compareOrdinal);
+    if (translatedFamily.has(null) || !sameItems(actualCategories, expectedCategories)) {
+      failures.push(
+        `${filename}:${base}: plural categories ${actualCategories.join(', ') || '(none)'}; expected ${expectedCategories.join(', ')}`
+      );
+    }
+    // allowed = any placeholder the English family uses; required = those
+    // every English variant carries (a translation may not drop {destination}).
+    const familyTokens = { allowed: new Set(), required: null };
+    for (const entry of englishFamily.values()) {
+      const tokens = placeholders(entry.value);
+      tokens.forEach((token) => familyTokens.allowed.add(token));
+      familyTokens.required = familyTokens.required === null
+        ? new Set(tokens)
+        : new Set([...familyTokens.required].filter((token) => tokens.includes(token)));
+    }
+    familyTokens.required = familyTokens.required || new Set();
+    for (const [category, entry] of translatedFamily) {
+      if (category === null) continue;
+      const englishEntry = englishEntryFor(englishFamily, category);
+      validateValue(filename, entry.key, entry.value, englishEntry.value, failures, warnings, familyTokens);
+    }
+    return;
+  }
+  const translated = translatedFamily.get(null);
+  const english = englishFamily.get(null);
+  if (!translated) {
+    failures.push(`${filename}:${base}: missing non-plural translation`);
+    return;
+  }
+  validateValue(filename, base, translated.value, english.value, failures, warnings);
+}
+
+function validateCatalog(tag, strings, englishStrings, { strict = false, moved = null } = {}) {
   const filename = `${tag}.json`;
   const failures = [];
   const warnings = [];
@@ -152,54 +214,26 @@ function validateCatalog(tag, strings, englishStrings, { strict = false } = {}) 
       `${filename}:<catalog>: covers ${covered} of ${englishFamilies.size} English keys; the floor is ${Math.round(COVERAGE_FLOOR * 100)}%`
     );
   }
+  // A key English no longer has is dead weight the runtime never reads, so a
+  // removed string does not force an edit to every catalog; the translation
+  // pass prunes it and --strict fails until it has.
   for (const base of [...translatedFamilies.keys()].sort(compareOrdinal)) {
-    if (!englishFamilies.has(base)) failures.push(`${filename}:${base}: unknown key`);
+    if (!englishFamilies.has(base)) (strict ? failures : warnings).push(`${filename}:${base}: unknown key`);
   }
 
   for (const [base, translatedFamily] of translatedFamilies) {
     const englishFamily = englishFamilies.get(base);
     if (!englishFamily) continue;
-    const englishIsPlural = [...englishFamily.keys()].some((category) => category !== null);
-    const translatedIsPlural = [...translatedFamily.keys()].some((category) => category !== null);
-    if (!englishIsPlural && translatedIsPlural) {
-      failures.push(`${filename}:${base}: plural variants are not allowed for a non-plural English key`);
+    // A translation of a string whose English has since changed is judged
+    // against text it was not written for. Outside --strict that mismatch is
+    // the translation pass's work, not a defect in the commit that reworded it.
+    if (!strict && moved && moved.has(base)) {
+      const stale = [];
+      validateFamily(filename, base, translatedFamily, englishFamily, pluralCategories, stale, stale);
+      if (stale.length) warnings.push(`${filename}:${base}: stale translation`);
       continue;
     }
-    if (englishIsPlural) {
-      const actualCategories = [...translatedFamily.keys()]
-        .filter((category) => category !== null)
-        .sort(compareOrdinal);
-      const expectedCategories = [...pluralCategories].sort(compareOrdinal);
-      if (translatedFamily.has(null) || !sameItems(actualCategories, expectedCategories)) {
-        failures.push(
-          `${filename}:${base}: plural categories ${actualCategories.join(', ') || '(none)'}; expected ${expectedCategories.join(', ')}`
-        );
-      }
-      // allowed = any placeholder the English family uses; required = those
-      // every English variant carries (a translation may not drop {destination}).
-      const familyTokens = { allowed: new Set(), required: null };
-      for (const entry of englishFamily.values()) {
-        const tokens = placeholders(entry.value);
-        tokens.forEach((token) => familyTokens.allowed.add(token));
-        familyTokens.required = familyTokens.required === null
-          ? new Set(tokens)
-          : new Set([...familyTokens.required].filter((token) => tokens.includes(token)));
-      }
-      familyTokens.required = familyTokens.required || new Set();
-      for (const [category, entry] of translatedFamily) {
-        if (category === null) continue;
-        const englishEntry = englishEntryFor(englishFamily, category);
-        validateValue(filename, entry.key, entry.value, englishEntry.value, failures, warnings, familyTokens);
-      }
-      continue;
-    }
-    const translated = translatedFamily.get(null);
-    const english = englishFamily.get(null);
-    if (!translated) {
-      failures.push(`${filename}:${base}: missing non-plural translation`);
-      continue;
-    }
-    validateValue(filename, base, translated.value, english.value, failures, warnings);
+    validateFamily(filename, base, translatedFamily, englishFamily, pluralCategories, failures, warnings);
   }
   return { failures, warnings };
 }
@@ -209,6 +243,9 @@ function main(argv = process.argv.slice(2)) {
   try {
     options = parseArguments(argv);
     const english = readCatalog(options.localesDir, 'en');
+    const moved = options.baseEnglish
+      ? movedFamilies(parseCatalog(JSON.parse(fs.readFileSync(options.baseEnglish, 'utf8')), 'en'), english)
+      : null;
     const tags = options.only !== null
       ? [options.only]
       : fs.readdirSync(options.localesDir)
@@ -219,7 +256,7 @@ function main(argv = process.argv.slice(2)) {
     const warnings = [];
     for (const tag of tags) {
       if (tag === 'en') continue;
-      const result = validateCatalog(tag, readCatalog(options.localesDir, tag), english, { strict: options.strict });
+      const result = validateCatalog(tag, readCatalog(options.localesDir, tag), english, { strict: options.strict, moved });
       failures.push(...result.failures);
       warnings.push(...result.warnings);
     }
@@ -238,4 +275,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { main, validateCatalog };
+module.exports = { main, movedFamilies, splitKey, validateCatalog };

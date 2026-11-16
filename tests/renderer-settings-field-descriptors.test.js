@@ -59,9 +59,9 @@ test('the Off/On selects and the personality search ghost are gone; the 24-hour 
 
 test('hydration normalizes without clamping and preserves zero, Off and Auto', () => {
   const cap = descriptors.getSettingDescriptor('autoApproveStreakCapInput');
-  assert.equal(descriptors.normalizeSettingValue(cap, 999), 50, 'out of range falls back to the default, never clamps');
+  assert.equal(descriptors.normalizeSettingValue(cap, 999), 250, 'out of range falls back to the default, never clamps');
   assert.equal(descriptors.normalizeSettingValue(cap, 0), 0, 'zero is a value, not a missing one');
-  assert.equal(descriptors.normalizeSettingValue(cap, '7'), 50, 'strings are not numbers');
+  assert.equal(descriptors.normalizeSettingValue(cap, '7'), 250, 'strings are not numbers');
   const guard = descriptors.getSettingDescriptor('unattendedGuardMinutesInput');
   assert.equal(descriptors.normalizeSettingValue(guard, 0), 0, 'Off survives');
   assert.equal(descriptors.normalizeSettingValue(guard, 45), 45);
@@ -97,15 +97,15 @@ test('edits validate and are rejected with a field error, never coerced', () => 
 
 test('Modified and the default meta follow the owner semantics', () => {
   const cap = descriptors.getSettingDescriptor('autoApproveStreakCapInput');
-  assert.equal(descriptors.isSettingModified(cap, 50), false);
+  assert.equal(descriptors.isSettingModified(cap, 250), false);
   assert.equal(descriptors.isSettingModified(cap, 0), true);
-  assert.equal(descriptors.describeSettingDefaultValue(cap), '50');
+  assert.equal(descriptors.describeSettingDefaultValue(cap), '250');
   const auto = descriptors.getSettingDescriptor('advancedTuningField-tokenBudgetWarningRatio');
   assert.equal(descriptors.isSettingModified(auto, null), false, 'no override means not modified');
   assert.equal(descriptors.isSettingModified(auto, 0.7), true, 'an override present means modified');
   assert.equal(descriptors.describeSettingDefaultValue(auto), 'Auto');
   assert.equal(descriptors.getSettingDescriptor('advancedTuningField-maxBudgetUsd'), null);
-  assert.equal(descriptors.describeSettingDefaultValue(descriptors.getSettingDescriptor('advancedTuningField-maxToolsPerTurn')), '20');
+  assert.equal(descriptors.describeSettingDefaultValue(descriptors.getSettingDescriptor('advancedTuningField-maxToolsPerTurn')), '200');
   assert.equal(descriptors.describeSettingDefaultValue(descriptors.getSettingDescriptor('safetyModeSelect')), 'Normal', 'enum defaults show the option label');
   assert.equal(descriptors.describeSettingDefaultValue(descriptors.getSettingDescriptor('notificationsSoundToggle')), '', 'booleans carry no meta');
   const limit = descriptors.getSettingDescriptor('runtime_limit_local_runnable_turns');
@@ -232,4 +232,16 @@ test('every Limits search stub takes its label and help from the page row that s
     assert.equal(descriptors.getSettingDescriptor('advancedTuningField-' + key), null, key);
   }
   assert.ok(Object.isFrozen(descriptors.LIMITS_PAGE_GROUPS[0].rows[0].lines[0]));
+});
+
+test('row 123 2a-6c: the team notification switch sits with the categories, needs a team, and Settings search finds it', () => {
+  const team = descriptors.getSettingDescriptorByControlId('notificationsCategoryTeamToggle');
+  assert.deepEqual([team.sectionId, team.adapterId, team.key, team.default, team.enabledWhen], ['notifications', 'windowUi.notifications', 'categories.team', true, 'team']);
+  assert.equal(team.copy.label, 'Someone messages you in a team');
+  const ids = all.map((d) => d.controlId);
+  assert.equal(ids.indexOf('notificationsCategoryTeamToggle') + 1, ids.indexOf('notificationsReplyPreviewToggle'), 'last category, just before the preview');
+  assert.equal(fieldCopy.listSettingsSearchEntries().find((e) => e.id === 'notificationsCategoryTeamToggle').label, 'Someone messages you in a team');
+  const preview = descriptors.getSettingDescriptorByControlId('notificationsReplyPreviewToggle');
+  const copy = typeof preview.copy === 'string' ? fieldCopy.getSettingsFieldCopy(preview.copy.slice('field-copy:'.length)) : preview.copy;
+  assert.equal(copy.label, 'Show the first line of the reply or message');
 });

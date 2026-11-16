@@ -335,7 +335,6 @@ test('the rail stylesheet hides a collapsed run in Answers, shows it expanded, a
   const hideMembers = ruleFor('[data-run-member]:not([data-run-expanded="true"])', 'display: none');
   const hideSummaryOutside = ruleFor('.chat-row[data-row-kind="tool_run"]', 'display: none');
   const indentExpanded = ruleFor('[data-run-member][data-run-expanded="true"]', 'padding-inline-start');
-  const hideMemberDots = ruleFor('[data-run-member] .chat-row-node-dot', 'display: none');
 
   const render = (expanded) => {
     const html = createList().buildTurnRowListMarkup(RUN_ROWS, [], { transcriptView: 'answers', sessionId: 's1' });
@@ -356,8 +355,7 @@ test('the rail stylesheet hides a collapsed run in Answers, shows it expanded, a
       assert.deepEqual(ids(hideSummaryOutside), ['turn-1:tool_run:c1'], 'outside Answers a stale summary stays hidden');
       assert.deepEqual(ids(hideMembers), [], 'outside Answers nothing is hidden by the run rules');
     }
-    assert.equal(document.querySelectorAll(hideMemberDots).length, view === 'answers' ? members.length : 0,
-      'run steps drop their own rail dots in Answers only');
+    assert.equal(document.querySelectorAll('.chat-row-node-dot').length, 0, 'run steps carry no gutter dots');
     dom.window.close();
   }
 });

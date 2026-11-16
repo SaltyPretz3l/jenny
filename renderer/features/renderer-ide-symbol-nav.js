@@ -34,7 +34,6 @@
   const TYPING_RENDER_DEBOUNCE_MS = 400;
   const MAX_SYMBOL_RESULTS = 200;
   const MAX_NAV_TREE_CACHE_ENTRIES = 64;
-  const MODEL_SCHEME = 'jenny-workspace';
 
   // Breadcrumbs show names only; picker rows include the kind so ambiguous names
   // remain distinguishable. Unmapped kinds pass through verbatim.
@@ -274,8 +273,8 @@
       // Monaco stores a decoded path; the host keys models via the shared
       // lossless workspacePathToMonacoUriString helper, so dropping the
       // leading slash recovers the complete workspace-relative path (URI
-      // delimiters like '#' included).
-      return String(uri.path || '').replace(/^\//, '');
+      // delimiters like '#' included). Outside files (row 137) map from their own scheme.
+      return monacoUtils.monacoUriToWorkspacePath(uri);
     }
 
     // Resolve and query the TS/JS language worker for one model. setEagerModelSync
@@ -582,7 +581,7 @@
         const eligible = models.filter((model) => model
           && !(model.isDisposed && model.isDisposed())
           && model.uri
-          && model.uri.scheme === MODEL_SCHEME
+          && model.uri.scheme === 'jenny-workspace' // the Workspace index; outside files (row 137) keep their own outline only
           && isTsJsLanguage(model.getLanguageId ? model.getLanguageId() : ''));
         const perModel = await Promise.all(eligible.map((model) => symbolsForModel(model)));
         if (disposed || !indexGate.isCurrent(token)) {

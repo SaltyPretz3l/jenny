@@ -222,3 +222,20 @@ test('a device revoked through HTTP goes offline in presence and leaves no timer
   assert.deepEqual(presence.size(), { members: 1, timers: 0, offline: 1 }, 'only the owner is tracked; no timer left');
   assert.equal([...timers.pending.values()].some((handle) => handle.ms === 30_000), false);
 });
+
+// Fault: a member who was pending when they first connected never tracked once admitted, so the owner sees them
+// offline while they chat.
+test('a member who connects while pending, is admitted and then opens a stream is online and announced', async (t) => {
+  const env = await createTeamHttpFixture(t, { withChat: true });
+  const seeded = await env.seed();
+  const owner = await connect(env, seeded.owner.key);
+  const waiting = env.client(seeded.pending.key);
+  assert.equal((await waiting.hello()).status, 200, 'a pending member says hello');
+  const admitted = await env.store.admit({ actorMemberId: seeded.owner.member_id, memberId: seeded.pending.member_id });
+  assert.equal(admitted.ok, true);
+  await connect(env, seeded.pending.key);
+  assert.equal(await waitUntil(() => framesOf(owner.stream, 'team_presence')
+    .some((frame) => frame.member_id === seeded.pending.member_id && frame.state === 'online')), true, 'announced');
+  const overview = await owner.send('team.chat.overview');
+  assert.equal(overview.members.find((entry) => entry.member_id === seeded.pending.member_id)?.state, 'online');
+});

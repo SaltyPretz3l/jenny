@@ -506,3 +506,27 @@ test('registerFeatureIpcHandlers applies authorization before settings writes', 
   });
   assert.deepEqual(updates, [{ tools: { web: true } }]);
 });
+
+test('E50 the payload says whether there is team data on disk only while the team flag is on, read at each payload', async () => {
+  const shellConfigService = { getState: () => ({ featureOverrides: {} }), getWorkspaceRootStatus: () => ({ state: 'missing', message: '' }) };
+  let onDisk = false;
+  let asked = 0;
+  const hasTeamData = () => { asked += 1; return onDisk; };
+  const build = (env, check = hasTeamData) => buildFeatureStatePayload({ shellConfigService, backendService: {}, env, platform: 'win32', hasTeamData: check });
+  const off = build({ JENNY_ENABLE_TEAM: '0' }); // team defaults on since 2026-11-15 (owner)
+  assert.equal(Object.hasOwn(off, 'teamData'), false, 'flag off: no key');
+  assert.equal(asked, 0, 'flag off: not even asked');
+  const env = { JENNY_ENABLE_TEAM: '1' };
+  assert.equal(build(env).teamData, false);
+  onDisk = true; // a join in main wrote its team directory
+  assert.equal(build(env).teamData, true);
+  assert.equal(Object.hasOwn(build(env, null), 'teamData'), false,
+    'no check passed: it cannot tell, so no key');
+  const harness = createFeaturePatchHarness();
+  const pushed = [];
+  onDisk = false;
+  const payload = await applyFeatureSettingsPatch({ patch: { memory: { pauseSaving: true } }, shellConfigService: harness.shellConfigService,
+    backendService: {}, env, platform: 'win32', hasTeamData, sendToWindow: (_channel, value) => pushed.push(value) });
+  assert.equal(payload.teamData, false);
+  assert.equal(pushed[0].teamData, false, 'the push carries it too');
+});

@@ -451,6 +451,35 @@
       return [...pending];
     }
 
+    // A question card (ask_user) still waiting in this stream's turn: answered, skipped, stale and withdrawn ones are not.
+    function isLiveQuestionCard(message, streamId) {
+      const tool = message?.tool_call;
+      return message?.kind === 'tool_use' && tool?.parent_stream_id === streamId
+        && tool.status === 'pending_user_input' && !tool.user_questions_stale && !tool.user_questions_withdrawn;
+    }
+
+    // Row 158 (gate sitting 2026-11-14, G7): the live question cards for the Needs you inbox, by the
+    // same rule as the "Input needed" chip. Only chats with a live turn are read, each back to its prompt.
+    function getPendingQuestionCards() {
+      const state = getState();
+      const cards = [];
+      for (const summary of Array.isArray(state?.sessions) ? state.sessions : []) {
+        const id = normalizeToken(summary?.id);
+        const streamId = id ? getStreamIdForSession(id) : '';
+        if (!streamId || isStreamFinalized(streamId)) continue;
+        const messages = state?.messagesBySession?.get?.(id) || [];
+        for (let index = messages.length - 1; index >= 0 && messages[index]?.role !== 'user'; index -= 1) {
+          if (!isLiveQuestionCard(messages[index], streamId)) continue;
+          const tool = messages[index].tool_call;
+          const questions = Array.isArray(tool.user_questions) ? tool.user_questions.filter(Boolean) : [];
+          cards.push({ sessionId: id, callId: normalizeToken(tool.call_id), questionCount: questions.length,
+            introText: String(questions[0]?.prompt || '') });
+          break;
+        }
+      }
+      return cards;
+    }
+
     // Attention is presentation only: a waiting request still owns its stream.
     // Read only the requested sessions and their current turn, never history lists.
     function getSessionAttentionStates(sessionIds) {
@@ -479,11 +508,7 @@
             attention.set(id, tool.tool_name === 'exit_plan_mode' ? 'plan_review' : 'approval');
             break;
           }
-          if (message?.kind === 'tool_use' && tool?.parent_stream_id === streamId
-            && tool.status === 'pending_user_input' && !tool.user_questions_stale
-            && !tool.user_questions_withdrawn) {
-            attention.set(id, 'input_needed');
-          }
+          if (isLiveQuestionCard(message, streamId)) attention.set(id, 'input_needed');
         }
       }
       return attention;
@@ -538,6 +563,7 @@
       isCancelStreamRefused,
       getApprovalPendingSessionIds,
       getSessionAttentionStates,
+      getPendingQuestionCards,
       dispose,
     };
   }

@@ -797,6 +797,8 @@ def test_edit_file_rejects_stale_full_read_snapshot(tmp_path: Path) -> None:
     assert result.success is False
     assert result.error_code == CMP_TOOL_STALE_READ_SNAPSHOT
     assert "read the file again" in result.output.lower()
+    assert "before editing it" in result.output
+    assert "attempting to" not in result.output
 
 
 def test_concurrent_edits_reject_stale_snapshot(tmp_path: Path) -> None:
@@ -936,6 +938,8 @@ def test_write_file_rejects_stale_full_read_snapshot(tmp_path: Path) -> None:
     assert result.success is False
     assert result.error_code == CMP_TOOL_STALE_READ_SNAPSHOT
     assert "read the file again" in result.output.lower()
+    assert "before writing it" in result.output
+    assert "attempting to" not in result.output
     backups = list((tmp_path / ".jenny" / "backups").glob("*@v*.bak"))
     assert backups == []
 

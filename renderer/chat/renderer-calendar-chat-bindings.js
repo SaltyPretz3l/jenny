@@ -15,6 +15,32 @@
   let journalUnsubscribe = null;
   let firstBindComplete = false;
   let journalGeneration = 0;
+  const MAX_EXPANDED_BLOCKS = 64;
+  const expandedBlocks = new Set();
+
+  function isCalendarBlockExpanded(key) {
+    return expandedBlocks.has(String(key));
+  }
+
+  function rememberBlockExpanded(key, open) {
+    if (!key) return;
+    expandedBlocks.delete(key);
+    if (!open) return;
+    expandedBlocks.add(key);
+    while (expandedBlocks.size > MAX_EXPANDED_BLOCKS) expandedBlocks.delete(expandedBlocks.values().next().value);
+  }
+
+  function toggleMoreRows(trigger) {
+    const block = trigger.closest('.cal-chat');
+    if (!block) return;
+    const open = trigger.getAttribute('aria-expanded') !== 'true';
+    block.querySelectorAll('[data-cal-more-row]').forEach((node) => { node.hidden = !open; });
+    block.querySelectorAll('[data-cal-earlier-line]').forEach((node) => { node.hidden = open; });
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const label = open ? trigger.dataset.labelLess : trigger.dataset.labelMore;
+    if (label) trigger.textContent = label;
+    rememberBlockExpanded(block.dataset.calBlockKey, open);
+  }
 
   function hasLiveJournalEntry(id) {
     return liveJournalIds === null || liveJournalIds.has(String(id));
@@ -86,6 +112,11 @@
     if (liveJournalIds !== null) syncUndoVisibility(container);
     initializeJournal(options.shell);
     const handleClick = (event) => {
+      const moreTrigger = event.target?.closest?.('[data-cal-more-toggle]');
+      if (moreTrigger) {
+        toggleMoreRows(moreTrigger);
+        return;
+      }
       const undoTrigger = event.target?.closest?.('[data-cal-undo-journal]');
       if (undoTrigger) {
         const runtime = resolveRuntime();
@@ -131,11 +162,13 @@
     journalUnsubscribe = null;
     firstBindComplete = false;
     journalGeneration = 0;
+    expandedBlocks.clear();
   }
 
   return {
     bindCalendarChatInteractions,
     hasLiveJournalEntry,
+    isCalendarBlockExpanded,
     syncUndoVisibility,
     applyJournal,
     _resetForTests,

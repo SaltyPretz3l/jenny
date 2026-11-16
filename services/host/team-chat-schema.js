@@ -4,12 +4,25 @@
 // "Message record" and "Store"). Closed-field validation of every document the
 // store reads and of every input it turns into a record. Pure functions; no
 // disk, no clock, no logging. Every field of the message record exists from
-// version 1 so later slices add behaviour, not migrations.
+// version 1 so later slices add behaviour, not migrations. Slice 2d gives the
+// channel document alone version 2, which adds `participants` (a direct
+// conversation's members, stored once); the index and segments stay version 1.
+// Slice E59 gives the read state version 2: each followed item gains `read_seq`
+// (the thread's own read mark, null while it tracks the channel mark) and `on`
+// may be null (no explicit choice: an item that only holds the mark of a thread
+// followed by the implicit rule). Version 1 is read and carried forward as
+// version 2, every mark null, so nothing reads as new after the upgrade.
+
+const crypto = require('node:crypto');
 
 const { isId } = require('../../server/team/ids');
 const { isCount, isPlainObject } = require('../../server/team/member-schema');
 
 const SCHEMA_VERSION = 1;
+// The channel document's version (2d): version 1 is read and carried forward as version 2 when it is next written.
+const CHANNEL_SCHEMA_VERSION = 2;
+// The read state's version (E59), carried forward the same way.
+const READ_SCHEMA_VERSION = 2;
 const MIB = 1024 * 1024;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -38,7 +51,7 @@ const LIMITS = Object.freeze({
   SEGMENT_HARD_MAX_BYTES: 4 * MIB,
   INDEX_MAX_BYTES: 256 * 1024,
   CHANNEL_MAX_BYTES: MIB,
-  // 64 members with 200 followed threads each is about 675 KB.
+  // 64 members with 200 followed threads each, every one with a 7-digit mark, measures about 940 KB (E59).
   READ_MAX_BYTES: MIB,
   REF_PATH_MAX_CHARS: 1024,
   ATTACHMENT_NAME_MAX_CHARS: 255,
@@ -75,11 +88,14 @@ const CHANNEL_PATTERNS = Object.freeze([
   ['dm', /^chan_dm_[a-f0-9]{64}$/u],
 ]);
 
+const CHANNEL_KEYS_V1 = ['schema_version', 'channel_id', 'kind', 'created_at', 'archived', 'rev', 'next_seq', 'floor_seq',
+  'bytes', 'pins', 'segments', 'requests'];
+
 const KEYS = Object.freeze({
   index: ['schema_version', 'channels'],
   indexEntry: ['channel_id', 'kind', 'created_at'],
-  channel: ['schema_version', 'channel_id', 'kind', 'created_at', 'archived', 'rev', 'next_seq', 'floor_seq', 'bytes',
-    'pins', 'segments', 'requests'],
+  channelV1: CHANNEL_KEYS_V1,
+  channel: [...CHANNEL_KEYS_V1, 'participants'],
   segmentMeta: ['n', 'first_seq', 'last_seq', 'count', 'bytes', 'newest_at'],
   request: ['device_id', 'request_id', 'digest', 'at', 'result'],
   segment: ['schema_version', 'channel_id', 'n', 'messages'],
@@ -88,7 +104,8 @@ const KEYS = Object.freeze({
     'served_by'],
   read: ['schema_version', 'channel_id', 'members'],
   readMember: ['member_id', 'last_read_seq', 'notify', 'followed', 'updated_at'],
-  followed: ['root_id', 'on'],
+  followedV1: ['root_id', 'on'],
+  followed: ['root_id', 'on', 'read_seq'],
 });
 
 const RESULT_KEYS = Object.freeze(['message_id', 'seq', 'rev']);
@@ -119,6 +136,25 @@ function channelKind(channelId) {
   if (typeof channelId !== 'string' || channelId.length > 160) return null;
   for (const [kind, pattern] of CHANNEL_PATTERNS) if (pattern.test(channelId)) return kind;
   return null;
+}
+
+// A direct conversation's id: `chan_dm_` plus the SHA-256 hex of its participants' member ids sorted by code
+// unit and joined by one line feed. The same people always give the same id, whoever asks and in any order.
+// The only place an id is built; the store's create and the channel document check both call it.
+function dmChannelId(memberIds) {
+  const digest = crypto.createHash('sha256').update([...memberIds].sort().join('\n'), 'utf8').digest('hex');
+  return `chan_dm_${digest}`;
+}
+
+// The shape of a participant list: 2 to 8 distinct member ids in code unit order (so sorted, as the id is built).
+function isParticipantList(value) {
+  return Array.isArray(value) && value.length >= 2 && value.length <= 8 && value.every(isMemberId)
+    && value.every((id, at) => at === 0 || value[at - 1] < id);
+}
+
+// A stored participant list: that shape, and the ids hash to the channel's own id.
+function isParticipants(value, channelId) {
+  return isParticipantList(value) && dmChannelId(value) === channelId;
 }
 
 // Markdown source: well-formed UTF-16, 1 to 16,000 code points, not blank, and
@@ -179,7 +215,9 @@ function isAttachment(item) {
 }
 
 // A reaction key holds at least one non-ASCII character (so never a prototype
-// name) and no control or space characters. The emoji allowlist is slice 2b's.
+// name) and no control or space characters. A stored key is not held to the
+// allowlist (team-chat-emoji.js, checked when a reaction is made), so changing
+// the list never corrupts a channel on load.
 function isReactionKey(key) {
   return key.length >= 1 && key.length <= 32 && !/^\p{ASCII}*$/u.test(key) && !/[\p{Cc}\p{Z}]/u.test(key);
 }
@@ -235,9 +273,9 @@ function fail(reason, schema = false) {
 // Shared head of every document: a plain object whose schema_version is 1. A
 // different integer version is `schema: true` (refused, never treated as
 // corrupt); anything else is malformed.
-function checkVersion(doc) {
+function checkVersion(doc, accepted = [SCHEMA_VERSION]) {
   if (!isPlainObject(doc)) return fail('not_object');
-  if (doc.schema_version !== SCHEMA_VERSION) {
+  if (!accepted.includes(doc.schema_version)) {
     return Number.isSafeInteger(doc.schema_version) ? fail('unsupported_schema', true) : fail('shape_invalid');
   }
   return null;
@@ -282,12 +320,18 @@ function validateSegmentMetas(segments, doc) {
   return segments.length === 0 || segments[0].first_seq >= doc.floor_seq;
 }
 
+// Version 1 has no `participants`; version 2 has it: an array for a direct conversation that stores its
+// participants, null otherwise (a direct channel created before 2d, or one made without participants, has none and
+// shows to nobody).
 function validateChannelDoc(doc, channelId) {
-  const head = checkVersion(doc);
+  const head = checkVersion(doc, [SCHEMA_VERSION, CHANNEL_SCHEMA_VERSION]);
   if (head) return head;
-  if (!hasExactKeys(doc, KEYS.channel) || doc.channel_id !== channelId || channelKind(channelId) !== doc.kind) {
+  const keys = doc.schema_version === SCHEMA_VERSION ? KEYS.channelV1 : KEYS.channel;
+  if (!hasExactKeys(doc, keys) || doc.channel_id !== channelId || channelKind(channelId) !== doc.kind) {
     return fail('channel_invalid');
   }
+  if (doc.participants !== undefined && doc.participants !== null
+    && !(doc.kind === 'dm' && isParticipants(doc.participants, channelId))) return fail('channel_invalid');
   if (!isIso(doc.created_at) || !(doc.archived === null || (hasExactKeys(doc.archived, ['at']) && isIso(doc.archived.at)))) {
     return fail('channel_invalid');
   }
@@ -316,8 +360,18 @@ function validateSegmentDoc(doc, channelId, n) {
   return { ok: true };
 }
 
+// A followed item. Version 1: an explicit follow or unfollow. Version 2: `on` true, false or null; an unfollowed
+// thread holds no mark, an item with no explicit choice exists only to hold one.
+function isFollowedItem(item, version) {
+  if (version === SCHEMA_VERSION) return hasExactKeys(item, KEYS.followedV1) && isMessageId(item.root_id) && typeof item.on === 'boolean';
+  if (!hasExactKeys(item, KEYS.followed) || !isMessageId(item.root_id)) return false;
+  if (item.on === false) return item.read_seq === null;
+  if (item.on === null) return isCount(item.read_seq);
+  return item.on === true && (item.read_seq === null || isCount(item.read_seq));
+}
+
 function validateReadDoc(doc, channelId) {
-  const head = checkVersion(doc);
+  const head = checkVersion(doc, [SCHEMA_VERSION, READ_SCHEMA_VERSION]);
   if (head) return head;
   if (!hasExactKeys(doc, KEYS.read) || doc.channel_id !== channelId) return fail('read_invalid');
   if (!Array.isArray(doc.members) || doc.members.length > LIMITS.MEMBERS_MAX) return fail('read_invalid');
@@ -329,7 +383,7 @@ function validateReadDoc(doc, channelId) {
     }
     seen.add(entry.member_id);
     if (!Array.isArray(entry.followed) || entry.followed.length > LIMITS.FOLLOWED_MAX
-      || !entry.followed.every((f) => hasExactKeys(f, KEYS.followed) && isMessageId(f.root_id) && typeof f.on === 'boolean')) {
+      || !entry.followed.every((f) => isFollowedItem(f, doc.schema_version))) {
       return fail('read_followed_invalid');
     }
   }
@@ -357,11 +411,29 @@ function newMessageId(nowMs, randomBytes) {
   return `msg_${encodeBase32(time, 10)}${encodeBase32(BigInt(`0x${bytes.toString('hex')}`), 16)}`;
 }
 
-function emptyChannelDoc(channelId, kind, createdAt) {
+function emptyChannelDoc(channelId, kind, createdAt, participants = null) {
   return {
-    schema_version: SCHEMA_VERSION, channel_id: channelId, kind, created_at: createdAt, archived: null, rev: 0,
-    next_seq: 1, floor_seq: 1, bytes: 0, pins: [], segments: [], requests: [],
+    schema_version: CHANNEL_SCHEMA_VERSION, channel_id: channelId, kind, created_at: createdAt, archived: null, rev: 0,
+    next_seq: 1, floor_seq: 1, bytes: 0, pins: [], segments: [], requests: [], participants: freezeList(participants),
   };
+}
+
+// A validated channel document in the current shape: version 1 gains version 2 and no participants. Nothing else changes.
+// The participants are frozen once, here and at creation, so the audience rule can hand the list out as it is.
+function currentChannelDoc(doc) {
+  return { ...doc, schema_version: CHANNEL_SCHEMA_VERSION, participants: freezeList(doc.participants) };
+}
+
+// A validated read document in the current shape: version 1 gains version 2 and a null mark on every followed item
+// (each thread's mark then tracks the member's channel mark, as every reply was counted before). Nothing else changes.
+function currentReadDoc(doc) {
+  if (doc.schema_version === READ_SCHEMA_VERSION) return doc;
+  return { ...doc, schema_version: READ_SCHEMA_VERSION, members: doc.members.map((entry) => ({ ...entry,
+    followed: entry.followed.map((item) => ({ root_id: item.root_id, on: item.on, read_seq: null })) })) };
+}
+
+function freezeList(list) {
+  return Array.isArray(list) ? Object.freeze([...list]) : null;
 }
 
 function defaultNotify(kind) {
@@ -370,16 +442,23 @@ function defaultNotify(kind) {
 
 module.exports = {
   SCHEMA_VERSION,
+  CHANNEL_SCHEMA_VERSION,
+  READ_SCHEMA_VERSION,
   LIMITS,
   NOTIFY_LEVELS,
   AUTHOR_KINDS,
   PATTERNS,
   channelKind,
+  currentChannelDoc,
+  currentReadDoc,
   defaultNotify,
+  dmChannelId,
   emptyChannelDoc,
   isCount,
   isDeviceId,
+  isIso,
   isMemberId,
+  isParticipantList,
   isMentionList,
   isMessageId,
   isMessageText,

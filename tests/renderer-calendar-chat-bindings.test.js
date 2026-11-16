@@ -289,3 +289,82 @@ test('missing shell and optional handlers do not throw', (t) => {
   assert.equal(activeView, 'home');
   assert.doesNotThrow(() => container.querySelector('[data-cal-undo-journal]').click());
 });
+
+function moreMetadata() {
+  const row = (id, title, start) => ({
+    instance_id: id, event_id: id, title, start, end: start.replace(':00', ':30'), category: 'work', source: 'local', source_kind: 'user',
+  });
+  return {
+    result_kind: 'home',
+    calendar: {
+      schema_version: 1,
+      range_start: '2026-09-05T00:00',
+      range_end: '2026-09-09T00:00',
+      generated_at: '2026-09-07T11:00',
+      instance_count: 2,
+      omitted_count: 2,
+      instances: [row('old', 'Old event', '2026-09-05T10:00'), row('now', 'Live event', '2026-09-07T12:00')],
+    },
+  };
+}
+
+test('the Show more control reveals hidden rows in place, swaps its label, and never navigates', (t) => {
+  const { dom, container } = buildContainer(buildMarkup(moreMetadata()));
+  reset(t, dom);
+  const calls = [];
+  bindings.bindCalendarChatInteractions(container, {
+    setHomeCalendarFocusDay: (key) => calls.push(['focus', key]),
+    setActiveView: (view) => calls.push(['view', view]),
+  });
+  const toggle = container.querySelector('[data-cal-more-toggle]');
+  const key = container.querySelector('.cal-chat').dataset.calBlockKey;
+  const moreRows = [...container.querySelectorAll('[data-cal-more-row]')];
+  const earlier = container.querySelector('[data-cal-earlier-line]');
+  assert.ok(moreRows.length >= 3);
+  assert.equal(moreRows.every((node) => node.hidden), true);
+  assert.equal(toggle.textContent, 'Show 1 more');
+  assert.equal(bindings.isCalendarBlockExpanded(key), false);
+
+  toggle.click();
+  assert.equal(moreRows.some((node) => node.hidden), false);
+  assert.equal(earlier.hidden, true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.textContent, 'Show less');
+  assert.equal(bindings.isCalendarBlockExpanded(key), true);
+  assert.deepEqual(calls, []);
+
+  toggle.click();
+  assert.equal(moreRows.every((node) => node.hidden), true);
+  assert.equal(earlier.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.textContent, 'Show 1 more');
+  assert.equal(bindings.isCalendarBlockExpanded(key), false);
+  assert.deepEqual(calls, []);
+});
+
+test('an open block stays open across a re-render and the open set stays bounded', (t) => {
+  const { dom, container } = buildContainer(buildMarkup(moreMetadata()));
+  reset(t, dom);
+  bindings.bindCalendarChatInteractions(container, {});
+  container.querySelector('[data-cal-more-toggle]').click();
+
+  const rerendered = calendarBlock.buildHomeResultBlockMarkup(moreMetadata(), {
+    actionButton, now: NOW, isExpanded: bindings.isCalendarBlockExpanded,
+  });
+  const fragment = JSDOM.fragment(rerendered);
+  assert.equal(fragment.querySelector('[data-cal-more-toggle]').getAttribute('aria-expanded'), 'true');
+  assert.equal(fragment.querySelectorAll('[data-cal-more-row][hidden]').length, 0);
+
+  const block = container.querySelector('.cal-chat');
+  const toggle = container.querySelector('[data-cal-more-toggle]');
+  for (let index = 0; index < 70; index += 1) {
+    block.dataset.calBlockKey = `key-${index}`;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.click();
+  }
+  assert.equal(bindings.isCalendarBlockExpanded('key-5'), false);
+  assert.equal(bindings.isCalendarBlockExpanded('key-6'), true);
+  assert.equal(bindings.isCalendarBlockExpanded('key-69'), true);
+  bindings._resetForTests();
+  assert.equal(bindings.isCalendarBlockExpanded('key-69'), false);
+});

@@ -198,3 +198,31 @@ test('a lane held only by a quarantined lease answers lane_quarantined, so the s
   assert.equal(quarantined.reason, 'lane_quarantined');
   setup.gateway.close({ producerSettled: true });
 });
+
+test('a waiting admit keeps what it waits behind for the wait line, and a grant clears it (row 136)', () => {
+  const lanes = new RuntimeLaneAdmission();
+  const route = captureRuntimeRoute({ engine_type: 'ollama', provider_id: 'ollama',
+    configuration_revision: 'config:1', resource_class: 'local', requires_gpu: true });
+  const holder = lanes.tryAcquireInference({ ownerId: 'request:other', sessionId: 'session:other', route });
+  const setup = fixture({ lanes });
+  assert.equal(setup.gateway.wait, null);
+  // The wire answer stays four fields; the blocker is kept beside it.
+  assert.deepEqual(setup.admit(), { schema_version: 1, operation_id: 'operation:1', status: 'waiting',
+    reason: 'lane_capacity' });
+  assert.deepEqual(setup.gateway.wait, { blocking_session_id: 'session:other', held_for_first: false });
+  // Behind a chat that was put first, the wait says so.
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'session:other', route }).status, 'granted');
+  assert.equal(lanes.setFirstSession('session:other').status, 'set');
+  setup.admit({ operation_id: 'operation:2' });
+  assert.deepEqual(setup.gateway.wait, { blocking_session_id: 'session:other', held_for_first: true });
+  lanes.clearFirstSession();
+  lanes.release(holder.lease, { producerSettled: true });
+  // Behind this chat's own helper (same chat id) nobody else is in the way: no wait to name.
+  const helper = lanes.tryAcquireInference({ ownerId: 'request:helper', sessionId: 'session:1', route });
+  assert.equal(setup.admit({ operation_id: 'operation:own' }).status, 'waiting');
+  assert.equal(setup.gateway.wait, null);
+  lanes.release(helper.lease, { producerSettled: true });
+  assert.equal(setup.admit({ operation_id: 'operation:3' }).status, 'granted');
+  assert.equal(setup.gateway.wait, null);
+  setup.gateway.close({ producerSettled: true });
+});

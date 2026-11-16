@@ -16,6 +16,7 @@ const path = require('path');
 const { registerIpcInvokeHandlers } = require('./ipc-contract');
 const { isChildPath } = require('./backend/path-utils');
 const { redactTranscriptExportContent } = require('./backend/transcript-export-redaction');
+const teamExportFormat = require('./team-export-format');
 
 const FORMAT_FILTER_MAP = {
   markdown: [{ name: 'Markdown', extensions: ['md'] }],
@@ -26,12 +27,75 @@ const FORMAT_FILTER_MAP = {
 
 const SUPPORTED_FORMATS = new Set(Object.keys(FORMAT_FILTER_MAP));
 
+// A picture or other bytes (sketch export, slice S6): `encoding: 'base64'` marks `content` as base64 text, at most
+// 32 MiB of it. It is decoded here and written as bytes; it is never redacted, so it cannot be combined with
+// `anonymizePaths`, and it is a single-file save, so not with `contents` or `document` either.
+const MAX_BASE64_CHARS = 32 * 1024 * 1024;
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+// The decoded bytes for an `encoding: 'base64'` payload, or null for an ordinary text save. Throws when the
+// payload is refused; the caller does this before the dialog opens.
+function readBase64Content(input, anonymizePaths) {
+  if (input.encoding === undefined || input.encoding === null) return null;
+  if (input.encoding !== 'base64') throw new Error('Unsupported save-file encoding.');
+  if (anonymizePaths || input.contents !== undefined || input.document !== undefined) {
+    throw new Error('A base64 save cannot be combined with anonymizePaths, contents or document.');
+  }
+  const content = input.content;
+  if (typeof content === 'string' && content.length > MAX_BASE64_CHARS) throw new Error('The export is too large to write.');
+  if (typeof content !== 'string' || !BASE64_PATTERN.test(content)) throw new Error('The content is not valid base64.');
+  return Buffer.from(content, 'base64');
+}
+
 function resolveFilters(format, override) {
   if (Array.isArray(override) && override.length) {
     return [...override, { name: 'All files', extensions: ['*'] }];
   }
   const base = FORMAT_FILTER_MAP[format] || [];
   return [...base, { name: 'All files', extensions: ['*'] }];
+}
+
+// Several formats in one save (owner, 2026-11-12, team export): the dialog offers each, in order, and only the
+// one whose type was picked is written. `contents` gives the text per format (the save formats below, a string
+// each; a map without the named format is refused); `document` is a team export, built here in the picked format
+// only (services/team-export-format.js). Returns { formats, textFor } or null for an ordinary one-format save.
+function readFormats(input, format) {
+  if (input.document !== undefined) {
+    const doc = teamExportFormat.readDocument(input.document);
+    if (!doc || format !== 'markdown') throw new Error('The export document is not one this app writes.');
+    return { formats: ['markdown', 'json'], textFor: (picked) => teamExportFormat.buildFormat(doc, picked) };
+  }
+  const value = input.contents;
+  if (value === undefined) return null;
+  const contents = {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const key of Object.keys(value)) {
+      if (SUPPORTED_FORMATS.has(key) && key !== 'session-json' && typeof value[key] === 'string') contents[key] = value[key];
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(contents, format)) throw new Error(`No text was given for the "${format}" format.`);
+  return { formats: [format, ...Object.keys(contents).filter((key) => key !== format)], textFor: (picked) => contents[picked] };
+}
+
+// Writes beside the target and renames over it, so a failed write never leaves a cut-off file at the path.
+async function writeWhole(targetPath, text) {
+  const temporary = targetPath + '.' + process.pid + '-' + Date.now() + '.tmp';
+  try {
+    await fs.promises.writeFile(temporary, text, 'utf8');
+    await fs.promises.rename(temporary, targetPath);
+  } catch (error) {
+    await fs.promises.unlink(temporary).catch(() => {}); // a file this call made; never a directory
+    throw error;
+  }
+}
+
+// The format whose extension the picked path carries; the first format when the name has none of them.
+function formatForPath(targetPath, formats, fallback) {
+  const extension = path.extname(targetPath).slice(1).toLowerCase();
+  for (const key of formats) {
+    if ((FORMAT_FILTER_MAP[key][0].extensions || []).includes(extension)) return key;
+  }
+  return fallback;
 }
 
 function normalizeString(value) {
@@ -91,7 +155,25 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
       throw err;
     }
 
-    const filters = resolveFilters(format, overrideFilters);
+    let bytes;
+    try {
+      bytes = readBase64Content(input, anonymizePaths);
+    } catch (error) {
+      safelyLog(log, 'WARN', 'save_file.invalid_encoding', { format });
+      throw error;
+    }
+
+    let several;
+    try {
+      several = readFormats(input, format);
+    } catch (error) {
+      safelyLog(log, 'WARN', 'save_file.invalid_contents', { format });
+      throw error;
+    }
+    // Several formats: just their types, the given (localized) names first, no "All files".
+    const filters = several
+      ? (overrideFilters && overrideFilters.length ? overrideFilters : several.formats.map((key) => FORMAT_FILTER_MAP[key][0]))
+      : resolveFilters(format, overrideFilters);
     const dialogOptions = {
       title: title || 'Save…',
       defaultPath: defaultName || `jenny-export.${(filters[0].extensions || ['txt'])[0]}`,
@@ -109,6 +191,7 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
     }
 
     const targetPath = path.resolve(result.filePath);
+    const picked = several ? formatForPath(targetPath, several.formats, format) : format;
     const realTargetPath = await resolveRealTarget(targetPath);
     const protectedRoots = resolveProtectedRoots();
     for (const root of protectedRoots) {
@@ -125,15 +208,17 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
     }
 
     try {
-      const exportContent = anonymizePaths ? redactTranscriptExportContent(content, format) : content;
-      await fs.promises.writeFile(targetPath, exportContent, 'utf8');
+      const text = several ? several.textFor(picked) : content;
+      if (!bytes && typeof text !== 'string') throw new Error('The export is too large to write.');
+      const exportContent = bytes || (anonymizePaths ? redactTranscriptExportContent(text, picked) : text);
+      await writeWhole(targetPath, exportContent);
       const bytesWritten = Buffer.byteLength(exportContent, 'utf8');
       safelyLog(log, 'INFO', 'save_file.completed', {
-        format,
+        format: picked,
         path: targetPath,
         bytesWritten,
       });
-      return { canceled: false, path: targetPath, bytesWritten };
+      return { canceled: false, path: targetPath, bytesWritten, format: picked };
     } catch (error) {
       safelyLog(log, 'ERROR', 'save_file.failed', {
         format,

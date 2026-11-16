@@ -1,7 +1,7 @@
 'use strict';
 
 /* services/background-job-wake.js - a background job Jenny started finishes after her turn ended: wake that
- * chat once so she reads the result (owner pick 2026-11-01, Claude Code parity).
+ * chat once so she reads the result (owner pick 2026-11-01).
  *
  * Pure decision logic over injected ports, beside row 70's message wake (chat-messaging-wake.js) and with its
  * guards: the chat must allow a send (not archived, locked down or read-only), a paused chat drops the wake, a

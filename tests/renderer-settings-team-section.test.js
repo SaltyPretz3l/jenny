@@ -8,7 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-const { TEAM, OTHER, ME, DOT, MAYA, DESK, flush, snapshot, hostState, device, ROSTER, harness } = require('./helpers/team-settings-harness');
+const {
+  TEAM, OTHER, ME, DOT, MAYA, DESK, NONE, CODE, flush, micro, snapshot, memberTeam, hostState, device, ROSTER, harness, shell, OWN_KEY_LINE, OWN_KEY_CASES,
+} = require('./helpers/team-settings-harness');
 
 // ------------------------------------------------------------------ flag off
 
@@ -111,8 +113,8 @@ test('hosting alone: one status line with Stop, owner groups, and no You group',
   assert.match(status.textContent, /Running on this PC/);
   assert.match(status.textContent, /1 of 8 seats/);
   assert.ok(status.querySelector('[data-team-action="stop"]'));
-  assert.deepEqual(h.headings(), ['Invite someone', 'People', 'Your devices', 'Activity', 'Join another team',
-    'Ownership and shutdown']);
+  assert.deepEqual(h.headings(), ['Invite someone', 'People', 'Your devices', 'Share this PC’s GPU', 'GPU use', 'Activity', 'Join another team',
+    'Ownership and shutdown', 'Delete']);
   assert.match(h.text(), /Only you so far/);
   assert.equal(h.q('#teamYourName'), null, 'the names come from the team and this device');
   assert.equal(h.q('#teamTeamName').value, 'Studio');
@@ -209,7 +211,7 @@ test('lost owner access: host running with no membership of its team offers Recl
 
 const MEMBER_STATES = {
   connecting: /connecting/, online: /connected/, reconnecting: /reconnecting/, offline: /offline/,
-  pending: /waiting for the owner to let you in/, revoked: /you no longer have access/, update_required: /update Jenny to connect/,
+  pending: /waiting for the owner to let you in/, revoked: /You no longer have access\. To come back, ask the owner for a new invite and paste it below\./, update_required: /update Jenny to connect/,
 };
 for (const [state, words] of Object.entries(MEMBER_STATES)) {
   test(`joined team ${state}: the row says so in plain words with its actions`, async (t) => {
@@ -229,6 +231,92 @@ for (const [state, words] of Object.entries(MEMBER_STATES)) {
     else assert.deepEqual(actions, ['leave']);
   });
 }
+for (const [name, over, shown] of OWN_KEY_CASES) test(`joined team, own key ${name}: the line is ${shown ? 'shown' : 'not shown'}`, async (t) => {
+  const h = harness({ teams: [snapshot({ team_id: OTHER, team_name: 'Dot lab', role: 'member', ...over })] }); t.after(h.restore);
+  await flush();
+  assert.deepEqual(h.qa('[data-team-joined] .team-set-person__hint').map((el) => el.textContent), shown ? [OWN_KEY_LINE] : []);
+});
+
+// Fault: a saved team that does not load hidden or drawn as an
+// ordinary team (a role, a connection state, Leave), the wrong sentence for its reason, its id drawn as
+// markup, or Remove sent without its confirm. The id is a directory name listTeamIds already checked
+// (tests/team-client-file.test.js); a hostile one is still drawn as text.
+const UNREADABLE_ROW = 'The saved file for this team cannot be read. Remove it from this PC, then join again with a new invite.';
+const REPAIR_SENTENCES = {
+  team_client_schema_unsupported: 'This team was saved by a newer Jenny. Update Jenny to use it, or remove it from this PC.',
+  team_client_invalid: UNREADABLE_ROW,
+  team_client_missing: UNREADABLE_ROW,
+  team_recover_local_save_failed: 'The server accepted you, but this PC could not save it. Run Reclaim ownership again.',
+};
+for (const [reason, sentence] of Object.entries(REPAIR_SENTENCES)) {
+  test(`a saved team that needs repair (${reason}): Needs repair, its sentence and Remove only, behind the confirm`, async (t) => {
+    const teamId = 'team_RepairAAAAbbbbCCCCdd';
+    const h = harness({ teams: [{ team_id: teamId, state: 'needs_repair', reason }] });
+    t.after(h.restore);
+    await flush();
+    const row = h.q('[data-team-joined] .team-set-person');
+    assert.equal(row.querySelector('.team-set-person__name').textContent, 'team_RepairAA…', 'the id\'s short form');
+    assert.equal(row.querySelector('.team-set-person__fact').textContent, `Needs repair · ${sentence}`);
+    assert.doesNotMatch(row.textContent, /Member|Owner|connected|unavailable|Unnamed/);
+    const actions = () => [...row.querySelectorAll('[data-team-action]')].map((button) => button.dataset.teamAction);
+    assert.deepEqual(actions(), ['remove-team']);
+    h.click(`[data-team-action="remove-team"][data-team-id="${teamId}"]`);
+    await flush();
+    assert.equal(h.sent('removeTeam').length, 0, 'Remove asks first');
+    assert.match(h.text(), /Remove team_RepairAA… from this PC\?/);
+    h.click('[data-team-action="confirm-remove-team"]');
+    await flush();
+    assert.deepEqual(h.sent('removeTeam').map((call) => call.payload), [{ team_id: teamId }]);
+  });
+}
+
+// Fault: the Remove confirm outliving the needs_repair state, so a team that healed meanwhile is removed.
+test('the Remove confirm goes when the row heals, and a stale confirm click sends nothing', async (t) => {
+  const teamId = 'team_RepairAAAAbbbbCCCCdd';
+  const h = harness({ teams: [{ team_id: teamId, state: 'needs_repair', reason: 'team_client_invalid' }] });
+  t.after(h.restore);
+  await flush();
+  h.click(`[data-team-action="remove-team"][data-team-id="${teamId}"]`);
+  await flush();
+  assert.ok(h.q('[data-team-action="confirm-remove-team"]'), 'the confirm is open');
+  h.listeners.state({ teams: [snapshot({ team_id: teamId, team_name: 'Healed', role: 'member' })] });
+  await flush();
+  assert.equal(h.q('[data-team-action="confirm-remove-team"]'), null, 'no confirm for a healed team');
+  const stale = h.window.document.createElement('button');
+  stale.dataset.teamAction = 'confirm-remove-team';
+  stale.dataset.teamId = teamId;
+  h.q('[data-team-joined]').append(stale);
+  stale.click();
+  await flush();
+  assert.deepEqual(h.sent('removeTeam'), [], 'a stale confirm click sends nothing');
+});
+
+// Fault: the names to reuse taken from a needs_repair row (it has none), so the page asks again.
+test('the names to reuse come from the first team that does not need repair', async (t) => {
+  const h = harness({ host: NONE, teams: [{ team_id: 'team_R1', state: 'needs_repair', reason: 'team_client_invalid' }, memberTeam()] });
+  t.after(h.restore);
+  await flush();
+  assert.equal(h.q('#teamYourName'), null, 'the names are reused, not asked again');
+});
+
+// Fault: this PC's name read only from the device list, so it is asked again offline.
+test("this PC's name comes from the team row while offline; with none anywhere the names are asked", async (t) => {
+  for (const [over, asked] of [[{ label: 'Work laptop' }, false], [{}, true]]) {
+    const h = harness({ host: NONE, teams: [memberTeam({ state: 'connecting', ...over })] });
+    await flush();
+    assert.equal(h.q('#teamYourName') !== null, asked, JSON.stringify(over));
+    h.restore();
+  }
+});
+
+test('a needs-repair row draws a hostile id as text', async (t) => {
+  const teamId = 'team_<img src=x onerror=alert(1)>';
+  const h = harness({ teams: [{ team_id: teamId, state: 'needs_repair', reason: 'team_client_invalid' }] });
+  t.after(h.restore);
+  await flush();
+  assert.equal(h.q('[data-team-joined] img'), null, 'no markup drawn');
+  assert.equal(h.q('[data-team-joined] .team-set-person__name').textContent, 'team_<img src…');
+});
 
 test('four teams: the join group is replaced by one line saying why', async (t) => {
   const ids = ['team_C1', 'team_C2', 'team_C3', 'team_C4'];
@@ -238,6 +326,18 @@ test('four teams: the join group is replaced by one line saying why', async (t) 
   assert.equal(h.q('#teamInviteCode'), null);
   assert.match(h.text(), /4 of 4/);
   assert.match(h.text(), /Jenny can be in four teams at once/);
+});
+
+test('four teams with one removed: the invite field stays, saying a removed team can still be replaced', async (t) => {
+  const teams = ['team_C1', 'team_C2', 'team_C3', 'team_C4'].map((id, n) => snapshot({ team_id: id, team_name: id,
+    role: 'member', ...(n === 2 ? { state: 'revoked' } : {}) }));
+  const h = harness({ teams });
+  t.after(h.restore);
+  await flush();
+  assert.ok(h.q('#teamInviteCode'), 'the field is shown');
+  assert.match(h.text(), /You can still paste a new invite for a team you were removed from\./);
+  const groups = [...h.container.querySelectorAll('[data-team-group]')].map((node) => node.dataset.teamGroup);
+  assert.ok(groups.indexOf('joined') < groups.indexOf('join'), 'the field is below the joined list');
 });
 
 test('an unknown host state renders as unavailable, never as owner controls', async (t) => {
@@ -339,4 +439,139 @@ test('the script-load path reaches showTeamSection; a failed load is retried whe
   assert.equal(shown.length, 1);
   assert.equal(shown[0].container, document.getElementById('teamSettingsSection'));
   delete require.cache[utilsPath];
+});
+
+// ---------------------------------------------------------------- E50: no team data on disk
+
+const GATE = require.resolve('../renderer/team/renderer-team-tab-gate');
+const UTILS = require.resolve('../renderer/shell/renderer-settings-utils');
+// Settings > Team entered with main's `teamData: false`, through the real section loader and top-nav shell.
+function openNoData(t, options = {}) {
+  delete require.cache[UTILS];
+  delete require.cache[GATE];
+  const h = harness({ show: false, ...options });
+  t.after(() => { h.restore(); delete require.cache[UTILS]; });
+  const s = shell(h, { teamData: false, activeView: 'settings' });
+  s.state.ui.activeSettingsSection = 'team';
+  enter(h, s, 'team');
+  return { h, s };
+}
+// Settings showing `section` (leaving Team when it is another one), through the real section loader.
+function enter(h, s, section) {
+  require(UTILS).syncTeamSettingsSection({ state: s.state, windowRef: h.window, activeSection: section });
+}
+const reads = (h) => h.calls.map((call) => call.method).filter((m) => m === 'hostStatus' || m === 'status').sort();
+const fillJoin = (h) => { h.type('#teamYourName', 'Olive'); h.type('#teamPcName', 'Desk'); h.type('#teamInviteCode', CODE); };
+
+test('E50 no team data: the page draws Host and Join from the seed, loads its own scripts and style, and asks main nothing', async (t) => {
+  const { h, s } = openNoData(t);
+  await flush();
+  assert.deepEqual(h.headings(), ['You', 'Host a team', 'Join a team']);
+  assert.deepEqual(s.requested, require('../renderer/shell/renderer-settings-script-manifest').teamSection.map(([src]) => src));
+  assert.equal(require.cache[GATE], undefined, 'the gate is not loaded');
+  assert.ok(h.window.document.querySelector('link[href="styles/team-settings.css"]'));
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.listeners.state, null);
+  assert.equal(h.listeners.host, null);
+  assert.deepEqual(h.store.snapshot().host, require('../renderer/team/renderer-team-store').EMPTY_HOST);
+  enter(h, s, 'general');
+  enter(h, s, 'team');
+  await flush();
+  assert.deepEqual(h.headings(), ['You', 'Host a team', 'Join a team'], 'entered again, still drawn from the seed');
+  assert.deepEqual(h.calls, [], 'entered again, still nothing asked of main');
+  assert.equal(h.listeners.state, null);
+});
+
+test('E50 no team data: Join is the first call; then the store subscribes and reads, the gate loads and the tab opens', async (t) => {
+  let joined = false;
+  const { h, s } = openNoData(t, { answers: { join: () => { joined = true; return { ok: true }; },
+    status: () => ({ ok: true, teams: joined ? [memberTeam()] : [] }) } });
+  await flush();
+  fillJoin(h);
+  h.click('[data-team-action="join"]');
+  await flush();
+  await flush();
+  assert.equal(h.calls[0].method, 'join');
+  assert.ok(h.listeners.state && h.listeners.host, 'the store follows the pushes');
+  assert.ok(h.sent('status').length >= 1 && h.sent('hostStatus').length >= 1);
+  assert.ok(require.cache[GATE], 'the gate loaded');
+  assert.deepEqual(s.tabs(), ['home', 'chat', 'ide', 'team']);
+  assert.equal(s.state.ui.activeView, 'team');
+});
+
+test('E50 no team data: a Deploy that succeeds wakes the store and loads the gate; the tab appears', async (t) => {
+  let host = NONE;
+  const { h, s } = openNoData(t, { answers: { hostDeploy: () => { host = hostState(); return { ok: true, host }; },
+    hostStatus: () => ({ ok: true, host }) } });
+  await flush();
+  h.type('#teamYourName', 'Olive Owner');
+  h.type('#teamPcName', 'Desk');
+  h.type('#teamNewName', 'Studio');
+  h.click('[data-team-action="deploy"]');
+  await flush();
+  await flush();
+  assert.equal(h.calls[0].method, 'hostDeploy');
+  assert.ok(h.listeners.host);
+  assert.ok(require.cache[GATE]);
+  assert.ok(s.tabs().includes('team'));
+});
+
+test('E50 no team data: a refused join ends the quiet state: the store follows the pushes and reads once, and no gate loads', async (t) => {
+  const { h, s } = openNoData(t, { answers: { join: { ok: false, error: { code: 'CMP-TEAM-0003', reason: 'team_invite_expired' } } } });
+  await flush();
+  fillJoin(h);
+  h.click('[data-team-action="join"]');
+  await flush();
+  assert.equal(h.calls[0].method, 'join');
+  assert.deepEqual(reads(h), ['hostStatus', 'status'], 'one read of each');
+  assert.ok(h.listeners.state && h.listeners.host, 'two listeners');
+  assert.equal(require.cache[GATE], undefined, 'no gate');
+  assert.deepEqual(s.tabs(), ['home', 'chat', 'ide']);
+  enter(h, s, 'general');
+  enter(h, s, 'team');
+  await flush();
+  assert.deepEqual(reads(h), ['hostStatus', 'hostStatus', 'status', 'status'], 'entered again, the page reads as usual');
+});
+
+test('E50 no team data: a join that answers ok after the page was left still wakes the store and loads the gate', async (t) => {
+  let release;
+  let joined = false;
+  const { h, s } = openNoData(t, { answers: { join: () => new Promise((resolve) => { release = resolve; }),
+    status: () => ({ ok: true, teams: joined ? [memberTeam()] : [] }) } });
+  await flush();
+  fillJoin(h);
+  h.click('[data-team-action="join"]');
+  await flush();
+  enter(h, s, 'general');
+  joined = true;
+  release({ ok: true });
+  await flush();
+  await flush();
+  assert.ok(reads(h).includes('hostStatus') && reads(h).includes('status'), 'the store read from main');
+  assert.ok(require.cache[GATE], 'the gate was asked for');
+  assert.ok(s.tabs().includes('team'));
+  const before = reads(h).length;
+  enter(h, s, 'team');
+  await flush();
+  assert.ok(reads(h).length > before, 'entered again, the page is not quiet');
+});
+
+test('E50 no team data: a join that times out with no answer still wakes the store, which reads from main', async (t) => {
+  const { h, s } = openNoData(t, { answers: { join: () => new Promise(() => {}) } });
+  await flush();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  fillJoin(h);
+  h.click('[data-team-action="join"]');
+  await micro();
+  assert.deepEqual(reads(h), []);
+  t.mock.timers.tick(60_000);
+  await micro();
+  assert.deepEqual(reads(h), ['hostStatus', 'status']);
+  assert.ok(h.listeners.state && h.listeners.host);
+  assert.equal(require.cache[GATE], undefined, 'nothing on disk said there is a team: no gate');
+  t.mock.timers.reset();
+  enter(h, s, 'general');
+  enter(h, s, 'team');
+  await flush();
+  assert.equal(reads(h).length, 4, 'entered again, the page reads as usual');
 });

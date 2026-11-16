@@ -654,6 +654,45 @@ test('skills service polls only while the feature is enabled', () => {
   service.dispose();
 });
 
+test('skills service stops polling while the window is hidden and rescans once on show', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-skills-service-hidden-watch-'));
+  const bundledRoot = path.join(userDataPath, 'bundled-skills');
+  trackDirectory(userDataPath);
+  fs.mkdirSync(bundledRoot, { recursive: true });
+
+  const service = new SkillsService({
+    configService: new ShellConfigService({ userDataPath }),
+    bundledRoot,
+    homedir: () => userDataPath,
+    featureEnabled: true,
+    watchIntervalMs: 60_000,
+  });
+  let polls = 0;
+  const poll = service._pollForChanges;
+  service._pollForChanges = () => { polls += 1; return poll(); };
+
+  assert.notEqual(service._watchTimer, null);
+  service.setWindowVisible(false);
+  assert.equal(service._watchTimer, null, 'no timer while hidden or minimised');
+  service.setFeatureEnabled(false);
+  service.setFeatureEnabled(true);
+  assert.equal(service._watchTimer, null, 'enabling the feature while hidden stays paused');
+  assert.equal(polls, 0);
+
+  service.setWindowVisible(true);
+  assert.notEqual(service._watchTimer, null, 'resumed on show');
+  assert.equal(polls, 1, 'one immediate scan so the Skills UI catches up');
+  service.setWindowVisible(true);
+  assert.equal(polls, 1, 'an unchanged visibility is a no-op');
+
+  service.setFeatureEnabled(false);
+  service.setWindowVisible(false);
+  service.setWindowVisible(true);
+  assert.equal(service._watchTimer, null, 'a show never starts the poll for a disabled feature');
+  assert.equal(polls, 1);
+  service.dispose();
+});
+
 test('skills service returns isolated state snapshots', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-skills-service-isolated-'));
   const bundledRoot = path.join(userDataPath, 'bundled-skills');

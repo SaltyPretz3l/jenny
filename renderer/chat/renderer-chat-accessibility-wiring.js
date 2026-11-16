@@ -4,9 +4,11 @@
  * renderer-chat-event-utils: the roving-tabindex keyboard controller (E3),
  * the help overlay (E7), the Ctrl+F search overlay (F1+E6), the selection
  * action bar, the unread orientation and the citation jump controllers.
- * A second pane passes `documentLevel: false` and gets no help or search
- * overlay. Every listener goes through the caller's `registerListener`, so
- * cleanup follows the pipeline's dispose.
+ * A second pane passes `documentLevel: false` and gets no help overlay; every
+ * pane gets its own search overlay (row 156: its find field lives in that
+ * pane's session bar and its keys act only while the pane is focused). Every
+ * listener goes through the caller's `registerListener`, so cleanup follows
+ * the pipeline's dispose.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -228,13 +230,12 @@
     const searchOverlayUtils = options.searchOverlayUtils
       || (typeof globalThis !== 'undefined' ? globalThis.rendererChatSearchOverlay : null);
     let searchOverlay = null;
-    if (documentLevel && searchOverlayUtils && typeof searchOverlayUtils.createChatSearchOverlay === 'function') {
-      const chatView = options.chatView || (doc ? doc.getElementById('chatView') : null);
+    if (searchOverlayUtils && typeof searchOverlayUtils.createChatSearchOverlay === 'function') {
       try {
+        // The pane root and its session-bar cluster derive from chatTimeline.
         searchOverlay = searchOverlayUtils.createChatSearchOverlay({
           document: doc,
           chatTimeline: chatTimeline,
-          chatView: chatView,
           keyboardController: keyboardController,
           // Search indexes canonical bounded documents and mounts only the
           // selected result; virtualization stays active while the overlay is open.

@@ -13,9 +13,8 @@ const { createPaneChrome } = require('../renderer/app/renderer-app-pane-chrome')
 
 const FIXTURE = `<!doctype html><html><body>
   <div class="chat-pane" id="zero" data-pane-id="0">
-    <div id="composerAttachmentPreviewPill" data-composer-v2="on"></div>
     <div id="composerV2FailedSendNotice" data-composer-v2="on"></div>
-    <div data-chat-node="attachmentTray" data-composer-v2="on"></div>
+    <div data-chat-node="attachmentTray"></div>
   </div>
   <div class="chat-pane" id="one" data-pane-id="1">
     <div class="chat-thread-stage"></div>
@@ -25,7 +24,6 @@ const FIXTURE = `<!doctype html><html><body>
       <textarea id="input"></textarea>
       <div data-chat-node="attachmentTray"></div>
     </div>
-    <div data-chat-node="composerAttachmentPreviewPill"></div>
     <div data-chat-node="composerStatusNotice"></div>
     <div data-chat-node="composerV2FailedSendNotice"></div>
     <div class="hero-stack"></div>
@@ -92,9 +90,7 @@ test('buildComposerNodes inserts the mic/Stop/Send/Attach, the notice hosts, the
   assert.equal(rig.pane.queuedNotice.className, 'chat-pane-queued');
   assert.equal(rig.pane.queuedNotice.hidden, true);
   assert.equal(rig.pane.queuedNotice.parentElement, rig.rootEl.querySelector('.composer-toolbar-left'));
-  assert.ok(rig.pane.notices.pill && rig.pane.notices.status && rig.pane.notices.failed);
-  // The tray mirrors pane 0's composer-v2 flag.
-  assert.equal(paneDom.attachmentTray.dataset.composerV2, 'on');
+  assert.ok(rig.pane.notices.status && rig.pane.notices.failed);
   assert.equal(rig.pane.dom.chatView, rig.rootEl);
   assert.equal(rig.pane.dom.sendButton, rig.pane.sendButton);
   assert.equal(rig.pane.dom.stopStreamButton, rig.pane.stopButton);
@@ -219,11 +215,8 @@ test('createPaneAttachments binds through the injected utils with pane-scoped ca
   assert.equal(bare.chrome.createPaneAttachments(bare.pane), null, 'no callbacks, no bindings');
 });
 
-test('mountPaneNotices mirrors pane 0 composer-v2: pill and failed-send notice only where pane 0 has them on', (t) => {
-  const created = [];
-  const render = { createComposerAttachmentTrayPreviewRenderer: (cfg) => { created.push(cfg); return { destroy() {} }; } };
+test('mountPaneNotices mirrors pane 0 composer-v2: the failed-send notice only where pane 0 has it on', (t) => {
   const rig = makeRig(t, {
-    options: { composerV2Render: render },
     calls: { mountFailedSendNotice: (cfg) => ({ cfg, destroy() {} }) },
   });
   buildPane(rig);
@@ -231,10 +224,6 @@ test('mountPaneNotices mirrors pane 0 composer-v2: pill and failed-send notice o
   rig.pane.shell = { id: 'shell' };
   const getSessionId = () => 'b';
   rig.chrome.mountPaneNotices(rig.pane, getSessionId);
-  assert.equal(rig.pane.notices.pill.dataset.composerV2, 'on');
-  assert.equal(created.length, 1);
-  assert.equal(created[0].tray, rig.pane.dom.attachmentTray);
-  assert.equal(created[0].pill, rig.pane.notices.pill);
   const mounted = rig.calls.find(([name]) => name === 'mountFailedSendNotice')[1];
   assert.equal(mounted.noticeNode, rig.pane.notices.failed);
   assert.equal(mounted.chatThread, rig.pane.dom.chatTimeline);
@@ -242,30 +231,21 @@ test('mountPaneNotices mirrors pane 0 composer-v2: pill and failed-send notice o
   assert.equal(mounted.getShellController(), rig.pane.shell);
   assert.ok(rig.pane.failedSendNotice);
 
-  const off = makeRig(t, { options: { composerV2Render: render } });
+  const off = makeRig(t);
   buildPane(off);
-  off.doc.getElementById('composerAttachmentPreviewPill').dataset.composerV2 = 'off';
   off.doc.getElementById('composerV2FailedSendNotice').dataset.composerV2 = 'off';
   off.pane.dom.chatTimeline = off.doc.createElement('div');
   off.chrome.mountPaneNotices(off.pane, () => 'b');
-  assert.equal(off.pane.previewPill, undefined);
   assert.equal(off.pane.failedSendNotice, undefined);
-  assert.equal(created.length, 1, 'pane 0 off: no second pill renderer');
-
-  const throwing = makeRig(t, { options: { composerV2Render: { createComposerAttachmentTrayPreviewRenderer: () => { throw new Error('boom'); } } } });
-  buildPane(throwing);
-  throwing.chrome.mountPaneNotices(throwing.pane, () => 'b');
-  assert.equal(throwing.pane.previewPill, null, 'a throwing renderer leaves no pill');
 });
 
 test('resolvePaneNotices finds the hosts inside the pane root only', (t) => {
   const rig = makeRig(t);
   const notices = rig.chrome.resolvePaneNotices(rig.rootEl);
-  assert.equal(notices.pill, rig.rootEl.querySelector('[data-chat-node="composerAttachmentPreviewPill"]'));
   assert.equal(notices.status, rig.rootEl.querySelector('[data-chat-node="composerStatusNotice"]'));
   assert.equal(notices.failed, rig.rootEl.querySelector('[data-chat-node="composerV2FailedSendNotice"]'));
   const empty = rig.chrome.resolvePaneNotices(rig.doc.getElementById('zero'));
-  assert.deepEqual(empty, { pill: null, status: null, failed: null });
+  assert.deepEqual(empty, { status: null, failed: null });
 });
 
 function draftRig(t) {

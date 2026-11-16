@@ -234,3 +234,28 @@ test('chat rows show the newest unseen terminal outcome without outranking live 
   assert.match(row('s1').querySelector('[data-session-open]').title.split('\n').at(-1), /^Last run failed/);
   assert.equal(row('s3').querySelector('[data-session-open]').title.split('\n').length, 2);
 });
+
+test('row 136: the chat that goes first carries the word First before its time, and loses it when the pick ends', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const doc = window.document;
+  await seedSessions(window, shell, [
+    buildSidebarSession('session-first', 'Port the reader', '2026-06-12T08:00:00.000Z'),
+    buildSidebarSession('session-other', 'Find the talk', '2026-06-12T07:00:00.000Z'),
+  ]);
+  assert.equal(doc.querySelector('.session-row__first'), null, 'taking turns shows nothing');
+  let answer = { status: 'ok', first: { sessionId: 'session-first', setBy: 'user', setAt: 1 } };
+  window.jennyShell.chat.firstSession = async () => answer;
+  await window.rendererStreamWaitingLine.firstChat.refresh();
+  await waitForUi(window, 40);
+  const tag = doc.querySelector('.conversation-item[data-session-id="session-first"] .session-row__first');
+  assert.ok(tag, 'the first chat is tagged');
+  assert.equal(tag.textContent, 'First');
+  assert.match(tag.title, /^This chat goes first\./);
+  assert.equal(tag.nextElementSibling.classList.contains('session-row__time'), true, 'the tag sits before the time');
+  assert.equal(doc.querySelector('.conversation-item[data-session-id="session-other"] .session-row__first'), null);
+
+  answer = { status: 'ok', first: null };
+  await window.rendererStreamWaitingLine.firstChat.refresh();
+  await waitForUi(window, 40);
+  assert.equal(doc.querySelector('.session-row__first'), null);
+});

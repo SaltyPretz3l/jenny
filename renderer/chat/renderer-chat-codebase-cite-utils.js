@@ -325,6 +325,13 @@
       if (disposed || !rootNode || (!isEnabled() && !absoluteContext()) || typeof rootNode.querySelectorAll !== 'function') {
         return 0;
       }
+      // Every bubble of a streaming article waits for the settle (below), so a
+      // live delta's mutation must not walk the whole turn article for them;
+      // the settle flips data-message-status, which schedules this pass again.
+      var entry = typeof rootNode.closest === 'function' ? rootNode.closest('.chat-entry') : null;
+      if (entry && entry.getAttribute('data-message-status') === 'streaming') {
+        return 0;
+      }
       // Without a workspace context only the cite stamp matters; with one, a bubble still lacking the absolute stamp is due.
       var current = absoluteContext();
       var due = current ? ':not([' + ENHANCED_ATTR + '="1"][' + ABSOLUTE_ATTR + '="' + current.stamp + '"])' : ':not([' + ENHANCED_ATTR + '="1"])';

@@ -20,6 +20,9 @@
   const MIN_RESTORE_SHIFT_PX = 1;
   const LOGICAL_ROW_SELECTOR = '[data-row-id]';
   const LOGICAL_ENTRY_FALLBACK_SELECTOR = '.chat-entry[data-message-id]';
+  // Rows after the anchor (same message) kept as fallbacks for an anchor row
+  // that loses its box, e.g. reasoning rows hiding at turn end (2026-11-12).
+  const ANCHOR_FOLLOWER_CAP = 2;
 
   function getLatestUserMessageId(messages) {
     const list = Array.isArray(messages) ? messages : [];
@@ -217,19 +220,26 @@
       // Refine only the located article, never scan every transcript row.
       // Keep its offset separately so a removed interior row has a safe fallback.
       const parentRect = getRect(row);
+      let siblings = rows.slice(rowIndex + 1, rowIndex + 1 + ANCHOR_FOLLOWER_CAP);
       if (refineEntries && row && containerRect) {
-        const interior = collectLogicalRows(row).find((candidate) => {
+        const interiorRows = collectLogicalRows(row);
+        const interiorIndex = interiorRows.findIndex((candidate) => {
           if (isVolatileApprovalRow(candidate)) return false;
           const rect = getRect(candidate);
           return rect && rect.bottom > containerRect.top && rect.bottom > rect.top;
         });
-        if (interior) row = interior;
+        if (interiorIndex >= 0) {
+          row = interiorRows[interiorIndex];
+          siblings = interiorRows.slice(interiorIndex + 1);
+        }
       }
       const identity = readLogicalRowIdentity(row);
       const rowRect = getRect(row);
       touch(normalizedKey, {
         identity,
         node: row,
+        followers: identity?.kind === 'row' && containerRect
+          ? captureFollowers(siblings, identity.parentMessageId, containerRect) : [],
         rowIndex,
         offset: rowRect && containerRect ? Number(rowRect.top - containerRect.top) || 0 : 0,
         parentOffset: refineEntries && parentRect && containerRect
@@ -238,6 +248,27 @@
         nearBottom: isNearBottom(metrics, threshold),
       });
       return true;
+    }
+
+    function captureFollowers(candidates, parentMessageId, containerRect) {
+      const followers = [];
+      for (let index = 0; index < candidates.length && followers.length < ANCHOR_FOLLOWER_CAP; index += 1) {
+        const node = candidates[index];
+        const identity = readLogicalRowIdentity(node);
+        const rect = getRect(node);
+        if (identity?.kind !== 'row' || identity.parentMessageId !== parentMessageId) continue;
+        if (!rect || !(rect.bottom > rect.top) || isVolatileApprovalRow(node)) continue;
+        followers.push({ identity, node, offset: Number(rect.top - containerRect.top) || 0 });
+      }
+      return followers;
+    }
+
+    function findBoxedFollower(rootNode, anchor) {
+      return (anchor.followers || []).find((follower) => {
+        if (!isRetainedAnchorNode(rootNode, follower.node, follower.identity)) return false;
+        const rect = getRect(follower.node);
+        return rect && rect.bottom > rect.top;
+      }) || null;
     }
 
     // HB-005: a restore whose anchor did not move (the mutation landed below
@@ -294,10 +325,17 @@
         outcome = 'nearest';
       }
       // A retained row that lost its box (a reasoning row the transcript view
-      // hides) restores against its parent entry instead of a zero rect.
+      // hides) restores against the next captured row that kept one, so rows
+      // hidden above it are compensated; else against its parent entry.
+      let followerOffset = null;
       if (target && outcome === 'logical' && anchor.identity?.kind === 'row' && anchor.identity.parentMessageId) {
         const rowRect = getRect(target);
-        if (!rowRect || !(rowRect.bottom > rowRect.top)) {
+        const follower = !rowRect || !(rowRect.bottom > rowRect.top) ? findBoxedFollower(rootNode, anchor) : null;
+        if (follower) {
+          target = follower.node;
+          outcome = 'sibling';
+          followerOffset = follower.offset;
+        } else if (!rowRect || !(rowRect.bottom > rowRect.top)) {
           const parent = findMessageEntry(rootNode, anchor.identity.parentMessageId);
           if (parent) {
             target = parent;
@@ -308,10 +346,10 @@
       const containerRect = getRect(container);
       const targetRect = getRect(target);
       if (target && containerRect && targetRect) {
+        const capturedOffset = followerOffset !== null ? followerOffset
+          : outcome === 'parent' && anchor.parentOffset !== null ? anchor.parentOffset : anchor.offset;
         writeScrollTop(container, (Number(container.scrollTop) || 0)
-          + (Number(targetRect.top - containerRect.top) || 0)
-          - (outcome === 'parent' && anchor.parentOffset !== null
-            ? anchor.parentOffset : anchor.offset));
+          + (Number(targetRect.top - containerRect.top) || 0) - capturedOffset);
         return outcome;
       }
       writeScrollTop(container, anchor.rawScrollTop);

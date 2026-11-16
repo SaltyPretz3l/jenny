@@ -70,14 +70,23 @@
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 2 / zoom; ctx.beginPath();
+    // Dim everything, cut the region out of the dim, then outline it (dark halo under white) and ring the corner handles.
+    ctx.fillStyle = 'rgba(8, 10, 14, 0.55)'; ctx.fillRect(0, 0, width, height);
     const [a, b] = region.points;
-    if (region.kind === 'box') ctx.rect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
-    else if (region.kind === 'ellipse') ctx.ellipse((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.abs(a[0] - b[0]) / 2, Math.abs(a[1] - b[1]) / 2, 0, 0, Math.PI * 2);
-    else { region.points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath(); }
-    ctx.stroke();
+    const trace = () => {
+      ctx.beginPath();
+      if (region.kind === 'box') ctx.rect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
+      else if (region.kind === 'ellipse') ctx.ellipse((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.abs(a[0] - b[0]) / 2, Math.abs(a[1] - b[1]) / 2, 0, 0, Math.PI * 2);
+      else { region.points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath(); }
+    };
+    ctx.save(); ctx.globalCompositeOperation = 'destination-out'; trace(); ctx.fill(); ctx.restore();
+    trace();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'; ctx.lineWidth = 4 / zoom; ctx.stroke();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5 / zoom; ctx.stroke();
     if (region.kind !== 'freehand') for (const p of region.points) {
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(p[0] - 4 / zoom, p[1] - 4 / zoom, 8 / zoom, 8 / zoom);
+      ctx.beginPath(); ctx.arc(p[0], p[1], 6 / zoom, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)'; ctx.lineWidth = 1.5 / zoom; ctx.stroke();
     }
   }
   return { imagePoint, createSelection, draw };

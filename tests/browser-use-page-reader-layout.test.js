@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const { chromium } = require('playwright-core');
 
 const { buildReaderCall } = require('../services/browser-use/page-reader-script');
+const { sharedBrowser, closeSharedBrowser } = require('./helpers/layout-shared-browser');
 
 const browserPath = [
   process.env.JENNY_TEST_CHROMIUM,
@@ -17,6 +18,9 @@ const browserPath = [
   chromium.executablePath(),
 ].find((candidate) => candidate && fs.existsSync(candidate));
 const SKIP = !browserPath && 'No local Chromium available; set JENNY_TEST_CHROMIUM';
+
+// One browser serves the file's three cases, each on its own page; it exits with the file.
+test.after(closeSharedBrowser);
 
 const SECTIONS = 30;
 const SECTION_HEIGHT = 300;
@@ -33,9 +37,8 @@ ${Array.from({ length: SECTIONS }, (_, i) => `<section id="s${i}"><h2>Section ${
 </body></html>`;
 
 test('a page with smooth scrolling still scrolls at once, so positions read back true', { skip: SKIP }, async () => {
-  const browser = await chromium.launch({ executablePath: browserPath, headless: true });
+  const page = await (await sharedBrowser()).newPage({ viewport: { width: 1000, height: 700 } });
   try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     await page.setContent(`<!doctype html><style>html{scroll-behavior:smooth}section{height:900px}</style>
       <section>one</section><section>two</section><section><button>Far away</button></section>`);
     const call = (op, args) => page.evaluate(buildReaderCall(op, args));
@@ -48,7 +51,7 @@ test('a page with smooth scrolling still scrolls at once, so positions read back
     assert.equal(Math.round(verified.rect.y), Math.round(buttonTop), 'the rect is where the button finally is');
     assert.ok(verified.rect.y >= 0 && verified.rect.y < 700);
   } finally {
-    await browser.close();
+    await page.close();
   }
 });
 
@@ -64,9 +67,8 @@ const ZERO_BODY_HTML = `<!doctype html><html><head><style>
 </body></html>`;
 
 test('a page whose body measures 0 px tall is still read, and buttons sharing a label keep their own names', { skip: SKIP }, async () => {
-  const browser = await chromium.launch({ executablePath: browserPath, headless: true });
+  const page = await (await sharedBrowser()).newPage({ viewport: { width: 1000, height: 700 } });
   try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     await page.setContent(ZERO_BODY_HTML);
     assert.equal(await page.evaluate(() => document.body.getBoundingClientRect().height), 0, 'the fixture must reproduce the zero-height body');
     const call = (op, args) => page.evaluate(buildReaderCall(op, args));
@@ -80,14 +82,13 @@ test('a page whose body measures 0 px tall is still read, and buttons sharing a 
     const found = await call('find', { query: 'First video' });
     assert.equal(found.total, 1);
   } finally {
-    await browser.close();
+    await page.close();
   }
 });
 
 test('page reader culls by real layout, tracks the scroll position, and hit-tests', { skip: SKIP }, async () => {
-  const browser = await chromium.launch({ executablePath: browserPath, headless: true });
+  const page = await (await sharedBrowser()).newPage({ viewport: { width: 1000, height: 700 } });
   try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     await page.setContent(PAGE_HTML);
     const call = (op, args) => page.evaluate(buildReaderCall(op, args));
     const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
@@ -135,6 +136,6 @@ test('page reader culls by real layout, tracks the scroll position, and hit-test
     assert.equal(blocked.status, 'obscured');
     assert.match(blocked.by, /Cookie banner/);
   } finally {
-    await browser.close();
+    await page.close();
   }
 });

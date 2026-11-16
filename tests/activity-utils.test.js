@@ -89,6 +89,43 @@ test('activity registry retains previousValue for revert-on-error flows', () => 
   assert.equal(snapshot.message, 'Could not save plan mode.');
 });
 
+test('a failed activity stays until its scope is begun again, unless the caller times it', () => {
+  const timerHarness = createTimerHarness();
+  const registry = createActivityRegistry({
+    now: timerHarness.now,
+    setTimeout: timerHarness.setTimeoutMock,
+    clearTimeout: timerHarness.clearTimeoutMock,
+  });
+
+  registry.failActivity('composer.runMode', { message: 'Could not save run mode.' });
+  timerHarness.advance(60_000);
+  assert.equal(registry.getActivitySnapshot('composer.runMode').state, 'error');
+  assert.equal(registry.getActivitySnapshot('composer.runMode').message, 'Could not save run mode.');
+  registry.beginActivity('composer.runMode');
+  assert.equal(registry.getActivitySnapshot('composer.runMode').state, 'pending');
+  assert.equal(registry.getActivitySnapshot('composer.runMode').message, '');
+
+  registry.failActivity('settings.timed', { message: 'x', autoClearMs: 600 });
+  timerHarness.advance(600);
+  timerHarness.advance(180);
+  assert.equal(registry.getActivitySnapshot('settings.timed'), null);
+});
+
+test('clearFailedActivities drops failed scopes under the given prefixes only', () => {
+  const cleared = [];
+  const registry = createActivityRegistry({ onChange: (scope, snapshot, meta) => { if (meta.reason === 'clear') cleared.push(scope); } });
+
+  registry.failActivity('composer.runMode', { message: 'a' });
+  registry.failActivity('settings.contextPreferences', { message: 'b' });
+  registry.failActivity('backend.failed', { message: 'c' });
+  registry.beginActivity('composer.preferredModel:s1');
+  registry.clearFailedActivities(['composer.', 'settings.']);
+
+  assert.deepEqual(cleared.sort(), ['composer.runMode', 'settings.contextPreferences']);
+  assert.equal(registry.getActivitySnapshot('backend.failed').state, 'error');
+  assert.equal(registry.getActivitySnapshot('composer.preferredModel:s1').state, 'pending');
+});
+
 test('activity registry reports reduced motion in snapshots', () => {
   const registry = createActivityRegistry({
     matchMedia: () => ({ matches: true }),

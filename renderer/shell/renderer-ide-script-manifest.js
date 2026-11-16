@@ -13,9 +13,11 @@
     Object.freeze(['renderer/shared/workbench-layout-solve.js', 'jennyWorkbenchLayoutSolve']),
     Object.freeze(['renderer/shared/workbench-layout-legacy.js', 'jennyWorkbenchLayoutLegacy']),
     Object.freeze(['renderer/shared/workbench-layout-ops.js', 'jennyWorkbenchLayoutOps']),
-    // Row 82 (VS Code parity) shared seams: the command/keymap registry and the glob matcher, before any consumer.
+    // Row 82 shared seams: the command/keymap registry and the glob matcher, before any consumer.
     Object.freeze(['renderer/shared/glob-match.js', 'jennyGlobMatch']),
     Object.freeze(['renderer/shared/file-link-detect.js', 'jennyFileLinkDetect']),
+    // Row 137: outside-file registry + instance factory, before the gate modules that consult it.
+    Object.freeze(['renderer/features/renderer-ide-outside-files.js', 'rendererIdeOutsideFiles']),
     Object.freeze(['renderer/features/renderer-ide-command-registry.js', 'rendererIdeCommandRegistry']),
     Object.freeze(['renderer/features/renderer-ide-keymap.js', 'rendererIdeKeymap']),
     Object.freeze(['renderer/features/renderer-ide-closed-tabs.js', 'rendererIdeClosedTabs']),
@@ -126,6 +128,7 @@
     Object.freeze(['renderer/features/renderer-changes-undo-sheet.js', 'rendererChangesUndoSheet']),
     Object.freeze(['renderer/features/renderer-changes-undo.js', 'rendererChangesUndo']),
     Object.freeze(['renderer/features/renderer-ide-chat-dock-changes.js', 'rendererIdeChatDockChanges']),
+    Object.freeze(['renderer/features/renderer-ide-chat-dock-anchors.js', 'rendererIdeChatDockAnchors']),
     Object.freeze(['renderer/features/renderer-ide-chat-dock.js', 'rendererIdeChatDock']),
     Object.freeze(['renderer/features/renderer-ide-workspace-chats.js', 'rendererIdeWorkspaceChats']),
     Object.freeze(['renderer/features/renderer-ide-gutter-decorations.js', 'rendererIdeGutterDecorations']),

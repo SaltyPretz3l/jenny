@@ -1,0 +1,74 @@
+{
+  "nodes": [
+    {
+      "id": "gw",
+      "label": "Gateway",
+      "group": "edge"
+    },
+    {
+      "id": "auth",
+      "label": "Auth",
+      "group": "core"
+    },
+    {
+      "id": "orders",
+      "label": "Orders",
+      "group": "core"
+    },
+    {
+      "id": "store",
+      "label": "Orders store",
+      "group": "data"
+    },
+    {
+      "id": "cache",
+      "label": "Cache",
+      "group": "data"
+    }
+  ],
+  "edges": [
+    {
+      "id": "gw->auth",
+      "from": "gw",
+      "to": "auth"
+    },
+    {
+      "id": "gw->orders",
+      "from": "gw",
+      "to": "orders"
+    },
+    {
+      "id": "orders->store",
+      "from": "orders",
+      "to": "store"
+    },
+    {
+      "id": "orders->cache",
+      "from": "orders",
+      "to": "cache"
+    }
+  ],
+  "groups": [
+    {
+      "id": "edge",
+      "label": "Edge"
+    },
+    {
+      "id": "core",
+      "label": "Core services"
+    },
+    {
+      "id": "data",
+      "label": "Data",
+      "parent": "core"
+    }
+  ],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": [],
+  "title": "Services",
+  "direction": "down"
+}

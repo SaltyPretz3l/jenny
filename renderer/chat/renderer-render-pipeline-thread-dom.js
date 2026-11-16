@@ -18,6 +18,32 @@ root.rendererRenderPipelineThreadDomUtils = factory();
   const buildTimeDividerMarkup = typeof timelineOrientationUtils.buildTimeDividerMarkup === 'function'
     ? timelineOrientationUtils.buildTimeDividerMarkup
     : function fallbackBuildTimeDividerMarkup() { return ''; };
+  // The first visible text line's centre, in viewport px. Null without
+  // layout (jsdom, fakes), which keeps each caller's top-align fallback.
+  // Shared with the sprite positioner (renderer-render-pipeline-thinking.js).
+  function firstTextLineCenter(target) {
+    const doc = target && target.ownerDocument;
+    if (!doc || typeof doc.createTreeWalker !== 'function' || typeof doc.createRange !== 'function') return null;
+    // Hidden subtrees (a finished thinking checkpoint's collapsed body) are
+    // skipped whole instead of visiting each of their text nodes.
+    const walker = doc.createTreeWalker(target, 1 | 4 /* SHOW_ELEMENT | SHOW_TEXT */, {
+      acceptNode(node) {
+        if (node.nodeType !== 1) return 1; /* FILTER_ACCEPT */
+        return node.hasAttribute('hidden') || node.classList?.contains('sr-only') ? 2 /* FILTER_REJECT */ : 3; /* FILTER_SKIP */
+      },
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.nodeValue || !node.nodeValue.trim()) continue;
+      const parent = node.parentElement;
+      if (!parent || parent.closest('.sr-only, [hidden]')) continue;
+      const range = doc.createRange();
+      range.selectNodeContents(node);
+      const rect = typeof range.getClientRects === 'function' ? range.getClientRects()[0] : null;
+      if (rect && rect.width > 0 && rect.height > 0) return rect.top + rect.height / 2;
+    }
+    return null;
+  }
+
   function createThreadDomPipeline(deps) {
     const {
       state = {},
@@ -112,6 +138,8 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         // busts the key (false in the common case -> no key perturbation).
         sessionGlobals.artifactReviewVisible ? 'ar1' : 'ar0',
         String(sessionGlobals.transcriptView || ''),
+        // An edit locks every other root's Edit button: rebuild each once.
+        String((renderOptions && renderOptions.editingMessageId) || ''),
       ];
       return globalParts.join('|') + '|' + parts.join('|');
     }
@@ -201,13 +229,18 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         && childrenMarkup.indexOf('<article') === -1;
 
       if (!parentId && role === 'user') {
+        // Dims this root's replies and every later root (chat-bubble-editor-v2.css).
+        const editingId = String((renderOptions && renderOptions.editingMessageId) || '');
+        const editingRootAttr = editingId && editingId === String(node.id || '')
+          ? '\n            data-thread-editing="true"'
+          : '';
         return dividerMarkup + `
           <div
             class="chat-thread-node chat-thread-root chat-thread-root-user"
             data-thread-depth="${normalizedDepth}"
             data-thread-parent=""
             data-thread-message-id="${escapeHtml(node.id)}"
-            data-thread-collapsed="false"
+            data-thread-collapsed="false"${editingRootAttr}
           >
             ${articleHtml}
             ${
@@ -298,9 +331,8 @@ root.rendererRenderPipelineThreadDomUtils = factory();
     }
 
     /**
-     * Measure dot positions, centre each dot with its primary content
-     * landmark, and set --_rail-top / --_rail-height on each thread root
-     * so the CSS rail line spans from the first dot to the last.
+     * Centre each thread toggle on its primary content landmark. The
+     * per-row dots and the rail line they anchored are gone (row 135).
      */
     const _dotLandmarkSelector =
       '.reasoning-row-block, .reasoning-row-header, .tool-call-header, .tool-run-toggle, .chat-bubble, .interactive-card, .proactive-suggestion-block, .slash-command-output';
@@ -321,25 +353,6 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         if (_hasBox(candidates[i])) return candidates[i];
       }
       return first;
-    }
-
-    // The first visible text line's centre, in viewport px: the axis the
-    // per-row dots use. Null without layout (jsdom, fakes), which keeps the
-    // top-align fallback.
-    function _firstTextLineCenter(target) {
-      const doc = target && target.ownerDocument;
-      if (!doc || typeof doc.createTreeWalker !== 'function' || typeof doc.createRange !== 'function') return null;
-      const walker = doc.createTreeWalker(target, 4 /* NodeFilter.SHOW_TEXT */);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (!node.nodeValue || !node.nodeValue.trim()) continue;
-        const parent = node.parentElement;
-        if (!parent || parent.closest('.sr-only, [hidden], .chat-row-node-dot')) continue;
-        const range = doc.createRange();
-        range.selectNodeContents(node);
-        const rect = range.getClientRects()[0];
-        if (rect && rect.width > 0 && rect.height > 0) return rect.top + rect.height / 2;
-      }
-      return null;
     }
 
     // B2: small timer-based debounce around the ResizeObserver-driven rail
@@ -472,10 +485,9 @@ root.rendererRenderPipelineThreadDomUtils = factory();
     }
 
     /**
-     * Finding 2: synchronous first-paint rail measurement. The full-render
-     * path calls this directly (no 80 ms debounce, no rAF) so
-     * --_rail-top/--_rail-height are set before the browser paints —
-     * eliminating the CSS-default height:0 -> snap window. The debounced
+     * Finding 2: synchronous first-paint measurement. The full-render
+     * path calls this directly (no 80 ms debounce, no rAF) so each toggle
+     * is placed before the browser paints. The debounced
      * scheduleRailResizeUpdate above is unchanged and keeps handling
      * subsequent ResizeObserver-driven resizes.
      */
@@ -502,8 +514,6 @@ root.rendererRenderPipelineThreadDomUtils = factory();
       const plans = [];
       for (const root of roots) {
         try {
-        const rootRect = root.getBoundingClientRect();
-        const dotCenters = [];
         const dotWrites = [];
 
         /* Phase 1: toggle buttons — JS-positioned to first content landmark.
@@ -519,14 +529,13 @@ root.rendererRenderPipelineThreadDomUtils = factory();
 
           const threadNode = dot.closest('.chat-thread-node');
           const nodeKind = threadNode && threadNode.dataset ? threadNode.dataset.threadNodeKind : '';
-          /* Response: dot centre on the first text line, the axis the per-row
-             dots below it use (cards such as the ask card match no landmark). */
+          /* Response: dot centre on the first text line (cards such as the
+             ask card match no landmark). */
           const lineTarget = nodeKind === 'response' ? (landmark || (article && article.querySelector('.chat-row'))) : null;
-          const lineCenter = lineTarget ? _firstTextLineCenter(lineTarget) : null;
+          const lineCenter = lineTarget ? firstTextLineCenter(lineTarget) : null;
           if (lineCenter !== null) {
             const rowRect = row.getBoundingClientRect();
             dotWrites.push({ dot, top: Math.round(lineCenter - rowRect.top - dot.offsetHeight / 2) });
-            dotCenters.push(lineCenter - rootRect.top);
           } else if (landmark) {
             const rowRect = row.getBoundingClientRect();
             const lmRect = landmark.getBoundingClientRect();
@@ -536,38 +545,17 @@ root.rendererRenderPipelineThreadDomUtils = factory();
               /* No measurable text line: dot centre sits at landmark top edge. */
               const lmTop = lmRect.top - rowRect.top;
               dotWrites.push({ dot, top: Math.round(lmTop) });
-              dotCenters.push(lmRect.top + dotHalf - rootRect.top);
             } else {
               /* Centre-align (tool, interactive, etc.) */
               const lmCenter = lmRect.top + lmRect.height / 2 - rowRect.top;
               dotWrites.push({ dot, top: Math.round(lmCenter - dotHalf) });
-              dotCenters.push(lmRect.top + lmRect.height / 2 - rootRect.top);
             }
           } else {
             dotWrites.push({ dot, top: null });
-            const dotRect = dot.getBoundingClientRect();
-            dotCenters.push(dotRect.top + dotRect.height / 2 - rootRect.top);
           }
         }
 
-        /* Phase 2: per-row dots — CSS-positioned, measure only. */
-        const rowDots = root.querySelectorAll(
-          '.chat-thread-node-nested .chat-thread-node-article .chat-row .chat-row-node-dot'
-        );
-        for (let j = 0; j < rowDots.length; j++) {
-          const dot = rowDots[j];
-          if (dot.offsetParent === null) continue;
-          const dotRect = dot.getBoundingClientRect();
-          /* Belt-and-suspenders: skip if CSS still hides it (display:none guard). */
-          if (dotRect.width === 0 && dotRect.height === 0) continue;
-          dotCenters.push(dotRect.top + dotRect.height / 2 - rootRect.top);
-        }
-
-        /* Sort ascending — the two passes may interleave vertically across
-           different nesting depths, so sorting gives the true top/bottom. */
-        dotCenters.sort(function (a, b) { return a - b; });
-
-        plans.push({ root, dotWrites, dotCenters });
+        plans.push({ root, dotWrites });
         } catch (error) {
           warnRailMeasurementFailure('read', error);
         }
@@ -585,21 +573,6 @@ root.rendererRenderPipelineThreadDomUtils = factory();
               writeStylePropertyIfChanged(write.dot.style, 'top', write.top + 'px');
             }
           }
-          if (plan.dotCenters.length < 2) {
-            writeStylePropertyIfChanged(plan.root.style, '--_rail-height', '0px');
-            if (readStyleProperty(plan.root.style, '--_rail-top')) {
-              plan.root.style.removeProperty('--_rail-top');
-            }
-            continue;
-          }
-          const firstCenter = plan.dotCenters[0];
-          const lastCenter = plan.dotCenters[plan.dotCenters.length - 1];
-          writeStylePropertyIfChanged(plan.root.style, '--_rail-top', Math.round(firstCenter) + 'px');
-          writeStylePropertyIfChanged(
-            plan.root.style,
-            '--_rail-height',
-            Math.round(Math.max(0, lastCenter - firstCenter)) + 'px'
-          );
         } catch (error) {
           warnRailMeasurementFailure('write', error);
         }
@@ -680,5 +653,5 @@ root.rendererRenderPipelineThreadDomUtils = factory();
     };
   }
 
-  return { createThreadDomPipeline };
+  return { createThreadDomPipeline, firstTextLineCenter };
 });

@@ -10,7 +10,7 @@ Jenny is also a solo-maintained hobby project. Issues and PRs are read, and good
 
 ## Scope: what fits
 
-Jenny is deliberately a **local-first** harness for small-to-mid local models — coding workflows, data-viz artifacts, and well-bounded tool calls, plus a light companion shell. Good fits: reliability fixes, tool-call robustness, local-model compatibility, accessibility, docs. Optional ChatGPT sign-in and Codex CLI integrations already exist, as does experimental Docker/browser hosting. New cloud paths require an owner-scoped plan and the existing service/security boundaries. Telemetry, speech, ambient companion behavior and retired executable plugin tiers remain outside ordinary contribution scope.
+Jenny is deliberately a **local-first** AI workstation for one owner — coding workflows, data-viz artifacts, and well-bounded tool calls in a workspace of chats, files and tools, with Home and a customizable personality around it. Good fits: reliability fixes, tool-call robustness, local-model compatibility, accessibility, docs. Optional ChatGPT sign-in, Codex CLI and your-own-API-key integrations already exist, as does experimental Docker/browser hosting. New cloud paths require an owner-scoped plan and the existing service/security boundaries. Telemetry, spoken replies, ambient companion behavior and retired executable plugin tiers remain outside ordinary contribution scope.
 
 ## Development environment
 

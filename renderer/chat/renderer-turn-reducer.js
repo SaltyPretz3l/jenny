@@ -59,9 +59,8 @@
     resolveReasoningEntryEdits,
   } = reasoningEntryMergeUtils;
 
-  const REASONING_CHUNK_SUM = typeof Symbol === 'function'
-    ? Symbol('reasoningChunkSum')
-    : '__reasoningChunkSum';
+  const REASONING_CHUNK_SUM = typeof Symbol === 'function' ? Symbol('reasoningChunkSum') : '__reasoningChunkSum';
+  const ROW_EVENT_ID_SET = typeof Symbol === 'function' ? Symbol('rowEventIdSet') : '__rowEventIdSet';
   const PHASE_SUMMARY_MAX_LENGTH = 240;
   const REASONING_ENTRY_MERGE_STATE = typeof Symbol === 'function'
     ? Symbol('reasoningEntryMergeState')
@@ -186,6 +185,7 @@
         cloneEntries,
       })
     : {});
+  const coalesceRetainedTextEvent = streamEventUtilsFactory.coalesceRetainedTextEvent || (() => false);
   if (typeof buildTurnEventFromStreamPayload !== 'function') {
     throw new Error('renderer-turn-reducer: stream-event-utils factory wire-up failed');
   }
@@ -387,10 +387,17 @@
   // claiming the event's MESSAGES. Needed where one event legitimately touches two
   // rows: a tool_result settles the tool_call row's badge while its content and its
   // message id belong to the dedicated tool_result row.
+  // The row's event ids, as a Set beside the list: one lookup per delta, not a scan.
   function ensureRowEvent(row, event, options) {
     const eventId = normalizeId(event && event.event_id);
-    if ((!options || options.recordEventId !== false) && eventId && !row.source_events.includes(eventId)) {
+    let seen = row[ROW_EVENT_ID_SET];
+    if (!seen || seen.size !== row.source_events.length) {
+      seen = new Set(row.source_events);
+      Object.defineProperty(row, ROW_EVENT_ID_SET, { value: seen, configurable: true, writable: true });
+    }
+    if ((!options || options.recordEventId !== false) && eventId && !seen.has(eventId)) {
       row.source_events.push(eventId);
+      seen.add(eventId);
     }
     if (!options || options.attributeSourceIds !== false) {
       appendSourceIds(row, event);
@@ -401,24 +408,15 @@
     const row = buildBaseRow('assistant_text', turn.turn_id, event);
     row.primary_message_id = normalizeId(assistantMessageId || row.primary_message_id);
     row.assistant_phase = normalizeId(event && event.assistant_phase) || 'final_answer';
-    // The segment group index IS this row's identity: deriveDeterministicRowId
-    // mints row:assistant_text:<turn>:<index> from it, so two rows sharing an
-    // index collide and get papered over with a `#1` suffix instead of being
-    // distinct rows.
-    //
-    // next_assistant_segment_index alone is not enough. It is advanced by
-    // maybeAdvanceAssistantSegment, which reads next_assistant_message_id -- a
-    // LIVE-stream field that canonical turn events do not carry. Replaying a
-    // canonical turn therefore left every assistant row at index 0. Counting the
-    // turn's SURVIVING assistant rows covers that and cannot disturb the live
-    // path, because it measures the very quantity applyStreamResetToTurnRows
-    // restates the counter to, and the live counter advances once per new
-    // assistant row -- so it is never below this count.
-    //
-    // `discarded` rows are excluded for that same reason: a reset tombstones the
-    // pre-reset row IN PLACE rather than removing it, and the row replacing it
-    // takes the index the tombstone gave up, which is what the hydrated projector
-    // counts because the discarded segment was never persisted.
+    // The segment group index IS this row's identity (deriveDeterministicRowId
+    // mints row:assistant_text:<turn>:<index>; a shared index collides into `#1`).
+    // next_assistant_segment_index alone is not enough: it reads the LIVE-only
+    // next_assistant_message_id, so a canonical replay left every row at index 0.
+    // Counting the turn's SURVIVING text rows covers that without disturbing the
+    // live path (applyStreamResetToTurnRows restates the counter to this count,
+    // and the live counter advances once per new row). `discarded` rows are
+    // excluded: a reset tombstones the pre-reset row in place and its replacement
+    // takes the index, as the hydrated projector counts (never persisted).
     let survivingTextRowCount = 0;
     for (let index = 0; index < turn.rows.length; index += 1) {
       const existing = turn.rows[index];
@@ -735,7 +733,7 @@
         if (normalizeId(event.status) && !reasoningPhaseIsCompleted(retained)) retained.status = event.status;
         if (normalizeId(event.completed_at)) retained.completed_at = event.completed_at;
         reasoningEventCoalesced = true;
-      } else {
+      } else if (!(event.kind === 'assistant_text_segment' && coalesceRetainedTextEvent(turn, event))) {
         turn.events.push(event);
         if (event.kind === 'reasoning_phase' && incomingEntries.length) {
           turn.retained_reasoning_event_by_phase_id[phaseKey] = event;

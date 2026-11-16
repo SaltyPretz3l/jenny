@@ -357,18 +357,9 @@ test('renderer renders sidecar write_file diffs with alias display, enriched sum
   assert.ok(fileDiff.querySelector('[data-file-diff-materialized] .diff-line'));
   assert.equal(fileDiff.querySelector('[data-file-diff-pending]'), null);
 
-  // The nested control remains independent once the user has made a choice.
-  fileDiff.querySelector('[data-file-diff-toggle]').click();
-  await waitForUi(window, 20);
-  assert.equal(fileDiff.getAttribute('data-expanded'), 'false', 'the per-file toggle collapses the diff');
-  header.click();
-  await waitForUi(window, 20);
-  header.click();
-  await waitForUi(window, 20);
-  assert.equal(fileDiff.getAttribute('data-expanded'), 'false', 'the explicit nested choice survives parent toggles');
-
-  fileDiff.querySelector('[data-file-diff-toggle]').click();
-  await waitForUi(window, 20);
+  // Row 160: a one-file diff renders bare inside its tool row, with no per-file head or toggle.
+  assert.ok(fileDiff.classList.contains('file-diff--bare'), 'one file renders as the bare diff');
+  assert.equal(fileDiff.querySelector('[data-file-diff-toggle]'), null, 'no nested toggle for one file');
 
   assert.match(expandedDetails.textContent, /\\ No newline at end of file/);
   assert.match(expandedDetails.textContent, /<script>alert\(1\)<\/script>/);

@@ -1,0 +1,65 @@
+/* The Team tab's shared projects (row 123, slice 3-10; owner picks 3-10,
+ * mockup team-projects, proposed.css). Loaded with the tab's other stylesheets. Tokens only and
+ * logical properties only; no side bars, no cards, state never by colour alone (every count and "running" is also
+ * said in the row's accessible name). Names are cut with an ellipsis; the full name is the tooltip. */
+
+/* ---------------------------------------------------------------- column */
+
+.team-projects { display: flex; flex-direction: column; }
+.team-proj { display: flex; flex-direction: column; }
+.team-proj__head { display: flex; align-items: center; gap: var(--space-2); }
+.team-proj__head .team-row { flex: 1; min-inline-size: 0; }
+.team-proj__gap { flex: none; inline-size: 18px; }
+.team-proj__chev { flex: none; inline-size: 18px; block-size: 18px; display: inline-grid; place-items: center; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0; border-radius: var(--radius-sm); }
+.team-proj__chev:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-proj__chev svg { inline-size: 12px; block-size: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; transition: transform var(--motion-duration-fast, 120ms); }
+.team-proj[data-open="false"] .team-proj__chev svg { transform: rotate(-90deg); }
+.team-proj__kids { display: flex; flex-direction: column; padding-inline-start: 18px; }
+.team-proj[data-open="false"] .team-proj__kids { display: none; }
+.team-proj__kids .team-row__name { font-size: var(--font-size-footnote); }
+.team-proj .team-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-proj .team-row__name[data-muted="true"] { color: var(--text-muted); }
+.team-row__role { margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-proj__new { color: var(--text-muted); }
+.team-proj__note { margin: 0; padding-block: var(--space-2); padding-inline: var(--space-4); }
+.team-inline-name { display: flex; gap: var(--space-3); padding-block: var(--space-2) var(--space-4); padding-inline: 18px var(--space-4); }
+.team-inline-name .inv-text-field, .team-inline-name input { flex: 1; min-inline-size: 0; }
+.team-head .team-inline-name { flex: 1; padding: 0; }
+
+/* ---------------------------------------------------------- project page */
+
+.team-project-root { flex: 1; min-block-size: 0; display: flex; flex-direction: column; }
+/* The page's parts and the box's slots are written one by one; they draw no box of their own. */
+[data-page-part], [data-conv-box="above"], [data-conv-box="below"] { display: contents; }
+.team-conv-box[hidden] { display: none; }
+.team-page { flex: 1; min-block-size: 0; overflow: auto; padding-block: var(--space-10) var(--space-16); padding-inline: var(--space-12); }
+.team-page__inner { max-inline-size: 760px; display: flex; flex-direction: column; gap: var(--space-12); }
+.team-page__lede { margin: 0; font-size: var(--font-size-body); color: var(--text-secondary); line-height: 1.5; max-inline-size: 620px; overflow-wrap: anywhere; }
+.team-page h3 { margin-block: 0 var(--space-4); margin-inline: 0; font-size: var(--font-size-footnote); font-weight: 600; color: var(--text-primary); display: flex; align-items: baseline; gap: var(--space-4); }
+.team-page h3 .team-set-count { font-weight: 400; }
+.team-page__acts { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-block-start: var(--space-5); }
+.team-page__fact { margin: 0; font-size: var(--font-size-body); color: var(--text-secondary); overflow-wrap: anywhere; }
+.team-page .team-set-person__name, .team-page .team-set-person__fact { overflow-wrap: anywhere; }
+.team-progress { display: flex; flex-direction: column; gap: var(--space-3); margin-block-start: var(--space-5); max-inline-size: 560px; }
+.team-progress__line { display: flex; align-items: center; gap: var(--space-5); font-size: var(--font-size-footnote); color: var(--text-secondary); }
+.team-progress__line .btn { margin-inline-start: auto; }
+.team-progress__note { margin-block-start: var(--space-3); font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-note-line { margin: 0; padding-block: var(--space-5); padding-inline: var(--space-8); border-block-end: 1px solid var(--line); font-size: var(--font-size-footnote); color: var(--text-secondary); overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------ shared conversation */
+
+.team-conv { flex: 1; min-block-size: 0; display: flex; flex-direction: column; }
+.team-conv__scroll { flex: 1; min-block-size: 0; overflow: auto; padding-block: var(--space-8); padding-inline: 12%; }
+.team-conv .team-head__name, .team-page ~ .team-head__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-author { display: block; margin-block: 0 var(--space-2); text-align: end; font-size: var(--tl-font-meta, var(--font-size-caption)); color: var(--text-muted); }
+.chat-author b { color: var(--text-secondary); font-weight: 600; }
+.team-head__sub b { color: var(--text-secondary); font-weight: 600; }
+.team-tool-line .turn-activity-label { color: var(--text-muted); }
+.team-drive { display: flex; align-items: center; gap: var(--space-5); padding-block: var(--space-6); padding-inline: var(--space-8); border-block-start: 1px solid var(--line); font-size: var(--font-size-body); color: var(--text-secondary); }
+.team-drive .btn { margin-inline-start: auto; }
+.team-drive__confirm { display: flex; flex-direction: column; gap: var(--space-4); padding-block: var(--space-6); padding-inline: var(--space-8); border-block-start: 1px solid var(--line); font-size: var(--font-size-body); color: var(--text-secondary); }
+.team-drive__confirm div { display: flex; gap: var(--space-4); }
+.team-drive__confirm p { margin: 0; }
+.team-drive__note { margin: 0; padding-inline: var(--space-8); }
+.team-conv-box { border-block-start: 1px solid var(--line); }
+.tool-approval-who { margin-block: var(--space-3) 0; margin-inline: 0; font-size: var(--font-size-caption); color: var(--text-muted); }

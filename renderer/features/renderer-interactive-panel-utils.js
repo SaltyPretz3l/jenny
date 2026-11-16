@@ -410,6 +410,13 @@
       }, STALLED_TIMEOUT_MS);
     }
 
+    // Row 157 swaps the placeholder while an ask_user card waits and keeps the default in
+    // dataset.questionReplyDefault (renderer-send-flow-helpers.js); leave that swap in place.
+    function resetComposerPlaceholder() {
+      if (!chatInput || Object.prototype.hasOwnProperty.call(chatInput.dataset || {}, 'questionReplyDefault')) return;
+      chatInput.placeholder = jt('interactive.composer.placeholder', 'Message Jenny...');
+    }
+
     function renderComposerInteractivePanel() {
       const batch = getPendingQuestionBatch();
       const questions = Array.isArray(batch?.questions) ? batch.questions : [];
@@ -421,9 +428,7 @@
         if (composer) {
           composer.classList.remove('composer-has-interactive');
         }
-        if (chatInput) {
-          chatInput.placeholder = jt('interactive.composer.placeholder', 'Message Jenny...');
-        }
+        resetComposerPlaceholder();
         return;
       }
 
@@ -453,9 +458,7 @@
       if (composer) {
         composer.classList.add('composer-has-interactive');
       }
-      if (chatInput) {
-        chatInput.placeholder = jt('interactive.composer.placeholder', 'Message Jenny...');
-      }
+      resetComposerPlaceholder();
       const unresolved = countUnresolvedQuestions(batch, draft, isInteractiveQuestionAnswered);
       if (unresolved > 0) {
         startStalledTimer();

@@ -20,11 +20,6 @@ function buildHarness(t, { runMode = 'ask' } = {}) {
   return { announcer, container, mode, renderer };
 }
 
-test('dom-e2e: the mode row no longer owns a routine mode chip', (t) => {
-  const h = buildHarness(t);
-  assert.equal(h.container.querySelectorAll('button[data-mode]').length, 0);
-});
-
 test('dom-e2e: destroy removes mounted chips and detaches state updates', (t) => {
   const h = buildHarness(t);
   h.renderer.destroy();

@@ -54,7 +54,9 @@ test('an older stored record without the field loads losslessly with the animati
   const storage = createStorage({ [appearance.STORAGE_KEY]: JSON.stringify(older) });
   const loaded = appearance.loadAppearancePreferences(storage);
   const { typeScaleVersion: _stamp, ...olderFields } = older;
-  assert.deepEqual(loaded, { ...olderFields, startupAnimation: true, titlebarLoad: false, artifactAutoOpen: false });
+  assert.deepEqual(loaded, {
+    ...olderFields, teamDensityId: 'comfortable', startupAnimation: true, titlebarLoad: false, artifactAutoOpen: false,
+  });
 
   const legacy = { paletteId: 'midnight', fontScaleId: 'xlarge' };
   const legacyStorage = createStorage({ [appearance.LEGACY_STORAGE_KEY]: JSON.stringify(legacy) });

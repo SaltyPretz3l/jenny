@@ -221,21 +221,15 @@
             unmarkPendingDelete(sessionId);
             showSessionActionError(error, jt('sidebar.sessionActions.deleteFailed', 'Delete Failed'));
           },
+          // The row is already hidden, so the toast speaks in the past tense; its
+          // × (or the window running out) lets the delete go through.
           buildToast: ({ onUndo }) => ({
-            message: jt("sessionActions.scheduledValueForDeletion", "Scheduled \"{value1}\" for deletion", { value1: String(title) }),
+            message: jt('sidebar.sessionActions.deletedNamed', 'Deleted “{title}”', { title: String(title) }),
             options: {
-              title: jt("sessionActions.deleteChat", "Delete Chat"),
-              tone: 'danger',
-              durationMs: undoWindowMs,
+              tone: 'info',
               source: TOAST_SOURCE.sessionAction,
               actions: [
                 { id: 'session-delete-undo', label: jt('sidebar.sessionActions.undo', 'Undo'), kind: 'primary', onClick: onUndo },
-                {
-                  id: 'session-delete-now',
-                  label: jt('sidebar.sessionActions.deleteNow', 'Delete now'),
-                  kind: 'secondary',
-                  onClick: () => deleteUndoScheduler.flush([sessionId]),
-                },
               ],
             },
           }),
@@ -253,7 +247,6 @@
         kind: 'session-delete',
         key: entry.key,
         label: entry.label,
-        deadline: entry.deadline,
         undo: entry.undo,
       }));
     }
@@ -469,7 +462,8 @@
         anchorY,
         restoreFocusTo: trigger || rowMenuButton(sessionId),
         onActionError: (error) => showSessionActionError(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')),
-        items: [
+        items: [ // Row 136 leads: "Finish this first" while a reply runs, "Take turns again" on the chat that is first.
+          ...(windowRef.rendererStreamWaitingLine?.firstChatMenuItems(sessionId, windowRef.rendererMultiStreamController?.isSessionStreaming?.(sessionId) === true) || []),
           ...overrideItems,
           ...(primary ? [] : [{ label: pinned ? jt('sidebar.sessionActions.unpin', 'Unpin') : jt('sidebar.sessionActions.pin', 'Pin'), action: () => togglePinSession(sessionId) }]),
           ...(isOfflineLockdownEnabled()

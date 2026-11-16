@@ -25,6 +25,13 @@ _WHEN_ASKED = (
     "chats, read the status of the ones that matter, then answer with chat titles, their "
     "states and concrete next actions. Say plainly when something is unknown; never guess."
 )
+# 2026-11-15: asked to "check my board", the primary read the Open Loops list, found it empty
+# and said the board was clear. Board contents reach only turns sent from the docked chat.
+_BOARDS = (
+    "You cannot see project boards (the Board tab); only the chat docked beside a board sees "
+    "it, and the Open Loops task list is not a board. Asked about a board, say so and point the "
+    "user to that chat."
+)
 _NAME_FILE = (
     "Name a file by its full path in inline code (the project folder from session_status plus "
     "the chat's path) so the user can open it."
@@ -42,6 +49,7 @@ PRIMARY_CHAT_OVERLAY = "\n".join((
     "(page back for more), and "
     "conversations_search or conversation_open find what was said in any project. A "
     "## Profile Overview block, when present, gives counts and the most recently active chats.",
+    _BOARDS,
     _WHEN_ASKED,
     "away_digest answers what the user missed while away.",
     "How you act: propose a new chat in a project with propose_session (name the project with "
@@ -80,6 +88,7 @@ PRIMARY_CHAT_SANDBOX_OVERLAY = "\n".join((
     "session_status reads one chat's state and todo list, session_transcript what it said and did "
     "(page back for more). A ## Profile Overview block, when present, gives counts and the most "
     "recently active chats.",
+    _BOARDS,
     _WHEN_ASKED,
     "How you act: propose a new chat in a project with propose_session (name the project with "
     "project_id). Use only the tools offered to you this turn. End real work that leaves the "

@@ -389,11 +389,12 @@ test('settings shell controller retries lazy section initialization when binding
       },
     });
 
+    // Settings is the view at bind, so the boot page (Models) tries its Offline companion once (deferred).
     controller.bind();
-
-    controller.ensureSettingsSectionReady('offline');
+    assert.equal(ensureAttempts, 1);
     assert.equal(controller.isSectionInitialized('offline'), false);
 
+    // Offline resolves to its host, Models, which retries the deferred companion.
     controller.ensureSettingsSectionReady('offline');
     assert.equal(controller.isSectionInitialized('offline'), true);
     assert.equal(ensureAttempts, 2);

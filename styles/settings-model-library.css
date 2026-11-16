@@ -8,42 +8,11 @@
  */
 
 /* Dedicated Settings > Model library section. */
-.model-library-section-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-3);
-}
-
 .model-library-filter-chips {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-/* Input + Pull + refresh stay on one line; the toolbar wraps as a whole. */
-.model-library-section-toolbar-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.model-library-section-pull-input {
-  flex: 1 1 160px;
-  width: min(220px, 100%);
-}
-
-.model-library-section-refresh {
-  min-width: 32px;
-}
-
-.model-library-section-pull-input .inv-text-field-control {
-  width: 100%;
 }
 
 .model-library-hardware-summary {
@@ -52,64 +21,99 @@
   font-size: var(--font-size-caption);
 }
 
-.model-row-list {
+/* Library: one search line, scope chips, sort, then one quiet row per model. */
+.mlib-searchline {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
+  align-items: center;
+  gap: var(--space-3);
+  margin-block: 2px 10px;
+}
+
+.mlib-search {
+  flex: 1 1 auto;
+}
+
+.mlib-search .inv-text-field-control {
+  width: 100%;
+  height: 38px;
+}
+
+.mlib-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-block: 2px 6px;
+}
+
+.mlib-tools-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.model-library-section-refresh {
+  min-width: 32px;
+}
+
+.mrow-list {
   container-type: inline-size;
 }
 
-.model-row-group-title {
-  margin: 0 0 var(--space-1);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.model-row-group-count {
-  color: var(--text-muted);
-  font-weight: 400;
-  margin-inline-start: 4px;
-}
-
-.model-row {
+.mrow,
+.mrow-cols {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px auto;
-  column-gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) 190px 176px;
+  column-gap: var(--space-5);
   align-items: center;
-  padding: var(--space-3) var(--space-1);
+}
+
+.mrow-cols {
+  padding: 0 var(--space-1) 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.mrow-cols-fit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mrow {
+  padding: 9px var(--space-1);
   border-top: 1px solid var(--line);
   min-width: 0;
+  outline: none;
 }
 
-.model-row-group > .model-row:last-child {
+.mrow-list > .mrow:last-child {
   border-bottom: 1px solid var(--line);
 }
 
-.model-row[data-active="true"] .model-row-name {
-  color: var(--accent-strong);
+.mrow:hover,
+.mrow:focus-within {
+  background: color-mix(in srgb, var(--text-primary) 3.5%, transparent);
 }
 
-.model-row[data-pending="true"] {
-  opacity: 0.85;
+.mrow[data-pending="true"] {
+  opacity: 0.8;
 }
 
-.model-row-main,
-.model-row-fit,
-.model-row-actions {
+.mrow-main {
   min-width: 0;
 }
 
-.model-row-title {
+.mrow-title {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  gap: 10px;
   min-width: 0;
 }
 
-.model-row-name {
-  max-width: 100%;
+.mrow-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,68 +122,140 @@
   font-weight: 500;
 }
 
-.model-row-name--tag {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-code);
-  font-weight: 500;
+.mrow-flag {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
 }
 
-.model-row-title .inv-badge {
-  text-transform: none;
-  letter-spacing: 0;
+.mrow-flag--danger {
+  color: var(--state-danger);
 }
 
-.model-row-meta {
+.mrow-meta {
+  margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   line-height: 1.4;
-  margin-top: 2px;
 }
 
-.model-row-fit {
+.mrow-fit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 62px;
+  align-items: center;
+  column-gap: 10px;
+}
+
+.mrow-fit-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  overflow: hidden;
+}
+
+.mrow-fit-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--state-success);
+}
+
+.mrow-fit-bar--over i {
+  background: var(--state-danger);
+}
+
+.mrow-fit-num {
+  text-align: end;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mrow-fit-num small {
+  color: var(--text-muted);
+  font-size: inherit;
+}
+
+.mrow-fit-num--text {
+  grid-column: 1 / -1;
+  text-align: start;
+  color: var(--text-muted);
+}
+
+/* No number to show: the dash sits where the numbers do. */
+.mrow-fit-num--none {
+  text-align: end;
+}
+
+.mrow-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* One quiet Use per row; it takes the accent only on the row you are on. */
+.mrow:hover .mrow-use:not(:disabled),
+.mrow:focus-within .mrow-use:not(:disabled) {
+  --btn-bg: var(--widget-button-primary-bg);
+  --btn-hover-bg: var(--widget-button-primary-bg);
+  background: var(--widget-button-primary-bg);
+  --btn-color: var(--widget-button-primary-color);
+  --btn-hover-color: var(--widget-button-primary-color);
+  --btn-border: color-mix(in srgb, var(--widget-button-primary-shadow) 58%, var(--widget-button-secondary-border));
+}
+
+.mrow .mrow-menu {
+  min-width: 30px;
+  padding-inline: 6px;
+}
+
+.mrow-sep {
+  padding: 14px var(--space-1) 6px;
+  border-top: 1px solid var(--line);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
-  line-height: 1.4;
-  overflow-wrap: anywhere;
 }
 
-.model-row-fit-text--estimated,
+.mp-more--inlist {
+  margin: 0;
+  padding: 12px var(--space-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+
+.mp-empty {
+  padding: 18px 0;
+}
+
+/* The list's own width decides, not the viewport: the settings content column is narrowest just above its single-column breakpoint. */
+@container (max-width: 640px) {
+  .mrow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 6px;
+  }
+
+  .mrow-fit {
+    grid-column: 1;
+    grid-row: 2;
+    max-width: 260px;
+  }
+
+  .mrow-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
 .model-card-fit--estimated .inv-progress-text {
   white-space: nowrap;
   overflow-wrap: normal;
-}
-
-#modelStatus:empty {
-  display: none;
-}
-
-.model-row-fit .inv-progress {
-  margin-top: 4px;
-}
-
-/* The fit text above the bar is the label; the bar's own caption repeats it. */
-.model-row-fit .inv-progress-text {
-  display: none;
-}
-
-.model-row-fit .inv-progress-track {
-  height: 4px;
-}
-
-.model-row-fit-none {
-  color: var(--text-muted);
-}
-
-.model-row-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  justify-self: end;
 }
 
 .model-card-grid {
@@ -278,6 +354,14 @@
   color: var(--text-secondary);
 }
 
+/* Row 142: "Use build N" buttons under a failed load's note. */
+.model-card-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .model-card-fit--success .inv-progress-fill {
   --inv-progress-fill-color: var(--state-success);
 }
@@ -329,20 +413,37 @@
   margin: 0 0 var(--space-4);
 }
 
-/* Query the list's own width, not the viewport: the settings shell's content
-   column is narrowest just above its single-column breakpoint. */
-@container (max-width: 720px) {
-  .model-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
+/* Row 123 slice 6-7: model sharing (the owner's picks, proposed.css). A model's sharing state inside its Library row
+   reuses .model-card-note, .model-card-pull-state and .model-card-pull-progress as a download does; the send, accept
+   and "Where it came from" drawers reuse the Tune drawer's rows. Only the spacing, the people list, the file list, the
+   read-only values, the checksum and the notes under a form are new. State is said in words; colour only repeats it. */
+.mrow-share { display: grid; gap: var(--space-2); margin-block-start: var(--space-2); max-inline-size: 720px; }
+.mrow-share .model-card-note { font-size: var(--font-size-footnote); color: var(--text-secondary); }
+.mrow-share .model-card-note[data-tone="warn"] { color: var(--state-warning); }
+.mrow-share .model-card-note[data-tone="danger"] { color: var(--state-danger); }
+.mrow-share-people { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.mrow-share-people li { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.mrow-share-who { flex: 0 0 72px; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: var(--font-size-footnote); }
+.mrow-share-people .model-card-note { flex: 1 1 160px; }
+.mshare-files { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); inline-size: 100%; }
+.mshare-files li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--space-5); align-items: baseline; }
+.mshare-files .mshare-file-name { min-inline-size: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: var(--font-size-footnote); }
+.mshare-files .mshare-file-size { color: var(--text-secondary); font-size: var(--font-size-footnote); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mshare-files .mshare-file-what { grid-column: 1 / -1; color: var(--text-muted); font-size: var(--font-size-caption); }
+.mshare-files .inv-checkbox { min-inline-size: 0; overflow-wrap: anywhere; }
+.mshare-total { margin: 0; margin-block-start: var(--space-3); color: var(--text-secondary); font-size: var(--font-size-footnote); font-variant-numeric: tabular-nums; }
+.mshare-value { margin: 0; color: var(--text-primary); font-size: var(--font-size-footnote); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; max-block-size: 240px; overflow: auto; }
+.mshare-value--quote { color: var(--text-secondary); }
+.mshare-hash { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-4); inline-size: 100%; }
+.mshare-hash code { font-size: var(--font-size-caption); color: var(--text-primary); overflow-wrap: anywhere; }
+.mshare-notes { display: grid; gap: var(--space-4); margin: 0; margin-block-start: var(--space-6); padding-block-start: var(--space-6); border-block-start: 1px solid var(--line); }
+.mshare-notes p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-footnote); line-height: 1.5; }
+.mshare-drawer .model-tuning-row-control .inv-text-field, .mshare-drawer .model-tuning-row-control .inv-select-field { inline-size: 100%; }
+.mshare-drawer .model-tuning-row-control { min-inline-size: 0; flex-wrap: wrap; }
+.mshare-drawer .model-tuning-row-control .mshare-total { flex: 0 0 100%; }
+.mshare-drawer .model-tuning-row-note[data-tone="warn"] { color: var(--state-warning); }
 
-  .model-row-actions {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .model-row-fit {
-    grid-column: 1 / -1;
-    padding-top: 4px;
-  }
+/* Settings › Team › Model sharing: the line under the host's switch that says how many models pass through now. */
+.team-relay-state {
+  padding-block: var(--space-2) var(--space-4);
 }

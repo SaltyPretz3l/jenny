@@ -26,7 +26,7 @@ class SessionRuntimeScheduler {
     provePausedCleanup = null, enabled = true, createId = randomUUID,
     onAttention = null, onSuspended = null, captureEligibility = null, releaseEligibility = null,
     validateCheckpoint = null, onWorkChange = null, cleanupAttentionGraceMs = 5000, setTimer = setTimeout, now = Date.now,
-    isPriorityTurn = null } = {}) {
+    isPriorityTurn = null, memberTurns = false } = {}) {
     for (const operation of [resolveRoute, validateWork, claimCanonical, startProducer]) {
       if (typeof operation !== 'function') throw new TypeError('runtime_scheduler_port_required');
     }
@@ -47,6 +47,8 @@ class SessionRuntimeScheduler {
     this.incarnation = createId();
     // Work whose turn takes the lane's priority slot (the primary Jenny chat); never throws.
     this.isPriorityTurn = typeof isPriorityTurn === 'function' ? isPriorityTurn : () => false;
+    // A team host's turns alternate between members (member-turn-order.js); otherwise the store's own order.
+    this.passOrder = memberTurns === true ? require('./member-turn-order').memberTurnOrder : (_owner, ready) => ready;
     this.onAttention = typeof onAttention === 'function' ? onAttention : null;
     this.onSuspended = typeof onSuspended === 'function' ? onSuspended : null;
     this.captureEligibility = typeof captureEligibility === 'function' ? captureEligibility : () => null;
@@ -259,10 +261,8 @@ class SessionRuntimeScheduler {
     this.pumping = true;
     const results = [];
     try {
-      for (const summary of this.store.listReadyCandidates({ limit: 256 })) {
-        // An ineligible session/lane does not stall later unrelated work.
-        results.push(this.tryDispatch(summary.work_id));
-      }
+      // An ineligible session/lane does not stall later work.
+      for (const summary of this.passOrder(this, this.store.listReadyCandidates({ limit: 256 }))) results.push(this.tryDispatch(summary.work_id));
     } finally {
       this.pumping = false;
     }

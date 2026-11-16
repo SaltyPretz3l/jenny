@@ -354,7 +354,7 @@ test('scheduleStartupRetentionTasks gates both retention passes behind backend-r
   assert.equal(swept, 1);
 });
 
-test('scheduleStartupRetentionTasks runs the WIDE-010 artifact retention sweep on ready and on the interval', () => {
+test('scheduleStartupRetentionTasks runs the WIDE-010 artifact retention sweep on ready and on the interval', async () => {
   const backend = createFakeBackend('ready');
   const immediate = [];
   const intervals = [];
@@ -376,14 +376,40 @@ test('scheduleStartupRetentionTasks runs the WIDE-010 artifact retention sweep o
   // Ready already: the sweep is staggered behind the orphan prune (4000ms).
   const staggeredSweep = immediate.find((t) => t.ms === 4000);
   assert.ok(staggeredSweep, 'retention sweep is scheduled with its own stagger');
-  staggeredSweep.fn();
+  await staggeredSweep.fn();
   assert.equal(sweeps, 1);
 
   // And re-runs on the periodic interval (prune interval first, sweep second).
   assert.equal(intervals.length, 2, 'both the prune and the sweep have periodic intervals');
   assert.ok(intervals.every((entry) => entry.ms === 30 * 60 * 1000));
-  intervals[1].fn();
+  await intervals[1].fn();
   assert.equal(sweeps, 2, 'the sweep interval re-invokes the retention pass');
+});
+
+test('the periodic prune and sweep fired on the same tick run one after the other, not together', async () => {
+  const backend = createFakeBackend('ready');
+  const intervals = [];
+  let releasePrune;
+  const events = [];
+  scheduleStartupRetentionTasks({
+    artifactService: {
+      pruneOrphanedArtifacts: () => new Promise((resolve) => { events.push('prune:start'); releasePrune = () => { events.push('prune:end'); resolve(); }; }),
+      getWorkspaceRoot: () => 'C:/ws',
+    },
+    backendService: backend,
+    artifactRetentionService: { sweep: async () => { events.push('sweep:start'); return { ok: true }; } },
+    setTimeoutRef: () => ({ unref() {} }),
+    setIntervalRef: (fn) => { intervals.push(fn); return { unref() {} }; },
+  });
+
+  // Both 30-minute timers fire together; two lockstep sweeps used to log every root twice.
+  const first = intervals[0]();
+  const second = intervals[1]();
+  await Promise.resolve();
+  assert.deepEqual(events, ['prune:start'], 'the sweep waits for the prune in flight');
+  releasePrune();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['prune:start', 'prune:end', 'sweep:start']);
 });
 
 test('the ipc-payload sweep counts references from every session, on tool_call AND tool_result', async () => {

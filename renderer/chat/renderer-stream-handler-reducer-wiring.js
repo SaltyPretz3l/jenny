@@ -310,9 +310,11 @@
       // for a message-built tree. Behaviour is the same either way there -- the damage would
       // be to projectionSource below, which would report a fold that never happened, which is
       // the exact false-green this program has now hit seven times.
+      // A version above the projector's own (a profile a newer build wrote) is dropped the same way.
+      const maxLogVersion = Number(turnTreeProjectorUtils.SUPPORTED_TURN_EVENT_LOG_VERSION) || Infinity;
       const useFinalizedTurnEvents = Array.isArray(canonicalTurnEvents)
         && canonicalTurnEvents.length > 0
-        && persistedLogVersion >= 1;
+        && persistedLogVersion >= 1 && persistedLogVersion <= maxLogVersion;
       const projectionTurnEvents = useFinalizedTurnEvents
         ? withEarlierAttemptEvents(canonicalTurnEvents, persistedTurnEvents, normalizedTurnId, normalizedAttemptStreamId)
         : persistedTurnEvents;
@@ -408,14 +410,18 @@
         hydratedRows,
         { deterministicRowId }
       );
-      if (Array.isArray(reconciliation.staleRows) && reconciliation.staleRows.length > 0) {
+      // A stream_reset tombstone (the live "Draft discarded" fold and its hidden
+      // rows) leaves at settle by design: the persisted receipt replaces it.
+      const lostRows = (Array.isArray(reconciliation.staleRows) ? reconciliation.staleRows : [])
+        .filter((row) => !(row && (row.discarded === true || row.payload?.discarded === true)));
+      if (lostRows.length > 0) {
         // Stale provisional rows are discarded; canonical is the authority.
         // Telemetered so we can detect real content loss in the wild — if it
         // happens, prefer targeted recovery over re-adding a blanket splice.
         safeRecordRolloutSignal(normalizedSessionId, 'stale_row_deletion', {
           turnId: normalizedTurnId,
-          staleRowCount: reconciliation.staleRows.length,
-          staleRowKeys: reconciliation.staleRows.map((row) => buildRolloutRowKey(row)),
+          staleRowCount: lostRows.length,
+          staleRowKeys: lostRows.map((row) => buildRolloutRowKey(row)),
         });
       }
       // DC1: under the deterministic-row_id flag the first pass should key on the
@@ -443,7 +449,7 @@
       if (
         typeof isRenderTelemetryEnabled === 'function'
         && isRenderTelemetryEnabled(normalizedSessionId) === true
-        && isEmptyList(reconciliation.staleRows)
+        && lostRows.length === 0
         && isEmptyList(reconciliation.secondPassMatches)
       ) {
         safeRecordRolloutSignal(normalizedSessionId, 'terminal_reconcile_clean', {

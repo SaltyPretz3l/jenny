@@ -34,6 +34,7 @@
     undo: '<path d="M3 7h6.5a3 3 0 0 1 0 6H6"/><path d="m5.5 4.5-2.5 2.5 2.5 2.5"/>',
     slash: '<path d="m4 5 3 3-3 3"/><path d="M8.5 11H12"/>',
     help: '<circle cx="8" cy="8" r="5.5"/><path d="M6.5 6.3a1.6 1.6 0 1 1 1.9 1.7v1"/><path d="M8.3 11.3h.01"/>',
+    person: '<circle cx="8" cy="5.6" r="2.6"/><path d="M3 13.5a5 5 0 0 1 10 0"/>',
   };
 
   const GLYPH_OPEN = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">';

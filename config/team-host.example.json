@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "host_mode": "server",
+  "host_execution_policy_version": 1,
+  "listen_host": "127.0.0.1",
+  "port": 0,
+  "user_data_path": "/data",
+  "workspace_root": null,
+  "secrets_dir": "/run/jenny-secrets",
+  "team": {
+    "name": "My team",
+    "key_source": "secret_file",
+    "direct_port": 41700,
+    "projects_root": "/srv/jenny-team/projects",
+    "model_relay_flowing": 2,
+    "import_dir": "/mnt/jenny-import",
+    "exchange_dir": "/mnt/jenny-exchange"
+  }
+}

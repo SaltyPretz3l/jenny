@@ -6,11 +6,13 @@
 // a manual timer set the supervisor can be driven with.
 
 const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 
 const READY_ADDRESSES = Object.freeze(['192.0.2.7:4242']);
 
-// script(child, message) runs for every message the parent posts.
-function createFakeFork({ script = () => {}, spawnDelay = 'immediate' } = {}) {
+// script(child, message) runs for every message the parent posts. With `stdout: true` the child has a
+// piped stdout (a PassThrough), null after its exit as in Electron; without it, none, as before.
+function createFakeFork({ script = () => {}, spawnDelay = 'immediate', stdout = false } = {}) {
   const calls = [];
   let nextPid = 7000;
   const fork = (modulePath, args, options) => {
@@ -22,6 +24,7 @@ function createFakeFork({ script = () => {}, spawnDelay = 'immediate' } = {}) {
     child.kills = 0;
     child.exited = false;
     child.exitOnKill = true;
+    child.stdout = stdout ? new PassThrough() : undefined;
     child.postMessage = (message) => {
       if (child.exited) return;
       const copy = JSON.parse(JSON.stringify(message));
@@ -38,8 +41,10 @@ function createFakeFork({ script = () => {}, spawnDelay = 'immediate' } = {}) {
     child.exit = (code = 0) => {
       if (child.exited) return;
       child.exited = true;
+      const piped = child.stdout;
       child.emit('exit', code);
       child.pid = undefined;
+      if (piped) { child.stdout = null; piped.end(); }
     };
     const pid = nextPid;
     const spawn = () => { child.pid = pid; child.emit('spawn'); };
@@ -73,7 +78,8 @@ const DIRECT_PORT = 45123;
 function createTestHostController(t, {
   userDataPath, secureStore, script, fork = null, service = null, platform = 'win32', isPackaged = false,
   lockPython = process.execPath,
-  pickDirectPort = async () => DIRECT_PORT, probeDirectPort = async () => true, hostKeys, bounds = BOUNDS,
+  pickDirectPort = async () => DIRECT_PORT, probeDirectPort = async () => true, hostKeys, bounds = BOUNDS, internet,
+  relayTokens, writeConfig, pick, now, gate,
 } = {}) {
   const { createHostController } = require('../../services/team/host/host-controller');
   const fake = fork ? null : createFakeFork({ script });
@@ -83,7 +89,8 @@ function createTestHostController(t, {
     userDataPath, getSecureStore: () => secureStore, getTeamService: () => service, platform,
     isPackaged: () => isPackaged, lockPython: () => lockPython,
     fork: fork || fake.fork, entryPath: 'C:\\app\\host-entry.js', environment: { SystemRoot: 'C:\\Windows' },
-    pickDirectPort, probeDirectPort, bounds, ...(hostKeys ? { hostKeys } : {}),
+    pickDirectPort, probeDirectPort, bounds, ...(hostKeys ? { hostKeys } : {}), ...(internet ? { internet } : {}),
+    ...(relayTokens ? { relayTokens } : {}), ...(writeConfig ? { writeConfig } : {}), ...(pick ? { pick } : {}), ...(now ? { now } : {}), ...(gate ? { gate } : {}),
     sendState: (snapshot) => pushed.push(JSON.parse(JSON.stringify(snapshot))),
     log: (level, event, fields) => logs.push({ level, event, fields: fields ?? {} }),
   });

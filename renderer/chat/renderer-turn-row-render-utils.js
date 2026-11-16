@@ -322,6 +322,18 @@
       resolveTurnRowModule,
     });
 
+    // Row 154: the turn's source index for a settled row with sources, else null (plain strip path). The list waits for
+    // the whole turn to settle so it never shows under an earlier segment and then moves.
+    function resolveSourceIndex(row, options) {
+      const chips = options?.isStreaming !== true && getFeatureFlags()?.source_citations === true
+        ? resolveTurnRowModule('rendererCitationChipsUtils', './renderer-citation-chips-utils') : null;
+      if (!chips?.buildTurnSourceIndex) return null;
+      const rows = [options?.turnRows, options?.siblingRows].find((list) => Array.isArray(list) && list.length) || [row];
+      const index = chips.buildTurnSourceIndex(rows);
+      const turnSettled = options?.turnLive !== true && !normalizeId(options?.streamingMessageId) && !normalizeId(options?.streamingRowId);
+      return index.all.length ? { chips, index, turnSettled } : null;
+    }
+
     function buildAssistantTextRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const sourceMessage = getSourceMessage(row, messages, options);
@@ -334,6 +346,8 @@
       }
       const text = String(payload.text || '');
       const isStreaming = renderOptions.isStreaming === true;
+      const sources = resolveSourceIndex(row, renderOptions);
+      const rowId = normalizeId(row && row.row_id);
       // Mid-turn phase kicker: a preserved commentary/intermediate slice gets
       // an SR-only label OUTSIDE
       // the markdown bubble (the visible de-emphasis is the dimmed
@@ -348,7 +362,9 @@
             const bubbleClassName = `chat-bubble chat-bubble-markdown${isStreaming ? ' chat-bubble-streaming' : ''}`;
             const renderedHtml = isStreaming
               ? buildStreamingBubbleHtml(text, renderOptions)
-              : renderMarkdown(stripCitationMarkersForDisplay(text));
+              : sources
+                ? sources.chips.renderTextWithReferences(text, { rowId, index: sources.index, renderMarkdown, escapeHtml })
+                : renderMarkdown(stripCitationMarkersForDisplay(text));
             const imageReferences = resolveTurnRowModule('rendererArtifactImageReferences', './renderer-artifact-image-references');
             const bubbleBodyHtml = imageReferences?.createRewriter(messages, sourceMessage, renderOptions.sessionId, globalThis.document)(renderedHtml) ?? renderedHtml;
             const streamingAttrs = isStreaming
@@ -357,6 +373,8 @@
             return `<div class="${bubbleClassName}" dir="auto"${streamingAttrs}>${bubbleBodyHtml}</div>`;
           })()
         : '';
+      const sourceListMarkup = sources?.turnSettled && bubbleMarkup && rowId && rowId === sources.index.finalAnswerRowId
+        ? sources.chips.renderSourceList(sources.index, { turnId: normalizeId(row.turn_id), escapeHtml }) : '';
       const attachmentsMarkup = sourceMessage && shouldRenderMessageAttachments(row, renderOptions)
         ? buildRowAttachmentsMarkup(sourceMessage)
         : '';
@@ -373,7 +391,7 @@
             disabled: renderOptions.resumeSendBusy === true,
           })
         : '';
-      return `${kickerMarkup}${bubbleMarkup}${attachmentsMarkup}${buildDiscardedReceiptMarkup(row, sourceMessage, renderOptions)}${resumeMarkup}`;
+      return `${kickerMarkup}${bubbleMarkup}${sourceListMarkup}${attachmentsMarkup}${buildDiscardedReceiptMarkup(row, sourceMessage, renderOptions)}${resumeMarkup}`;
     }
 
     function buildReasoningRenderMessage(row, messages, options) {
@@ -440,19 +458,6 @@
       };
     }
 
-    // HB-038 H1: when the thinking guard cuts a think off, its phase completes
-    // and the same think continues in a new phase; collapsing the finished one
-    // at once dropped the pinned tail by about 2K px. While the turn is live
-    // and nothing but reasoning follows, the phase stays open; it collapses
-    // once a tool row, the answer or the turn's end arrives.
-    const STILL_THINKING_ROW_KINDS = new Set(['reasoning', 'agent_progress']);
-    function onlyReasoningFollows(options) {
-      const siblings = Array.isArray(options?.siblingRows) ? options.siblingRows : null;
-      const index = Number(options?.rowIndex);
-      if (!siblings || !Number.isInteger(index) || index < 0) return false;
-      return siblings.slice(index + 1).every((row) => STILL_THINKING_ROW_KINDS.has(normalizeId(row && row.kind)));
-    }
-
     function buildReasoningRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       if (payload.discard_hidden === true) {
@@ -476,10 +481,10 @@
       const widgetHtml = renderThinkingWidget(
         renderMessage,
         reasoningStreaming ? renderMessage.id : '',
-        {
-          transcriptView: options && options.transcriptView,
-          holdOpen: !turnSettled && options?.turnLive === true && onlyReasoningFollows(options),
-        }
+        // A phase the thinking guard cut off collapses like any finished
+        // phase: held open, each cut-off stacked another capped box that took
+        // the wheel from the timeline (owner pick, 2026-11-11).
+        { transcriptView: options && options.transcriptView }
       );
       if (String(widgetHtml || '').trim()) {
         return widgetHtml;
@@ -636,18 +641,10 @@
         : '';
     }
 
-    function buildErrorCodeNoticeMarkup(row, renderMessage, suppressedErrors, messages, options) {
-      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
-      const errorCode = normalizeId(renderMessage && renderMessage.error_code) || normalizeId(payload.error_code);
-      if (!errorCode && !hasAssistantErrorRecoveryMetadata(renderMessage)) {
-        return '';
-      }
+    /* The card's message with the turn's folded errors and superseded / retry-unavailable flags, for both
+     * error paths. turn_id IS the parent_stream_id (logs deep link), stamped when the source has no stream. */
+    function buildErrorNoticeMessage(row, renderMessage, suppressedErrors, messages, options) {
       const folded = Array.isArray(suppressedErrors) ? suppressedErrors : [];
-      /* Row-ID contract: turn_id IS the turn's parent_stream_id, so it is the
-       * logs deep-link target for the card chip and the legacy row alike.
-       * Stamped onto the notice message so the recovery path (which renders
-       * the same card through the transcript adapter) links too when the
-       * source message did not carry its own stream field. */
       const streamId = normalizeId(row && row.turn_id);
       const noticeMessage = {
         ...(renderMessage && typeof renderMessage === 'object' ? renderMessage : {}),
@@ -655,10 +652,19 @@
         ...(resolveSupersededErrorNotice(renderMessage, messages, options) ? { superseded: true } : {}),
         ...(resolveHandoffPreparationErrorNotice(renderMessage, messages) ? { retryUnavailable: true } : {}),
       };
-      if (streamId && !normalizeId(noticeMessage.stream_id)) {
-        noticeMessage.stream_id = streamId;
+      if (streamId && !normalizeId(noticeMessage.stream_id)) noticeMessage.stream_id = streamId;
+      return noticeMessage;
+    }
+
+    function buildErrorCodeNoticeMarkup(row, renderMessage, suppressedErrors, messages, options) {
+      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+      const errorCode = normalizeId(renderMessage && renderMessage.error_code) || normalizeId(payload.error_code);
+      if (!errorCode && !hasAssistantErrorRecoveryMetadata(renderMessage)) {
+        return '';
       }
-      const recoveryMarkup = renderAssistantFailureNotice(noticeMessage);
+      const folded = Array.isArray(suppressedErrors) ? suppressedErrors : [];
+      const streamId = normalizeId(row && row.turn_id);
+      const recoveryMarkup = renderAssistantFailureNotice(buildErrorNoticeMessage(row, renderMessage, folded, messages, options));
       if (recoveryMarkup) {
         const errorCodeAttr = errorCode ? ` data-error-code="${escapeHtml(errorCode)}"` : '';
         return `<div class="chat-error-row chat-error-row--recovery"${errorCodeAttr}>${recoveryMarkup}</div>`;
@@ -684,10 +690,8 @@
       if (cardMarkup) {
         return `<div class="chat-error-row chat-error-row--recovery" data-error-code="${escapeHtml(errorCode)}">${cardMarkup}</div>`;
       }
-      /* @legacy-fallback — bare error row when the card module is unavailable.
-       * The code still deep-links into the Activity tab (same
-       * data-inv-error-action contract as the card chip) whenever the row
-       * carries a turn id. */
+      /* @legacy-fallback — bare error row when the card module is unavailable; the code still
+       * deep-links into the Activity tab (the card chip's data-inv-error-action) given a turn id. */
       const messageHtml = message
         ? `<span class="chat-error-message">${escapeHtml(message)}</span>`
         : '';
@@ -705,18 +709,11 @@
           return buildOrphanCarryNoticeMarkup(payload);
         }
         if (subkind === 'source_citations') {
-        // Citations: persisted source_citations events render as a chip row
-        // (renderer-citation-chips-utils). Flag-gated at render too so a
-        // flag-off relaunch shows nothing even for events persisted while the
-        // flag was on (the collector derive is the primary gate).
-        if (getFeatureFlags()?.source_citations !== true) {
-          return '';
-        }
-        const chipsModule = resolveTurnRowModule('rendererCitationChipsUtils', './renderer-citation-chips-utils');
-        if (!chipsModule || typeof chipsModule.renderCitationChips !== 'function') {
-          return '';
-        }
-        return chipsModule.renderCitationChips({ refs: payload.refs, escapeHtml });
+        // Sources list lives under the final answer; a turn with no answer text shows it on its last notice row.
+        const sources = resolveSourceIndex(row, options);
+        const rowId = normalizeId(row && row.row_id);
+        return sources?.turnSettled && !sources.index.finalAnswerRowId && rowId && rowId === sources.index.lastNoticeRowId
+          ? sources.chips.renderSourceList(sources.index, { turnId: normalizeId(row.turn_id), escapeHtml }) : '';
       }
       const renderMessage = buildSystemNoticeMessage(row, messages, options);
       if (subkind === 'context_compacted') {
@@ -749,7 +746,8 @@
           && !normalizeId(payload.stream_error || sourceMessage.stream_error)
           && !hasAssistantErrorRecoveryMetadata(renderMessage);
         if (repeatsBody) return '';
-        return renderAssistantFailureNotice(renderMessage) || buildGenericSystemNoticeMarkup(row);
+        return renderAssistantFailureNotice(buildErrorNoticeMessage(row, renderMessage, dedupe.suppressedErrors, messages, options))
+          || buildGenericSystemNoticeMarkup(row);
       }
       return buildGenericSystemNoticeMarkup(row);
     }

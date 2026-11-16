@@ -330,6 +330,10 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
 
         _mark_dispatch_ready()
+        # One [web:N] number per source across the turn (web_citation_numbering).
+        tool_result = _tool_support.number_turn_web_citations(
+            runtime, tool_result, working_messages
+        )
         outcomes.append(tool_result)
         loop_event_emit.emit_tool_result(runtime, tool_result, call_id)
         if runtime.streaming:

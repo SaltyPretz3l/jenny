@@ -15,13 +15,15 @@
 //
 // Finished jobs stay as the chat's history (the Session rail's Background
 // tasks list): the newest MAX_FINISHED_PER_SESSION per session, evicted by
-// count, never by time. In-process subscribers (`onChanged`, `onJobSettled`)
-// let the rail invalidate without a second poll.
+// count, never by time, or hidden by the panel's Clear (`clearFinished`, an
+// in-memory dismissed flag). In-process subscribers (`onChanged`,
+// `onJobSettled`) let the rail invalidate without a second poll.
 
 const fs = require('fs');
 const path = require('path');
 const { isProcessAlive, killProcessTree, getProcessStartTime } = require('../backend/process-utils');
 const { readBoundedTextFile, readJobProgress } = require('./background-job-progress');
+const { MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS, readJobOutput, readLiveOutput } = require('./background-job-output'); // row 138: output view
 
 const { BACKGROUND_JOB_ID_PATTERN: JOB_ID_PATTERN } = require('../backend/chat-stream-background-jobs'); // shell_background.py's uuid4().hex[:12]; anything else is refused before a path join (WIDE-011)
 // Mirrors sidecar shell_background_status.MAX_STATUS_FILE_BYTES: bounds the read before JSON.parse so an
@@ -44,9 +46,6 @@ const KILL_ESCALATION_MS = 5_000;
 // evicted (a running/killing job never is).
 const MAX_TRACKED_JOBS = 128;
 const MAX_FINISHED_PER_SESSION = 20;
-// readOutput tail bounds: the rail's inline output view, not a log viewer.
-const MAX_OUTPUT_LINES = 60;
-const MAX_OUTPUT_CHARS = 8_000;
 const MAX_COMMAND_CHARS = 400;
 const MAX_ERROR_CHARS = 400;
 const MAX_STATUS_FAILURES = 3;
@@ -88,29 +87,8 @@ function newestFirst(field) {
   return (left, right) => (right[field] - left[field]) || (right.seq - left.seq);
 }
 
-// Last MAX_OUTPUT_LINES lines and MAX_OUTPUT_CHARS characters of the status
-// file's captured stdout (+ stderr after a blank line). Text is data only.
-function tailOutput(payload) {
-  const stdout = typeof payload.stdout === 'string' ? payload.stdout : '';
-  const stderr = typeof payload.stderr === 'string' ? payload.stderr : '';
-  let text = stderr.trim()
-    ? (stdout.trim() ? `${stdout.replace(/[\r\n]+$/, '')}\n\n${stderr}` : stderr)
-    : stdout;
-  text = text.replace(/[\r\n]+$/, '');
-  let truncated = payload.output_truncated === true;
-  const lines = text.split('\n');
-  if (lines.length > MAX_OUTPUT_LINES) {
-    text = lines.slice(-MAX_OUTPUT_LINES).join('\n');
-    truncated = true;
-  }
-  if (text.length > MAX_OUTPUT_CHARS) {
-    text = text.slice(-MAX_OUTPUT_CHARS);
-    // Never start on the low half of a split surrogate pair.
-    if (/^[\udc00-\udfff]/.test(text)) text = text.slice(1);
-    truncated = true;
-  }
-  return { text, truncated };
-}
+// A job the panel's Clear dismissed stays tracked (chat-delete cleanup, the global cap) but is never shown.
+const isVisible = (job) => job.dismissed !== true;
 
 function createBackgroundJobTracker({
   getWorkspaceRoot = () => '',
@@ -118,6 +96,7 @@ function createBackgroundJobTracker({
   log = () => {},
   readStatusFileImpl = defaultReadStatusFile,
   readProgressFileImpl = readJobProgress, // row 96: progress.json beside status.json
+  readLiveOutputImpl = readLiveOutput, // row 138: live-output.json beside status.json
   isPidAliveImpl = isProcessAlive,
   killPidTreeImpl = defaultKillPidTree,
   getProcessStartTimeImpl = getProcessStartTime,
@@ -170,7 +149,7 @@ function createBackgroundJobTracker({
 
   function getState() {
     return {
-      jobs: Array.from(jobs.values()).map(snapshotJob),
+      jobs: Array.from(jobs.values()).filter(isVisible).map(snapshotJob),
       generatedAt: new Date(nowImpl()).toISOString(),
     };
   }
@@ -254,7 +233,7 @@ function createBackgroundJobTracker({
   }
 
   function trimSessionHistory(sessionId) {
-    for (const job of finishedJobs(sessionId).slice(MAX_FINISHED_PER_SESSION)) {
+    for (const job of finishedJobs(sessionId).filter(isVisible).slice(MAX_FINISHED_PER_SESSION)) {
       jobs.delete(job.jobId);
     }
   }
@@ -414,7 +393,8 @@ function createBackgroundJobTracker({
     const normalizedSessionId = String(sessionId || '').trim();
     const affected = new Set([normalizedSessionId]);
     if (jobs.size >= MAX_TRACKED_JOBS) {
-      const oldest = finishedJobs().at(-1);
+      const finished = finishedJobs(); // dismissed jobs go first
+      const oldest = finished.filter((job) => !isVisible(job)).at(-1) || finished.at(-1);
       if (!oldest) {
         log('WARN', 'background_jobs.tracked_job_cap_reached', { jobId: normalizedJobId });
         return false;
@@ -522,7 +502,7 @@ function createBackgroundJobTracker({
   function getSessionJobs(sessionId) {
     const wanted = String(sessionId || '').trim();
     return Array.from(jobs.values())
-      .filter((job) => job.sessionId === wanted)
+      .filter((job) => job.sessionId === wanted && isVisible(job))
       .sort(newestFirst('startedAtMs'))
       .map(snapshotJob);
   }
@@ -530,37 +510,26 @@ function createBackgroundJobTracker({
   // Read-only: a chat's finished jobs with the root captured at registration, so deleting the chat can remove their output.
   const getSessionJobRoots = (sessionId) => finishedJobs(String(sessionId || '').trim()).map((job) => ({ jobId: job.jobId, workspaceRoot: job.workspaceRoot }));
 
-  // The finished job's captured output tail for the rail's inline view.
-  // fullOutputPath is derived ONLY from the root captured at registration and
-  // only when that file exists; status.json is workspace-writable, so no
-  // path is ever taken from it.
+  // The output view: a live job's live-output.json tail, a finished job's status.json tail.
+  // Paths come ONLY from the root captured at registration (output.txt only when it
+  // exists); both files are workspace-writable, so no path is ever taken from them.
   function readOutput(jobId) {
     const normalizedJobId = String(jobId || '').trim();
     const job = JOB_ID_PATTERN.test(normalizedJobId) ? jobs.get(normalizedJobId) : null;
-    if (!job) {
+    if (!job || !isVisible(job)) {
       return { ok: false, reason: 'not_found' };
     }
-    if (isLive(job)) {
-      return { ok: true, state: job.state, text: '', truncated: false, fullOutputPath: '' };
-    }
-    const outputPath = path.join(job.workspaceRoot, '.jenny', 'tool-results', normalizedJobId, 'output.txt');
-    let fullOutputPath;
-    try {
-      fullOutputPath = fileExistsImpl(outputPath) ? outputPath : '';
-    } catch (_error) {
-      fullOutputPath = '';
-    }
-    const read = readStatusFileImpl(job.statusPath);
-    let payload;
-    try {
-      payload = read.ok ? JSON.parse(read.text) : null;
-    } catch (_error) {
-      payload = null;
-    }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      return { ok: false, reason: 'output_unavailable', state: job.state, fullOutputPath };
-    }
-    return { ok: true, state: job.state, ...tailOutput(payload), fullOutputPath };
+    return readJobOutput(job, { live: isLive(job), readStatusFileImpl, readLiveOutputImpl, fileExistsImpl });
+  }
+
+  // The panel's Clear: hide a chat's finished jobs (live ones are never touched).
+  function clearFinished(sessionId) {
+    const wanted = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!wanted) return { ok: false, reason: 'invalid_session' };
+    const cleared = finishedJobs(wanted).filter(isVisible);
+    for (const job of cleared) job.dismissed = true;
+    if (cleared.length) emitChanged([wanted]);
+    return { ok: true, cleared: cleared.length };
   }
 
   function dispose() {
@@ -578,6 +547,7 @@ function createBackgroundJobTracker({
     getSessionJobs,
     getSessionJobRoots,
     readOutput,
+    clearFinished,
     onChanged: (listener) => subscribe(changeListeners, listener),
     onJobSettled: (listener) => subscribe(settleListeners, listener),
     pollNow,

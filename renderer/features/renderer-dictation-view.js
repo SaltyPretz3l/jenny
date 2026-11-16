@@ -47,7 +47,7 @@
     if (!entry || !entry.el.isConnected) {
       const node = el(host.ownerDocument, 'div', 'composer-dictation-line');
       node.setAttribute('role', 'status');
-      host.insertBefore(node, host.firstChild);
+      host.insertBefore(node, host.querySelector(':scope > .composer-entry-row') || host.firstChild);
       entry = { el: node, levels: new Array(BARS).fill(0), timer: 0, problemTimer: 0 };
       lines.set(host, entry);
     }

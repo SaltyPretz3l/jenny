@@ -13,7 +13,7 @@ const { createSearchHighlightController } = require('../renderer/chat/renderer-c
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 function buildEnv(timelineHtml, extraOptions) {
-  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView"><div id="chatTimeline" role="feed">'
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div><div id="chatTimeline" role="feed">'
     + timelineHtml + '</div></div><textarea id="composer"></textarea></body></html>');
   dom.window.CSS = dom.window.CSS || {};
   dom.window.CSS.highlights = new Map();

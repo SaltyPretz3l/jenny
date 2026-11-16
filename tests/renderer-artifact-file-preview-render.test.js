@@ -137,9 +137,12 @@ describe('describeFilePreviewFailure', () => {
 });
 
 describe('markup escaping and shape', () => {
-  test('the bar labels html as Sandboxed HTML', () => {
+  test('the bar labels html as Sandboxed HTML in Preview and plain HTML in Code', () => {
     const html = render.buildFilePreviewBarHtml({ kind: 'html', path: 'a/x.html' }, OPTIONS);
     assert.ok(html.includes('Sandboxed HTML'));
+    const source = render.buildFilePreviewBarHtml({ kind: 'html', path: 'a/x.html', view: 'code' }, OPTIONS);
+    assert.ok(source.includes('<span class="artifact-file-preview-kind">HTML</span>'));
+    assert.equal(source.includes('Sandboxed'), false);
   });
 
   test('the bar renders an escaped note only when one is present', () => {
@@ -191,15 +194,29 @@ describe('markup escaping and shape', () => {
     assert.ok(html.includes('start="10"'));
   });
 
-  test('the view toggle only renders when the caller allows it', () => {
+  test('the rows tokenize as one block and carry their wrap indent', () => {
+    const html = render.buildCodeListHtml({
+      lines: ['top', '  two', '\tTab', ' '.repeat(90) + 'deep', '', ' \tmixed'],
+      startLine: 1,
+      languageId: 'html',
+    }, OPTIONS);
+    assert.ok(html.startsWith('<ol class="artifact-file-preview-code" data-code-highlight-block data-language-id="html" start="1">'));
+    const indents = [...html.matchAll(/<code[^>]*>/g)].map((match) => (match[0].match(/data-wrap-indent="(\d+)"/) || [])[1] || '0');
+    assert.deepEqual(indents, ['0', '2', '2', '40', '0', '2'], 'spaces count 1, a tab runs to the next 2-column stop, capped at 40');
+  });
+
+  test('the view toggle is the compact Preview / Code segmented control, only when allowed', () => {
+    const { JSDOM } = require('jsdom');
+    const { segmentedOptions, segmentedValue } = require('./helpers/segmented-control');
     const withToggle = render.buildFilePreviewBarHtml({ path: 'a/b.md', kind: 'markdown', view: 'code', canToggleView: true }, OPTIONS);
-    assert.ok(withToggle.includes('data-file-preview-view="read"'));
-    assert.ok(withToggle.includes('data-file-preview-view="code"'));
+    const doc = new JSDOM('<!doctype html><body>' + withToggle + '</body>').window.document;
+    assert.deepEqual(segmentedOptions(doc, 'file-preview-view'), [{ value: 'read', label: 'Preview' }, { value: 'code', label: 'Code' }]);
+    assert.equal(segmentedValue(doc, 'file-preview-view'), 'code');
+    assert.ok(doc.querySelector('[data-inv-segmented="file-preview-view"]').classList.contains('inv-segmented--compact'));
     assert.ok(withToggle.includes('title="View rendered"'));
     assert.ok(withToggle.includes('title="View raw source"'));
-    assert.ok(/aria-pressed="true"[^>]*data-file-preview-view="code"/.test(withToggle));
     const without = render.buildFilePreviewBarHtml({ path: 'a/b.md', kind: 'markdown' }, OPTIONS);
-    assert.equal(without.includes('data-file-preview-view'), false);
+    assert.equal(without.includes('data-inv-segmented'), false);
   });
 
   test('state cards escape their message and carry the requested affordances', () => {

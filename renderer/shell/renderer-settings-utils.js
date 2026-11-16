@@ -14,11 +14,11 @@
   const settingsSupport = load('rendererSettingsSupport', './renderer-settings-support');
   const settingsCoreRenderers = load('rendererSettingsCoreRenderers', './renderer-settings-core-renderers');
   const sectionRegistry = load('rendererSettingsSectionRegistry', './renderer-settings-section-registry');
-  const { applyBadgeState, applyNote } = load('rendererSettingsFoundation', './renderer-settings-foundation');
+  const { applyNote } = load('rendererSettingsFoundation', './renderer-settings-foundation');
   const {
-    resolveModelBadge, normalizeFeatureState, normalizeWorkspaceRootState, getToolConfigFieldsForRender,
+    normalizeFeatureState, normalizeWorkspaceRootState, getToolConfigFieldsForRender,
     buildToolConfigFieldListMarkup, buildUiLanguageFieldMarkup, buildContextToggleListsMarkup,
-    buildSettingsToggleListMarkup, renderStatusRowContainer, buildSettingsSummaryModel,
+    buildSettingsToggleListMarkup,
     buildWebSearchSectionMarkup, buildCompactionTuningMarkup,
   } = settingsSupport;
   const {
@@ -26,7 +26,7 @@
   } = load('rendererSettingsControlTowerUtils', './renderer-settings-control-tower-utils');
   const { renderSetupSettingsRow } = settingsCoreRenderers;
   const {
-    renderLazyManagers, renderLazySummaries, renderSurfaceEffectCopy, renderSurfaceEffectPreview, disposeSurfaceEffectPreview,
+    renderLazyManagers, renderSurfaceEffectCopy, renderSurfaceEffectPreview, disposeSurfaceEffectPreview, renderJennyChatModels,
   } = load('rendererSettingsLazyRenderers', './renderer-settings-lazy-renderers');
   const { renderSettingsV2Surfaces, paintSlot } = load('rendererSettingsV2Surfaces', './renderer-settings-v2-surfaces');
 
@@ -34,31 +34,46 @@
    * page's scripts load only while the `team` flag is exactly true and Team is the section on screen,
    * so with the flag off no team script loads and `jennyShell.team` is never touched. */
   let teamScriptsLoad = null;
+  // A Node-only require: the renderer's `require` is Monaco's AMD loader, which throws for any module it does not know.
+  const nodeRequire = (id) => { try { return typeof module === 'object' && module.exports ? require(id) : null; } catch (error) { if (error && error.code === 'MODULE_NOT_FOUND') return null; throw error; } };
   // A failed load waits for the next entry into Team instead of retrying on every render pass.
   let teamLoadFailed = false;
   let teamWasActive = false;
-  function loadTeamScripts(windowRef) {
+  const TEAM_STYLE = 'styles/team-settings.css';
+  // E50: with `teamData: false` and no gate loaded, the page's own scripts and stylesheet load without it.
+  function loadSectionOnly(windowRef, loader, scripts) {
+    const doc = windowRef.document;
+    if (doc && !doc.querySelector(`link[data-team-style="${TEAM_STYLE}"]`)) {
+      const link = doc.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = TEAM_STYLE;
+      link.setAttribute('data-team-style', TEAM_STYLE);
+      doc.head.appendChild(link);
+    }
+    return scripts.reduce((ready, [src, name]) => ready.then((ok) => ok && Promise.resolve(loader.ensureScript({ src, isReady: () => Boolean(windowRef[name]) }))
+      .then((done) => done === true, () => false)), Promise.resolve(true));
+  }
+
+  function loadTeamScripts(windowRef, teamData) {
     if (teamScriptsLoad) return teamScriptsLoad;
-    const manifest = windowRef.rendererSettingsScriptManifest || (typeof require === 'function' ? require('./renderer-settings-script-manifest') : null);
+    const manifest = windowRef.rendererSettingsScriptManifest || nodeRequire('./renderer-settings-script-manifest');
     const scripts = (manifest && manifest.teamSection) || [];
     const loader = windowRef.scriptLoaderUtils;
     if (!scripts.length || typeof loader?.ensureScript !== 'function') return Promise.resolve(false);
-    const doc = windowRef.document;
-    if (doc && typeof doc.createElement === 'function' && !doc.querySelector('link[data-team-settings-style]')) {
-      const sheet = doc.createElement('link');
-      sheet.rel = 'stylesheet';
-      sheet.href = 'styles/team-settings.css';
-      sheet.setAttribute('data-team-settings-style', '');
-      (doc.head || doc.documentElement).appendChild(sheet);
+    // Otherwise the team assets load through the Team tab gate's loader (slice 1g-2). With the flag on the
+    // shell has normally loaded that file already; if not, it is loaded first.
+    const [gateSrc, gateName] = ((manifest && manifest.teamGate) || [])[0] || [];
+    let assets;
+    if (teamData === false && !windowRef[gateName]) {
+      assets = loadSectionOnly(windowRef, loader, scripts);
+    } else {
+      const gate = () => windowRef[gateName] || nodeRequire('../team/renderer-team-tab-gate');
+      const gateReady = gate() ? Promise.resolve(true) : Promise.resolve(loader.ensureScript({ src: gateSrc, isReady: () => Boolean(windowRef[gateName]) }));
+      assets = gateReady.then(() => (gate() ? gate().ensureTeamAssets({ windowRef, scripts, styles: [TEAM_STYLE] }) : false), () => false);
     }
-    const loads = scripts.map(([src], index) => {
-      const isReady = () => scripts.slice(0, index + 1).every(([, name]) => Boolean(windowRef[name]));
-      return Promise.resolve(loader.ensureScript({ src, isReady })).then((loaded) => loaded === true, () => false);
-    });
-    teamScriptsLoad = Promise.all(loads).then((results) => {
-      const ok = results.every(Boolean) && scripts.every(([, name]) => Boolean(windowRef[name]));
-      if (!ok) { teamScriptsLoad = null; teamLoadFailed = true; }
-      return ok;
+    teamScriptsLoad = assets.then((ok) => {
+      if (ok !== true) { teamScriptsLoad = null; teamLoadFailed = true; }
+      return ok === true;
     });
     return teamScriptsLoad;
   }
@@ -66,7 +81,7 @@
   function syncTeamSettingsSection({ state, windowRef = globalThis, activeSection = '' } = {}) {
     const doc = windowRef && windowRef.document;
     const flags = (state && state.features && state.features.featureFlags) || {};
-    const navUtils = globalThis.rendererSettingsNavUtils || (typeof require === 'function' ? require('./renderer-settings-nav-utils') : null);
+    const navUtils = globalThis.rendererSettingsNavUtils || nodeRequire('./renderer-settings-nav-utils');
     navUtils?.syncFeatureFlaggedSettings?.(doc, flags);
     const team = windowRef.rendererSettingsTeamSection;
     const active = flags.team === true && activeSection === 'team';
@@ -78,16 +93,17 @@
     }
     const container = doc?.getElementById?.('teamSettingsSection');
     if (!container) return;
+    const teamData = state.features?.teamData;
     if (team) {
-      team.showTeamSection({ container });
+      team.showTeamSection({ container, teamData });
       return;
     }
     if (teamLoadFailed && !entering) return;
     teamLoadFailed = false;
-    void loadTeamScripts(windowRef).then((ok) => {
+    void loadTeamScripts(windowRef, teamData).then((ok) => {
       const still = state.features?.featureFlags?.team === true && state.ui?.activeView === 'settings'
         && sectionRegistry.normalizeSettingsSectionId(state.ui.activeSettingsSection) === 'team';
-      if (ok && still) windowRef.rendererSettingsTeamSection?.showTeamSection?.({ container });
+      if (ok && still) windowRef.rendererSettingsTeamSection?.showTeamSection?.({ container, teamData: state.features?.teamData });
     });
   }
 
@@ -134,17 +150,17 @@
     const { state, shouldPatchSection = () => true } = deps;
     const { ACTIVITY_SCOPE } = deps.constants;
     const {
-      appearanceSettingsSection, appearanceSurfaceEffectMeta, appearanceSurfaceEffectPreview,
+      appearanceSettingsSection, generalSettingsSection, chatSettingsSection, appearanceSurfaceEffectMeta, appearanceSurfaceEffectPreview,
       appearanceHoloList, appearanceSpellcheckList,
       settingsModelCard,
-      modelBadge, modelStatus, modelStartupLoadList, appearanceResetButton,
+      modelStartupLoadList, appearanceResetButton,
       modelCatalogEmpty,
       accountSummary, localProfileSettingsMount, backendSummary,
       setupSettingsSummary, setupSettingsActions, setupProgressContainer,
       settingsControlTowerHost,
       contextStatus, contextSettingsSection,
       contextSourcesList, contextRuntimeList, contextCompactionTuning,
-      toolsConfigFieldList, toolsPermissionsList, toolsFilesList, toolsWebList, toolsTerminalList, toolsCodeList,
+      toolsConfigFieldList, permissionsSettingsSection, toolsFilesList, toolsWebList, toolsTerminalList, toolsCodeList,
       toolsWorkspaceLine, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
       toolsWorkspaceProject, toolsWorkspaceChooseButton,
       editorStatus, editorSettingsFieldList,
@@ -166,7 +182,7 @@
       getActivitySnapshot, getMostRecentActivity, isActivityBusy,
       applyActivityAttributes,
       isDefaultAppearancePreferences,
-      renderPersonalityEditor, renderSkillsManager, renderOfflineManager, escapeHtml,
+      renderPersonalityEditor, renderSkillsManager, renderOfflineManager, escapeHtml, getActiveSession,
       getSectionDom = function noopGetSectionDom() { return {}; },
       isSectionInitialized = function alwaysReady() { return true; },
     } = deps.callbacks;
@@ -236,7 +252,6 @@
     }
 
     function renderSettings() {
-      const activeModel = state.status?.model || state.modelList?.active_model || '';
       const modelCatalogUnavailable = state.modelList?.available === false;
       const modelCatalogReason = String(state.modelList?.reason || '').trim();
       const runtimePreferences = getCurrentRuntimePreferences();
@@ -251,8 +266,6 @@
         ACTIVITY_SCOPE.settingsModelLoad,
         ACTIVITY_SCOPE.settingsModelUnload,
       ]);
-      const runtimeModelBusy = isActivityBusy(runtimeModelActivity);
-      const loadingModel = runtimeModelActivity && runtimeModelActivity.scope === ACTIVITY_SCOPE.settingsModelLoad;
       const settingsContextActivity = getActivitySnapshot(ACTIVITY_SCOPE.settingsContextPreferences);
       const contextPreferences = runtimePreferences.contextPreferences;
       state.features = normalizeFeatureState(state.features);
@@ -271,8 +284,6 @@
       const workspaceRootStatus = workspaceRootState.status || featureWorkspaceRootStatus;
       const backendMode = String(state.backend?.mode || '').trim().toLowerCase();
       const contextUnavailable = backendMode === 'external';
-      const offlineState = state.offline && typeof state.offline === 'object' ? state.offline : {};
-      const offlineDom = getLazySectionDom('offline');
       const activeSection = activeSettingsSection();
       const toggleSwitch = globalThis.inventory?.toggleSwitch || null;
       if (settingsControlTowerHost) {
@@ -289,13 +300,23 @@
       mountSettingRow(appearanceSettingsSection, 'appearancePaletteSelect', appearancePreferences.paletteId, { rowClassName: 'settings-field--wide-control' });
       mountSettingRow(appearanceSettingsSection, 'appearanceTypographySelect', appearancePreferences.typographyId);
       mountSettingRow(appearanceSettingsSection, 'appearanceFontScaleSelect', appearancePreferences.fontScaleId);
-      mountSettingRow(appearanceSettingsSection, 'appearanceChatWidthSelect', appearancePreferences.chatWidthId);
       const surfaceEffectMount = mountSettingRow(appearanceSettingsSection, 'appearanceSurfaceEffectSelect', appearancePreferences.surfaceEffectId);
       mountSettingRow(appearanceSettingsSection, 'appearanceAppZoomSelect', appZoomPercent);
-      mountSettingRow(appearanceSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
-      mountSettingRow(appearanceSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
-      mountSettingRow(appearanceSettingsSection, 'changePicturesToggle', state.features?.featureFlags?.change_pictures !== false, { afterId: 'appearanceArtifactAutoOpenToggle' });
-      globalThis.rendererPerformanceSettings?.mountRows(appearanceSettingsSection, mountSettingRow);
+      if (state.features?.featureFlags?.team === true) mountSettingRow(appearanceSettingsSection, 'appearanceTeamDensitySelect', appearancePreferences.teamDensityId, { afterId: 'appearanceAppZoomSelect' }); else appearanceSettingsSection?.querySelector?.('[data-setting-mount="appearanceTeamDensitySelect"]')?.remove();
+      // Row 133: Chat › Layout and Side panel, General › Machine status (rows that left Appearance).
+      mountSettingRow(chatSettingsSection, 'appearanceChatWidthSelect', appearancePreferences.chatWidthId);
+      mountSettingRow(chatSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
+      mountSettingRow(chatSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
+      mountSettingRow(chatSettingsSection, 'changePicturesToggle', state.features?.featureFlags?.change_pictures !== false, { afterId: 'appearanceArtifactAutoOpenToggle' });
+      // With sketch blocks off the model is told Mermaid whatever this says: keep the row, greyed out, with the reason.
+      const sketchOff = state.features?.featureFlags?.sketch_blocks === false;
+      const drawingMount = chatSettingsSection?.querySelector?.('[data-setting-mount="drawingInstructionsSelect"]');
+      if (drawingMount && (drawingMount.dataset.sketchOff === 'true') !== sketchOff) drawingMount.replaceChildren();
+      const drawingRow = mountSettingRow(chatSettingsSection, 'drawingInstructionsSelect', state.drawingInstructions || 'short', sketchOff
+        ? { afterId: 'changePicturesToggle', disabled: true, rowClassName: 'settings-field--unavailable', description: jt('settings.drawingInstructions.unavailable', 'Sketch drawings are turned off, so the model is told to write Mermaid.') }
+        : { afterId: 'changePicturesToggle', disabled: false });
+      if (drawingRow) drawingRow.dataset.sketchOff = String(sketchOff);
+      globalThis.rendererPerformanceSettings?.mountRows(generalSettingsSection, mountSettingRow);
       if (appearanceLanguageField && shouldPatchSection('appearanceLanguage')) {
         appearanceLanguageField.innerHTML = buildUiLanguageFieldMarkup({
           value: state.uiLanguage,
@@ -310,6 +331,10 @@
           fields: appearanceUtils.getAppearanceToggleFields({ jt, composerHoloOption, appearancePreferences, startupAnimationFlagOff: state.features?.featureFlags?.startup_animation === false }),
         }));
       }
+      const titlebarLoadList = generalSettingsSection?.querySelector?.('#generalTitlebarLoadList');
+      if (titlebarLoadList) {
+        paintSlot(titlebarLoadList, buildSettingsToggleListMarkup({ escapeHtml, toggleSwitch, fields: appearanceUtils.getMachineStatusToggleFields({ appearancePreferences }) }));
+      }
       if (appearanceSpellcheckList) {
         paintSlot(appearanceSpellcheckList, buildSettingsToggleListMarkup({
           escapeHtml,
@@ -319,25 +344,11 @@
           ],
         }));
       }
-      const modelBadgeState = resolveModelBadge({
-        busy: runtimeModelBusy, loadingModel, errored: runtimeModelActivity?.state === 'error',
-        catalogUnavailable: modelCatalogUnavailable, activeModel,
-      });
-      if (activeModel && modelBadgeState.text === activeModel) modelBadgeState.text = activeModel.slice(activeModel.lastIndexOf('/') + 1);
-      applyBadgeState(modelBadge, modelBadgeState);
-      modelBadge.title = activeModel;
-      modelStatus.textContent = String(runtimeModelActivity?.message || '').trim() || (
-        activeModel && modelCatalogUnavailable && modelCatalogReason
-          ? jt('settings.modelLibrary.loadedCatalogUnavailable', 'Loaded model: {model} (catalog unavailable: {reason})', { model: activeModel, reason: modelCatalogReason })
-          : activeModel
-            ? ''
-            : modelCatalogUnavailable && modelCatalogReason
-            ? modelCatalogReason
-            : jt('settings.modelLibrary.noneLoaded', 'No model is currently loaded.')
-      );
-      applyNote(modelCatalogEmpty, modelCatalogUnavailable
-        ? jt('settings.modelLibrary.catalogUnavailableFallback', 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.')
-        : '');
+      // Running now shows the loaded model; this note is the one place the catalog's failure and its reason show.
+      applyNote(modelCatalogEmpty, !modelCatalogUnavailable ? ''
+        : modelCatalogReason
+          ? jt('settings.modelLibrary.catalogUnavailableReason', 'Model catalog unavailable: {reason} Using the backend default; load actions may not work until the local engine is reachable.', { reason: modelCatalogReason })
+          : jt('settings.modelLibrary.catalogUnavailableFallback', 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.'));
       const canEditSessionRuntime = Boolean(state.auth.authenticated);
       if (appearanceResetButton) appearanceResetButton.disabled = isDefaultAppearancePreferences(appearancePreferences);
       // The composer render pass (renderComposerState) owns this control's
@@ -369,12 +380,20 @@
         setupSettingsSummary,
         setupSettingsActions,
       });
-      applyNote(contextStatus, (isActivityBusy(settingsContextActivity) || settingsContextActivity?.state === 'error'
-        ? String(settingsContextActivity?.message || '').trim() : '') || (contextUnavailable
-          ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
-          : ''));
+      const contextSaveError = settingsContextActivity?.state === 'error' ? String(settingsContextActivity.message || '').trim() : '';
+      applyNote(contextStatus, contextSaveError || (contextUnavailable
+        ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
+        : ''));
+      if (contextSaveError && contextStatus && globalThis.inventory?.statusRow) contextStatus.innerHTML = globalThis.inventory.statusRow({ tone: 'danger', message: contextSaveError, compact: true });
       mountSettingRow(contextSettingsSection, 'contextHistoryScopeSelect', contextPreferences.historyScope,
         { disabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity) });
+      // Chat › This chat says whose rows these are: the open chat, else (like getCurrentRuntimePreferences) the next one.
+      const contextScopeNote = contextSettingsSection?.querySelector?.('#contextScopeNote');
+      const openChat = typeof getActiveSession === 'function' ? getActiveSession() : null;
+      const scopeText = openChat
+        ? jt('settings.chat.thisChat.scopeOpen', 'These change only the chat you have open: {title}.', { title: String(openChat.title || '').trim() || jt('settings.chat.thisChat.untitled', 'New chat') })
+        : jt('settings.chat.thisChat.scopeNone', 'No chat is open. These apply to the next chat you start.');
+      if (contextScopeNote && contextScopeNote.textContent !== scopeText) contextScopeNote.textContent = scopeText;
       if (modelStartupLoadList) {
         paintSlot(modelStartupLoadList, buildSettingsToggleListMarkup({
           toggleSwitch,
@@ -411,19 +430,13 @@
       }
       const toolOn = (key) => (Object.prototype.hasOwnProperty.call(featureTools, key)
         ? featureTools[key] === true : toolConfigFields.find((field) => field.key === key)?.default === true);
+      // Permissions (row 133): four fixed rows in the card's mounts, patched in place (never a focused control).
+      for (const [id, value] of [['defaultRunModeSelect', state.defaultRunMode], ['safetyModeSelect', state.safetyMode],
+        ['unattendedGuardMinutesInput', state.unattendedGuardMinutes], ['autoApproveStreakCapInput', state.autoApproveStreakCap]]) {
+        const descriptor = fieldDescriptors?.getSettingDescriptor?.(id);
+        if (descriptor) mountSettingRow(permissionsSettingsSection, id, fieldDescriptors.normalizeSettingValue(descriptor, value), { className: '' });
+      }
       if (toolsConfigFieldList && shouldPatchSection('toolsConfig')) {
-        if (toolsPermissionsList) {
-          // Four fixed rows: mounted once, then patched in place like the Appearance rows.
-          const permissionRows = [['safetyModeSelect', state.safetyMode], ['defaultRunModeSelect', state.defaultRunMode],
-            ['unattendedGuardMinutesInput', state.unattendedGuardMinutes], ['autoApproveStreakCapInput', state.autoApproveStreakCap]];
-          if (!toolsPermissionsList.firstElementChild) {
-            toolsPermissionsList.innerHTML = permissionRows.map(([id]) => `<div data-setting-mount="${id}"></div>`).join('');
-          }
-          for (const [id, value] of permissionRows) {
-            const descriptor = fieldDescriptors?.getSettingDescriptor?.(id);
-            if (descriptor) mountSettingRow(toolsPermissionsList, id, fieldDescriptors.normalizeSettingValue(descriptor, value), { className: '' });
-          }
-        }
         const groups = [
           [toolsFilesList, ['fileTools', 'richFiles', 'imageRead']],
           [toolsWebList, ['web']],
@@ -476,30 +489,25 @@
       const jennyChatDigestsList = typeof document !== 'undefined' ? document.getElementById('jennyChatDigestsList') : null;
       const jennyChatQuietList = jennyChatDigestsList ? document.getElementById('jennyChatQuietList') : null;
       if (jennyChatDigestsList) renderJennyChatDigests(jennyChatDigestsList, state, jennyChatQuietList || jennyChatDigestsList);
+      const jennyChatModelList = typeof document !== 'undefined' ? document.getElementById('jennyChatModelList') : null;
+      if (jennyChatModelList) renderJennyChatModels(jennyChatModelList, state);
       const dictationSettingsSection = typeof document !== 'undefined' ? document.getElementById('dictationSettingsSection') : null;
       if (dictationSettingsSection) {
         globalThis.rendererSettingsDictationSection?.renderDictationSection?.({ container: dictationSettingsSection, state });
       }
       syncTeamSettingsSection({ state, activeSection });
       if (toolsApprovalRulesList) {
-        // Read over IPC, so only while Tools is the section on screen.
+        // Read over IPC, so only while Permissions is the section on screen.
         settingsCoreRenderers.renderApprovalRules({
           container: toolsApprovalRulesList,
           api: (typeof window !== 'undefined' && window.jennyShell?.tools) || null,
           projectsApi: (typeof window !== 'undefined' && window.jennyShell?.projects) || null,
           permissionReviewApi: (typeof window !== 'undefined' && window.jennyShell?.permissionReview) || null,
           escapeHtml,
-          active: activeSection === 'tools',
+          active: activeSection === 'permissions',
         });
       }
       renderSupportingSurfaces();
-      renderLazySummaries({
-        offlineDom,
-        offlineState,
-        renderStatusRowContainer,
-        buildSettingsSummaryModel,
-        escapeHtml,
-      });
       renderSurfaceEffectCopy({
         descriptionEl: surfaceEffectMount?.querySelector('.settings-field-help') || null,
         metaEl: appearanceSurfaceEffectMeta,
@@ -514,8 +522,6 @@
         windowRef: typeof globalThis !== 'undefined' ? globalThis : undefined,
       });
       applyActivityAttributes(settingsModelCard, runtimeModelActivity);
-      applyActivityAttributes(modelBadge, runtimeModelActivity);
-      applyActivityAttributes(modelStatus, runtimeModelActivity);
       applyActivityAttributes(contextStatus, settingsContextActivity);
       renderLazyManagers({
         shouldRenderLazySection,

@@ -11,6 +11,9 @@
   const MAX_MEMO_ENTRIES = 2000;
   const MAX_LINE_CHARS = 400;
   const MAX_BODY_LINES = 400;
+  // A line block (a file preview's rows) tokenizes as one document so state
+  // carries across lines; past this size it falls back to line-by-line.
+  const MAX_BLOCK_CHARS = 200000;
   const COMMON = Object.freeze({
     js: 'javascript', jsx: 'javascript', javascript: 'javascript', mjs: 'javascript', cjs: 'javascript',
     ts: 'typescript', tsx: 'typescript', typescript: 'typescript',
@@ -34,6 +37,10 @@
     tag: 'tok-tag', metatag: 'tok-tag', operator: 'tok-operator', operators: 'tok-operator',
     regexp: 'tok-regexp', constant: 'tok-constant', annotation: 'tok-annotation', predefined: 'tok-function',
   });
+
+  // Grammars a language hands its embedded regions to (HTML's <script> and
+  // <style>); a block is settled only once these are loaded too.
+  const EMBEDDED_LANGUAGES = Object.freeze({ html: ['javascript', 'css'] });
 
   const extensionToLanguage = new Map();
   const knownLanguages = new Set(Object.values(COMMON));
@@ -122,6 +129,32 @@
     return !languageId || !knownLanguages.has(languageId) || grammarReady(languageId);
   }
 
+  // Every grammar the block needs, its embedded ones included. All loads start
+  // together: each call kicks off its own lazy load.
+  function blockGrammarsReady(languageId) {
+    let ready = grammarReady(languageId);
+    for (const nested of EMBEDDED_LANGUAGES[languageId] || []) {
+      if (knownLanguages.has(nested)) ready = grammarReady(nested) && ready;
+    }
+    return ready;
+  }
+
+  function tokensFromRaw(text, rawTokens) {
+    if (!Array.isArray(rawTokens) || rawTokens.length === 0) return defaultTokens(text);
+    const tokens = [];
+    let consumed = 0;
+    for (let index = 0; index < rawTokens.length; index += 1) {
+      const start = Math.max(0, Number(rawTokens[index]?.offset) || 0);
+      const end = index + 1 < rawTokens.length ? Math.max(start, Number(rawTokens[index + 1]?.offset) || start) : text.length;
+      if (start > consumed) {
+        tokens.push({ text: text.slice(consumed, start), cls: 'tok-default' });
+      }
+      tokens.push({ text: text.slice(start, end), cls: mapTokenClass(rawTokens[index]?.type) });
+      consumed = end;
+    }
+    return tokens.length ? tokens : defaultTokens(text);
+  }
+
   function highlightLine(textInput, languageIdInput) {
     const text = String(textInput == null ? '' : textInput);
     const languageId = normalize(languageIdInput);
@@ -135,20 +168,30 @@
     let rawTokens;
     try { rawTokens = monacoApi.editor.tokenize(text, languageId)?.[0]; } catch (_error) { return defaultTokens(text); }
     if (!Array.isArray(rawTokens) || rawTokens.length === 0) return defaultTokens(text);
-    const tokens = [];
-    let consumed = 0;
-    for (let index = 0; index < rawTokens.length; index += 1) {
-      const start = Math.max(0, Number(rawTokens[index]?.offset) || 0);
-      const end = index + 1 < rawTokens.length ? Math.max(start, Number(rawTokens[index + 1]?.offset) || start) : text.length;
-      if (start > consumed) {
-        tokens.push({ text: text.slice(consumed, start), cls: 'tok-default' });
-      }
-      tokens.push({ text: text.slice(start, end), cls: mapTokenClass(rawTokens[index]?.type) });
-      consumed = end;
-    }
-    const normalizedTokens = tokens.length ? tokens : defaultTokens(text);
+    const normalizedTokens = tokensFromRaw(text, rawTokens);
     cache(key, normalizedTokens);
     return normalizedTokens.map((token) => ({ ...token }));
+  }
+
+  // One token list per line, tokenized as a single document: a line inside an
+  // HTML <script> or a multi-line comment colors by its context, not as a
+  // fresh first line. A block that starts mid-file (a windowed preview) starts
+  // from the grammar's initial state. Lines over MAX_LINE_CHARS stay plain, as
+  // line by line. Not memoized (a block is one-off and can be large).
+  function highlightLines(linesInput, languageIdInput) {
+    const lines = (Array.isArray(linesInput) ? linesInput : []).map((line) => String(line == null ? '' : line));
+    const languageId = normalize(languageIdInput);
+    const lineByLine = () => lines.map((line) => highlightLine(line, languageId));
+    if (!monacoApi?.editor?.tokenize || !languageId || !knownLanguages.has(languageId)
+      || !blockGrammarsReady(languageId)) {
+      return lineByLine();
+    }
+    const text = lines.join('\n');
+    if (text.length > MAX_BLOCK_CHARS) return lineByLine();
+    let rawLines;
+    try { rawLines = monacoApi.editor.tokenize(text, languageId); } catch (_error) { return lineByLine(); }
+    if (!Array.isArray(rawLines) || rawLines.length !== lines.length) return lineByLine();
+    return lines.map((line, index) => (line.length > MAX_LINE_CHARS ? defaultTokens(line) : tokensFromRaw(line, rawLines[index])));
   }
 
   function languageHintForNode(codeNode) {
@@ -164,20 +207,85 @@
     return mark === 'tokenized' || (mark === 'default' && !monacoApi);
   }
 
-  function replaceLineNode(node, text, languageId) {
-    if (!node || isSettled(node)) return false;
+  // A diff line's changed-word mark (renderer-file-diff-view.js) as a [start, end) text range,
+  // so a rewrite keeps it.
+  function markedRange(node) {
+    const mark = node.querySelector?.(':scope > mark.diff-word');
+    if (!mark) return null;
+    let start = 0;
+    for (const child of node.childNodes) {
+      if (child === mark) break;
+      start += (child.textContent || '').length;
+    }
+    return [start, start + (mark.textContent || '').length];
+  }
+
+  function writeTokens(node, tokens) {
     const doc = node?.ownerDocument;
     if (!doc || typeof doc.createElement !== 'function') return false;
+    const range = markedRange(node);
     const fragment = doc.createDocumentFragment();
-    for (const token of highlightLine(text, languageId)) {
+    let position = 0;
+    let markNode = null;
+    const append = (cls, text, marked) => {
       const span = doc.createElement('span');
-      span.className = `tok ${token.cls}`;
-      span.textContent = token.text;
-      fragment.appendChild(span);
+      span.className = `tok ${cls}`;
+      span.textContent = text;
+      if (!marked) {
+        markNode = null;
+        fragment.appendChild(span);
+        return;
+      }
+      if (!markNode) {
+        markNode = doc.createElement('mark');
+        markNode.className = 'diff-word';
+        fragment.appendChild(markNode);
+      }
+      markNode.appendChild(span);
+    };
+    for (const token of tokens) {
+      const text = String(token.text == null ? '' : token.text);
+      const start = position;
+      position += text.length;
+      if (!range || range[1] <= start || range[0] >= position) {
+        append(token.cls, text, false);
+        continue;
+      }
+      const from = Math.max(range[0], start) - start;
+      const to = Math.min(range[1], position) - start;
+      if (from > 0) append(token.cls, text.slice(0, from), false);
+      append(token.cls, text.slice(from, to), true);
+      if (to < text.length) append(token.cls, text.slice(to), false);
     }
     node.replaceChildren(fragment);
+    return true;
+  }
+
+  function replaceLineNode(node, text, languageId) {
+    if (!node || isSettled(node)) return false;
+    if (!writeTokens(node, highlightLine(text, languageId))) return false;
     node.setAttribute('data-code-highlighted', monacoApi && grammarSettled(languageId) ? 'tokenized' : 'default');
     return true;
+  }
+
+  // A [data-code-highlight-block] container's line nodes decorate together
+  // (see highlightLines). Returns how many line nodes were written.
+  function decorateLineBlock(block) {
+    const nodes = Array.from(block.querySelectorAll('[data-code-highlight-line]'));
+    if (nodes.length === 0 || nodes.every(isSettled)) return 0;
+    const languageId = normalize(block.dataset?.languageId || nodes[0].dataset?.languageId || '');
+    // The rows already show their plain text. Leave them until Monaco and every
+    // grammar the block needs are loaded (each load re-runs this pass) rather
+    // than rewriting every row, and dropping the reader's selection, per load.
+    if (!monacoApi || (languageId && knownLanguages.has(languageId) && !blockGrammarsReady(languageId))) return 0;
+    const tokenLines = highlightLines(nodes.map((node) => node.textContent || ''), languageId);
+    let written = 0;
+    nodes.forEach((node, index) => {
+      if (!writeTokens(node, tokenLines[index] || defaultTokens(node.textContent))) return;
+      node.setAttribute('data-code-highlighted', 'tokenized');
+      written += 1;
+    });
+    return written;
   }
 
   function decorateCodeNode(codeNode, languageHint) {
@@ -223,9 +331,13 @@
     rootNode.querySelectorAll('.tool-call-section code[data-language-id]').forEach((codeNode) => {
       if (decorateCodeNode(codeNode, codeNode.dataset?.languageId || '')) decorated += 1;
     });
+    const blocks = new Set();
     rootNode.querySelectorAll('[data-code-highlight-line]').forEach((lineNode) => {
-      if (replaceLineNode(lineNode, lineNode.textContent || '', lineNode.dataset?.languageId || '')) decorated += 1;
+      const block = lineNode.closest?.('[data-code-highlight-block]');
+      if (block) blocks.add(block);
+      else if (replaceLineNode(lineNode, lineNode.textContent || '', lineNode.dataset?.languageId || '')) decorated += 1;
     });
+    blocks.forEach((block) => { decorated += decorateLineBlock(block); });
     return decorated;
   }
 
@@ -344,8 +456,8 @@
   }
 
   return {
-    MAX_LANGUAGE_ENTRIES, MAX_MEMO_ENTRIES, MAX_LINE_CHARS, MAX_BODY_LINES,
-    warmCodeHighlighting, getLanguageId, getLanguageDot, mapTokenClass, highlightLine,
+    MAX_LANGUAGE_ENTRIES, MAX_MEMO_ENTRIES, MAX_LINE_CHARS, MAX_BODY_LINES, MAX_BLOCK_CHARS,
+    warmCodeHighlighting, getLanguageId, getLanguageDot, mapTokenClass, highlightLine, highlightLines,
     decorateCodeNode, decorateCodeBlocks, decorateStreamModel, disposeCodeHighlighting,
   };
 });

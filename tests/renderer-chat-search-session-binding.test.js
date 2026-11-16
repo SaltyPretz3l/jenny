@@ -59,7 +59,7 @@ function setup(t, paneSessionId, focusedSessionId) {
     ]),
   };
   const manager = createManager(state);
-  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView"><div id="chatTimeline" role="feed"></div></div></body></html>');
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div><div id="chatTimeline" role="feed"></div></div></body></html>');
   shimCssHighlights(dom.window);
   dom.window.HTMLElement.prototype.scrollIntoView = function () {};
   const wired = wireChatAccessibility({

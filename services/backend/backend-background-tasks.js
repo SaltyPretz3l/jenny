@@ -1,5 +1,7 @@
 'use strict';
 
+const { liveTeamSelection } = require('./team-engine-models');
+
 function normalizeTaskName(task) {
   return String(task || '').trim().toLowerCase();
 }
@@ -86,11 +88,15 @@ async function runBackgroundTask(service, task, params = {}) {
   if (!normalizedTask) {
     throw new Error('task is required');
   }
+  // Nothing a background task reads leaves this PC because a team model happens to be loaded.
+  const teamLoaded = Boolean(liveTeamSelection(service));
   if (
-    !service.sidecarClient
+    teamLoaded
+    || !service.sidecarClient
     || typeof service.sidecarClient.backgroundRun !== 'function'
   ) {
-    const reason = service.sidecarClient ? 'background_run_unavailable' : 'sidecar_unavailable';
+    const reason = teamLoaded ? 'team_engine_loaded'
+      : service.sidecarClient ? 'background_run_unavailable' : 'sidecar_unavailable';
     if (typeof service._emitServiceLog === 'function') {
       service._emitServiceLog('INFO', 'background.run_skipped', {
         task: normalizedTask,

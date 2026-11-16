@@ -127,7 +127,7 @@ test('a sensitive file renders path-only with the secrets note; other summary-on
     assert.equal(sensitive.querySelector('.file-diff-body'), null, `${label}: no diff body for a sensitive file`);
     assert.equal(sensitive.querySelector('.file-diff-chevron'), null);
     assert.equal(sensitive.querySelector('.file-diff-open'), null, `${label}: path only, no editor link`);
-    assert.equal(other.querySelector('.file-diff-truncated').textContent, 'too large to show inline');
+    assert.equal(other.querySelector('.file-diff-truncated').textContent, 'took too long to compare', 'row 160: the reason names why');
   }
 });
 

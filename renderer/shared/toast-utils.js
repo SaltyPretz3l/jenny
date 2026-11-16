@@ -22,9 +22,9 @@
     warning: 8000,
     danger: 0,
   };
-  // Entries beyond maxVisible stay queued with their timers running and
-  // promote into view as visible ones leave. This bound stops an unattended
-  // error loop from growing the queue without limit.
+  // Entries beyond maxVisible wait, clock not started, and promote into view
+  // as visible ones leave. This bound stops an unattended error loop from
+  // growing the queue without limit.
   var HARD_RETENTION_BOUND = 12;
   // A toast paused with only a sliver of time left would otherwise vanish the
   // instant the pointer leaves it.
@@ -81,6 +81,7 @@
           sticky: toast.sticky,
           dedupeKey: toast.dedupeKey,
           repeatCount: toast.repeatCount,
+          countdownMs: toast.countdownMs,
           actions: toast.actions.map(function cloneAction(action) {
             return {
               id: action.id,
@@ -106,6 +107,8 @@
     var listeners = new Set();
     var paused = false;
     var snapshotCache = null;
+    // Toast id -> onExpire, run once when the toast leaves.
+    var expireHandlers = new Map();
 
     function invalidateSnapshot() {
       snapshotCache = null;
@@ -123,10 +126,68 @@
     }
 
     function emit() {
+      if (!toasts.length) paused = false;
       var snapshot = getSnapshot();
       listeners.forEach(function notify(listener) {
         listener(snapshot);
       });
+    }
+
+    // After listeners render, so a follow-up toast sees a settled store.
+    function fireExpire(ids) {
+      ids.forEach(function callHandler(id) {
+        var handler = expireHandlers.get(id);
+        expireHandlers.delete(id);
+        runHandler(handler);
+      });
+    }
+
+    function runHandler(handler) {
+      try {
+        if (handler) handler();
+      } catch (error) {
+        void error;
+      }
+    }
+
+    function holdTimer(timer, at) {
+      clearTimeoutFn(timer.handle);
+      timer.handle = null;
+      timer.remainingMs = Math.max(0, timer.remainingMs - (at - timer.startedAt));
+    }
+
+    function startTimer(timer, toastId, at) {
+      timer.startedAt = at;
+      timer.remainingMs = Math.max(timer.remainingMs, RESUME_FLOOR_MS);
+      timer.handle = setTimeoutFn(function handleAutoDismiss() {
+        dismiss(toastId);
+      }, timer.remainingMs);
+    }
+
+    // A clock runs only while its toast is in view, so none is spent unseen.
+    function syncVisibleTimers() {
+      var at = nowFn();
+      toasts.forEach(function syncTimer(toast, index) {
+        var visible = index < maxVisible;
+        var timer = timers.get(toast.id);
+        if (!timer) {
+          if (visible) scheduleDismiss(toast);
+          return;
+        }
+        if (!visible && !timer.hidden) {
+          timer.hidden = true;
+          if (timer.handle !== null) holdTimer(timer, at);
+        } else if (visible && timer.hidden) {
+          timer.hidden = false;
+          if (!paused) startTimer(timer, toast.id, at);
+        }
+      });
+    }
+
+    function getRemainingMs(id) {
+      var timer = timers.get(normalizeString(id));
+      if (!timer) return 0;
+      return timer.handle === null ? timer.remainingMs : Math.max(0, timer.remainingMs - (nowFn() - timer.startedAt));
     }
 
     function clearTimer(id) {
@@ -153,8 +214,10 @@
       }
       toasts = nextToasts;
       clearTimer(toastId);
+      syncVisibleTimers();
       invalidateSnapshot();
       emit();
+      fireExpire([toastId]);
     }
 
     function scheduleDismiss(toast) {
@@ -184,12 +247,7 @@
       paused = true;
       var at = nowFn();
       timers.forEach(function pauseTimer(timer) {
-        if (timer.handle === null) {
-          return;
-        }
-        clearTimeoutFn(timer.handle);
-        timer.handle = null;
-        timer.remainingMs = Math.max(0, timer.remainingMs - (at - timer.startedAt));
+        if (timer.handle !== null) holdTimer(timer, at);
       });
     }
 
@@ -200,14 +258,7 @@
       paused = false;
       var at = nowFn();
       timers.forEach(function resumeTimer(timer, toastId) {
-        if (timer.handle !== null) {
-          return;
-        }
-        timer.startedAt = at;
-        timer.remainingMs = Math.max(timer.remainingMs, RESUME_FLOOR_MS);
-        timer.handle = setTimeoutFn(function handleAutoDismiss() {
-          dismiss(toastId);
-        }, timer.remainingMs);
+        if (timer.handle === null && !timer.hidden) startTimer(timer, toastId, at);
       });
     }
 
@@ -219,6 +270,7 @@
         ? Boolean(source.sticky)
         : defaultDuration <= 0;
       var durationMs = sticky ? 0 : normalizeDuration(source.durationMs, defaultDuration);
+      var countdownMs = source.countdown && durationMs > 0 ? durationMs : 0;
 
       return {
         id: preservedId || 'toast_' + String(nextId++),
@@ -236,6 +288,7 @@
         sticky: sticky,
         dedupeKey: normalizeString(source.dedupeKey),
         repeatCount: Math.max(1, Number(repeatCount) || 1),
+        countdownMs: countdownMs,
         actions: normalizeActions(source.actions),
       };
     }
@@ -243,9 +296,10 @@
     // Sticky entries are never sacrificed to make room for a newer toast; only
     // the hard retention bound drops anything, and then non-sticky first.
     function enforceRetentionBound() {
+      var dropped = [];
       while (toasts.length > HARD_RETENTION_BOUND) {
         var dropIndex = -1;
-        for (var index = toasts.length - 1; index >= 0; index -= 1) {
+        for (var index = toasts.length - 1; index >= 1; index -= 1) {
           if (!toasts[index].sticky) {
             dropIndex = index;
             break;
@@ -255,8 +309,10 @@
           dropIndex = toasts.length - 1;
         }
         clearTimer(toasts[dropIndex].id);
+        dropped.push(toasts[dropIndex].id);
         toasts.splice(dropIndex, 1);
       }
+      return dropped;
     }
 
     function enqueue(input) {
@@ -274,6 +330,7 @@
         : -1;
       var preservedId = '';
       var repeatCount = 1;
+      var superseded = null;
 
       if (duplicateIndex !== -1) {
         var previous = toasts[duplicateIndex];
@@ -283,14 +340,22 @@
         repeatCount = previous.message === message ? previous.repeatCount + 1 : 1;
         clearTimer(preservedId);
         toasts.splice(duplicateIndex, 1);
+        // The replaced toast has left: its work runs now, never on the new one.
+        superseded = expireHandlers.get(preservedId) || null;
+        expireHandlers.delete(preservedId);
       }
 
       var nextToast = buildToastRecord(candidate, preservedId, repeatCount);
+      if (typeof candidate.onExpire === 'function') {
+        expireHandlers.set(nextToast.id, candidate.onExpire);
+      }
       toasts.unshift(nextToast);
-      enforceRetentionBound();
-      scheduleDismiss(nextToast);
+      var dropped = enforceRetentionBound();
+      syncVisibleTimers();
       invalidateSnapshot();
       emit();
+      runHandler(superseded);
+      fireExpire(dropped);
       return nextToast.id;
     }
 
@@ -303,7 +368,7 @@
       }
       var scoped = Boolean(options) && typeof options === 'object';
       var sessionId = scoped ? normalizeString(options.sessionId) : '';
-      var removed = false;
+      var removedIds = [];
       toasts = toasts.filter(function keepToast(entry) {
         if (entry.source !== token) {
           return true;
@@ -311,13 +376,15 @@
         if (scoped && entry.sessionId && entry.sessionId !== sessionId) {
           return true;
         }
-        removed = true;
+        removedIds.push(entry.id);
         clearTimer(entry.id);
         return false;
       });
-      if (removed) {
+      if (removedIds.length) {
+        syncVisibleTimers();
         invalidateSnapshot();
         emit();
+        fireExpire(removedIds);
       }
     }
 
@@ -325,12 +392,20 @@
       if (!toasts.length) {
         return;
       }
-      toasts.forEach(function clearEntry(entry) {
+      var removedIds = toasts.map(function clearEntry(entry) {
         clearTimer(entry.id);
+        return entry.id;
       });
       toasts = [];
       invalidateSnapshot();
       emit();
+      fireExpire(removedIds);
+    }
+
+    function hasSticky() {
+      return toasts.some(function isSticky(entry) {
+        return entry.sticky;
+      });
     }
 
     function subscribe(listener) {
@@ -349,7 +424,9 @@
       dismissBySource: dismissBySource,
       enqueue: enqueue,
       getOverflowCount: getOverflowCount,
+      getRemainingMs: getRemainingMs,
       getSnapshot: getSnapshot,
+      hasSticky: hasSticky,
       pauseAll: pauseAll,
       resumeAll: resumeAll,
       subscribe: subscribe,

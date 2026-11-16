@@ -74,6 +74,63 @@
   background: var(--rail-selected-bg);
 }
 
+/* Swatch mode (palette picker): a row of colour dots, no track. Each option's
+   aria-label and title carry its name. */
+.inv-segmented--swatch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.inv-segmented--swatch .inv-segmented-option {
+  position: relative;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: visible;
+  background: transparent;
+}
+
+.inv-segmented--swatch .inv-segmented-option:hover:not(:disabled):not(.inv-segmented-option--on) {
+  background: transparent;
+}
+
+.inv-segmented--swatch .inv-segmented-swatch {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--inv-swatch-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.inv-segmented--swatch .inv-segmented-swatch::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 2px;
+  inset-block-end: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--inv-swatch-accent);
+}
+
+.inv-segmented--swatch .inv-segmented-option--on,
+.inv-segmented--swatch .inv-segmented-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.inv-segmented--swatch .inv-segmented-option[data-group-start] {
+  margin-inline-start: var(--space-3);
+}
+
 @media (forced-colors: active) {
   .inv-segmented--compact .inv-segmented-option--on {
     border-color: Highlight;

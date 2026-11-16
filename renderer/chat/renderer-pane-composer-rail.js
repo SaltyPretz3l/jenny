@@ -710,7 +710,7 @@
         state: state,
         documentRef: doc,
         idSuffix: 'Pane' + paneId,
-        dom: { popover: popoverEl, host: host, modelSelect: modelSelect, effortSelect: effortSelect, pill: pill },
+        dom: { popover: popoverEl, host: host, modelSelect: modelSelect, effortSelect: effortSelect, pill: pill }, getSessionId: sessionContext.getSessionId,
       });
       picker.bind();
     }

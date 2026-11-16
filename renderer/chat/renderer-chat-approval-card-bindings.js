@@ -175,6 +175,9 @@
           const alwaysAllow = toolApproveBtn.getAttribute('data-approval-scope') === 'always';
           // Row 87 C1: "Always allow for chats Jenny started" also asks the backend to save its offered rule.
           const remember = toolApproveBtn.getAttribute('data-approval-remember') === 'linked_children' ? 'linked_children' : undefined;
+          // Row 166 D10: "Allow all" answers this call and asks the backend to take the round it offered.
+          const round = toolApproveBtn.getAttribute('data-approval-round') === 'true';
+          const approveOptions = { alwaysAllow, ...(remember ? { remember } : {}), ...(round ? { round: true } : {}) };
           const originSessionId = String(getSessionId() || '').trim();
           const approvalRow = toolApproveBtn.closest('.approval-gap-row') || block;
           const fallbackTarget = approvalRow ? resolveApprovalFocusFallback(approvalRow) : null;
@@ -182,7 +185,7 @@
           // can itself blur it, so this must reflect focus at click time.
           const heldFocus = !!(approvalRow && doc && approvalRow.contains(doc.activeElement));
           setApprovalBlockBusy(block, true);
-          answerLiveApproval(toolApproveBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.approve(liveId, remember ? { alwaysAllow, remember } : { alwaysAllow })).then((result) => {
+          answerLiveApproval(toolApproveBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.approve(liveId, approveOptions)).then((result) => {
             // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
             if (handleApprovalOutcomeRefused(result, {
               block, callId, logEvent: 'tool.approve_refused', title: jt('chat.transcript.approvalFailedTitle', 'Approval Failed'),

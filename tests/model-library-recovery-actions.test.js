@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const reader = require('../renderer/shared/model-load-failure');
-const { createModelLibraryRecoveryActions } = require('../renderer/shell/model-library/model-library-recovery-actions');
+const { createModelLibraryRecoveryActions } = require('../renderer/shell/model-library/model-library-runtime-actions');
 
 function harness(overrides = {}) {
   const calls = [];
@@ -13,19 +13,19 @@ function harness(overrides = {}) {
   const recovery = createModelLibraryRecoveryActions({ windowRef, state, reader,
     runtimeActions: { handleUse: (tag) => calls.push(['load', tag]) },
     findModel: () => ({ key: 'qwen3:8b' }), setStatusMessage: (message) => calls.push(['status', message]),
-    setFilter: (filter) => calls.push(['filter', filter]), render: () => calls.push(['render']),
+    showCatalog: () => calls.push(['catalog']), render: () => calls.push(['render']),
     openDiagnostics: () => calls.push(['diagnostics']), ...overrides });
   return { recovery, calls, state, windowRef, failure };
 }
 
-test('recovery routes retry, smaller context, recommended models, diagnostics and details', async () => {
+test('recovery routes retry, smaller context, the Can download list, diagnostics and details', async () => {
   const h = harness();
   await h.recovery.handle('retry', 'QWEN3:8B');
   assert.deepEqual(h.calls.splice(0), [['load', 'QWEN3:8B']]);
   await h.recovery.handle('loadSmaller', 'qwen3:8b');
   assert.deepEqual(h.calls.splice(0), [['persist', { modelId: 'qwen3:8b', contextLength: 32768 }], ['load', 'qwen3:8b']]);
   await h.recovery.handle('showFits', 'qwen3:8b');
-  assert.deepEqual(h.calls.splice(0), [['filter', 'recommended']]);
+  assert.deepEqual(h.calls.splice(0), [['catalog']]);
   await h.recovery.handle('diagnostics', 'qwen3:8b');
   assert.deepEqual(h.calls.splice(0), [['diagnostics']]);
   await h.recovery.handle('copyDetails', 'qwen3:8b');

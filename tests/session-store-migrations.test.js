@@ -21,14 +21,40 @@ const {
   repairSessionForV17,
   repairSessionForV19,
   repairSessionForV22,
+  repairSessionForV28,
 } = require('../services/backend/session-store-migrations');
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-test('STORE_SCHEMA_VERSION === 27', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 27);
+test('STORE_SCHEMA_VERSION === 29', () => {
+  assert.equal(STORE_SCHEMA_VERSION, 29);
+});
+
+// v28 adds the optional team `allowed_nodes`; the step adds nothing to a record.
+test('v28: a schema 27 payload opens as the current schema with every record unchanged apart from the version', () => {
+  // Stored v27 records already carry linked_session_ids, which every step re-normalizes.
+  const sessions = { s1: { id: 's1', title: 'Old', preferred_model: 'alpha', linked_session_ids: [], messages: [{ id: 'm', role: 'user' }] },
+    s2: { id: 's2', linked_session_ids: [], allowed_nodes: ['node_keep'] } };
+  const payload = { schema_version: 27, sessions };
+  const before = JSON.stringify(payload);
+  const migrated = migrateStorePayload(payload);
+  assert.equal(JSON.stringify(payload), before, 'the input is not mutated');
+  assert.equal(migrated.schema_version, STORE_SCHEMA_VERSION); // the v29 step (tests/board-turn-stamp.test.js) adds nothing either
+  assert.deepEqual(migrated.sessions, sessions);
+  assert.equal(Object.hasOwn(migrated.sessions.s1, 'allowed_nodes'), false);
+  const damaged = migrateStorePayload({ schema_version: 27, sessions: { s3: { id: 's3', linked_session_ids: [], allowed_nodes: 'node_a' } } });
+  assert.deepEqual(damaged.sessions.s3.allowed_nodes, [], 'a damaged list stays a restriction through the step');
+});
+
+test('v28: the step keeps a valid list, keeps a malformed one as a restriction no turn satisfies, never adds the field', () => {
+  assert.deepEqual(repairSessionForV28({ id: 's' }), { id: 's' });
+  assert.deepEqual(repairSessionForV28({ id: 's', allowed_nodes: null }), { id: 's' }, 'null is any node, as absent');
+  assert.deepEqual(repairSessionForV28({ id: 's', allowed_nodes: ['node_a', 'node_b'] }), { id: 's', allowed_nodes: ['node_a', 'node_b'] });
+  for (const bad of [[], ['node_a', 'node_a'], ['device_a'], 'node_a', [1]]) {
+    assert.deepEqual(repairSessionForV28({ id: 's', allowed_nodes: bad }), { id: 's', allowed_nodes: [] }, JSON.stringify(bad));
+  }
 });
 
 test('v20 normalizes only the five boolean session tool override keys', () => {

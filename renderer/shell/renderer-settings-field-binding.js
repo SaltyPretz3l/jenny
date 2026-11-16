@@ -560,6 +560,8 @@
     controlElements(container, descriptor).forEach((el) => {
       if (busy) {
         if (el.disabled) return;
+        // A control that opts out stays usable; its next write queues behind this one (presets and Revert still lock).
+        if (descriptor.lockWhileSaving === false && !el.hasAttribute('data-setting-revert') && !el.hasAttribute('data-setting-preset')) return;
         el.setAttribute('data-setting-busy', '');
         el.disabled = true;
       } else if (el.hasAttribute('data-setting-busy')) {

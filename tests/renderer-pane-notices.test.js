@@ -15,6 +15,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { waitForState } = require('./helpers/shell-shared-wait');
 
 function buildSummary(id, title) {
   return {
@@ -61,10 +62,10 @@ async function openTwoPanes(t, { failedInB = false, withC = false, shell = {} } 
   t.after(() => app.dispose());
   const { window } = app;
   const doc = window.document;
-  await waitForUi(window, 150);
+  await waitForState(window, () => window.__rendererState.currentSessionId === 'session-a' && /Answer from pane zero/.test(doc.getElementById('chatTimeline')?.textContent || ''));
   const composition = window.rendererAppPaneComposition.getPaneComposition();
   assert.equal(composition.toggleSplit(), true, 'precondition: the chord opens session-b beside');
-  await waitForUi(window, 150);
+  await waitForState(window, () => /Answer from pane one/.test(composition.getPane(1)?.root.textContent || ''));
   const pane1 = composition.getPane(1);
   assert.ok(pane1, 'pane 1 is mounted');
   const state = window.__rendererState;
@@ -127,19 +128,6 @@ test('a large (accepted) paste into pane 1 warns under pane 1 only', async (t) =
   assert.equal(event.defaultPrevented, false, 'precondition: a warned paste is accepted');
   assert.match(paneNode(pane1, 'composerStatusNotice').textContent, /Large paste added/);
   assert.equal(isShown(doc.getElementById('composerStatusNotice')), false);
-});
-
-test('pane 1\'s preview pill counts pane 1\'s tray; pane 0\'s stays hidden', async (t) => {
-  const { window, doc, pane1 } = await openTwoPanes(t);
-  const paneZeroPill = doc.getElementById('composerAttachmentPreviewPill');
-  const paneOnePill = paneNode(pane1, 'composerAttachmentPreviewPill');
-  assert.equal(paneZeroPill.dataset.composerV2, 'on', 'precondition: pane 0 mounted its pill');
-  assert.equal(paneOnePill.dataset.composerV2, 'on', 'pane 1 mirrors it');
-  pasteImage(window, pane1.dom.chatInput, 'side.png');
-  await waitForUi(window, 80);
-  assert.equal(isShown(paneOnePill), true);
-  assert.match(paneOnePill.textContent, /1/);
-  assert.equal(isShown(paneZeroPill), false, 'pane 0\'s queue is empty, so is its pill');
 });
 
 test('a failed send in pane 1\'s session shows its notice under pane 1; dismiss clears it there', async (t) => {

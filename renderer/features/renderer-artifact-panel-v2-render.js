@@ -225,16 +225,28 @@
       const capabilities = resolveCapabilities(artifact);
       const titleSlot = panelEl.querySelector('[data-artifact-panel-title-slot]');
       const browserHost = windowRef?.rendererBrowserUseHost;
+      // A file preview is titled by its file, like an artifact (full path on hover).
+      const filePreview = mode === 'file_preview' ? state.ui?.filePreview || null : null;
+      const previewPath = String(filePreview?.path || '').replace(/\\/g, '/');
+      const previewName = previewPath.split('/').filter(Boolean).pop() || '';
       const title = artifactMode ? (artifact ? null : jt('artifacts.review.toggleTitle', 'Artifacts'))
         : mode === 'code_review' ? jt('artifactPanelV2Render.changes', 'Changes')
-        : mode === 'file_preview' ? jt('ide.filePreviewLabel', 'File preview')
+        : mode === 'file_preview' ? (previewName || jt('ide.filePreviewLabel', 'File preview'))
         : mode === 'notes' ? jt('projectNotes.title', 'Notes')
+        : mode === 'background_tasks' ? jt('backgroundTasks.title', 'Background tasks')
         : mode === 'browser' ? (browserHost?.panelTitle?.() || jt('composer.toolFamily.browser.label', 'Browser'))
         : jt('artifactPanelV2Render.tasks', 'Tasks');
-      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, title, glyphHtml: mode === 'browser' ? browserHost?.glyphHtml : '', artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
+      // Row 138: an open background task turns the title into its Back control (the panel's own markup).
+      const ownTitleHtml = mode === 'background_tasks' ? String(windowRef?.rendererBackgroundTasksPanel?.titleHtml?.() || '') : '';
+      const glyphHtml = mode === 'browser' ? browserHost?.glyphHtml
+        : previewName ? chromeRender.kindGlyphHtml(filePreview.payload?.kind
+          || globalThis.rendererArtifactFilePreviewRender?.resolveFilePreviewKind?.(previewPath)) : '';
+      const titleHtml = ownTitleHtml || chromeRender.buildTitleHtml({ artifact, title, tooltip: previewName ? previewPath : '', glyphHtml, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel });
+      syncSlotHtml(titleSlot, titleHtml);
       // Non-artifact surfaces clear the live title text before rendering; an
-      // unchanged cached slot would otherwise leave it blank.
-      const titleText = artifactMode ? null : titleSlot?.querySelector('.artifact-panel-title-text');
+      // unchanged cached slot would otherwise leave it blank. (The file preview
+      // leaves the V3 title alone, so its file name keeps its ellipsis markup.)
+      const titleText = artifactMode || ownTitleHtml ? null : titleSlot?.querySelector('.artifact-panel-title-text');
       if (titleText && titleText.textContent !== title) titleText.textContent = title;
       const viewSlot = panelEl.querySelector('[data-artifact-panel-view-slot]');
       syncSlotHtml(viewSlot, capabilities.hasPreview && capabilities.hasCode ? chromeRender.buildViewControlHtml(currentV3View(capabilities)) : '');
@@ -265,7 +277,10 @@
       copyBtn?.setAttribute('title', copyLabel);
       setHidden(overflowBtn, !artifactMode);
       setDisabled(overflowBtn, !hasArtifact || !actionsController || actionsController.hasOverflowItems?.(artifact) === false);
-      setDisabled(panelEl.querySelector('#artifactPanelV2ProvenanceTrigger'), !hasArtifact);
+      // Provenance is an artifact's history; a file preview has none to show.
+      const provenanceBtn = panelEl.querySelector('#artifactPanelV2ProvenanceTrigger');
+      setHidden(provenanceBtn, mode === 'file_preview');
+      setDisabled(provenanceBtn, !hasArtifact);
 
       const info = artifact && versionHistoryUtils?.resolveArtifactVersionInfo?.(artifact, state);
       const slot = panelEl.querySelector('[data-artifact-panel-v2-stepper-slot]');
@@ -274,7 +289,7 @@
 
       const source = artifact ? managerHooks.getSelectedArtifactSource?.() : null;
       const meta = panelEl.querySelector('#artifactPanelV2FooterMeta');
-      if (meta) meta.textContent = chromeRender.buildStatusMetaText(artifact, source);
+      if (meta) meta.textContent = filePreview ? chromeRender.buildFilePreviewMetaText(filePreview) : chromeRender.buildStatusMetaText(artifact, source);
       syncSaveState(artifact, dirty);
 
       // Maximize lives in More; the header shows a pressed Restore only while

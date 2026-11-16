@@ -49,6 +49,11 @@
     }
   }
 
+  /* The retained data URL of one chat image, or ''. A pure lookup: no read, and the eviction order is left alone. */
+  function peekArtifactImage(sessionId, artifactId) {
+    return imageCache.get(`${String(sessionId || '')}:${String(artifactId || '')}`) || '';
+  }
+
   function pruneFailedImages(now) {
     for (const [key, failure] of failedImages) {
       if (now - failure.failedAt >= FAILED_IMAGE_TTL_MS) failedImages.delete(key);
@@ -387,6 +392,7 @@
 
   return {
     isAllowedArtifactImageSource: isAllowedArtifactImageSource,
+    peekArtifactImage: peekArtifactImage,
     renderArtifactCards: renderArtifactCards,
     renderImagePendingFigure: renderImagePendingFigure,
     releaseInlineImages: releaseInlineImages,

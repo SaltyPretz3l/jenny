@@ -78,7 +78,12 @@
         threadExpansionSignature,
         noteStructuralRewrite,
         recordStreamingArticleRebuild,
+        rewriteReason = '',
       } = ctx;
+      // Why the surgical patch could not take this frame (describePatchBlock):
+      // the whole-article rewrite is charged to it, not to an anonymous patch.
+      const morphReason = rewriteReason ? `article_rewrite:${rewriteReason}` : 'article_rewrite';
+      let morphNoted = false;
       const streamingMessageId = String(streamingMessage?.id || '').trim();
       let article = articleOverride || resolveVisibleTurnArticleTarget(streamingMessageId, projectionContext);
       if (!streamingMessageId || !article) {
@@ -88,9 +93,9 @@
         article.getAttribute?.('data-message-id')
         || resolveTurnArticleMessageId(streamingMessageId, projectionContext)
       ).trim();
-      const articleMessageMatch = messages.find(
-        (message) => String(message?.id || '').trim() === articleMessageId
-      );
+      const indexed = projectionContext?.messageById?.get?.(articleMessageId);
+      const articleMessageMatch = indexed && String(indexed.id || '').trim() === articleMessageId ? indexed
+        : messages.find((message) => String(message?.id || '').trim() === articleMessageId);
       const articleMessage = articleMessageMatch || streamingMessage;
       // timeline-perf 2026-09-30: the row segments let the morph below
       // reconcile the turn row list per row (settled rows keep their
@@ -104,7 +109,9 @@
         followUpDisabledReason,
         String(articleMessage.id || '') === latestReplyAssistantMessageId ? latestRegenerateRequest : null,
         projectionContext,
-        { rowListSegmentSink: rowListSegments }
+        // No prediction: the rewrite lays the turn out now, and a reservation
+        // would cost a second row-list build.
+        { rowListSegmentSink: rowListSegments, skipHeightPrediction: true }
       );
       const template = article.ownerDocument?.createElement?.('template') || null;
       let nextArticle = null;
@@ -149,8 +156,9 @@
           if (result?.rowList) {
             const rowStats = result.rowList.stats || {};
             rebuildStats = { ...(rebuildStats || {}), row_list: result.rowList.outcome, kept: rowStats.kept, morphed: rowStats.morphed, added: rowStats.added };
+            morphNoted = true;
             streamClientMetrics?.noteRowListMorph?.(getPaneSessionId(), {
-              reason: 'article_rewrite',
+              reason: morphReason,
               rowsReused: Number(rowStats.kept) || 0,
               rowsRebuilt: (Number(rowStats.morphed) || 0) + (Number(rowStats.added) || 0),
             });
@@ -213,7 +221,9 @@
         inlineMermaidStreaming: true,
         syncViewport: true,
         syncChrome: true,
+        cleanupPredictedHeights: true,
       });
+      if (!morphNoted && rewriteReason) streamClientMetrics?.noteRowListMorph?.(getPaneSessionId(), { reason: morphReason });
       noteStreamRender('patch');
       return true;
     }

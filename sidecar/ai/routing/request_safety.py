@@ -77,4 +77,4 @@ def resolve_safety_mode(request_context: Any | None, config: Any) -> str:
 
 def resolve_streak_cap(request_context: Any | None, config: Any) -> int:
     requested = getattr(request_context, "auto_approve_streak_cap", None)
-    return int(getattr(config, "auto_approve_streak_cap", 50)) if requested is None else requested
+    return int(getattr(config, "auto_approve_streak_cap", 250)) if requested is None else requested

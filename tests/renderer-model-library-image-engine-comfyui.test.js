@@ -61,7 +61,7 @@ function sdSet() {
 }
 
 function createHarness(t, options = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="imageEngine"></div></body>', { url: 'http://localhost/' });
+  const dom = new JSDOM(`<!doctype html><body><div id="imageEngine" data-image-engine-part="${options.part || 'comfyui'}"></div></body>`, { url: 'http://localhost/' });
   const calls = [];
   let state = engineState(options.state);
   const run = (name, payload, fallback) => { calls.push([name, payload]); return options[name] ? options[name](payload) : fallback; };
@@ -98,25 +98,31 @@ function createHarness(t, options = {}) {
   };
 }
 
-test('ComfyUI only: sd.cpp not installed still shows the ComfyUI block and the Model sets list', async (t) => {
+test('the ComfyUI drawer shows only the ComfyUI block and the Model sets list, with sd.cpp not installed', async (t) => {
   const h = createHarness(t);
   await h.open();
   const titles = [...h.document.querySelectorAll('.model-library-image-engine-subtitle')].map((node) => node.textContent);
-  assert.deepEqual(titles, ['stable-diffusion.cpp', 'ComfyUI', 'Model sets']);
-  assert.match(h.text(), /Not installed/);
+  assert.deepEqual(titles, ['ComfyUI', 'Model sets']);
+  assert.doesNotMatch(h.text(), /Not installed/);
+  assert.equal(h.button('install'), null);
   assert.match(h.text(), /No sets yet/);
   assert.equal(h.button('choose-folder'), null);
   assert.equal(h.button('choose-comfy-folder').textContent, 'Choose ComfyUI folder…');
 });
 
-test('kill switch off: no ComfyUI block, the Model sets list stays', async (t) => {
-  const h = createHarness(t, { state: { comfyui: { enabled: false, health: null }, recipes: {}, model_sets: { sets: [sdSet()], default_id: '0123456789ab' } } });
+test('kill switch off: no ComfyUI block, and each drawer lists only its own engine sets', async (t) => {
+  const state = { comfyui: { enabled: false, health: null }, recipes: {}, model_sets: { sets: [sdSet()], default_id: '0123456789ab' } };
+  const h = createHarness(t, { state, part: 'sdcpp' });
   await h.open();
   assert.equal(h.comfyStatus(), null);
   assert.equal(h.button('choose-comfy-folder'), null);
   const titles = [...h.document.querySelectorAll('.model-library-image-engine-subtitle')].map((node) => node.textContent);
   assert.deepEqual(titles, ['stable-diffusion.cpp', 'Model sets']);
   assert.equal(h.document.querySelectorAll('.model-library-image-engine-set').length, 1);
+  const g = createHarness(t, { state });
+  await g.open();
+  assert.deepEqual([...g.document.querySelectorAll('.model-library-image-engine-subtitle')].map((node) => node.textContent), ['Model sets']);
+  assert.equal(g.document.querySelectorAll('.model-library-image-engine-set').length, 0);
 });
 
 test('no folder: Not set up, one secondary choose button and the explanation', async (t) => {
@@ -287,18 +293,24 @@ test('Check again calls checkComfyFolder and then refreshes', async (t) => {
   assert.equal(h.calls.filter(([m]) => m === 'getState').length, reads + 1);
 });
 
-test('sets list: the engine leads the meta line and a ComfyUI set is named by its recipe and quant', async (t) => {
-  const h = createHarness(t, { state: {
+test('sets list: each drawer shows its own engine sets, the engine leads the meta line and a ComfyUI set is named by its recipe and quant', async (t) => {
+  const state = {
     status: 'installed', comfyui: { enabled: true, health: health() },
     model_sets: { sets: [comfySet(), sdSet()], default_id: 'abcdef012345' },
-  } });
+  };
+  const h = createHarness(t, { state });
   await h.open();
   const rows = [...h.document.querySelectorAll('.model-library-image-engine-set')];
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 1);
   assert.equal(rows[0].querySelector('.model-library-image-engine-set-name').textContent, 'MiniMax-H3-Image · INT8');
   assert.equal(rows[0].querySelector('.model-library-image-engine-set-meta').textContent, 'ComfyUI · 35.2 GB · Default');
-  assert.equal(rows[1].querySelector('.model-library-image-engine-set-name').textContent, 'Qwen-Image 2.1 · Q4_K_M');
-  assert.equal(rows[1].querySelector('.model-library-image-engine-set-meta').textContent, 'stable-diffusion.cpp · 17.3 GB');
+  const g = createHarness(t, { state, part: 'sdcpp' });
+  await g.open();
+  const sdRows = [...g.document.querySelectorAll('.model-library-image-engine-set')];
+  assert.equal(sdRows.length, 1);
+  assert.equal(sdRows[0].querySelector('.model-library-image-engine-set-name').textContent, 'Qwen-Image 2.1 · Q4_K_M');
+  assert.equal(sdRows[0].querySelector('.model-library-image-engine-set-meta').textContent, 'stable-diffusion.cpp · 17.3 GB');
+  assert.ok(sdRows[0].querySelector('[data-image-engine-action="make-default"]'), 'making a set default is offered on either drawer');
 });
 
 test('a ComfyUI set of an unknown recipe falls back to the recipe id and a stored label wins', async (t) => {

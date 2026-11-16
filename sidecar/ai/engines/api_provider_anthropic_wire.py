@@ -1,7 +1,7 @@
 """Anthropic Messages request building for a user's own API key (row 78, P3a).
 
 Pure request shaping, no I/O: headers, the message-history mapping, the tool
-payload, the adaptive-thinking switches and the request-scoped cache that
+payload, the adaptive-thinking switches and the request-keyed cache that
 replays signed thinking blocks inside one tool loop. SSE parsing lives in
 ``api_provider_anthropic_stream``; the engine in ``api_provider_anthropic``.
 
@@ -16,9 +16,11 @@ text so the cached prefix stays byte-stable between iterations.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
@@ -26,7 +28,11 @@ from sidecar.ai.engines.vision_input import VisionImage
 
 ANTHROPIC_VERSION = "2026-10-21"
 THINKING_BETA = "thinking-binding-controls-2026-08-01"
-MAX_OUTPUT_CEILING = 32_768
+# Thinking counts toward ``max_tokens``, so a large window gets a 64,000 default. A
+# smaller window keeps 32,768, which its context budget is sized around; a larger
+# reply is the user's explicit pin.
+DEFAULT_OUTPUT_CEILING = 64_000
+SMALL_WINDOW_OUTPUT_CEILING = 32_768
 _SYSTEM_JOINER = "\n\n"
 _EPHEMERAL = {"type": "ephemeral"}
 _EFFORT_LEVELS = {
@@ -38,15 +44,24 @@ _EFFORT_LEVELS = {
     "max": "max",
     "ultra": "max",
 }
-_NO_THINKING_EFFORTS = frozenset({"", "none", "default"})
+_OFF_EFFORT = "none"
+_DEFAULT_EFFORTS = frozenset({"", "default"})
+# ``claude-<family>-<major>[-<minor>]``; a trailing date is not a minor version.
+_MODEL_VERSION_RE = re.compile(
+    r"(?:^|[/.])claude-[a-z]+-(?P<major>\d{1,2})(?:[-.](?P<minor>\d{1,2}))?(?!\d)"
+)
+# ``claude-3-5-sonnet-...`` and older: the version leads the id.
+_LEGACY_MODEL_RE = re.compile(r"(?:^|[/.])claude-(?P<major>\d)(?!\d)")
+_ADAPTIVE_SINCE = (4, 6)
+_XHIGH_SINCE = (4, 7)
 _IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 _EMPTY_TOOL_OUTPUT = "(no output)"
 
-# Replay cache bounds mirror the ChatGPT reasoning cache: a count floor large enough
-# for one long tool loop, a hard count ceiling, and an aggregate byte ceiling because a
-# signed thinking block is an opaque blob of unbounded size.
-DEFAULT_MAX_REPLAY_ENTRIES = 64
-MAX_REPLAY_ENTRIES_CEILING = 512
+# Replay cache bounds: one entry per tool call, so the count sits above the longest
+# cloud turn (500 calls plus 30 browser calls), with an aggregate byte ceiling because
+# a signed thinking block is an opaque blob of unbounded size. A finished chat turn's
+# blocks are not released; they wait here for FIFO eviction.
+DEFAULT_MAX_REPLAY_ENTRIES = 600
 MAX_REPLAY_BYTES = 8 * 1024 * 1024
 _NOMINAL_BLOCK_BYTES = 4096
 
@@ -56,21 +71,82 @@ def static_headers() -> dict[str, str]:
         "anthropic-version": ANTHROPIC_VERSION,
         "content-type": "application/json",
         "accept": "text/event-stream",
+        # The stream is read as raw bytes; the API compresses it when a client offers
+        # to accept that, and httpx offers by default.
+        "accept-encoding": "identity",
     }
 
 
 def output_cap(limits: Mapping[str, Any], context_length: int) -> int:
-    return min(int(limits["max_output_tokens"]), MAX_OUTPUT_CEILING, context_length // 2)
+    """The reply budget: the model's limit inside half the window, with a default ceiling.
+
+    The ceiling is 64,000 where that is at most an eighth of the window and 32,768
+    otherwise, so a 200,000-token model compacts where it did before. A pinned limit
+    has no ceiling.
+    """
+    cap = min(int(limits["max_output_tokens"]), context_length // 2)
+    if limits["sources"]["max_output_tokens"] == "pin":
+        return cap
+    ceiling = max(SMALL_WINDOW_OUTPUT_CEILING, min(DEFAULT_OUTPUT_CEILING, context_length // 8))
+    return min(cap, ceiling)
 
 
-def thinking_effort(requested: str | None, *, supported: bool) -> tuple[bool, str | None]:
-    """``(thinking requested, wire effort)``; an unknown effort still thinks, with no effort."""
+@dataclass(frozen=True)
+class ThinkingPlan:
+    """What one request says about thinking.
+
+    ``adaptive`` sends the ``thinking`` field (adaptive, block binding, the beta header)
+    and replays the held thinking blocks; without it the request names no thinking
+    control at all. ``effort`` is ``output_config.effort``, or ``None`` for the model's
+    default.
+    """
+
+    adaptive: bool
+    effort: str | None = None
+    display: str = "summarized"
+
+
+_NO_THINKING = ThinkingPlan(adaptive=False)
+
+
+def model_version(model: str) -> tuple[int, int] | None:
+    """``(major, minor)`` of a Claude model id; ``None`` for any other id."""
+    key = str(model or "").strip().lower()
+    legacy = _LEGACY_MODEL_RE.search(key)
+    if legacy is not None:
+        return int(legacy["major"]), 0
+    match = _MODEL_VERSION_RE.search(key)
+    if match is None:
+        return None
+    return int(match["major"]), int(match["minor"] or 0)
+
+
+def thinking_plan(requested: str | None, *, supported: bool, model: str) -> ThinkingPlan:
+    """Map Jenny's effort setting onto the wire for ``model``.
+
+    A Claude model from 4.6 on always gets adaptive thinking, because leaving the field
+    out does not turn thinking off there: it runs at the model's default effort with no
+    text. "Off" is therefore the lowest effort with the text omitted. Older Claude
+    models take a token budget this transport does not send, so they get no thinking
+    control. An id that is not a Claude version keeps the earlier shape: thinking only
+    when an effort is asked for.
+    """
     if not supported:
-        return False, None
+        return _NO_THINKING
     key = str(requested or "").strip().lower()
-    if key in _NO_THINKING_EFFORTS:
-        return False, None
-    return True, _EFFORT_LEVELS.get(key)
+    version = model_version(model)
+    if version is None:
+        if key == _OFF_EFFORT or key in _DEFAULT_EFFORTS:
+            return _NO_THINKING
+        return ThinkingPlan(adaptive=True, effort=_EFFORT_LEVELS.get(key))
+    if version < _ADAPTIVE_SINCE:
+        return _NO_THINKING
+    if key == _OFF_EFFORT:
+        return ThinkingPlan(adaptive=True, effort="low", display="omitted")
+    effort = _EFFORT_LEVELS.get(key)
+    if effort == "xhigh" and version < _XHIGH_SINCE:
+        effort = "high"
+    return ThinkingPlan(adaptive=True, effort=effort)
 
 
 # -- replay cache ----------------------------------------------------------------
@@ -84,15 +160,16 @@ def _block_size(block: Mapping[str, Any]) -> int:
 
 
 class ThinkingReplayCache:
-    """Signed thinking blocks of the current request, keyed by the turn's tool_use ids.
+    """Signed thinking blocks per request, keyed by the turn's tool_use ids.
 
     Anthropic signs each thinking block against the conversation prefix, and Jenny does
-    not persist signatures, so blocks live only for one request's tool loop and are
-    never offered to another request. FIFO eviction by first capture on count and bytes.
+    not persist signatures, so blocks serve one request's tool loop (an approval pause
+    included) and are never offered to another request. FIFO eviction by first capture
+    on count and bytes.
     """
 
     def __init__(self, max_entries: int = DEFAULT_MAX_REPLAY_ENTRIES) -> None:
-        self._max_entries = max(1, min(int(max_entries), MAX_REPLAY_ENTRIES_CEILING))
+        self._max_entries = max(1, int(max_entries))
         self._blocks: dict[tuple[str, str], tuple[dict[str, Any], ...]] = {}
         self._sizes: dict[tuple[str, str], int] = {}
         self._order: OrderedDict[tuple[str, str], None] = OrderedDict()
@@ -102,17 +179,19 @@ class ThinkingReplayCache:
     def store(
         self, request_key: str, tool_ids: Sequence[str], blocks: Sequence[Mapping[str, Any]]
     ) -> None:
-        if not request_key or not blocks:
+        if not request_key or not blocks or not tool_ids:
             return
         frozen = tuple(dict(block) for block in blocks)
-        size = sum(_block_size(block) for block in frozen)
+        # A parallel round's ids share these blocks, so each id carries an equal share
+        # of the bytes: counting them whole per id evicted a busy turn's own blocks.
+        share = -(-sum(_block_size(block) for block in frozen) // len(tool_ids))
         with self._lock:
             for tool_id in tool_ids:
                 key = (request_key, str(tool_id))
                 self._total_bytes -= self._sizes.get(key, 0)
                 self._blocks[key] = frozen
-                self._sizes[key] = size
-                self._total_bytes += size
+                self._sizes[key] = share
+                self._total_bytes += share
                 self._order.setdefault(key, None)
             self._evict_locked()
 
@@ -261,11 +340,14 @@ def _tool_result_block(message: EngineMessage) -> dict[str, Any] | None:
     if not isinstance(call_id, str) or not call_id.strip():
         return None
     text = _text_of(message.get("content"))
-    return {
+    block: dict[str, Any] = {
         "type": "tool_result",
         "tool_use_id": call_id.strip(),
         "content": text if text.strip() else _EMPTY_TOOL_OUTPUT,
     }
+    if message.get("is_error") is True:
+        block["is_error"] = True
+    return block
 
 
 def _merge_turns(turns: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str, Any]]:
@@ -333,19 +415,48 @@ def build_messages(
     return _merge_turns(turns)
 
 
+def _required_sets(branches: Any) -> list[str]:
+    """Each branch's required arguments, when every branch is such a list; else nothing."""
+    sets: list[str] = []
+    for branch in branches if isinstance(branches, list) else []:
+        required = branch.get("required") if isinstance(branch, dict) else None
+        if not isinstance(required, list) or not required:
+            return []
+        sets.append(" + ".join(str(key) for key in required))
+    return sets
+
+
+def _input_schema(tool: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    """``(input_schema, description)`` in the shape the Messages API admits.
+
+    The API answers 400 to a top-level ``anyOf``, ``oneOf`` or ``allOf`` in a tool's
+    ``input_schema``, which is how Jenny's schemas say "one of these argument sets".
+    The combinator is dropped from the model-facing copy and its sets are named in the
+    description; the call is still checked against the full schema before it runs.
+    """
+    schema = tool.get("parameters")
+    input_schema = dict(schema) if isinstance(schema, dict) else {}
+    input_schema.setdefault("type", "object")
+    description = str(tool.get("description") or "").strip()
+    input_schema.pop("allOf", None)
+    for key in ("anyOf", "oneOf"):
+        sets = _required_sets(input_schema.pop(key, None))
+        if sets:
+            description = f"{description} Give one of these argument sets: {'; '.join(sets)}."
+    return input_schema, description.strip()
+
+
 def build_tools(tools: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for tool in tools:
         name = str(tool.get("name") or "").strip()
         if not name or tool.get("defer_loading") is True:
             continue
-        schema = tool.get("parameters")
-        input_schema = dict(schema) if isinstance(schema, dict) else {}
-        input_schema.setdefault("type", "object")
+        input_schema, description = _input_schema(tool)
         payload.append(
             {
                 "name": name,
-                "description": str(tool.get("description") or "").strip(),
+                "description": description,
                 "input_schema": input_schema,
                 "eager_input_streaming": True,
             }
@@ -361,8 +472,7 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
     prompt: str,
     messages: Sequence[EngineMessage] | None,
     tools: Sequence[dict[str, Any]],
-    thinking: bool,
-    effort: str | None,
+    thinking: ThinkingPlan,
     vision: bool,
     replay: Mapping[str, Sequence[dict[str, Any]]],
 ) -> tuple[dict[str, Any], dict[str, str]]:
@@ -372,7 +482,9 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
         prompt,
         remainder if messages else None,
         vision=vision,
-        replay=replay if thinking else {},
+        # Without the block-binding field an edited history is a hard error on an
+        # enforced account, so blocks are replayed only alongside it.
+        replay=replay if thinking.adaptive else {},
     )
     payload: dict[str, Any] = {
         "model": model,
@@ -390,28 +502,31 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
         payload["tools"] = tool_payload
         payload["tool_choice"] = {"type": "auto"}
     headers: dict[str, str] = {}
-    if thinking:
+    if thinking.adaptive:
         payload["thinking"] = {
             "type": "adaptive",
-            "display": "summarized",
+            "display": thinking.display,
             "block_binding": {"prefix_mismatch_behavior": "drop_block"},
         }
-        if effort is not None:
-            payload["output_config"] = {"effort": effort}
+        if thinking.effort is not None:
+            payload["output_config"] = {"effort": thinking.effort}
         headers["anthropic-beta"] = THINKING_BETA
     return payload, headers
 
 
 __all__ = [
     "ANTHROPIC_VERSION",
-    "MAX_OUTPUT_CEILING",
+    "DEFAULT_OUTPUT_CEILING",
+    "SMALL_WINDOW_OUTPUT_CEILING",
     "THINKING_BETA",
+    "ThinkingPlan",
     "ThinkingReplayCache",
     "build_messages",
     "build_request",
     "build_tools",
+    "model_version",
     "output_cap",
     "split_system",
     "static_headers",
-    "thinking_effort",
+    "thinking_plan",
 ]

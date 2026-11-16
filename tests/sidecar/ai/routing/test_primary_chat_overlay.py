@@ -120,8 +120,9 @@ def test_the_overlay_is_static_registered_and_bounded() -> None:
     # row 94 P1 raised it again for the chat_organize / chat_configure sentence, row 85 for scheduled checks;
     # row 86's away_digest line fits under the same cap; row 94 P2 raised it for the projects and fork sentence,
     # P3 for the app_view clause, P4 for the export and terminal clause, the terminal_run exception and the
-    # suggest_next_step line.
-    assert 900 <= len(overlay) <= 3000, len(overlay)
+    # suggest_next_step line; 2026-11-15 (owner pick "Say where boards live") for the boards sentence.
+    assert 900 <= len(overlay) <= 3200, len(overlay)
+    assert "project boards" in overlay and "docked beside a board" in overlay, "the primary cannot see boards"
     for tool in ("sessions_list", "session_status", "session_transcript", "conversations_search", "propose_session",
                  "session_message", "session_stop", "jenny_help", "schedule_list", "schedule_change", "away_digest",
                  "projects_list", "project_create", "fork_of_session_id", "app_view", "session_export",
@@ -188,6 +189,7 @@ def test_the_command_sandbox_gets_an_overlay_naming_only_its_tools() -> None:
     assert named <= DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES, named - DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES
     assert {"sessions_list", "session_status", "session_transcript"} <= named
     assert "command sandbox is on" in overlay and "Settings" in overlay
+    assert "docked beside a board" in overlay, "the boards sentence reaches both variants"
     # No policy declaration, or the legacy desktop default, keeps the full overlay.
     assert build_primary_chat_overlay(primary, {}) == [PRIMARY_CHAT_OVERLAY]
     assert build_primary_chat_overlay(primary) == [PRIMARY_CHAT_OVERLAY]

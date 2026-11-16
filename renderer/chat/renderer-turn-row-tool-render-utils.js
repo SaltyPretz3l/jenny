@@ -261,9 +261,12 @@
           try { summaryInput = JSON.parse(inputJson); } catch (_error) { summaryInput = null; }
         }
       }
-      const rowSummary = toolCallUtils && typeof toolCallUtils.formatToolCallSummary === 'function'
+      // A tool whose row names what happened (session_prioritize: Put "<title>" first) puts the words
+      // in its result metadata; the call's input alone cannot say them.
+      const resultRowSummary = String(canonicalResult?.metadata?.row_summary || resultPayload?.metadata?.row_summary || '').trim();
+      const rowSummary = resultRowSummary || (toolCallUtils && typeof toolCallUtils.formatToolCallSummary === 'function'
         ? toolCallUtils.formatToolCallSummary(toolName, summaryInput)
-        : toolName;
+        : toolName);
       // W1-4 clickable paths: file-target tools stamp their path on the row
       // (context-menu hook) and render the path portion of the summary as a
       // chip that dispatches ide:open-file-at-line (renderer-chat-path-open).
@@ -405,6 +408,7 @@
           escapeHtml,
           // Resolved per render: the bindings module owns the live-journal set.
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
+          isExpanded: globalThis.rendererCalendarChatBindings?.isCalendarBlockExpanded,
         }) : '';
       const notesBlockMarkup = !resultPayload ? ''
         : detailModel.metadata.result_kind === 'project_notes'

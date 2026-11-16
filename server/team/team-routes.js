@@ -4,7 +4,8 @@
 // "Version handshake"): hello, status, join, leave and the team bootstrap.
 // Each handler calls the per-request guard with the action the registry names
 // for its route and answers the guard's failure unchanged; none checks a role
-// itself. Logs carry event names and reasons only.
+// itself. Logs carry event names and reasons only. Hello answers `addresses`
+// to device principals only (slice 5-3, I12).
 
 const { hostFailure } = require('../api-contract');
 const {
@@ -107,8 +108,14 @@ function createTeamRoutes(context) {
       return;
     }
     ctx.markHello();
+    // I12 (TEAM_INTERNET_SPEC): only a device principal learns the host's addresses; an invite
+    // holder already has the invite's hints and gets none (T3, T5).
+    const device = typeof ctx.actor?.member_id === 'string' && ctx.actor.role !== 'invite';
+    // Slice 6-6: a device may send bulk streams only while the running bridge reads their class byte.
+    const bulk = device && context.bulkStreams?.() === true;
     json(ctx.response, 200, { ok: true, api_version: API_VERSION, protocol: { ...PROTOCOL_RANGE },
-      team_id: context.store.teamId(), app_version: appVersion, addresses: context.addresses() });
+      team_id: context.store.teamId(), app_version: appVersion, ...(device ? { addresses: context.addresses() } : {}),
+      ...(bulk ? { bulk_streams: 1 } : {}) });
   }
 
   function status(ctx) {
@@ -123,9 +130,10 @@ function createTeamRoutes(context) {
 
   async function join(ctx) {
     if (!permit(ctx, { kind: 'invite', id: ctx.actor.device_id })) return;
-    // Both limits count the attempt before the body or the store is touched.
+    // Both limits count the attempt before the body or the store is touched; the overall budget only
+    // counts an attempt the per-invite limit allowed, so one invite key cannot spend everyone's (X3-F01).
     const allowedForInvite = perInvite.take(ctx.actor.device_id);
-    const allowedOverall = overall.take(JOIN_OVERALL_KEY);
+    const allowedOverall = allowedForInvite && overall.take(JOIN_OVERALL_KEY);
     if (!allowedForInvite || !allowedOverall) {
       log('WARN', 'team.join_rate_limited', { scope: allowedForInvite ? 'overall' : 'invite' });
       sendHostFailure(ctx.response, hostFailure('limit', 'team_rate_limit', ctx.requestId), ctx.requestId);

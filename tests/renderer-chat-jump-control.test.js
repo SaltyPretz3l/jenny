@@ -143,3 +143,31 @@ test('an empty chat shows no control', (t) => {
   assert.equal(button.dataset.visible, 'false');
   assert.equal(button.hasAttribute('inert'), true);
 });
+
+// scroll-away-nav 9: the control renders every scroll frame; it must not filter
+// the whole message list per frame just to learn whether the chat is empty.
+test('the per-frame render re-filters the messages only when the session’s list changes', (t) => {
+  const { window } = new JSDOM('<!doctype html><body><div class="composer-jump-tools hidden"><button id="top"></button></div><button id="bottom"></button></body>');
+  t.after(() => window.close());
+  const doc = window.document;
+  const list = [{ id: 'u1' }, { id: 'a1' }];
+  let filters = 0;
+  const chrome = composerChrome.createComposerChrome({
+    state: { ui: {} },
+    documentRef: doc,
+    getPaneSessionId: () => 'session-a',
+    isFollowingLatest: () => false,
+    dom: { jumpToTopButton: doc.getElementById('top'), jumpToBottomButton: doc.getElementById('bottom') },
+    callbacks: {
+      getSessionMessages: () => list,
+      getVisibleSessionMessages: () => { filters += 1; return list.filter(Boolean); },
+    },
+  });
+  for (let frame = 0; frame < 100; frame += 1) chrome.renderComposerJumpControls();
+  assert.equal(filters, 1, 'one filter for 100 frames over an unchanged list');
+  assert.equal(doc.getElementById('top').disabled, false);
+  list.length = 0;
+  chrome.renderComposerJumpControls();
+  assert.equal(filters, 2, 'a changed list is filtered again');
+  assert.equal(doc.getElementById('top').disabled, true, 'an emptied chat disables the jump');
+});

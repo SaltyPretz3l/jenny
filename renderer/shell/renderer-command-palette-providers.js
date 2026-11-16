@@ -37,13 +37,14 @@
 
   // Empty-query display order. Also the group order for the grouped view.
   const GROUP_ORDER = [
-    'Undo', 'Navigate', 'Actions', 'Workspace', 'Sessions', 'Settings', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help',
+    'Undo', 'Navigate', 'Team', 'Actions', 'Workspace', 'Sessions', 'Settings', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help',
   ];
 
   // Row type word shown on the trailing edge. Sentence case, singular.
   const GROUP_TAGS = {
     Undo: 'Undo',
     Navigate: 'View',
+    Team: 'Action', // team rows set their own word: Channel, Direct, Person, Action
     Actions: 'Action',
     Workspace: 'Command',
     Sessions: 'Chat',
@@ -56,6 +57,7 @@
   const GROUP_ICONS = {
     Undo: 'undo',
     Navigate: 'arrow',
+    Team: 'chat',
     Actions: 'action',
     Workspace: 'code',
     Sessions: 'chat',
@@ -71,9 +73,10 @@
     return index < 0 ? GROUP_ORDER.length : index;
   }
 
-  function scopeAllows(scope, groupName) {
+  // A row may also name the scopes it belongs to (`scopes`): team channels and conversations are in Chats.
+  function scopeAllows(scope, groupName, item) {
     if (!scope || !scope.groups) return true;
-    return scope.groups.indexOf(groupName) !== -1;
+    return scope.groups.indexOf(groupName) !== -1 || Boolean(item && Array.isArray(item.scopes) && item.scopes.indexOf(scope.id) !== -1);
   }
 
   function decorate(item) {
@@ -120,6 +123,7 @@
       openKeyboardShortcuts = function noop() {},
       openSettingsSection = function noop() {},
       ensureSettingsPage = function noop() {},
+      getProjectSwitcher = null,
     } = callbacks;
 
     // Built once on first use, then reused: the settings index is derived from
@@ -307,8 +311,8 @@
        already builds for the Settings page search box. Navigation reuses the
        shell's openSettingsSection seam rather than re-implementing the jump. */
     function getSettingsItems() {
+      const search = globalRef.rendererSettingsSearch || null;
       if (settingsIndexCache === null) {
-        const search = globalRef.rendererSettingsSearch || null;
         if (!search) {
           Promise.resolve(ensureSettingsPage()).catch(() => {});
           return [];
@@ -317,7 +321,11 @@
           ? safeList(() => search.buildSettingsSearchIndex())
           : [];
       }
-      return settingsIndexCache.map((entry) => ({
+      // The index is cached; the flag is tested at each build, by the test the Settings search box uses.
+      const navItems = typeof search?.listNavItems === 'function' ? safeList(() => search.listNavItems(globalRef.document)) : [];
+      const offered = settingsIndexCache.filter((entry) => !entry.featureFlag
+        || (typeof search?.isFlagOn === 'function' && search.isFlagOn(entry.featureFlag, navItems) === true));
+      return offered.map((entry) => ({
         id: 'setting:' + String(entry.id || ''),
         group: 'Settings',
         label: String(entry.label || ''),
@@ -327,12 +335,35 @@
       }));
     }
 
+    /* Team rows (row 123 slice 2a-6c): only while the `team` flag is on and the gate has loaded the team rows,
+       which it does only while this Jenny is in a team; else nothing, so the palette is exactly as without Team. */
+    function getTeamItems() {
+      if (state.features?.featureFlags?.team !== true) return [];
+      const team = globalRef.rendererTeamPalette;
+      if (!team || typeof team.paletteItems !== 'function') return [];
+      return safeList(() => team.paletteItems({ navigate: navigateTo('team') }));
+    }
+
+    /* Boards by name (row 150 slice B5): only while `project_boards` is on. The rows come from a module loaded the first
+       time the palette opens with the flag on (it is in no startup list); until it has read the list there are none. */
+    function getBoardItems() {
+      if (state.features?.featureFlags?.project_boards !== true) return [];
+      const boards = globalRef.rendererBoardPalette;
+      if (typeof boards?.paletteItems !== 'function') {
+        Promise.resolve(globalRef.scriptLoaderUtils?.ensureScript?.({ src: 'renderer/features/board/board-palette.js', isReady: () => Boolean(globalRef.rendererBoardPalette) })).catch(() => {});
+        return [];
+      }
+      return safeList(() => boards.paletteItems({ navigate: navigateTo('board'), getProjectSwitcher, windowRef: globalRef }));
+    }
+
     /* One array, built once per open. Order here is only the tie-break for
        equal-scoring rows; display order comes from groupOrder()/the ranking. */
     function snapshot() {
       return []
         .concat(getPendingUndoItems())
         .concat(getNavigateItems())
+        .concat(getTeamItems())
+        .concat(getBoardItems())
         .concat(getActionItems())
         .concat(safeList(getIdeCommandItems))
         .concat(getSessionItems())
@@ -343,7 +374,7 @@
           id: 'help:keyboard',
           group: 'Help',
           label: jt('commandPalette.help.keyboardShortcuts', 'Keyboard shortcuts'),
-          description: jt('commandPalette.help.keyboardShortcutsDescription', 'Quick reference for hotkeys across Jenny'),
+          description: jt('commandPalette.help.keyboardShortcutsDescription', 'Every shortcut in Jenny, searchable'),
           hint: null,
           run: () => { try { openKeyboardShortcuts(); } catch (_err) { /* noop */ } },
         }])

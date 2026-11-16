@@ -201,6 +201,7 @@
       defaultLabel: spec.defaultLabel ? String(spec.defaultLabel) : '',
       defaultSource,
       noMeta: spec.noMeta === true,
+      lockWhileSaving: spec.lockWhileSaving !== false, // false: the control stays usable while its save is in flight (the next write queues)
       options: Array.isArray(spec.options) ? Object.freeze(spec.options.map((option) => Object.freeze({ value: option.value, label: String(option.label == null ? option.value : option.label) }))) : (spec.options || null),
       validation: Object.freeze(Object.assign({}, isRecord(spec.validation) ? spec.validation : {})),
       presentation: Object.freeze(presentation),
@@ -209,6 +210,7 @@
       adapterId: String(spec.adapterId),
       key: String(spec.key),
       searchOnly: spec.searchOnly === true,
+      enabledWhen: spec.enabledWhen ? String(spec.enabledWhen) : '', // a condition the row's page tests: greyed out, never hidden
     });
     REGISTRY.set(id, descriptor);
     return descriptor;
@@ -268,17 +270,17 @@
   // A saved pause length that is not on the list is worded like the listed ones.
   const guardMinutesLabel = (n) => jt('settings.unattendedGuard.choice.minutes', '{n} min', { n });
 
-  // Tools (chatUi scalars, tool config, web search, command sandbox)
-  def({ id: 'safetyModeSelect', sectionId: 'tools', kind: 'enum', default: 'normal', adapterId: 'chatUi', key: 'safetyMode',
+  // Permissions (chatUi scalars); then Tools (tool config, web search, command sandbox)
+  def({ id: 'safetyModeSelect', sectionId: 'permissions', kind: 'enum', default: 'normal', adapterId: 'chatUi', key: 'safetyMode',
     options: [{ value: 'normal', label: jt('settings.safetyMode.option.normal', 'Normal') }, { value: 'strict', label: jt('settings.safetyMode.option.strict', 'Strict') }, { value: 'paranoid', label: jt('settings.safetyMode.option.paranoid', 'Paranoid') }] });
-  def({ id: 'defaultRunModeSelect', sectionId: 'tools', kind: 'enum', default: 'ask', adapterId: 'chatUi', key: 'defaultRunMode',
+  def({ id: 'defaultRunModeSelect', sectionId: 'permissions', kind: 'enum', default: 'ask', adapterId: 'chatUi', key: 'defaultRunMode',
     options: [{ value: 'ask', label: jt('composer.runMode.ask', 'Ask') }, { value: 'auto', label: jt('composer.runMode.auto', 'Auto') }, { value: 'plan', label: jt('composer.runMode.plan', 'Plan') }] });
-  def({ id: 'unattendedGuardMinutesInput', sectionId: 'tools', kind: 'optionalInteger', default: 0, offValue: 0, control: 'choice', controlReason: 'row-standard:off-capable-dropdown', adapterId: 'chatUi', key: 'unattendedGuardMinutes',
+  def({ id: 'unattendedGuardMinutesInput', sectionId: 'permissions', kind: 'optionalInteger', default: 0, offValue: 0, control: 'choice', controlReason: 'row-standard:off-capable-dropdown', adapterId: 'chatUi', key: 'unattendedGuardMinutes',
     validation: { min: 1, max: 120, step: 1 }, presentation: { unit: UNIT.min, offLabel: jt('settings.unattendedGuard.choice.never', 'Never'), choiceLabel: guardMinutesLabel,
       choices: [5, 10, 15, 30].map((n) => ({ value: n, label: guardMinutesLabel(n) })).concat([
         { value: 60, label: jt('settings.unattendedGuard.choice.oneHour', '1 hour') }, { value: 120, label: jt('settings.unattendedGuard.choice.twoHours', '2 hours') },
       ]) } });
-  def({ id: 'autoApproveStreakCapInput', sectionId: 'tools', kind: 'optionalInteger', offValue: 0, default: 50, adapterId: 'chatUi', key: 'autoApproveStreakCap', validation: { min: 1, max: 500, step: 1 }, presentation: { offLabel: jt('settings.field.noLimit', 'No limit') } });
+  def({ id: 'autoApproveStreakCapInput', sectionId: 'permissions', kind: 'optionalInteger', offValue: 0, default: 250, adapterId: 'chatUi', key: 'autoApproveStreakCap', validation: { min: 1, max: 500, step: 1 }, presentation: { offLabel: jt('settings.field.noLimit', 'No limit') } });
   // Tool toggles: the only place their copy is written. The tool-config field table in
   // renderer-settings-support.js reads label, help and detail from these descriptors.
   const TOOL_COPY = {
@@ -293,7 +295,7 @@
     lsp: [jt('settings.tools.lsp.label', 'Code intelligence'), jt('settings.tools.lsp.description', 'Read-only diagnostics, symbols and definitions from language servers.')],
   };
   [['imageRead', false], ['fileTools', true], ['richFiles', true], ['web', false], ['pythonRuntime', false], ['worktree', false], ['subagents', true], ['bash', true], ['lsp', false]].forEach(([key, dflt]) => {
-    bool('settings-tool-config-' + key, 'tools', 'features', 'toolConfig.' + key, dflt, { copy: { label: TOOL_COPY[key][0], description: TOOL_COPY[key][1], detail: TOOL_COPY[key][2] } });
+    bool('settings-tool-config-' + key, 'tools', 'features', 'toolConfig.' + key, dflt, { lockWhileSaving: false, copy: { label: TOOL_COPY[key][0], description: TOOL_COPY[key][1], detail: TOOL_COPY[key][2] } });
   });
   def({ id: 'webSearchProviderSelect', sectionId: 'tools', kind: 'enum', default: 'duckduckgo', adapterId: 'features', key: 'webSearch.provider', options: 'source:webSearchProviders',
     copy: { label: jt('settings.tools.webSearch.providerLabel', 'Search provider'), description: jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no setup.') } });
@@ -332,27 +334,37 @@
   def({ id: 'appearancePaletteSelect', sectionId: 'appearance', kind: 'enum', default: 'slate', adapterId: 'appearance', key: 'paletteId', options: 'source:palettes' });
   def({ id: 'appearanceTypographySelect', sectionId: 'appearance', kind: 'enum', default: 'technical', adapterId: 'appearance', key: 'typographyId', options: 'source:typography' });
   def({ id: 'appearanceFontScaleSelect', sectionId: 'appearance', kind: 'enum', default: 'default', adapterId: 'appearance', key: 'fontScaleId', options: 'source:fontScales', control: 'segmented', controlReason: SOURCE_SEGMENTED });
-  def({ id: 'appearanceChatWidthSelect', sectionId: 'appearance', kind: 'enum', default: 'standard', adapterId: 'appearance', key: 'chatWidthId', options: 'source:chatWidths', control: 'segmented', controlReason: SOURCE_SEGMENTED });
+  def({ id: 'appearanceChatWidthSelect', sectionId: 'chat', kind: 'enum', default: 'standard', adapterId: 'appearance', key: 'chatWidthId', options: 'source:chatWidths', control: 'segmented', controlReason: SOURCE_SEGMENTED });
   def({ id: 'appearanceSurfaceEffectSelect', sectionId: 'appearance', kind: 'enum', default: 'none', adapterId: 'appearance', key: 'surfaceEffectId', options: 'source:surfaceEffects' });
   bool('appearanceComposerHoloToggle', 'appearance', 'appearance', 'composerHoloId', true);
   bool('appearanceStartupAnimationToggle', 'appearance', 'appearance', 'startupAnimation', true);
-  bool('appearanceTitlebarLoadToggle', 'appearance', 'appearance', 'titlebarLoad', false);
-  bool('appearanceArtifactAutoOpenToggle', 'appearance', 'appearance', 'artifactAutoOpen', false);
+  bool('appearanceTitlebarLoadToggle', 'general', 'appearance', 'titlebarLoad', false);
+  bool('appearanceArtifactAutoOpenToggle', 'chat', 'appearance', 'artifactAutoOpen', false);
   // Row 59 checkpoint 6: shell-config performanceTelemetry through window.jennyShell.performance (wire names).
-  bool('performanceShowCounterToggle', 'appearance', 'performance', 'show_counter', false);
-  bool('performanceGpuWarningsToggle', 'appearance', 'performance', 'gpu_warnings_enabled', true);
-  bool('appearanceSpellcheckToggle', 'appearance', 'features', 'featureFlags.text_spellcheck', true);
+  bool('performanceShowCounterToggle', 'general', 'performance', 'show_counter', false);
+  bool('performanceGpuWarningsToggle', 'general', 'performance', 'gpu_warnings_enabled', true);
+  bool('appearanceSpellcheckToggle', 'general', 'features', 'featureFlags.text_spellcheck', true);
   // Row 122: before and after pictures of the pages a turn changed (a Chat layout row).
-  bool('changePicturesToggle', 'appearance', 'features', 'featureFlags.change_pictures', true, { copy: {
+  bool('changePicturesToggle', 'chat', 'features', 'featureFlags.change_pictures', true, { copy: {
     label: jt('settings.changePictures.label', 'Show before and after pictures of page changes'),
-    description: jt('settings.changePictures.description', 'When a turn changes a web page, Jenny takes a picture of the page before and after and shows both in the chat and in Changes. Off takes no pictures and shows none.'),
+    description: jt('settings.changePictures.description', 'When a turn changes a web page, Jenny takes a picture of the page before and after and shows both in Changes. Off takes no pictures and shows none.'),
     keywords: [jt('settings.changePictures.keywords.beforeAfter', 'before and after'), jt('settings.changePictures.keywords.pictures', 'pictures'), jt('settings.changePictures.keywords.screenshot', 'screenshot'), jt('settings.changePictures.keywords.compare', 'compare')],
   } });
   def({ id: 'appearanceAppZoomSelect', sectionId: 'appearance', kind: 'enum', default: 110, adapterId: 'windowUi', key: 'appZoomPercent', options: 'source:appZoomPresets' });
-  def({ id: 'uiLanguageSelect', sectionId: 'appearance', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages' });
-  def({ id: 'use24HourTime', sectionId: 'appearance', kind: 'boolean', default: false, controlId: 'use24HourTimeToggle', adapterId: 'chatUi', key: 'use24HourTime', copy: 'field-copy:use24HourTimeToggle' });
-  def({ id: 'transcriptViewDefaultSelect', sectionId: 'appearance', kind: 'enum', default: 'thinking', adapterId: 'chatUi', key: 'transcriptViewDefault',
+  def({ id: 'appearanceTeamDensitySelect', sectionId: 'appearance', kind: 'enum', default: 'comfortable', adapterId: 'appearance', key: 'teamDensityId',
+    options: [{ value: 'comfortable', label: jt('appearance.teamDensity.comfortable', 'Comfortable') }, { value: 'compact', label: jt('appearance.teamDensity.compact', 'Compact') }] });
+  def({ id: 'uiLanguageSelect', sectionId: 'general', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages' });
+  def({ id: 'use24HourTime', sectionId: 'general', kind: 'boolean', default: false, controlId: 'use24HourTimeToggle', adapterId: 'chatUi', key: 'use24HourTime', copy: 'field-copy:use24HourTimeToggle' });
+  def({ id: 'transcriptViewDefaultSelect', sectionId: 'chat', kind: 'enum', default: 'thinking', adapterId: 'chatUi', key: 'transcriptViewDefault',
     options: [{ value: 'answers', label: jt('settings.transcriptView.answers', 'Answers') }, { value: 'thinking', label: jt('settings.transcriptView.thinking', 'Thinking') }, { value: 'everything', label: jt('settings.transcriptView.everything', 'Everything') }] });
+  // Which diagram language the model is told about (one, never two). Mounted after the pictures switch on Chat.
+  def({ id: 'drawingInstructionsSelect', sectionId: 'chat', kind: 'enum', default: 'short', adapterId: 'chatUi', key: 'drawingInstructions',
+    options: [{ value: 'short', label: jt('settings.drawingInstructions.option.short', 'Short') }, { value: 'full', label: jt('settings.drawingInstructions.option.full', 'Full') }, { value: 'mermaid', label: jt('settings.drawingInstructions.option.mermaid', 'Mermaid') }],
+    copy: {
+      label: jt('settings.drawingInstructions.label', 'Drawing instructions'),
+      description: jt('settings.drawingInstructions.description', "What Jenny's model is told about drawing diagrams. Short suits small local models. Full adds charts, sequences, molecules, maps and free pictures. Mermaid tells it to write Mermaid instead."),
+      keywords: [jt('settings.drawingInstructions.keywords.diagram', 'diagram'), jt('settings.drawingInstructions.keywords.sketch', 'sketch'), jt('settings.drawingInstructions.keywords.mermaid', 'mermaid'), jt('settings.drawingInstructions.keywords.drawing', 'drawing')],
+    } });
 
   // Editor (workspaceIde object)
   def({ id: 'editorFontSizeSelect', sectionId: 'editor', kind: 'enum', default: 0, adapterId: 'workspaceIde', key: 'fontSize', options: 'source:editorFontSizes' });
@@ -410,11 +422,16 @@
   // hours are chatUi scalars on the half hour, drawn together on one row (renderer-settings-utils.js).
   bool('primaryDigestsToggle', 'jennyChat', 'features', 'featureFlags.primary_digests', false);
   const HALF_HOURS = Array.from({ length: 48 }, (_, i) => String(Math.floor(i / 2)).padStart(2, '0') + (i % 2 ? ':30' : ':00')).map((value) => ({ value, label: value }));
-  def({ id: 'digestQuietStartSelect', sectionId: 'jennyChat', kind: 'enum', default: '22:00', adapterId: 'chatUi', key: 'digestQuietStart', options: HALF_HOURS });
-  def({ id: 'digestQuietEndSelect', sectionId: 'jennyChat', kind: 'enum', default: '07:00', adapterId: 'chatUi', key: 'digestQuietEnd', options: HALF_HOURS });
+  def({ id: 'digestQuietStartSelect', sectionId: 'notifications', kind: 'enum', default: '22:00', adapterId: 'chatUi', key: 'digestQuietStart', options: HALF_HOURS });
+  def({ id: 'digestQuietEndSelect', sectionId: 'notifications', kind: 'enum', default: '07:00', adapterId: 'chatUi', key: 'digestQuietEnd', options: HALF_HOURS });
   ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny'].forEach((category) => {
     bool('notificationsCategory' + category[0].toUpperCase() + category.slice(1) + 'Toggle', 'notifications', 'windowUi.notifications', 'categories.' + category, true);
   });
+  // Row 123 slice 2a-6c: team messages, greyed out (not hidden) while this Jenny is in no team (owner, 2026-11-12).
+  bool('notificationsCategoryTeamToggle', 'notifications', 'windowUi.notifications', 'categories.team', true, { enabledWhen: 'team', copy: {
+    label: jt('settings.fieldCopy.notificationsCategoryTeamToggle.label', 'Someone messages you in a team'),
+    description: jt('settings.fieldCopy.notificationsCategoryTeamToggle.description', 'A mention, a direct message, or any message in a channel you set to All messages. The bell in each channel chooses which.'),
+    keywords: ['team', 'mention', jt('settings.fieldCopy.notificationsCategoryTeamToggle.keywordDirect', 'direct message'), 'channel'] } });
   bool('notificationsReplyPreviewToggle', 'notifications', 'windowUi.notifications', 'replyPreview', false);
 
   // Offline, Memories (memory v2 switches: shell config `memory`, saved through the features bridge)
@@ -504,9 +521,9 @@
   };
   // [key, scope, default, unit, min, max, step, schema type, presets, row id] — mirrors renderer/shared/engine-tuning-schema.js (held by test).
   const ENGINE_TUNING_STUBS = [
-    ['maxToolsPerTurn', 'local', 20, '', 1, 500, 1, 'integer', [[10, '10'], [20, '20'], [40, '40']], 'toolCallsPerReply'],
-    ['maxChatLoopIterations', 'local', 8, '', 1, 32, 1, 'integer', [[4, '4'], [8, '8'], [16, '16']], 'chatRounds'],
-    ['maxTaskLoopIterations', 'local', 30, '', 1, 250, 1, 'integer', [[10, '10'], [20, '20'], [30, '30']], 'taskRounds'],
+    ['maxToolsPerTurn', 'local', 200, '', 1, 500, 1, 'integer', [[40, '40'], [200, '200'], [400, '400']], 'toolCallsPerReply'],
+    ['maxChatLoopIterations', 'local', 40, '', 1, 250, 1, 'integer', [[10, '10'], [40, '40'], [100, '100']], 'chatRounds'],
+    ['maxTaskLoopIterations', 'local', 300, '', 1, 1000, 1, 'integer', [[50, '50'], [300, '300'], [600, '600']], 'taskRounds'],
     ['cloudMaxChatLoopIterations', 'cloud', 40, '', 1, 1000, 1, 'integer', [[20, '20'], [40, '40'], [100, '100']], 'chatRounds'],
     ['cloudMaxTaskLoopIterations', 'cloud', 300, '', 1, 1000, 1, 'integer', [[100, '100'], [300, '300'], [600, '600']], 'taskRounds'],
     ['cloudMaxToolsPerTurn', 'cloud', 200, '', 1, 500, 1, 'integer', [[100, '100'], [200, '200'], [400, '400']], 'toolCallsPerReply'],
@@ -514,14 +531,14 @@
     ['maxCloudSubAgentConcurrency', 'cloud', 3, '', 1, 3, 1, 'integer', [[1, '1'], [2, '2'], [3, '3']], 'helpersAtOnce'],
     ['maxSubAgentLoopIterations', 'shared', 10, '', 1, 32, 1, 'integer', [[5, '5'], [10, '10'], [20, '20']], 'helperRounds'],
     ['maxToolCallsPerSession', 'local', 2000, '', 1, 2000, 10, 'integer', [[500, '500'], [1000, '1000'], [2000, '2000']], 'conversationToolCalls'],
-    ['maxWebToolCallsPerTurn', 'local', 10, '', 1, 100, 1, 'integer', [[5, '5'], [10, '10'], [25, '25']], 'webCalls'],
+    ['maxWebToolCallsPerTurn', 'local', 30, '', 1, 100, 1, 'integer', [[10, '10'], [30, '30'], [60, '60']], 'webCalls'],
     ['maxCodeIntelligenceToolCallsPerTurn', 'shared', 16, '', 1, 100, 1, 'integer', [[8, '8'], [16, '16'], [32, '32']], 'codeIntelCalls'],
     ['maxInlinePayloadBytes', 'shared', 65536, UNIT.kb, 4096, 2097152, 4096, 'integer', [[16384, '16 ' + UNIT.kb], [65536, '64 ' + UNIT.kb], [262144, '256 ' + UNIT.kb]], 'inlinePayload'],
     ['cloudMaxToolCallsPerSession', 'cloud', 2000, '', 1, 2000, 50, 'integer', [[500, '500'], [1000, '1000'], [2000, '2000']], 'conversationToolCalls'],
     ['cloudMaxWebToolCallsPerTurn', 'cloud', 30, '', 1, 100, 1, 'integer', [[10, '10'], [30, '30'], [60, '60']], 'webCalls'],
     ['toolsExecutionTimeoutSeconds', 'local', 120, UNIT.sec, 5, 600, 5, 'number', [[60, '60'], [120, '120'], [300, '300']], 'toolTimeout'],
     ['cloudToolsExecutionTimeoutSeconds', 'cloud', 1800, UNIT.sec, 5, 3600, 30, 'number', [[600, '600'], [1800, '1800'], [3600, '3600']], 'toolTimeout'],
-    ['maxLoopWallSeconds', 'local', 3600, UNIT.min, 30, 7200, 30, 'number', [[1800, '30'], [3600, '60'], [7200, '120']], 'replyWorkingTime'],
+    ['maxLoopWallSeconds', 'local', 7200, UNIT.min, 30, 28800, 30, 'number', [[3600, '60'], [7200, '120'], [14400, '240']], 'replyWorkingTime'],
     ['modelLoadGraceSeconds', 'local', 300, UNIT.sec, 60, 1800, 30, 'number', [[120, '120'], [300, '300'], [600, '600']], 'modelLoading'],
     ['ollamaRequestTimeoutSeconds', 'local', 300, UNIT.sec, 30, 3600, 30, 'integer', [[120, '120'], [300, '300'], [900, '900']], 'ollamaRequest'],
     ['toolsPythonRuntimeTimeoutSeconds', 'shared', 30, UNIT.sec, 1, 600, 5, 'integer', [[15, '15'], [30, '30'], [120, '120']], 'pythonRun'],

@@ -196,7 +196,7 @@
           } finally { release(); if (!disposed) report('deleted', counts); }
         },
         onCommitError: (error) => { release(); callbacks.showSessionActionError(error, jt('sidebarBulkActions.bulkDeleteFailed', 'Bulk Delete Failed')); },
-        buildToast: ({ onUndo }) => ({ message: jt('sidebarBulkActions.valueChatsScheduledForDeletionValueSkipped', '{value1} chats scheduled for deletion. {value2} skipped.', { value1: String(candidates.length), value2: String(counts.skipped) }), options: { durationMs: windowMs, actions: [{ id: 'sidebar-bulk-undo', label: jt('ide.changes.undo', 'Undo'), onClick: onUndo }] } }),
+        buildToast: ({ onUndo }) => ({ message: jt('sidebarBulkActions.valueChatsScheduledForDeletionValueSkipped', '{value1} chats scheduled for deletion. {value2} skipped.', { value1: String(candidates.length), value2: String(counts.skipped) }), options: { actions: [{ id: 'sidebar-bulk-undo', label: jt('ide.changes.undo', 'Undo'), onClick: onUndo }] } }),
       });
       if (!scheduled) release();
     }

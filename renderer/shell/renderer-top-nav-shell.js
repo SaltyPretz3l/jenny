@@ -49,9 +49,159 @@
     // width vars and the strip CSS (--view-panel-strip-width) cannot drift.
     const chatsStripWidth = Number((rootRef.rendererChatsStrip || {}).STRIP_WIDTH) || 56;
 
+    /* The Team tab (row 123, slice 1g-2). The rail entry below and these delegates are all the shell
+     * holds: the gate (renderer/team/renderer-team-tab-gate.js) loads after first paint, and only
+     * while the `team` flag is exactly true. Until it is there the tab does not exist.
+     * E50: main's `teamData: false` (no team data on disk) holds the gate back too, until the first Join,
+     * Deploy or Recover succeeds (`noteTeamData`, or `openTeamView({ wait: true })`); no key reads as yes. */
+    let teamGate = null;
+    let teamDataSeen = false;
+    let pendingOpen = null;
+    let teamGateLoad = null;
+    let teamGateFailed = false;
+    let teamActions = null;
+    let disposed = false;
+
+    function loadTeamGate() {
+      const [src, name] = (windowRef.rendererSettingsScriptManifest?.teamGate || [])[0] || [];
+      const loader = windowRef.scriptLoaderUtils;
+      const afterPaint = deps.teamTab?.afterPaint || ((fn) => {
+        if (typeof windowRef.requestAnimationFrame === 'function') windowRef.requestAnimationFrame(() => windowRef.setTimeout(fn, 0));
+        else windowRef.setTimeout(fn, 0);
+      });
+      teamGateLoad = new Promise((resolve) => afterPaint(resolve))
+        .then(() => (src && typeof loader?.ensureScript === 'function' ? loader.ensureScript({ src, isReady: () => Boolean(windowRef[name]) }) : false))
+        .then((loaded) => loaded === true && typeof windowRef[name]?.createTeamTabGate === 'function', () => false)
+        .then((ok) => {
+          if (disposed) return;
+          teamGateFailed = !ok;
+          if (ok) {
+            teamGate = windowRef[name].createTeamTabGate({
+              state, windowRef, setActiveView,
+              onChange: () => railController?.renderTopRail?.(),
+              onBadge: () => railController?.syncBadges?.(),
+              focusTab: (viewId) => railController?.focusRailTab?.(viewId),
+            });
+            teamGate.setActions(teamActions);
+          }
+          syncTeamTab();
+          const asked = pendingOpen;
+          pendingOpen = null;
+          if (asked && teamGate) teamGate.open(asked);
+        });
+    }
+
+    /* The Board tab (row 150, slice B4). The tab exists while the `project_boards` flag is on, and that is all
+     * the shell knows of it: nothing of the Board loads until the tab is first opened, when the manifest, its
+     * scripts and its stylesheets load through the script loader and the page is shown into #boardView. */
+    const BOARD_MANIFEST_SRC = 'renderer/shell/renderer-board-script-manifest.js';
+    let boardLoad = null;
+    let boardFailed = false;
+    const boardFlagOn = () => state.features?.featureFlags?.project_boards === true;
+
+    function ensureBoardAssets() {
+      const loader = windowRef.scriptLoaderUtils;
+      if (typeof loader?.ensureScript !== 'function') return Promise.resolve(false);
+      const settle = (loaded) => loaded === true;
+      return Promise.resolve(loader.ensureScript({ src: BOARD_MANIFEST_SRC, isReady: () => Boolean(windowRef.rendererBoardScriptManifest) })).then((ok) => {
+        const manifest = windowRef.rendererBoardScriptManifest;
+        if (!settle(ok) || !manifest) return false;
+        for (const href of manifest.styles || []) {
+          if (documentRef?.querySelector?.(`link[data-board-style="${href}"]`)) continue;
+          const sheet = documentRef?.createElement?.('link');
+          if (!sheet) continue;
+          sheet.rel = 'stylesheet';
+          sheet.href = href;
+          sheet.setAttribute('data-board-style', href);
+          (documentRef.head || documentRef.documentElement).appendChild(sheet);
+        }
+        // The whole group starts at once (the loader keeps document order); each entry waits for its predecessors' globals.
+        return Promise.all(manifest.map(([src], index) => Promise.resolve(loader.ensureScript({
+          src, isReady: () => manifest.slice(0, index + 1).every(([, name]) => Boolean(windowRef[name])),
+        })).then(settle, () => false))).then((results) => results.every(Boolean) && Boolean(windowRef.rendererBoardPage?.showBoardPage));
+      }, () => false);
+    }
+
+    function showBoardView() {
+      const container = documentRef?.getElementById?.('boardView');
+      if (!container) return;
+      const page = windowRef.rendererBoardPage;
+      if (page?.showBoardPage) {
+        page.showBoardPage({
+          container, windowRef, state,
+          // The chat docked beside the board (slice C1): the picker opens a chat as the Chats strip does.
+          chat: { openSession: deps.callbacks?.openSession, showShellErrorToast: deps.callbacks?.showShellErrorToast, noteScrollProgrammaticWrite: deps.callbacks?.noteScrollProgrammaticWrite },
+          getProjectSwitcher: deps.callbacks?.getProjectSwitcher,
+          showToast: deps.callbacks?.showToastMessage,
+          appendClientLog: deps.callbacks?.appendClientLog,
+        });
+        return;
+      }
+      if (boardLoad || boardFailed) return;
+      const load = ensureBoardAssets().then((ok) => {
+        if (boardLoad !== load) return;
+        boardLoad = null;
+        if (disposed) return;
+        // A page that cannot load is never left blank: back to Chat, and the next open tries again.
+        if (!ok) { boardFailed = true; setActiveView?.('chat'); return; }
+        syncBoardTab();
+      });
+      boardLoad = load;
+    }
+
+    function syncBoardTab() {
+      const onBoard = state.ui.activeView === 'board';
+      // Once the real flags are in, the chat's block loader is told too (a `board` block in a reply becomes a row).
+      if (state.features?.availabilityResolved === true) windowRef.rendererMermaidRuntimeLoader?.setBoardBlocksEnabled?.(boardFlagOn());
+      if (!boardFlagOn()) {
+        // Same fallback as Team: held back until the real flags have merged over the boot seed.
+        if (onBoard && state.features?.availabilityResolved === true) { setActiveView?.('chat'); return; }
+      } else if (onBoard) { showBoardView(); return; }
+      if (!onBoard) boardFailed = false;
+      windowRef.rendererBoardPage?.hideBoardPage?.();
+    }
+
+    const teamDataOn = () => teamDataSeen || state.features?.teamData !== false;
+    function syncTeamTab() {
+      teamGate?.sync();
+      const flagOn = state.features?.featureFlags?.team === true;
+      // `availabilityResolved` is documented as display-only (renderer-bootstrap-utils.js). Reading it
+      // here gates nothing: it only holds back this one fallback until the real flags have merged, so a
+      // saved Team view is not thrown away on the boot seed. The worst a wrong value can do is show Chat.
+      const noTab = flagOn ? (teamGateFailed || (!teamGate && !teamDataOn())) : state.features?.availabilityResolved === true;
+      if (noTab && state.ui.activeView === 'team') { setActiveView?.('chat'); return; }
+      if (flagOn && teamDataOn() && !teamGate && !teamGateLoad) loadTeamGate();
+    }
+
+    // The first Join, Deploy or Recover succeeded with no team data before: load and start the gate.
+    function noteTeamData() {
+      if (state.features?.featureFlags?.team !== true) return;
+      teamDataSeen = true;
+      syncTeamTab();
+    }
+
+    // Ctrl+6 and "joining ends in the tab". A gate that failed to load is asked for again here, not on render passes.
+    function openTeamView(options) {
+      if (teamGate) return teamGate.open(options);
+      if (teamGateFailed) {
+        teamGateFailed = false;
+        teamGateLoad = null;
+        syncTeamTab();
+      } else if (options?.wait === true && state.features?.featureFlags?.team === true) {
+        // A join that ends in the tab while the gate is absent or still loading: it opens once the gate is there.
+        pendingOpen = options;
+        noteTeamData();
+      }
+      return false;
+    }
+
     const railController = (rootRef.rendererTopRailUtils || {}).createTopRailController?.({
       state,
-      staticModel: { tabs: DEFAULT_VIEW_TABS },
+      staticModel: { tabs: DEFAULT_VIEW_TABS.concat({
+        id: 'board', label: jt('board.tab.label', 'Board'), isAvailable: () => boardFlagOn(),
+      }, {
+        id: 'team', label: jt('team.tab.label', 'Team'), isAvailable: () => teamGate?.exists() === true, getBadge: () => teamGate?.badge() || null,
+      }) },
       dom: {
         topRail: deps.dom.topRail,
         topRailTabs: deps.dom.topRailTabs,
@@ -87,6 +237,10 @@
         openSession,
         newChat,
         appendClientLog,
+        // The "Needs you" inbox's snapshot and flyout, for the strip's mark and its chips.
+        getNeedsYou: () => state.attentionInboxController?.getSnapshot?.() || null,
+        toggleNeedsYou: (mark) => state.attentionInboxController?.toggleFlyout?.(mark),
+        closeNeedsYou: () => state.attentionInboxController?.closeFlyout?.({ restoreFocus: false }),
         showMoreChats: () => {
           prepareChatsPanelForExpansion?.();
           setActivePanelCollapsed(false);
@@ -220,6 +374,9 @@
     }
 
     function applyViewChrome() {
+      // First, so a Team view that may not show has already fallen back to Chat below.
+      syncTeamTab();
+      syncBoardTab();
       syncChromeVisibility();
       panelRegistry?.applyPanelForView?.(state.ui.activeView);
       railController?.renderTopRail?.();
@@ -342,6 +499,9 @@
         resizeFrame = 0;
       }
       stripController?.dispose?.();
+      disposed = true;
+      windowRef.rendererBoardPage?.hideBoardPage?.();
+      teamGate?.dispose();
       railController?.dispose?.();
     }
 
@@ -372,6 +532,14 @@
       syncChatsStrip,
       patchChatsStripRuntime,
       focusActiveViewTab,
+      // Team tab (slice 1g-2): delegates to the gate; they do nothing until it has loaded.
+      syncTeamTab,
+      // Board tab (slice B4): the page shows while the view is the Board's and stops when it is not.
+      syncBoardTab,
+      isTeamTabAvailable: () => teamGate?.exists() === true, // for tests
+      openTeamView,
+      noteTeamData,
+      setTeamTabActions: (actions) => { teamActions = actions; teamGate?.setActions(actions); },
       bind,
       dispose,
     };

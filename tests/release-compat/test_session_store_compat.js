@@ -30,8 +30,8 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.7.0';
-const EXPECTED_SCHEMA_VERSION = 27;
+const EXPECTED_APP_VERSION = '1.8.0';
+const EXPECTED_SCHEMA_VERSION = 29;
 const FIXTURE_DIRS = [
   'userdata-v3', 'userdata-v4', 'userdata-v5', 'userdata-v6', 'userdata-v7',
   'userdata-v9-current',
@@ -52,7 +52,7 @@ const FIXTURE_DIRS = [
   'userdata-v24-journal-recovery',
   'userdata-v25-current',
   'userdata-v26-current',
-  'userdata-v27-current',
+  'userdata-v27-current', 'userdata-v28-current', 'userdata-v29-current',
 ];
 
 test.afterEach(async () => {
@@ -728,12 +728,12 @@ test('release-compat: v22 migrates to the journal layout and settles an interrup
   );
 });
 
-// ---- v27 current: chat = base + append-only journal, index = base + journal ----
-// userdata-v27-current is userdata-v26-current at schema 27 (same chat ids; v26 made `sess_v23_second`
-// the pinned primary chat) plus one chat journal delta that re-sets `b_user_1` with a member author
-// (slice 3-5); v26/v25/v24-current (and v23-current) are now migration sources.
+// ---- v29 current: chat = base + append-only journal, index = base + journal ----
+// userdata-v29-current is userdata-v28-current at schema 29 (same chat ids; v26 made `sess_v23_second` the pinned primary chat, v27 gave
+// `b_user_1` a member author, v28 saved an `allowed_nodes` list on that chat) plus one chat journal delta that re-sets `b_user_1` with the
+// `board_id` it was sent from (row 150); v28 to v24-current (and v23) are migration sources.
 
-const JOURNAL_CHAT = 'sess_v23_journaled';
+const [JOURNAL_CHAT, FIXTURE_BOARD] = ['sess_v23_journaled', 'board_0f1e2d3c-4b5a-4697-8899-aabbccddeeff'];
 const SECOND_CHAT = 'sess_v23_second';
 const RECOVERY_CHAT = 'sess_v23_lost_rename';
 const JOURNAL_DAMAGE_EVENT = /session_journal_damaged|journal_corrupt|journal_ignored|session_journal_quarantine/;
@@ -790,8 +790,8 @@ function assertJournalFixtureContent(store) {
   );
 }
 
-test('release-compat: v27 current fixture holds un-compacted base + journal state on disk', () => {
-  const { sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current fixture holds un-compacted base + journal state on disk', () => {
+  const { sessionsPath } = loadFixture('userdata-v29-current');
   const base = rawChatBase(sessionsPath, JOURNAL_CHAT);
   assert.equal(base.schema_version, EXPECTED_SCHEMA_VERSION);
   assert.ok(base.journal_epoch >= 2, 'the fixture chat base is at epoch 2 or later');
@@ -807,22 +807,24 @@ test('release-compat: v27 current fixture holds un-compacted base + journal stat
   assert.ok(fs.statSync(path.join(sessionsDir, '_index.1.journal')).size > 0);
 });
 
-test('release-compat: v27 current profile loads every journaled message, title and turn event', () => {
-  const { sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current profile loads every journaled message, title and turn event', () => {
+  const { sessionsPath } = loadFixture('userdata-v29-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
   assert.equal(store.hasPendingMigrations(), false);
-  assert.deepEqual([store.hasNewerSchema(), store.getSessionSummary(SECOND_CHAT).session_role, store.getSession(SECOND_CHAT).session_role], [false, 'primary', 'primary']);
+  assert.deepEqual([store.hasNewerSchema(), store.getSessionSummary(SECOND_CHAT).session_role, store.getSession(SECOND_CHAT).session_role,
+    store.getSession(SECOND_CHAT).allowed_nodes, store.getSessionSummary(SECOND_CHAT).allowed_nodes, store.getSessionSummary(JOURNAL_CHAT).allowed_nodes ?? null],
+  [false, 'primary', 'primary', ['node_fixture_v28'], ['node_fixture_v28'], null]); // the saved allowed-node list survives the load
   assertJournalFixtureContent(store);
-  // Slice 3-5: the journaled member author on one user row survives the load; no other row has one.
-  assert.deepEqual([JOURNAL_CHAT, SECOND_CHAT].flatMap((chat) => store.getSession(chat).messages.map((message) => message.author?.member_id ?? null)).filter(Boolean), ['member_fixture_v27']);
+  // Slice 3-5 and row 150: the journaled member author and board stamp on one user row survive the load; no other row has either.
+  assert.deepEqual([JOURNAL_CHAT, SECOND_CHAT].flatMap((chat) => store.getSession(chat).messages.map((message) => [message.id, message.author?.member_id, message.board_id])).filter(([, member, board]) => member !== undefined || board !== undefined), [['b_user_1', 'member_fixture_v27', FIXTURE_BOARD]]);
   assert.equal(readChat(sessionsPath, JOURNAL_CHAT).journalStatus, 'ok');
   assert.equal(fs.existsSync(path.join(sessionsDirFromPath(sessionsPath), 'corrupt')), false);
   assertCleanJournalLogs(logs);
 });
 
-test('release-compat: v27 current profile loads without writing a byte', () => {
-  const { tmpRoot, sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current profile loads without writing a byte', () => {
+  const { tmpRoot, sessionsPath } = loadFixture('userdata-v29-current');
   const before = snapshotFiles(tmpRoot);
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
@@ -838,8 +840,8 @@ test('release-compat: v27 current profile loads without writing a byte', () => {
   assertCleanJournalLogs(logs);
 });
 
-test('release-compat: v27 current profile keeps earlier content after one more write', () => {
-  const { sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current profile keeps earlier content after one more write', () => {
+  const { sessionsPath } = loadFixture('userdata-v29-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
   assert.ok(store.appendMessage(JOURNAL_CHAT, {
@@ -852,18 +854,16 @@ test('release-compat: v27 current profile keeps earlier content after one more w
   assert.deepEqual(reopenedChat.messages.map((message) => message.id), [...JOURNAL_CHAT_MESSAGE_IDS, 'a_user_next']);
   assert.equal(reopenedChat.title, 'Journal chat (renamed)');
   assert.equal(reopenedChat.turn_events.length, 2);
-  assert.deepEqual(
-    reopened.getSession(SECOND_CHAT).messages.map((message) => message.id),
-    ['b_user_1', 'b_assistant_1']
-  );
+  assert.deepEqual([reopened.getSession(SECOND_CHAT).messages.map((message) => message.id), reopened.getSession(SECOND_CHAT).allowed_nodes,
+    reopened.getSession(SECOND_CHAT).messages[0].board_id], [['b_user_1', 'b_assistant_1'], ['node_fixture_v28'], FIXTURE_BOARD]);
   assert.equal(reopened.listSessions().find((entry) => entry.id === JOURNAL_CHAT).message_count, 7);
   assertCleanJournalLogs(logs);
   store.dispose();
   reopened.dispose();
 });
 
-test('release-compat: v27 current profile opens with the journal kill switch and writes whole files', () => {
-  const { sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current profile opens with the journal kill switch and writes whole files', () => {
+  const { sessionsPath } = loadFixture('userdata-v29-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: false });
   assert.equal(store.hasPendingMigrations(), false);
@@ -930,8 +930,8 @@ test('release-compat: v24 lost base rename recovers the state at the end of the 
   reopened.dispose();
 });
 
-test('release-compat: v27 current profile loads journaled suggested changes and workspace view', () => {
-  const { sessionsPath } = loadFixture('userdata-v27-current');
+test('release-compat: v29 current profile loads journaled suggested changes and workspace view', () => {
+  const { sessionsPath } = loadFixture('userdata-v29-current');
   const store = new ElectronSessionStore(sessionsPath, { sessionJournal: true });
   const record = store.getSession(JOURNAL_CHAT).suggested_changes;
   assert.equal(record.schema_version, 1);
@@ -974,12 +974,12 @@ test('release-compat: v23 migrates to the current schema with an empty suggested
 
 const DEFAULT_WORKSPACE_VIEW = { schema_version: 1, rail_visible: null, disclosures: {}, children_expanded: null };
 
-for (const from of [24, 25, 26]) {
-  test(`release-compat: v${from} current migrates to v27 with coordination and role defaults, no author, and keeps its journals`, async () => {
+for (const from of [24, 25, 26, 27, 28]) {
+  test(`release-compat: v${from} current migrates to v29 with coordination and role defaults, no new author, list or board stamp, keeping its journals`, async () => {
     const { sessionsPath } = loadFixture(`userdata-v${from}-current`);
     const logs = createLogCollector();
     const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
-    assert.equal(store.hasPendingMigrations(), true, `a v${from} fixture queues the v${from} -> v27 migration`);
+    assert.equal(store.hasPendingMigrations(), true, `a v${from} fixture queues the v${from} -> v29 migration`);
     const result = await store.runPendingMigrations({ batchSize: 1 });
     assert.deepEqual([result.ran, result.success, store.hasPendingMigrations()], [true, true, false]);
     assert.ok(logs.entries.find((entry) => entry.event === 'session_store.split_schema_migration_completed'));
@@ -987,10 +987,10 @@ for (const from of [24, 25, 26]) {
     assert.equal(readChat(sessionsPath, JOURNAL_CHAT).value.schema_version, EXPECTED_SCHEMA_VERSION);
     assertJournalFixtureContent(store);
     for (const chat of [JOURNAL_CHAT, SECOND_CHAT]) {
-      const [migrated, role] = [store.getSession(chat), from === 26 && chat === SECOND_CHAT ? 'primary' : null];
-      assert.equal(migrated.session_role, role, `a v${from} chat keeps its session_role (null when it had none)`);
-      assert.equal(store.getSessionSummary(chat).session_role, role, 'the index projection carries the role as well');
-      assert.equal(migrated.messages.some((message) => Object.hasOwn(message, 'author')), false, 'the migration adds no author');
+      const [migrated, role, listed] = [store.getSession(chat), from >= 26 && chat === SECOND_CHAT ? 'primary' : null, from === 28 && chat === SECOND_CHAT];
+      assert.deepEqual([migrated.session_role, store.getSessionSummary(chat).session_role, Object.hasOwn(migrated, 'allowed_nodes'),
+        Object.hasOwn(store.getSessionSummary(chat), 'allowed_nodes')], [role, role, listed, listed], `a v${from} chat keeps its role and gains no list (v28 keeps its)`);
+      assert.deepEqual(['author', 'board_id'].map((key) => migrated.messages.some((message) => Object.hasOwn(message, key))), [from >= 27 && chat === SECOND_CHAT, false], 'no author added (v27, v28 keep theirs); no board stamp added');
       if (from === 24) assert.deepEqual([migrated.workspace_view, migrated.coordination_revision, migrated.spawned_from], [DEFAULT_WORKSPACE_VIEW, 0, null]);
     }
     assertCleanJournalLogs(logs);

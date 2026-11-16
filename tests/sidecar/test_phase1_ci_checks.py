@@ -265,7 +265,9 @@ def test_run_ci_uses_sidecar_coverage_gate() -> None:
     assert any("--durations-min=1.0" in command for command in flat_commands)
 
     node_stage = next(stage for stage in module.STAGES if stage.name == "node_test_safe")
-    assert node_stage.env == {"JENNY_TEST_WORKERS": "14"}
+    # The gate must not go green with the sidecar-backed Node suites left out
+    # (scripts/run-node-tests-safe-python-gate.js skips them when .venv is missing).
+    assert node_stage.env == {"JENNY_TEST_WORKERS": "14", "JENNY_REQUIRE_PYTHON_TESTS": "1"}
     assert "--timeout-ms=1200000" in node_stage.command
     assert module.DEFAULT_GLOBAL_TIMEOUT_SECONDS == 1800
 

@@ -236,29 +236,6 @@
       ctx.windowRef.removeEventListener('jenny:model-state-changed', onModelStateChanged);
     });
 
-    const composerAttachmentTray = documentRef.querySelector('#attachmentTray');
-    const composerAttachmentPreviewPill = documentRef.querySelector('#composerAttachmentPreviewPill');
-    if (
-      composerAttachmentTray
-      && composerAttachmentPreviewPill
-      && composerV2RenderModule
-      && typeof composerV2RenderModule.createComposerAttachmentTrayPreviewRenderer === 'function'
-    ) {
-      try {
-        const composerAttachmentPreviewRenderer = composerV2RenderModule.createComposerAttachmentTrayPreviewRenderer({
-          tray: composerAttachmentTray,
-          pill: composerAttachmentPreviewPill,
-        });
-        composerAttachmentTray.setAttribute('data-composer-v2', 'on');
-        composerAttachmentPreviewPill.setAttribute('data-composer-v2', 'on');
-        registerCleanup(() => composerAttachmentPreviewRenderer?.destroy?.());
-      } catch (error) {
-        appendClientLog('WARN', 'composer.attachment_preview_mount_failed', {
-          message: String(error?.message || error || ''),
-        });
-      }
-    }
-
     const composerV2FailedSendNotice = documentRef.querySelector('#composerV2FailedSendNotice');
     // Split view W3-1: pane 0's notice reads the session pane 0 shows (one pane:
     // currentSessionId); pane 1 mounts its own through mountFailedSendNotice.
@@ -376,6 +353,7 @@
       callbacks: {
         activateWorkspaceSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
         appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
+        showToastMessage: (...a) => callbacks.showToastMessage?.(...a),
       },
     }) || null;
     state.desktopNotificationsController = desktopNotificationsController;
@@ -398,6 +376,7 @@
       actionButton: windowRef.inventoryActionButton,
       facts: windowRef.toolCallUtils,
       onInboxRows: (rows) => desktopNotificationsController?.onInboxRows?.(rows),
+      getPendingQuestionCards: () => controllers.multiStreamController?.getPendingQuestionCards?.(),
       callbacks: {
         openSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
         setActiveView: (...a) => callbacks.setActiveView?.(...a),
@@ -682,9 +661,15 @@
     } = callbacks;
     try {
       // A disposed owner stops at every await: re-binding would leak listeners.
+      // Neither read depends on the session list, so both overlap the bootstrap round trips.
+      const earlyHydration = [refreshWorkspaceRootState, ensureComposerFeatureStateLoaded].map((read) => {
+        const pending = Promise.resolve().then(read);
+        pending.catch(() => {}); // settled below; a bootstrap throw must not leave it unhandled
+        return pending;
+      });
       await bootstrap({ signalRendererReadyOnce });
       if (isDisposed()) return;
-      const hydrationResults = await Promise.allSettled([syncWorkspaceFromStore(), refreshWorkspaceRootState(), ensureComposerFeatureStateLoaded()]);
+      const hydrationResults = await Promise.allSettled([syncWorkspaceFromStore(), ...earlyHydration]);
       if (isDisposed()) return;
       // Composer feature hydration reports its own failures internally.
       ['workspace', 'workspace_root'].forEach((operation, index) => {
@@ -712,12 +697,14 @@
       await reconcileBackendStatusAfterBindings(ctx);
       if (isDisposed()) return;
       controllers.shellStatusController?.notifyShellHydrated?.();
-      // Home and Workspace report their own view readiness; every view also requires shared hydration.
+      // Home and Workspace report their own view readiness; every view also requires shared hydration. Any other
+      // view is ready here: the Board loads its page behind the lifted curtain and reports nothing, so a list of
+      // named views held its launch for the backstop.
       if (state.ui.activeView === 'settings') {
         try { await controllers.settingsShellController?.ensureSettingsPage?.(); } catch (_error) { /* load failure cannot block boot */ }
         if (isDisposed()) return;
       }
-      if (['chat', 'logs', 'settings'].includes(state.ui.activeView)) {
+      if (!['home', 'ide'].includes(state.ui.activeView)) {
         controllers.shellStatusController?.notifyBootViewReady?.();
       }
       try { await initSetupController(); } catch (_setupInitErr) { /* logged inside controller */ }

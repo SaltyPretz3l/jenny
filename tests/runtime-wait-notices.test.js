@@ -237,7 +237,7 @@ test('the broker names the leases in the way without conveying one', () => {
   const held = broker.tryAcquire({ ownerId: 'tool-a', resources: folder(), sessionId: 'sess_a' });
   const wait = broker.describeWait(folder());
   assert.equal(wait.resource_class, 'filesystem');
-  assert.deepEqual(wait.holders, [{ session_id: 'sess_a', status: 'active', quarantined_at: null }]);
+  assert.deepEqual(wait.holders, [{ session_id: 'sess_a', status: 'active', quarantined_at: null, owner_id: 'tool-a' }]);
   assert.equal(Object.isFrozen(wait) && Object.isFrozen(wait.holders), true);
   assert.equal(broker.snapshot().lease_count, 1, 'describing a wait reserves nothing');
   broker.release(held.lease, { producerSettled: true });

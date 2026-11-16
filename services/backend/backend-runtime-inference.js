@@ -12,6 +12,7 @@ const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc
 const { RUNTIME_ERROR_CODES } = require('./error-codes');
 const { registerPreemptibleAuxiliary } = require('./auxiliary-preemption');
 const { isLocalEngine, openAiCompatibleUrlFromService } = require('./session-lockdown-gate');
+const { liveTeamSelection, otherChatRefusal } = require('./team-engine-models');
 
 const METHODS = new Set([
   'suggestions.generate', 'commit.generate_message', 'chat.compact', 'memory.reflect', 'handoff.generate_note',
@@ -19,6 +20,9 @@ const METHODS = new Set([
 ]);
 // Session-scoped methods hold the session's turn lease and captured authority.
 const SCOPED_METHODS = new Set(['chat.compact', 'memory.reflect', 'handoff.generate_note']);
+// While a team model is loaded only the chat that chose it may use it (its compaction and handoff note,
+// which check that themselves); reflection and naming are refused by the local-only route check below.
+const TEAM_CHAT_METHODS = new Set(['chat.compact', 'handoff.generate_note', 'memory.reflect', 'session.generate_title']);
 const unsettledRequests = new WeakMap();
 
 function admissionError(reason) {
@@ -44,6 +48,7 @@ async function requestRuntimeInference(service, method, params, {
   if (typeof consumeResult !== 'function' || (engineType !== null && !reflect) || (scoped
     ? typeof sessionId !== 'string' || !sessionId.trim() || params?.session_id !== sessionId
     : sessionId !== null)) throw new TypeError('runtime_auxiliary_scope_invalid');
+  if (!TEAM_CHAT_METHODS.has(method) && liveTeamSelection(service)) throw otherChatRefusal();
   const runtime = service?.sessionRuntime;
   const client = service?.sidecarClient;
   if (!runtime) {

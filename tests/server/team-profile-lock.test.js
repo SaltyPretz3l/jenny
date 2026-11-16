@@ -19,6 +19,9 @@ const {
 } = require('../../services/host/profile-ownership');
 const { pipeLockName } = require('../../services/host/profile-pipe-lock');
 const { cliLockName } = require('../../services/cli-host/profile-lock');
+const { startHostedServer } = require('../../server/main');
+const { MEMBERS_FILE } = require('../../server/team/member-store');
+const { writeSingleOwnerConfig } = require('./helpers/team-host-fixture');
 
 const HOLDER = path.resolve(__dirname, 'helpers', 'profile-lock-holder.js');
 const LOCKED_MESSAGE = 'Profile is locked or locking is unavailable.';
@@ -203,4 +206,19 @@ test('on Linux the synchronous and asynchronous paths return the same shape', { 
 test('profile locking stays unsupported off Linux and Windows', { skip: IS_WINDOWS || process.platform === 'linux' ? 'only on other platforms' : false }, async (t) => {
   await assert.rejects(acquireProfileAsync({ userDataPath: fixture(t), pythonExecutable: '' }),
     (error) => error.code === HOST_ERROR_CODES.UNAVAILABLE);
+});
+
+test('the single-owner start refuses a team profile before it listens, and lets the lock go', { skip: windowsOnly('named-pipe profile lock') }, async (t) => {
+  const root = fixture(t);
+  const configPath = writeSingleOwnerConfig(root);
+  const profile = path.join(root, 'single-profile');
+  // A team host held this profile: the server marker, then its member store.
+  const first = await acquireProfileAsync({ userDataPath: profile, pythonExecutable: '' });
+  await first.release();
+  fs.writeFileSync(path.join(profile, MEMBERS_FILE), '{}');
+  await assert.rejects(startHostedServer(configPath),
+    (error) => error.message === 'invalid_host_profile' && error.code === HOST_ERROR_CODES.CONFLICT);
+  assert.equal(fs.existsSync(path.join(profile, 'auth.json')), false);
+  const again = await acquireProfileAsync({ userDataPath: profile, pythonExecutable: '' });
+  await again.release();
 });

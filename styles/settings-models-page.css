@@ -1,0 +1,281 @@
+/* Settings > Models: the page's own groups. "Engines and providers" is one
+   table of the engines and providers (renderer/shell/model-library/model-library-services.js):
+   the library's row anatomy, one status column and one action column, a
+   labelled rule between the kinds, and every row's details in one shared
+   Manage drawer. Running now (the .mstage group and .mm-*) follows at the end. */
+
+.mp-dot[data-tone="ready"] { background: var(--state-success); }
+.mp-dot[data-tone="warn"] { background: var(--state-warning); }
+.mp-dot[data-tone="busy"] { background: var(--state-pending); }
+.mp-dot[data-tone="off"] { background: var(--state-muted); }
+
+.mp-quiet {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+/* The row reuses the library's .mrow grid for its main and action cells. */
+.srow {
+  grid-template-columns: minmax(0, 1fr) 230px 118px;
+}
+
+.srow-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.srow-status span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow: the status drops under the name, like the Library's fit cell. */
+@container (max-width: 640px) {
+  .srow { grid-template-columns: minmax(0, 1fr) auto; }
+  .srow-status { grid-column: 1; grid-row: 2; }
+}
+
+/* Section header inside the table: space above, a label with its summary, and
+   a rule stronger than the row hairlines. */
+.srow-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-start: 34px;
+  padding: 0 var(--space-1) 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+}
+
+.srow-head small {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.srow-list > .srow-head:first-child { margin-block-start: 6px; }
+.srow-list > .srow-head + .srow { border-top: 0; }
+.srow-list > .srow:last-child { border-bottom: 0; }
+.srow-list > .srow:has(+ .srow-head) { border-bottom: 0; }
+
+/* Facts and action buttons inside a Manage drawer. */
+.eng-facts {
+  display: grid;
+  gap: 4px;
+  padding-block: 2px 10px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.eng-facts b {
+  display: inline-block;
+  min-width: 124px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.eng-buttons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.inv-drawer-body .eng-facts b { min-width: 130px; }
+
+.inv-drawer-body .mp-quiet {
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Running now: the loaded model over a GPU memory bar. The group sticks to the
+   top of the Settings scroller (.settings-content-scroll, the only scroll
+   container above it; the card and the frame do not clip) while the library
+   scrolls underneath. At rest it has no fill, so it sits on the page like any
+   other group. While it is stuck, a band hides the rows passing under it: the
+   main stage's own background, fixed to the viewport so it lines up with the
+   page behind it in every palette (a flat colour reads as a dark slab). */
+.settings-card .settings-group.mstage {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  container-type: scroll-state;
+  padding-block-end: var(--space-5);
+  margin-block-end: var(--space-10);
+}
+
+.settings-card .settings-group.mstage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--surface-main-stage-background);
+  background-attachment: fixed;
+  border-bottom: 1px solid var(--line);
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  pointer-events: none;
+}
+
+@container scroll-state(stuck: top) {
+  .settings-card .settings-group.mstage::before { opacity: 1; }
+}
+
+.mm-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  min-width: 0;
+  padding-block: var(--space-3) var(--space-4);
+}
+
+.mm-name {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-heading);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mm-name--idle {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.mm-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.mm-actions {
+  flex: none;
+  display: inline-flex;
+  gap: var(--space-1);
+  align-self: center;
+}
+
+.mm-bar {
+  position: relative;
+  height: var(--space-5);
+  border-radius: var(--space-2);
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+}
+
+.mm-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: var(--space-2);
+  background: var(--state-success);
+  transition: width var(--motion-duration-emphasis) var(--motion-ease-emphasis);
+}
+
+.mm--loading .mm-fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--state-success) 55%, transparent) 0 40%, var(--state-success) 50%, color-mix(in srgb, var(--state-success) 55%, transparent) 60% 100%);
+  background-size: 220% 100%;
+  animation: mm-sweep var(--motion-duration-sheen) linear infinite;
+}
+
+@keyframes mm-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: -120% 0; }
+}
+
+.mm-ghost {
+  position: absolute;
+  inset-block: calc(var(--space-1) * -1.5);
+  inset-inline-start: 0;
+  border-inline-end: 2px solid var(--text-primary);
+  border-radius: var(--space-2) 0 0 var(--space-2);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  transition: width var(--motion-duration-fast) var(--motion-ease-standard);
+  pointer-events: none;
+}
+
+.mm-ghost--over {
+  border-color: var(--state-danger);
+  background: color-mix(in srgb, var(--state-danger) 22%, transparent);
+}
+
+.mm-tick {
+  position: absolute;
+  top: 100%;
+  width: 1px;
+  height: var(--space-2);
+  background: var(--border-default);
+}
+
+.mm-tick span {
+  position: absolute;
+  top: 100%;
+  inset-inline: -2em; /* centred on the tick in either direction */
+  text-align: center;
+  font-style: normal;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-9);
+  padding-block-start: var(--space-12);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+/* No bar (hardware unknown, or a hosted model): no tick numbers to clear. */
+.mm-head + .mm-legend {
+  padding-block-start: var(--space-2);
+}
+
+.mm-legend b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.mm-free,
+.mm-gpu {
+  color: var(--text-muted);
+}
+
+.mm-gpu {
+  margin-inline-start: auto;
+}
+
+.mm-preview {
+  color: var(--text-primary);
+}
+
+.mm-preview--over,
+.mm-preview--over b {
+  color: var(--state-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-fill,
+  .mm-ghost,
+  .settings-card .settings-group.mstage::before { transition: none; }
+  .mm--loading .mm-fill { animation: none; }
+}

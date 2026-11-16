@@ -2,7 +2,8 @@
 [data-widget-modifier~="playlist-scroll"],
 [data-widget-modifier~="atomic-burst"],
 [data-widget-modifier~="circuit-trace"],
-[data-widget-modifier~="context-weave"] {
+[data-widget-modifier~="context-weave"],
+[data-widget-modifier~="aurora-ridge"] {
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -12,6 +13,7 @@
 .chat-surface-effect-gutter[data-widget-modifier~="playlist-scroll"],
 .chat-surface-effect-gutter[data-widget-modifier~="atomic-burst"],
 .chat-surface-effect-gutter[data-widget-modifier~="circuit-trace"],
+.chat-surface-effect-gutter[data-widget-modifier~="aurora-ridge"],
 .chat-surface-effect-gutter[data-widget-modifier~="context-weave"] {
   position: absolute;
 }
@@ -20,7 +22,8 @@
 [data-widget-modifier~="playlist-scroll"] > :not(.widget-playlist-scroll-canvas),
 [data-widget-modifier~="atomic-burst"] > :not(.widget-atomic-burst-canvas),
 [data-widget-modifier~="circuit-trace"] > :not(.widget-circuit-trace-canvas),
-[data-widget-modifier~="context-weave"] > :not(.widget-context-weave-canvas) {
+[data-widget-modifier~="context-weave"] > :not(.widget-context-weave-canvas),
+[data-widget-modifier~="aurora-ridge"] > :not(.widget-aurora-ridge-canvas) {
   position: relative;
   z-index: 1;
 }
@@ -127,6 +130,24 @@
 }
 
 .widget-context-weave-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+/* Aurora Ridge: a still painting. CSS stretches it while its host is being
+   resized; the controller repaints it once the size settles. */
+.widget-aurora-ridge-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.widget-aurora-ridge-canvas.surface-canvas-ready {
   opacity: 1;
 }
 

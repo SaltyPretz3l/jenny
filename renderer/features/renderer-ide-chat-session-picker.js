@@ -44,6 +44,8 @@
     const state = deps?.state || {};
     const getHeader = typeof deps?.getHeader === 'function' ? deps.getHeader : () => null;
     const onSelectSession = typeof deps?.onSelectSession === 'function' ? deps.onSelectSession : noop;
+    // The page's project (the Board names its own): that project's chats come first, each part newest first.
+    const getPreferredProjectId = typeof deps?.getPreferredProjectId === 'function' ? deps.getPreferredProjectId : () => '';
     const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const actionButton = resolveInventoryPrimitive('inventoryActionButton', '../inventory/action-button');
@@ -67,6 +69,8 @@
         (Array.isArray(state.ui?.pendingSessionDeletes) ? state.ui.pendingSessionDeletes : [])
           .map((id) => String(id || '').trim()).filter(Boolean)
       );
+      const preferred = String(getPreferredProjectId() || '');
+      const inPreferred = (session) => Number(Boolean(preferred) && (String(session?.project_id || '').trim() || 'project_general') === preferred);
       return (Array.isArray(state.sessions) ? state.sessions : [])
         .filter((session) => {
           const id = String(session?.id || '').trim();
@@ -74,7 +78,7 @@
           return Boolean(id) && type === 'chat' && !session?.archived_at && !pendingDeletes.has(id);
         })
         .slice()
-        .sort((left, right) => String(right?.updated_at || right?.created_at || '')
+        .sort((left, right) => (inPreferred(right) - inPreferred(left)) || String(right?.updated_at || right?.created_at || '')
           .localeCompare(String(left?.updated_at || left?.created_at || '')));
     }
 

@@ -1,11 +1,12 @@
 'use strict';
 
-// Which managed server (llama-server or NInfer) owns the sidecar's
-// openai-compatible endpoint right now. Both managers mint a per-launch api
-// key that must travel only to the endpoint that IS that server (same local
-// origin), and only that endpoint takes the server's alias as its model.
-// The two-manager resolution lives here, apart from managed-sidecar-config.js,
-// so that file keeps one concern.
+// Which managed server owns the sidecar's openai-compatible endpoint right
+// now: llama-server, NInfer, or the team engine port (row 123 slice 4b, a
+// loopback port that forwards to the team's pooled GPUs). Each mints a
+// per-launch api key that must travel only to the endpoint that IS that server
+// (same local origin), and only that endpoint takes the server's alias as its
+// model. The list is closed at these three. The resolution lives here, apart
+// from managed-sidecar-config.js, so that file keeps one concern.
 
 const { sameLocalOrigin } = require('../local-origin');
 
@@ -29,6 +30,8 @@ function resolveManagedServerOwner(service, apiUrl) {
   const candidates = [
     ['ninfer', service?.options?.getNinferManager?.() || null],
     ['llama-server', service?.options?.getLlamaServerManager?.() || null],
+    // Reports no alias, so the configured model stays the model.
+    ['team-engine', service?.options?.getTeamEnginePort?.() || null],
   ];
   for (const [kind, manager] of candidates) {
     if (!manager || typeof manager.getBaseUrl !== 'function') continue;
@@ -47,10 +50,14 @@ function managedServerAlias(service, apiUrl) {
   return String(owner.status.alias || '').trim();
 }
 
-// The per-launch key for `apiUrl`, '' when no managed server owns it.
+// The per-launch key for `apiUrl`, '' when no managed server owns it. The
+// team engine port's key also waits for `ready`: a deliberate fail-closed check,
+// since that key is minted per port launch and a port that is not serving must
+// not have it handed out.
 function managedServerApiKey(service, apiUrl) {
   const owner = resolveManagedServerOwner(service, apiUrl);
   if (!owner || typeof owner.manager.getApiKey !== 'function') return '';
+  if (owner.kind === 'team-engine' && owner.status.state !== 'ready') return '';
   return String(owner.manager.getApiKey() || '');
 }
 

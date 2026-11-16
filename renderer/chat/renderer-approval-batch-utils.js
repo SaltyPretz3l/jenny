@@ -15,6 +15,7 @@
   const APPROVAL_ROW_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-variant="plan"]):not([data-approval-exact])';
   const BATCH_BANNER_CLASS = 'approval-batch-banner';
   const BATCH_BANNER_DATA = 'data-approval-batch-banner';
+  const APPROVAL_TOUCH_SELECTOR = '.approval-gap-row, [' + BATCH_BANNER_DATA + ']';
 
   const escapeHtml = stringUtils.escapeHtml;
 
@@ -446,8 +447,19 @@
     scopeRoot.addEventListener('click', handleClick, true);
 
     if (typeof MutationObserver === 'function') {
-      observer = new MutationObserver(() => scheduleSync());
-      observer.observe(scopeRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-approval-resolved', 'data-approval-reconciliation'] });
+      // Only mutations that touch an approval row or a batch banner can change
+      // a banner. A streaming delta's unit writes are skipped without scanning
+      // the whole timeline (a turn's finished thinking checkpoints included).
+      const touchesApprovals = (record) => {
+        if (record.type === 'attributes' || claimedTurnIds.size) return true;
+        if (record.target?.closest?.(APPROVAL_TOUCH_SELECTOR)) return true;
+        return [...record.addedNodes, ...record.removedNodes].some((node) => node.nodeType === 1
+          && (node.matches?.(APPROVAL_TOUCH_SELECTOR) || node.querySelector?.(APPROVAL_TOUCH_SELECTOR)));
+      };
+      observer = new MutationObserver((records) => {
+        if (records.some(touchesApprovals)) scheduleSync();
+      });
+      observer.observe(scopeRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-approval-resolved', 'data-approval-reconciliation', 'data-approval-status'] });
     }
 
     scheduleSync();

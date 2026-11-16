@@ -1,0 +1,594 @@
+/* The Board page (row 150, slice B4; owner-approved mockup project-board).
+ * Three workbench columns (boards | canvas | chat and changes) in the Board layout profile. The columns
+ * themselves are the workbench's (ide-workbench.css); this file only fills the page, pads the boards
+ * list and places the centre's overlays (empty hint, note, Fit and 100%). Loaded the first time the
+ * Board tab opens, with inventory-board.css for the canvas primitives. No side bars, no cards, no
+ * motion beyond the row hover the chat list already has. Tokens come from foundation.css; the 236px
+ * list width is the mockup's and lives in the saved layout, not here. Directions are logical. */
+
+.board-view.active-view {
+  display: flex;
+}
+
+.board-workbench {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+/* ---------------------------------------------------------------- the boards list */
+
+.board-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  padding: var(--space-8) var(--space-4) var(--space-6);
+}
+
+.board-list__project {
+  margin: 0;
+  padding: var(--space-1) var(--space-4) var(--space-4);
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.board-list__new {
+  display: flex;
+  margin-inline-start: var(--space-2);
+  margin-block-end: var(--space-2);
+}
+
+.board-list__new .board-new-button {
+  align-self: flex-start;
+}
+
+.board-list__empty {
+  padding-inline: var(--space-4);
+}
+
+.board-list__foot {
+  margin: auto 0 0;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-row .session-row__open {
+  /* No dot column or time slot here: the actions take the end of the row. */
+  padding-inline-end: calc(var(--space-2) + 3 * 28px);
+}
+
+.board-row .session-row__title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rename, duplicate and delete sit at the end of the row. Opacity, not display, so the buttons stay focusable by keyboard. */
+.board-row-actions {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: var(--space-1);
+  height: var(--session-row-height);
+  display: flex;
+  align-items: center;
+  opacity: 0;
+}
+
+.board-row:is(:hover, :focus-within) .board-row-actions {
+  opacity: 1;
+}
+
+.board-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+.board-row-action:is(:hover, :focus-visible) {
+  color: var(--text-primary);
+}
+
+.board-row-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.board-row:has(.inv-inline-title-editor) .board-row-actions {
+  display: none;
+}
+
+.board-row-error {
+  margin: var(--space-1) var(--space-4) 0;
+  color: var(--state-danger, var(--text-secondary));
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------- the canvas column */
+
+.board-centre {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-base);
+}
+
+.board-centre > .inv-board-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.board-empty-hint,
+.board-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: var(--space-16);
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+
+.board-empty-hint[hidden],
+.board-note[hidden],
+.board-note__actions[hidden],
+.board-zoombar[hidden] {
+  display: none;
+}
+
+/* A read-only board's sentence with Show file and Remove from list under it (slice B11). */
+.board-note {
+  align-content: center;
+  gap: var(--space-4);
+}
+
+.board-note__text {
+  margin: 0;
+}
+
+.board-note__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  pointer-events: auto;
+}
+
+.board-zoombar {
+  position: absolute;
+  inset-block-end: var(--space-6);
+  inset-inline-end: var(--space-6);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+}
+
+.board-zoom-button {
+  flex: none;
+  --btn-min-height: 28px;
+}
+
+/* ---------------------------------------------------------------- chat and changes hosts */
+
+.board-chat-host,
+.board-changes-host {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The centre column: the canvas, with the outline and the find box over it (board-views.js). */
+.board-views {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.board-views > .board-centre[hidden] {
+  display: none;
+}
+
+/* The view switch sits at the end of the outline's bar while the outline shows. */
+.board-outline__bar > .board-view-switch {
+  margin-inline-start: auto;
+}
+
+/* The chat dock element fills the chat column, as it does in the Workspace (ide-chat-dock.css). */
+.board-chat-host {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The chat on screen belongs to another project than the board (slice C1). */
+.board-chat-notice {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+/* ---------------------------------------------------------------- editing: the toolbar, the selection bar, the inline editors (slice B6) */
+
+/* The mockup's floating toolbar and the bar under it. One column, centred; only its children take the pointer. */
+.board-chrome {
+  position: absolute;
+  inset-block-start: var(--space-6);
+  inset-inline: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.board-chrome[hidden],
+.board-selbar[hidden],
+.board-selbar__part[hidden],
+.board-link-form[hidden],
+.board-link-form__error[hidden],
+.board-card-editor__status[hidden] {
+  display: none;
+}
+
+.board-chrome > * {
+  pointer-events: auto;
+}
+
+.board-toolbar,
+.board-selbar,
+.board-link-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: max-content;
+  max-width: calc(100% - var(--space-12));
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+}
+
+.board-toolbar {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.board-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.board-selbar {
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.board-selbar__part {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.board-tool {
+  flex: none;
+  --btn-min-height: 28px;
+}
+
+.board-selbar .board-tool {
+  --btn-min-height: 26px;
+}
+
+.board-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin-inline: var(--space-2);
+  background: var(--border-default);
+}
+
+.board-toolbar__slot:empty {
+  display: none;
+}
+
+.board-selbar__count {
+  padding-inline: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.board-swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+}
+
+.board-swatch-button {
+  --btn-min-height: 24px;
+  width: 24px;
+  padding: 0;
+}
+
+.board-swatch {
+  display: block;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-2);
+}
+
+.board-swatch[data-tone="none"] {
+  border-style: dashed;
+  background: transparent;
+}
+
+.board-swatch[data-tone="amber"] { background: var(--accent-amber); }
+.board-swatch[data-tone="blue"] { background: var(--state-info); }
+.board-swatch[data-tone="green"] { background: var(--state-success); }
+.board-swatch[data-tone="red"] { background: var(--state-danger); }
+
+/* The link address form and the connector label field share the editors' field look. */
+.board-link-form {
+  flex-wrap: wrap;
+  border-radius: var(--radius-md);
+}
+
+.board-link-form__field {
+  flex: 1 1 18em;
+  min-width: 14em;
+}
+
+.board-link-form__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--state-danger, var(--text-secondary));
+  font-size: var(--font-size-caption);
+}
+
+.board-selbar__field {
+  width: 16em;
+}
+
+.board-card-editor__field {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.4;
+  resize: none;
+  user-select: text;
+}
+
+.board-card-editor__field:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 0;
+}
+
+.board-card-editor__field[data-board-single-line],
+.board-link-form__field,
+.board-selbar__field {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The inline editor lies over its card: a note takes the whole card, a group only its title strip, a link grows below. */
+.board-card-editor {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  padding: var(--space-3);
+  border-radius: inherit;
+  background: var(--inv-board-card-bg, var(--bg-surface));
+  outline: 1.5px solid var(--focus-ring-color);
+  cursor: text;
+}
+
+.board-card-editor--note .board-card-editor__field {
+  flex: 1;
+}
+
+.board-card-editor--group {
+  inset-block-end: auto;
+}
+
+.board-card-editor--link {
+  inset-block-end: auto;
+  min-width: 280px;
+}
+
+.board-card-editor__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.board-card-editor__fetched {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-card-editor__status,
+.board-card-editor__hint {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.board-card-editor__status {
+  color: var(--text-primary);
+}
+
+.board-card-editor__hint {
+  color: var(--text-muted);
+}
+
+/* The preview line while a connector is dragged out of a port. */
+.board-connect-preview {
+  color: var(--focus-ring-color);
+}
+
+.board-connect-preview__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+/* ---- Diagram cards (board slice B8) ---------------------------------------- */
+
+/* The still picture sits in the card's media slot; a quiet line stands in until it is ready. */
+.board-diagram__media {
+  position: relative;
+}
+
+.board-diagram__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+/* "Edit source" shows when the card is hovered, focused or selected, and stays reachable by keyboard. */
+.board-diagram__edit {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-board-card:hover .board-diagram__edit,
+.inv-board-card:focus-within .board-diagram__edit,
+.inv-board-card[data-selected] .board-diagram__edit,
+.board-diagram__edit:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-diagram__edit {
+    transition: none;
+  }
+}
+
+/* The source editor grows below the card like the link editor; the scene is monospace and does not wrap. */
+.board-card-editor--diagram {
+  inset-block-end: auto;
+  min-width: 360px;
+}
+
+.board-diagram-editor__source {
+  min-height: 12em;
+  font-family: var(--font-family-mono);
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+/* ---- Slice B7: picture cards (board-card-media.js). The file path form reuses the link form's classes. ---- */
+
+/* The picture fills the card's media slot (inventory-board.css); one quiet line stands in when it cannot be read. */
+.board-picture[hidden],
+.board-picture__missing[hidden] {
+  display: none;
+}
+
+.board-picture__missing {
+  margin-block: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* ---- Break apart and Tidy (board slice B9) --------------------------------- */
+
+/* "Break apart" sits at the card's lower corner and shows like "Edit source": on hover, focus or selection. */
+.board-diagram__break {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-board-card:hover .board-diagram__break,
+.inv-board-card:focus-within .board-diagram__break,
+.inv-board-card[data-selected] .board-diagram__break,
+.board-diagram__break:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-diagram__break {
+    transition: none;
+  }
+}
+
+/* ---- Slice B10: Export joins the row's actions (room for four), and Import board… sits beside New board. ---- */
+.board-row .session-row__open {
+  padding-inline-end: calc(var(--space-2) + 4 * 28px);
+}
+
+.board-list__new {
+  gap: var(--space-1);
+}
+
+/* ---- 500-card pass (row 150 hardening, P5-A): cards far outside the view cost the browser nothing ------------ */
+
+/* Every card stays in the DOM (find, the outline and the keyboard walk all rely on that); the browser skips the layout,
+   style and paint of a card's contents while it is far from the viewport. A card's box keeps its own inline width and
+   height, so nothing moves; the intrinsic size is only a fallback for a card that has none. A group holds only a title
+   and is left alone. Paint containment clips overflow, so a card shows in full wherever its ports, grip or outline sit
+   outside its box: while selected, hovered, focused (an inline editor is focus inside), or the target of a connect drag. */
+.inv-board-card:not([data-card-kind="group"]) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px auto 160px;
+}
+
+.inv-board-card:not([data-card-kind="group"]):is([data-selected], [data-board-connect-target], :hover, :focus-within) {
+  content-visibility: visible;
+}

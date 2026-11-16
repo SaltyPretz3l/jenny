@@ -197,6 +197,8 @@ const WORKSPACE_FS_ERROR_CODES = Object.freeze({
   IMAGE_UNSUPPORTED: 'CMP-WORKSPACEFS-0014',
   DOCUMENT_UNSUPPORTED: 'CMP-WORKSPACEFS-0015',
   DOCUMENT_TOO_LARGE: 'CMP-WORKSPACEFS-0016',
+  // 0017: a file opened from outside the Workspace (row 137) whose grant is gone.
+  OUTSIDE_GRANT_UNKNOWN: 'CMP-WORKSPACEFS-0017',
   WRITE_CONFLICT: 'CMP-WORKSPACEFS-0020',
   ATOMIC_WRITE_FAILED: 'CMP-WORKSPACEFS-0021',
   IO_FAILED: 'CMP-WORKSPACEFS-0022',
@@ -394,6 +396,18 @@ const TEAM_ERROR_CODES = Object.freeze({
   HOST_STOPPED: 'CMP-TEAM-0005',
   // The team host this Jenny runs (slice 1f-2) cannot start here, failed or exited.
   HOST_UNAVAILABLE: 'CMP-TEAM-0006',
+  // Team chat (slice 2a-4b): the host asked for a later retry (its chat rate limit or low disk).
+  CHAT_RETRY_LATER: 'CMP-TEAM-0007',
+  // Team chat (slice 2a-4b): the channel or message does not exist or is not visible to this member.
+  CHAT_NOT_FOUND: 'CMP-TEAM-0008',
+  // Team chat: the team server refused a reaction or pin (a bad emoji, or a reaction or pin limit).
+  CHAT_CHANGE_REFUSED: 'CMP-TEAM-0009',
+  // Team engine (slice 4b member wiring): a team model cannot be loaded now (feature off, team unknown,
+  // not connected, member not active, engine port not ready, model not offered).
+  ENGINE_UNAVAILABLE: 'CMP-TEAM-0010',
+  // Model sharing, member side (slice 6-5): a model offer, send or receive was refused or failed on this PC
+  // (services/team/team-models.js; the reason word is one of services/team/model-reasons.js).
+  MODEL_FAILED: 'CMP-TEAM-0011',
 });
 
 // Jenny CLI host (services/cli-host/): the in-process local-only composition,

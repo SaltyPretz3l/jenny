@@ -78,7 +78,6 @@
   --holo-periwinkle: #5cb83a;
   --holo-lavender: #d4a020;
   --shadow-soft: 0 18px 42px rgba(108, 92, 68, 0.14);
-  --shadow-accent: 0 12px 26px rgba(61, 140, 42, 0.16);
   --surface-body-background:
     radial-gradient(circle at 18% 12%, rgba(61, 140, 42, 0.08), rgba(228, 216, 194, 0) 30%),
     radial-gradient(circle at 84% 16%, rgba(184, 132, 14, 0.06), rgba(228, 216, 194, 0) 28%),
@@ -176,7 +175,6 @@
   --widget-token-pill-bg: rgba(128, 112, 88, 0.12);
   --widget-token-pill-color: #6b5a42;
   --widget-composer-scrollbar-color: rgba(128, 112, 88, 0.5);
-  --widget-hero-avatar-bg: linear-gradient(180deg, #4a9e34, #3d8c2a);
   --widget-sprite-color: rgba(44, 36, 23, 0.92);
   --widget-face-glow-color: #3d8c2a;
   --widget-face-shine-color: rgba(228, 242, 220, 0.82);
@@ -231,11 +229,7 @@
   --widget-attachment-meta-color: #9a8a72;
   --widget-attachment-remove-color: #6b5a42;
   --widget-attachment-clear-color: #9a8a72;
-  --widget-activity-pending-glow: rgba(61, 140, 42, 0.08);
-  --widget-activity-pending-border: rgba(61, 140, 42, 0.48);
   --widget-activity-pending-color: #2d7a1e;
-  --widget-activity-success-color: #2d7a1e;
-  --widget-activity-error-color: #9b2c2c;
   --widget-activity-pulse-color: rgba(61, 140, 42, 0.14);
   --text-bright: #2c2417;
   --text-danger-soft: #993440;

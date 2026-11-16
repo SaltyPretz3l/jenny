@@ -114,7 +114,42 @@ for (const resultKind of ['user_questions_answered', 'user_questions_declined'])
       assert.match(receipt.textContent, /Pick many/);
       assert.match(receipt.textContent, /One, Two/);
     } else {
-      assert.match(receipt.textContent, /Questions skipped/);
+      assert.match(receipt.textContent, /You skipped Jenny's questions/);
     }
   });
 }
+
+test('a reply typed in the composer survives live, persisted and rendered projection', (t) => {
+  const state = createTurnReducerState();
+  applyPayload(state, { type: 'started', streamId: 'stream-questions' });
+  applyPayload(state, { type: 'tool_use', callId: 'call-question', toolName: 'ask_user', status: 'running', input: {} });
+  applyPayload(state, {
+    type: 'user_questions_requested', callId: 'call-question', toolName: 'ask_user', questionRef: 'question-ref',
+    questions: [{ id: 'dest', prompt: 'Where should it go?', options: ['E:'], multi_select: false }],
+  });
+  const reply = 'Neither.\nUse the NAS share.';
+  const turn = applyPayload(state, {
+    type: 'tool_result', callId: 'call-question', toolName: 'ask_user', content: 'replied',
+    metadata: { result_kind: 'user_questions_answered', answers: [], reply },
+  });
+  const live = turn.rows.find((candidate) => candidate.kind === 'tool_call');
+  const persisted = projectPersistedEventsWithReducer(turn.events, { turnId: turn.turn_id })
+    .rows.find((candidate) => candidate.kind === 'tool_call');
+  for (const candidate of [live, persisted]) {
+    assert.equal(candidate.payload.user_questions_result_kind, 'user_questions_answered');
+    assert.equal(candidate.payload.user_questions_reply, reply);
+  }
+  const renderer = createTurnRowRenderUtils({
+    renderToolCallBlock() { return 'generic tool'; },
+    renderMarkdown(value) { return String(value || ''); },
+    getFeatureFlags() { return {}; },
+    MESSAGE_STATUS: { STREAMING: 'streaming' },
+  });
+  const dom = new JSDOM(renderer.buildToolCallRowMarkup(persisted, []));
+  t.after(() => dom.window.close());
+  const receipt = dom.window.document.querySelector('.user-questions-receipt');
+  assert.ok(receipt, 'a reply renders the question receipt, not the generic tool row');
+  assert.match(receipt.textContent, /You replied in your own words/);
+  assert.match(receipt.textContent, /Use the NAS share\./);
+  assert.match(receipt.textContent, /Where should it go\?/);
+});

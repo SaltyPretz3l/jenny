@@ -47,6 +47,9 @@
   // editor. Same id scheme as diff/preview; one instance per IDE.
   const MAP_TAB_PREFIX = 'map://';
   const MAP_TAB_ID = 'map://workspace';
+  // Row 137: a file opened from outside the Workspace, keyed by main's grant id; never persisted.
+  const OUTSIDE_TAB_PREFIX = 'outside://';
+  const isOutsideTabId = (id) => typeof id === 'string' && /^outside:\/\/o[0-9a-f]{24}\/[^/\\]+$/.test(id);
   // Editor-stage surfaces (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): exactly one is
   // visible in #ideEditorStage at a time ('editor' covers Monaco/diff/image/empty;
   // the rest are keep-alive stage siblings). Mirrors the service's
@@ -206,7 +209,7 @@
   // fits. Typed result:
   //   { ok: true } | { ok: false, code: 'TAB_LIMIT', limit: MAX_OPEN_TABS }
   function checkTabCapacity(ide, path) {
-    const normalized = normalizeIdeRelativePath(path);
+    const normalized = isOutsideTabId(path) ? path : normalizeIdeRelativePath(path);
     if (normalized && findTabIndex(ide, normalized) === -1
       && ide.openTabs.length >= MAX_OPEN_TABS) {
       return { ok: false, code: 'TAB_LIMIT', limit: MAX_OPEN_TABS };
@@ -216,7 +219,7 @@
 
   function openTab(ide, path, options = {}) {
     const transientPreview = options?.transientPreview === true;
-    const normalized = normalizeIdeRelativePath(path);
+    const normalized = isOutsideTabId(path) ? path : normalizeIdeRelativePath(path);
     if (!normalized) {
       return ide;
     }
@@ -382,7 +385,7 @@
       // rides the same sparse-emit idiom: emit it ONLY when 'exploded' (never
       // the 'code' default), and it coexists independently of `pinned`.
       openTabs: ide.openTabs
-        .filter((tab) => tab.kind === 'file')
+        .filter((tab) => tab.kind === 'file' && !isOutsideTabId(tab.path))
         .map((tab) => {
           const entry = { path: tab.path };
           if (tab.transientPreview === true) entry.preview = true;
@@ -397,7 +400,7 @@
           }
           return entry;
         }),
-      activeTabPath: isDiffTabId(ide.activeTabPath) || isPreviewTabId(ide.activeTabPath) || isMapTabId(ide.activeTabPath)
+      activeTabPath: isDiffTabId(ide.activeTabPath) || isPreviewTabId(ide.activeTabPath) || isMapTabId(ide.activeTabPath) || isOutsideTabId(ide.activeTabPath)
         ? ''
         : normalizeIdeRelativePath(ide.activeTabPath),
       // Clamp to the same bound the service normalizer applies on read so the
@@ -532,6 +535,7 @@
     TERMINAL_SCROLLBACK_MAX,
     DIFF_TAB_PREFIX,
     MAP_TAB_ID,
+    OUTSIDE_TAB_PREFIX, isOutsideTabId,
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
     normalizeEditorFontSize,

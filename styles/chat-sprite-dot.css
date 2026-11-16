@@ -29,15 +29,6 @@
  * its own five --sprite-dot-* tokens at 3:1 or better on its --bg-base.
  * Dark palettes keep the defaults above. */
 
-/* At the 22-24 px sprite breakpoint (chat-media-queries.css: --chat-sprite-size
- * is 24 px wherever the rail still shows) only the inner root scales, by
- * 24 / 30 on top of the throbber scale. */
-@media (max-width: 700px) {
-  .chat-view {
-    --sprite-dot-scale: calc(0.8 * var(--tl-throbber-scale));
-  }
-}
-
 /* -- Root, group, particles, ring and check -- */
 .chat-sprite-dot {
   --sprite-dot-morph: var(--sprite-morph-duration);
@@ -51,6 +42,16 @@
   pointer-events: none;
   transform: scale(var(--sprite-dot-scale));
   transition: color var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+/* The rail sprite is larger than the 30 px drawing; only its root scales. */
+.chat-assistant-sprite .chat-sprite-dot {
+  --sprite-dot-scale: calc(var(--chat-sprite-scale, 1) * var(--tl-throbber-scale));
+}
+
+/* Set while the sprite moves between rows of one turn; never on first show. */
+.chat-assistant-sprite[data-sprite-glide] {
+  transition: transform var(--transition-regular);
 }
 
 /* Urgent states (approve, stopped, error) commit within 140 ms. */

@@ -29,6 +29,7 @@ const {
 const DEFAULT_TAIL = {
   fontScaleId: 'default',
   chatWidthId: 'standard',
+  teamDensityId: 'comfortable',
   startupAnimation: true,
   titlebarLoad: false,
   artifactAutoOpen: false,
@@ -65,6 +66,7 @@ test('appearance presets expose the expected curated options', () => {
     'darkroom',
     'slate',
     'chalk',
+    'aurora',
     'paper',
     'woolly',
     'lexicon',
@@ -80,6 +82,7 @@ test('appearance presets expose the expected curated options', () => {
     'atomic-burst',
     'circuit-trace',
     'context-weave',
+    'aurora-ridge',
   ]);
   assert.equal(
     getSurfaceEffectPresets().some((preset) => preset.id === 'peripheral-garden'),
@@ -133,6 +136,7 @@ test('theme bundles expose the curated default and lexicon bundle mappings', () 
     'obsidian',
     'slate',
     'chalk',
+    'aurora',
     'lexicon',
     'rocko',
     'jenny-day',
@@ -445,6 +449,7 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
     threadStyle: 'subtle',
     fontScale: 'default',
     chatWidth: 'standard',
+    teamDensity: 'comfortable',
     startupAnimation: 'on',
     titlebarLoad: 'off',
     artifactAutoOpen: 'off',
@@ -497,31 +502,6 @@ test('the retired signal palette id loads as obsidian everywhere a palette id is
   const root = { dataset: {}, style: { setProperty() {}, removeProperty() {} } };
   applyAppearanceToDocument(root, { paletteId: 'signal' });
   assert.equal(root.dataset.palette, 'obsidian');
-});
-
-test('applying appearance never writes the retired sprite holo attribute or variables', () => {
-  const appliedStyle = new Map();
-  const removedStyle = new Set();
-  const root = {
-    dataset: {},
-    style: {
-      setProperty(name, value) {
-        appliedStyle.set(name, value);
-      },
-      removeProperty(name) {
-        removedStyle.add(name);
-        appliedStyle.delete(name);
-      },
-    },
-  };
-
-  ['paper', 'slate', 'midnight'].forEach((paletteId) => {
-    const result = applyAppearanceToDocument(root, { paletteId, spriteHoloId: 'on' });
-    assert.equal(Object.hasOwn(result, 'spriteHoloId'), false);
-    assert.equal(Object.hasOwn(root.dataset, 'spriteHolo'), false);
-    assert.equal([...appliedStyle.keys()].some((name) => name.startsWith('--sprite-holo')), false);
-    assert.equal([...removedStyle].some((name) => name.startsWith('--sprite-holo')), false);
-  });
 });
 
 test('stored preferences carrying spriteHoloId load without error and without effect', () => {
@@ -854,6 +834,22 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
   );
 });
 
+test('team chat density: one key, comfortable unless compact, on the root and the Appearance page, never in a bundle', () => {
+  const utils = require('../renderer/shared/appearance-utils');
+  assert.equal(normalizeAppearancePreferences({}).teamDensityId, 'comfortable');
+  assert.equal(normalizeAppearancePreferences({ teamDensityId: ' Compact ' }).teamDensityId, 'compact');
+  assert.equal(normalizeAppearancePreferences({ teamDensityId: 'tight' }).teamDensityId, 'comfortable', 'unknown is comfortable');
+  assert.equal(getDefaultAppearancePreferences().teamDensityId, 'comfortable');
+  assert.ok(utils.APPEARANCE_PAGE_KEYS.includes('teamDensityId'), 'Reset Appearance restores it');
+  const root = { dataset: {} };
+  applyAppearanceToDocument(root, { teamDensityId: 'compact' });
+  assert.equal(root.dataset.teamDensity, 'compact');
+  applyAppearanceToDocument(root, {});
+  assert.equal(root.dataset.teamDensity, 'comfortable');
+  assert.ok(getThemeBundles().every((bundle) => bundle.preferences.teamDensityId === 'comfortable'), 'no bundle sets it');
+  assert.equal('teamDensityId' in utils.pickThemeBundleAxes({ teamDensityId: 'compact' }), false, 'a bundle switch keeps it');
+});
+
 test('font scale presets expose the curated text-size ladder', () => {
   assert.deepEqual(getFontScalePresets().map((preset) => preset.id), [
     'small',
@@ -899,7 +895,7 @@ test('applyAppearanceToDocument writes the resolved --font-scale multiplier and 
 
 test('one text-size axis: role tokens multiply --font-scale and the chat timeline aliases them', () => {
   const foundationCss = readStyleFile('foundation.css');
-  // The role tokens multiply by --font-scale at Claude Code parity sizes.
+  // The role tokens multiply by --font-scale at the Default sizes.
   for (const [role, px] of [['caption', 12], ['footnote', 13], ['code', 13], ['body', 14], ['prose', 16], ['heading', 16], ['title', 20]]) {
     assert.ok(foundationCss.includes(`--font-size-${role}: calc(${px}px * var(--font-scale, 1));`), role);
   }

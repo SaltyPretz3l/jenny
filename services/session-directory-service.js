@@ -386,6 +386,31 @@ function createSessionDirectoryService({
     return { ok: true, session_id: sessionId, stopped: { stream, queued_work: queued }, cleanup };
   }
 
+  // Row 136: the primary chat puts another chat's task first on the model, or lifts a pick it made.
+  // Nobody else may (the scope kind), never on itself, and the person's own pick stands: the lanes
+  // refuse a pick over it and this refuses to lift it. `lanes` comes from the tool's live call.
+  function prioritize({ callerSessionId, sessionId, first = true, lanes = null } = {}) {
+    const scope = scopeFor(callerSessionId);
+    if (!scope.ok) return { ok: false, reason: scope.reason };
+    if (scope.kind !== 'profile') return { ok: false, reason: 'unavailable' };
+    if (sessionId === scope.caller.id) return { ok: false, reason: 'self' };
+    if (typeof sessionId !== 'string' || !scope.session_ids.has(sessionId)) return NOT_FOUND;
+    if (typeof lanes?.setFirstSession !== 'function') return { ok: false, reason: 'unavailable' };
+    const target = { session_id: sessionId, title: D.clip(scope.byId.get(sessionId)?.title, D.TITLE_CHARS) };
+    if (first === false) {
+      const current = lanes.firstSession();
+      if (current?.session_id === sessionId && current.set_by !== 'primary') return { ok: false, reason: 'user_pick_active' };
+      const changed = lanes.clearFirstSession(sessionId) === true;
+      if (changed) note('session_directory.prioritize', { session_id: sessionId, first: false });
+      return { ok: true, ...target, first: false, changed };
+    }
+    const outcome = lanes.setFirstSession(sessionId, { setBy: 'primary', picker: scope.caller.id, whenStarted: true });
+    if (outcome.status !== 'set') return { ok: false, reason: outcome.reason };
+    note('session_directory.prioritize', { session_id: sessionId, first: true });
+    // `running: false`: the chat has no turn yet and goes first once one starts.
+    return { ok: true, ...target, first: true, running: outcome.started === true };
+  }
+
   // A chat's title for this caller, in the digest's scope, without reading its transcript (row 94 P4 session_export).
   function title({ callerSessionId, sessionId } = {}) {
     const scope = scopeFor(callerSessionId);
@@ -394,7 +419,7 @@ function createSessionDirectoryService({
     return { ok: true, session_id: sessionId, title: D.clip(scope.byId.get(sessionId)?.title, D.TITLE_CHARS) };
   }
 
-  return { digest, list, stop, title, transcript };
+  return { digest, list, prioritize, stop, title, transcript };
 }
 
 module.exports = { createSessionDirectoryService };

@@ -521,7 +521,8 @@
       }
       startupAuditAutoSendInProgress = true;
       try {
-        const config = windowRef.__jennyStartupAudit?.config || await windowRef.jennyShell?.diagnostics?.getStartupAuditConfig?.().catch(() => null);
+        const audit = windowRef.__jennyStartupAudit;
+        const config = audit?.config || audit?.disabledConfig || await windowRef.jennyShell?.diagnostics?.getStartupAuditConfig?.().catch(() => null);
         if (config?.enabled !== true || !String(config.prompt || '').trim()) {
           return;
         }
@@ -803,6 +804,16 @@
       return rowModelStore.get(normalizedSessionId) === true;
     }
 
+    // An unhealthy DOM-write or rebuild outcome has no dedupe key (every one is
+    // counted), but its log line is de-duplicated per stream and reason: the
+    // first, then every UNHEALTHY_SIGNAL_LOG_EVERY-th.
+    const UNHEALTHY_SIGNAL_LOG_EVERY = 100;
+    function buildUnhealthySignalKey(signal, details = {}) {
+      if (signal !== 'timeline_dom_write' && signal !== 'streaming_article_rebuild' && signal !== 'active_turn_root_rebuild') return '';
+      return ['unhealthy', signal, String(details.lane || details.reason || '').trim(), String(details.outcome || '').trim(),
+        String(details.streamId || details.streamingMessageId || '').trim()].join(':');
+    }
+
     function recordRolloutSignal(sessionId, signal, details = {}) {
       const normalizedSessionId = String(sessionId || '').trim();
       const normalizedSignal = String(signal || '').trim();
@@ -832,6 +843,16 @@
       if (signalKey) {
         signalKeys.set(signalKey, true);
         evictOldestMapEntries(signalKeys, MAX_CHAT_TIMELINE_SIGNAL_KEYS_PER_SESSION);
+      }
+      const unhealthyKey = signalKey ? '' : buildUnhealthySignalKey(normalizedSignal, details);
+      if (unhealthyKey) {
+        const seen = Number(signalKeys.get(unhealthyKey) || 0) + 1;
+        signalKeys.delete(unhealthyKey);
+        signalKeys.set(unhealthyKey, seen);
+        evictOldestMapEntries(signalKeys, MAX_CHAT_TIMELINE_SIGNAL_KEYS_PER_SESSION);
+        if (seen > 1 && seen % UNHEALTHY_SIGNAL_LOG_EVERY !== 0) {
+          return { logged: false, count: counters[normalizedSignal] };
+        }
       }
       const stickyRollback = meta.sticky_rollback === true;
       const level = resolveSignalLevel(normalizedSignal, { ...details, stickyRollback });

@@ -20,7 +20,12 @@
      The activity row (renderer-stream-activity-row.js) owns the tracked entry
      and the node; this module owns what a waiting entry is and how it reads.
      It is not silence: the busy copy never shows for a waiting or ended stream
-     (dogfood HB-034 F5). */
+     (dogfood HB-034 F5).
+     Row 136: a reply that is running but whose next model request waits for
+     another chat is reported on its live stream as `model_waiting` (waitState
+     waiting, then granted). It reads as a wait too (waitState `model` here),
+     with one action, "Finish this first"; the reply is not paused, so the
+     composer and the queue strip treat it as running. */
 
   // Stands in for the other chat's title inside the translated sentence, so
   // the title can be a control without splitting the sentence into fragments.
@@ -28,6 +33,13 @@
 
   function normalizeId(value) {
     return String(value == null ? '' : value).trim();
+  }
+
+  // The stored placeholder of a chat whose generated title has not arrived
+  // ('New Chat'; the localized label is display-only) names nothing, so the
+  // line reads as it does for an untitled chat.
+  function isPlaceholderTitle(title) {
+    return title === 'New Chat' || title === jt('session.defaultTitle.chat', 'New Chat');
   }
 
   // Row 100 P2 (owner pick B): who holds a work lease, in plain words; the
@@ -83,6 +95,13 @@
     return parts.join(' · ');
   }
 
+  // A sentence cut at the title's place, so the title can be a control.
+  function splitAtTitle(sentence, title, sub) {
+    const at = sentence.indexOf(TITLE_TOKEN);
+    return at < 0 ? { before: sentence, linked: '', after: '', sub }
+      : { before: sentence.slice(0, at), linked: title, after: sentence.slice(at + TITLE_TOKEN.length), sub };
+  }
+
   // The words of a waiting line: `before` + linked title + `after`, then `sub`.
   function waitingCopy(typed, title) {
     if (typed.waitState === 'stuck') {
@@ -95,11 +114,7 @@
     }
     const sub = jt('chat.streamActivity.continuesOnItsOwn', 'Continues on its own.');
     const named = holderSentence(typed, typed.blockingSessionId ? title : '');
-    if (named) {
-      const at = named.indexOf(TITLE_TOKEN);
-      return at < 0 ? { before: named, linked: '', after: '', sub }
-        : { before: named.slice(0, at), linked: title, after: named.slice(at + TITLE_TOKEN.length), sub };
-    }
+    if (named) return splitAtTitle(named, title, sub);
     if (typed.blockingSessionId && title) {
       const sentence = jt('chat.streamActivity.waitingForChat', 'Waiting for "{title}" to finish a command in this folder.', { title: TITLE_TOKEN });
       const at = sentence.indexOf(TITLE_TOKEN);
@@ -115,6 +130,25 @@
       after: '',
       sub,
     };
+  }
+
+  // The words of a wait for the model behind another chat (row 136). `first`:
+  // this chat was put first and only waits for the other chat's running step.
+  function modelWaitCopy(typed, title, first) {
+    let sentence;
+    let sub = jt('chat.streamActivity.continuesOnItsOwn', 'Continues on its own.');
+    if (typed.heldForFirst && !first) {
+      sub = jt('chat.streamActivity.modelWait.continuesWhenDone', 'Continues when it is done.');
+      if (!title) sentence = jt('chat.streamActivity.modelWait.firstOther', 'Waiting for the chat that goes first.');
+      else if (typed.firstSetBy === 'primary') sentence = jt('chat.streamActivity.modelWait.firstChatByJenny', 'Waiting for "{title}". Jenny put it first.', { title: TITLE_TOKEN });
+      else sentence = jt('chat.streamActivity.modelWait.firstChat', 'Waiting for "{title}", which goes first.', { title: TITLE_TOKEN });
+    } else {
+      if (first) sub = jt('chat.streamActivity.modelWait.goesNext', 'This chat goes next.');
+      sentence = title
+        ? jt('chat.streamActivity.modelWait.chat', 'Waiting for the model while "{title}" uses it.', { title: TITLE_TOKEN })
+        : jt('chat.streamActivity.modelWait.otherChat', 'Waiting for the model while another chat uses it.');
+    }
+    return splitAtTitle(sentence, title, sub);
   }
 
   function createButton(documentRef, label, className, title, handler) {
@@ -136,15 +170,22 @@
     if (typed.blockingSessionId && typeof options.getSessionTitle === 'function') {
       try { title = normalizeId(options.getSessionTitle(typed.blockingSessionId)); } catch (_error) { title = ''; }
     }
+    if (isPlaceholderTitle(title)) title = '';
+    const model = typed.waitState === 'model';
+    let first = false;
+    if (model && typeof options.isFirstChat === 'function') {
+      try { first = options.isFirstChat(entry.sessionId) === true; } catch (_error) { first = false; }
+    }
     const hover = holderTitle(typed);
-    const key = [typed.waitState, typed.blockingSessionId, title, JSON.stringify(typed.holder)].join('\n');
+    const key = [typed.waitState, typed.blockingSessionId, title, JSON.stringify(typed.holder),
+      typed.heldForFirst, typed.firstSetBy, first].join('\n');
     if (label.getAttribute('data-wait-key') === key) return;
     label.setAttribute('data-wait-key', key);
     if (hover) label.title = hover;
     else label.removeAttribute('title');
     label.classList.remove('turn-activity-label--path');
     label.textContent = '';
-    const copy = waitingCopy(typed, title);
+    const copy = model ? modelWaitCopy(typed, title, first) : waitingCopy(typed, title);
     const why = documentRef.createElement('span');
     why.className = 'turn-activity-wait-why';
     why.appendChild(documentRef.createTextNode(copy.before));
@@ -166,10 +207,27 @@
       label.appendChild(createButton(documentRef, jt('chat.stuckSend.restartEngine', 'Restart engine'),
         'turn-activity-wait-action', '', () => options.onRestartEngine?.(sessionId)));
     }
+    if (model && !first) {
+      const sessionId = entry.sessionId;
+      label.appendChild(documentRef.createTextNode(' '));
+      label.appendChild(createButton(documentRef, jt('chat.firstChat.finishFirst', 'Finish this first'),
+        'turn-activity-wait-action',
+        jt('chat.firstChat.finishFirstHint', 'Give this chat the model until its task is done. The other chat\'s current step is not cut off.'),
+        () => options.onFinishFirst?.(sessionId)));
+    }
   }
 
   function isWaiting(entry) {
     return entry?.typed?.kind === 'waiting';
+  }
+
+  // A running reply whose model request waits behind another chat (row 136).
+  function isModelWait(entry) {
+    return isWaiting(entry) && entry.typed.waitState === 'model';
+  }
+
+  function isPausedWait(entry) {
+    return isWaiting(entry) && !isModelWait(entry);
   }
 
   // Draws a waiting entry into the activity row's node: no name, the sentence,
@@ -221,6 +279,27 @@
   // a resume (the entry is disarmed so the busy copy cannot come back for it).
   function applyNotice(entry, payload) {
     const waitState = normalizeId(payload && payload.waitState);
+    // The wait began at its first notice; a later one only updates why.
+    const startedAt = isWaiting(entry) ? entry.typed.startedAt : entry.lastEventAt;
+    if (normalizeId(payload && payload.type) === 'model_waiting') {
+      // A reply that has paused since is no longer asking for the model: its own line stands.
+      if (isPausedWait(entry)) return true;
+      if (waitState !== 'waiting') {
+        // Granted: the reply runs on, and the busy copy may speak for it again.
+        entry.typed = null;
+        return false;
+      }
+      entry.typed = {
+        kind: 'waiting',
+        waitState: 'model',
+        blockingSessionId: normalizeId(payload.blockingSessionId),
+        heldForFirst: payload.heldForFirst === true,
+        firstSetBy: normalizeId(payload.firstSetBy),
+        startedAt,
+      };
+      entry.armed = true;
+      return true;
+    }
     if (waitState !== 'waiting' && waitState !== 'stuck') {
       entry.typed = null;
       entry.armed = false;
@@ -233,8 +312,7 @@
       workId: normalizeId(payload && payload.workId),
       blockingSessionId: normalizeId(payload && payload.blockingSessionId),
       holder: holderOf(payload),
-      // The wait began at its first notice; a later one only updates why.
-      startedAt: isWaiting(entry) ? entry.typed.startedAt : entry.lastEventAt,
+      startedAt,
     };
     entry.armed = true;
     entry.waitEnded = false;
@@ -245,7 +323,7 @@
   // gets a terminal: the session's next `started` ends the wait it replaces.
   function releaseSessionWaits(tracked, sessionId, startedStreamId, untrack) {
     for (const [streamId, entry] of [...tracked.entries()]) {
-      if (streamId !== startedStreamId && entry.sessionId === sessionId && (isWaiting(entry) || entry.waitEnded)) {
+      if (streamId !== startedStreamId && entry.sessionId === sessionId && (isPausedWait(entry) || entry.waitEnded)) {
         untrack(streamId);
       }
     }
@@ -255,7 +333,7 @@
   // queue strip (no "Paused reply" row for a wait that ends by itself).
   function createQueries(tracked) {
     return {
-      isWaitingStream: (streamId) => isWaiting(tracked.get(normalizeId(streamId))),
+      isWaitingStream: (streamId) => isPausedWait(tracked.get(normalizeId(streamId))),
       // The chats waiting behind one of this app's background jobs (row 100 P2, the rail's "N waiting").
       waitersForJob(jobId) {
         const id = normalizeId(jobId);
@@ -277,12 +355,82 @@
     };
   }
 
+  // Row 136: which chat goes first on the model. Main owns the pick and ends
+  // it without an event (60 s after the chat's task), so this is a read-through
+  // copy: read after a set or clear made here, on a model-wait notice, on a
+  // reply's start and end (the activity row calls `refresh`), and every
+  // FIRST_RECHECK_MS for as long as a pick is shown. A bridge without the
+  // method (hosted) reads as nobody first.
+  const FIRST_RECHECK_MS = 15_000;
+  function createFirstChat({ api = () => globalThis.jennyShell && globalThis.jennyShell.chat, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+    let first = null; // { sessionId, setBy } | null
+    let recheck = null;
+    const listeners = new Set();
+    function apply(result) {
+      const next = result && result.first && normalizeId(result.first.sessionId)
+        ? { sessionId: normalizeId(result.first.sessionId), setBy: normalizeId(result.first.setBy) || 'user' } : null;
+      if ((first && first.sessionId) === (next && next.sessionId) && (first && first.setBy) === (next && next.setBy)) return;
+      first = next;
+      for (const listener of [...listeners]) {
+        try { listener(first); } catch (_error) { /* one view cannot block another */ }
+      }
+    }
+    async function call(action, sessionId) {
+      try {
+        const result = await api().firstSession({ action, sessionId: normalizeId(sessionId) });
+        apply(result);
+        // Every answer that shows a pick books the next read; the read that finds none ends the chain.
+        if (recheck) clearTimer(recheck);
+        recheck = first ? setTimer(() => { recheck = null; call('get', ''); }, FIRST_RECHECK_MS) : null;
+        return result;
+      } catch (_error) {
+        return null; // no bridge, or a failed read: what is shown stays until the next read
+      }
+    }
+    return {
+      get: () => first,
+      isFirst: (sessionId) => Boolean(first) && first.sessionId === normalizeId(sessionId),
+      refresh: () => call('get', ''),
+      set: (sessionId) => call('set', sessionId),
+      clear: (sessionId) => call('clear', sessionId),
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+  }
+  const firstChat = createFirstChat();
+
+  // The sidebar row's tag for the chat that goes first, or null.
+  function firstChatRowTag(sessionId, store = firstChat) {
+    if (!store.isFirst(sessionId)) return null;
+    return {
+      label: jt('chat.firstChat.tag', 'First'),
+      title: store.get().setBy === 'primary'
+        ? jt('chat.firstChat.tagHintByJenny', 'Jenny put this chat first. Other chats wait for the model until its task is done.')
+        : jt('chat.firstChat.tagHint', 'This chat goes first. Other chats wait for the model until its task is done.'),
+    };
+  }
+
+  // The sidebar row menu's top item: lift the pick on the chat that is first,
+  // or put a chat with a reply running first. Nothing for an idle chat.
+  function firstChatMenuItems(sessionId, running, store = firstChat) {
+    if (store.isFirst(sessionId)) {
+      return [{ label: jt('chat.firstChat.takeTurns', 'Take turns again'), action: () => store.clear(sessionId) }];
+    }
+    return running === true
+      ? [{ label: jt('chat.firstChat.finishFirst', 'Finish this first'), action: () => store.set(sessionId) }]
+      : [];
+  }
+
   // Stream-handler side: what the line needs from the app, and what the
   // composer must redo when a wait starts, changes or ends.
-  function createWaitingRowWiring({ state, queueSessionRender = () => {} } = {}) {
+  function createWaitingRowWiring({ state, queueSessionRender = () => {}, firstChat: firstChatOf = () => firstChat } = {}) {
     const controller = () => state && state.runtimeSendController;
     return {
       rowOptions: {
+        isFirstChat: (sessionId) => firstChatOf().isFirst(sessionId),
+        onFinishFirst: (sessionId) => firstChatOf().set(sessionId),
         getSessionTitle: (sessionId) => String((Array.isArray(state?.sessions) ? state.sessions : [])
           .find((entry) => entry?.id === sessionId)?.title || '').trim(),
         onOpenChat: (sessionId) => controller()?.openChat?.(sessionId),
@@ -303,5 +451,6 @@
     };
   }
 
-  return { applyNotice, createQueries, createWaitingRowWiring, isWaiting, releaseLabel, releaseSessionWaits, renderRow, waitingCopy };
+  return { applyNotice, createFirstChat, createQueries, createWaitingRowWiring, firstChat, firstChatMenuItems, firstChatRowTag,
+    isModelWait, isWaiting, releaseLabel, releaseSessionWaits, renderRow, waitingCopy };
 });

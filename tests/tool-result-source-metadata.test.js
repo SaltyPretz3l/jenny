@@ -131,6 +131,64 @@ describe('normalizeSourceCitations shape + fallbacks', () => {
   });
 });
 
+describe('normalizeSourceCitations keeps each ref\'s web:N number (row 154)', () => {
+  test('a sources entry is numbered by its slot in the raw array, invalid slots included', () => {
+    const result = normalizeSourceCitations(payloadWith([
+      { url: 'https://example.com/one', title: 'One' },
+      { url: 'javascript:alert(1)', title: 'Evil' },
+      { url: 'https://example.com/three', title: 'Three' },
+    ]));
+    assert.deepEqual(result.refs.map((ref) => ref.n), [1, 3]);
+  });
+
+  test('a citations entry takes N from its web:N id; a malformed id leaves n unset', () => {
+    const result = normalizeSourceCitations(payloadWith(undefined, [
+      { id: 'web:4', url: 'https://example.com/four', title: 'Four' },
+      { id: 'web:x', url: 'https://example.com/bad', title: 'Bad' },
+      { id: 'web:1234', url: 'https://example.com/long', title: 'Long' },
+      { url: 'https://example.com/none', title: 'None' },
+    ]));
+    assert.deepEqual(result.refs.map((ref) => ref.n), [4, undefined, undefined, undefined]);
+    assert.equal('n' in result.refs[1], false, 'no n key when nothing parsed');
+  });
+
+  test('a source and a citation sharing a url keep the source ref and its n', () => {
+    const result = normalizeSourceCitations({
+      sources: [{ url: 'https://example.com/dup', title: 'From source', snippet: 'snip' }],
+      citations: [{ id: 'web:1', url: 'https://example.com/dup', title: 'From citation' }],
+    });
+    assert.equal(result.refs.length, 1);
+    assert.equal(result.refs[0].n, 1);
+    assert.equal('alsoN' in result.refs[0], false, 'the same N is not repeated');
+  });
+
+  test('a later duplicate url keeps its N on the surviving ref as alsoN', () => {
+    const result = normalizeSourceCitations(payloadWith([
+      { url: 'https://example.com/a', title: 'A' },
+      { url: 'https://example.com/b', title: 'B' },
+      { url: 'https://example.com/a', title: 'A again' },
+    ]));
+    assert.equal(result.refs.length, 2);
+    assert.equal(result.refs[0].n, 1);
+    assert.deepEqual(result.refs[0].alsoN, [3]);
+  });
+
+  test('alsoN is bounded', () => {
+    const dupes = Array.from({ length: 40 }, () => ({ url: 'https://example.com/same', title: 'Same' }));
+    const result = normalizeSourceCitations(payloadWith(dupes));
+    assert.equal(result.refs.length, 1);
+    assert.ok(result.refs[0].alsoN.length <= 12, 'alsoN capped');
+  });
+
+  test('a fetched page maps to the page source type', () => {
+    const result = normalizeSourceCitations(payloadWith([
+      { url: 'https://blog.example.com/post', title: 'blog.example.com', snippet: 'Skip to main content', source_type: 'fetched_url' },
+    ]));
+    assert.equal(result.refs[0].sourceType, 'page');
+    assert.equal(result.refs[0].n, 1);
+  });
+});
+
 // The LIVE wire shape (chat-stream-tool-handling.js noteEvent payload) never
 // carries structured `sources`/`citations` keys — the web tool json.dumps its
 // whole payload into the `output` param, which lands verbatim in
@@ -187,6 +245,72 @@ describe('normalizeSourceCitations output_text fallback (live wire shape)', () =
     assert.equal(normalizeSourceCitations({ output_text: '{"citations": "not-an-array"}' }), null);
     assert.equal(normalizeSourceCitations({ output_text: '{"citations": [{"url": "javascript:x"}]}' }), null);
     assert.equal(normalizeSourceCitations({ output_text: 42 }), null);
+  });
+
+  // Gate sitting 2026-11-14 (G4): with the canonical bridge on, the collector sees the sidecar's
+  // turn-event payload, which names the tool output `tool_output_summary` (chat_serialization.py),
+  // never `output_text`, so no source_citations event was ever derived in the real app.
+  test('recovers citations from the canonical tool_output_summary field', () => {
+    const result = normalizeSourceCitations({
+      tool_name: 'web_search',
+      success: true,
+      tool_output_summary: JSON.stringify({
+        query: 'jenny',
+        sources: [{ url: 'https://example.com/one', title: 'One', snippet: 's1', source_type: 'web_result' }],
+        citations: [{ id: 'web:1', url: 'https://example.com/one', title: 'One' }],
+      }),
+      content_type: 'application/json',
+    });
+    assert.ok(result, 'refs recovered from tool_output_summary JSON');
+    assert.equal(result.refs.length, 1);
+    assert.equal(result.refs[0].url, 'https://example.com/one');
+    assert.equal(result.refs[0].n, 1);
+  });
+
+  test('output_text wins over tool_output_summary when both carry JSON', () => {
+    const result = normalizeSourceCitations({
+      output_text: JSON.stringify({ sources: [{ url: 'https://live.example.com/', title: 'Live' }] }),
+      tool_output_summary: JSON.stringify({ sources: [{ url: 'https://saved.example.com/', title: 'Saved' }] }),
+    });
+    assert.equal(result.refs[0].url, 'https://live.example.com/');
+  });
+
+  test('a later call of the turn numbers its sources by slot plus citation_offset', () => {
+    const result = normalizeSourceCitations({
+      output_text: JSON.stringify({
+        citation_offset: 2,
+        sources: [
+          { url: 'https://example.com/three', title: 'Three' },
+          { url: 'https://example.com/four', title: 'Four' },
+        ],
+        citations: [
+          { id: 'web:3', url: 'https://example.com/three', title: 'Three' },
+          { id: 'web:4', url: 'https://example.com/four', title: 'Four' },
+        ],
+      }),
+    });
+    assert.deepEqual(result.refs.map((entry) => entry.n), [3, 4]);
+    assert.equal(result.refs[0].alsoN, undefined, 'sources and citations agree: no alsoN');
+  });
+
+  test('citation_offset is read from structured payloads too and defaults to zero', () => {
+    const shifted = normalizeSourceCitations({
+      citation_offset: 5,
+      sources: [{ url: 'https://example.com/a', title: 'A' }],
+    });
+    assert.equal(shifted.refs[0].n, 6);
+    const plain = normalizeSourceCitations({ sources: [{ url: 'https://example.com/a', title: 'A' }] });
+    assert.equal(plain.refs[0].n, 1);
+  });
+
+  test('a citation_offset that is not a non-negative integer is ignored', () => {
+    for (const bad of [-1, 1.5, '2', null, true, [2], Number.NaN]) {
+      const result = normalizeSourceCitations({
+        citation_offset: bad,
+        sources: [{ url: 'https://example.com/a', title: 'A' }],
+      });
+      assert.equal(result.refs[0].n, 1, `offset ${JSON.stringify(bad)} ignored`);
+    }
   });
 
   test('oversized output_text is refused without parsing', () => {

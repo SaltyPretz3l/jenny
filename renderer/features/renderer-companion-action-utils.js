@@ -350,6 +350,7 @@
               tone: 'info',
               dedupeKey,
               durationMs: LOOP_UNDO_WINDOW_MS,
+              countdown: true,
               actions: [{
                 id: 'undo',
                 label: jt('companion.actions.undo', 'Undo'),
@@ -380,12 +381,12 @@
 
     async function commitLoopDelete(followUpId) {
       const pending = pendingDeletes.get(followUpId);
-      if (!pending || pending.committing) {
+      // Teardown dismisses the toast too; that must cancel, not commit.
+      if (!pending || pending.committing || disposed) {
         return;
       }
       pending.committing = true;
-      // The toast pauses while hovered, but this clock does not: once the
-      // delete is committed, Undo must not stay on screen.
+      clearTimeout(pending.timer);
       if (pending.toastId) {
         dismissToast(pending.toastId);
       }
@@ -421,7 +422,7 @@
         return;
       }
       const pending = {
-        timer: setTimeout(() => { void commitLoopDelete(followUpId); }, LOOP_UNDO_WINDOW_MS),
+        timer: null,
         toastId: '',
         committing: false,
       };
@@ -433,6 +434,8 @@
         tone: 'info',
         dedupeKey: `shell.companion:delete:${followUpId}`,
         durationMs: LOOP_UNDO_WINDOW_MS,
+        countdown: true,
+        onExpire: () => { void commitLoopDelete(followUpId); },
         actions: [{
           id: 'undo',
           label: jt('companion.actions.undo', 'Undo'),
@@ -450,6 +453,9 @@
           },
         }],
       });
+      if (!pending.toastId) {
+        pending.timer = setTimeout(() => { void commitLoopDelete(followUpId); }, LOOP_UNDO_WINDOW_MS);
+      }
       renderAll();
     }
 
@@ -468,8 +474,8 @@
         });
         return;
       }
-      /* Sticky, and toast actions do not dismiss it: the picker closes itself
-       * once the defer lands or the loop turns out to be stale. */
+      /* Sticky, and its actions keep it open: the picker closes itself once
+       * the defer lands or the loop turns out to be stale. */
       let pickerToastId = '';
       pickerToastId = showToastMessage(jt('companion.toasts.chooseResurfaceTime', 'Choose when this should resurface.'), {
         title: jt('companion.titles.deferOpenLoop', 'Defer Open Loop'),
@@ -481,6 +487,7 @@
           id: `defer:${action.followUpId}:${preset.preset}`,
           label: deferPresetLabel(preset),
           kind: index === 0 ? 'primary' : 'secondary',
+          keepOpen: true,
           onClick: async () => {
             try {
               const payload = await windowRef.jennyShell.companion.deferFollowUp(action.followUpId, preset.preset);

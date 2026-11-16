@@ -93,7 +93,6 @@
 
   /* ── Shadows — soft cool ink drops and neutral hairline rings, without sheen ── */
   --shadow-soft: 0 12px 30px rgba(21, 24, 28, 0.12);
-  --shadow-accent: 0 8px 20px rgba(31, 111, 168, 0.14);
   --shadow-elevation-1: 0 0 0 1px rgba(21, 24, 28, 0.08);
   --shadow-elevation-2: 0 2px 10px rgba(21, 24, 28, 0.08), 0 0 0 1px rgba(21, 24, 28, 0.08);
   --shadow-elevation-3: 0 6px 22px rgba(21, 24, 28, 0.12), 0 0 0 1px rgba(21, 24, 28, 0.10);
@@ -174,7 +173,6 @@
   --widget-button-danger-border: rgba(179, 38, 30, 0.24);
   --widget-button-danger-color: #b3261e;
   --widget-close-hover-bg: #b3261e;
-  --widget-hero-avatar-bg: #1f6fa8;
 
   /* Sidebar & item states */
   --widget-item-active-bg: #dce2e8;
@@ -266,11 +264,7 @@
   --settings-shell-field-bg: var(--surface-input-background);
 
   /* Activity states */
-  --widget-activity-pending-glow: rgba(31, 111, 168, 0.08);
-  --widget-activity-pending-border: rgba(31, 111, 168, 0.44);
   --widget-activity-pending-color: #17598a;
-  --widget-activity-success-color: rgba(26, 116, 71, 0.94);
-  --widget-activity-error-color: #b3261e;
   --widget-activity-pulse-color: rgba(31, 111, 168, 0.12);
 
   /* Sprite activity dot — light-ground inks (light sheets only) */

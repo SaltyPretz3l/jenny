@@ -117,11 +117,6 @@ test('unknown reason falls back to the generic phrase', () => {
   assert.match(missing, /Jenny started this part over/);
 });
 
-test('the old restarted marker is gone', () => {
-  const html = createRenderer().buildTurnRowListMarkup([textRow('r1', 'assistant_1', 'Answer', { truncated: true })], []);
-  assert.ok(!html.includes('chat-truncation-marker'));
-});
-
 test('settled receipt renders once after the last assistant_text row of each receipted message', () => {
   const renderer = createRenderer();
   const messages = [

@@ -295,3 +295,73 @@ test('primary_chat and tools_session_directory_enabled are internal default-on k
     assert.equal(FEATURE_OVERRIDE_KEYS.includes(key), false, key);
   }
 });
+
+// Model pin (Jenny's model): BackendService.ensurePrimarySession re-applies the config pin to the primary session.
+function pinService(pin, { schemaVersion = 1, failWith = null } = {}) {
+  const service = buildService();
+  const calls = [];
+  service.configService = { getState: () => ({ primaryChat: { schemaVersion, model: pin } }) };
+  service.setSessionPreferences = async (sessionId, preferences) => {
+    calls.push([sessionId, preferences]);
+    if (failWith) throw failWith;
+    return service.sessionStore.setSessionPreferences(sessionId, preferences);
+  };
+  service.calls = calls;
+  return service;
+}
+const ensureViaService = (service) => BackendService.prototype.ensurePrimarySession.call(service);
+
+test('ensurePrimarySession applies a differing model pin once, then a matching pin changes nothing', async () => {
+  const service = pinService('qwen3.8:27b');
+  const first = await ensureViaService(service);
+  assert.equal(first.created, true);
+  assert.deepEqual(service.calls, [[first.session_id, { preferred_model: 'qwen3.8:27b' }]]);
+  assert.equal(service.sessionStore.getSessionSummary(first.session_id).preferred_model, 'qwen3.8:27b');
+  const logged = service.logs.find((row) => row.event === 'primary_session.model_pin_reconciled');
+  assert.equal(logged.level, 'INFO');
+  assert.equal(JSON.stringify(service.logs).includes('qwen3.8'), false, 'no model id in any log');
+  const again = await ensureViaService(service);
+  assert.deepEqual(again, { session_id: first.session_id, created: false, demoted: [] });
+  assert.equal(service.calls.length, 1, 'a matching pin does not call again');
+});
+
+test('ensurePrimarySession corrects a primary whose model drifted from the pin', async () => {
+  const service = pinService('qwen3.8:27b');
+  const { session_id: id } = await ensureViaService(service);
+  service.sessionStore.setSessionPreferences(id, { preferred_model: 'tiny:2b' });
+  await ensureViaService(service);
+  assert.equal(service.calls.length, 2);
+  assert.deepEqual(service.calls[1], [id, { preferred_model: 'qwen3.8:27b' }]);
+  assert.equal(service.sessionStore.getSessionSummary(id).preferred_model, 'qwen3.8:27b');
+});
+
+test('ensurePrimarySession leaves the model alone with no pin, a read-only block or the chat off', async () => {
+  for (const [pin, options] of [['', {}], [undefined, {}], [7, {}], ['m1', { schemaVersion: 2 }]]) {
+    const service = pinService(pin, options);
+    const result = await ensureViaService(service);
+    assert.equal(result.created, true);
+    assert.equal(service.calls.length, 0, JSON.stringify([pin, options]));
+  }
+  const off = pinService('m1');
+  off.featureFlags = { primary_chat: false };
+  assert.deepEqual(await ensureViaService(off), { session_id: null, created: false, demoted: [] });
+  assert.equal(off.calls.length, 0);
+  const noConfig = buildService();
+  noConfig.configService = undefined;
+  assert.equal((await ensureViaService(noConfig)).created, true);
+});
+
+test('ensurePrimarySession swallows a throwing or missing preference writer and still answers', async () => {
+  const failing = pinService('m1', { failWith: new Error('model m1 vanished') });
+  const result = await ensureViaService(failing);
+  assert.equal(result.created, true);
+  assert.equal(failing.calls.length, 1);
+  assert.equal(failing.logs.some((row) => row.event === 'primary_session.model_pin_reconciled'), false);
+  assert.equal(JSON.stringify(failing.logs).includes('m1'), false, 'no model id in any log');
+  const throwingConfig = buildService();
+  throwingConfig.configService = { getState: () => ({ defaultRunMode: 'ask', toolsWorkspaceRoot: '', get primaryChat() { throw new Error('config down'); } }) };
+  assert.equal((await ensureViaService(throwingConfig)).created, true);
+  const missingWriter = pinService('m1');
+  missingWriter.setSessionPreferences = undefined;
+  assert.equal((await ensureViaService(missingWriter)).created, true);
+});

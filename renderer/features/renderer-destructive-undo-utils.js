@@ -6,6 +6,8 @@
   root.rendererDestructiveUndoUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
+  /* The Undo window is the toast's clock (held on hover); the toast leaving
+     for any reason commits, except after Undo drops the entry. */
   function createDestructiveUndoScheduler(config) {
     const {
       keyFn = function defaultKeyFn(value) { return String(value); },
@@ -24,14 +26,24 @@
     function dropEntry(key) {
       const entry = entries.get(key);
       if (!entry) return null;
-      clearTimeout(entry.timeoutId);
+      clearTimeout(entry.fallbackTimer);
       entries.delete(key);
       return entry;
     }
 
+    function commitEntry(key) {
+      const entry = dropEntry(key);
+      if (!entry) return;
+      Promise.resolve()
+        .then(function runCommit() { return entry.commit(); })
+        .catch(entry.onCommitError);
+    }
+
     registerCleanup(function cancelAllDestructiveUndoTimers() {
-      entries.forEach(function clearTimer(entry) {
-        clearTimeout(entry.timeoutId);
+      const pending = [...entries.values()];
+      entries.clear();
+      pending.forEach(function clearEntry(entry) {
+        clearTimeout(entry.fallbackTimer);
         if (entry.toastId) dismissToast(entry.toastId);
         if (typeof entry.onDisposeCleanup === 'function') {
           try {
@@ -41,7 +53,6 @@
           }
         }
       });
-      entries.clear();
     });
 
     function schedule(keyParts, options) {
@@ -64,29 +75,17 @@
       if (entries.has(key)) return false;
 
       function handleUndo() {
-        const entry = entries.get(key);
+        const entry = dropEntry(key);
         if (!entry) return;
-        clearTimeout(entry.timeoutId);
-        entries.delete(key);
         if (entry.toastId) dismissToast(entry.toastId);
         onUndo();
       }
 
-      const undoWindowSeconds = Math.max(1, Math.round(windowMs / 1000));
-      const timeoutId = setTimeout(function commitOnTimeout() {
-        entries.delete(key);
-        Promise.resolve()
-          .then(function runCommit() { return commit(); })
-          .catch(onCommitError);
-      }, windowMs);
-
-      const deadline = Date.now() + windowMs;
       const entry = {
-        timeoutId: timeoutId,
+        fallbackTimer: null,
         toastId: null,
         handleUndo: handleUndo,
         label: String(label || ''),
-        deadline: deadline,
         commit: commit,
         onCommitError: onCommitError,
         onDisposeCleanup: typeof onDisposeCleanup === 'function' ? onDisposeCleanup : null,
@@ -94,27 +93,25 @@
       entries.set(key, entry);
       try {
         markPending();
+        const undoWindowSeconds = Math.max(1, Math.round(windowMs / 1000));
         const toastResult = buildToast({ windowMs: windowMs, undoWindowSeconds: undoWindowSeconds, onUndo: handleUndo });
         entry.toastId = toastResult
-          ? showToastMessage(toastResult.message, toastResult.options || {})
+          ? showToastMessage(toastResult.message, {
+            ...(toastResult.options || {}),
+            // Never sticky, whatever the tone.
+            sticky: false,
+            durationMs: Math.max(1, windowMs),
+            countdown: true,
+            onExpire: function commitOnExpire() { commitEntry(key); },
+          }) || null
           : null;
       } catch (error) {
         dropEntry(key);
         throw error;
       }
-      return true;
-    }
-
-    /* Run the commit immediately instead of waiting out the undo window
-       (e.g. a "Delete now" toast action). */
-    function flush(keyParts) {
-      const key = buildKey(keyParts);
-      const entry = dropEntry(key);
-      if (!entry) return false;
-      if (entry.toastId) dismissToast(entry.toastId);
-      Promise.resolve()
-        .then(function runCommit() { return entry.commit(); })
-        .catch(entry.onCommitError);
+      if (!entry.toastId && entries.has(key)) {
+        entry.fallbackTimer = setTimeout(function commitOnTimeout() { commitEntry(key); }, windowMs);
+      }
       return true;
     }
 
@@ -124,14 +121,13 @@
         out.push({
           key: key,
           label: entry.label,
-          deadline: entry.deadline,
           undo: entry.handleUndo,
         });
       });
       return out;
     }
 
-    return { schedule: schedule, flush: flush, list: list };
+    return { schedule: schedule, list: list };
   }
 
   return {

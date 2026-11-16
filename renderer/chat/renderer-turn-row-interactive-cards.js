@@ -15,13 +15,30 @@
   function createInteractiveCards(deps) {
     const { escapeHtml, normalizeId, renderUserQuestionsBlock, renderUserQuestionsReceipt } = deps;
 
+    // The live user_questions_requested event is not saved, so a settled or reloaded card falls back
+    // to the questions the model asked: the tool_use input, then the saved call's input_json.
+    function askedQuestions(payload, toolCall) {
+      for (const input of [payload.input, toolCall.input]) {
+        if (input && Array.isArray(input.questions) && input.questions.length) return input.questions;
+      }
+      for (const json of [payload.input_json, toolCall.input_json]) {
+        if (typeof json !== 'string' || !json.includes('"questions"')) continue;
+        try {
+          const parsed = JSON.parse(json);
+          if (parsed && Array.isArray(parsed.questions) && parsed.questions.length) return parsed.questions;
+        } catch (_error) { /* not JSON: keep looking */ }
+      }
+      return undefined;
+    }
+
     function buildUserQuestionsMarkup(toolCallMessage, row) {
       const toolCall = toolCallMessage && toolCallMessage.tool_call && typeof toolCallMessage.tool_call === 'object'
         ? toolCallMessage.tool_call : {};
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const status = normalizeId(payload.state || toolCall.status);
       const toolName = normalizeId(payload.tool_name || toolCall.tool_name);
-      const questions = Array.isArray(payload.user_questions) ? payload.user_questions : toolCall.user_questions;
+      const questions = Array.isArray(payload.user_questions) ? payload.user_questions
+        : (Array.isArray(toolCall.user_questions) ? toolCall.user_questions : askedQuestions(payload, toolCall));
       if (toolName !== 'ask_user') {
         return '';
       }
@@ -47,9 +64,11 @@
       }
       const resultKind = normalizeId(payload.user_questions_result_kind);
       const answered = resultKind === 'user_questions_answered';
+      // A reply typed in the composer settles as answered with no per-question answers.
+      const reply = answered && typeof payload.user_questions_reply === 'string' ? payload.user_questions_reply : '';
       if (!renderUserQuestionsReceipt
         || !Array.isArray(questions)
-        || (answered && !Array.isArray(payload.user_questions_answers))
+        || (answered && !reply && !Array.isArray(payload.user_questions_answers))
         || (!answered && resultKind !== 'user_questions_declined')) {
         return '';
       }
@@ -58,6 +77,7 @@
         questions,
         resultKind,
         answers: Array.isArray(payload.user_questions_answers) ? payload.user_questions_answers : [],
+        ...(reply ? { reply } : {}),
       }, { escapeHtml });
     }
 

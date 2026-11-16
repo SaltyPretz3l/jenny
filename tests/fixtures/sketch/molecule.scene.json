@@ -1,0 +1,28 @@
+{
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [
+    {
+      "id": "m",
+      "title": "Ethanol",
+      "spec": {
+        "kind": "molecule",
+        "smiles": "CCO"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "title": "OH",
+      "text": "the hydroxyl group",
+      "highlight": [
+        "m[3]"
+      ]
+    }
+  ]
+}

@@ -39,36 +39,22 @@ test('titlebarLoad persists through save and load', () => {
   assert.equal(appearance.loadAppearancePreferences(storage).titlebarLoad, true);
 });
 
-test('an older stored record without the field loads losslessly with the read-out off', () => {
-  const older = {
-    paletteId: 'pewter',
-    typographyId: 'editorial',
-    surfaceEffectId: 'circuit-trace',
-    composerHoloId: 'off',
-    fontScaleId: 'large',
-    chatWidthId: 'narrow',
-    startupAnimation: false,
-    typeScaleVersion: appearance.TYPE_SCALE_VERSION,
-  };
-  const storage = createStorage({ [appearance.STORAGE_KEY]: JSON.stringify(older) });
-  const loaded = appearance.loadAppearancePreferences(storage);
-  const { typeScaleVersion: _stamp, ...olderFields } = older;
-  assert.deepEqual(loaded, { ...olderFields, titlebarLoad: false, artifactAutoOpen: false });
-});
-
 test('theme bundles never touch the title-bar read-out choice', () => {
   const picked = appearance.pickThemeBundleAxes({ titlebarLoad: true, paletteId: 'pewter' });
   assert.equal(Object.prototype.hasOwnProperty.call(picked, 'titlebarLoad'), false);
 });
 
-test('Settings > Appearance offers "Show machine load in the title bar" and persists it', async (t) => {
+test('Settings > General › Machine status offers "Show machine load in the title bar" and persists it', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
   await openSettingsView(app.window);
   const { window } = app;
-  const list = window.document.getElementById('appearanceHoloList');
+  // Row 133: the switch is stored with the appearance but drawn on General, under Machine status.
+  const list = window.document.getElementById('generalTitlebarLoadList');
+  assert.ok(list.closest('.settings-card[data-settings-section="general"]'));
   const toggle = list.querySelector('[data-inv-toggle="appearanceTitlebarLoadToggle"]');
-  assert.ok(toggle, 'the toggle renders in the Appearance list');
+  assert.ok(toggle, 'the toggle renders in the General list');
+  assert.equal(window.document.querySelector('#appearanceHoloList [data-inv-toggle="appearanceTitlebarLoadToggle"]'), null, 'never on two pages');
   assert.match(list.textContent, /Show machine load in the title bar/);
   assert.match(list.textContent, /GPU and VRAM as a small read-out next to the health dot\. CPU, GPU and VRAM are always in the health popover\./);
   const metricList = window.document.getElementById('metricList');
@@ -97,7 +83,7 @@ test('a system stats push through the booted app updates the title-bar read-out'
   const { window } = app;
   const readout = () => [...window.document.querySelectorAll('#metricList .metric-item')]
     .map((item) => item.textContent.replace(/\s+/g, ' ').trim());
-  window.document.getElementById('appearanceHoloList').dispatchEvent(new window.CustomEvent('inv-toggle-change', {
+  window.document.getElementById('generalTitlebarLoadList').dispatchEvent(new window.CustomEvent('inv-toggle-change', {
     bubbles: true, detail: { id: 'appearanceTitlebarLoadToggle', checked: true },
   }));
   await waitForUi(window);

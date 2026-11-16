@@ -17,6 +17,9 @@
 
   function noop() {}
 
+  // Outside-Workspace documents (row 137) keep a registry of their real display path.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+
   /**
    * @param {Object} deps
    * @param {() => (Object|null)} deps.getWorkspaceFsApi - workspace-fs bridge getter
@@ -118,8 +121,28 @@
       await copyTextToClipboard(joined, 'ide:path:copy-abs');
     }
 
+    // Outside document (row 137): the real path comes from the registry; Open in Default
+    // App (it may be Jenny itself) and Copy Relative Path (no Workspace root) are not offered.
+    function buildOutsideMenuItems(key) {
+      const docs = outsideDocs();
+      const reveal = async () => {
+        const result = await docs.reveal(key);
+        if (result && result.ok === false) {
+          showShellErrorToast(jt('ide.pathMenu.revealFailed', 'Could not reveal the item.'), { title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:path:reveal' });
+        }
+      };
+      return [
+        { separator: true },
+        { label: jt('ide.pathMenu.revealInFileExplorer', 'Reveal in File Explorer'), action: reveal },
+        { separator: true },
+        { label: jt('ide.pathMenu.copyPath', 'Copy Path'), action: () => copyTextToClipboard(docs.displayPathFor(key), 'ide:path:copy-abs') },
+        { label: jt('ide.pathMenu.copyName', 'Copy Name'), action: () => copyTextToClipboard(docs.describe(key)?.name || key.split('/').pop(), 'ide:path:copy-name') },
+      ];
+    }
+
     // Path/OS utilities shared by tree rows (files AND directories) and tabs.
     function buildPathUtilityMenuItems(path, kind = 'file') {
+      if (outsideDocs()?.isOutsideKey(path)) return buildOutsideMenuItems(path);
       const items = [
         { separator: true },
         { label: jt('ide.pathMenu.revealInFileExplorer', 'Reveal in File Explorer'), action: () => revealInFileExplorer(path) },

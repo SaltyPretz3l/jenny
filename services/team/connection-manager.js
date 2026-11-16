@@ -9,27 +9,33 @@
 // the invite's hints second. The backoff starts over only once a connection has
 // held (an active member's event stream is open, or a pending member's poll was
 // answered), so a host that greets and then drops is not redialled every second.
-// Every address unreachable is `offline` with the time. A refused known device
-// key is `revoked` once a second refusal confirms it; a hello version mismatch is
-// `update_required`. Both are terminal: no timer, no bridge, no reconnect.
+// Every address unreachable is `offline` with the time. A refused known device key is `revoked` once a refusal a
+// full bridge cooldown after the first confirms it (review round two, R11-F01: bridge-link.js createRefusalWindow);
+// a hello version mismatch is `update_required`. Both are terminal: no timer, no bridge, no reconnect.
 //
 // Leave and revoking the device the call came from end this connection on the
-// host, so a reset there means "check again", not failure: two refused dials
-// with the device key prove the change happened; anything else is unconfirmed.
+// host, so a reset there means "check again", not failure: two refused dials with the device key, a cooldown
+// apart, prove the change happened; anything else is unconfirmed.
 // The host is the authority on roles: this file never checks or caches a role to
 // allow a call. A generation counter makes every await check that its connection
 // is still the current one; `stop()` ends a dial in progress and waits for every
-// attempt and probe, and nothing is written after it. Logs carry the team id,
-// states, reasons, counts and event cursor numbers.
+// attempt and probe, and nothing is written after it. Logs carry the team id, states, reasons, counts and event cursor numbers.
 //
 // Host events (slice 2a-4a): the event feed (event-feed.js) outlives links; each
 // stream resumes from its remembered id and delivers to `onEvent` listeners in
 // order, once. An invalid frame drops the link, so the next stream resyncs.
+//
+// Slice 5-3: a team with a DNS name (client file schema 3) resolves it before
+// every connect (host-name.js); an unresolved name with nothing else reachable is
+// `offline` with `host_name_unresolved`.
 
 const { STATES_SEEN } = require('./client-file');
-const { addressSets, cleanAddresses, openLink } = require('./bridge-link');
+const { DEFAULT_BACKOFF, addressSets, backoffDelay, cleanAddresses, createRefusalWindow, createWaits, openLink } = require('./bridge-link');
+const { createDialSecrets } = require('./dial-secrets');
 const { createEventFeed } = require('./event-feed');
-const { REQUEST_ID } = require('./team-session');
+const { createRoute, resolveHostName } = require('./host-name');
+const { REQUEST_ID, envelopeFields } = require('./team-session');
+const { engineCall } = require('./team-engine');
 const {
   TEAM_ERROR_CODES, TeamError, VERSION_REASONS, failureOf, invalidRequest, isFailureAnswer, teamFailure,
 } = require('./team-errors');
@@ -39,19 +45,21 @@ const STATES = Object.freeze({
   PENDING: 'pending', REVOKED: 'revoked', UPDATE_REQUIRED: 'update_required',
 });
 const TERMINAL = new Set([STATES.REVOKED, STATES.UPDATE_REQUIRED]);
+const OFFLINE_REASONS = new Set(['host_unreachable', 'host_name_unresolved', 'relay_denied', 'team_bridge_unavailable']);
 const CLIENT_REASONS = new Set(['client_unauthorized', 'boot_epoch_mismatch', 'client_required']);
 const RATE_LIMIT_MS = 60_000;
 const CHAT_PREFIX = 'team.chat.';
+// The host's own test (services/host/team-chat-commands.js): presence is limited with chat, on its own counter.
+const isChatOperation = (operation) => typeof operation === 'string'
+  && (operation.startsWith(CHAT_PREFIX) || operation === 'team.presence.set');
 // A stream open this long has held: a frame rejected after that starts the rejection backoff over.
 const STREAM_STABLE_MS = 60_000;
-const DEFAULT_BACKOFF = Object.freeze({ initialMs: 1000, maxMs: 60_000 });
-// A delay is shortened by up to this share, so teams that lost one host do not redial in step.
-const JITTER = 0.2;
 
 function createConnectionManager({
   record: initialRecord, deviceKeys, saveRecord, onChange = () => {}, log = () => {}, spawnChild, appVersion,
   protocolVersion, requestTimeoutMs, timers = { setTimeout, clearTimeout }, backoff = DEFAULT_BACKOFF,
   pendingPollMs = 5000, now = Date.now, random = Math.random, createBridge, eventIdleMs, eventTimers,
+  resolveName = resolveHostName, adoptDevice = () => true, refusedCooldownMs,
 }) {
   const record = { ...initialRecord };
   const teamId = record.team_id;
@@ -70,7 +78,7 @@ function createConnectionManager({
   let failures = 0;
   // Streams in a row that ended on a rejected frame; while above zero an opened stream does not reset `failures`.
   let frameRejections = 0;
-  let refusalsUnconfirmed = 0;
+  const refusals = createRefusalWindow({ now, cooldownMs: refusedCooldownMs });
   let stopped = false;
   let busy = false;
   let lossDuringBusy = null;
@@ -101,7 +109,8 @@ function createConnectionManager({
   function snapshot() {
     return { team_id: teamId, team_name: facts.team_name, state: current.state, reason: current.reason,
       code: current.code, since: current.since, member_id: record.member_id, device_id: record.device_id,
-      display_name: record.display_name, role: facts.role, member_state: facts.member_state };
+      display_name: record.display_name, label: record.label ?? null, role: facts.role, member_state: facts.member_state,
+      path: current.state === STATES.ONLINE ? link?.bridge?.path?.() ?? null : null };
   }
 
   function persist(changes) {
@@ -142,10 +151,9 @@ function createConnectionManager({
   }
 
   function nextDelay() {
-    const initial = Math.max(1, backoff.initialMs);
-    const base = Math.min(backoff.maxMs, initial * (2 ** Math.min(failures, 30)));
+    const delay = backoffDelay(backoff, failures, random);
     failures += 1;
-    return Math.max(1, Math.round(base * (1 - JITTER * random())));
+    return delay;
   }
 
   function closeLink(target) {
@@ -174,20 +182,20 @@ function createConnectionManager({
     setState(state, { reason, code });
   }
 
-  function retryLater(state, reason, code = TEAM_ERROR_CODES.CONNECTION_FAILED) {
+  function retryLater(state, reason, code = TEAM_ERROR_CODES.CONNECTION_FAILED, delay = null) {
     if (stopped || TERMINAL.has(current.state)) return;
     setState(state, { reason, code });
-    schedule(attempt, nextDelay());
+    schedule(attempt, delay ?? nextDelay());
   }
 
-  // A refusal of a key the host had already greeted on this connection is a revoke (the host
-  // drops a key only on a revoke). A refusal before or during hello is confirmed by one more
-  // attempt first: the host also closes a connection right after refusing a hello, and that
-  // answer is only delivered best effort.
+  // A refusal of a key the host had already greeted on this connection is a revoke (the host drops a key only on a
+  // revoke). One before or during hello is confirmed first by a refusal the host gave itself: the bridge refuses
+  // that key again on its own for its cooldown (and says refused for an unanswered admit), so the confirming dial
+  // waits the cooldown out. The host also closes a connection right after refusing a hello, best effort.
   function refused() {
-    if (refusalsUnconfirmed >= 1) { terminal(STATES.REVOKED, 'member_revoked'); return; }
-    refusalsUnconfirmed += 1;
-    retryLater(STATES.RECONNECTING, 'host_refused');
+    const wait = refusals.note();
+    if (wait === 0) terminal(STATES.REVOKED, 'member_revoked');
+    else retryLater(STATES.RECONNECTING, 'host_refused', TEAM_ERROR_CODES.CONNECTION_FAILED, wait);
   }
 
   function onLinkLost(gen, reason) {
@@ -209,29 +217,34 @@ function createConnectionManager({
     onLinkLost(gen, reason || 'closed');
   }
 
-  function loadSeed() {
-    try {
-      const seed = deviceKeys.load(teamId);
-      return seed ? { seed } : { reason: 'team_device_key_missing' };
-    } catch (error) {
-      return { reason: error instanceof TeamError ? error.reason : 'team_device_key_unavailable', retry: true };
-    }
-  }
-
   // True once this manager stopped, or (for an attempt) once a newer attempt or a drop replaced it.
   const stale = (gen) => stopped || (gen !== null && gen !== generation);
+  // The routes of connects in flight, so a stop ends their wait for a lookup.
+  const routes = new Set();
+  const secrets = createDialSecrets({ deviceKeys, teamId, record });
+  const waits = createWaits(timers); // a probe's wait out of the bridge cooldown; stop() cuts it
 
-  // Dials the address sets in order. `gen` is the attempt's generation, or null for a probe.
+  // Dials the address sets in order. `gen` is the attempt's generation, or null for a probe. The key
+  // comes first (no lookup without it); a name is looked up on every connect and never kept, and its
+  // route answers a LAN team's sets synchronously, as before (host-name.js createRoute).
   async function connect(gen) {
-    const key = loadSeed();
+    const key = secrets.key();
     if (!key.seed) return { ok: false, keyReason: key.reason, retry: key.retry === true };
+    // The saved relay, read for every dial (dial-secrets.js); a token store that cannot answer dials nothing.
+    const saved = secrets.relay();
+    if (saved.reason) { key.seed.fill(0); return { ok: false, keyReason: saved.reason, retry: true }; }
+    const route = createRoute(addressSets(record), record.host_name, resolveName);
+    routes.add(route);
     let reason = 'host_unreachable';
     try {
-      for (const addresses of addressSets(record)) {
+      for (let index = 0; ; index += 1) {
+        let addresses = route.set(index);
+        if (addresses && typeof addresses.then === 'function') addresses = await addresses;
         if (stale(gen)) return { ok: false, reason: 'closed' };
+        if (!addresses) break;
         let bridge = null;
         const opened = await openLink({ secretKey: key.seed, hostPublicKey: hostKey, addresses, spawnChild, appVersion,
-          protocolVersion, requestTimeoutMs, createBridge, log: (event, fields) => say(event, fields),
+          protocolVersion, requestTimeoutMs, createBridge, relay: saved.relay, log: (event, fields) => say(event, fields),
           onBridge: (started) => { bridge = started; dialing.add(started); } });
         if (bridge) dialing.delete(bridge);
         if (stale(gen)) {
@@ -241,11 +254,14 @@ function createConnectionManager({
         if (opened.ok) return { ok: true, link: opened.link };
         reason = opened.reason;
         if (reason === 'host_refused') break;
+        if (reason === 'relay_denied') { secrets.refuseRelay(); break; }
       }
     } finally {
+      routes.delete(route);
       key.seed.fill(0);
     }
-    return { ok: false, reason };
+    const last = route.unresolved() && reason === 'host_unreachable' ? 'host_name_unresolved' : reason;
+    return { ok: false, reason: last === 'host_unreachable' && secrets.relayRefused() ? 'relay_denied' : last };
   }
 
   async function attempt() {
@@ -263,7 +279,8 @@ function createConnectionManager({
           return;
         }
         if (result.reason === 'host_refused') { refused(); return; }
-        retryLater(result.reason === 'host_unreachable' ? STATES.OFFLINE : STATES.RECONNECTING, result.reason);
+        retryLater(OFFLINE_REASONS.has(result.reason) ? STATES.OFFLINE : STATES.RECONNECTING, result.reason, undefined,
+          result.reason === 'host_cooldown' ? refusals.left() : null);
         return;
       }
       link = result.link;
@@ -312,9 +329,10 @@ function createConnectionManager({
       return;
     }
     if (target.lossDuringHello) { onLinkLost(gen, target.lossDuringHello); return; }
-    refusalsUnconfirmed = 0;
+    refusals.reset();
     target.greeted = true;
-    persist({ last_addresses: cleanAddresses([...target.workingAddresses(), ...(hello.addresses || [])]) });
+    // The host's own list first: it is current, so old dialled addresses are what the cap cuts, never a new one.
+    persist({ last_addresses: cleanAddresses([...(hello.addresses || []), ...target.workingAddresses()]) });
     await refresh(gen, false);
   }
 
@@ -329,6 +347,8 @@ function createConnectionManager({
       else onLinkLost(gen, 'closed');
       return;
     }
+    // The host's id for this device, if not the saved one, is saved with the outbox marks before going on.
+    if (!adoptDevice(record, status.device_id)) { onLinkLost(gen, 'closed'); return; }
     facts = { team_name: typeof status.team_name === 'string' ? status.team_name : null,
       role: typeof status.role === 'string' ? status.role : null, member_state: status.state };
     if (STATES_SEEN.includes(status.state)) persist({ state_seen: status.state });
@@ -353,8 +373,7 @@ function createConnectionManager({
     return null;
   }
 
-  // Registers a client (reused while the host's boot epoch is the same; concurrent callers share one
-  // registration) and resolves null, or the host's failure.
+  // Registers a client (reused while the host's boot epoch is the same; concurrent callers share one registration) and resolves null, or the host's failure.
   function ensureClient(target) {
     if (target.client) return Promise.resolve(null);
     if (!target.registering) {
@@ -417,13 +436,14 @@ function createConnectionManager({
 
   // Sends one command and returns the host's answer; throws a TeamError when there is no answer.
   // `requestId` (optional) is the caller's id for this mutation (see the retry below for what it guarantees).
-  async function send(operation, params, { requestId } = {}) {
+  async function send(operation, params, { requestId, envelope } = {}) {
     if (stopped) return teamFailure('HOST_STOPPED', 'team_connection_stopped');
     if (requestId !== undefined && !(typeof requestId === 'string' && REQUEST_ID.test(requestId))) {
       return invalidRequest('team_request_id_invalid');
     }
+    if (envelopeFields(envelope) === null) return invalidRequest('team_envelope_invalid'); // slice 3-9: nothing sent
     // The host limits chat on its own counter (team_chat_rate_limit, passed through): the admin hold never covers it.
-    const chat = typeof operation === 'string' && operation.startsWith(CHAT_PREFIX);
+    const chat = isChatOperation(operation);
     if (!chat && now() < limitedUntil && limitedAnswer) return limitedAnswer;
     const target = link;
     if (!target || (current.state !== STATES.ONLINE && current.state !== STATES.PENDING)) {
@@ -432,7 +452,7 @@ function createConnectionManager({
     const blocked = await ensureClient(target);
     if (blocked) return blocked;
     const used = target.client;
-    let answer = await target.session.command(operation, params, { client: used, bootEpoch: used.bootEpoch, requestId });
+    let answer = await target.session.command(operation, params, { client: used, bootEpoch: used.bootEpoch, requestId, envelope });
     if (isFailureAnswer(answer) && CLIENT_REASONS.has(answer.error.reason)) {
       // Only the client this call used is dropped: a concurrent call may already have a new one.
       if (target.client === used) target.client = null;
@@ -443,8 +463,7 @@ function createConnectionManager({
       // without one the retry carries a new id. A later resend under the same id replays the stored answer
       // only for chat (the chat store keys member, device and id). An admin mutation's receipt also digests
       // client_id and boot_epoch, so after a new registration it answers request_payload_changed.
-      answer = await target.session.command(operation, params, { client: target.client,
-        bootEpoch: target.client.bootEpoch, requestId });
+      answer = await target.session.command(operation, params, { client: target.client, bootEpoch: target.client.bootEpoch, requestId, envelope });
     }
     // The host's admin limit is one counter per member over every team command, so the hold covers every
     // admin command (a chat operation's own limit answers team_chat_rate_limit and starts no hold).
@@ -464,8 +483,7 @@ function createConnectionManager({
     }
   }
 
-  // One dial with the device key: 'admitted' (status answered), 'revoked' (status says so),
-  // 'refused' (the key was refused) or 'unknown'.
+  // One dial with the device key: 'admitted' (status answered), 'revoked' (status says so), 'refused' (the key was refused) or 'unknown'.
   async function probeOnce() {
     const result = await connect(null);
     if (!result.ok) return result.reason === 'host_refused' ? 'refused' : 'unknown';
@@ -485,12 +503,14 @@ function createConnectionManager({
     }
   }
 
-  // After a reset during a change that ends this device's access: did it happen? A refusal is
-  // confirmed by a second one (the same rule as a reconnect); one refusal alone proves nothing.
+  // After a reset during a change that ends this device's access: did it happen? A refusal is confirmed by a
+  // second one past the bridge's cooldown (the same rule as a reconnect); one refusal alone proves nothing.
   async function changeHappened() {
     const first = await probeOnce();
     if (first === 'revoked') return true;
     if (first !== 'refused' || stopped) return false;
+    await waits.wait(refusals.windowMs);
+    if (stopped) return false;
     const second = await probeOnce();
     return second === 'refused' || second === 'revoked';
   }
@@ -542,6 +562,8 @@ function createConnectionManager({
 
   async function stop() {
     stopped = true;
+    for (const route of routes) route.cancel();
+    waits.wakeAll();
     cancelTimer();
     dropLink();
     feed.close();
@@ -554,13 +576,15 @@ function createConnectionManager({
     await Promise.all([...tasks].map((task) => task.catch(() => {})));
     await Promise.all([...stopping]);
   }
+  const borrow = () => ({ link, ensureClient, online: !stopped && current.state === STATES.ONLINE });
 
   return {
     teamId,
     start() { if (!stopped) run(attempt); },
-    stop,
-    snapshot,
-    command,
+    stop, snapshot, command,
+    // This connection while online: the team engine call (team-engine.js) and the node link (node/team-link.js) borrow it.
+    borrow,
+    engine: (route, body, options) => engineCall(borrow(), route, body, options),
     // Every host event in order, exactly once, across reconnects; returns the unsubscribe function.
     onEvent: (listener) => (stopped ? () => {} : feed.onEvent(listener)),
     // The cursor of the last delivered event (the number only), or null.

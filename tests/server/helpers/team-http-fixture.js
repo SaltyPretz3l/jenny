@@ -5,10 +5,12 @@
 // host composition around the fake backend, and a raw client that writes the
 // 72-byte preamble itself and then speaks HTTP. No native library, no sidecar.
 
+const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const http = require('node:http');
 const net = require('node:net');
 
+const { command } = require('../../helpers/command-router-fixture');
 const { loadHostConfig } = require('../../../server/config');
 const { ClientRegistry } = require('../../../server/client-registry');
 const { ControlLeases } = require('../../../server/control-leases');
@@ -20,6 +22,7 @@ const { createTeamCommands } = require('../../../server/team/team-commands');
 const { createTeamListener, TEAM_HOST } = require('../../../server/team/team-http-server');
 const { chatRoster, createTeamChatHost } = require('../../../services/host/team-chat-host');
 const { encodeHostPreamble } = require('../../../server/team/transport/preamble');
+const { LOCAL_COMMAND } = require('../../../server/team/member-schema');
 const { createTeamHostFixture, randomKey } = require('./team-host-fixture');
 
 function randomPublicKey() {
@@ -36,6 +39,7 @@ function createClock(start = 1_800_000_000_000) {
 
 async function createTeamHttpFixture(t, {
   clock = createClock(), beforeRedeem = null, resourceLimits = null, withChat = false, chatTimers = null,
+  dropKeyFails = false, chatStoreLimits = null, chatStoreYield = null, beforeChat = null, models: buildModels = null,
 } = {}) {
   const fx = createTeamHostFixture(t);
   const config = loadHostConfig(fx.configPath);
@@ -46,7 +50,12 @@ async function createTeamHttpFixture(t, {
   if (!opened.ok) throw new Error(`store open failed: ${opened.error.reason}`);
   const clients = new ClientRegistry({ capacity: 64, perDeviceCapacity: 4 });
   const leases = new ControlLeases();
-  const { authorize } = createAuthorizer({ directory: store.directory });
+  // As team-main.js wires it: a conversation's project from the host's own session index.
+  let core = null;
+  let chat = null;
+  const { authorize, sessionScope } = createAuthorizer({ directory: store.directory,
+    sessionProject: (id) => core?.composition?.backend?.sessionStore?.peekSessionSummary?.(id)?.project_id ?? null,
+    dmParticipants: (channelId) => chat?.store?.participantsOf(channelId) });
   const realInvites = createInviteService({ store, logger: fx.logger });
   const redeemCalls = [];
   const invites = { ...realInvites, redeem: async (input) => {
@@ -54,16 +63,22 @@ async function createTeamHttpFixture(t, {
     if (beforeRedeem) beforeRedeem();
     return realInvites.redeem(input);
   } };
-  // Slice 2a-3a: the chat host and the team commands, composed as team-main.js does.
-  let core = null;
-  const chat = withChat ? createTeamChatHost({ profileDir: fx.profile, directory: store.directory, clock,
+  // Slice 2a-3a: the chat host and the team commands, composed as team-main.js does. `beforeChat`
+  // may write chat files on the profile first (a channel this host has not loaded yet).
+  if (withChat && beforeChat) await beforeChat(fx.profile);
+  chat = withChat ? createTeamChatHost({ profileDir: fx.profile, directory: store.directory, clock,
     logger: fx.logger, publish: (type, payload, options) => core.events.publish(type, payload, options),
-    roster: chatRoster(store), ...(chatTimers ? { timers: chatTimers } : {}) }) : null;
-  const teamCommands = withChat ? createTeamCommands({ store, invites: realInvites, directory: store.directory,
-    clock, logger: fx.logger, chat: chat.commands }) : undefined;
+    roster: chatRoster(store), ...(chatTimers ? { timers: chatTimers } : {}),
+    ...(chatStoreLimits ? { storeLimits: chatStoreLimits } : {}), ...(chatStoreYield ? { storeYield: chatStoreYield } : {}) }) : null;
+  // Slice 6-3: model sharing, composed as team-main.js does (commands, part routes, stream presence, hooks).
+  const models = buildModels ? buildModels({ store, authorize, logger: fx.logger, clock,
+    publish: (type, payload, options) => core.events.publish(type, payload, options) }) : null;
+  const teamCommands = withChat || models ? createTeamCommands({ store, invites: realInvites, directory: store.directory,
+    clock, logger: fx.logger, chat: chat?.commands ?? null, models: models?.commands ?? null }) : undefined;
   core = createHostCore({ config, clients, leases, authorize, guardRequired: true, maxEventClients: 64,
-    logger: fx.logger, createBackend: fx.createBackend, teamCommands });
+    logger: fx.logger, createBackend: fx.createBackend, teamCommands, sessionScope });
   if (chat) await chat.start();
+  const modelUnsubscribes = models ? models.attach() : [];
   const bootSecret = crypto.randomBytes(32);
   const dropped = [];
   const notified = [];
@@ -71,33 +86,39 @@ async function createTeamHttpFixture(t, {
   const memberStreamCalls = [];
   const context = Object.freeze({
     config, bootEpoch: core.bootEpoch, bootSecret, store, directory: store.directory, invites, authorize, clients,
-    leases, events: core.events, router: core.router, assetRoutes: core.assetRoutes,
+    leases, events: core.events, router: core.router,
+    assetRoutes: models ? async (ctx) => await core.assetRoutes(ctx) || await models.routes(ctx) : core.assetRoutes,
     resourceLimits: { ...config.resourceLimits, ...(resourceLimits || {}) }, isReady: () => ready,
-    addresses: () => ['192.0.2.7:4242'], dropKey: (key) => { dropped.push(key); return 0; },
+    addresses: () => ['192.0.2.7:4242'],
+    dropKey: (key) => { dropped.push(key); if (dropKeyFails) throw new Error('bridge_down'); return 0; },
     notifyMembership: (kind, memberId) => { notified.push({ kind, member_id: memberId }); },
-    logger: fx.logger,
+    logger: fx.logger, sessionScope,
     // Slice 2a-3b: presence hears each member stream, as team-main wires it.
     // Every call is recorded, so a test can show a refused stream reports nothing.
-    ...(chat ? { onMemberStream: (...args) => { memberStreamCalls.push(args); chat.onMemberStream(...args); } } : {}),
+    // Chat and model sharing (slice 6-3) each hear every call when both are set.
+    ...(chat || models ? { onMemberStream: (...args) => {
+      memberStreamCalls.push(args);
+      for (const hook of [chat, models]) hook?.onMemberStream(...args);
+    } } : {}),
   });
   const listener = await createTeamListener(context);
   const openClients = [];
 
   const env = {
-    fx, store, clients, core, context, listener, port: listener.port, bootSecret, dropped, notified, logs, clock, chat,
+    fx, store, clients, core, context, listener, port: listener.port, bootSecret, dropped, notified, logs, clock, chat, models,
     memberStreamCalls,
     redeemCalls, setReady(value) { ready = value; },
     // The log text, for the redaction check.
     logText: () => JSON.stringify(logs),
     client(key, options) { const client = openClient(env, key, options); openClients.push(client); return client; },
-    async newInvite({ kind = 'new_member', actor = null, role = 'member', ttlMs } = {}) {
+    async newInvite({ kind = 'new_member', actor = LOCAL_COMMAND, role = 'member', ttlMs } = {}) {
       const key = randomPublicKey();
       const created = await store.createInvite({ kind, actorMemberId: actor, ...(kind === 'new_member' ? { role } : {}),
         ...(ttlMs ? { ttlMs } : {}), invitePublicKey: key });
       if (!created.ok) throw new Error(`invite failed: ${created.error.reason}`);
       return { key, inviteId: created.invite_id };
     },
-    async redeemDirect({ kind = 'new_member', actor = null, role = 'member', name, label = 'Laptop' }) {
+    async redeemDirect({ kind = 'new_member', actor = LOCAL_COMMAND, role = 'member', name, label = 'Laptop' }) {
       const invite = await env.newInvite({ kind, actor, role });
       const deviceKey = randomPublicKey();
       const redeemed = await store.redeem({ inviteId: invite.inviteId, devicePublicKey: deviceKey,
@@ -125,6 +146,7 @@ async function createTeamHttpFixture(t, {
     async cleanup() {
       for (const client of openClients) client.close();
       await chat?.dispose();
+      for (const unsubscribe of modelUnsubscribes.splice(0).reverse()) unsubscribe();
       await listener.close();
       await core.dispose();
     },
@@ -161,7 +183,7 @@ function openClient(env, key, { host = TEAM_HOST, preamble } = {}) {
           response.on('end', () => {
             const text = Buffer.concat(chunks).toString('utf8');
             const parse = () => { try { return JSON.parse(text); } catch { return null; } };
-            resolve({ status: response.statusCode, headers: response.headers, json: parse(), text });
+            resolve({ status: response.statusCode, headers: response.headers, json: parse(), text, body: Buffer.concat(chunks) });
           });
         });
         req.on('error', reject);
@@ -210,4 +232,28 @@ async function waitUntil(predicate, { attempts = 100, interval = 20 } = {}) {
   return predicate();
 }
 
-module.exports = { createClock, createTeamHttpFixture, pause, randomPublicKey, waitUntil };
+// Hello, a client, and an open stream for one device key; `send` posts a command as that client.
+async function connectMember(env, key) {
+  const client = env.client(key);
+  assert.equal((await client.hello()).status, 200);
+  const auth = await client.registerClient();
+  assert.equal(auth.response.status, 200);
+  const stream = await client.openStream(auth);
+  assert.equal(stream.status, 200);
+  const send = async (operation, params = {}) => {
+    const body = { ...command(auth, operation, params), boot_epoch: env.context.bootEpoch };
+    const answer = await client.request('POST', '/api/v1/commands',
+      { body, headers: { 'X-Client-Token': auth.client_token } });
+    return answer.json;
+  };
+  return { client, auth, stream, send };
+}
+
+// The team chat events a stream has received so far.
+const chatFrames = (stream) => stream.frames.join('').split('\n')
+  .filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)))
+  .filter((frame) => typeof frame.event_type === 'string' && frame.event_type.startsWith('team_chat_'));
+
+module.exports = {
+  chatFrames, connectMember, createClock, createTeamHttpFixture, openClient, pause, randomPublicKey, waitUntil,
+};

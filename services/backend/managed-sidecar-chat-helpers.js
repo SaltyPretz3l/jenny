@@ -181,6 +181,89 @@ function createChatStreamWatchdog({
   };
 }
 
+// Row 136. A model request that waits for the lane (another chat's request, or a chat that was put
+// first) is neither hung nor working, and behind a first chat the wait can be long. The sidecar
+// re-asks about once a second: the first `waiting` answer parks the turn's clocks through
+// `suspend()` (which returns the resume), and the next admit answer that is not a wait resumes
+// them. If the asking stops for `livenessMs` the clocks resume by themselves, so a sidecar that
+// died or gave up is still caught by the idle watchdog.
+// A wait that lasts MODEL_WAIT_NOTICE_MS is also announced to the chat: `announce(wait)` with
+// what `describe()` says it waits behind, again when that changes, and `announce(null)` when it
+// ends. `describe()` answers null for a wait that is not behind another chat (the reply's own
+// helper has the model): that one is not announced.
+const MODEL_WAIT_LIVENESS_MS = 15_000;
+// An ordinary handover between two chats takes a moment and is not worth a line.
+const MODEL_WAIT_NOTICE_MS = 3_000;
+// The reasons the sidecar polls through (sidecar/runtime/inference_admission.py).
+const MODEL_WAIT_REASONS = new Set(['lane_capacity', 'downstream_capacity']);
+function createModelWaitClock({
+  suspend, livenessMs = MODEL_WAIT_LIVENESS_MS, setTimer = setTimeout, clearTimer = clearTimeout,
+  describe = null, announce = null, now = Date.now,
+}) {
+  let resume = null;
+  let timer = null;
+  let closed = false;
+  let waitingSince = null;
+  let announced = null;
+  function tell(wait) {
+    try { announce(wait); } catch (_error) { /* a notice never costs the admission answer */ }
+  }
+  // Clock bookkeeping never changes or loses the admission answer it rides on.
+  function end() {
+    if (timer) clearTimer(timer);
+    timer = null;
+    const resumeClocks = resume;
+    resume = null;
+    try { if (typeof resumeClocks === 'function') resumeClocks(); } catch (_error) { /* the watchdog keeps its own state */ }
+    waitingSince = null;
+    if (announced !== null) { announced = null; tell(null); }
+  }
+  function note(params, result) {
+    if (closed || params?.kind !== 'inference' || params?.phase !== 'admit') return result;
+    if (result?.status !== 'waiting' || !MODEL_WAIT_REASONS.has(result.reason)) {
+      end();
+      return result;
+    }
+    try { if (!resume) resume = suspend(); } catch (_error) { return result; }
+    if (timer) clearTimer(timer);
+    timer = setTimer(end, livenessMs);
+    if (typeof timer?.unref === 'function') timer.unref();
+    waitingSince ??= now();
+    if (typeof announce === 'function' && now() - waitingSince >= MODEL_WAIT_NOTICE_MS) {
+      let wait = null;
+      try { wait = describe?.() || null; } catch (_error) { /* a wait that cannot be described is not announced */ }
+      const key = wait ? JSON.stringify(wait) : null;
+      if (key !== announced) { announced = key; tell(wait); }
+    }
+    return result;
+  }
+  // The request is over: resume once (which also ends an announced wait: a reply that pauses
+  // gets no terminal event), and a late answer parks nothing on a finished turn.
+  function close() {
+    end();
+    closed = true;
+  }
+  return { note, close };
+}
+
+// The chat-stream event behind the wait line (renderer-stream-waiting-line.js). Presentation
+// only: `gateway.inferenceWait()` is what the lanes answered, the lanes say who chose.
+function createModelWaitNotice(service, runtime, gateway) {
+  return {
+    describe() {
+      const wait = gateway?.inferenceWait?.();
+      if (!wait) return null;
+      const first = wait.held_for_first ? service.sessionRuntime?.lanes?.firstSession?.() : null;
+      return { blockingSessionId: wait.blocking_session_id || '', heldForFirst: wait.held_for_first === true,
+        firstSetBy: first?.set_by || '' };
+    },
+    announce(wait) {
+      service.emit('chat-stream', { type: 'model_waiting', waitState: wait ? 'waiting' : 'granted',
+        ...(wait || {}), ...runtime.getEventBase() });
+    },
+  };
+}
+
 function normalizeDebugOptions(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalized = {
@@ -467,6 +550,8 @@ module.exports = {
   buildImageAttachmentSendParams,
   buildLeanContextPreferences,
   createChatStreamWatchdog,
+  createModelWaitClock,
+  createModelWaitNotice,
   emitManagedHistoryScopeNarrowing,
   emitManagedTurnPerformanceSummary,
   managedToolPreferenceInput,

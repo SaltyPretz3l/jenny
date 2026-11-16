@@ -12,6 +12,7 @@ const {
 } = require('./git-context-utils');
 const {
   getCodebaseContext,
+  isGroundableChatQuery,
 } = require('./codebase-context-utils');
 const {
   buildActiveFileContextBlock,
@@ -92,10 +93,12 @@ async function assembleContextForChat(service, options) {
     recentUserTurns,
     preparedMessages,
     recallQuery,
+    hasImageAttachments,
     logTiming,
     activeFileContext,
     mentionContents,
     executionAuthority,
+    boardId = null,
   } = options;
   const trustedExecution = getTrustedExecutionBinding(executionAuthority);
   if (!trustedExecution || trustedExecution.sessionId !== resolvedSessionId) {
@@ -133,12 +136,15 @@ async function assembleContextForChat(service, options) {
   // Codebase grounding ("local RAG-lite") is opt-in: gated behind the
   // default-ON workspace_codebase_context flag AND the include_codebase_context
   // context preference AND a configured workspace root. It is independent of the
-  // git-context preference.
+  // git-context preference. An image turn asks about the picture, and a thin
+  // chat query ("hello") only matches noise, so neither grounds.
+  const codebaseQuery = recallQuery || prompt || '';
   const shouldIncludeCodebaseContext =
     service.featureFlags?.workspace_codebase_context === true
     && contextPreferences.include_codebase_context !== false
-    && Boolean(projectRoot);
-  const codebaseQuery = recallQuery || prompt || '';
+    && Boolean(projectRoot)
+    && hasImageAttachments !== true
+    && isGroundableChatQuery(codebaseQuery);
   // Implicit active-file context + @-mentions (Tier-3): gated behind the
   // default-ON workspace_active_file_context flag AND the
   // include_active_file_context preference. Unlike codebase grounding the
@@ -433,6 +439,18 @@ async function assembleContextForChat(service, options) {
     if (overview) {
       appendContextBlock(overview.kind, overview.content);
       promptContributions.profile_overview_block = summarizeTextBlock(overview.content);
+    }
+  }
+  // Row 150: a turn sent from the chat docked beside a board (its stamp already checked) carries how to
+  // propose changes and the board as text. Self-bounded (board-text.js), so it bypasses the trimmer; last,
+  // so it sits nearest the user's message. An unstamped turn loads nothing and gets nothing.
+  if (boardId) {
+    const boardBlock = await require('../boards/board-turn-context')
+      .buildBoardContextBlock(service, { boardId, sessionId: resolvedSessionId, streamId });
+    trustedExecution.assertCurrent();
+    if (boardBlock) {
+      appendContextBlock(boardBlock.kind, boardBlock.content);
+      promptContributions.board_block = summarizeTextBlock(boardBlock.content);
     }
   }
   const normalizedContextBlocks = normalizeContextBlocksForSend(contextBlocks, {

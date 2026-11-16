@@ -72,14 +72,15 @@ const CASES = [
     'chat.hasPendingUserQuestions chat.answerUserQuestions chat.declineUserQuestions'],
   [chatIpc.registerChatStreamIpcHandlers, 'ipcAuthorization', {},
     'chat.startStream chat.editAndRegenerate chat.retryUnsavedReply chat.discardUnsavedReply'
-    + ' chat.getActiveTurnState chat.cancelStream chat.compactNow handoff.generateNote attachments.pick'
+    + ' chat.getActiveTurnState chat.cancelStream chat.compactNow chat.firstSession handoff.generateNote attachments.pick'
     + ' attachments:prepare-dropped-paths attachments.prepare attachments.saveImageAsset attachments.releaseAssets'],
   [workspaceIpc.registerWorkspaceStateIpcHandlers, 'workspaceAuthorization', {
     app: { getPath: () => USER_DATA }, backendService: {}, shellConfigService: {},
   },
   'reminders.snooze workspace.getState workspace.updateState workspaceIde.getState workspaceIde.updateSettings'
     + ' workspaceIde.updateState workspaceBackup.write workspaceBackup.remove workspaceBackup.list'
-    + ' workspaceBackup.read backgroundJobs.getState backgroundJobs.kill backgroundJobs.readOutput'],
+    + ' workspaceBackup.read backgroundJobs.getState backgroundJobs.kill backgroundJobs.readOutput'
+    + ' backgroundJobs.clearFinished'],
   // knowledge_layer / semantic_catalog off: only the skills channels register.
   [guidanceIpc.registerGuidanceKnowledgeIpcHandlers, 'workspaceAuthorization', { backendService: {} },
     'skills.getState skills.updateSettings skills.openScopeFolder'],

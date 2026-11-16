@@ -1,11 +1,13 @@
 /* renderer/shell/renderer-settings-api-providers.js
  *
- * Settings > Models API-key providers (row 78, variant A): rows inside the
- * Cloud models group, the editor in place under its row. The main process
- * owns instances, keys and discovery (services/backend/api-provider-service.js);
- * this controller owns the view state of one host, the bridge subscription and
- * the row actions. A key goes out once through the write-only setKey; it is
- * never stored here, and the state the main process sends carries only hasKey.
+ * Settings > Models API-key providers (row 78): one row per provider, plus an
+ * "Add provider" row, under Cloud providers in Engines and providers; each
+ * row's editor lives in its Manage drawer. The main process owns instances,
+ * keys and discovery (services/backend/api-provider-service.js); this
+ * controller registers the rows, owns the view state of the open drawer, the
+ * bridge subscription and the actions. A key goes out once through the
+ * write-only setKey; it is never stored here, and the state the main process
+ * sends carries only hasKey.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -18,6 +20,12 @@
 
   const viewModule = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsApiProvidersView)
     || (typeof require === 'function' ? require('./renderer-settings-api-providers-view') : null);
+
+  const SERVICES_READY_EVENT = 'model-library-services-ready';
+  const HOST_ID = 'apiProvidersDrawerHost';
+  const ADD_ID = 'api-add';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback
+    || ((key, fallback, params) => (params ? String(fallback).replace(/\{(\w+)\}/g, (m, name) => (Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : m)) : fallback));
 
   // Fields whose value and focus survive a repaint (a push can land mid-typing).
   const KEPT_FIELDS = [
@@ -47,10 +55,14 @@
   function createApiProvidersController(options = {}) {
     const windowRef = options.windowRef || (typeof globalThis !== 'undefined' ? globalThis.window || globalThis : null);
     const documentRef = options.documentRef || windowRef?.document || null;
-    const host = options.host || documentRef?.getElementById?.('apiProvidersHost') || null;
     const inventory = options.inventory || windowRef?.inventory || globalThis.inventory || {};
     const getBridge = typeof options.getBridge === 'function'
       ? options.getBridge : () => windowRef?.jennyShell?.apiProviders || null;
+    const getServices = () => {
+      if (typeof options.services === 'function') return options.services() || null;
+      const module = windowRef?.modelLibraryServices;
+      return module && typeof module.shared === 'function' ? module.shared({ documentRef, windowRef }) : null;
+    };
     const refreshComposerModels = typeof options.refreshComposerModels === 'function'
       ? options.refreshComposerModels
       : () => windowRef?.rendererSnapshotRefresh?.instance?.refreshSnapshots?.();
@@ -68,6 +80,9 @@
     let disposed = false;
     let bound = false;
     let unsubscribe = null;
+    let host = null; // the open drawer's body host, a fresh node per open
+    const hostCleanups = [];
+    const registered = new Map(); // row id -> what the table shows of it that only a re-register can change
     const listeners = [];
 
     function instanceById(id) {
@@ -84,16 +99,16 @@
 
     function captureFields() {
       const kept = new Map();
-      for (const element of host.querySelectorAll('input')) {
+      for (const element of host?.querySelectorAll('input') || []) {
         const key = keptFieldKey(element);
         if (key) kept.set(key, element.value);
       }
       const active = documentRef?.activeElement;
-      return { kept, focused: host.contains(active) ? keptFieldKey(active) : '' };
+      return { kept, focused: host?.contains(active) ? keptFieldKey(active) : '' };
     }
 
     function restoreFields(snapshot) {
-      for (const element of host.querySelectorAll('input')) {
+      for (const element of host?.querySelectorAll('input') || []) {
         const key = keptFieldKey(element);
         if (key && snapshot.kept.has(key)) element.value = snapshot.kept.get(key);
         if (key && key === snapshot.focused) element.focus();
@@ -102,17 +117,92 @@
 
     function applySearch() {
       const query = ui.query.trim().toLowerCase();
-      for (const row of host.querySelectorAll('[data-api-model]')) {
+      for (const row of host?.querySelectorAll('[data-api-model]') || []) {
         row.hidden = Boolean(query) && !row.getAttribute('data-api-model').toLowerCase().includes(query);
       }
     }
 
+    function rowEntry(instance, index) {
+      return {
+        id: `api:${instance.id}`, kind: 'cloud', order: 30 + index, name: instance.label, what: viewModule.hostOf(instance.endpoint),
+        getStatus: () => {
+          const current = instanceById(instance.id);
+          return current ? view.rowStatus(current, state.localOnly) : { text: '', tone: 'off', set: true };
+        },
+        renderDrawer: (body) => openDrawerHost(body, { 'data-api-provider-instance': instance.id }, instance.id),
+        onDrawerClose: () => { ui.editing = ''; closeEditorState(); },
+      };
+    }
+
+    function addEntry() {
+      return {
+        id: ADD_ID, kind: 'cloud', order: 999, inSummary: false,
+        name: jt('settings.apiProviders.addRowName', 'Add provider'),
+        what: jt('settings.apiProviders.addRowWhat', 'Your own key, or any compatible endpoint'),
+        actionLabel: jt('settings.apiProviders.addRowAction', 'Add…'),
+        drawerTitle: jt('settings.apiProviders.addLabel', 'Add a provider'),
+        getStatus: () => view.addStatus(state.instances.length),
+        renderDrawer: (body) => openDrawerHost(body, { 'data-api-provider-add': '' }, ''),
+        onDrawerClose: () => { ui.customDraft = null; delete ui.errors.add; },
+      };
+    }
+
+    function openDrawerHost(body, attributes, editing) {
+      const node = documentRef.createElement('div');
+      node.id = HOST_ID;
+      for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+      body.replaceChildren(node);
+      ui.editing = editing;
+      closeEditorState();
+      render();
+    }
+
+    // One row per provider, then the add row; the rows follow the state, and are absent while the feature is off.
+    function syncRows() {
+      const svc = getServices();
+      if (!svc) return null;
+      const wanted = state.enabled ? [...state.instances.map(rowEntry), addEntry()] : [];
+      const ids = new Set(wanted.map((entry) => entry.id));
+      for (const id of [...registered.keys()]) {
+        if (!ids.has(id)) { svc.unregister(id); registered.delete(id); }
+      }
+      for (const entry of wanted) {
+        const signature = `${entry.order}|${entry.name}|${entry.what}`;
+        if (registered.get(entry.id) !== signature || !svc.has(entry.id)) {
+          svc.register(entry);
+          registered.set(entry.id, signature);
+        } else {
+          svc.refresh(entry.id);
+        }
+      }
+      return svc;
+    }
+
+    // A drawer host is a fresh node on every open: listeners follow the node the page has now.
+    function syncHost() {
+      const node = documentRef?.getElementById?.(HOST_ID) || null;
+      if (node === host) return host;
+      for (const cleanup of hostCleanups.splice(0)) cleanup();
+      host = node;
+      if (host?.addEventListener) {
+        for (const [type, handler] of [['click', onClick], ['input', onInput], ['change', onChange], ['keydown', onKeyDown]]) {
+          host.addEventListener(type, handler);
+          hostCleanups.push(() => node.removeEventListener(type, handler));
+        }
+      }
+      return host;
+    }
+
     function render() {
-      if (disposed || !host || typeof inventory.settingsField !== 'function') return;
+      if (disposed || typeof inventory.settingsField !== 'function') return;
+      syncRows();
+      if (!syncHost()) return;
       if (!ui.addPreset) ui.addPreset = state.presets[0]?.id || viewModule.CUSTOM_PRESET_ID;
       if (ui.editing && !instanceById(ui.editing)) ui.editing = '';
       const snapshot = captureFields();
-      host.innerHTML = view.render(state, ui);
+      const id = host.getAttribute('data-api-provider-instance');
+      const instance = id ? instanceById(id) : null;
+      host.innerHTML = id ? (instance ? view.instanceDrawer(instance, ui, state.localOnly) : '') : view.addDrawer(state, ui);
       restoreFields(snapshot);
       applySearch();
     }
@@ -159,7 +249,7 @@
     }
 
     function inputValue(selector) {
-      return String(host.querySelector(selector)?.value || '');
+      return String(host?.querySelector(selector)?.value || '');
     }
 
     function closeEditorState() {
@@ -170,7 +260,7 @@
     }
 
     async function saveKey(instanceId) {
-      const field = host.querySelector(`[data-api-provider-key="${instanceId}"]`);
+      const field = host?.querySelector(`[data-api-provider-key="${instanceId}"]`);
       const key = String(field?.value || '').trim();
       if (!key) {
         ui.errors[instanceId] = viewModule.errorText('invalid_key');
@@ -199,7 +289,7 @@
         if (!ui.customDraft) {
           ui.customDraft = emptyDraft();
           render();
-          host.querySelector('[data-api-custom="label"]')?.focus?.();
+          host?.querySelector('[data-api-custom="label"]')?.focus?.();
           return;
         }
       }
@@ -210,9 +300,11 @@
       if (result?.ok) {
         ui.customDraft = null;
         closeEditorState();
-        ui.editing = result.instanceId;
-        render();
-        host.querySelector(`[data-api-provider-key="${result.instanceId}"]`)?.focus?.();
+        // Close the add drawer and open the new provider's: its row exists once the state has arrived.
+        const rowId = `api:${result.instanceId}`;
+        if (!getServices()?.has(rowId)) await refresh();
+        await Promise.resolve();
+        if (!disposed && getServices()?.open(rowId)) host?.querySelector(`[data-api-provider-key="${result.instanceId}"]`)?.focus?.();
       }
     }
 
@@ -222,13 +314,8 @@
     }
 
     const ACTIONS = {
-      apiProvidersToggleEditor: (id) => {
-        ui.editing = ui.editing === id ? '' : id;
-        closeEditorState();
-        render();
-      },
       apiProvidersSaveKey: (id) => saveKey(id),
-      apiProvidersReplaceKey: (id) => { ui.replacingKey = id; render(); host.querySelector(`[data-api-provider-key="${id}"]`)?.focus?.(); },
+      apiProvidersReplaceKey: (id) => { ui.replacingKey = id; render(); host?.querySelector(`[data-api-provider-key="${id}"]`)?.focus?.(); },
       apiProvidersCancelReplace: () => { ui.replacingKey = ''; render(); },
       apiProvidersClearKey: (id) => run('key', id, (bridge) => bridge.clearKey({ instanceId: id })),
       apiProvidersDiscover: (id) => discover(id),
@@ -251,7 +338,7 @@
         const modelId = inputValue(`[data-api-provider-add-model="${id}"]`).trim();
         if (!modelId) return;
         const result = await run('model', id, (bridge) => bridge.setModelEnabled({ instanceId: id, modelId, enabled: true }));
-        const field = host.querySelector(`[data-api-provider-add-model="${id}"]`);
+        const field = host?.querySelector(`[data-api-provider-add-model="${id}"]`);
         if (result?.ok && field) field.value = '';
       },
       apiProvidersRemoveAsk: (id) => { ui.confirmRemove = id; render(); },
@@ -341,15 +428,9 @@
     function bind() {
       if (bound || disposed) return;
       bound = true;
-      if (host?.addEventListener) {
-        const register = (target, type, handler) => {
-          target.addEventListener(type, handler);
-          listeners.push(() => target.removeEventListener(type, handler));
-        };
-        register(host, 'click', onClick);
-        register(host, 'input', onInput);
-        register(host, 'change', onChange);
-        register(host, 'keydown', onKeyDown);
+      if (documentRef?.addEventListener) {
+        documentRef.addEventListener(SERVICES_READY_EVENT, render);
+        listeners.push(() => documentRef.removeEventListener(SERVICES_READY_EVENT, render));
       }
       try {
         const maybe = getBridge()?.onChanged?.(onChanged);
@@ -364,6 +445,10 @@
       generation += 1;
       try { unsubscribe?.(); } catch (_error) { /* best effort */ }
       for (const cleanup of listeners.splice(0)) cleanup();
+      for (const cleanup of hostCleanups.splice(0)) cleanup();
+      host = null;
+      for (const id of registered.keys()) getServices()?.unregister(id);
+      registered.clear();
     }
 
     return { bind, dispose, refresh, render, getState: () => normalizeState(state), ui };

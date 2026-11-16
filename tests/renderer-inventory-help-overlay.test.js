@@ -111,3 +111,55 @@ test('onClose callback fires when overlay closes (E7)', () => {
   overlay.close();
   assert.equal(closeCount, 1);
 });
+
+test('headerHtml, size, initialFocusSelector and onRender extend the dialog (wide variant)', () => {
+  const { dom, overlay } = buildOverlay();
+  const doc = dom.window.document;
+  const rendered = [];
+  overlay.open({
+    title: 'Wide',
+    titleId: 'wideTitle',
+    headerHtml: '<input id="extraField" type="text" aria-label="Extra">',
+    size: 'wide',
+    initialFocusSelector: '#extraField',
+    bodyHtml: '<p>body</p>',
+    onRender: (dialog) => { rendered.push(dialog); },
+  });
+  const dialog = doc.querySelector('.inv-help-overlay-dialog');
+  assert.ok(dialog.classList.contains('inv-help-overlay-dialog--wide'));
+  const header = dialog.querySelector('.inv-help-overlay-header');
+  const children = Array.from(header.children);
+  assert.deepEqual(children.map((el) => el.className), [
+    'inv-help-overlay-title',
+    'inv-help-overlay-header-extra',
+    'inv-help-overlay-close',
+  ]);
+  assert.ok(children[1].querySelector('#extraField'));
+  assert.equal(doc.activeElement, doc.getElementById('extraField'));
+  assert.deepEqual(rendered, [dialog], 'onRender is called once with the dialog');
+});
+
+test('an unmatched initialFocusSelector falls back to the close button and a throwing onRender is swallowed', () => {
+  const { dom, overlay } = buildOverlay();
+  overlay.open({
+    title: 'Help',
+    bodyHtml: '<p>body</p>',
+    size: 'huge',
+    initialFocusSelector: '#nope',
+    onRender: () => { throw new Error('boom'); },
+  });
+  const doc = dom.window.document;
+  assert.equal(overlay.isOpen(), true);
+  assert.equal(doc.activeElement, doc.querySelector('[data-help-overlay-close]'));
+  assert.equal(doc.querySelector('.inv-help-overlay-dialog--wide'), null, 'unknown sizes are ignored');
+  assert.equal(doc.querySelector('.inv-help-overlay-header-extra'), null, 'no header extra without headerHtml');
+});
+
+test('open() with only title and bodyHtml behaves as before the extensions', () => {
+  const { dom, overlay } = buildOverlay();
+  overlay.open({ title: 'Plain', bodyHtml: '<p>body</p>' });
+  const doc = dom.window.document;
+  assert.equal(doc.querySelector('.inv-help-overlay-dialog').className, 'inv-help-overlay-dialog');
+  assert.equal(doc.activeElement, doc.querySelector('[data-help-overlay-close]'));
+  assert.equal(doc.querySelector('.inv-help-overlay-header').children.length, 2);
+});

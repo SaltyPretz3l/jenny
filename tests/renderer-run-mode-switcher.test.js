@@ -5,7 +5,6 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const {
-  createComposerModeChipsRenderer,
   createRunModeSwitcherRenderer,
   syncRunModeChip,
   syncRunModeSegmentsDisabled,
@@ -109,22 +108,6 @@ test('destroy unmounts the chip', (t) => {
   const h = buildHarness(t);
   h.renderer.destroy();
   assert.equal(chipOf(h.doc), null);
-});
-
-test('the mode-chips renderer no longer mounts the retired Plan chip', (t) => {
-  const dom = new JSDOM('<!doctype html><body>'
-    + '<div class="composer-mode-chips" id="composerModeChips">'
-    + '<div id="composerModeChipsAnnouncer" class="sr-only" aria-live="polite" aria-atomic="true"></div>'
-    + '</div></body>');
-  const container = dom.window.document.getElementById('composerModeChips');
-  const renderer = createComposerModeChipsRenderer({
-    container,
-    getPlanMode: () => true,
-    onPlanModeToggle: () => {},
-  });
-  t.after(() => renderer.destroy());
-  assert.equal(dom.window.document.getElementById('composerPlanModeChip'), null);
-  assert.equal(container.querySelectorAll('button[data-mode]').length, 0);
 });
 
 /* Collapsed settings popover (spec 2026-09-26 §4 step 4): an inline

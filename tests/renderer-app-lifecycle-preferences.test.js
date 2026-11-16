@@ -88,7 +88,8 @@ test('chat-timeline rollout signal keys evict the oldest entry without capping c
 // single lane, every one at WARN. A routine success is not a warning, and at
 // that volume it hides the fallbacks the lane-merge decisions actually ride on.
 // So: successes collapse to one INFO line per lane, and anything that did NOT
-// morph stays WARN and is counted every time.
+// morph stays WARN and is counted every time (its log lines are de-duplicated
+// per stream and reason: cost-growth 8).
 test('timeline_dom_write: successes collapse to one INFO per lane, failures always log at WARN', () => {
   const logged = [];
   const state = {
@@ -129,10 +130,8 @@ test('timeline_dom_write: successes collapse to one INFO per lane, failures alwa
       'INFO:turn_row_list:morph_applied',
       'INFO:full_render:morph_applied',
       'WARN:full_render:raw_innerhtml',
-      'WARN:full_render:raw_innerhtml',
-      'WARN:full_render:raw_innerhtml',
     ],
-    '50 identical successes collapse to one line per lane; every failure is kept'
+    '50 identical successes collapse to one line per lane; a repeated failure logs once'
   );
   assert.equal(
     controller.getChatTimelineRowModelMeta('dom-write-session')
@@ -167,8 +166,33 @@ test('timeline_dom_write: a per-row reconcile is a healthy write, a thrown one s
 
   assert.deepEqual(
     logged.map((entry) => `${entry.level}:${entry.details.outcome}`),
-    ['INFO:reconcile_applied', 'WARN:reconcile_threw', 'WARN:reconcile_threw'],
+    ['INFO:reconcile_applied', 'WARN:reconcile_threw'],
   );
+});
+
+// cost-growth 8: a persistent failure logged one WARN with full details per
+// occurrence. Now: once per stream and reason, then every 100th, while the
+// counter still sees every one.
+test('a repeated unhealthy signal logs once per stream and reason, then every 100th', () => {
+  const logged = [];
+  const controller = createChatTimelinePreferenceController({
+    state: { currentSessionId: 's', ui: { chatTimelineRowModelBySession: new Map(), chatTimelineRowModelMetaBySession: new Map() } },
+    storage: null,
+    storageKeys: {},
+    callbacks: { appendClientLog(level, event, details) { logged.push({ level, details }); } },
+  });
+  for (let index = 0; index < 500; index += 1) {
+    controller.recordChatTimelineRolloutSignal('s', 'timeline_dom_write', { lane: 'full_render', outcome: 'parse_failed', streamId: 'stream_a' });
+  }
+  controller.recordChatTimelineRolloutSignal('s', 'timeline_dom_write', { lane: 'full_render', outcome: 'parse_failed', streamId: 'stream_b' });
+  controller.recordChatTimelineRolloutSignal('s', 'streaming_article_rebuild', { outcome: 'raw_innerhtml', streamingMessageId: 'm1' });
+  controller.recordChatTimelineRolloutSignal('s', 'streaming_article_rebuild', { outcome: 'raw_innerhtml', streamingMessageId: 'm1' });
+  assert.deepEqual(logged.map((entry) => `${entry.details.signal}:${entry.details.streamId || entry.details.streamingMessageId}:${entry.details.count}`), [
+    'timeline_dom_write:stream_a:1', 'timeline_dom_write:stream_a:100', 'timeline_dom_write:stream_a:200', 'timeline_dom_write:stream_a:300',
+    'timeline_dom_write:stream_a:400', 'timeline_dom_write:stream_a:500', 'timeline_dom_write:stream_b:501', 'streaming_article_rebuild:m1:1',
+  ]);
+  assert.ok(logged.every((entry) => entry.level === 'WARN'));
+  assert.equal(controller.getChatTimelineRowModelMeta('s').telemetry_counters.timeline_dom_write, 501);
 });
 
 test('healthy rebuild and evidence rollout signals resolve to INFO without hiding anomalies', () => {
@@ -226,14 +250,13 @@ test('healthy rebuild and evidence rollout signals resolve to INFO without hidin
   assert.deepEqual(record('streaming_article_rebuild', 'morph_applied'), { logged: true, count: 1 });
   assert.deepEqual(record('streaming_article_rebuild', 'morph_applied'), { logged: false, count: 2 });
   assert.deepEqual(record('streaming_article_rebuild', 'fallback_rebuild'), { logged: true, count: 3 });
-  assert.deepEqual(record('streaming_article_rebuild', 'fallback_rebuild'), { logged: true, count: 4 });
+  assert.deepEqual(record('streaming_article_rebuild', 'fallback_rebuild'), { logged: false, count: 4 }, 'counted, its log line de-duplicated');
   assert.deepEqual(record('unknown_signal', 'morph_applied'), { logged: true, count: 1 });
 
   assert.deepEqual(
     logged.map((entry) => `${entry.level}:${entry.details.signal}:${entry.details.outcome}`),
     [
       'INFO:streaming_article_rebuild:morph_applied',
-      'WARN:streaming_article_rebuild:fallback_rebuild',
       'WARN:streaming_article_rebuild:fallback_rebuild',
       'WARN:unknown_signal:morph_applied',
     ]

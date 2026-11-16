@@ -60,7 +60,7 @@ function menuRowText(rowEl) {
     label: rowEl.querySelector('.project-menu-name')?.textContent || '',
     detail: rowEl.querySelector('.project-menu-detail')?.textContent || '',
     count: rowEl.querySelector('.project-menu-count')?.textContent || '',
-    selected: rowEl.querySelector('.project-menu-check')?.textContent === '\u2713',
+    selected: Boolean(rowEl.querySelector('.project-menu-check svg')),
   };
 }
 

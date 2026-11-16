@@ -18,7 +18,17 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+pub mod fake_mapper;
+pub mod raw;
+pub mod relay;
+
 pub const WAIT: Duration = Duration::from_secs(10);
+
+/// A loopback UDP port that was free a moment ago.
+pub fn free_udp_port() -> u16 {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a probe socket");
+    socket.local_addr().expect("local address").port()
+}
 
 /// Awaits `future` for at most [`WAIT`].
 pub async fn within<F: Future>(what: &str, future: F) -> F::Output {
@@ -118,9 +128,17 @@ impl Bridge {
 
     /// The next line, parsed. Panics when none arrives in time or the bridge ended.
     pub async fn next(&mut self) -> Value {
-        let line = within("a control line", self.lines.recv())
+        self.next_before(tokio::time::Instant::now() + WAIT, "a control line")
             .await
-            .expect("bridge still running");
+    }
+
+    /// The next line, read before `end`.
+    async fn next_before(&mut self, end: tokio::time::Instant, what: &str) -> Value {
+        let line = match tokio::time::timeout_at(end, self.lines.recv()).await {
+            Ok(Some(line)) => line,
+            Ok(None) => panic!("the bridge ended before {what}"),
+            Err(_) => panic!("timed out waiting for {what}"),
+        };
         assert!(!line.contains('\n'), "line is a single line");
         let value: Value = serde_json::from_str(&line).expect("line is JSON");
         self.history.push(value.clone());
@@ -136,23 +154,60 @@ impl Bridge {
         self.wait_for(what, matches).await
     }
 
+    /// Skips lines until one matches, for up to `limit`.
+    pub async fn wait_up_to(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        matches: impl Fn(&Value) -> bool,
+    ) -> Value {
+        let end = tokio::time::Instant::now() + limit;
+        loop {
+            let line = self.next_before(end, what).await;
+            if matches(&line) {
+                return line;
+            }
+        }
+    }
+
+    /// Sends `stop` and returns every line up to and including `stopped`.
+    pub async fn stop_until_stopped(&mut self) -> Vec<Value> {
+        self.send(json!({ "t": "stop" })).await;
+        self.until_stopped().await
+    }
+
+    /// Every line up to and including `stopped`.
+    pub async fn until_stopped(&mut self) -> Vec<Value> {
+        let mut lines = Vec::new();
+        loop {
+            let line = self.next().await;
+            let done = line["t"] == "stopped";
+            lines.push(line);
+            if done {
+                return lines;
+            }
+        }
+    }
+
+    /// Every line returned so far.
+    pub fn history(&self) -> &[Value] {
+        &self.history
+    }
+
+    /// True when a line already returned matches.
+    pub fn history_has(&self, matches: impl Fn(&Value) -> bool) -> bool {
+        self.history.iter().any(matches)
+    }
+
     /// The latest `stats` line matching, seen before or arriving later.
     pub async fn stats_where(&mut self, what: &str, matches: impl Fn(&Value) -> bool) -> Value {
         self.seen_or_wait(what, |line| line["t"] == "stats" && matches(line))
             .await
     }
 
-    /// Skips lines until one matches.
+    /// Skips lines until one matches, for up to [`WAIT`].
     pub async fn wait_for(&mut self, what: &str, matches: impl Fn(&Value) -> bool) -> Value {
-        within(what, async {
-            loop {
-                let line = self.next().await;
-                if matches(&line) {
-                    return line;
-                }
-            }
-        })
-        .await
+        self.wait_up_to(WAIT, what, matches).await
     }
 
     pub async fn expect(&mut self, t: &str) -> Value {
@@ -199,6 +254,9 @@ pub fn host_limits() -> Value {
         "max_handshakes": 64,
         "admit_timeout_ms": 5000,
         "drop_grace_ms": 1000,
+        "max_waiting": 16,
+        "max_handshakes_per_source": 8,
+        "refused_cooldown_ms": 60000,
     })
 }
 
@@ -220,6 +278,7 @@ pub fn host_start(secret: &[u8; 32], boot: &[u8; 32], loopback_port: u16, limits
         "alpn": "jenny-team/1",
         "loopback_port": loopback_port,
         "direct_port": null,
+        "internet": null,
         "limits": limits,
     })
 }
@@ -304,6 +363,8 @@ pub struct Pair {
     pub member_keys: Keys,
     pub launch: [u8; 32],
     pub port: u16,
+    /// The member's port for bulk sockets (model parts).
+    pub bulk_port: u16,
 }
 
 /// Starts a host and returns it with its public key and addresses.
@@ -348,6 +409,27 @@ pub async fn start_member(
     (member, member_keys, launch)
 }
 
+/// Starts a member with the given keys against the host; does not answer the admit question.
+pub async fn start_member_as(
+    host_public: &str,
+    addresses: &Value,
+    limits: Value,
+    member_keys: &Keys,
+) -> Bridge {
+    let mut member = Bridge::member();
+    member
+        .send(member_start(
+            &member_keys.secret,
+            host_public,
+            addresses,
+            &random32(),
+            limits,
+        ))
+        .await;
+    member.expect_state("connecting").await;
+    member
+}
+
 /// Answers the next admit question; checks it names `key`.
 pub async fn admit(host: &mut Bridge, key: &str, kind: Value) -> u64 {
     let question = host.expect("admit").await;
@@ -368,6 +450,8 @@ pub async fn pair_with(host_limits: Value, member_limits: Value) -> Pair {
     host.expect_log("team.bridge.connection_admitted").await;
     let online = member.expect_state("online").await;
     let port = u16::try_from(online["port"].as_u64().expect("port")).expect("port fits");
+    let bulk_port = online["bulk_port"].as_u64().expect("bulk port");
+    let bulk_port = u16::try_from(bulk_port).expect("bulk port fits");
     Pair {
         host,
         member,
@@ -378,11 +462,51 @@ pub async fn pair_with(host_limits: Value, member_limits: Value) -> Pair {
         member_keys,
         launch,
         port,
+        bulk_port,
     }
 }
 
 pub async fn pair() -> Pair {
     pair_with(host_limits(), member_limits()).await
+}
+
+/// Member limits with a short connect timeout, for dials the host ignores.
+pub fn fast_member_limits() -> Value {
+    let mut limits = member_limits();
+    limits["connect_timeout_ms"] = json!(1500);
+    limits
+}
+
+/// The member's next `state` line that is `online` or `offline`.
+pub async fn settled(member: &mut Bridge) -> Value {
+    member
+        .wait_for("online or offline", |line| {
+            line["t"] == "state" && (line["state"] == "online" || line["state"] == "offline")
+        })
+        .await
+}
+
+/// Waits until `quiet` passes with no `admit` line; returns every line seen meanwhile.
+pub async fn no_admit_for(host: &mut Bridge, quiet: Duration) -> Vec<Value> {
+    let mut seen = Vec::new();
+    let end = tokio::time::Instant::now() + quiet;
+    while let Ok(line) = tokio::time::timeout_at(end, host.next()).await {
+        assert_ne!(line["t"], "admit", "no admit question: {line}");
+        seen.push(line);
+    }
+    seen
+}
+
+pub fn is_summary(line: &Value) -> bool {
+    line["t"] == "log" && line["event"] == "team.bridge.refusal_summary"
+}
+
+/// The first summary line among `seen`, or the next one to arrive.
+pub async fn summary_after(host: &mut Bridge, seen: &[Value]) -> Value {
+    match seen.iter().find(|line| is_summary(line)) {
+        Some(line) => line.clone(),
+        None => host.expect_log("team.bridge.refusal_summary").await,
+    }
 }
 
 /// Connects to the member's loopback port and sends a valid preamble.

@@ -121,7 +121,7 @@
       // The tooltip (it opens below the row) describes the button only while it shows;
       // aria-description says the same text from the start, and gives way to the tooltip.
       var detailHtml = detail ? '<button type="button" class="settings-field-detail inv-tooltip-pin"'
-        + ' data-tooltip="' + escapeHtml(detail) + '" data-tooltip-placement="below" aria-label="' + escapeHtml(o.detailLabel || '') + '"'
+        + ' data-tooltip="' + escapeHtml(detail) + '" data-tooltip-placement="below"' + (o.detailLabel ? ' aria-label="' + escapeHtml(o.detailLabel) + '"' : '')
         + ' aria-description="' + escapeHtml(detail) + '">?</button>' : '';
       var tailHtml = metaHtml || revertHtml ? '<span class="settings-field-title-tail">' + metaHtml + revertHtml + '</span>' : '';
       titleHtml = '<span class="settings-field-title-row">' + titleHtml + detailHtml + tailHtml + '</span>';

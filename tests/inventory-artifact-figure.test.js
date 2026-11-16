@@ -98,6 +98,18 @@ test('generation details map provenance, drop empty values and render escaped ro
   assert.equal(figure.generationDetails({ metadata: { provenance: { model_set_id: 'set-9f2c' } } }, {}).model, undefined);
   assert.deepEqual(figure.detailRows(details, '1024 × 1024').map(([label]) => label), ['Size', 'Seed', 'Steps', 'Model', 'Time', 'File']);
   assert.deepEqual(figure.detailRows({ seed: 0 }, ''), [['Seed', '0']]);
+  assert.deepEqual(figure.detailRows({ type: 'JPEG', bytes: 421888, fileName: 'a.jpg' }, '10 × 10'),
+    [['Size', '10 × 10'], ['Type', 'JPEG'], ['File size', '412 KB'], ['File', 'a.jpg']]);
+  const fileSize = (bytes) => figure.detailRows({ bytes }, '').map((row) => row[1]).join();
+  assert.equal(fileSize(512), '512 B');
+  assert.equal(fileSize(8601), '8.4 KB');
+  assert.equal(fileSize(1468006), '1.4 MB');
+  assert.equal(fileSize(1024), '1.0 KB');
+  assert.equal(fileSize(0), '', 'a zero, negative or non-numeric size is not shown');
+  assert.equal(fileSize(-5), '');
+  assert.equal(fileSize('big'), '');
+  assert.deepEqual(figure.detailRows({ seed: 1, steps: 2, model: 'm', seconds: 3, bytes: 2048, type: 'PNG', fileName: 'f.png' }, '1 × 1').map(([label]) => label),
+    ['Size', 'Type', 'Seed', 'Steps', 'Model', 'Time', 'File size', 'File']);
   const html = figure.renderDetails(details, '1024 × 1024');
   assert.ok(!html.includes('<b>'));
   const doc = parse(html);
@@ -107,4 +119,26 @@ test('generation details map provenance, drop empty values and render escaped ro
   assert.equal(doc.querySelectorAll('dt').length, 6);
   assert.equal(figure.renderDetails(null, ''), '');
   assert.equal(parse(figure.renderDetails({ seed: 7 }, '')).querySelector('[data-image-copy-prompt]'), null);
+});
+
+// Pin to board (row 150 slice C5): a Pin tool beside the picture's other tools, only while the chat's pin entry says the flag is on.
+test('a generated or tool picture gets a Pin tool after its others while the flag is on; an attached one and an id-less one do not', (t) => {
+  const generated = () => figure.renderFigure({ callId: 'c', artifactId: 'a1', sessionId: 's1', imageKey: 'k', title: 't', labels: LABELS });
+  const tool = () => figure.renderSourceFigure({ kind: 'tool', id: 'chart-1', sessionId: 's1', src: 'file:///a.png', alt: 'a', labels: LABELS });
+  const attached = () => figure.renderSourceFigure({ kind: 'attachment', id: 'att-1', sessionId: 's1', src: 'file:///a.png', alt: 'a', labels: LABELS });
+  const tools = (html) => [...parse(html).querySelectorAll('.inv-artifact-figure-actions button')].map((button) => button.dataset.imageAction);
+  const before = [generated(), tool(), attached()];
+  globalThis.rendererChatMessageActionBindings = { pinEnabled: () => false };
+  t.after(() => { delete globalThis.rendererChatMessageActionBindings; });
+  assert.deepEqual([generated(), tool(), attached()], before, 'flag off: byte-identical');
+  assert.equal(before.some((html) => html.includes('data-image-action="pin"')), false);
+  globalThis.rendererChatMessageActionBindings = { pinEnabled: () => true };
+  assert.deepEqual(tools(generated()), ['copy', 'save-as', 'reveal', 'panel', 'pin']);
+  assert.deepEqual(tools(tool()), ['copy', 'save-as', 'pin']);
+  assert.deepEqual(tools(attached()), ['copy', 'save-as'], 'a user-attached picture has no resolver in the main process');
+  const pin = parse(generated()).querySelector('button[data-image-action="pin"]');
+  assert.deepEqual([pin.dataset.imageKind, pin.dataset.imageId, pin.dataset.sessionId], ['artifact', 'a1', 's1']);
+  assert.deepEqual([pin.getAttribute('aria-label'), pin.title], ['Pin to board', 'Pin to board']);
+  assert.ok(pin.querySelector('svg[aria-hidden="true"]'));
+  assert.equal(parse(figure.renderFigure({ labels: LABELS })).querySelector('button'), null, 'an id-less figure has no tools');
 });

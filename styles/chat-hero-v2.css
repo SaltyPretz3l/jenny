@@ -1,41 +1,32 @@
-/* D7 — Empty state / hero stage V2 visual refresh.
- * Base: styles/chat-thread.css. The 50px "J" avatar renders via renderHero() in
- * renderer/chat/renderer-render-pipeline-chrome.js. Hero copy refresh
- * lives in the renderer module and is out of scope for CSS-only D7. */
+/* Empty state / hero stage. Base: styles/chat-thread.css; renderHero() in
+ * renderer/chat/renderer-render-pipeline-chrome-hero.js writes the words.
+ * Direction A (owner, 2026-11-15): one title size and one weight for every
+ * state, so a project chat and a General chat read alike. */
 
-.hero-avatar {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
-    var(--shadow-accent);
-  transition:
-    transform var(--transition-emphasis),
-    box-shadow var(--transition-emphasis);
+/* The no-model hint's "sign in with ChatGPT": a plain text button. The stage
+ * keeps pointer-events: none; only this link and .hero-actions opt in. */
+.hero-hint-link {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-strong, var(--accent));
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
-.hero-stage:hover .hero-avatar,
-.hero-stage:focus-within .hero-avatar {
-  transform: translateY(-1px);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent),
-    var(--shadow-accent);
+.hero-hint-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .hero-avatar {
-    transition: none;
-  }
-  .hero-stage:hover .hero-avatar,
-  .hero-stage:focus-within .hero-avatar {
-    transform: none;
-  }
+.hero-hint-link:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
 }
 
 /* Setup-incomplete hero: Resume setup action and footnote. */
-.hero-setup-incomplete .hero-title {
-  font-size: var(--font-size-heading);
-  line-height: 1.3;
-}
-
 .hero-resume-setup {
   pointer-events: auto;
   font-size: var(--font-size-body);
@@ -56,19 +47,12 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--space-3);
-  margin: var(--space-2) 0 0;
+  margin: var(--space-4) 0 0;
   pointer-events: auto;
 }
 
 .hero-actions:empty {
   display: none;
-}
-
-.hero-stage[data-model-state="noModel"] .hero-title,
-.hero-stage[data-model-state="downloading"] .hero-title,
-.hero-stage[data-model-state="failed"] .hero-title {
-  font-size: var(--font-size-heading);
-  line-height: 1.3;
 }
 
 .hero-stage[data-model-state="failed"] .hero-subtitle {

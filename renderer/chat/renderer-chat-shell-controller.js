@@ -524,7 +524,6 @@
       },
       controllers: {
         thinkingController: controllers.thinkingController,
-        toastActionHandlers: controllers.toastActionHandlers,
         // B5: virtualizer instance forwarded so chat-event-utils can
         // hand it to wireChatAccessibility for F1 search pause + E3
         // keyboard ensureMounted integration.

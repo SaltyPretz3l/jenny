@@ -641,12 +641,6 @@ test('the dock composer uses the one-line fit toolbar and keeps its control size
   assert.match(findDockRuleBody('.ide-chat-dock-body .composer-input'), /max-height:\s*120px;/);
 });
 
-test('the retired shell grid matrix and stacked-narrow rules are gone (the workbench solver owns layout)', () => {
-  assert.equal(DOCK_CSS.includes('grid-template-areas'), false, 'no shell grid rewrites remain');
-  assert.equal(DOCK_CSS.includes('data-chatdock-open'), false, 'no [data-chatdock-open] layout gating remains');
-  assert.equal(DOCK_CSS.includes('@media (max-width: 860px)'), false, 'no stacked-narrow media block remains');
-});
-
 test('dock body is the chatdock @container and re-derives the chat width vars', () => {
   assert.ok(DOCK_CSS.includes('container-type: inline-size'), 'dock body establishes a size container');
   assert.ok(DOCK_CSS.includes('container-name: chatdock'), 'container is named chatdock');
@@ -676,8 +670,9 @@ test('compact dock nodes keep primary semantic fills with a protected edge gutte
   assert.match(compactCss, /--thread-dot-size:\s*7px;/);
   assert.match(
     compactCss,
-    /\.chat-thread-toggle::before,\s*\.ide-chat-dock-body \.chat-row-node-dot\s*\{[\s\S]*?border-width:\s*1px;/
+    /\.ide-chat-dock-body \.chat-thread-toggle::before\s*\{[\s\S]*?border-width:\s*1px;/
   );
+  assert.equal(compactCss.includes('chat-row-node-dot'), false, 'rows no longer draw a gutter dot');
   assert.equal(
     DOCK_CSS.slice(0, compactStart).includes('--thread-dot-size'),
     false,

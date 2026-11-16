@@ -8,9 +8,9 @@
 // A channel state (newState) is { doc, loaded, read, strays, broken } until
 // loaded, then also { entries, byId, threads, head, headDirty }: `entries` are
 // the visible messages in seq order as { id, seq, rev, n, root }, `threads`
-// maps a root id to its reply stats { count, last_at, members } (members: the
-// ids that wrote the root or a reply or were mentioned in one, the implicit
-// followers), `head` is the committed head segment and `headDirty` says its
+// maps a root id to its reply stats { count, last_at, last_seq, members } (members:
+// a Map of each id that wrote the root or a reply or was mentioned in one, the
+// implicit followers, to the seq of the first such message; E59), `head` is the committed head segment and `headDirty` says its
 // file still holds dropped (uncommitted) messages.
 // `io.readSegment(channelId, n)` returns a validated segment or throws.
 
@@ -22,7 +22,7 @@ const { corrupt } = require('./team-chat-files');
 
 const SEGMENT_FILE = /^seg-([1-9][0-9]{0,8})\.json$/u;
 const TEMP_FILE = /^\.host-[a-f0-9]{32}\.tmp$/u;
-const NO_MEMBERS = new Set();
+const NO_MEMBERS = new Map();
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bytesOf = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8');
@@ -37,11 +37,13 @@ function segmentMeta(n, segment, bytes, newestAt) {
     bytes, newest_at: newestAt };
 }
 
-// The implicit followers a message adds to its thread: its author (for a
-// Jenny reply, the member who asked) and the member ids it mentions.
-function addMembers(members, author, mentions) {
-  if (typeof author === 'string') members.add(author);
-  for (const mention of mentions) if (mention.startsWith('member_')) members.add(mention);
+// The implicit followers a message (at `seq`) adds to its thread: its author
+// (for a Jenny reply, the member who asked) and the member ids it mentions,
+// each kept with the seq of the first message that added them.
+function addMembers(members, author, mentions, seq) {
+  const add = (id) => { if (!members.has(id)) members.set(id, seq); };
+  if (typeof author === 'string') add(author);
+  for (const mention of mentions) if (mention.startsWith('member_')) add(mention);
   return members;
 }
 
@@ -51,7 +53,7 @@ function addMembers(members, author, mentions) {
 // (slice 2a-3b). Nothing is assigned to the channel state until finishLoad.
 function startLoad(doc) {
   return { doc, index: 0, entries: [], byId: new Map(), threads: new Map(), roots: new Map(), deleted: new Set(),
-    metas: [], maxRev: doc.rev, expected: doc.floor_seq, head: null, headDirty: false };
+    pinned: [], metas: [], maxRev: doc.rev, expected: doc.floor_seq, head: null, headDirty: false };
 }
 
 // A message at or past next_seq is uncommitted (a torn post) and dropped;
@@ -73,18 +75,20 @@ function loadStep(load, segment) {
     if (load.byId.has(message.id)) throw corrupt('duplicate_id');
     load.maxRev = Math.max(load.maxRev, message.rev);
     if (message.deleted !== null) load.deleted.add(message.id);
+    else if (message.pinned !== null) load.pinned.push({ id: message.id, at: message.pinned.at });
     const rootId = message.thread_root_id;
     if (rootId === null) {
       // Kept only until a reply needs it: the author id and the mention list, never the text.
-      load.roots.set(message.id, [message.author.member_id, message.mentions]);
+      load.roots.set(message.id, [message.author.member_id, message.mentions, message.seq]);
     } else {
       const root = load.byId.get(rootId);
       if (!root) continue;
       if (root.root !== null) throw corrupt('thread_invalid');
       const stats = load.threads.get(rootId)
-        || { count: 0, last_at: null, members: addMembers(new Set(), ...load.roots.get(rootId)) };
-      addMembers(stats.members, message.author.member_id, message.mentions);
-      load.threads.set(rootId, { count: stats.count + 1, last_at: message.created_at, members: stats.members });
+        || { count: 0, last_at: null, members: addMembers(new Map(), ...load.roots.get(rootId)) };
+      addMembers(stats.members, message.author.member_id, message.mentions, message.seq);
+      load.threads.set(rootId, { count: stats.count + 1, last_at: message.created_at, last_seq: message.seq,
+        members: stats.members });
     }
     const entry = { id: message.id, seq: message.seq, rev: message.rev, n: listed.n, root: rootId };
     load.byId.set(message.id, entry);
@@ -97,7 +101,9 @@ function loadStep(load, segment) {
 
 // Assigns a finished load. `state.doc` may differ from the doc the load read
 // only by a change that touches no segment (an archive); revisions past the
-// committed one roll forward, and pins naming a missing or deleted message drop.
+// committed one roll forward, and the pin list follows the segments (they are written first, so a
+// torn pin or unpin leaves the record newer than the list): a listed id whose record is not pinned
+// drops, a pinned record the list lacks is added, oldest pin first.
 function finishLoad(state, load, io) {
   const read = load.doc;
   if (load.index !== read.segments.length || load.expected !== read.next_seq) throw corrupt('segment_gap');
@@ -108,7 +114,13 @@ function finishLoad(state, load, io) {
     return (match && !listedNs.has(Number(match[1]))) || TEMP_FILE.test(name);
   });
   const maxRev = Math.max(load.maxRev, doc.rev);
-  const pins = doc.pins.filter((id) => load.byId.has(id) && !load.deleted.has(id));
+  // A pinned reply whose root was pruned is an orphan no read lists (review round two, R07-F03): never a pin.
+  const pinned = load.pinned.filter((item) => load.byId.has(item.id));
+  const pinnedIds = new Set(pinned.map((item) => item.id));
+  const kept = doc.pins.filter((id) => pinnedIds.has(id));
+  const listed = new Set(kept);
+  const missing = pinned.filter((item) => !listed.has(item.id)).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  const pins = [...kept, ...missing.map((item) => item.id)].slice(0, schema.LIMITS.PINS_MAX);
   state.doc = { ...doc, rev: maxRev, segments: load.metas, bytes: sumBytes(load.metas), pins };
   Object.assign(state, { entries: load.entries, byId: load.byId, threads: load.threads, head: load.head,
     headDirty: load.headDirty, loaded: true });
@@ -159,7 +171,7 @@ function materialize(state, entries, io) {
 // The unread walk's light records: seq, author, mentions and whether the
 // message is deleted; no text, and no copy of the record or its edit history.
 function unreadRecords(state, entries, io) {
-  return recordsOf(state, entries, io, (message) => ({ seq: message.seq,
+  return recordsOf(state, entries, io, (message) => ({ seq: message.seq, root_id: message.thread_root_id,
     author: { kind: message.author.kind, member_id: message.author.member_id }, mentions: [...message.mentions],
     deleted: message.deleted !== null }));
 }
@@ -239,15 +251,17 @@ function segmentBefore(state, beforeSeq, io) {
 }
 
 // The unread walk (slice 2a-3b): entries after `afterSeq`, newest first,
-// every timeline entry and each reply whose thread `follows(rootId, members)`
-// admits (members: the thread's implicit followers); at most `limit`, `more`
-// when further ones exist. In memory only; the caller materializes.
-function recentEntries(state, { afterSeq, limit, follows }) {
+// every timeline entry after `timelineAfter` (default `afterSeq`) and each reply whose thread
+// `follows(rootId, members, seq)` admits (members: the thread's implicit followers; E59 passes the seq so each
+// thread keeps its own mark); at most `limit`, `more` when further ones exist. In memory only; the caller
+// materializes.
+function recentEntries(state, { afterSeq, limit, follows, timelineAfter = afterSeq }) {
   const picked = [];
   for (let i = state.entries.length - 1; i >= 0; i -= 1) {
     const entry = state.entries[i];
     if (entry.seq <= afterSeq) break;
-    if (entry.root !== null && follows(entry.root, state.threads.get(entry.root)?.members || NO_MEMBERS) !== true) {
+    if (entry.root === null ? entry.seq <= timelineAfter
+      : follows(entry.root, state.threads.get(entry.root)?.members || NO_MEMBERS, entry.seq) !== true) {
       continue;
     }
     if (picked.length === limit) return { entries: picked, more: true };
@@ -292,20 +306,22 @@ function rememberAppend(state, message, n, target, rootMessage = null) {
   state.entries.push(entry);
   state.byId.set(message.id, entry);
   if (message.thread_root_id !== null) {
+    const rootSeq = state.byId.get(message.thread_root_id).seq;
     const stats = state.threads.get(message.thread_root_id)
-      || { count: 0, members: addMembers(new Set(), rootMessage?.author.member_id, rootMessage?.mentions || []) };
-    addMembers(stats.members, message.author.member_id, message.mentions);
+      || { count: 0, members: addMembers(new Map(), rootMessage?.author.member_id, rootMessage?.mentions || [], rootSeq) };
+    addMembers(stats.members, message.author.member_id, message.mentions, message.seq);
     state.threads.set(message.thread_root_id, { count: stats.count + 1, last_at: message.created_at,
-      members: stats.members });
+      last_seq: message.seq, members: stats.members });
     state.byId.get(message.thread_root_id).rev = message.rev;
   }
 }
 
-// An edit's new mentions join its thread's implicit followers (they are never
-// removed until the thread is pruned; a reload recomputes from current text).
+// An edit's new mentions join its thread's implicit followers at the edited
+// message's seq (they are never removed until the thread is pruned; a reload
+// recomputes from current text).
 function rememberMentions(state, message) {
   const stats = state.threads.get(message.thread_root_id === null ? message.id : message.thread_root_id);
-  if (stats) addMembers(stats.members, null, message.mentions);
+  if (stats) addMembers(stats.members, null, message.mentions, message.seq);
 }
 
 const withMessage = (segment, updated) => ({ ...segment,

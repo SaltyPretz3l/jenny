@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { LOCAL_COMMAND } = require('../../../server/team/member-schema');
 
 const START_MS = 1_800_000_000_000;
 
@@ -22,6 +23,7 @@ function createFixture(t, options = {}) {
   let nowMs = options.start ?? START_MS;
   let randomCounter = 0;
   let keyCounter = 0;
+  let memberCounter = 0;
   const logs = [];
 
   const fx = {
@@ -76,7 +78,7 @@ function createFixture(t, options = {}) {
       const key = fx.nextKey('owner-device');
       const invitePublicKey = fx.nextKey('owner-invite');
       const created = await store.createInvite({
-        kind: 'owner_first', actorMemberId: null, invitePublicKey,
+        kind: 'owner_first', actorMemberId: LOCAL_COMMAND, invitePublicKey,
       });
       if (!created.ok) throw new Error(`owner invite failed: ${created.error.reason}`);
       const redeemed = await store.redeem({
@@ -86,8 +88,9 @@ function createFixture(t, options = {}) {
       return { member_id: redeemed.member_id, device_id: redeemed.device_id, key, invite_id: created.invite_id };
     },
     // A member who joined with a new-member invite; admitted unless told otherwise.
+    // The default name is unique per call: a joiner may not take a live member's name.
     async joinMember(store, ownerId, {
-      displayName = 'Member', role = 'member', admit = true, label = 'Laptop',
+      displayName = `Member ${++memberCounter}`, role = 'member', admit = true, label = 'Laptop',
     } = {}) {
       const key = fx.nextKey('device');
       const created = await store.createInvite({

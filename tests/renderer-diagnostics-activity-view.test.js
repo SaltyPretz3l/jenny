@@ -40,7 +40,7 @@ test('issue inspection scopes Activity and selecting a row disengages Follow lat
   assert.equal(doc.getElementById('diagnosticsCloseDetail').getAttribute('title'), 'Close details');
   assert.equal(doc.querySelectorAll('#logDetailPanel h4, #logDetailPanel .diagnostics-detail-section').length, 0, 'no Identity or Summary sections');
   assert.equal(doc.querySelector('#logDetailPanel h3').textContent, 'failed');
-  assert.match(doc.querySelector('#logDetailPanel .diagnostics-detail-meta').textContent, /^Error · \d\d:\d\d:\d\d\.\d{3} · Local engine$/);
+  assert.match(doc.querySelector('#logDetailPanel .diagnostics-detail-meta').textContent, /^Error · \D+ \d{1,2}, \d{4} \d\d:\d\d:\d\d\.\d{3} · Local engine$/);
   assert.ok(doc.querySelector('#logDetailPanel .diagnostics-detail-icon .inv-state-icon--error'));
   assert.deepEqual(
     Array.from(doc.querySelectorAll('#logDetailPanel dl.diagnostics-facts dt')).map((term) => term.textContent),
@@ -126,7 +126,7 @@ test('first live event replaces the empty state and anchors keyboard navigation'
   search.value = 'first-live-only';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
   await waitForUi(window, 30);
-  assert.equal(doc.querySelector('#logList .inv-empty-note').textContent, 'No records match. Clear the search or filters.');
+  assert.equal(doc.querySelector('#logEmpty .inv-empty-note').textContent, 'No records match.');
 
   await shell.__emitLogAppend({ entry_id: 'first-live', run_id: 'harness-current', sequence: 1, level: 'INFO', layer: 'electron', event: 'first-live-only' });
   await waitForUi(window, 80);
@@ -134,7 +134,8 @@ test('first live event replaces the empty state and anchors keyboard navigation'
   const row = doc.querySelector('[data-entry-id="first-live"]');
   assert.ok(row);
   assert.equal(row.tabIndex, 0);
-  assert.equal(doc.querySelector('#logList .inv-empty-note'), null);
+  assert.equal(doc.querySelector('#logEmpty .inv-empty-note'), null);
+  assert.equal(doc.getElementById('logEmpty').hidden, true);
 });
 
 test('rows show a level icon for errors and warnings, dbg for debug and nothing for info', async (t) => {
@@ -154,7 +155,10 @@ test('rows show a level icon for errors and warnings, dbg for debug and nothing 
   assert.ok(cell('w').querySelector('.inv-state-icon--warn'));
   assert.equal(cell('d').textContent, 'dbg');
   assert.equal(cell('i').textContent, '');
-  assert.equal(doc.querySelector('[data-entry-id="e"]').getAttribute('title'), 'Error');
+  assert.equal(cell('e').getAttribute('title'), 'Error');
+  assert.equal(doc.querySelector('[data-entry-id="e"]').hasAttribute('title'), false, 'the row has no tooltip of its own');
+  assert.equal(cell('i').hasAttribute('title'), false);
+  assert.equal(cell('d').hasAttribute('title'), false);
   assert.match(doc.querySelector('[data-entry-id="e"]').getAttribute('aria-label'), /Level ERROR, Source Local engine, Event engine\.failed/);
   assert.equal(doc.querySelector('[data-entry-id="e"] .log-entry-source').textContent, 'Local engine');
   assert.equal(doc.querySelector('[data-entry-id="e"] .log-entry-event bdi').textContent, 'engine.failed');
@@ -170,7 +174,7 @@ test('rows show a level icon for errors and warnings, dbg for debug and nothing 
   search.value = 'no-such-record';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
   await waitForUi(window, 40);
-  assert.equal(doc.querySelector('#logList .inv-empty-note').textContent, 'No records match. Clear the search or filters.');
+  assert.equal(doc.querySelector('#logEmpty .inv-empty-note').textContent, 'No records match.');
 });
 
 test('crossing into narrow Activity moves row focus to Back to activity', async (t) => {

@@ -19,6 +19,7 @@ const {
   ensureJsdomBundle,
   jsdomBundleNodeArgs,
 } = require('../scripts/tests/jsdom-bundle');
+const { withoutLocalInstall } = require('./helpers/local-node-modules');
 
 function fakeRoot(t, { lock = 'lock-a' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-jsdom-bundle-'));
@@ -72,7 +73,8 @@ test('a failed build or the kill switch leaves tests on node_modules', (t) => {
   assert.ok(fs.existsSync(env[BUNDLE_ENV_VAR]));
 });
 
-test('a test run through the safe runner gets a working jsdom from the bundle', (t) => {
+// The runner builds the bundle from this checkout's own node_modules (jsdom and esbuild).
+test('a test run through the safe runner gets a working jsdom from the bundle', { skip: withoutLocalInstall(['jsdom', 'esbuild']) }, (t) => {
   const tempRoot = fs.mkdtempSync(path.join(ROOT, 'tests', '.tmp-jsdom-bundle-'));
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
   const fixture = path.join(tempRoot, 'uses-jsdom.test.js');

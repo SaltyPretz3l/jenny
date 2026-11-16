@@ -260,7 +260,7 @@ def test_initialize_response_swallows_cleanup_exception() -> None:
     brain = SimpleNamespace(configure=lambda _, **_kwargs: stack)
 
     with mock.patch(
-        "sidecar.runtime.capabilities.cleanup_workspace_artifacts",
+        "sidecar.ai.tools.builtins.workspace_cleanup.cleanup_workspace_artifacts",
         side_effect=OSError("disk full"),
     ) as patched:
         response = initialize_response(
@@ -269,6 +269,12 @@ def test_initialize_response_swallows_cleanup_exception() -> None:
             api_version="2026-03-06",
             brain_container=brain,
         )
+        # The sweep runs beside the handshake: the response does not wait for it.
+        from sidecar.ai.tools.builtins import workspace_cleanup
+
+        sweep = workspace_cleanup._sweep_thread
+        assert sweep is not None
+        sweep.join(timeout=5)
 
     patched.assert_called_once()
     assert response["jsonrpc"] == "2.0"

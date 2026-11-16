@@ -264,8 +264,10 @@ function checkHiddenAnchorRowRestoresThroughParent(registryOptions, expectedScro
   const registry = createLogicalScrollAnchorRegistry(registryOptions);
   registry.capture('reader', scroll);
 
-  // The view switch hides the reasoning row: same node, zero rect.
+  // The view switch hides the reasoning row: same node, zero rect. Its sibling
+  // hides too, so no captured follower keeps a box.
   setRect(row1, 0, 0);
+  setRect(row1b, 0, 0);
   setRect(message1, 50, 110);
   setRect(message2, 120, 180);
   scroll.scrollTop = 100;
@@ -280,6 +282,45 @@ test('a retained anchor row that lost its box (hidden by the transcript view) re
 
 test('the timeline registry config (preferEntries + refineEntries) restores a hidden anchor row through its parent', () => {
   checkHiddenAnchorRowRestoresThroughParent({ preferEntries: true, refineEntries: true }, 180);
+});
+
+// Review 2026-11-12 (scroll-away-nav 1): Answers view at turn end hides every
+// reasoning row. The anchor (a reasoning row straddling the top) lost its box and
+// restored through the turn article's top, which does not move, so the hidden
+// rows above shifted the reader's content up with no write.
+test('a hidden anchor row restores through the next captured row that still has a box', () => {
+  const dom = new JSDOM(`<!doctype html><body><div id="scroll">
+    <article class="chat-entry" data-message-id="m1">
+      <div data-row-id="r0" data-row-kind="reasoning"></div>
+      <div data-row-id="r1" data-row-kind="reasoning"></div>
+      <div data-row-id="t1" data-row-kind="assistant_text"></div>
+    </article>
+  </div></body>`);
+  const scroll = dom.window.document.getElementById('scroll');
+  const message = scroll.firstElementChild;
+  const [r0, r1, t1] = message.children;
+  Object.defineProperties(scroll, {
+    scrollHeight: { configurable: true, value: 3000 },
+    clientHeight: { configurable: true, value: 400 },
+  });
+  setRect(scroll, 0, 400);
+  setRect(message, -300, 300);
+  setRect(r0, -300, -100);
+  setRect(r1, -100, 100);
+  setRect(t1, 100, 300);
+  scroll.scrollTop = 1000;
+  const registry = createLogicalScrollAnchorRegistry({ preferEntries: true, refineEntries: true });
+  registry.capture('reader', scroll, scroll);
+
+  // The turn settles: both reasoning rows hide, the article top stays put and
+  // the answer moves up by their 400 px.
+  setRect(r0, 0, 0);
+  setRect(r1, 0, 0);
+  setRect(t1, -300, -100);
+  setRect(message, -300, -100);
+
+  assert.equal(registry.restore('reader', scroll, scroll), 'sibling');
+  assert.equal(scroll.scrollTop, 600, 'the answer returns to where the reader saw it');
 });
 
 // NOTE (2026-08-30): the two approval-gap skip tests below construct the

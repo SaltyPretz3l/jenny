@@ -8,6 +8,7 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 
 const { getBridgeChannel } = require('../services/ipc-contract');
 const {
@@ -803,4 +804,36 @@ describe('personality preview scope validation', () => {
     assert.deepEqual(effects, [], 'validation must precede all persistence');
   });
 
+});
+
+describe('team registration wiring (row 123 E64)', () => {
+  // Row 123 E64: the team registration's Force local options are the live mode read and the saved config's event.
+  test('the team flag on: registerTeam reads the mode from offlineIntelligenceService and hears shellConfigService changes', () => {
+    const registrationPath = require.resolve('../services/main/team-registration');
+    const saved = require.cache[registrationPath];
+    let options = null;
+    require.cache[registrationPath] = { id: registrationPath, filename: registrationPath, loaded: true,
+      exports: { registerTeam: (_ipc, given) => { options = given; return { registered: true }; } } };
+    try {
+      const { deps } = buildDeps();
+      let mode = 'disabled';
+      const config = Object.assign(new EventEmitter(), deps.shellConfigService);
+      const backendService = new Proxy(deps.backendService, { get: (target, prop) => (prop === 'featureFlags' ? { team: true } : target[prop]) });
+      registerMainIpcHandlers({ ...deps, backendService, shellConfigService: config, offlineIntelligenceService: { getMode: () => mode } });
+      assert.ok(options, 'registerTeam was called');
+      assert.equal(options.readOfflineMode(), 'disabled');
+      mode = 'local_only';
+      assert.equal(options.readOfflineMode(), 'local_only', 'a live read of offlineIntelligenceService.getMode');
+      const before = config.listenerCount('changed');
+      const heard = [];
+      const off = options.subscribeConfig((...args) => heard.push(args));
+      assert.equal(config.listenerCount('changed'), before + 1);
+      config.emit('changed', { offlineIntelligence: { mode: 'local_only' } }, { reason: 'x' });
+      assert.equal(heard.length, 1, 'the shell config\'s changed event reaches the listener');
+      off();
+      assert.equal(config.listenerCount('changed'), before, 'and its unsubscribe removes it');
+    } finally {
+      if (saved) require.cache[registrationPath] = saved; else delete require.cache[registrationPath];
+    }
+  });
 });

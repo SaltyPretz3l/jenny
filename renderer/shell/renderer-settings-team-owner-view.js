@@ -54,7 +54,7 @@
       )).join('') + '</ul>'
       : '';
     return group('invite', jt('settings.team.invite.heading', 'Invite someone'), {
-      copy: jt('settings.team.invite.copy', 'Each code lets one person ask to join. Nobody gets in until you admit them.'),
+      copy: jt('settings.team.invite.copy', 'Each code lets one person ask to join. Nobody gets in until you admit them.') + (vm.inviteLine ? ' ' + vm.inviteLine : ''),
       body: controls + reveal + list + note(vm.errors.invite),
     });
   }
@@ -102,7 +102,7 @@
     const pending = hosted.owner ? members.filter((member) => member.state === 'pending') : [];
     const active = members.filter((member) => member.state === 'active')
       .sort((a, b) => (b.member_id === hosted.team.member_id) - (a.member_id === hosted.team.member_id));
-    const extra = jt('settings.team.people.count', '{count} of 8', { count: members.length })
+    const extra = jt('settings.team.people.count', '{count} of {max}', { count: members.length, max: vm.maxMembers })
       + (pending.length ? ' · ' + jt('settings.team.people.waiting', '{count} waiting', { count: pending.length }) : '');
     const solo = active.length <= 1 && !pending.length && hosted.owner;
     return group('people', jt('settings.team.people.heading', 'People'), {
@@ -168,19 +168,22 @@
         jt('settings.team.ownership.handOverHelp', 'Pick a member in People, then “Make … the owner”. You stay as a member.'), '')
         + fieldRow('teamStopRow', jt('settings.team.ownership.stop', 'Stop the server'),
           jt('settings.team.ownership.stopHelp', 'Everyone is disconnected. Members, projects and history stay on this PC and come back when you start it.'),
-          button(vm, 'stop', jt('settings.team.ownership.stopAction', 'Stop server'))) + stopConfirm(vm, 'ownership'),
+          button(vm, 'stop', jt('settings.team.ownership.stopAction', 'Stop server'))) + stopConfirm(vm, 'ownership') + (vm.exportRowHtml || ''),
     });
   }
 
   // The hosted team's groups in page order, up to Activity; Join and Ownership are placed by the page.
-  function hostedGroups(vm, hosted) {
+  // `gpuHtml` (slice 4e: Share this PC's GPU, Team GPUs, GPU use) goes after Your devices, before Activity.
+  function hostedGroups(vm, hosted, gpuHtml = '') {
     let html = '';
     if (hosted.owner) html += teamNameRow(vm, hosted) + inviteGroup(vm, hosted);
     html += peopleGroup(vm, hosted);
     if (hosted.team.state === 'online') html += devicesGroup(vm, hosted.team, hosted.devices);
+    html += gpuHtml;
     if (hosted.owner) html += activityGroup(vm, hosted);
     return html;
   }
 
-  return { hostedGroups, ownershipGroup };
+  // `pendingRow` is shared with the Team tab's "Wants to join" (slice 1g-2).
+  return { hostedGroups, ownershipGroup, pendingRow };
 });

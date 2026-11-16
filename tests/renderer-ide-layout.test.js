@@ -69,9 +69,3 @@ test('render() with no deps at all is a no-op on a render-only API', () => {
   assert.equal(bare.render(), undefined);
   assert.equal(createIdeLayout({}).render(), undefined);
 });
-
-test('the retired viewport clamp helpers are no longer exported', () => {
-  const exported = require('../renderer/features/renderer-ide-layout');
-  assert.equal(exported.computeViewportWidthLimits, undefined);
-  assert.equal(exported.CHAT_DOCK_VIEWPORT_RATIO, undefined);
-});

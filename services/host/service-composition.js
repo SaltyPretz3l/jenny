@@ -143,6 +143,20 @@ function normalizeWorkspaceRoot(value, options) {
   return workspaceRoot;
 }
 
+// A team host's projects root (null, or an absolute real path from the loader): the project root
+// boundary in place of a workspace root, which a team host never has.
+function readProjectsRoot(options) {
+  const value = options.projectsRoot ?? null;
+  if (value === null) return null;
+  if (typeof value !== 'string' || !path.isAbsolute(value)) {
+    throw invalidHostOption('invalid_projects_root', 'projectsRoot must be null or an absolute path.');
+  }
+  if (options.workspaceRoot !== undefined && options.workspaceRoot !== null) {
+    throw invalidHostOption('projects_root_workspace_conflict', 'projectsRoot and workspaceRoot cannot both be set.');
+  }
+  return value;
+}
+
 function configureWorkspaceRoot(configService, options) {
   if (!Object.prototype.hasOwnProperty.call(options, 'workspaceRoot')) return;
   const value = normalizeWorkspaceRoot(options.workspaceRoot, options);
@@ -179,6 +193,7 @@ function createHostedBackend(options = {}) {
     hostMode: options.hostMode,
     credentialService: options.credentialService,
   });
+  const projectsRoot = readProjectsRoot(options);
   const noModel = options.modelOptional === true && options.modelEndpoint === null;
   const modelEndpoint = noModel ? null : normalizeModelEndpoint(options.modelEndpoint);
   const configService = new ShellConfigService({
@@ -189,6 +204,10 @@ function createHostedBackend(options = {}) {
   });
   configureWorkspaceRoot(configService, options);
   const configuredWorkspaceRoot = configService.getToolsWorkspaceRoot();
+  // A workspace root kept in the profile's shell config counts as a workspace root too.
+  if (projectsRoot !== null && configuredWorkspaceRoot !== null) {
+    throw invalidHostOption('projects_root_workspace_conflict', 'projectsRoot and workspaceRoot cannot both be set.');
+  }
 
   const processLogPath = path.join(userDataPath, 'logs', 'shell.log');
   let logStore;
@@ -247,7 +266,8 @@ function createHostedBackend(options = {}) {
     historyAttachmentHydrator: createAttachmentContentStore(userDataPath).hydrateHistory,
     toolExecutor,
     toolPermissionStore,
-    projectRootBoundary: configuredWorkspaceRoot,
+    projectRootBoundary: projectsRoot ?? configuredWorkspaceRoot,
+    memberTurns: options.memberTurns === true, // a team host: turns alternate between members
     // Streaming and cancellation are required host transport contracts. The
     // desktop feature service is absent in this composition; pin these here.
     featureFlags: { ...options.featureFlags,
@@ -260,6 +280,8 @@ function createHostedBackend(options = {}) {
   });
 
   backend.hostExecutionBroker = options.executionBroker || null;
+  // A host's turn route (services/backend/turn-route.js); null leaves every chat.send as before.
+  backend.turnRoute = options.turnRoute || null;
   backend.hostExecutionStagingRoot = options.executionStagingRoot || null;
   // Propose mode (row 35): the same suggestion record and journaled apply as desktop.
   backend.suggestedChanges = createSuggestedChangesService({ backendService: backend, log });

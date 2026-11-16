@@ -31,6 +31,7 @@ const sessionsListTool = require('./builtin/sessions-list-tool');
 const sessionStatusTool = require('./builtin/session-status-tool');
 const sessionTranscriptTool = require('./builtin/session-transcript-tool');
 const sessionStopTool = require('./builtin/session-stop-tool');
+const sessionPrioritizeTool = require('./builtin/session-prioritize-tool');
 const settingsGetTool = require('./builtin/settings-get-tool');
 const settingsChangeTool = require('./builtin/settings-change-tool');
 const chatOrganizeTool = require('./builtin/chat-organize-tool');
@@ -101,7 +102,7 @@ function createDefaultRegistry(options = {}) {
     registry.registerTool(withManifestSchema(conversationsSearchTool));
   }
   if (options.toolsSessionDirectoryEnabled === true) {
-    for (const tool of [sessionsListTool, sessionStatusTool, sessionTranscriptTool, sessionStopTool]) registry.registerTool(withManifestSchema(tool));
+    for (const tool of [sessionsListTool, sessionStatusTool, sessionTranscriptTool, sessionStopTool, sessionPrioritizeTool]) registry.registerTool(withManifestSchema(tool));
   }
   if (options.toolsPrimarySettingsEnabled === true) {
     for (const tool of [settingsGetTool, settingsChangeTool]) registry.registerTool(withManifestSchema(tool));

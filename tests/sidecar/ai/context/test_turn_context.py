@@ -83,6 +83,34 @@ def test_profile_overview_rides_the_trailing_row_locally_and_leads_on_cloud() ->
         (personality, overview), ())
 
 
+@pytest.mark.usefixtures("flag_on")
+def test_board_block_rides_the_trailing_row_and_leaves_the_leading_run_alone() -> None:
+    # Row 150: the board section is per-turn. A turn sent from a board and a turn
+    # sent from the chat page share every leading byte, so the prefix cache holds.
+    personality = {"kind": "personality", "content": "Warm."}
+    board = {"kind": "board", "content": "## Board\nBoard now:\nboard Plan\nnote n1 Ship it"}
+
+    assert "board" not in tc.LEADING_CONTEXT_BLOCK_KINDS
+    with_board = tc.split_context_blocks(_config("ollama"), (personality, board))
+    without = tc.split_context_blocks(_config("ollama"), (personality,))
+    assert with_board == ((personality,), (board,))
+    assert with_board[0] == without[0]
+    assert tc.split_context_blocks(_config("chatgpt"), (personality, board)) == (
+        (personality, board), ())
+
+    history = [
+        {"role": "system", "content": "prompt"},
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "two"},
+    ]
+    row = tc.build_turn_context_row([str(board["content"])])
+    placed = tc.place_turn_context_row(history, row)
+    assert placed[:3] == history[:3]
+    assert "note n1 Ship it" in str(placed[3]["content"])  # type: ignore[index]
+    assert placed[4] == history[3]
+
+
 def test_row_is_placed_before_the_latest_user_message() -> None:
     row = tc.build_turn_context_row(["## Workspace Manifest\nsrc/"])
     history = [

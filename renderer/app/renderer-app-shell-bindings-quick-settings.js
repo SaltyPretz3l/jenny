@@ -91,6 +91,7 @@
     }
 
     const adapters = buildAdapters({ state, windowRef, callbacks });
+    const refreshOffline = () => Promise.resolve(callbacks.refreshOfflineState?.()).catch(() => {});
 
     const controller = factory({
       documentRef,
@@ -110,6 +111,16 @@
         windowRef.rendererModelTuningDrawerController?.open?.(modelId, restoreFocusTo)
       ),
       appendClientLog: callbacks.appendClientLog,
+      // The one Wide toggle belongs to the controllers binder, which runs after this one: read it lazily.
+      chatWidth: {
+        read: () => String(state?.ui?.appearance?.chatWidthId || '') === 'wide',
+        available: () => Boolean(controllers.chatWidthToggle),
+        toggle: () => controllers.chatWidthToggle?.toggle?.('quick_settings'),
+      },
+      // Opening and each Force local write settle the offline state (the write also supersedes an
+      // older in-flight read); the modal repaints through renderOfflineManager.
+      onOpen: refreshOffline,
+      onOfflineWritten: refreshOffline,
     });
 
     if (!controller) {
@@ -128,6 +139,7 @@
       // Modifier chords never insert text, so this must fire even from the composer.
       event.preventDefault();
       event.stopPropagation();
+      if (event.repeat) return;
       controller.toggle();
     }
 

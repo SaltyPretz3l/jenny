@@ -69,10 +69,13 @@ test('kill() ends a long-running child and exit fires', async () => {
 test('a missing command yields no pid and an ENOENT error without hanging', async () => {
   const child = await bounded(spawnOffMainThread('G:/jenny-test/definitely-missing/ninfer-serve.exe', [], STDIO), 'spawn');
   assert.equal(child.pid, undefined);
+  // Both listeners go on before the first await: on a busy machine the worker has already reported
+  // error and close, and the facade then emits them back to back.
+  const closed = once(child, 'close');
   const [error] = await bounded(once(child, 'error'), 'error');
   assert.ok(error instanceof Error);
   assert.equal(error.code, 'ENOENT');
-  await bounded(once(child, 'close'), 'close after error');
+  await bounded(closed, 'close after error');
 });
 
 test('the facade feeds pipeChildLogs like a real child', async () => {

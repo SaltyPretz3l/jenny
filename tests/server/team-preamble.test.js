@@ -37,6 +37,16 @@ function pause(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
+// The socket closes within `ms`, else the test fails at once naming the guard that should have closed it (a missing
+// guard leaves the socket open; waiting for a close that never comes only ends at the runner's two-minute watchdog).
+function closes(client, guard, ms = 3000) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new assert.AssertionError({ message: `the socket was not destroyed within ${ms} ms: ${guard}` })), ms);
+  });
+  return Promise.race([client.closedPromise, late]).finally(() => clearTimeout(timer));
+}
+
 async function setup(t, options = {}) {
   const sockets = [];
   const clients = [];
@@ -72,7 +82,7 @@ for (const [name, mutate] of [
     mutate(bytes);
     await client.connected;
     client.socket.write(Buffer.concat([bytes, Buffer.from('GET / HTTP/1.1\r\n\r\n')]));
-    await client.closedPromise;
+    await closes(client, `${name} must be refused (the preamble check)`);
     assert.equal(client.bytes().length, 0);
     assert.equal(sockets.length, 0, 'the HTTP layer never saw the socket');
     assert.deepEqual(listener.stats(), { pending: 0, accepted: 0, refused: 1 });
@@ -86,7 +96,7 @@ test('a short preamble that stalls is destroyed at the timeout with nothing sent
   client.socket.write(validPreamble().subarray(0, 40));
   await pause(30);
   assert.equal(listener.stats().pending, 1);
-  await client.closedPromise;
+  await closes(client, 'a stalled preamble must be destroyed at the timeout (preamble timeout)');
   assert.equal(client.bytes().length, 0);
   assert.equal(sockets.length, 0);
   assert.deepEqual(listener.stats(), { pending: 0, accepted: 0, refused: 1 });
@@ -98,11 +108,11 @@ test('a slow preamble that passes the timeout is destroyed even if the rest arri
   await client.connected;
   const bytes = validPreamble();
   client.socket.write(bytes.subarray(0, 71));
-  await client.closedPromise;
+  await closes(client, 'a preamble one byte short must be destroyed at the timeout (preamble timeout)');
   client.socket.write(bytes.subarray(71));
   assert.equal(client.bytes().length, 0);
   assert.equal(sockets.length, 0);
-  assert.equal(listener.stats().accepted, 0);
+  assert.deepEqual(listener.stats(), { pending: 0, accepted: 0, refused: 1 }, 'refused by the timeout, never accepted');
 });
 
 test('the seventeenth socket in the preamble phase is destroyed at once', async (t) => {
@@ -112,7 +122,7 @@ test('the seventeenth socket in the preamble phase is destroyed at once', async 
   await pause(50);
   assert.equal(listener.stats().pending, 16);
   const extra = connect();
-  await extra.closedPromise;
+  await closes(extra, 'the seventeenth pending socket must be destroyed (pending cap)');
   assert.equal(extra.bytes().length, 0);
   assert.equal(pending.some((client) => client.closed), false, 'the sixteen earlier sockets are untouched');
   assert.deepEqual(listener.stats(), { pending: 16, accepted: 0, refused: 1 });
@@ -126,7 +136,7 @@ test('close destroys sockets still in the preamble phase', async (t) => {
   client.socket.write(validPreamble().subarray(0, 10));
   await pause(30);
   await listener.close();
-  await client.closedPromise;
+  await closes(client, 'closing the listener must destroy a socket still in the preamble phase');
   assert.equal(client.bytes().length, 0);
   assert.equal(listener.stats().pending, 0);
 });
@@ -218,7 +228,7 @@ test('stats count accepted and refused sockets and a throwing logger changes not
   wrong[0] ^= 1;
   bad.socket.write(wrong);
   good.socket.write(validPreamble());
-  await bad.closedPromise;
+  await closes(bad, 'a socket with a wrong magic must be refused (the preamble check)');
   for (let attempt = 0; attempt < 50 && sockets.length === 0; attempt += 1) await pause(20);
   assert.deepEqual(listener.stats(), { pending: 0, accepted: 1, refused: 1 });
 });

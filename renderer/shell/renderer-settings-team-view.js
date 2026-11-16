@@ -16,13 +16,18 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-  const MAX_TEAMS = 4;
 
   function inv() { return globalThis.inventory || {}; }
   function textFieldFn() { return globalThis.inventoryTextField || inv().textField; }
 
+  // E64: what would host, join, reach a team or share the GPU is greyed while Force local is on, the state line its reason.
+  const HELD_ACTIONS = new Set(['deploy', 'start', 'join', 'recover', 'confirm-recover', 'restore-open', 'restore-pick', 'restore-go',
+    'new-open', 'new-go', 'net-save', 'net-on', 'net-code', 'share-start', 'leave', 'confirm-leave', 'cancel-request', 'enter-code',
+    'reconnect', 'device-invite', 'leave-export']);
+
   // One inventory button carrying its action and ids as data attributes; disabled while busy.
   function button(vm, action, label, { variant = 'secondary', ids = {}, busyKey = action, disabled = false, ariaLabel = '', title = '' } = {}) {
+    if (vm.forceLocal === true && HELD_ACTIONS.has(action)) { disabled = true; title = words.forceLocalText(); }
     const dataset = { 'team-action': action };
     if (ids.teamId) dataset['team-id'] = ids.teamId;
     if (ids.memberId) dataset['member-id'] = ids.memberId;
@@ -40,8 +45,8 @@
       + (copy ? '<p class="settings-group-copy">' + escapeHtml(copy) + '</p>' : '') + body + '</div>';
   }
 
-  function note(text) {
-    return text ? '<p class="settings-field-note team-set-note" role="status">' + escapeHtml(text) + '</p>' : '';
+  function note(text, attrs = '') {
+    return text ? '<p class="settings-field-note team-set-note" role="status"' + attrs + '>' + escapeHtml(text) + '</p>' : '';
   }
 
   function textInput(id, value, ariaLabel, { placeholder = '', maxLength = 40 } = {}) {
@@ -56,6 +61,30 @@
   function confirmBlock(vm, sentence, action, label, { variant = 'primary', ids = {}, busyKey = action } = {}) {
     return '<div class="team-set-confirm" role="group" aria-label="' + escapeHtml(label) + '"><p>' + escapeHtml(sentence) + '</p>'
       + '<div class="team-set-inline">' + button(vm, action, label, { variant, ids, busyKey })
+      + button(vm, 'confirm-cancel', jt('settings.team.cancel', 'Cancel')) + '</div></div>';
+  }
+
+  // Leave's confirm (slice 2a-6c, owner pick 15): the sentence, then the offer to export first. While the export
+  // runs its button cancels it and Leave waits; offline the export cannot run and Leave still works. Leave is never
+  // done for the person and never blocked by an export that failed or was cancelled. `vm.leaveExport`: the shared
+  // exporter's state for this team when Leave started it, else null.
+  function leaveConfirm(vm, team, name) {
+    const ids = { teamId: team.team_id };
+    const run = vm.leaveExport && vm.leaveExport.teamId === team.team_id ? vm.leaveExport : null;
+    const running = Boolean(run && (run.phase === 'gathering' || run.phase === 'saving'));
+    const offline = team.state !== 'online';
+    let said = '';
+    if (offline) said = jt('settings.team.leaveExport.offline', '{team} is offline, so its messages cannot be exported now.', { team: name });
+    else if (run && run.phase === 'done') said = jt('settings.team.leaveExport.done', 'Exported {count} messages from {total} conversations to {path}.', { count: (run.count || 0).toLocaleString(globalThis.jennyI18n?.tag?.()), total: run.total, path: run.path });
+    else if (run && vm.exportLineText) said = vm.exportLineText(run);
+    const exportButton = running
+      ? button(vm, 'leave-export-cancel', jt('settings.team.leaveExport.cancel', 'Cancel the export'), { ids, disabled: run.phase === 'saving' })
+      : button(vm, 'leave-export', jt('settings.team.leaveExport.action', 'Export my messages first…'), { ids, disabled: offline || vm.exportBusy === true });
+    return '<div class="team-set-confirm" role="group" aria-label="' + escapeHtml(jt('settings.team.joined.leaveAction', 'Leave {team}', { team: name })) + '">'
+      + '<p>' + escapeHtml(jt('settings.team.joined.leaveConfirm', 'Leave {team}? This PC disconnects from it and you lose its channels and shared projects. You can only come back with a new invite.', { team: name })) + '</p>'
+      + '<p>' + escapeHtml(jt('settings.team.leaveExport.offer', 'To keep a copy of the messages you can read, export them first.')) + '</p>'
+      + note(said, running ? ' data-team-export-line' : '') + '<div class="team-set-inline">' + exportButton
+      + button(vm, 'confirm-leave', jt('settings.team.joined.leaveAction', 'Leave {team}', { team: name }), { variant: 'danger', ids, busyKey: 'leave:' + team.team_id, disabled: running })
       + button(vm, 'confirm-cancel', jt('settings.team.cancel', 'Cancel')) + '</div></div>';
   }
 
@@ -115,29 +144,36 @@
         + fieldRow('teamDeployRow', jt('settings.team.host.server', 'Team server'),
           jt('settings.team.host.serverHelp', 'Windows may ask once to allow Jenny on your network. People on the same network can then join with an invite.'),
           button(vm, 'deploy', jt('settings.team.host.deploy', 'Deploy'), { variant: 'primary' }))
-        + note(vm.errors.host),
+        + note(vm.errors.host) + (vm.restoreHtml || ''),
     });
   }
 
   function joinGroup(vm) {
     const first = vm.teamCount === 0;
     const heading = first ? jt('settings.team.join.heading', 'Join a team') : jt('settings.team.join.another', 'Join another team');
-    if (vm.teamCount >= MAX_TEAMS) {
+    // At the limit the field stays only for a removed team: the service still refuses any other team.
+    const full = vm.teamCount >= vm.maxTeams;
+    if (full && !vm.joined.some((team) => team.state === 'revoked')) {
       return group('join', heading, { copy: jt('settings.team.join.full', 'Jenny can be in four teams at once. Leave one to join another.') });
     }
     return group('join', heading, {
-      copy: jt('settings.team.join.copy', 'Paste the invite code someone sent you. Their owner then lets you in.'),
+      copy: full ? jt('settings.team.join.fullRevoked', 'Jenny can be in four teams at once. You can still paste a new invite for a team you were removed from.')
+        : jt('settings.team.join.copy', 'Paste the invite code someone sent you. Their owner then lets you in.'),
       body: '<div class="team-set-inline">' + textInput('teamInviteCode', vm.drafts.invite, jt('settings.team.join.code', 'Invite code'),
-        { placeholder: jt('settings.team.join.placeholder', 'jteam1_…'), maxLength: 256 })
+        { placeholder: jt('settings.team.join.placeholder', 'jteam2_…'), maxLength: 512 })
         + button(vm, 'join', jt('settings.team.join.join', 'Join')) + '</div>' + note(vm.errors.join),
     });
   }
 
-  function joinedRowActions(vm, team) {
+  function joinedRowActions(vm, team, extra) {
     const ids = { teamId: team.team_id };
+    const leave = button(vm, 'leave', jt('settings.team.joined.leave', 'Leave'), { ids, busyKey: 'leave:' + team.team_id });
+    if (extra.code) return button(vm, 'enter-code', jt('settings.team.member.enterCode', 'Enter reconnect code'), { ids, busyKey: 'reconnect:' + team.team_id }) + leave;
     switch (team.state) {
       case 'pending': return button(vm, 'cancel-request', jt('settings.team.joined.cancel', 'Cancel request'), { ids, busyKey: 'leave:' + team.team_id });
-      case 'revoked': return button(vm, 'remove-team', jt('settings.team.joined.remove', 'Remove this team'), { ids, busyKey: 'remove:' + team.team_id });
+      case 'deleted':
+      case 'revoked':
+      case 'needs_repair': return button(vm, 'remove-team', jt('settings.team.joined.remove', 'Remove this team'), { ids, busyKey: 'remove:' + team.team_id });
       case 'update_required': return '';
       case 'online':
         return button(vm, 'device-invite', jt('settings.team.joined.addDevice', 'Add a device'), { ids, busyKey: 'device-invite:' + team.team_id })
@@ -149,17 +185,31 @@
   function joinedGroup(vm, revealHtml) {
     if (!vm.joined.length) return '';
     const rows = vm.joined.map((team) => {
-      const name = team.team_name || jt('settings.team.joined.unnamed', 'Unnamed team');
-      const fact = words.roleText(team.role) + ' · ' + words.connectionText(team.state);
-      const confirm = vm.confirm === 'leave:' + team.team_id
-        ? confirmBlock(vm, jt('settings.team.joined.leaveConfirm', 'Leave {team}? This PC disconnects from it and you lose its channels and shared projects. You can only come back with a new invite.', { team: name }),
-          'confirm-leave', jt('settings.team.joined.leaveAction', 'Leave {team}', { team: name }), { variant: 'danger', ids: { teamId: team.team_id }, busyKey: 'leave:' + team.team_id })
-        : '';
+      const name = words.teamName(team);
+      // A needs_repair row has no role: its state words and the sentence for its reason. Slice 5-6: a deleted row
+      // has no role either; `vm.memberRow` (renderer-settings-team-network.js) adds the path, hint and code.
+      const extra = vm.memberRow ? vm.memberRow(team) : {};
+      const fact = team.state === 'needs_repair' ? words.connectionText(team.state) + ' · ' + words.repairText(team.reason)
+        : team.state === 'deleted' || team.state === 'force_local' ? words.connectionText(team.state)
+          : words.roleText(team.role) + ' · ' + (team.state === 'revoked' ? words.revokedText() : extra.fact || words.connectionText(team.state));
+      const ids = { teamId: team.team_id };
+      let confirm = '';
+      if (vm.confirm === 'leave:' + team.team_id) {
+        confirm = leaveConfirm(vm, team, name);
+      } else if (vm.confirm === 'remove-team:' + team.team_id) {
+        confirm = confirmBlock(vm, jt('settings.team.joined.removeConfirm', 'Remove {team} from this PC? Its saved file and key here are deleted. You can only come back with a new invite.', { team: name }),
+          'confirm-remove-team', jt('settings.team.joined.removeAction', 'Remove from this PC'), { variant: 'danger', ids, busyKey: 'remove:' + team.team_id });
+      } else if (vm.confirm === 'code:' + team.team_id && vm.codeEntry) {
+        confirm = vm.codeEntry(vm, team);
+      }
       const code = revealHtml(team.team_id);
-      return row(name, fact, joinedRowActions(vm, team), { extraHtml: confirm + (code ? '<div class="team-set-row-wide">' + code + '</div>' : '') });
+      const ownKey = words.ownKeyText(team);
+      const hint = ownKey || extra.hint;
+      const keyHtml = hint ? '<p class="team-set-person__hint">' + escapeHtml(hint) + '</p>' : '';
+      return row(name, fact, joinedRowActions(vm, team, extra), { extraHtml: keyHtml + confirm + (code ? '<div class="team-set-row-wide">' + code + '</div>' : '') });
     }).join('');
     return group('joined', jt('settings.team.joined.heading', 'Teams you have joined'), {
-      extra: jt('settings.team.joined.count', '{count} of 4', { count: vm.teamCount }),
+      extra: jt('settings.team.joined.count', '{count} of {max}', { count: vm.teamCount, max: vm.maxTeams }),
       body: '<ul class="team-set-list" data-team-joined>' + rows + '</ul>' + note(vm.errors.joined),
     });
   }
@@ -189,5 +239,5 @@
       + '<p class="team-set-code__note">' + escapeHtml(noteText) + '</p></div>';
   }
 
-  return { button, group, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, MAX_TEAMS };
+  return { button, group, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, HELD_ACTIONS };
 });

@@ -110,7 +110,7 @@
 .chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker {
   box-sizing: border-box;
   min-block-size: var(--session-bar-h);
-  padding-inline-end: var(--split-bar-reserve, 200px);
+  padding-inline-end: var(--split-bar-reserve, 232px); /* row 156: +32 for the find toggle */
 }
 
 .chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker > .chat-pane-close {

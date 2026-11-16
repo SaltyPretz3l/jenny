@@ -1,5 +1,6 @@
-/* Overrides attachment-tray chip styling; base layout lives in chat-composer.css
- * and settings-controls.css, with markup emitted by renderer-sidebar-utils.js. */
+/* Attachment-tray styling. The .attachment-chip rules serve the Team tab's staged files
+ * (base layout in settings-attachments-popover.css); the composer's own items are the
+ * .composer-attachment rules below. */
 
 .attachment-tray .attachment-chip {
   transition:
@@ -17,60 +18,426 @@
   border-color: color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
-.attachment-chip-audio-glyph {
-  background: color-mix(in srgb, var(--accent-cyan) 22%, var(--bg-surface));
-  color: color-mix(in srgb, var(--accent-cyan) 78%, white);
-  border: 1px solid color-mix(in srgb, var(--accent-cyan) 36%, transparent);
-}
-
-.attachment-chip-remove,
-.attachment-chip-clear {
+.attachment-chip-remove {
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast),
     color var(--transition-fast);
 }
 
-.attachment-chip-remove:hover,
-.attachment-chip-clear:hover {
+.attachment-chip-remove:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text-primary);
 }
 
-.attachment-chip-remove:focus-visible,
-.attachment-chip-clear:focus-visible {
+.attachment-chip-remove:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
-.message-skill-pill {
+/* The marks under a sent prompt (skill, /image, board): one quiet caption line on the bubble's right edge, an icon and a
+ * few words each, no border, tint or accent. Only a named board is a control. Markup: renderer-transcript-attachments.js. */
+.message-marks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 14px;
+  max-width: 100%;
+  margin-top: var(--space-3);
+  padding-inline: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 18px;
+}
+
+.message-mark {
   display: inline-flex;
   align-items: center;
-  width: fit-content;
-  min-height: 22px;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--widget-attachment-border));
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--accent) 9%, var(--widget-attachment-bg));
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
 }
 
-.message-image-prompt-pill {
-  gap: var(--space-1);
-}
-
-.message-image-prompt-pill svg {
-  width: 13px;
-  height: 13px;
+.message-mark-icon {
+  width: 12px;
+  height: 12px;
   flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.message-mark-icon--fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.message-mark-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-mark--link {
+  cursor: pointer;
+}
+
+.message-mark--link:hover {
+  color: var(--text-primary);
+}
+
+.message-mark--link:hover .message-mark-label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.message-mark--link:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* Sent files under the marks: text files as the composer-tray tile (no remove), images and audio as they were. */
+.message-files {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  max-width: 100%;
+  margin-top: var(--space-4);
+}
+
+.message-file {
+  display: inline-grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  height: 48px;
+  max-width: min(232px, 100%);
+  padding: 0 var(--space-6) 0 var(--space-5);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.message-file-icon {
+  width: 26px;
+  height: 32px;
+  color: var(--text-secondary);
+}
+
+.message-file-icon-sheet {
+  fill: color-mix(in srgb, currentColor 10%, transparent);
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.message-file-icon-fold {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+/* The type word's size is in the icon's own units (font-size="7.5" on the <text>), so it scales with the icon. */
+.message-file-icon text {
+  fill: currentColor;
+  font-family: var(--font-family-body);
+  font-weight: 700;
+}
+
+.message-file-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.message-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.message-file-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Row 153: the composer's own attachments sit inside the composer, above the message text.
+ * Markup: renderer/shell/renderer-sidebar-utils.js (attachmentItemsHtml). The Team tab's
+ * staged files keep the .attachment-chip rules above and in settings-attachments-popover.css. */
+.composer-main > .attachment-tray {
+  justify-content: flex-start;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-2) 2px var(--space-5);
+}
+
+.composer-attachment {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: 56px;
+  border-radius: var(--radius-md);
+}
+
+.composer-attachment--file,
+.composer-attachment--audio {
+  display: inline-grid;
+  grid-template-columns: 30px minmax(0, 1fr) 22px;
+  column-gap: 9px;
+  width: max-content;
+  max-width: min(232px, 100%);
+  padding-block: 0;
+  padding-inline: 10px 6px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.composer-attachment--pending.composer-attachment--file {
+  grid-template-columns: 30px minmax(0, 1fr);
+  padding-inline-end: 12px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer-attachment-icon {
+  display: block;
+  width: 30px;
+  height: 36px;
+  color: var(--text-secondary);
+}
+
+.composer-attachment-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.composer-attachment-icon-body {
+  fill: color-mix(in srgb, currentColor 10%, transparent);
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.composer-attachment-icon-fold {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.composer-attachment-icon-wave {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.composer-attachment-icon text {
+  fill: currentColor;
+  font-family: var(--font-family-body);
+  font-weight: 700;
+}
+
+.composer-attachment-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.composer-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.composer-attachment-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-attachment-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-surface-2);
+  cursor: zoom-in;
+}
+
+.composer-attachment-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-attachment-thumb:focus-visible,
+.composer-attachment-remove:focus-visible,
+.composer-attachment-clear:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-attachment-remove {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.composer-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.composer-attachment:hover .composer-attachment-remove,
+.composer-attachment:focus-within .composer-attachment-remove {
+  opacity: 1;
+}
+
+.composer-attachment-remove:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+/* A thumbnail's remove is a small disc on its corner, shown on hover or keyboard focus. */
+.composer-attachment--image .composer-attachment-remove {
+  position: absolute;
+  inset-block-start: -6px;
+  inset-inline-end: -6px;
+  width: 20px;
+  height: 20px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-default);
+  opacity: 0;
+}
+
+.composer-attachment--image:hover .composer-attachment-remove,
+.composer-attachment--image:focus-within .composer-attachment-remove,
+.composer-attachment--over .composer-attachment-remove {
+  opacity: 1;
+}
+
+.composer-attachment--image .composer-attachment-remove:hover {
+  background: var(--bg-surface-2);
+}
+
+/* Past the per-message image limit; the reason is the composer status line. */
+.composer-attachment--over .composer-attachment-thumb {
+  opacity: 0.4;
+  box-shadow: inset 0 0 0 2px var(--state-warning);
+}
+
+.composer-attachment--pending.composer-attachment--image {
+  justify-content: center;
+  width: 56px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+/* Sizing on the shared .inv-spinner (renderer/inventory/inventory.css owns its motion). */
+.composer-attachment .composer-attachment-spinner {
+  justify-self: center;
+  width: 16px;
+  height: 16px;
+}
+
+.composer-attachment-tail {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: var(--space-2);
+}
+
+.composer-attachment-count {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-attachment-clear {
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-base);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.composer-attachment-clear:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The drop hint covers the composer while files are dragged over its pane and takes no space,
+ * so a drag never changes the composer's height (or rewrites the tray). */
+.composer-drop-hint {
+  position: absolute;
+  inset: var(--space-2);
+  z-index: 2;
+  display: none;
+  place-items: center;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  pointer-events: none;
+}
+
+.chat-pane.chat-drop-active .composer-drop-hint {
+  display: grid;
+}
+
+@media (max-width: 700px) {
+  .composer-attachment--file,
+  .composer-attachment--audio {
+    max-width: min(180px, 100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .attachment-tray .attachment-chip,
   .attachment-chip-remove,
-  .attachment-chip-clear {
+  .composer-attachment-remove {
     transition: none;
   }
 }

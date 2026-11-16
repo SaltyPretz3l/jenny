@@ -55,13 +55,20 @@
     return ordered;
   }
 
+  // Outside-Workspace documents (row 137): name and real folder come from the registry, never the key.
+  const outsideMeta = (path) => (globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null))?.describe(path) || null;
+
   function basenameOf(path) {
+    const meta = outsideMeta(path);
+    if (meta) return meta.name;
     const str = String(path || '');
     const slash = str.lastIndexOf('/');
     return slash === -1 ? str : str.slice(slash + 1);
   }
 
   function dirOf(path) {
+    const meta = outsideMeta(path);
+    if (meta) return meta.dirLabel;
     const str = String(path || '');
     const slash = str.lastIndexOf('/');
     return slash === -1 ? '' : str.slice(0, slash);

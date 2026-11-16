@@ -94,3 +94,20 @@ test('twenty join attempts per minute over all invite keys, then the next key is
   assert.equal(refused.json.error.reason, 'team_rate_limit');
   assert.equal(env.redeemCalls.length, 20);
 });
+
+// Slice 5-3 review item 10 (independent review X3-F01). Fault: attempts the per-invite limit already
+// refuses still spending the overall budget, so one invite key hammering join locks out every joiner.
+test('attempts the per-invite limit refuses do not spend the overall join budget', async (t) => {
+  const env = await createTeamHttpFixture(t);
+  const owner = await env.redeemDirect({ kind: 'owner_first', name: 'Olive Owner' });
+  const hammer = env.client((await env.newInvite({ actor: owner.member_id })).key);
+  await hammer.hello();
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await hammer.request('POST', '/api/v1/team/join', { body: failingJoin() });
+  }
+  assert.equal(env.redeemCalls.length, 5, 'only the per-invite allowance reached the store');
+  const honest = env.client((await env.newInvite({ actor: owner.member_id })).key);
+  await honest.hello();
+  const first = await honest.request('POST', '/api/v1/team/join', { body: failingJoin() });
+  assert.equal(first.json.error.reason, 'team_display_name_invalid', 'another invite\'s first attempt is allowed');
+});

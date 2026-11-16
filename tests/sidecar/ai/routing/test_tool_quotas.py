@@ -116,7 +116,7 @@ def test_tool_quota_policy_from_config_fails_open_on_malformed_values() -> None:
 
     policy = policy_from_config(config)
 
-    assert policy.max_web_tool_calls_per_turn == 10
+    assert policy.max_web_tool_calls_per_turn == 30
     assert policy.max_code_intelligence_tool_calls_per_turn == 16
     assert policy.max_tool_calls_per_session == 2_000
 
@@ -124,7 +124,7 @@ def test_tool_quota_policy_from_config_fails_open_on_malformed_values() -> None:
 def test_tool_quota_policy_from_config_uses_the_local_profile_by_default() -> None:
     policy = policy_from_config(parse_runtime_config({}))
 
-    assert policy.max_web_tool_calls_per_turn == 10
+    assert policy.max_web_tool_calls_per_turn == 30
     # TR-008 (owner 2026-09-28): the local per-chat budget matches cloud.
     assert policy.max_tool_calls_per_session == 2_000
     assert policy.max_code_intelligence_tool_calls_per_turn == 16

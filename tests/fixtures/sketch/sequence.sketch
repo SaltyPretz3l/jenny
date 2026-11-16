@@ -1,0 +1,10 @@
+title Logging in
+seq s
+  actor u You (person)
+  actor app App
+  actor auth Auth server
+  u -> app click sign in
+  app -> auth redirect
+  auth --> app code
+  note app keeps the token server-side
+step Redirect: the app hands over | s[2]

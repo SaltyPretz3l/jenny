@@ -15,7 +15,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildAttentionInbox, rowNote } = require('../renderer/shell/renderer-attention-inbox-model');
+const { buildAttentionInbox, rowNote, waitingStates, sourceFingerprint } = require('../renderer/shell/renderer-attention-inbox-model');
 
 function factsStub() {
   const calls = [];
@@ -91,6 +91,8 @@ function build(options = {}) {
     currentSessionId: options.currentSessionId || '',
     facts: 'facts' in options ? options.facts : factsStub(),
     stuckSends: options.stuckSends,
+    questionCards: options.questionCards,
+    currentSessionOnScreen: options.currentSessionOnScreen,
   });
 }
 
@@ -298,7 +300,7 @@ test('a chat whose sent messages failed to deliver gets one row to open, named b
   const inbox = build({ sessions: [session('s1', { failed_delivery_count: 2 }), session('s2', { failed_delivery_count: 0 })] });
   assert.equal(inbox.rows.length, 1);
   assert.deepEqual({ ...inbox.rows[0] }, {
-    key: 'delivery_failed:s1', kind: 'delivery_failed', sessionId: 's1', sessionTitle: 'Chat s1', failedCount: 2, order: 0,
+    key: 'delivery_failed:s1', kind: 'delivery_failed', sessionId: 's1', sessionTitle: 'Chat s1', failedCount: 2, order: 0, onScreen: false,
   });
   assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, deliveryFailures: 1, stuckSends: 0, answerable: 1 });
   assert.equal(inbox.hidden, false);
@@ -376,4 +378,82 @@ test('an approval with no call id cannot be answered, so it is not listed', () =
     pendingToolApprovals: approvalMap([liveApproval({ approvalId: 'a-blank', callId: '' })]),
   });
   assert.equal(inbox.rows.length, 0);
+});
+
+test('onScreen marks only the current sessions rows, and only when the chat view is on screen', () => {
+  const sessions = [session('s1'), session('s2', { pending_question_batch: questionBatch('b1') }), session('s3', { failed_delivery_count: 1 })];
+  const pendingToolApprovals = approvalMap([
+    liveApproval(),
+    liveApproval({ approvalId: 'appr-2', callId: 'call-2', sessionId: 's2' }),
+  ]);
+  const onScreen = build({ sessions, pendingToolApprovals, currentSessionId: 's2', currentSessionOnScreen: true });
+  assert.deepEqual(onScreen.rows.map((row) => [row.key, row.onScreen]), [
+    ['approval:call-1', false],
+    ['approval:call-2', true],
+    ['question:s2:b1', true],
+    ['delivery_failed:s3', false],
+  ], 'every row kind carries the flag; the key order is the models own');
+  assert.equal(onScreen.counts.answerable, 4, 'an on-screen row still counts');
+  const elsewhere = build({ sessions, pendingToolApprovals, currentSessionId: 's2', currentSessionOnScreen: false });
+  assert.equal(elsewhere.rows.every((row) => row.onScreen === false), true, 'another view means nothing is on screen');
+  const unspecified = build({ sessions, pendingToolApprovals, currentSessionId: 's2' });
+  assert.equal(unspecified.rows.every((row) => row.onScreen === false), true);
+  assert.deepEqual(elsewhere.rows.map((row) => row.key), onScreen.rows.map((row) => row.key), 'the flag never changes the order');
+});
+
+test('waitingStates maps each kind to its dot and lets approval beat plan review beat input needed', () => {
+  const inbox = build({
+    sessions: [
+      session('s1'),
+      session('s2', { pending_question_batch: questionBatch('b1') }),
+      session('s3', { failed_delivery_count: 2 }),
+      session('s4'),
+      session('s5'),
+    ],
+    pendingToolApprovals: approvalMap([
+      liveApproval(),
+      liveApproval({ approvalId: 'p1', callId: 'plan-1', toolName: 'exit_plan_mode', sessionId: 's4' }),
+      liveApproval({ approvalId: 'appr-5', callId: 'call-5', sessionId: 's5' }),
+      liveApproval({ approvalId: 'p5', callId: 'plan-5', toolName: 'exit_plan_mode', sessionId: 's5' }),
+    ]),
+    stuckSends: [{ key: 'k1', sessionId: 's4' }],
+  });
+  const states = waitingStates(inbox.rows);
+  assert.equal(states.size, 5);
+  assert.equal(states.get('s1'), 'approval');
+  assert.equal(states.get('s2'), 'input_needed', 'a question batch is input needed');
+  assert.equal(states.get('s3'), 'input_needed', 'a failed delivery is input needed');
+  assert.equal(states.get('s4'), 'plan_review', 'a plan review beats the stuck send in the same chat');
+  assert.equal(states.get('s5'), 'approval', 'an approval beats a plan review in the same chat');
+  assert.equal(waitingStates([]).size, 0);
+  assert.equal(waitingStates(undefined).size, 0);
+  const stuckOnly = waitingStates(build({ sessions: [session('s1')], stuckSends: [{ key: 'k', sessionId: 's1' }] }).rows);
+  assert.equal(stuckOnly.get('s1'), 'input_needed', 'a stuck send is input needed');
+});
+
+test('a live question card (ask_user) is a question wait, next to an approval in another chat (G7)', () => {
+  const inbox = build({
+    sessions: [session('s1'), session('s2')],
+    pendingToolApprovals: approvalMap([liveApproval()]),
+    questionCards: [{ sessionId: 's2', callId: 'ask-1', questionCount: 2, introText: 'Which format?' },
+      { sessionId: 'gone', callId: 'ask-2', questionCount: 1, introText: 'x' }],
+  });
+  assert.deepEqual(inbox.rows.map((row) => row.key), ['approval:call-1', 'question:s2:ask-1']);
+  const row = inbox.rows[1];
+  assert.deepEqual([row.kind, row.source, row.sessionTitle, row.questionCount, row.introText], ['question', 'card', 'Chat s2', 2, 'Which format?']);
+  assert.equal(inbox.counts.questions, 1);
+  assert.equal(inbox.counts.answerable, 2);
+  assert.equal(waitingStates(inbox.rows).get('s2'), 'input_needed');
+  const base = { collapsed: false, stuckSends: [], verdicts: [] };
+  const state = { sessions: [session('s2')], pendingToolApprovals: new Map() };
+  assert.notEqual(sourceFingerprint(state, { ...base, questionCards: [] }),
+    sourceFingerprint(state, { ...base, questionCards: [{ sessionId: 's2', callId: 'ask-1', questionCount: 1, introText: '' }] }),
+    'a card arriving or leaving must rebuild the inbox');
+});
+
+test('a chat with a structured question batch does not also get a live-card row (review)', () => {
+  const s2 = { ...session('s2'), pending_question_batch: { batch_id: 'b1', questions: [{ prompt: 'Which format?' }], intro_text: 'Pick' } };
+  const inbox = build({ sessions: [session('s1'), s2], questionCards: [{ sessionId: 's2', callId: 'ask-1', questionCount: 1, introText: 'Which format?' }] });
+  assert.deepEqual(inbox.rows.map((row) => row.key), ['question:s2:b1']);
+  assert.equal(inbox.counts.answerable, 1);
 });

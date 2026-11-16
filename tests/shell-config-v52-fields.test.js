@@ -126,11 +126,12 @@ test('ShellConfigService persists and exposes v52 chat UI settings idempotently'
     defaultRunMode: 'ask',
     uiLanguage: 'pt-BR',
     safetyMode: 'strict',
-    autoApproveStreakCap: 50,
+    autoApproveStreakCap: 250,
     unattendedGuardMinutes: 30,
     digestQuietStart: '22:00',
     digestQuietEnd: '07:00',
     browserOnInNewChats: false,
+    drawingInstructions: 'short',
   });
   // One commit per patch (Settings cohesion F-5): the specific reasons ride in meta.reasons.
   assert.deepEqual(reasons, ['chat_ui_settings_updated']);

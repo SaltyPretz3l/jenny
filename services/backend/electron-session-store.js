@@ -4,9 +4,8 @@ const {
   createConversationStorePort,
   messageIntentMatches,
 } = require('./conversation-store-port');
-const {
-  normalizeContextPreferences,
-} = require('./context-preferences');
+const { normalizeContextPreferences } = require('./context-preferences');
+const { allowedNodesField } = require('./session-allowed-nodes');
 const {
   normalizeConversationMode,
   normalizeInteractiveRoundCount,
@@ -212,7 +211,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
       sessionId
     ),
     linked_task_id: normalizeLinkedTaskId(input.linked_task_id),
-    ...(composerDraft ? { composer_draft: composerDraft } : {}),
+    ...(composerDraft ? { composer_draft: composerDraft } : {}), ...allowedNodesField(input.allowed_nodes),
     messages: messageList,
     message_seq_counter: Number(input.message_seq_counter || 0),
     turn_event_log_version: normalizedTurnEventLogVersion,
@@ -601,7 +600,7 @@ class ElectronSessionStore {
   }
 
   setSessionPreferences(sessionId, preferences = {}) {
-    return this.updateSession(sessionId, this._preferencesPatch(preferences, this.getSession(sessionId) || {}));
+    return this._updateSessionRecord(sessionId, this._preferencesPatch(preferences, this.getSession(sessionId) || {}));
   }
 
   // `expectedPriorStreamId` is an optional CAS guard (defense-in-depth behind
@@ -917,9 +916,8 @@ class ElectronSessionStore {
   updateSession(sessionId, patch = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
     const safePatch = { ...patch };
-    delete safePatch.runtime_continuations;
-    delete safePatch.suggested_changes;
-    delete safePatch.session_role; // row 69: only the primary-session seam writes the role
+    // Only their own seams write these: the role (row 69), the team host's allowed nodes (setSessionPreferences).
+    for (const key of ['runtime_continuations', 'suggested_changes', 'session_role', 'allowed_nodes']) delete safePatch[key];
     stripCoordinationFields(safePatch);
     return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,

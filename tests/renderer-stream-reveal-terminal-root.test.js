@@ -757,3 +757,29 @@ test('isStreaming gate clears completed turn markers when an earlier source mess
   assert.equal(window.document.querySelectorAll('[data-streaming-row="true"]').length, 0);
   assert.equal(window.document.querySelectorAll('article.chat-entry.assistant.pending').length, 0);
 });
+
+// cost-growth: each decline of the active-turn-root patch names its reason.
+test('active turn root patch names why it declined', () => {
+  const dom = new JSDOM(`<!doctype html><body><div id="timeline">
+    <div class="chat-thread-root" data-thread-message-id="u1"><article data-message-id="u1">u1</article></div>
+    <div class="chat-thread-root" data-thread-message-id="u2"><article data-message-id="u2">u2</article></div></div></body>`);
+  const timeline = dom.window.document.getElementById('timeline');
+  const controller = createStreamRevealController({
+    windowRef: dom.window, chatTimeline: timeline, reducedMotionQuery: { matches: false },
+    renderStreamingMarkdownUnits: () => ({ html: '', units: [], fingerprints: [], changedStartIndex: -1 }),
+    escapeSelectorValue: (value) => String(value || ''),
+  });
+  controller.commitFullRender({ currentSessionId: 'session-1', structureSignature: 1, activeTurnRootMessageId: 'u2', activeTurnStructureHash: 1, activeTurnTailFingerprint: 'a' });
+  const reasonFor = (overrides) => {
+    const diagnostics = { reason: '' };
+    const patched = controller.patchActiveTurnRoot({ currentSessionId: 'session-1', activeTurnRootMessageId: 'u2', turnStructureHash: 2,
+      turnTailFingerprint: 'b', expectedRootOrder: ['u1', 'u2'], buildTurnRootMarkup: () => '', diagnostics, ...overrides });
+    return patched ? 'patched' : diagnostics.reason;
+  };
+  assert.equal(reasonFor({ currentSessionId: 'session-2' }), 'session_mismatch');
+  assert.equal(reasonFor({ expectedRootOrder: ['u2', 'u1'] }), 'root_order_mismatch');
+  assert.equal(reasonFor({ activeTurnRootMessageId: 'u9', expectedRootOrder: [] }), 'root_not_on_screen');
+  assert.equal(reasonFor({ buildTurnRootMarkup: null }), 'no_builder');
+  assert.equal(reasonFor({ buildTurnRootMarkup: () => { throw new Error('boom'); } }), 'build_threw');
+  assert.equal(reasonFor({}), 'build_empty');
+});

@@ -37,3 +37,18 @@ test('the sidecar idle workers attach to the backend service once', () => {
     workers.forEach((worker) => worker?.dispose?.());
   }
 });
+
+test('a post-window start that throws is logged and does not stop the starts after it', () => {
+  const calls = [];
+  const logs = [];
+  const starters = createPostWindowServiceStarters({
+    backendService: { commandSandbox: { start: async () => { calls.push('commandSandbox'); } } },
+    pdfAddon: { start: async () => { calls.push('pdfAddon'); } },
+    imageEngine: { start: () => { throw new Error('stat failed'); } },
+    wireSemanticCatalog: () => { calls.push('semanticCatalog'); },
+    log: (...entry) => logs.push(entry),
+  });
+  starters.startPostWindowServices();
+  assert.deepEqual(calls, ['pdfAddon', 'commandSandbox', 'semanticCatalog']);
+  assert.deepEqual(logs, [['WARN', 'app.post_window_service_failed', { service: 'image_engine', message: 'stat failed' }]]);
+});

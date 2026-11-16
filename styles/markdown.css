@@ -310,6 +310,39 @@
   border-top: 1px solid var(--markdown-code-header-border);
 }
 
+/* Code inside thinking: one plain block in the text, no toolbar, colouring or
+   clamp, so it grows and scrolls with the thinking while it is written. */
+.reasoning-row-panel-body.chat-bubble-markdown pre.thinking-code {
+  margin: 0 0 var(--markdown-flow-gap);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--tl-code-bg);
+  color: inherit;
+  font-family: var(--font-family-mono);
+  font-size: 0.92em;
+  line-height: 1.5;
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-row-panel-body.chat-bubble-markdown pre.thinking-code > code {
+  font: inherit; background: none; padding: 0; border: 0; color: inherit; white-space: inherit;
+}
+
+/* Copy shows on hover or keyboard focus, top right. */
+.thinking-code-host { position: relative; }
+
+.thinking-code-host > .thinking-code-copy {
+  position: absolute; top: 6px; inset-inline-end: 8px;
+  opacity: 0; transition: opacity 120ms ease;
+}
+
+.thinking-code-host:hover > .thinking-code-copy,
+.thinking-code-host > .thinking-code-copy:focus-visible { opacity: 1; }
+
 /* Quiet grammar: the Show-more chip is a sentence-case pill, no shout. */
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-expand-overlay span {
   font-family: var(--font-family-body);
@@ -971,7 +1004,8 @@ body.mermaid-fullscreen-open {
   :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-block.collapsible > pre,
   :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-expand-overlay,
   :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-expand-overlay span,
-  :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-source .markdown-code-language::before {
+  :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-source .markdown-code-language::before,
+  .thinking-code-host > .thinking-code-copy {
     transition: none;
   }
 }

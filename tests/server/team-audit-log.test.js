@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const { createFixture } = require('./helpers/team-store-fixture');
 const { AUDIT_KINDS, AUDIT_LIMITS, AuditLog } = require('../../server/team/audit-log');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 function entry(overrides = {}) {
   return { kind: 'invite_created', store_rev: 1, detail: 'kind=new_member,role=member', ...overrides };
@@ -67,7 +68,7 @@ test('entries have exactly the documented fields and persist across a reopen', (
   assert.equal(saved.applied, true);
   assert.equal(saved.store_rev, 4);
   assert.equal(saved.subject_member_id, null);
-  assert.deepEqual(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 2);
+  assert.deepEqual(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
 });
 
 test('entries never hold a key, an address or an invite string; bad entries are refused', (t) => {
@@ -91,7 +92,8 @@ test('entries never hold a key, an address or an invite string; bad entries are 
   assert.throws(() => log.append([]), TypeError);
   assert.throws(() => log.append(Array.from({ length: 9 }, () => entry())), TypeError);
   assert.equal(fs.existsSync(fx.auditFile), false, 'refused entries write nothing');
-  assert.ok(AUDIT_KINDS.includes('recovery_used') && AUDIT_KINDS.includes('team_renamed') && AUDIT_KINDS.length === 12);
+  assert.ok(AUDIT_KINDS.includes('recovery_used') && AUDIT_KINDS.includes('team_renamed') && AUDIT_KINDS.includes('audit_log_reset')
+    && AUDIT_KINDS.includes('invite_name_taken') && AUDIT_KINDS.length === 14);
 });
 
 // ------------------------------------------------------------------ bounds
@@ -146,7 +148,7 @@ test('an unreadable or invalid audit log is never rewritten and refuses appends'
   const cases = [
     Buffer.from([0x00, 0xff, 0x80]),
     '[]',
-    JSON.stringify({ schema_version: 3, floor_seq: 1, next_seq: 1, entries: [] }),
+    JSON.stringify({ schema_version: 4, floor_seq: 1, next_seq: 1, entries: [] }),
     JSON.stringify({ schema_version: 1, floor_seq: 1, next_seq: 1, entries: [], extra: true }),
     JSON.stringify({ schema_version: 1, floor_seq: 1, next_seq: 2, entries: [{ seq: 1 }] }),
     JSON.stringify({ schema_version: 1, floor_seq: 3, next_seq: 2, entries: [] }),
@@ -164,12 +166,14 @@ test('an unreadable or invalid audit log is never rewritten and refuses appends'
   }
 });
 
+// A log refused for its content is set aside at start (team-member-store-audit-start
+// tests); one from a newer Jenny is never moved and still refuses changes.
 test('a broken audit log refuses member mutations and leaves the member store unchanged', async (t) => {
   const fx = createFixture(t);
   const store = fx.openStore();
   const owner = await fx.bootstrapOwner(store);
   const before = fs.readFileSync(fx.memberFile);
-  const garbage = Buffer.from('not json at all');
+  const garbage = Buffer.from(JSON.stringify({ schema_version: 9, floor_seq: 1, next_seq: 1, entries: [] }));
   fs.writeFileSync(fx.auditFile, garbage);
   const broken = fx.openStore();
   const result = await broken.createInvite({
@@ -241,7 +245,7 @@ test('recovery writes recovery_used, a device_revoked per dropped device and dev
   const store = fx.openStore();
   const owner = await fx.bootstrapOwner(store);
   await fx.addDevice(store, owner.member_id, 'Tablet');
-  const minted = await store.createInvite({ kind: 'recovery', actorMemberId: null, invitePublicKey: fx.nextKey() });
+  const minted = await store.createInvite({ kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey() });
   assert.equal(store.audit.read({ cursor: 0 }).entries.at(-1).actor_member_id, null);
   const before = store.audit.read({ cursor: 0 }).entries.length;
   await store.redeem({
@@ -297,9 +301,11 @@ test('audit written, commit skipped: reopening marks the entry not applied and t
 
 test('a first-owner commit lost before the file exists is marked not applied on open', async (t) => {
   const fx = createFixture(t);
+  // The process dies after the first change's audit write (one entry, store_rev 1).
+  // Two lost commits would leave store_rev 2 with no file, which fails closed.
   const crashing = fx.openStore({ writeJson() { /* lost */ } });
-  const owner = await fx.bootstrapOwner(crashing);
-  assert.ok(owner.member_id);
+  const created = await crashing.createInvite({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey() });
+  assert.equal(created.ok, true);
   assert.equal(fs.existsSync(fx.memberFile), false);
   const reopened = fx.openStore();
   assert.equal(reopened.rev(), 0);
@@ -383,7 +389,7 @@ function project(overrides = {}) {
   return entry({ kind: 'project_created', project_id: 'project_p1', detail: 'role=admin', ...overrides });
 }
 
-test('a schema 1 audit file loads, reads and is written as schema 2 by its first append', (t) => {
+test('a schema 1 audit file loads, reads and is written as schema 3 by its first append', (t) => {
   const fx = createFixture(t);
   const v1 = {
     seq: 1, at: 1, kind: 'member_admitted', actor_member_id: null, subject_member_id: null,
@@ -397,7 +403,7 @@ test('a schema 1 audit file loads, reads and is written as schema 2 by its first
   assert.equal(log.reconcile(3).marked, 0);
   assert.equal(log.append([project({ store_rev: 4 })]).ok, true);
   const doc = JSON.parse(fs.readFileSync(fx.auditFile, 'utf8'));
-  assert.equal(doc.schema_version, 2);
+  assert.equal(doc.schema_version, 3);
   assert.deepEqual(doc.entries.map((item) => [item.seq, item.kind, item.project_id, item.name]),
     [[1, 'member_admitted', null, 'Mina'], [2, 'project_created', 'project_p1', null]]);
 });
@@ -492,5 +498,24 @@ test('a reconcile that upgrades a schema 1 file at the byte cap stays inside it 
   assert.equal(tail.ok, true, 'the log is still readable');
   assert.deepEqual(tail.entries.map((item) => item.applied), [false, false, false]);
   assert.ok(tail.floor_seq > 10000, 'the oldest entries were dropped to fit');
-  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 2);
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
+});
+
+test('a schema 2 audit file loads and is written as schema 3; one holding the schema 3 kind is refused', (t) => {
+  const stored = (kind) => ({
+    seq: 1, at: 1, kind, actor_member_id: null, subject_member_id: null, subject_device_id: null,
+    name: null, detail: null, store_rev: 3, applied: true, project_id: null,
+  });
+  const fx = createFixture(t);
+  fs.writeFileSync(fx.auditFile, JSON.stringify({ schema_version: 2, floor_seq: 1, next_seq: 2, entries: [stored('team_renamed')] }));
+  const log = openLog(fx);
+  assert.deepEqual(log.read({ cursor: 0 }).entries, [stored('team_renamed')]);
+  assert.equal(log.append([entry()]).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
+
+  const bad = createFixture(t);
+  const bytes = JSON.stringify({ schema_version: 2, floor_seq: 1, next_seq: 2, entries: [stored('audit_log_reset')] });
+  fs.writeFileSync(bad.auditFile, bytes);
+  assert.equal(openLog(bad).read({ cursor: 0 }).error.reason, 'team_unavailable');
+  assert.equal(fs.readFileSync(bad.auditFile, 'utf8'), bytes);
 });

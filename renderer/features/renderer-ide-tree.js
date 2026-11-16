@@ -15,6 +15,8 @@
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
   function noop() {}
+  // Outside-Workspace documents (row 137) are not in the tree: revealing one would persist fake folders.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -777,6 +779,7 @@
     // Lazy ancestor listings load asynchronously; the remembered focusedPath
     // survives those re-renders.
     async function revealPath(path, { expandSelf = false, focus = true } = {}) {
+      if (isOutsideKey(path)) return;
       const epoch = rootEpoch;
       const segments = String(path || '').split('/').filter(Boolean);
       if (!segments.length) {

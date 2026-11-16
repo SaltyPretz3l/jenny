@@ -379,3 +379,107 @@ test('toast store dismissBySource with a session scope keeps other sessions\' to
   // Drop the remaining toast so its armed dismiss timer does not hold the process open.
   store.dismissAll();
 });
+
+function createHarnessedStore(maxVisible = 4) {
+  const timerHarness = createTimerHarness();
+  const store = createToastStore({
+    now: timerHarness.now,
+    setTimeout: timerHarness.setTimeoutMock,
+    clearTimeout: timerHarness.clearTimeoutMock,
+    maxVisible,
+  });
+  return { store, timerHarness };
+}
+
+test('toast store calls onExpire once when the toast times out, and the hover hold delays it', () => {
+  const { store, timerHarness } = createHarnessedStore();
+  let expired = 0;
+  store.enqueue({ message: 'Deleted "Trip".', durationMs: 6000, onExpire: () => { expired += 1; } });
+
+  timerHarness.advance(2000);
+  store.pauseAll();
+  timerHarness.advance(10000);
+  assert.equal(expired, 0, 'held: neither the toast nor its work expires');
+  store.resumeAll();
+  timerHarness.advance(3999);
+  assert.equal(expired, 0);
+  timerHarness.advance(1);
+  assert.equal(expired, 1);
+  assert.equal(store.getSnapshot().length, 0);
+});
+
+test('toast store calls onExpire once on dismiss, a dedupe re-show, dismissAll and the retention drop', () => {
+  const { store } = createHarnessedStore(20);
+  const fired = [];
+  const dismissed = store.enqueue({ message: 'A', onExpire: () => fired.push('dismiss') });
+  store.dismiss(dismissed);
+  store.dismiss(dismissed);
+  assert.deepEqual(fired, ['dismiss'], 'once per toast');
+
+  const first = store.enqueue({ message: 'Loop deleted.', dedupeKey: 'k', onExpire: () => fired.push('replaced') });
+  const second = store.enqueue({ message: 'Loop deleted.', dedupeKey: 'k' });
+  assert.equal(second, first, 'the re-show keeps the toast id');
+  assert.deepEqual(fired, ['dismiss', 'replaced'], 'the replaced toast\'s work runs now');
+  store.dismiss(second);
+  assert.deepEqual(fired, ['dismiss', 'replaced'], 'and never again when the new toast leaves');
+
+  store.enqueue({ message: 'Oldest', onExpire: () => fired.push('retention') });
+  for (let index = 1; index <= 12; index += 1) store.enqueue({ message: `Note ${index}` });
+  assert.deepEqual(fired, ['dismiss', 'replaced', 'retention']);
+
+  store.enqueue({ message: 'Last', onExpire: () => fired.push('all') });
+  store.dismissAll();
+  assert.deepEqual(fired, ['dismiss', 'replaced', 'retention', 'all']);
+});
+
+test('toast store holds a toast\'s clock while it waits out of view', () => {
+  const { store, timerHarness } = createHarnessedStore(1);
+  const first = store.enqueue({ message: 'Visible failure', tone: 'danger' });
+  store.enqueue({ message: 'Queued note', tone: 'info' });
+  // The newest is on top: the note is visible and the failure waits.
+  assert.equal(store.getSnapshot()[0].message, 'Queued note');
+  timerHarness.advance(5000);
+  assert.equal(store.getSnapshot()[0].id, first, 'the visible note expired on time');
+
+  const { store: queued, timerHarness: clock } = createHarnessedStore(1);
+  queued.enqueue({ message: 'Waiting note', tone: 'info' });
+  const blocker = queued.enqueue({ message: 'Blocking failure', tone: 'danger' });
+  clock.advance(60000);
+  assert.equal(queued.getOverflowCount(), 1, 'pushed out of view, the note is not spent while it waits');
+  queued.dismiss(blocker);
+  assert.equal(queued.getSnapshot()[0].message, 'Waiting note');
+  clock.advance(4999);
+  assert.equal(queued.getSnapshot().length, 1);
+  clock.advance(1);
+  assert.equal(queued.getSnapshot().length, 0, 'the time it had left ran once it was back in view');
+});
+
+test('toast store gives a countdown only to a toast that expires on its own', () => {
+  const { store } = createHarnessedStore();
+  const timed = store.enqueue({ message: 'Moved 2 files.', durationMs: 8000, countdown: true });
+  const sticky = store.enqueue({ message: 'Failed.', tone: 'danger', countdown: true });
+  const plain = store.enqueue({ message: 'Saved.' });
+  const byId = (id) => store.getSnapshot().find((toast) => toast.id === id);
+  assert.equal(byId(timed).countdownMs, 8000);
+  assert.equal(byId(sticky).countdownMs, 0);
+  assert.equal(byId(plain).countdownMs, 0);
+  assert.equal(store.hasSticky(), true);
+});
+
+test('toast store never drops the newest toast at the bound, and an empty stack drops a stuck hold', () => {
+  const { store, timerHarness } = createHarnessedStore(20);
+  for (let index = 1; index <= 12; index += 1) store.enqueue({ message: `Failure ${index}`, tone: 'danger' });
+  let committed = 0;
+  const undoId = store.enqueue({ message: 'Deleted "Trip".', durationMs: 6000, onExpire: () => { committed += 1; } });
+  assert.ok(store.getSnapshot().some((toast) => toast.id === undoId), 'a new Undo toast is shown, not committed unseen');
+  assert.equal(committed, 0);
+  store.dismissAll();
+
+  // The hovered (or focused) toast is removed and no pointerleave/focusout arrives.
+  store.enqueue({ message: 'Saved.' });
+  store.pauseAll();
+  store.dismissAll();
+  store.enqueue({ message: 'Deleted "Notes".', durationMs: 6000, onExpire: () => { committed += 1; } });
+  timerHarness.advance(6000);
+  assert.equal(committed, 2, 'the next Undo window still runs');
+});

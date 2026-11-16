@@ -270,9 +270,9 @@ test('Retry replays the stored payload and ignores the current composer', async 
     undefined,
     'the immutable pre-retry snapshot is not mutated in place',
   );
-  const settledFailure = (harness.state.messagesBySession.get('session-1') || [])
-    .find((message) => message.id === failedMessage.id);
-  assert.equal(settledFailure.send_failure.dismissed, true, 'accepted retry clears the original failure notice');
+  // The accepted retry's own bubble replaces the failed one, so the notice goes with it.
+  assert.equal((harness.state.messagesBySession.get('session-1') || [])
+    .some((message) => message.id === failedMessage.id), false, 'accepted retry clears the original failure notice');
 });
 
 test('a malformed acceptance cancels its identifiable stream and preserves a retry payload', async (t) => {
@@ -369,4 +369,37 @@ test('dispose makes late settlement inert and releases owned assets once', () =>
     failedPayload: null,
   });
   assert.equal(env.store.getRetryAvailability('missing').available, false);
+});
+
+test('Retry of a failed send shows the prompt once while the retried turn starts and streams', async (t) => {
+  let attempt = 0;
+  let promptCountDuringStart = -1;
+  const countPrompt = () => (harness.state.messagesBySession.get('session-1') || [])
+    .filter((message) => message.role === 'user' && message.content === 'say it once').length;
+  const harness = createControllerHarness([], {
+    chatInputValue: 'say it once',
+    startStream: async (payload) => {
+      attempt += 1;
+      if (attempt === 1) {
+        const error = new Error('transport unavailable');
+        error.code = 'CMP-CHAT-0002';
+        throw error;
+      }
+      promptCountDuringStart = countPrompt();
+      return { sessionId: payload.sessionId, streamId: 'stream-retry-once' };
+    },
+  });
+  t.after(() => harness.restore());
+
+  await harness.controller.startPromptSend('say it once', { restoreInputOnError: true });
+  const failedMessage = (harness.state.messagesBySession.get('session-1') || [])
+    .find((message) => message.send_failure?.payload_id);
+  assert.ok(failedMessage);
+  const result = await harness.controller.retryFailedPayload(failedMessage.send_failure.payload_id);
+
+  assert.equal(result.streamId, 'stream-retry-once');
+  assert.equal(promptCountDuringStart, 1, 'one bubble while the retry starts');
+  assert.equal(countPrompt(), 1, 'one bubble while the retried turn streams');
+  assert.equal((harness.state.messagesBySession.get('session-1') || [])
+    .some((message) => message.send_failure && message.send_failure.dismissed !== true), false, 'no failure marker is left');
 });

@@ -6,9 +6,9 @@
      - a live job's elapsed time ticks once a second while any is on screen;
      - Stop (data-rail-job-stop) calls backgroundJobs.kill and disables itself until the next paint (a
        refused stop re-enables it and says so in its tooltip);
-     - a finished job's row (data-rail-job-output) opens its output below itself, read once over
-       backgroundJobs.readOutput and kept across repaints; "Open full output" opens the job's
-       output.txt in the Workspace when the job wrote one;
+     - a job's row opens it in the Background tasks panel (row 138, routed by the rail's detail click); a
+       finished row's right-click offers the shared path menu on its output.txt once a hover or focus has
+       read where that file is (backgroundJobs.readOutput, once per job);
      - a live job other chats wait on (row 100 P2 work leases) reads "N waiting · " before its time, and
        its hover and Stop tooltip say so; getJobWaiters returns the waiting chats' titles ('' if untitled);
      - the Session toggle reads "N running" while this chat has live jobs and the tray is out of sight
@@ -17,22 +17,40 @@
    Job text renders through textContent only, never markup. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-session-rail-model'), require('../inventory/action-button'));
+    module.exports = factory(require('./renderer-session-rail-model'));
     return;
   }
-  root.rendererSessionRailJobs = factory(root.rendererSessionRailModel, null);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, injectedActionButton) {
+  root.rendererSessionRailJobs = factory(root.rendererSessionRailModel);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model) {
   'use strict';
 
   const TICK_MS = 1000;
-  const MAX_CACHED_OUTPUTS = 20;
+  const MAX_KNOWN_PATHS = 20;
+  const trimRoot = (value) => String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const sameRoot = (a, b) => (/^[A-Za-z]:/.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+  // The shared path menu on a job's output.txt (the rail's finished row and the Background tasks panel's Open full
+  // output). workspaceFs speaks workspace-relative paths, and the tracker derives fullOutputPath only as
+  // <root>/.jenny/tool-results/<jobId>/output.txt, so the relative path is rebuilt from the job id. Anything else (no
+  // path yet, a path of another shape, or a job captured under another workspace root than the current one, whose
+  // relative path would open the wrong file) leaves the browser default. True when the menu showed.
+  function showOutputPathMenu({ jobId, fullOutputPath, event, control, rootEl, win, pathMenu, workspaceRoot }) {
+    const full = String(fullOutputPath || '').replace(/\\/g, '/');
+    const relative = `.jenny/tool-results/${jobId}/output.txt`;
+    if (!/^[0-9a-f]{12}$/.test(String(jobId || '')) || !full.endsWith(`/${relative}`) || typeof pathMenu?.showPathMenu !== 'function') return false;
+    const jobRoot = trimRoot(full.slice(0, -(relative.length + 1)));
+    const root = trimRoot(workspaceRoot);
+    if (!root || !jobRoot || !sameRoot(jobRoot, root)) return false;
+    const shown = pathMenu.showPathMenu({
+      path: relative, kind: 'file', windowRef: win, anchorX: event.clientX, anchorY: event.clientY, anchorEl: control, restoreFocusTo: control, rootEl,
+    });
+    if (shown) event.preventDefault();
+    return Boolean(shown);
+  }
 
   function createRailJobs({ tray, toggle = null, win, jt, getSessionId = () => '', trayShown = () => true, getBackgroundJobs, getJobWaiters = null, pathMenu: injectedPathMenu = null, getWorkspaceRoot = null } = {}) {
     if (!tray || !win) return { handleClick: () => false, dispose: () => {} };
-    const doc = tray.ownerDocument;
-    const actionButton = (options) => (injectedActionButton || win.inventoryActionButton)(options);
-    const outputs = new Map(); // job id -> { text, fullOutputPath } once read
-    const open = new Set(); // job ids whose output is showing
+    const paths = new Map(); // job id -> its output file path ('' while the read runs), once read
     let ticker = 0;
     let disposed = false;
     let trackedJobs = [];
@@ -76,22 +94,6 @@
       syncWaiters();
     }
 
-    function outputNode(jobId, entry) {
-      const block = doc.createElement('div');
-      block.className = 'session-rail-job-output';
-      block.setAttribute('data-rail-job-output-for', jobId);
-      const pre = doc.createElement('pre');
-      pre.textContent = entry.text || jt('chat.sessionRail.tasks.noOutput', 'No output.');
-      block.appendChild(pre);
-      if (entry.fullOutputPath) {
-        block.insertAdjacentHTML('beforeend', actionButton({
-          plain: true, className: 'session-rail-job-open', label: jt('chat.sessionRail.tasks.openFullOutput', 'Open full output'),
-          dataset: { 'rail-job-open': jobId },
-        }));
-      }
-      return block;
-    }
-
     function syncReadout() {
       const slot = toggle?.querySelector('[data-session-rail-jobs-readout]');
       if (!slot || disposed) return;
@@ -115,51 +117,29 @@
       syncReadout();
     }
 
-    // After every repaint: re-attach open outputs, fill live elapsed times and tick only while a live job is in sight.
+    // After every repaint: fill live elapsed times and tick only while a live job is in sight.
     function sync() {
       if (disposed) return;
       syncReadout();
-      for (const jobId of open) {
-        const row = tray.querySelector(`[data-rail-job-output="${jobId}"]`);
-        if (!row) continue;
-        if (row.getAttribute('aria-expanded') !== 'true') row.setAttribute('aria-expanded', 'true');
-        const wrapper = row.parentElement;
-        if (outputs.has(jobId) && wrapper && !wrapper.querySelector('[data-rail-job-output-for]')) wrapper.appendChild(outputNode(jobId, outputs.get(jobId)));
-      }
       const live = trayShown() && Boolean(tray.querySelector('[data-rail-started-at], [data-rail-job-waiting]'));
       if (live) tick();
       if (live && !ticker) ticker = win.setInterval(tick, TICK_MS);
       else if (!live && ticker) { win.clearInterval(ticker); ticker = 0; }
     }
 
-    async function toggleOutput(row) {
-      const jobId = row.getAttribute('data-rail-job-output');
-      if (open.has(jobId)) {
-        open.delete(jobId);
-        row.setAttribute('aria-expanded', 'false');
-        row.parentElement?.querySelector('[data-rail-job-output-for]')?.remove();
-        return;
-      }
-      open.add(jobId);
-      if (!outputs.has(jobId)) {
-        let result;
-        try { result = await api()?.readOutput?.(jobId); } catch { result = null; }
-        if (disposed || !open.has(jobId)) return;
-        if (!result || result.ok !== true) {
-          // Said in place of the output; not cached, so a later open asks again.
-          row.parentElement?.appendChild(outputNode(jobId, { text: jt('chat.sessionRail.tasks.outputUnavailable', "That job's output isn't available any more.") }));
-          return;
-        }
-        outputs.set(jobId, { text: String(result.text || ''), fullOutputPath: String(result.fullOutputPath || '') });
-        while (outputs.size > MAX_CACHED_OUTPUTS) {
-          const evicted = outputs.keys().next().value;
-          outputs.delete(evicted);
-          open.delete(evicted);
-          tray.querySelector(`[data-rail-job-output-for="${evicted}"]`)?.remove();
-          tray.querySelector(`[data-rail-job-output="${evicted}"]`)?.setAttribute('aria-expanded', 'false');
-        }
-      }
-      sync();
+    // A hover or focus on a finished row reads where its output file is, once, so a right-click can offer the path
+    // menu (a failed read is forgotten and asked again next time).
+    async function learnPath(event) {
+      const row = event?.target?.closest ? event.target.closest('[data-rail-job-path]') : null;
+      const jobId = row && tray.contains(row) ? row.getAttribute('data-rail-job-path') : '';
+      if (!jobId || paths.has(jobId)) return;
+      paths.set(jobId, '');
+      let result;
+      try { result = await api()?.readOutput?.(jobId); } catch { result = null; }
+      if (disposed) return;
+      if (!result || result.ok !== true) { paths.delete(jobId); return; }
+      paths.set(jobId, String(result.fullOutputPath || ''));
+      while (paths.size > MAX_KNOWN_PATHS) paths.delete(paths.keys().next().value);
     }
 
     function stop(button) {
@@ -176,54 +156,29 @@
     function currentRoot() {
       try { return String((getWorkspaceRoot || (() => win.jennyWorkspacePathResolve?.getWorkspaceRoot?.()))() || ''); } catch { return ''; }
     }
-    const trimRoot = (value) => String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
-    const sameRoot = (a, b) => (/^[A-Za-z]:/.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b);
-
-    // Right-click on a finished job's row or its Open full output button: the shared path menu on the job's
-    // output file. workspaceFs speaks workspace-relative paths, and the tracker derives fullOutputPath only as
-    // <root>/.jenny/tool-results/<jobId>/output.txt, so the relative path is rebuilt from the job id once the
-    // read says the file exists. Anything else (no read yet, a path of another shape, or a job captured under
-    // another workspace root than the current one, whose relative path would open the wrong file) leaves the
-    // browser default.
+    // Right-click on a finished job's row: the shared path menu on its output file, once its path is known.
     function handleContextMenu(event) {
       const target = event?.target?.closest ? event.target : null;
-      const control = target && target.closest('[data-rail-job-output], [data-rail-job-open]');
+      const control = target && target.closest('[data-rail-job-path]');
       if (!control || !tray.contains(control)) return;
-      const jobId = control.getAttribute('data-rail-job-output') || control.getAttribute('data-rail-job-open') || '';
-      const full = String(outputs.get(jobId)?.fullOutputPath || '').replace(/\\/g, '/');
-      const relative = `.jenny/tool-results/${jobId}/output.txt`;
-      const pathMenu = injectedPathMenu || win.rendererIdePathMenu;
-      if (!/^[0-9a-f]{12}$/.test(jobId) || !full.endsWith(`/${relative}`) || typeof pathMenu?.showPathMenu !== 'function') return;
-      const jobRoot = trimRoot(full.slice(0, -(relative.length + 1)));
-      const root = trimRoot(currentRoot());
-      if (!root || !jobRoot || !sameRoot(jobRoot, root)) return;
-      const shown = pathMenu.showPathMenu({
-        path: relative, kind: 'file', windowRef: win, anchorX: event.clientX, anchorY: event.clientY, anchorEl: control, restoreFocusTo: control, rootEl: tray,
-      });
-      if (shown) event.preventDefault();
+      const jobId = control.getAttribute('data-rail-job-path') || '';
+      showOutputPathMenu({ jobId, fullOutputPath: paths.get(jobId), event, control, rootEl: tray, win,
+        pathMenu: injectedPathMenu || win.rendererIdePathMenu, workspaceRoot: currentRoot() });
     }
 
-    function openFull(jobId) {
-      const target = outputs.get(jobId)?.fullOutputPath;
-      if (!target || typeof win.CustomEvent !== 'function') return;
-      win.dispatchEvent(new win.CustomEvent('ide:open-file-at-line', {
-        detail: { path: target, line: null, column: null, preferIde: true }, bubbles: true, cancelable: true,
-      }));
-    }
-
-    // The rail's tray click listener asks first; true means the click was a job control.
+    // The rail's tray click listener asks first; true means the click was Stop (a row's click opens the panel).
     function handleClick(event) {
       const target = event?.target?.closest ? event.target : null;
-      const control = target && target.closest('[data-rail-job-stop], [data-rail-job-output], [data-rail-job-open]');
+      const control = target && target.closest('[data-rail-job-stop]');
       if (!control || !tray.contains(control)) return false;
       event.preventDefault();
-      if (control.hasAttribute('data-rail-job-stop')) stop(control);
-      else if (control.hasAttribute('data-rail-job-open')) openFull(control.getAttribute('data-rail-job-open'));
-      else void toggleOutput(control);
+      stop(control);
       return true;
     }
 
     tray.addEventListener('contextmenu', handleContextMenu);
+    tray.addEventListener('mouseover', learnPath);
+    tray.addEventListener('focusin', learnPath);
     const observer = typeof win.MutationObserver === 'function' ? new win.MutationObserver(sync) : null;
     observer?.observe(tray, { childList: true, subtree: true });
     // The toggle's own attributes move with the rail's mode and the sheet (syncToggle writes them).
@@ -237,6 +192,8 @@
     function dispose() {
       disposed = true;
       tray.removeEventListener('contextmenu', handleContextMenu);
+      tray.removeEventListener('mouseover', learnPath);
+      tray.removeEventListener('focusin', learnPath);
       observer?.disconnect();
       toggleObserver?.disconnect();
       if (typeof unsubscribe === 'function') unsubscribe();
@@ -247,5 +204,5 @@
     return { handleClick, sync, syncReadout, dispose };
   }
 
-  return { createRailJobs };
+  return { createRailJobs, showOutputPathMenu };
 });

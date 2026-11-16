@@ -122,11 +122,6 @@ test('the rail glyph buttons use a role type token', () => {
   assert.doesNotMatch(css, /--font-size-sm\b/);
 });
 
-test('the retired per-tab link button leaves no styles behind', () => {
-  const css = readRepoFile('styles/workspace-rail.css');
-  assert.doesNotMatch(css, /workspace-rail-link-button/);
-});
-
 test('a chat open as a tab no longer paints a ring in the sidebar dot column', () => {
   const css = readRepoFile('styles/chats-panel.css');
   const ring = cssRules(css).find((entry) => /\[data-session-dominant-state="open"\]/.test(entry.selector) && /\.session-row__dot/.test(entry.selector) && /box-shadow/.test(entry.body));

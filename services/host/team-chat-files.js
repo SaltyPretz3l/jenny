@@ -10,6 +10,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { hostFailure } = require('../../server/api-contract');
+const { logCode } = require('./durable-json');
+
+// The channel id a log line may carry: a direct conversation's id is a hash of its participants, so a log says
+// only `dm`.
+const logChannel = (channelId) => (typeof channelId === 'string' && channelId.startsWith('chan_dm_') ? 'dm' : channelId);
 
 // A name that never exists: guarding it checks only its directory.
 const GUARD_PROBE = '.guard-probe';
@@ -102,7 +107,7 @@ function createFileIo({ guard, ops, log }) {
         return true;
       } catch (error) {
         if (error && error.code === 'ENOENT') return true;
-        log('WARN', 'team_chat.remove_failed', { channel_id: channelId, code: error?.code || null });
+        log('WARN', 'team_chat.remove_failed', { channel_id: logChannel(channelId), code: logCode(error?.code) });
         return false;
       }
     },
@@ -110,4 +115,4 @@ function createFileIo({ guard, ops, log }) {
   return io;
 }
 
-module.exports = { checked, corrupt, createFileIo, isTransient, refuse };
+module.exports = { checked, corrupt, createFileIo, isTransient, logChannel, refuse };

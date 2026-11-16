@@ -92,9 +92,9 @@ class TestBuildMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "compare"},
                     {"type": "image_url", "image_url": {"url": first.as_data_uri()}},
                     {"type": "image_url", "image_url": {"url": second.as_data_uri()}},
+                    {"type": "text", "text": "compare"},
                 ],
             }
         ]
@@ -189,8 +189,8 @@ class TestBuildMessages:
 
         assert result[0] == {"role": "system", "content": "identity\n\npolicy"}
         assert result[1]["content"] == [
-            {"type": "text", "text": "inspect"},
             {"type": "image_url", "image_url": {"url": image.as_data_uri()}},
+            {"type": "text", "text": "inspect"},
         ]
 
     def test_collapses_consecutive_system_messages(self) -> None:

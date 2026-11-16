@@ -27,6 +27,8 @@
       dropReasoningStream = () => {},
       rawHandleComplete = async () => ({ buffered: false, terminal: false }),
       rawHandleError = async () => ({ buffered: false, terminal: false }),
+      rawHandleQuestionBatch = async () => ({ buffered: false, terminal: false }),
+      settleQuestionBatchRowModel = () => {},
       dismissToast,
       chatStreamToastSource,
       // Desktop notifications: told about every settled terminal, after cleanup.
@@ -149,7 +151,25 @@
       }
     }
 
-    return { handleComplete, handleError };
+    // A question batch ends the turn as complete does: the live turn is stamped
+    // terminal and its open reasoning settles before the card renders.
+    async function handleQuestionBatch(payload, callOptions) {
+      try { flushPendingStreamCommit(payload?.streamId); } catch (_e) { /* defensive */ }
+      settleTerminalReasoningPhases(payload);
+      try { applyLiveTurnPayload({ ...payload, type: 'complete', status: 'complete' }); } catch (_e) { /* defensive */ }
+      settleTerminalStreamAffordances(payload);
+      try {
+        const result = await rawHandleQuestionBatch(payload, callOptions);
+        if (result?.terminal) {
+          try { settleQuestionBatchRowModel(payload); } catch (_e) { /* defensive */ }
+        }
+        return result;
+      } finally {
+        cleanupTerminalStreamState(payload?.streamId);
+      }
+    }
+
+    return { handleComplete, handleError, handleQuestionBatch };
   }
 
   return { createTerminalSettleHandlers };

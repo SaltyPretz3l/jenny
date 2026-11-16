@@ -227,7 +227,7 @@
     list.appendChild(node);
   }
 
-  /* Owner option C (2026-10-20, Claude Code parity): a queued send is shown
+  /* Owner option C (2026-10-20): a queued send is shown
    * where it was typed, as its own user bubble greyed out until it starts, with
    * one quiet line under it: what it is waiting as, and its actions. Withdraw
    * puts the text back in the composer as a draft; Up in an empty composer
@@ -238,6 +238,9 @@
   const META_ATTR = 'data-queued-send-meta';
   // Per timeline: the composer's last syncQueuedBubbles input, re-applied after timeline writes.
   const lastSync = new WeakMap();
+  // Bubbles this module left marked per timeline: with none wanted and none
+  // marked, a composer render (every keystroke) skips the timeline scan.
+  const markedCount = new WeakMap();
 
   function bubbleRow(row) {
     return Boolean(row) && row.queued !== false && row.detached !== true && row.status !== 'running' && Boolean(row.userId);
@@ -367,6 +370,8 @@
       const article = timeline.querySelector(`.chat-entry[data-message-id="${cssId(row.userId)}"]`);
       if (article && !wanted.has(article)) wanted.set(article, row);
     }
+    if (!wanted.size && markedCount.get(timeline) === 0) return shown;
+    markedCount.set(timeline, wanted.size);
     for (const node of timeline.querySelectorAll(`[${QUEUED_ATTR}]`)) {
       if (wanted.has(node)) continue;
       node.removeAttribute(QUEUED_ATTR);

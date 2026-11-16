@@ -7,6 +7,7 @@ const {
   LLAMA_SERVER_PROFILE_MANAGED_ARGS,
   validateExtraArgs,
 } = require('./backend-config');
+const { modelFamily } = require('../llama-server-gguf-files');
 
 const FALLBACK_DEFAULTS = Object.freeze({
   draftNMax: 4,
@@ -105,7 +106,37 @@ function globLiteRegex(pattern) {
   return new RegExp(`^${escaped}$`, 'i');
 }
 
-function findDrafterFile({ modelDir, drafterPattern, fsImpl = fs } = {}) {
+// A drafter names its model's family ("mtp-Qwen3.8-27B-Q4_0.gguf" is for
+// "qwen3.8-27b"); a model file belongs to it when that family is the start of
+// the model's own family at a name separator ("qwen3.8-27b-gsq-rco" does, a
+// longer digit run does not).
+function drafterNamesModel(drafterName, modelFile) {
+  const drafterFamily = modelFamily(drafterName.replace(/^mtp-/i, ''));
+  const modelName = modelFamily(modelFile);
+  return drafterFamily.length > 0
+    && modelName.startsWith(drafterFamily)
+    && (modelName.length === drafterFamily.length
+      || /[-_.\s]/.test(modelName[drafterFamily.length]));
+}
+
+// Which of a folder's drafter file names (sorted) belongs to `modelFile`: the
+// one that names its model; failing that, the only drafter in the folder (a
+// fine-tune's own name need not carry the family); never one of several that
+// name other models. Without a model file, the first. '' when none.
+function pickDrafter(drafterNames, modelFile) {
+  if (typeof modelFile !== 'string' || modelFile.length === 0) {
+    return drafterNames[0] || '';
+  }
+  const named = drafterNames.find((name) => drafterNamesModel(name, modelFile));
+  if (named) {
+    return named;
+  }
+  return drafterNames.length === 1 ? drafterNames[0] : '';
+}
+
+function findDrafterFile({
+  modelDir, drafterPattern, modelFile, fsImpl = fs,
+} = {}) {
   try {
     if (typeof drafterPattern !== 'string'
         || drafterPattern.length === 0
@@ -121,19 +152,15 @@ function findDrafterFile({ modelDir, drafterPattern, fsImpl = fs } = {}) {
       .filter((name) => typeof name === 'string')
       .sort();
 
-    for (const name of names) {
-      if (!matcher.test(name)) {
-        continue;
-      }
-      const candidate = path.join(resolvedDir, name);
-      if (path.resolve(candidate).startsWith(directoryPrefix)) {
-        return candidate;
-      }
-    }
+    const drafters = names.filter((name) => (
+      matcher.test(name)
+      && path.resolve(path.join(resolvedDir, name)).startsWith(directoryPrefix)
+    ));
+    const picked = pickDrafter(drafters, modelFile);
+    return picked ? path.join(resolvedDir, picked) : '';
   } catch (_error) {
     return '';
   }
-  return '';
 }
 
 function offResult(reason) {
@@ -221,6 +248,8 @@ function resolveAccelerationArgs({
   capabilities,
   profileExtraArgs,
   modelDir,
+  // The model GGUF's file name: picks the drafter that names its family.
+  modelFile,
   // The model GGUF's `<arch>.nextn_predict_layers` (null: unread). A count
   // above zero is an MTP head inside the model itself.
   embeddedMtpLayers = null,
@@ -270,6 +299,7 @@ function resolveAccelerationArgs({
     drafterPath = findDrafterFile({
       modelDir,
       drafterPattern: family.drafterPattern,
+      modelFile,
       fsImpl,
     });
     // No drafter beside the model: a head inside the GGUF drafts instead
@@ -318,7 +348,9 @@ function resolveAccelerationArgs({
 
 module.exports = {
   canonicalizeModelToken,
+  findFamily,
   loadAccelerationCatalog,
   findDrafterFile,
+  pickDrafter,
   resolveAccelerationArgs,
 };

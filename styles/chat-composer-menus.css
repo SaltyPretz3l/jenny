@@ -109,6 +109,10 @@
   font-size: var(--font-size-caption);
   font-weight: 500;
 }
+/* A heading between rows opens a section. */
+.inv-context-menu-item + .inv-context-menu-heading {
+  padding-block-start: var(--space-4);
+}
 /* Outranks the primitive's radio-row `[role] > span:first-child { flex: 1 }` (0,3,1). */
 .inv-context-menu-item.inv-context-menu-item--icon[role] > .inv-context-menu-icon {
   display: inline-flex;

@@ -12,6 +12,15 @@ async function loadOfflineApp(t, options) {
   return app;
 }
 
+// The Force local inference row: its help line is the one readiness sentence; the `?` holds the boundary.
+// The switch rows paint with the lazily loaded Settings scripts, so Settings opens first.
+async function openSettings(window) {
+  window.document.getElementById('settingsTopRailTab').click();
+  await waitForUi(window, 40);
+  return window.document;
+}
+const helpOf = (document) => document.querySelector('#offlineLocalOnlyList .settings-field-help').textContent.trim();
+
 test('renderer Offline card shows the forced-inference boundary and selected-model readiness', async (t) => {
   const app = await loadOfflineApp(t, {
     shell: {
@@ -28,12 +37,16 @@ test('renderer Offline card shows the forced-inference boundary and selected-mod
       },
     },
   });
-  const { document } = app.window;
+  const document = await openSettings(app.window);
 
   assert.equal(document.getElementById('offlineBadge'), null);
-  assert.match(document.getElementById('offlineSummary').textContent, /Force local inference is on/i);
-  assert.equal(document.getElementById('offlineModelStatus').textContent, 'Local inference uses llava:7b. Change it in Model Library.');
-  assert.match(document.getElementById('offlineModelActions').textContent, /Manage in Model Library/i);
+  assert.equal(helpOf(document), 'Blocks every cloud model. Ready with llava:7b.');
+  const detail = document.querySelector('#offlineLocalOnlyList .settings-field-detail');
+  assert.match(detail.getAttribute('data-tooltip'), /^Governs model inference only\. Tools, extensions, sign-in, updates and other services may still use the network\. It needs an Ollama model as the local default\.$/);
+  for (const id of ['offlineSummary', 'offlineStatus', 'offlineModelStatus']) assert.equal(document.getElementById(id), null, id);
+  // Row 133: the group sits on Models beside the library, so the shortcut button is gone.
+  assert.equal(document.getElementById('offlineModelActions'), null);
+  assert.equal(document.querySelector('[data-action="openOfflineModelLibrary"]'), null);
   assert.equal(document.getElementById('offlineLocalModelSelect'), null);
   assert.equal(document.getElementById('offlineRuntimeStatus'), null);
   assert.equal(document.getElementById('localEnginesContainer'), null);
@@ -44,22 +57,21 @@ test('renderer Offline card shows the forced-inference boundary and selected-mod
   assert.match(document.getElementById('composerChatPostureText').textContent, /Force local inference: using llava:7b/i);
 });
 
-test('Offline toggle persists through the bridge and the model shortcut routes to Model Library', async (t) => {
+test('the Local only toggle on Models persists through the bridge the first time Settings opens', async (t) => {
   const { window, shell } = await loadOfflineApp(t);
   const { document } = window;
+  // Settings opens on Models; no rail click, so only the companion readying binds the switch.
   document.getElementById('settingsTopRailTab').click();
   await waitForUi(window, 40);
-  document.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
-  await waitForUi(window, 40);
+  assert.equal(document.querySelector('.settings-nav-item[data-settings-section="models"]').classList.contains('active'), true);
+  assert.equal(document.querySelector('.settings-nav-item[data-settings-section="offline"]'), null, 'Offline has no rail item');
+  const group = document.getElementById('offlineLocalOnlyList').closest('[data-settings-merged-section="offline"]');
+  assert.equal(group.closest('.settings-card').dataset.settingsSection, 'models');
   document.getElementById('offlineLocalOnlyList').dispatchEvent(new window.CustomEvent('inv-toggle-change', {
     bubbles: true, detail: { id: 'offlineLocalOnlyToggle', checked: true },
   }));
   await waitForUi(window, 30);
   assert.deepEqual(JSON.parse(JSON.stringify(shell.__state.offlineUpdateCalls)), [{ mode: 'local_only' }]);
-
-  document.querySelector('[data-action="openOfflineModelLibrary"]').click();
-  await waitForUi(window, 30);
-  assert.equal(document.querySelector('.settings-nav-item[data-settings-section="models"]').classList.contains('active'), true);
 });
 
 test('hidden panel posture text separates local readiness from the disabled force-local setting', async (t) => {
@@ -92,7 +104,7 @@ test('Offline reads a Model Library GGUF served by llama-server as the installed
           mode: 'disabled', preferredLocalModel: 'ternary-bonsai-2-27b-pq2_0',
           localCatalog: { available: true, reason: '', models: ['qwen3.5:9b'] },
           managedSidecar: { mode: 'managed-dev', phase: 'ready', ready: true },
-          selectedLocalEngineType: 'openai-compatible',
+          selectedLocalEngineType: 'openai-compatible', selectedManagedEngine: 'llama-server',
           selectedLocalModelInstalled: true, localChatReady: true, localVisionReady: false,
           unavailableReason: 'Forced local inference is unavailable right now.', visionUnavailableReason: '',
           summary: 'Local chat is ready with ternary-bonsai-2-27b-pq2_0.',
@@ -100,17 +112,29 @@ test('Offline reads a Model Library GGUF served by llama-server as the installed
       },
     },
   });
-  const { document } = window;
-  const modelStatus = document.getElementById('offlineModelStatus').textContent;
-  assert.equal(modelStatus, 'Local inference uses ternary-bonsai-2-27b-pq2_0. Change it in Model Library.');
-  assert.doesNotMatch(modelStatus, /not available in the local catalog/i);
-  assert.doesNotMatch(document.getElementById('offlineSummary').textContent, /not installed/i);
-  // The group states the model once; the boundary is stated by the lede and
-  // the toggle help, not repeated as group copy.
-  const card = document.querySelector('.settings-card[data-settings-section="offline"]');
-  assert.equal(card.querySelector('[data-i18n="settings.offline.inferenceBoundary.description"]'), null);
-  assert.equal(card.querySelector('[data-i18n="settings.offline.localModel.description"]'), null);
-  assert.ok(card.querySelector('[data-i18n="settings.offline.description"]'), 'the lede stays');
+  const document = await openSettings(window);
+  // The model is named once, in the row's help line, with the engine that blocks it.
+  const help = helpOf(document);
+  assert.equal(help, 'Blocks every cloud model. Not usable with ternary-bonsai-2-27b-pq2_0 yet: it runs on llama-server.');
+  assert.doesNotMatch(help, /not installed|not available in the local catalog/i);
+  const group = document.querySelector('.settings-card[data-settings-section="models"] [data-settings-merged-section="offline"]');
+  assert.equal(group.querySelector('[data-i18n="settings.offline.description"]'), null, 'the boundary is behind the row\'s ?, not group copy');
+  assert.equal(group.querySelectorAll('.settings-field--row').length, 2, 'two switch rows: Force local inference and Load model at startup');
+});
+
+test('Offline names NInfer as the engine, and says what to pick when no model is selected', async (t) => {
+  const state = (overrides) => ({ shell: { offline: { state: {
+    mode: 'disabled', preferredLocalModel: 'qwen3.8-27b-nvfp4',
+    localCatalog: { available: true, reason: '', models: [] },
+    managedSidecar: { mode: 'managed-dev', phase: 'ready', ready: true },
+    selectedLocalEngineType: 'openai-compatible', selectedManagedEngine: 'ninfer',
+    selectedLocalModelInstalled: true, localChatReady: true, localVisionReady: false,
+    unavailableReason: '', visionUnavailableReason: '', summary: '', ...overrides,
+  } } } });
+  const ninfer = await loadOfflineApp(t, state());
+  assert.equal(helpOf(await openSettings(ninfer.window)), 'Blocks every cloud model. Not usable with qwen3.8-27b-nvfp4 yet: it runs on NInfer.');
+  const none = await loadOfflineApp(t, state({ preferredLocalModel: '', selectedManagedEngine: '', selectedLocalModelInstalled: false, localChatReady: false }));
+  assert.equal(helpOf(await openSettings(none.window)), 'Blocks every cloud model. Pick an Ollama model as the local default.');
 });
 
 test('Offline shows unavailable selected-model remediation without exposing engine details', async (t) => {
@@ -128,32 +152,10 @@ test('Offline shows unavailable selected-model remediation without exposing engi
       },
     },
   });
-  const { document } = window;
+  const document = await openSettings(window);
   assert.equal(document.getElementById('offlineBadge'), null);
-  assert.match(document.getElementById('offlineModelStatus').textContent, /gemma3:4b is not available/i);
-  assert.match(document.getElementById('offlineModelActions').textContent, /Manage in Model Library/i);
+  assert.equal(helpOf(document), 'Blocks every cloud model. Selected model is not installed locally.');
+  assert.equal(document.getElementById('offlineModelActions'), null);
   assert.equal(document.getElementById('offlineRuntimeStatus'), null);
   assert.equal(document.getElementById('localEnginesContainer'), null);
-});
-
-test('Offline status fallback preserves the force-local label when the shared primitive is unavailable', async (t) => {
-  const { window } = await loadOfflineApp(t);
-  const previousStatusRow = window.inventory.statusRow;
-  window.inventory.statusRow = null;
-  t.after(() => { window.inventory.statusRow = previousStatusRow; });
-  window.document.getElementById('settingsTopRailTab').click();
-  await waitForUi(window, 40);
-  window.document.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
-  await waitForUi(window, 40);
-  window.document.getElementById('offlineLocalOnlyList').dispatchEvent(new window.CustomEvent('inv-toggle-change', {
-    bubbles: true, detail: { id: 'offlineLocalOnlyToggle', checked: true },
-  }));
-  await waitForUi(window, 30);
-  const fallbackHtml = window.document.getElementById('offlineSummary').innerHTML;
-  assert.match(fallbackHtml, /<span class="inv-status-row-label">Force local inference<\/span>/i);
-  // The fallback must mirror the real primitive's shape, not invent its own —
-  // drifting fallbacks are what made the old banner and settings notices
-  // degrade into three different layouts.
-  assert.match(fallbackHtml, /class="inv-status-row inv-status-row--warning"/);
-  assert.match(fallbackHtml, /inv-status-row-dot/);
 });

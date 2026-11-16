@@ -15,7 +15,11 @@ from typing import NamedTuple
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins.filesystem import _as_path_argument, workspace_relative_path
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
-from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_hosted_directory
+from sidecar.ai.tools.hosted_file_io import (
+    HostedEntry,
+    hosted_file_io_enabled,
+    open_hosted_directory,
+)
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_LIST_ENTRIES = 500
@@ -55,7 +59,7 @@ def format_entry_size(size_bytes: int) -> str:
     return f"{value / 1024.0:.1f}T"
 
 
-def format_list_entry(entry: os.DirEntry[str]) -> ListedEntry | None:
+def format_list_entry(entry: HostedEntry) -> ListedEntry | None:
     """Render one directory entry, or None when it cannot be classified at all."""
     try:
         is_dir = entry.is_dir(follow_symlinks=False)
@@ -76,7 +80,7 @@ def format_list_entry(entry: os.DirEntry[str]) -> ListedEntry | None:
     return ListedEntry(f"[F] {entry.name}  {format_entry_size(size)}", size, size_unknown=False)
 
 
-def _scan_directory(resolved: Path) -> list[os.DirEntry[str]]:
+def _scan_directory(resolved: Path) -> list[HostedEntry]:
     if not resolved.is_dir():
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
@@ -94,7 +98,7 @@ def _scan_directory(resolved: Path) -> list[os.DirEntry[str]]:
         ) from error
 
 
-def _render_retained(scanned: list[os.DirEntry[str]]) -> list[ListedEntry | None]:
+def _render_retained(scanned: list[HostedEntry]) -> list[ListedEntry | None]:
     retained = sorted(scanned[:MAX_LIST_SCAN_ENTRIES], key=lambda entry: entry.name.lower())
     return [format_list_entry(entry) for entry in retained[:MAX_LIST_ENTRIES]]
 
@@ -105,12 +109,12 @@ def list_dir_tool(
     path = _as_path_argument(arguments, allow_empty=True)
     resolved = workspace.resolve_list_path(path.strip() or ".")
     if hosted_file_io_enabled():
-        # Enumerate through the pinned root descriptor so a concurrent
+        # Enumerate through the pinned root so a concurrent
         # directory->symlink swap cannot redirect the scan outside the root.
         try:
-            with open_hosted_directory(resolved) as dir_fd, os.scandir(dir_fd) as iterator:
-                scanned = list(islice(iterator, MAX_LIST_SCAN_ENTRIES + 1))
-                # fd-based DirEntry.stat() uses dir_fd: render before it closes.
+            with open_hosted_directory(resolved) as directory:
+                scanned = directory.scan(MAX_LIST_SCAN_ENTRIES + 1)
+                # Entry stat() is handle-relative: render before the directory closes.
                 rendered_entries = _render_retained(scanned)
         except ToolExecutionFailure:
             raise

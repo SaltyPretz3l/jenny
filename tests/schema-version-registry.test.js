@@ -41,6 +41,7 @@ const {
 const {
   USAGE_ROLLUP_SCHEMA_VERSION,
 } = require('../services/usage-rollup');
+const { SCHEMA_VERSION: BOARD_MODEL_SCHEMA_VERSION } = require('../services/boards/board-model');
 
 const REGISTRY_PATH = '../services/backend/schema-version-registry';
 const SCHEDULER_SERVICE_PATH = '../services/scheduler-service';
@@ -97,6 +98,7 @@ test('getAllSchemaVersions returns Electron registry entries and normalized side
     ['electron.usage_rollup', USAGE_ROLLUP_SCHEMA_VERSION],
     ['electron.jenny_status', JENNY_STATUS_SCHEMA_VERSION],
     ['electron.mcp_servers', 2],
+    ['electron.project_boards', BOARD_MODEL_SCHEMA_VERSION],
     ['sidecar.memory_store', 5],
   ]);
 

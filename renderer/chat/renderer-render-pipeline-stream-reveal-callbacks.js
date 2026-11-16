@@ -63,9 +63,9 @@
         || resolveTurnArticleMessageId(streamingMessageId, projectionContext)
         || streamingMessageId
       ).trim();
-      const articleMessage = messages.find(
-        (message) => String(message?.id || '').trim() === articleMessageId
-      ) || derived.streamingMessage;
+      const indexed = projectionContext?.messageById?.get?.(articleMessageId);
+      const articleMessage = (indexed && String(indexed.id || '').trim() === articleMessageId ? indexed
+        : messages.find((message) => String(message?.id || '').trim() === articleMessageId)) || derived.streamingMessage;
       const template = articleMessage
         ? chatTimeline?.ownerDocument?.createElement?.('template')
         : null;
@@ -91,7 +91,11 @@
     }
 
     return {
-      buildMessageNodeState: (message, nextMessages, nextLatestAssistantMessageId) => {
+      buildMessageNodeState: (message, nextMessages, nextLatestAssistantMessageId, markupOptions) => {
+        if (markupOptions?.thinkingOnly === true) {
+          return buildMessageInnerMarkup(message, nextMessages, nextLatestAssistantMessageId, latestReplyAssistantMessageId,
+            '', null, projectionContext, markupOptions);
+        }
         const nextFollowUpDisabledReason = resolveFollowUpDisabledReason();
         const nextRegenerateRequest = String(message?.id || '') === latestReplyAssistantMessageId
           ? resolveRegenerateRequest(latestReplyAssistantMessageId, nextMessages, {
@@ -106,7 +110,8 @@
           latestReplyAssistantMessageId,
           nextFollowUpDisabledReason,
           nextRegenerateRequest,
-          projectionContext
+          projectionContext,
+          markupOptions
         );
         return {
           ...nextMessageModel,
@@ -163,6 +168,7 @@
           inlineMermaidStreaming: true,
           patchedMessageId: patchResult?.messageId,
           predictedHeight: patchResult?.predictedHeight,
+          decorateRoots: patchResult?.decorateRoots,
           cleanupPredictedHeights: true,
           syncViewport: true,
         });

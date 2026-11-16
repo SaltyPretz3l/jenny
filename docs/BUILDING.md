@@ -122,6 +122,13 @@ majors are intentionally rejected before dependency installation.
 
 - `npm run build:preload` builds both `preload.bundle.js` and the narrow
   `uninstall-preload.bundle.js`; source preloads remain excluded from the asar.
+- `npm run build:sketch` builds the sketch-block drawing bundles from
+  `vendor/sketchy` (record: `vendor/sketchy/JENNY_VENDORING.md`).
+  `sketch-frame.bundle.js` ships through the root `*.js` glob;
+  `sketch-core.bundle.cjs` is for Node tests and never ships. Both are
+  gitignored, rebuilt on a dev launch when their inputs change, and built by
+  every `pack:`/`release:` script. The release policy check refuses a
+  workflow job that runs electron-builder without building them first.
 - Windows NSIS includes `build/installer.nsh`. Updates bypass the assistant,
   silent uninstall preserves data, and only fixed exit codes authorize residual
   profile cleanup.
@@ -133,6 +140,22 @@ majors are intentionally rejected before dependency installation.
 
 See [Uninstall and Data Recovery](operations/UNINSTALL_AND_DATA_RECOVERY.md) for ownership
 and failure semantics.
+
+### File associations ("Open with Jenny")
+
+Jenny is listed in the system "Open with" menu for text, Markdown and code files and is never made the
+default app (row 137, plan `docs/plans/OPEN_WITH_JENNY_2026-11-12.md`).
+
+- **Windows:** `build/installer.nsh` `customInstall` writes, in HKCU only, the ProgID `Jenny.File`, one
+  REG_NONE `OpenWithProgids` value per extension, `Applications\Jenny.exe\SupportedTypes`, and a
+  `Software\Jenny\Capabilities` entry registered under `RegisteredApplications` (Settings > Default apps).
+  The command is `"Jenny.exe" -- "%1"`. `RemoveJennyOpenWith` undoes it on every real uninstall; an
+  update keeps it. The extension list lives once, in the `JennyOpenWithTypes` macro.
+- **macOS:** `mac.fileAssociations`, one `Editor` document type with `rank: Alternate` and the same list.
+- **Linux:** `linux.mimeTypes`, which becomes the `.desktop` `MimeType=` line.
+
+Never add `fileAssociations` at the top level or under `win:`: electron-builder's NSIS association macro
+writes the `.<ext>` default value, which can make Jenny the default app.
 
 ### Command-line tool packaging
 
@@ -330,6 +353,36 @@ scripts and the release workflows run it after the sidecar build, which can
 clear the directory. The release workflows pin one Rust toolchain for all three
 systems; the Linux build installs it with rustup inside the Ubuntu 22.04
 container.
+The headless team host image (`Dockerfile.team`) copies this Linux binary in
+rather than building it: see `docs/operations/team-host-docker.md`.
+
+### File-access library (Windows)
+`jenny_file_access.dll` is the small Rust library a Windows team host loads to
+read and write project files inside the project folder (see
+`docs/plans/TEAM_WINDOWS_FILE_ACCESS_SPEC.md`). It is built from the crate in
+`native/jenny-file-access/` by `scripts/packaging/build_file_access.py`
+(`npm run build:file-access`), which needs `cargo` on the build machine. The
+script deletes the previous output, runs `cargo build --release --locked` from
+the crate folder (so its static C runtime setting applies) without the
+`test-seams` feature, loads the result and fails the build unless it reports ABI
+version 1 and build flags 0 and does not export `jfa_test_set_token_state`
+(a test-seams library must never ship). It then copies the library to
+`build/sidecar/jenny_file_access.dll` and writes
+`build/sidecar/jenny_file_access.manifest.json` with the hash (of the library
+as built: a signed release signs the copy in `resources/sidecar/`, so the
+shipped file's hash differs, and nothing compares them), the toolchain
+versions and the crates from `Cargo.lock` (the manifest holds no path from the
+build machine). `electron-builder.yml` ships the whole `build/sidecar/`
+directory, so it lands in `resources/sidecar/`. The script runs after the
+sidecar build, which clears the directory, in `pack:dir`, `pack:release`,
+`release:windows` and the Windows release job; `pack:linux` does not run it. It
+skips itself on other operating systems, and `--allow-missing-toolchain` makes a
+missing `cargo` a skip instead of an error (the release workflow does not pass
+it). A source checkout that never ran it has no library: a Windows team host
+then reports `file_access_component_missing` and offers no file tools. Local
+builds are unsigned; a signed release signs this file as Jenny
+(`win.signExts` in `electron-builder.yml`), and "Verify Windows signatures"
+checks it.
 
 ## Distributing Jenny
 
@@ -454,8 +507,9 @@ CI then, per OS runner:
    `sidecar.exe` on Windows, `sidecar` on macOS).
 3. On Windows, builds the native launcher with
    `scripts/packaging/build_native_launcher.py`, which needs a Rust toolchain
-   (`cargo`) on the build machine. No other OS needs a Rust toolchain. Then runs
-   `electron-builder --win|--mac --publish never`.
+   (`cargo`) on the build machine, and the file-access library with
+   `scripts/packaging/build_file_access.py`. No other OS needs a Rust toolchain.
+   Then runs `electron-builder --win|--mac --publish never`.
 4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar architecture,
    bundled preload, runtime provenance, and framed initialize through
    `scripts/packaging/verify_macos_release.py` before upload.
@@ -529,8 +583,9 @@ automatically (no workflow edit needed):
   - With all seven set, the Windows job builds from a generated config that
     extends `electron-builder.yml` with `win.azureSignOptions`,
     `verifyUpdateCodeSignature: true` and `forceCodeSigning: true`, then
-    "Verify Windows signatures" fails the job unless the installer and every
-    `.exe` in `win-unpacked` has a valid signature from that publisher.
+    "Verify Windows signatures" fails the job unless the installer, every
+    `.exe` in `win-unpacked` and `jenny_file_access.dll` have a valid signature
+    from that publisher.
     Vendor-signed executables keep their own signature (`win.signExts`):
     `python.exe` and `pythonw.exe` (Python Software Foundation) and node-pty's
     `OpenConsole.exe` (Microsoft). Signing changes `sidecar.exe`'s bytes, so

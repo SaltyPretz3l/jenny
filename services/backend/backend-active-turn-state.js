@@ -1,4 +1,5 @@
 const { normalizeString: normalizeToken } = require('../shared/normalize');
+const { roundApprovalEventFields } = require('./round-approval-gate');
 
 const MAX_PENDING_APPROVAL_SUMMARY_CHARS = 500;
 
@@ -46,6 +47,7 @@ function findPendingApproval(service, sessionId, streamId) {
       exactApproval: isPlainObject(pending?.exactApproval) ? pending.exactApproval : null,
       alwaysAllowScope: isPlainObject(pending?.alwaysAllowScope) ? pending.alwaysAllowScope : null,
       rememberOffer: pending?.rememberOffer === 'linked_children' ? 'linked_children' : '',
+      roundOffer: Array.isArray(pending?.roundOffer) ? pending.roundOffer : [],
     };
   }
   return null;
@@ -140,6 +142,8 @@ function getManagedActiveTurnState(service, sessionId) {
         ...(pending.alwaysAllowScope ? { always_allow_scope: pending.alwaysAllowScope } : {}),
         // The message card's "Always allow for chats Jenny started" (row 87 C1).
         ...(pending.rememberOffer === 'linked_children' ? { remember_offer: 'linked_children' } : {}),
+        // The round of edits the card offers to allow together (row 166 D10), each shown whole.
+        ...roundApprovalEventFields(pending.roundOffer),
         summary: (pending.summary || readPendingApprovalSummary(
           service,
           normalizedSessionId,

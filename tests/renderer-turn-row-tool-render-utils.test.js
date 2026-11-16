@@ -104,6 +104,20 @@ test('settled-success badge is a11y-only; other states keep a visible word', () 
   assert.match(running, /class="tool-call-status-label">Running</);
 });
 
+test('a saved result whose metadata names what happened labels the row (session_prioritize, G11)', () => {
+  const renderer = createToolRenderer();
+  const callRow = { payload: { tool_call_id: 'call-first', tool_name: 'session_prioritize', state: 'completed',
+    input: { session_id: 'sess_d', first: true } } };
+  const pairedToolResultRow = { primary_message_id: 'msg-first-result', payload: { tool_call_id: 'call-first', state: 'completed' } };
+  const messages = [{ id: 'msg-first-result', tool_result: { call_id: 'call-first', tool_name: 'session_prioritize',
+    summary: 'session_prioritize', metadata: { result_kind: 'session_prioritize', status: 'ok', row_summary: 'Put "Task <D>" first' } } }];
+  const html = renderer.buildToolCallRowMarkup(callRow, messages, { pairedToolResultRow });
+  assert.match(html, /class="tool-call-summary tool-call-row-summary">Put &quot;Task &lt;D&gt;&quot; first</);
+  // Without a result the row keeps the call's own label.
+  const bare = renderer.buildToolCallRowMarkup(callRow);
+  assert.doesNotMatch(bare, /Put &quot;/);
+});
+
 /* ── Minimal one-row tool card ── */
 
 test('tool call rows render as a minimal collapsed toggle row by default', () => {
@@ -338,7 +352,8 @@ test('settled Edit rows render their structured diff in-row and suppress raw out
     } },
   });
   assert.match(html, /data-tool-status="completed"/);
-  assert.match(html, /class="file-diff"/);
+  assert.match(html, /class="file-diff file-diff--bare"/, 'one file: the diff itself, no nested head');
+  assert.doesNotMatch(html, /file-diff-head/);
   assert.match(html, /data-diff-id="diff:settled"/);
   assert.doesNotMatch(html, /&quot;raw&quot;|tool-call-section-kicker">Output/);
 });

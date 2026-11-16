@@ -106,6 +106,9 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         "session_status",
         "session_transcript",
         "session_stop",
+        # Added deliberately (row 136): the Jenny chat puts a chat's task first on the model.
+        # Side-effecting (policy auto, no card), so plan mode withholds it.
+        "session_prioritize",
         # Added deliberately (row 69 W4b): flag-less read-only app guide search/read.
         "jenny_help",
         # Added deliberately (row 97): flag-gated, read-only, non-blocking next-step card
@@ -277,7 +280,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_task_board_enabled", {"task_board"}),
         ("tools_project_notes_enabled", {"project_notes"}),
         ("tools_conversations_enabled", {"conversations_recent", "conversation_open", "conversations_search"}),
-        ("tools_session_directory_enabled", {"sessions_list", "session_status", "session_transcript", "session_stop"}),
+        ("tools_session_directory_enabled", {"sessions_list", "session_status", "session_transcript", "session_stop", "session_prioritize"}),
         ("tools_primary_settings_enabled", {"settings_get", "settings_change"}),
         ("tools_primary_chat_manage_enabled", {"chat_organize", "chat_configure"}),
         ("tools_primary_chat_placement_enabled", {"project_create", "projects_list"}),

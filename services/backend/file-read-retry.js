@@ -31,6 +31,37 @@ function readFileWithRetry(filePath, { delaysMs = READ_RETRY_DELAYS_MS, sleep = 
   }
 }
 
+// The write-side twin, used by FileJsonStore's synchronous writes (flush at
+// exit, no debounce). On Windows a rename onto a file that antivirus, the
+// indexer or another reader holds open fails for a moment, so it is retried
+// briefly (230 ms worst case) instead of losing the write (LFM3 image chat
+// findings F5: shell-config.json EBUSY at exit, 2026-11-13). The same codes as
+// a read count as transient; any other error throws at once. A target whose
+// retries ran out gets single tries for a while, so a lasting lock does not
+// stall the main thread 230 ms on every write; a success clears that.
+const RENAME_RETRY_DELAYS_MS = Object.freeze([20, 60, 150]);
+const RENAME_RETRY_COOLDOWN_MS = 5_000;
+const renameRetryExhaustedAt = new Map(); // target path -> ms; only paths still locked, a success deletes
+
+function renameWithRetrySync(from, to, { delaysMs = RENAME_RETRY_DELAYS_MS, sleep = sleepSync, now = Date.now } = {}) {
+  const coolingDown = now() - (renameRetryExhaustedAt.get(to) ?? -Infinity) < RENAME_RETRY_COOLDOWN_MS;
+  const delays = coolingDown ? [] : delaysMs;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(from, to);
+      renameRetryExhaustedAt.delete(to);
+      return;
+    } catch (error) {
+      if (!isTransientReadError(error)) throw error;
+      if (attempt >= delays.length) {
+        if (delays.length) renameRetryExhaustedAt.set(to, now());
+        throw error;
+      }
+      sleep(delays[attempt]);
+    }
+  }
+}
+
 // FileJsonStore.readWithStatus result for a file that exists but could not be
 // read. Nothing is known about its bytes, so it is never reported as corrupted:
 // callers must not move, replace or overwrite it, and a later read tries again.
@@ -88,5 +119,6 @@ module.exports = {
   corruptedReadResult,
   isTransientReadError,
   readFileWithRetry,
+  renameWithRetrySync,
   unreadableReadResult,
 };

@@ -136,3 +136,22 @@ test('the closed lists agree across the service, the tool, the manifest and the 
   assert.deepEqual(sorted(CHAT_PANEL_SURFACES), sorted(SURFACES));
   assert.deepEqual(sorted([...ACTIVITY_PANES, ...CLOSE_PANES]), sorted(params.pane.enum));
 });
+
+test('the Team settings section is refused unless the team flag is exactly true, with no push', () => {
+  for (const flags of [{}, { team: false }, { team: 'true' }, { team: 1 }]) {
+    const { service, sent } = harness({ flags });
+    const answer = service.requestView({ session_id: PRIMARY, action: 'settings', target: { section: 'team' } });
+    assert.deepEqual(answer, { ok: false, reason: 'unavailable' }, JSON.stringify(flags));
+    assert.deepEqual(sent, [], `nothing is pushed with ${JSON.stringify(flags)}`);
+  }
+  const off = harness({ flags: { team: false } });
+  assert.equal(off.service.requestView({ session_id: PRIMARY, action: 'settings', target: { section: 'models' } }).ok, true,
+    'another section is unaffected');
+  assert.equal(off.service.requestView({ session_id: PRIMARY, action: 'settings', target: { section: 'secrets' } }).reason,
+    'invalid_input', 'an unknown section stays an invalid input');
+  const on = harness({ flags: { team: true } });
+  const answer = on.service.requestView({ session_id: PRIMARY, action: 'settings', target: { section: 'team' } });
+  assert.equal(answer.ok, true);
+  assert.equal(answer.delivered, true);
+  assert.equal(on.sent.at(-1)[1].section, 'team');
+});

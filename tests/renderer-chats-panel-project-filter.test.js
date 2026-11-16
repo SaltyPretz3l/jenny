@@ -1,7 +1,7 @@
 'use strict';
 
-// Projects v2 (2026-09-20): the Chats panel filtered by project (parity with
-// the Claude Code / Codex desktop apps, on the owner's ask). A plain button at
+// Projects v2 (2026-09-20): the Chats panel filtered by project
+// (on the owner's ask). A plain button at
 // the end of the Recent / Archived row opens the shared project menu; picking
 // a project narrows the list, keeps the date groups, and offers a new chat
 // there when that is truthfully where one would land. Window-scoped; follows

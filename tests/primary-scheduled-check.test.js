@@ -33,8 +33,10 @@ function check(extra = {}) {
   };
 }
 
-function harness({ enabled = true, paused = false, busy = false, summaryExtra = {}, submitResult = null, rate } = {}) {
-  const state = { now: NOW, paused, busy, enabled };
+function harness({ enabled = true, paused = false, busy = false, summaryExtra = {}, submitResult = null, rate, gate, floor = true } = {}) {
+  const state = { now: NOW, paused, busy, enabled, floor, gate };
+  const gateCalls = [];
+  const notices = [];
   const submits = [];
   const records = [];
   const wakeNotes = [];
@@ -56,8 +58,13 @@ function harness({ enabled = true, paused = false, busy = false, summaryExtra = 
     now: () => state.now,
     log: (level, event, details) => logs.push({ level, event, details }),
     ...(rate ? { rate } : {}),
+    ...(gate ? {
+      checkModel: async (sum, options) => { gateCalls.push(options); return state.gate(sum, options); },
+      floorEnabled: () => state.floor,
+      notify: (notice) => notices.push(notice),
+    } : {}),
   });
-  return { ops, state, submits, records, wakeNotes, logs, rechecks };
+  return { ops, state, submits, records, wakeNotes, logs, rechecks, gateCalls, notices };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -240,6 +247,8 @@ test('wirePrimaryScheduledChecks reads the backend lazily and retries on a settl
     submitApplicationTurn: async (request, options) => { submits.push({ request, options }); return { ok: true, turn_id: 'turn_w' }; },
   };
   backend.chatMessages = { noteWakeTurn: (turnId, depth) => notes.push({ turnId, depth }) };
+  backend.getBackendStatus = () => ({ phase: 'ready' });
+  backend.listModels = async () => ({ available: true, data: [{ id: 'qwen-local', parameterSize: '27.8B' }] });
   const ops = wirePrimaryScheduledChecks(backend);
   assert.equal(backend.primaryScheduledChecks, ops);
   assert.deepEqual(ops.onDue(check(), Date.now(), {}), { handled: true });
@@ -293,4 +302,179 @@ test('a deferred check runs what is stored now: nothing once deleted or off, els
   await ops.onTurnSettled(JENNY);
   assert.equal(submits.length, 1);
   assert.match(submits[0].prompt, /Summarize only the failures/);
+});
+
+// Row 144: the model gate (plan SCHEDULED_CHECK_MODEL_FLOOR_2026-11-13.md section 3.1).
+const fit = (model) => () => ({ status: 'fit', model });
+const small = (model) => () => ({ status: 'too_small', model, params_b: 2 });
+
+test('a check whose model is too small is held: Activity, one notice, nothing submitted', async () => {
+  const h = harness({ gate: small('lfm3-omni-2b') });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.equal(h.submits.length, 0);
+  assert.deepEqual(h.records, [{ kind: 'schedule_held', id: 'check-1', reason: 'model_too_small' }]);
+  assert.deepEqual(h.notices, [{ type: 'held', reminder_id: 'check-1', label: 'Overnight', reason: 'model_too_small', model: 'lfm3-omni-2b' }]);
+  assert.deepEqual(h.ops.listHeld(), [{ reminder_id: 'check-1', label: 'Overnight', reason: 'model_too_small', model: 'lfm3-omni-2b' }]);
+  // A retry that is still too small logs nothing new and sends no second notice.
+  await h.ops.onModelsChanged();
+  assert.equal(h.records.length, 1);
+  assert.equal(h.notices.length, 1);
+});
+
+test('a missing model holds the check as unavailable', async () => {
+  const h = harness({ gate: () => ({ status: 'unavailable', model: 'qwen38-27b' }) });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.deepEqual(h.records, [{ kind: 'schedule_held', id: 'check-1', reason: 'model_unavailable' }]);
+  assert.equal(h.notices[0].reason, 'model_unavailable');
+});
+
+test('a fit model is pinned on the request, over the chat\'s own model', async () => {
+  const h = harness({ gate: fit('qwen38-27b') });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.equal(h.submits.length, 1);
+  assert.equal(h.submits[0].request.preferredModel, 'qwen38-27b');
+  assert.equal(h.submits[0].request.approvalMode, 'prompt');
+  assert.deepEqual(h.gateCalls, [{ override: false }]);
+  assert.deepEqual(h.notices, []);
+});
+
+test('a model list that is not ready is asked again shortly, then held after the grace period', async () => {
+  const h = harness({ gate: () => ({ status: 'pending', model: '' }) });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.equal(h.submits.length, 0);
+  assert.deepEqual(h.records, []);
+  assert.equal(h.rechecks.at(-1).ms, 15000);
+  h.state.gate = fit('qwen38-27b');
+  h.rechecks.at(-1).fn();
+  await flush();
+  assert.equal(h.submits.length, 1);
+
+  const late = harness({ gate: () => ({ status: 'pending', model: '' }) });
+  late.ops.onDue(check(), NOW);
+  await flush();
+  late.state.now = NOW + 2 * 60000 + 1;
+  late.rechecks.at(-1).fn();
+  await flush();
+  // A model never confirmed is not available (no Run anyway), not too small.
+  assert.deepEqual(late.records, [{ kind: 'schedule_held', id: 'check-1', reason: 'model_unavailable' }]);
+});
+
+test('a held check runs once a big enough model is set, and its notice is withdrawn', async () => {
+  const h = harness({ gate: small('lfm3-omni-2b') });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  h.state.gate = fit('qwen38-27b');
+  assert.deepEqual(await h.ops.onModelsChanged(), { outcome: 'retried' });
+  assert.equal(h.submits.length, 1);
+  assert.equal(h.submits[0].request.preferredModel, 'qwen38-27b');
+  assert.deepEqual(h.notices.at(-1), { type: 'cleared', reminder_id: 'check-1' });
+  assert.deepEqual(h.ops.listHeld(), []);
+  assert.deepEqual(await h.ops.onModelsChanged(), { outcome: 'none' });
+});
+
+test('a held check past its catch-up bound is missed and its notice is withdrawn', async () => {
+  const h = harness({ gate: small('lfm3-omni-2b') });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  h.state.now = NOW + 7 * 60 * 60000; // a daily check catches up for at most 6 h
+  await h.ops.onModelsChanged();
+  assert.deepEqual(h.records.at(-1), { kind: 'schedule_missed', id: 'check-1', reason: 'late' });
+  assert.deepEqual(h.notices.at(-1), { type: 'cleared', reminder_id: 'check-1' });
+});
+
+test('Run anyway runs one held occurrence with the size test skipped; Skip drops one', async () => {
+  const h = harness({ gate: (sum, options) => (options.override ? fit('lfm3-omni-2b')() : small('lfm3-omni-2b')()) });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  const ran = await h.ops.runHeld('check-1');
+  assert.deepEqual(ran, { ok: true, turn_id: 'turn_1' });
+  assert.deepEqual(h.gateCalls.at(-1), { override: true });
+  assert.deepEqual(h.records.at(-1), { kind: 'schedule_run_anyway', id: 'check-1', reason: 'user' });
+  assert.deepEqual(h.notices.at(-1), { type: 'cleared', reminder_id: 'check-1' });
+  assert.deepEqual(await h.ops.runHeld('check-1'), { ok: false, reason: 'not_held' });
+
+  const s = harness({ gate: small('lfm3-omni-2b') });
+  s.ops.onDue(check({ id: 'check-2' }), NOW);
+  await flush();
+  assert.deepEqual(await s.ops.skipHeld('check-2'), { ok: true });
+  assert.deepEqual(s.records.at(-1), { kind: 'schedule_skipped', id: 'check-2', reason: 'user' });
+  assert.deepEqual(s.notices.at(-1), { type: 'cleared', reminder_id: 'check-2' });
+  assert.equal(s.submits.length, 0);
+  assert.deepEqual(await s.ops.skipHeld('check-2'), { ok: false, reason: 'not_held' });
+});
+
+test('with the floor off nothing is held: a confirmed model is pinned, otherwise today\'s routing', async () => {
+  const h = harness({ floor: false, gate: () => ({ status: 'unavailable', model: 'gone' }) });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.equal(h.submits.length, 1);
+  assert.equal(h.submits[0].request.preferredModel, 'qwen-local'); // the chat's own model, as before row 144
+  assert.deepEqual(h.gateCalls, [{ override: true }]);
+  assert.deepEqual(h.notices, []);
+});
+
+test('the wiring holds a check on a small model, notifies, and retries when the backend status changes', async () => {
+  const backend = new EventEmitter();
+  const submits = [];
+  const notices = [];
+  let models = [{ id: 'qwen-local', parameterSize: '2.6B' }];
+  backend.featureFlags = { primary_chat: true, primary_scheduled_checks: true };
+  backend.primaryChatControls = { primarySessionId: () => JENNY, isPaused: () => false, recordScheduleEvent: () => true };
+  backend.sessionStore = { getSessionSummary: () => summary(), peekActiveTurn: () => null };
+  backend.sessionRuntime = {
+    hasSessionWork: () => false,
+    submitApplicationTurn: async (request) => { submits.push(request); return { ok: true, turn_id: 'turn_s' }; },
+  };
+  backend.getBackendStatus = () => ({ phase: 'ready' });
+  backend.listModels = async () => ({ available: true, data: models });
+  const ops = wirePrimaryScheduledChecks(backend, { notify: (notice) => notices.push(notice) });
+  ops.onDue(check(), Date.now());
+  await flush();
+  assert.equal(submits.length, 0);
+  assert.equal(notices[0].type, 'held');
+  assert.equal(notices[0].reason, 'model_too_small');
+  models = [{ id: 'qwen-local', parameterSize: '27.8B' }];
+  backend.emit('backend-status', { phase: 'ready' });
+  await flush();
+  await flush();
+  assert.equal(submits.length, 1);
+  assert.equal(submits[0].preferredModel, 'qwen-local');
+  assert.deepEqual(notices.at(-1), { type: 'cleared', reminder_id: 'check-1' });
+});
+
+test('a held check that has to wait again (Jenny busy, model list pending) stays held with its notice', async () => {
+  const h = harness({ gate: small('lfm3-omni-2b') });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  assert.equal(h.ops.listHeld().length, 1);
+  h.state.busy = true;
+  await h.ops.onModelsChanged();
+  assert.equal(h.ops.listHeld().length, 1, 'busy keeps it held');
+  h.state.busy = false;
+  h.state.gate = () => ({ status: 'pending', model: '' });
+  await h.ops.onModelsChanged();
+  assert.equal(h.ops.listHeld().length, 1, 'pending keeps it held');
+  assert.equal(h.notices.filter((n) => n.type === 'cleared').length, 0);
+  assert.equal(h.notices.filter((n) => n.type === 'held').length, 1);
+  h.state.gate = fit('qwen38-27b');
+  await h.ops.onModelsChanged();
+  assert.equal(h.submits.length, 1);
+  assert.deepEqual(h.notices.at(-1), { type: 'cleared', reminder_id: 'check-1' });
+});
+
+test('Run anyway while Jenny is busy keeps the override for when the chat is free', async () => {
+  const h = harness({ gate: (sum, options) => (options.override ? fit('lfm3-omni-2b')() : small('lfm3-omni-2b')()) });
+  h.ops.onDue(check(), NOW);
+  await flush();
+  h.state.busy = true;
+  assert.deepEqual(await h.ops.runHeld('check-1'), { ok: false, reason: 'still_waiting' });
+  assert.equal(h.ops.listHeld().length, 1);
+  h.state.busy = false;
+  await h.ops.onTurnSettled(JENNY);
+  assert.equal(h.submits.length, 1);
+  assert.deepEqual(h.gateCalls.at(-1), { override: true });
 });

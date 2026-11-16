@@ -107,9 +107,19 @@
       getPaneTranscriptView = () => 'thinking',
       // Split view W3-1: does THIS pane own selection mode (a bag without one is pane 0)?
       isPaneSelecting = () => state?.ui?.selectionModePaneId === 0,
+      // This pane's follow state (one pane: state.ui.followLatest).
+      isFollowingLatest = () => state.ui?.followLatest === true,
     } = callbacks;
     let pendingVirtualizerRebuildFrame = null;
     let latestVirtualizedArticleContext = null;
+    // A click inside a settled root (tool row toggle, Show more, a reasoning
+    // panel) changes DOM state its memoized markup lacks: drop that root's memo
+    // so the next full render rebuilds it, not morphs it stale.
+    const forgetInteractedRoot = (event) => {
+      const rootNode = event?.target?.closest?.('.chat-thread-root[data-thread-message-id]');
+      if (rootNode) uiRuntime.threadRootMarkupCache?.delete?.(String(rootNode.getAttribute('data-thread-message-id') || '').trim());
+    };
+    chatTimeline?.addEventListener?.('click', forgetInteractedRoot, true);
 
     // One record for every timeline DOM write, whatever its scope. The four
     // render lanes all build their markup with buildMessageArticleMarkup and
@@ -436,11 +446,11 @@
       renderMathAfterTimelinePatch();
       decorateCodeAfterTimelinePatch();
 
-      schedulePredictedHeightCleanup({ beforePaint: state.ui?.followLatest === true });
+      schedulePredictedHeightCleanup({ beforePaint: isFollowingLatest() === true });
       // Finding 2: attach first so its cancel clears the PREVIOUS render's
-      // pending debounce timer/rAF, then measure synchronously so
-      // --_rail-top/--_rail-height are set before paint (no height:0 ->
-      // snap window). The observer's own later initial-fire still runs
+      // pending debounce timer/rAF, then measure synchronously so each
+      // thread toggle is placed before paint. The observer's own later
+      // initial-fire still runs
       // through the debounced scheduleRailResizeUpdate for subsequent
       // resizes; it will coalesce to the same values (harmless).
       attachRailResizeObserver();
@@ -463,20 +473,22 @@
     }
 
     function tryPatchActiveTurnRoot(messages, threadTree, forcedOpenIds, latestAssistantMessageId, latestReplyAssistantMessageId, followUpDisabledReason, latestRegenerateRequest, structureSignature, projectionContext, timelineDividerByMessageId) {
+      // Why the fast path declined, charged to the full render that follows
+      // (message-renderer); '' when there is no live turn root to patch.
+      const decline = (reason) => { uiRuntime.activeTurnRootDecline = reason; return false; };
+      uiRuntime.activeTurnRootDecline = '';
       // The root id alone gates the repaint scope because a live turn may have no streaming segment.
-      if (
-        !state.ui?.chatTimelineBatch4FastPathEnabled
-        || !projectionContext?.available
-        || !projectionContext.activeTurnRootMessageId
-      ) {
+      if (!projectionContext?.available || !projectionContext.activeTurnRootMessageId) {
         return false;
       }
+      if (!state.ui?.chatTimelineBatch4FastPathEnabled) return decline('fast_path_off');
       const activeRootId = String(projectionContext.activeTurnRootMessageId || '').trim();
       const paneSessionId = getPaneSessionId();
       const activeRootNode = threadTree?.nodeById?.get?.(activeRootId) || null;
       if (!activeRootNode) {
-        return false;
+        return decline('root_not_in_tree');
       }
+      const diagnostics = { reason: '' };
       const activeRootSelector = '.chat-thread-root[data-thread-message-id="'
         + escapeSelectorValue(activeRootId)
         + '"]';
@@ -504,7 +516,9 @@
           suppressOwnLeadingDivider: true,
         }),
         resolveRowListSegments: rowListCapture.resolve,
+        diagnostics,
       });
+      if (!patched) decline(diagnostics.reason || 'declined');
 
       if (patched) {
         // The active-turn root's outerHTML was just swapped — its old
@@ -690,11 +704,12 @@
       globalThis.rendererRuntimeQueueView?.resyncQueuedBubbles?.(chatTimeline);
     }
 
-    // Row 122: the before and after pictures under a settled reply are not article
-    // markup either, so every timeline write puts them back (best-effort).
+    // Row 122: the chat draws no pictures, but a turn can only be pictured while
+    // its files match the disk, so every timeline write lets the last reply ask
+    // for its pictures for the Changes view (best-effort).
     function resyncChangePictures(root) {
       try {
-        globalThis.rendererCodeReviewRail?.decorateChatPictures?.({
+        globalThis.rendererCodeReviewRail?.captureChatPictures?.({
           root: root || chatTimeline,
           timeline: chatTimeline,
           getSessionId: getPaneSessionId,
@@ -761,13 +776,20 @@
         if (patchedRailRoot) scheduleRailResizeUpdate(patchedRailRoot);
       }
       if (Object.prototype.hasOwnProperty.call(opts, 'inlineMermaidStreaming')) {
-        renderInlineMermaidAfterTimelinePatch(opts.inlineMermaidStreaming, patchedRoot || chatTimeline);
+        // A surgical live patch names the nodes it wrote: decorate those, not
+        // the whole turn article with every finished checkpoint in it.
+        if (Array.isArray(opts.decorateRoots)) {
+          opts.decorateRoots.filter((root) => root?.isConnected)
+            .forEach((root) => renderInlineMermaidAfterTimelinePatch(opts.inlineMermaidStreaming, root));
+        } else {
+          renderInlineMermaidAfterTimelinePatch(opts.inlineMermaidStreaming, patchedRoot || chatTimeline);
+        }
       }
       if (opts.patchedMessageId) {
         syncPatchedArticlePrediction(opts.patchedMessageId, opts.predictedHeight);
       }
       if (opts.cleanupPredictedHeights) {
-        schedulePredictedHeightCleanup({ beforePaint: state.ui?.followLatest === true });
+        schedulePredictedHeightCleanup({ beforePaint: isFollowingLatest() === true });
       }
       if (opts.liveThinking !== false) {
         renderLiveThinkingChip();
@@ -798,6 +820,7 @@
 
     function dispose() {
       latestVirtualizedArticleContext = null;
+      chatTimeline?.removeEventListener?.('click', forgetInteractedRoot, true);
       if (pendingVirtualizerRebuildFrame === null) return;
       if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(pendingVirtualizerRebuildFrame);
       pendingVirtualizerRebuildFrame = null;

@@ -110,11 +110,7 @@ function rowsFor(h, key) {
   return [...h.host.querySelectorAll('[data-model-key]')].filter((row) => row.getAttribute('data-model-key') === key);
 }
 
-function badgeTexts(row) {
-  return [...row.querySelectorAll('.inv-badge')].map((badge) => badge.textContent);
-}
-
-test('a Local GGUF entry renders one Installed card reading "Local GGUF · 6.7 GB"', async (t) => {
+test('a Local GGUF entry renders one library row reading "llama-server · Local GGUF · 6.7 GB on disk"', async (t) => {
   const h = harness(t, { installed: [{ id: 'installed:1b', size: 1024, engine_type: 'ollama' }] });
   h.controller.bind();
   await flush();
@@ -122,13 +118,12 @@ test('a Local GGUF entry renders one Installed card reading "Local GGUF · 6.7 G
   const rows = rowsFor(h, OWNER_CARD);
   assert.equal(rows.length, 1);
   const row = rows[0];
-  assert.equal(row.closest('[data-model-group]').getAttribute('data-model-group'), 'installed');
-  assert.equal(row.querySelector('.model-row-name').textContent, OWNER_TAG);
-  assert.equal(row.querySelector('.model-row-meta').textContent, 'Local GGUF · 6.7 GB');
-  assert.deepEqual(badgeTexts(row), ['llama-server']);
+  assert.equal(row.closest('.mrow-list').querySelector('.mrow-sep'), null, 'an installed model sits above the catalog separator');
+  assert.equal(row.querySelector('.mrow-name').textContent, OWNER_TAG);
+  assert.equal(row.querySelector('.mrow-meta').textContent, 'llama-server · Local GGUF · 6.7 GB on disk');
   // Every other card keeps its meta line exactly.
   const other = rowsFor(h, 'installed:1b')[0];
-  assert.doesNotMatch(other.querySelector('.model-row-meta').textContent, /Local GGUF/);
+  assert.doesNotMatch(other.querySelector('.mrow-meta').textContent, /Local GGUF/);
 });
 
 test('a served alias and its projection merge into one card that keeps the file size', async (t) => {
@@ -141,9 +136,8 @@ test('a served alias and its projection merge into one card that keeps the file 
 
   const rows = rowsFor(h, OWNER_CARD);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].querySelector('.model-row-meta').textContent, 'Local GGUF · 6.7 GB');
-  assert.deepEqual(badgeTexts(rows[0]), ['Serving on :8093', 'llama-server']);
-  assert.equal(h.host.querySelectorAll('.model-row').length, 1);
+  assert.equal(rows[0].querySelector('.mrow-meta').textContent, 'llama-server · Local GGUF · 6.7 GB on disk');
+  assert.equal(h.host.querySelectorAll('.mrow').length, 1);
 });
 
 test('with the acceleration flag off a persisted Local GGUF entry makes no card', async (t) => {
@@ -153,7 +147,7 @@ test('with the acceleration flag off a persisted Local GGUF entry makes no card'
 
   assert.equal(rowsFor(h, OWNER_CARD).length, 0);
   assert.doesNotMatch(h.host.textContent, /Local GGUF|ternary-bonsai/);
-  assert.equal(h.host.querySelectorAll('.model-row').length, 1);
+  assert.equal(h.host.querySelectorAll('.mrow').length, 1);
 });
 
 test('Use loads a Local GGUF card on llama-server', async (t) => {
@@ -212,7 +206,7 @@ test('Tune while Ollama\'s tags are unreadable leaves Ollama unknown and keeps t
   assert.equal(await hint(whileUp), "Ollama doesn't have this model, so it runs on Jenny's own llama-server.");
 });
 
-test('the llama-server pill names a custom build and stays plain for the bundled one', async (t) => {
+test('the llama-server engine name carries a custom build and stays plain for the bundled one', async (t) => {
   const custom = harness(t, { managed: managedWith(ownerEntry({ runtimePath: FORK, runtimeBuild: 10683 })) });
   const bundled = harness(t, { managed: managedWith(ownerEntry({ runtimeBuild: 10683 })) });
   const mtp = harness(t, {
@@ -230,9 +224,12 @@ test('the llama-server pill names a custom build and stays plain for the bundled
   mtp.controller.bind();
   await flush();
 
-  assert.deepEqual(badgeTexts(rowsFor(custom, OWNER_CARD)[0]), ['llama-server · build 10683']);
-  assert.deepEqual(badgeTexts(rowsFor(bundled, OWNER_CARD)[0]), ['llama-server']);
-  assert.deepEqual(badgeTexts(rowsFor(mtp, 'gemma4:12b')[0]), ['llama-server · MTP · build 10683']);
+  const metaOf = (row) => row.querySelector('.mrow-meta').textContent;
+  assert.equal(metaOf(rowsFor(custom, OWNER_CARD)[0]), 'llama-server · build 10683 · Local GGUF · 6.7 GB on disk');
+  assert.equal(metaOf(rowsFor(bundled, OWNER_CARD)[0]), 'llama-server · Local GGUF · 6.7 GB on disk');
+  const mtpRow = rowsFor(mtp, 'gemma4:12b')[0];
+  assert.match(metaOf(mtpRow), /^llama-server · build 10683 · /);
+  assert.deepEqual([...mtpRow.querySelectorAll('.mrow-flag')].map((flag) => flag.textContent), ['MTP']);
 });
 
 function mergeCards(overrides = {}) {
@@ -288,32 +285,33 @@ test('customBuild reaches both card shapes only for llama-server with a runtime 
   assert.equal(mergeCards({ installed: [PROJECTION] })[0].customBuild, 0);
 });
 
-test('the row meta leads with Local GGUF only on library cards', () => {
+test('the library row meta carries Local GGUF only on library cards', () => {
   const card = {
     key: OWNER_CARD, tag: OWNER_TAG, displayName: OWNER_TAG, source: 'installed', installed: true,
-    engineVisible: true, engineType: 'openai-compatible', sizeBytes: OWNER_BYTES, fitState: 'unknown',
+    engineVisible: true, engineType: 'openai-compatible', selectedEngine: 'llama-server', sizeBytes: OWNER_BYTES, fitState: 'unknown',
   };
-  const meta = (overrides) => JSDOM.fragment(view.buildModelRow({ ...card, ...overrides }, {}))
-    .querySelector('.model-row-meta').textContent;
-  assert.equal(meta({ libraryGguf: true }), 'Local GGUF · 6.7 GB');
-  assert.equal(meta({ libraryGguf: true, params: '27B', quant: 'PQ2_0' }), 'Local GGUF · 27B · PQ2_0 · 6.7 GB');
-  assert.equal(meta({ libraryGguf: true, sizeBytes: 0 }), 'Local GGUF · Size unknown');
-  assert.equal(meta({ libraryGguf: true, source: 'both' }), `Local GGUF · ${OWNER_TAG} · 6.7 GB`);
-  assert.equal(meta({}), '6.7 GB');
-  assert.equal(meta({ libraryGguf: 'true' }), '6.7 GB');
+  const meta = (overrides) => JSDOM.fragment(view.buildLibraryRow({ ...card, ...overrides }, {}))
+    .querySelector('.mrow-meta').textContent;
+  assert.equal(meta({ libraryGguf: true }), 'llama-server \u00b7 Local GGUF \u00b7 6.7 GB on disk');
+  assert.equal(meta({ libraryGguf: true, params: '27B', quant: 'PQ2_0' }), 'llama-server \u00b7 Local GGUF \u00b7 27B \u00b7 PQ2_0 \u00b7 6.7 GB on disk');
+  assert.equal(meta({ libraryGguf: true, sizeBytes: 0 }), 'llama-server \u00b7 Local GGUF \u00b7 Size unknown');
+  assert.equal(meta({}), 'llama-server \u00b7 6.7 GB on disk');
+  assert.equal(meta({ libraryGguf: 'true' }), 'llama-server \u00b7 6.7 GB on disk');
 });
 
-test('the build suffix follows customBuild on the pill of rows and compact cards', () => {
+test('the build suffix follows customBuild on the engine name of library rows and the pill of compact cards', () => {
   const card = {
     key: OWNER_CARD, tag: OWNER_TAG, installed: true, engineVisible: true, source: 'installed',
     engineType: 'openai-compatible', selectedEngine: 'llama-server', fitState: 'unknown',
   };
+  const engine = (model) => JSDOM.fragment(view.buildLibraryRow(model, {})).querySelector('.mrow-meta').textContent.split(' \u00b7 ')
+    .filter((part) => part.startsWith('llama-server') || part === 'Ollama' || part.startsWith('build'));
   const pills = (html) => [...JSDOM.fragment(html).querySelectorAll('.inv-badge')].map((badge) => badge.textContent);
-  assert.ok(pills(view.buildModelRow({ ...card, customBuild: 10683 }, {})).includes('llama-server · build 10683'));
-  assert.ok(pills(view.buildModelCard({ ...card, customBuild: 10683 }, { compact: true })).includes('llama-server · build 10683'));
-  assert.ok(pills(view.buildModelRow({ ...card, customBuild: 0 }, {})).includes('llama-server'));
-  assert.ok(pills(view.buildModelRow({ ...card, customBuild: -3 }, {})).includes('llama-server'));
-  assert.ok(pills(view.buildModelRow(card, {})).includes('llama-server'));
-  assert.ok(!pills(view.buildModelRow({ ...card, selectedEngine: 'ollama', customBuild: 10683 }, {}))
-    .some((text) => text.includes('build')));
+  assert.ok(pills(view.buildModelCard({ ...card, customBuild: 10683 }, { compact: true })).includes('llama-server \u00b7 build 10683'));
+  assert.deepEqual(engine({ ...card, customBuild: 10683 }), ['llama-server', 'build 10683']);
+  assert.deepEqual(engine({ ...card, customBuild: 0 }), ['llama-server']);
+  assert.deepEqual(engine({ ...card, customBuild: -3 }), ['llama-server']);
+  assert.deepEqual(engine(card), ['llama-server']);
+  assert.deepEqual(engine({ ...card, selectedEngine: 'ollama', customBuild: 10683 }), ['Ollama']);
+  assert.equal(view.libraryEngineName({ ...card, customBuild: 10683 }), 'llama-server \u00b7 build 10683');
 });

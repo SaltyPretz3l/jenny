@@ -211,6 +211,7 @@ function createBackendServiceWithDeps({
   backendService.imageEngine = imageEngine;
   imageEngine.on('changed', (state) => sendBridgeEvent('imageEngine.onChanged', state));
   backendService.exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator || new ExclusiveGpuCoordinator({ logger: log });
+  backendService.vramLoadPreflight = require('../backend/vram-load-preflight').createVramLoadPreflight({ log }); // free-VRAM check before a model loads
   backendService.chatGpuHandoff = createChatGpuHandoff({
     backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager, getNinferManager,
     reconcileRenderProcesses: () => reconcileRenderRecord({ userDataPath: app.getPath('userData'), log }),
@@ -527,7 +528,7 @@ function createBackendServiceWithDeps({
 
   // Row 62: post-window starts and the sidecar-gated workers (post-window-services.js).
   const { startPostWindowServices, startSidecarIdleWorkers } = createPostWindowServiceStarters({
-    backendService, pdfAddon, imageEngine,
+    backendService, pdfAddon, imageEngine, log,
     // Row 41: idle-gated semantic catalog over the knowledge folders (inert until
     // the user picks an embedding model; JENNY_ENABLE_SEMANTIC_CATALOG=0 off).
     wireSemanticCatalog: () => require('./semantic-catalog-wiring').wireSemanticCatalog({

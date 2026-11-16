@@ -308,13 +308,13 @@
   }
 
   /* A run_command background job: live (dot, ticking elapsed, Stop) or finished (duration, exit code or
-     Stopped; the row opens its output). */
+     Stopped). Either row opens the job in the Background tasks panel (row 138). */
   function jobRow(item, phase, jt, nowMs) {
     const jobId = text(item.job_id);
     const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
     const started = Number(item.started_at_ms) || 0;
     if (phase === 'running') {
-      return { kind: 'job', key: `job:${jobId}`, jobId, dot: taskDot('running'), text: command, title: command,
+      return { kind: 'job', key: `job:${jobId}`, jobId, dot: taskDot('running'), text: command, title: command, surface: 'background_tasks', resourceRef: `job:${jobId}`,
         meta: formatElapsed(nowMs - started), startedAtMs: started, stopping: text(item.state) === 'killing',
         progressPercent: Number.isFinite(item.progress_percent) ? item.progress_percent : null, // row 96 live test run
         progressMarks: Array.isArray(item.progress_marks) ? item.progress_marks.filter(Number.isFinite) : [],
@@ -329,7 +329,7 @@
         ? jt('chat.sessionRail.tasks.exitCode', 'Exit {code}', { code: item.exit_code }) : taskPhaseLabel('failed', jt);
     }
     return { kind: 'job_done', key: `job:${jobId}`, jobId, dot: failed && item.stop_requested !== true ? taskDot('failed') : null,
-      text: command, meta, title: `${command} (${taskPhaseLabel(phase, jt)})` };
+      text: command, meta, title: `${command} (${taskPhaseLabel(phase, jt)})`, surface: 'background_tasks', resourceRef: `job:${jobId}` };
   }
 
   function buildBackgroundTasks(data, jt) {
@@ -384,7 +384,7 @@
       const linked = text(item.source_kind) === 'linked_chat_turn' && text(item.session_id);
       const name = linked ? text(item.title) : '';
       target.push({
-        kind: 'action', key: `task:${id}`, icon: '', dot: taskDot(phase), surface: 'background_tasks', resourceRef: '',
+        kind: 'action', key: `task:${id}`, icon: '', dot: taskDot(phase), surface: 'background_tasks', resourceRef: linked ? `chat:${text(item.session_id)}` : '',
         text: name || label, meta: stateWord, title: name ? `${label}: ${name} (${stateWord})` : `${label} (${stateWord})`,
         ...(linked ? { sessionRef: text(item.session_id) } : {}),
       });
@@ -399,9 +399,6 @@
         text: jt('chat.sessionRail.tasks.finished', '{count} finished', { count: completed }), meta: '', title: '',
       });
     }
-    if (!rows.length) {
-      rows.push({ kind: 'action', key: 'activity', icon: 'list', surface: 'background_tasks', resourceRef: '', text: jt('chat.sessionRail.tasks.open', 'View activity'), meta: '', title: '' });
-    }
     const unsupported = Array.isArray(data.unsupported_sources) ? data.unsupported_sources : [];
     for (const source of data.failed_sources || []) {
       rows.push({ kind: 'note', key: `failed:${source}`, text: `${taskSourceLabel(source, jt)}: ${jt('chat.sessionRail.state.unavailable', 'Unavailable')}` });
@@ -409,6 +406,8 @@
     if (data.coverage === 'partial' || unsupported.length > 0) {
       rows.push({ kind: 'note', key: 'coverage', text: jt('chat.sessionRail.tasks.partial', "Some sources aren't connected yet.") });
     }
+    // Row 138: the section always ends on the way into the Background tasks panel.
+    rows.push({ kind: 'action', key: 'all', icon: 'list', surface: 'background_tasks', resourceRef: '', text: jt('chat.sessionRail.tasks.openAll', 'All background tasks'), meta: '', title: '' });
     return { valueText, parts: null, dot, rows, defaultOpen: anyActive };
   }
 
@@ -519,6 +518,8 @@
     formatTokens,
     contextPercent,
     taskPhase,
+    taskPhaseLabel,
+    taskDot,
     formatElapsed,
     isDisclosureOpen,
     buildSection,

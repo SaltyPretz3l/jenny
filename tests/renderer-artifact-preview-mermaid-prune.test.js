@@ -60,7 +60,9 @@ async function harness(t) {
 test('Markdown -> Code -> dispose prunes retired targets and keeps the connected baseline', async (t) => {
   const h = await harness(t);
   const retired = h.host.querySelector('.markdown-mermaid-block');
-  h.host.querySelector('[data-file-preview-view="code"]').click();
+  h.host.dispatchEvent(new h.dom.window.CustomEvent('inv-segmented-change', {
+    bubbles: true, detail: { id: 'file-preview-view', value: 'code' },
+  }));
   assert.equal(retired.isConnected, false);
   assert.deepEqual([...h.observer.targets], [h.baselineTarget], 'Code replacement prunes detached Mermaid targets');
   h.panel.remove();

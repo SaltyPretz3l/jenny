@@ -341,25 +341,29 @@ test('merge: an installed NInfer model shows as its pin card, active when loaded
   assert.equal(card.preferredLocal, true);
 });
 
-test('view: the row shows Best fit and the NInfer badge (with MTP), the action reads Download and hides while the set-up runs', () => {
+test('view: the row shows Best fit and the NInfer engine (with MTP), the action reads Download and hides while the set-up runs', () => {
   const [card] = mergeWith(ninferInput()).cards;
-  const row = new JSDOM(view.buildModelRow(card, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
-  assert.match(row.querySelector('.model-row-title').textContent, /Best fit/);
-  assert.match(row.querySelector('.model-row-title').textContent, /NInfer · MTP/);
-  assert.equal(row.querySelector('.model-row-title').textContent.includes('MTP ready'), false);
-  assert.match(row.querySelector('.model-row-meta').textContent, /22\.1 GB download/);
+  const flags = (doc) => [...doc.querySelectorAll('.mrow-flag')].map((node) => node.textContent);
+  const actions = (doc) => [...doc.querySelectorAll('[data-model-card-action]')].map((node) => node.dataset.modelCardAction);
+  const row = new JSDOM(view.buildLibraryRow(card, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
+  assert.deepEqual(flags(row), ['MTP', 'Best fit'], 'MTP is on, so "MTP ready" is not repeated');
+  assert.match(row.querySelector('.mrow-meta').textContent, /^NInfer \u00b7 /);
+  assert.match(row.querySelector('.mrow-meta').textContent, /22\.1 GB download/);
   const download = row.querySelector('[data-model-card-action="pull"]');
   assert.equal(download.textContent.trim(), 'Download');
   assert.equal(download.dataset.modelTag, PIN.model_id);
-  const running = new JSDOM(view.buildModelRow({ ...card, ninferSetupRunning: true }, { actions: ['use', 'pull', 'tune'], pull: {}, activation: {} })).window.document;
+  const running = new JSDOM(view.buildLibraryRow({ ...card, ninferSetupRunning: true }, { actions: ['use', 'pull', 'tune'], pull: {}, activation: {} })).window.document;
   assert.equal(running.querySelector('[data-model-card-action]'), null, 'the block owns the message while the set-up runs');
   const [installed] = mergeWith(ninferInput({ installed: [{ id: PIN.id, present: true }] })).cards;
-  const ready = new JSDOM(view.buildModelRow(installed, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
-  assert.deepEqual([...ready.querySelectorAll('[data-model-card-action]')].map((node) => node.dataset.modelCardAction), ['use', 'tune', 'menu']);
-  const serving = new JSDOM(view.buildModelRow({ ...installed, active: true, serving: true, servingPort: 8034 }, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
-  assert.match(serving.querySelector('.model-row-title').textContent, /Active.*Serving on :8034.*NInfer · MTP/);
+  const ready = new JSDOM(view.buildLibraryRow(installed, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
+  assert.deepEqual(actions(ready), ['use', 'tune', 'menu']);
+  const serving = new JSDOM(view.buildLibraryRow({ ...installed, active: true, serving: true, servingPort: 8034 }, { actions: ['use', 'unload', 'tune', 'pull', 'menu'], pull: {}, activation: {} })).window.document;
+  assert.deepEqual(flags(serving), ['MTP', 'Serving on :8034']);
   const plain = new JSDOM(view.buildModelCard(card, { compact: true, actions: ['use', 'pull'], pull: {}, activation: {} })).window.document;
   assert.equal(plain.querySelector('[data-model-card-action="pull"]').textContent.trim(), 'Download');
+  const badges = [...plain.querySelectorAll('.inv-badge')].map((node) => node.textContent);
+  assert.ok(badges.includes('NInfer \u00b7 MTP'), badges.join(' | '));
+  assert.equal(badges.includes('MTP ready'), false);
 });
 
 // --- the Models section wiring ---
@@ -409,17 +413,15 @@ function sectionHarness(t, { flag = true, ninferState: ninferOverrides = {}, ine
   return { controller, windowRef, document: windowRef.document, calls, state, featureChanged: () => featureChanged };
 }
 
-test('section: behind the flag the block renders in the extras host, the NInfer row downloads through the block and Use loads the model id', async (t) => {
+test('section: behind the flag the NInfer pin joins the library, downloads through the block and Use loads the model id', async (t) => {
   const h = sectionHarness(t);
   h.controller.bind();
   await flush();
   await flush();
-  const host = h.document.getElementById('modelLibraryNinferHost');
-  assert.ok(host, 'the NInfer host renders behind the flag');
-  assert.match(host.textContent, /NInfer engine/);
-  assert.ok(h.calls.some((call) => call[0] === 'ninfer.subscribe'));
-  const row = h.document.querySelector(`.model-row[data-model-key="${ROW_KEY}"]`);
-  assert.ok(row, 'the NInfer row joins the grid');
+  assert.equal(h.document.getElementById('modelLibraryNinferHost'), null, 'the NInfer controls live in the engine drawer, not on the page');
+  h.document.querySelector('[data-model-library-section-action="show-catalog"]').dispatchEvent(new h.windowRef.MouseEvent('click', { bubbles: true }));
+  const row = h.document.querySelector(`.mrow[data-model-key="${ROW_KEY}"]`);
+  assert.ok(row, 'the NInfer row joins the library');
   assert.match(row.textContent, /Best fit/);
   const download = row.querySelector('[data-model-card-action="pull"]');
   assert.equal(download.textContent.trim(), 'Download');
@@ -431,14 +433,12 @@ test('section: behind the flag the block renders in the extras host, the NInfer 
   const off = sectionHarness(t, { flag: false });
   off.controller.bind();
   await flush();
-  assert.equal(off.document.getElementById('modelLibraryNinferHost'), null);
-  assert.equal(off.document.querySelector(`.model-row[data-model-key="${ROW_KEY}"]`), null);
+  assert.equal(off.document.querySelector(`.mrow[data-model-key="${ROW_KEY}"]`), null);
   const ineligible = sectionHarness(t, { ineligible: true });
   ineligible.controller.bind();
   await flush();
   await flush();
-  assert.equal(ineligible.document.getElementById('modelLibraryNinferHost').innerHTML, '');
-  assert.equal(ineligible.document.querySelector(`.model-row[data-model-key="${ROW_KEY}"]`), null, 'zero NInfer DOM on an ineligible card');
+  assert.equal(ineligible.document.querySelector(`.mrow[data-model-key="${ROW_KEY}"]`), null, 'zero NInfer DOM on an ineligible card');
 });
 
 test('section: Use on the installed NInfer row says C7 and loads through openai-compatible; Tune carries the NInfer hint', async (t) => {
@@ -446,12 +446,12 @@ test('section: Use on the installed NInfer row says C7 and loads through openai-
   h.controller.bind();
   await flush();
   await flush();
-  const row = h.document.querySelector(`.model-row[data-model-key="${ROW_KEY}"]`);
+  const row = h.document.querySelector(`.mrow[data-model-key="${ROW_KEY}"]`);
   row.querySelector('[data-model-card-action="use"]').dispatchEvent(new h.windowRef.MouseEvent('click', { bubbles: true }));
   assert.equal(h.document.querySelector('.model-library-section-status').textContent, 'Switching to Qwen3.8 27B on NInfer… llama-server stops first so the GPU is free.');
   await flush();
   assert.deepEqual(h.calls.filter((call) => call[0] === 'load'), [['load', { model: PIN.model_id, engine_type: 'openai-compatible' }]]);
-  h.document.querySelector(`.model-row[data-model-key="${ROW_KEY}"] [data-model-card-action="tune"]`).dispatchEvent(new h.windowRef.MouseEvent('click', { bubbles: true }));
+  h.document.querySelector(`.mrow[data-model-key="${ROW_KEY}"] [data-model-card-action="tune"]`).dispatchEvent(new h.windowRef.MouseEvent('click', { bubbles: true }));
   const tune = h.calls.find((call) => call[0] === 'tune');
   assert.equal(tune[1], PIN.model_id);
   assert.equal(tune[3].engineTypeHint, 'openai-compatible');

@@ -308,6 +308,71 @@ test('Review fix case 9: the edited root is excluded from memo; sibling roots st
   assert.ok(sharedCache.has('u2'), 'the settled sibling must remain cached');
 });
 
+test('Row 155: a settled user root that is not the edit target rebuilds when an edit starts or ends', () => {
+  // Its hover row reads "Finish the current edit first." while another message
+  // is being edited, so a memoized pre-edit root must not be served stale.
+  const callLog = [];
+  const buildArticle = buildSpyArticle(callLog);
+  const pipeline = createThreadDomPipeline({ callbacks: { escapeHtml } });
+  const tree = buildThreadTree([buildRootNode('u1', 'being edited'), buildRootNode('u2', 'settled sibling')]);
+  const fingerprints = new Map([['u1', 'fp-u1'], ['u2', 'fp-u2']]);
+  const globals = (editingMessageId) => ({
+    sessionId: 's1',
+    latestReplyAssistantMessageId: 'a1',
+    followUpDisabledReason: '',
+    regenerateRequestFingerprint: '',
+    editingMessageId,
+  });
+  const first = baseRenderOptions({ messageFingerprintById: fingerprints, sessionGlobals: globals('') });
+  const sharedCache = first.markupCache;
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, first);
+  assert.deepEqual(callLog, ['u1', 'u2']);
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    markupCache: sharedCache,
+    messageFingerprintById: fingerprints,
+    editingMessageId: 'u1',
+    sessionGlobals: globals('u1'),
+  }));
+  assert.deepEqual(callLog.slice(2), ['u1', 'u2'], 'u2 rebuilds when the edit of u1 starts');
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    markupCache: sharedCache,
+    messageFingerprintById: fingerprints,
+    editingMessageId: 'u1',
+    sessionGlobals: globals('u1'),
+  }));
+  assert.deepEqual(callLog.slice(4), ['u1'], 'while the edit stays open only the edited root rebuilds');
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    markupCache: sharedCache,
+    messageFingerprintById: fingerprints,
+    sessionGlobals: globals(''),
+  }));
+  assert.deepEqual(callLog.slice(5), ['u2'], 'u2 rebuilds when the edit ends; u1 returns to its pre-edit entry, whose content is unchanged');
+});
+
+test('Row 155: only the edited user root wrapper carries data-thread-editing', () => {
+  const buildArticle = buildSpyArticle([]);
+  const pipeline = createThreadDomPipeline({ callbacks: { escapeHtml } });
+  const tree = buildThreadTree([buildRootNode('u1', 'being edited'), buildRootNode('u2', 'settled sibling')]);
+  const fingerprints = new Map([['u1', 'fp-u1'], ['u2', 'fp-u2']]);
+  const html = pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    editingMessageId: 'u1',
+    messageFingerprintById: fingerprints,
+  }));
+  assert.equal((html.match(/data-thread-editing="true"/g) || []).length, 1);
+  const editedWrapper = html.match(/<div[^>]*data-thread-message-id="u1"[^>]*>/);
+  assert.ok(editedWrapper && /data-thread-editing="true"/.test(editedWrapper[0]), 'the edited root is marked');
+  const siblingWrapper = html.match(/<div[^>]*data-thread-message-id="u2"[^>]*>/);
+  assert.ok(siblingWrapper && !/data-thread-editing/.test(siblingWrapper[0]), 'the sibling is not');
+  const idle = pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    messageFingerprintById: fingerprints,
+  }));
+  assert.doesNotMatch(idle, /data-thread-editing/);
+});
+
 test('Review fix case 10: selectionModeActive suspends memo for every root', () => {
   // Selection mode grows a checkbox/handle on every settled root
   // (article-markup resolveSelectionState reads the pane's selection ownership

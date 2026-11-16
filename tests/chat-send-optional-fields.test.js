@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  buildChatSendOptionalFields, isPrimaryChatTurn, primaryChatRoleFields, safetyRequestFields,
+  buildChatSendOptionalFields, isPrimaryChatTurn, primaryChatRoleFields, routeTokenFields, safetyRequestFields,
 } = require('../services/backend/chat-send-optional-fields');
 const { startManagedSidecarChatStream } = require('../services/backend/managed-sidecar-chat');
 const {
@@ -97,4 +97,20 @@ test('chat.send carries session_role and the profile overview for the primary ch
   const off = await captureChatSend(service);
   assert.equal(Object.hasOwn(off, 'session_role'), false);
   assert.equal((off.context_blocks || []).some((block) => block.kind === 'profile_overview'), false);
+});
+
+// Slice 4a-4: the opaque routing token is sent only in the one shape the sidecar binds
+// (43 characters of unpadded base64url); anything else is omitted, never sent as null.
+test('routeTokenFields keeps exactly a 43-character base64url token and omits everything else', () => {
+  const token = Buffer.alloc(32, 7).toString('base64url');
+  assert.equal(token.length, 43);
+  assert.deepEqual(routeTokenFields(token), { route_token: token });
+  assert.deepEqual(routeTokenFields('A-_z'.repeat(10) + 'abc'), { route_token: 'A-_z'.repeat(10) + 'abc' });
+  for (const bad of [undefined, null, '', token.slice(1), `${token}A`, `${token.slice(1)}=`, `${token.slice(1)}+`,
+    `${token.slice(1)}/`, ` ${token.slice(1)}`, `${token.slice(1)}
+`, 43, { token }, [token], Buffer.from(token)]) {
+    const fields = routeTokenFields(bad);
+    assert.deepEqual(fields, {}, String(bad));
+    assert.equal(Object.hasOwn(fields, 'route_token'), false);
+  }
 });

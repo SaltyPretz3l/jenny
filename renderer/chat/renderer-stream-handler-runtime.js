@@ -48,6 +48,8 @@
       clearChatSendLifecycle = () => false,
       isCurrentSession = () => false,
       isVisibleChatSession = () => false,
+      // The one thinking indicator is pane 0's; only that pane's chat drives it.
+      isIndicatorSession = isVisibleChatSession,
       markHiddenRenderableEvent = () => {},
       dismissApprovalToast = () => {},
       // Background Effects v3 S5 W1b: complete impulse, fired right where a
@@ -105,7 +107,7 @@
     }
 
     function syncThinkingIndicatorMode(sessionId, nextMode) {
-      if (!thinkingIndicator || !isVisibleChatSession(sessionId)) return;
+      if (!thinkingIndicator || !isIndicatorSession(sessionId)) return;
       const displayState = thinkingIndicator.getDisplayState?.() || null;
       if (!displayState || displayState.mode === 'idle') {
         thinkingIndicator.startIndicator(nextMode || 'thinking');
@@ -114,14 +116,23 @@
       thinkingIndicator.updateIndicator(nextMode || displayState.mode);
     }
 
-    function completeThinkingIndicator(sessionId) {
-      if (thinkingIndicator && isVisibleChatSession(sessionId)) {
+    function completeThinkingIndicator(sessionId, streamId = '') {
+      if (thinkingIndicator && isIndicatorSession(sessionId) && !isSupersededStream(sessionId, streamId)) {
         thinkingIndicator.completeIndicator();
       }
     }
 
-    function resetThinkingIndicator(sessionId) {
-      if (thinkingIndicator && isVisibleChatSession(sessionId)) {
+    // A terminal of an older stream, while a newer one is live in the same chat.
+    function isSupersededStream(sessionId, streamId) {
+      const live = String(multiStreamController?.getStreamIdForSession?.(sessionId) || '').trim();
+      // Only a stream already finalized (stopped, pre-empted) is stale; an id
+      // this renderer never registered must still settle the turn.
+      return Boolean(streamId && live && live !== String(streamId).trim()
+        && multiStreamController?.isStreamFinalized?.(streamId) === true);
+    }
+
+    function resetThinkingIndicator(sessionId, streamId = '') {
+      if (thinkingIndicator && isIndicatorSession(sessionId) && !isSupersededStream(sessionId, streamId)) {
         thinkingIndicator.resetIndicator();
       }
     }
@@ -347,6 +358,8 @@
       if (!sessionId || !streamId) {
         return;
       }
+      // Read before the clear below marks this stream finalized.
+      const superseded = isSupersededStream(sessionId, streamId);
       clearTerminalStreamState(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
       // A resumed paused turn continues on a fresh stream, and the paused
       // stream never gets a terminal event of its own: release it here. A late
@@ -364,6 +377,8 @@
           }
         }
       }
+      // The newer turn owns the lifecycle, the composer notice and the queue.
+      if (superseded) return;
       setChatSendLifecycle(sessionId, 'settling');
       publishCompleteImpulse({ sessionId, streamId, timeStamp: payload && payload.timeStamp });
       if (options.clearComposerNotice !== false) {

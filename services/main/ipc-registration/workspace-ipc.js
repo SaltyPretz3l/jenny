@@ -43,14 +43,16 @@ function registerWorkspaceStateIpcHandlers(ipcMain, {
     authorization: workspaceAuthorization, userDataPath: app.getPath('userData'), // row 82 E3 hot exit backups
     getRootContext: () => backendService.workspaceRootCoordinator?.captureContext?.() || null, isWorkspaceBackupEnabled: () => backendService.featureFlags?.ide_hot_exit !== false,
   });
-  // W2-2 background jobs: snapshot, kill (an OS pid-tree kill) and the finished-job output tail
-  // (reads workspace files), all behind the trusted-sender authorizer like the workspace-mutating surface.
+  // W2-2 background jobs: snapshot, kill (an OS pid-tree kill), the output tail (reads workspace files)
+  // and Clear finished (row 138), all behind the trusted-sender authorizer like the workspace-mutating surface.
   registerIpcInvokeHandlers(ipcMain, {
     'backgroundJobs.getState': () =>
       backendService.backgroundJobTracker?.getState?.() || { jobs: [], generatedAt: '' },
     'backgroundJobs.kill': (_, jobId) => backendService.backgroundJobTracker?.killJob?.(jobId)
       || { ok: false, reason: 'unavailable' },
     'backgroundJobs.readOutput': (_, jobId) => backendService.backgroundJobTracker?.readOutput?.(jobId)
+      || { ok: false, reason: 'unavailable' },
+    'backgroundJobs.clearFinished': (_, sessionId) => backendService.backgroundJobTracker?.clearFinished?.(sessionId)
       || { ok: false, reason: 'unavailable' },
   }, workspaceAuthorization);
 }

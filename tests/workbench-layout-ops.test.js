@@ -539,3 +539,15 @@ test('structureSignature changes with ids, direction, kind and view order', () =
   assert.equal(structureSignature({}), '');
   assert.notEqual(sizeEntry(base, 'stack-1'), null);
 });
+
+test('board profile: moving a view and the render-time prune keep the profile and gain no Workspace view', () => {
+  const base = createDefaultLayout('board');
+  const moved = moveView(base, 'changes', { edge: 'left' });
+  assert.equal(moved.profile, 'board');
+  assert.equal(shape(moved.root), 'row(boards+changes,E,chat)');
+  assert.deepEqual(normalizeLayout(moved, 'board'), moved);
+  const pruned = pruneUnavailable(base, (id) => id !== 'changes');
+  assert.equal(pruned.profile, 'board');
+  assert.equal(shape(pruned.root), 'row(boards,E,chat)');
+  assert.equal(isLayoutEqual(base, createDefaultLayout()), false, 'a Board layout never equals the Workspace default');
+});

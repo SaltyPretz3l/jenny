@@ -23,6 +23,11 @@ test('data lifecycle startup owner handles an idle profile without side effects'
     assert.deepEqual(await promotePendingRestore(app, null), { ok: true, status: 'none' });
     assert.equal(await finalizeSuccessfulRestoredBoot(app), false);
     assert.equal(startUninstallAssistant([], root), false);
+    // The pre-window startup checks load neither graph (IPC registration loads restore-service later).
+    const loaded = Object.keys(require.cache).map((file) => file.split(path.sep).join('/'));
+    for (const heavy of ['data-lifecycle/restore-service.js', 'main/uninstall-assistant-main.js']) {
+      assert.equal(loaded.some((file) => file.endsWith(heavy)), false, `${heavy} stays unloaded`);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

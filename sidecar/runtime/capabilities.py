@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,7 +21,7 @@ from sidecar.ai.engines.ollama_model_info import (
 )
 from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
-from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
+from sidecar.ai.tools.builtins.workspace_cleanup import start_workspace_cleanup
 from sidecar.runtime.chat_workspace_capabilities import (
     CHAT_WORKSPACE_VERSION,
     latch_session_handoff,
@@ -53,7 +54,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.7.0"
+SERVER_VERSION = "1.8.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -69,12 +70,11 @@ _OLLAMA_CATALOG_METADATA_FIELDS = (
 def _cached_hardware_summary() -> dict[str, object] | None:
     """Return a hardware snapshot if already probed, else ``None``.
 
-    Never triggers a probe — safe to call from ``initialize``.
+    Never probes or imports the profile module: safe for ``initialize``.
     """
+    module = sys.modules.get("sidecar.runtime.hardware_profile")
     try:
-        from sidecar.runtime.hardware_profile import get_cached_hardware_summary
-
-        return get_cached_hardware_summary()
+        return module.get_cached_hardware_summary() if module is not None else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -211,7 +211,7 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
     stack = brain_container.configure(raw_config, **configure_kwargs)
     try:
         ws_root = stack.config.tools_workspace_root
-        cleanup_workspace_artifacts(Path(ws_root) if ws_root else None)
+        start_workspace_cleanup(Path(ws_root) if ws_root else None)  # beside the handshake
     except Exception:  # noqa: BLE001
         pass  # best-effort; never block initialization
     runtime_config = stack.config

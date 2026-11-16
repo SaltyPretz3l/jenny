@@ -127,11 +127,9 @@
   font-size: var(--tl-font-meta);
 }
 
-.cal-chat__jenny {
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
-  color: color-mix(in srgb, var(--accent-strong) 45%, var(--text-primary));
+.cal-chat__by,
+.cal-chat__asof {
+  color: var(--text-muted);
   font-size: var(--tl-font-meta);
 }
 
@@ -184,14 +182,10 @@
   font-size: var(--tl-font-ui);
 }
 
-.cal-chat__more {
-  margin-inline-end: auto;
-}
-
-.cal-chat__open-home {
+.cal-chat__open-home,
+.cal-chat__more-toggle {
   padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -199,32 +193,71 @@
   cursor: pointer;
 }
 
+.cal-chat__open-home {
+  border-bottom: 1px solid var(--line);
+}
+
+.cal-chat__more-toggle {
+  margin-inline-end: auto;
+  text-align: start;
+}
+
 .cal-chat__open-home:hover,
-.cal-chat__open-home:focus-visible {
+.cal-chat__open-home:focus-visible,
+.cal-chat__more-toggle:hover,
+.cal-chat__more-toggle:focus-visible {
   color: var(--text-primary);
 }
 
-.cal-chat__row--receipt .cal-chat__dot {
-  grid-column: 2;
-  grid-row: 1 / span 2;
+.cal-chat__omitted:first-child {
+  margin-inline-end: auto;
 }
 
-.cal-chat__row--receipt .cal-chat__title {
-  grid-column: 3;
-  grid-row: 1;
+[data-cal-more-row][hidden],
+[data-cal-earlier-line][hidden] {
+  display: none;
+}
+
+.cal-chat--receipt .cal-chat__row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.cal-chat--receipt .cal-chat__dot {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-inline-end: 2px;
+}
+
+.cal-chat__verb {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--tl-font-ui);
+  white-space: nowrap;
+}
+
+.cal-chat--receipt .cal-chat__title {
+  flex: 0 3 auto;
 }
 
 .cal-chat__when {
-  grid-column: 3;
-  grid-row: 2;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--tl-font-ui);
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.cal-chat__row--receipt .cal-chat__meta {
-  grid-column: 4;
-  grid-row: 1 / span 2;
+.cal-chat__when::before {
+  content: "\00b7" " ";
+}
+
+.cal-chat--receipt .cal-chat__undo {
+  opacity: 1;
 }
 
 .cal-chat__row--deleted .cal-chat__title {

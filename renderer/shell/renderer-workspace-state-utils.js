@@ -573,7 +573,11 @@
             ? [state.activeSessionId, ...state.openSessionIds.filter((e) => e !== state.activeSessionId)]
             : state.openSessionIds.slice();
           hydrateLayout(saved, validSet);
-          return commitState();
+          followRail();
+          // Restoring the stored rail and layout unchanged writes nothing (a pruned or refocused layout writes; main re-normalizes on it).
+          const shape = (r, l) => JSON.stringify([r?.activeSessionId, r?.openSessionIds, l?.panes?.map((p) => [p?.paneId, p?.sessionId]), l?.focusedPaneId, l?.splitRatio]);
+          if (options.preserveCurrentSession === true || !Array.isArray(saved?.panes) || shape(saved, saved) !== shape(snapshot(), readLayout())) await persist();
+          return publish();
         });
       },
 

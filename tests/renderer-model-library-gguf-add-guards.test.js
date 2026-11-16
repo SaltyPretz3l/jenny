@@ -150,6 +150,8 @@ async function addWith(options) {
 
 // The real Settings section, wired to real main for engine writes; `live`
 // holds what the next load reads.
+// Slice 6-7: model sharing's item leads every ⋯ menu (renderer-model-library-share.test.js pins it); these pins are the rest.
+const shareFirst = (items) => { assert.equal(items[0]?.label, 'Send to someone in your team…'); return items.slice(1); };
 function sectionHarness(t, options = {}) {
   const main = options.main || realMain(options.seed);
   const dom = new JSDOM(`<!doctype html><body>
@@ -158,8 +160,11 @@ function sectionHarness(t, options = {}) {
       <div id="modelLibrarySectionToolbarHost"></div>
       <div class="settings-note model-library-section-status" aria-live="polite"></div>
       <div id="modelLibrarySectionHost"></div>
+      <div id="modelLibraryFoldersHost"></div>
+      <div id="modelRunningHost"></div>
     </section>
   </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
+  // Row 139: the llama-server drawer mounts the folders host (stand-in above); Running now shows the running model.
   const windowRef = dom.window;
   const calls = [];
   const liveWrites = spyLiveRegion(windowRef);
@@ -169,7 +174,7 @@ function sectionHarness(t, options = {}) {
     pick: options.pick || { ok: true, picked: false, path: '' },
   };
   const state = {
-      features: { featureFlags: { llama_server_acceleration: true } },
+      features: { featureFlags: { llama_server_acceleration: true, team: true } }, // E72: the share item is drawn with Team on
     localEngines: main.service.getLocalEngines(),
     status: { model: options.activeModel || '' },
     offline: { preferredLocalModel: options.preferredLocalModel || '' },
@@ -221,14 +226,12 @@ function sectionHarness(t, options = {}) {
   const row = (key) => rows().find((el) => el.getAttribute('data-model-key') === key);
   const click = (element) => element.dispatchEvent(new windowRef.MouseEvent('click', { bubbles: true }));
   const menuButton = (key) => row(key).querySelector('[data-model-card-action="menu"]');
-  const menuFor = (key) => {
-    click(menuButton(key));
-    return calls.filter((entry) => entry[0] === 'menu').pop()[1].items;
-  };
+  const menuFor = (key) => { click(menuButton(key)); return shareFirst(calls.filter((entry) => entry[0] === 'menu').pop()[1].items); };
   return {
     main, doc, windowRef, calls, state, live, controller, card, rows, row, click, menuButton, menuFor, liveWrites,
     keys: () => rows().map((el) => el.getAttribute('data-model-key')),
-    meta: (key) => row(key)?.querySelector('.model-row-meta')?.textContent,
+    meta: (key) => row(key)?.querySelector('.mrow-meta')?.textContent,
+    running: () => card.querySelector('#modelRunningHost .mm-name')?.textContent,
     labels: (key) => menuFor(key).map((item) => item.label),
     statusLine: () => card.querySelector('.model-library-section-status').textContent,
     foldersLine: () => card.querySelector('.model-library-folders-status')?.textContent,
@@ -309,7 +312,7 @@ test('a library model keeps its own card and Remove after Ollama pulls a same-na
   await h.controller.refresh({ force: true });
   await flush();
   assert.deepEqual(h.keys().sort(), ['mistral', 'mistral:latest']);
-  assert.match(h.meta('mistral'), /^Local GGUF · /);
+  assert.match(h.meta('mistral'), /^llama-server · Local GGUF · /);
   assert.doesNotMatch(h.meta('mistral:latest'), /Local GGUF/);
   assert.deepEqual(h.labels('mistral'), ['Remove from library', 'Copy tag']);
   assert.deepEqual(h.labels('mistral:latest'), ['Remove…', 'Copy tag']);
@@ -337,12 +340,12 @@ test('served and active, an own-card library model keeps its alias and its Activ
   });
   h.controller.bind();
   await flush();
-  assert.deepEqual(h.keys().sort(), ['mistral', 'mistral:latest']);
-  assert.equal(h.row('mistral').getAttribute('data-active'), 'true');
-  assert.equal(h.row('mistral:latest').getAttribute('data-active'), 'false');
-  assert.doesNotMatch(h.meta('mistral:latest'), /default for local inference/, 'the default is the library model, not Ollama\'s');
-  assert.match(h.meta('mistral'), /^Local GGUF/);
-  assert.equal(h.row('mistral:latest').querySelector('.model-row-name').textContent, 'mistral:latest');
+  assert.equal(h.running(), 'mistral', 'Running now names the served library model');
+  assert.deepEqual(h.keys(), ['mistral:latest'], 'the running model is not listed again');
+  const ollama = h.row('mistral:latest');
+  assert.equal(ollama.getAttribute('data-active'), 'false');
+  assert.doesNotMatch(ollama.textContent, /Serving on|Local default/, 'the serving and the default are the library model\'s, not Ollama\'s');
+  assert.equal(ollama.querySelector('.mrow-name').textContent, 'mistral:latest');
   h.click(h.row('mistral:latest').querySelector('[data-model-card-action="use"]'));
   await flush();
   assert.deepEqual(h.calls.find((entry) => entry[0] === 'load')[1], { model: 'mistral:latest', engine_type: 'ollama' });
@@ -464,7 +467,7 @@ test('in the section, an Add keeps one live region through every re-render and f
   h.click(h.addModelButton());
   await flush();
   assert.equal(h.foldersLine(), `Added ${QWEN_TAG}.`);
-  assert.equal(h.doc.activeElement, h.addModelButton(), 'focus is on the re-rendered Add GGUF model… button');
+  // Focus on the re-rendered button is the services drawer's job since row 139 (renderer-model-library-services).
   const next = JSON.parse(JSON.stringify(h.main.service.getLocalEngines()));
   next.openaiCompatible.managed.libraryRoots = ['E:\\other'];
   h.controller.syncEngineSettings(next);

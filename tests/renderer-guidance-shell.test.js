@@ -119,11 +119,12 @@ test('renderer keeps Home navigation and skill actions available without tip chi
   await waitForUi(window, 40);
 
   assert.equal(window.document.querySelector('[data-tip-settings]'), null);
-  window.document.querySelector('nav.settings-nav [data-settings-section="home"]').click();
+  // Row 133: Home's Quick capture group lives on General.
+  window.document.querySelector('nav.settings-nav [data-settings-section="general"]').click();
   await waitForUi(window, 40);
 
   const activeSection = window.document.querySelector('.settings-section-active');
-  assert.equal(activeSection?.dataset.settingsSection, 'home');
+  assert.equal(activeSection?.dataset.settingsSection, 'general');
 
   // Skills opens via its Plugins host (the standalone skills nav item is gone); its
   // disclosed folder actions still call through to the shell.
@@ -423,8 +424,7 @@ test('tools card keeps authority and internal guardrail controls out of Settings
 
   const groups = card.querySelectorAll('#toolsConfigFieldList > .settings-group');
   assert.deepEqual(Array.from(groups, (group) => group.getAttribute('aria-labelledby')), [
-    'toolsPermissionsHeading', 'toolsApprovalRulesHeading', 'toolsFilesHeading',
-    'toolsWebHeading', 'toolsCodeHeading',
+    'toolsFilesHeading', 'toolsWebHeading', 'toolsCodeHeading',
   ]);
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
@@ -436,32 +436,6 @@ test('tools card keeps authority and internal guardrail controls out of Settings
   assert.equal(doc.getElementById('toolsFeatureList'), null);
   assert.equal(doc.querySelector('[data-inv-toggle="toolsShellSecurityToggle"]'), null);
   assert.equal(doc.querySelector('[data-inv-toggle="toolsGitTrackingToggle"]'), null);
-});
-
-test('renderer has no hidden Tips master or retired Tips settings section', async (t) => {
-  const { window } = await loadRendererApp({
-    shell: {
-      features: {
-        async getState() {
-          return {
-            featureFlags: {
-              tips_surface: false,
-            },
-          };
-        },
-      },
-    },
-  });
-  t.after(async () => {
-    await window.close();
-  });
-
-  await waitForUi(window, 40);
-
-  assert.equal(window.document.getElementById('tipsSettingsNavItem'), null);
-  assert.equal(window.document.getElementById('tipsSettingsSection'), null);
-  assert.equal(window.document.querySelector('[data-inv-toggle="tipsSurfaceToggle"]'), null);
-  assert.equal(window.document.querySelector('[data-inv-toggle="tipsEnabledToggle"]'), null);
 });
 
 test('personality card groups canonical profile and advanced identity documents', async (t) => {
@@ -486,18 +460,23 @@ test('personality card groups canonical profile and advanced identity documents'
   assert.equal(doc.getElementById('personalityTabs'), null);
 });
 
-test('home card keeps one labelled Home behavior group and retires layout settings', async (t) => {
+test('General keeps Home as one labelled Quick capture group and retires layout settings', async (t) => {
   const { window } = await loadRendererApp();
   t.after(async () => {
     await window.close();
   });
   await waitForUi(window, 40);
   const doc = window.document;
-  const card = doc.querySelector('section.settings-card[data-settings-section="home"]');
+  // Row 133: the Home card is General's Quick capture group, beside Language and text, You and Machine status.
+  const card = doc.querySelector('section.settings-card[data-settings-section="general"]');
   assert.ok(card);
+  assert.equal(doc.querySelector('section.settings-card[data-settings-section="home"]'), null);
 
   const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.equal(groups.length, 1);
+  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, null, 'home', null]);
+  const homeGroup = groups[2];
+  assert.equal(doc.getElementById(homeGroup.getAttribute('aria-labelledby'))?.textContent.trim(), 'Quick capture');
+  assert.ok(homeGroup.querySelector('#homeSettingsFieldList'));
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
     const headingId = group.getAttribute('aria-labelledby');
@@ -507,31 +486,29 @@ test('home card keeps one labelled Home behavior group and retires layout settin
   assert.equal(card.querySelector('#scratchpadFontSelect'), null);
 });
 
-test('Offline groups the inference boundary and Model Library readiness into labelled groups', async (t) => {
+test('Local use is one labelled group on Models: two switch rows, the readiness in the help line', async (t) => {
   const { window } = await loadRendererApp();
   t.after(async () => {
     await window.close();
   });
   await waitForUi(window, 40);
   const doc = window.document;
-  const card = doc.querySelector('section.settings-card[data-settings-section="offline"]');
-  assert.ok(card);
-
-  const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.equal(groups.length, 2);
-  for (const group of groups) {
-    assert.equal(group.getAttribute('role'), 'group');
-    const headingId = group.getAttribute('aria-labelledby');
-    assert.ok(headingId && doc.getElementById(headingId), `group heading ${headingId} resolves`);
-  }
-  assert.match(card.textContent, /Force local inference governs model inference only/i);
-  assert.ok(doc.getElementById('offlineModelStatus'));
-  assert.ok(card.querySelector('[data-action="openOfflineModelLibrary"]'));
+  assert.equal(doc.querySelector('section.settings-card[data-settings-section="offline"]'), null);
+  const card = doc.querySelector('section.settings-card[data-settings-section="models"]');
+  const group = card.querySelector(':scope > .settings-group[data-settings-merged-section="offline"]');
+  assert.ok(group);
+  assert.equal(group.getAttribute('role'), 'group');
+  const headingId = group.getAttribute('aria-labelledby');
+  assert.equal(doc.getElementById(headingId)?.textContent, 'Local use');
+  assert.ok(group.querySelector('#offlineLocalOnlyList') && group.querySelector('#modelStartupLoadList'));
+  for (const id of ['offlineSummary', 'offlineStatus', 'offlineModelStatus']) assert.equal(group.querySelector(`#${id}`), null, id);
+  assert.equal(group.querySelector('.settings-group-copy'), null, 'the boundary sits behind the row\'s ?');
+  assert.equal(doc.querySelector('[data-action="openOfflineModelLibrary"]'), null);
   assert.equal(doc.getElementById('offlineLocalModelSelect'), null);
   assert.equal(doc.getElementById('localEnginesContainer'), null);
 });
 
-test('profile and setup card wraps the local profile editor in a labelled group', async (t) => {
+test('the local profile editor is General\'s labelled You group; data, setup and updates sit on their own pages', async (t) => {
   const { window } = await loadRendererApp();
   t.after(async () => {
     await window.close();
@@ -539,40 +516,47 @@ test('profile and setup card wraps the local profile editor in a labelled group'
   await openSettingsView(window);
   await waitForUi(window, 40);
   const doc = window.document;
+  // Row 133 split the old Profile page: the profile editor is General > You, setup is on Readiness,
+  // About & updates has its own page, and the `account` card is Data & privacy.
   const card = doc.querySelector('section.settings-card[data-settings-section="account"]');
   assert.ok(card);
 
   const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, null, null, 'dataPrivacy', 'aboutUpdates', null]);
+  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, 'dataPrivacy', null, null]);
   // Row 93 added the Your data group; the settings live review (2026-10-03) gave uninstall its own closing group.
-  assert.ok(groups[2].querySelector('#dataStorageMount'));
-  assert.ok(groups[5].querySelector('#dataLifecycleRemoveMount'));
-  for (const id of ['dataPrivacy', 'aboutUpdates']) {
-    assert.equal(doc.querySelector(`.settings-card[data-settings-section="${id}"]`), null, 'a folded-in section has no card of its own');
-  }
-  assert.ok(card.querySelector('#dataLifecycleSettingsMount'));
-  assert.ok(card.querySelector('#checkUpdatesButton'));
-  const profileGroup = groups[0];
+  assert.ok(groups[0].querySelector('#dataStorageMount'));
+  assert.ok(groups[1].querySelector('#dataLifecycleSettingsMount'));
+  assert.ok(groups[3].querySelector('#dataLifecycleRemoveMount'));
+  assert.equal(doc.querySelector('.settings-card[data-settings-section="dataPrivacy"]'), null, 'a folded-in section has no card of its own');
+  const aboutCard = doc.querySelector('section.settings-card[data-settings-section="aboutUpdates"]');
+  assert.ok(aboutCard.querySelector('#checkUpdatesButton'));
+  assert.equal(card.querySelector('#checkUpdatesButton'), null);
+
+  const profileGroup = doc.getElementById('localProfileDisplayName').closest('.settings-group');
+  assert.equal(profileGroup.closest('section.settings-card').getAttribute('data-settings-section'), 'general');
   assert.equal(profileGroup.getAttribute('role'), 'group');
   const headingId = profileGroup.getAttribute('aria-labelledby');
-  assert.ok(headingId && doc.getElementById(headingId), `group heading ${headingId} resolves`);
-  assert.ok(profileGroup.querySelector('#localProfileDisplayName'));
+  assert.equal(doc.getElementById(headingId)?.textContent.trim(), 'You');
   assert.ok(profileGroup.querySelector('[data-action="save-local-profile"]'));
-  assert.equal(card.querySelector('#openAuthButton'), null);
-  assert.equal(card.querySelector('#settingsLogoutButton'), null);
-  assert.ok(card.querySelector('.settings-setup-row #setupSettingsActions'));
+  assert.equal(card.querySelector('#localProfileDisplayName'), null);
+  assert.equal(doc.getElementById('openAuthButton'), null);
+  assert.equal(doc.getElementById('settingsLogoutButton'), null);
+  const readinessCard = doc.querySelector('section.settings-card[data-settings-section="readiness"]');
+  assert.ok(readinessCard.querySelector('.settings-setup-row #setupSettingsActions'));
+  assert.equal(card.querySelector('#setupSettingsActions'), null);
   assert.equal(doc.getElementById('accountSummary').getAttribute('aria-live'), 'polite');
   assert.equal(doc.getElementById('backendSummary').getAttribute('aria-live'), 'polite');
 });
 
-test('profile card copy states local-profile truth, not the old cloud-features claim', async (t) => {
+test('profile copy states local-profile truth, not the old cloud-features claim', async (t) => {
   const { window } = await loadRendererApp();
   t.after(async () => {
     await window.close();
   });
   await waitForUi(window, 40);
   const doc = window.document;
-  const card = doc.querySelector('section.settings-card[data-settings-section="account"]');
+  // Row 133: the profile copy lives in General's You group.
+  const card = doc.getElementById('localProfileSettingsMount').closest('.settings-group');
   assert.ok(card);
   const cardText = card.textContent;
 

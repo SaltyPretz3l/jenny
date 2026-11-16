@@ -3,108 +3,14 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 /* Load new inventory primitives. */
-const FaviconBadge = require('../renderer/inventory/favicon-badge');
 const progressBar = require('../renderer/inventory/progress-bar');
 const ToggleSwitch = require('../renderer/inventory/toggle-switch');
 const contextMenu = require('../renderer/inventory/context-menu');
 
 /* Load renderer utils. */
-const sourceUtils = require('../renderer/chat/renderer-source-utils');
 const errorRecoveryUtils = require('../renderer/chat/renderer-error-recovery-utils');
 const artifactCardUtils = require('../renderer/chat/renderer-artifact-card-utils');
 const contextUsageUtils = require('../renderer/chat/renderer-context-usage-utils');
-
-/* ══════════════════════════════════════════════════════
-   FaviconBadge
-   ══════════════════════════════════════════════════════ */
-
-test('faviconBadge renders link with local initial glyph', () => {
-  const html = FaviconBadge.faviconBadge({ url: 'https://example.com/page' });
-  assert.ok(html.includes('class="inv-favicon-badge"'), 'has badge class');
-  assert.ok(html.includes('href="https://example.com/page"'), 'has href');
-  assert.ok(html.includes('target="_blank"'), 'opens in new tab');
-  assert.ok(html.includes('inv-favicon-initial'), 'has local initial badge');
-  assert.ok(!html.includes('google.com/s2/favicons'), 'does not use external favicon service');
-});
-
-test('faviconBadge renders title text', () => {
-  const html = FaviconBadge.faviconBadge({ url: 'https://example.com', title: 'Example Site' });
-  assert.ok(html.includes('Example Site'), 'title in badge');
-});
-
-test('faviconBadge escapes special characters', () => {
-  const html = FaviconBadge.faviconBadge({ url: 'https://example.com', title: '<script>xss</script>' });
-  assert.ok(!html.includes('<script>'), 'no raw script tag');
-  assert.ok(html.includes('&lt;script&gt;'), 'escaped');
-});
-
-test('faviconBadge falls back to domain when no title', () => {
-  const html = FaviconBadge.faviconBadge({ url: 'https://docs.python.org/3/' });
-  assert.ok(html.includes('docs.python.org'), 'domain shown');
-});
-
-test('faviconBadgeGroup renders multiple badges', () => {
-  const html = FaviconBadge.faviconBadgeGroup({
-    sources: [
-      { url: 'https://a.com', title: 'A' },
-      { url: 'https://b.com', title: 'B' },
-    ],
-  });
-  assert.ok(html.includes('inv-source-group'), 'has group wrapper');
-  assert.ok(html.includes('A'), 'first badge');
-  assert.ok(html.includes('B'), 'second badge');
-});
-
-test('faviconBadgeGroup returns empty string for no sources', () => {
-  const html = FaviconBadge.faviconBadgeGroup({ sources: [] });
-  assert.strictEqual(html, '', 'empty for no sources');
-});
-
-test('faviconBadgeGroup collapses overflow', () => {
-  const sources = [];
-  for (let i = 0; i < 12; i++) {
-    sources.push({ url: `https://${i}.example.com`, title: `Site ${i}` });
-  }
-  const html = FaviconBadge.faviconBadgeGroup({ sources, maxVisible: 5 });
-  assert.ok(html.includes('inv-source-toggle'), 'has toggle button');
-  assert.ok(html.includes('+7 more'), 'shows overflow count');
-  assert.ok(html.includes('inv-source-overflow'), 'has overflow container');
-});
-
-test('initFaviconHandlers updates aria-label and button text on overflow toggle', () => {
-  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
-  const root = dom.window.document.getElementById('root');
-  root.innerHTML = FaviconBadge.faviconBadgeGroup({
-    sources: [
-      { url: 'https://a.com', title: 'A' },
-      { url: 'https://b.com', title: 'B' },
-      { url: 'https://c.com', title: 'C' },
-    ],
-    maxVisible: 1,
-    groupId: 'group-1',
-  });
-
-  FaviconBadge.initFaviconHandlers(root);
-  const btn = root.querySelector('[data-inv-source-toggle="group-1"]');
-  const overflow = root.querySelector('[data-inv-overflow-id="group-1"]');
-  assert.equal(btn.getAttribute('aria-label'), 'Show 2 more sources');
-  assert.equal(btn.textContent, '+2 more');
-  assert.equal(overflow.hidden, true);
-
-  btn.click();
-  assert.equal(btn.getAttribute('aria-label'), 'Show fewer sources');
-  assert.equal(btn.textContent, 'Show less');
-  assert.equal(overflow.hidden, false);
-
-  btn.click();
-  assert.equal(btn.getAttribute('aria-label'), 'Show 2 more sources');
-  assert.equal(btn.textContent, '+2 more');
-  assert.equal(overflow.hidden, true);
-});
-
-test('extractDomain strips www prefix', () => {
-  assert.strictEqual(FaviconBadge.extractDomain('https://www.example.com/page'), 'example.com');
-});
 
 /* ══════════════════════════════════════════════════════
    ProgressBar
@@ -196,72 +102,8 @@ test('toggleSwitch strips unsafe custom className content', () => {
 });
 
 /* ══════════════════════════════════════════════════════
-   Source Parser
-   ══════════════════════════════════════════════════════ */
-
-test('parseSources handles JSON web_search output', () => {
-  const json = JSON.stringify({
-    query: 'test',
-    answer: 'Some answer',
-    sources: [
-      { url: 'https://example.com', title: 'Example', snippet: 'A snippet' },
-      { url: 'https://other.org', title: 'Other', snippet: '' },
-    ],
-    citations: [],
-  });
-  const result = sourceUtils.parseSources(json);
-  assert.strictEqual(result.answer, 'Some answer');
-  assert.strictEqual(result.sources.length, 2);
-  assert.strictEqual(result.sources[0].domain, 'example.com');
-  assert.strictEqual(result.sources[1].url, 'https://other.org');
-});
-
-test('parseSources handles block format fallback', () => {
-  const text = 'Title: Example Page\nURL: https://example.com\nSnippet: A description\n\nTitle: Other\nURL: https://other.org\nSnippet: More info';
-  const result = sourceUtils.parseSources(text);
-  assert.strictEqual(result.sources.length, 2);
-  assert.strictEqual(result.sources[0].title, 'Example Page');
-  assert.strictEqual(result.sources[0].url, 'https://example.com');
-  assert.strictEqual(result.sources[1].title, 'Other');
-});
-
-test('parseSources returns empty for non-matching text', () => {
-  const result = sourceUtils.parseSources('Just some random text');
-  assert.strictEqual(result.sources.length, 0);
-});
-
-test('parseSources drops non-http citation URLs', () => {
-  const json = JSON.stringify({
-    answer: 'Unsafe links test',
-    sources: [
-      { url: 'javascript:alert(1)', title: 'Bad' },
-      { url: 'https://example.com', title: 'Good' },
-    ],
-  });
-  const result = sourceUtils.parseSources(json);
-  assert.strictEqual(result.sources.length, 1);
-  assert.strictEqual(result.sources[0].url, 'https://example.com');
-});
-
-test('parseSources returns empty for empty input', () => {
-  const result = sourceUtils.parseSources('');
-  assert.strictEqual(result.sources.length, 0);
-});
-
-/* ══════════════════════════════════════════════════════
    Error Classification
    ══════════════════════════════════════════════════��═══ */
-
-test('isAllowedCitationUrl accepts http and https only', () => {
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('https://example.com'), true);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('http://example.com'), true);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('javascript:alert(1)'), false);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('data:text/html,<h1>hi</h1>'), false);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('ftp://files.example.com'), false);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl('file:///etc/passwd'), false);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl(''), false);
-  assert.strictEqual(sourceUtils.isAllowedCitationUrl(null), false);
-});
 
 test('classifyError recognizes transport errors', () => {
   assert.strictEqual(errorRecoveryUtils.classifyError('CMP-AI-0002'), 'transport');
@@ -761,7 +603,6 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
   const prevSpinner = global.inventorySpinner;
   const prevCollapsible = global.inventoryCollapsible;
   const prevCodeBlock = global.inventoryCodeBlock;
-  const prevFaviconBadge = global.inventoryFaviconBadge;
   const prevProgressBar = global.inventoryProgressBar;
   const prevStatusRow = global.inventoryStatusRow;
   const prevToggle = global.inventoryToggleSwitch;
@@ -772,7 +613,6 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
   global.__inventoryHandlersInstalled = false;
   var calls = {
     copy: 0,
-    favicon: 0,
     toggle: 0,
     collapsible: 0,
   };
@@ -780,7 +620,6 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
   global.inventorySpinner = () => 'spinner';
   global.inventoryCollapsible = { initCollapsibleHandlers: () => { calls.collapsible += 1; } };
   global.inventoryCodeBlock = { initCopyHandlers: () => { calls.copy += 1; } };
-  global.inventoryFaviconBadge = { initFaviconHandlers: () => { calls.favicon += 1; } };
   global.inventoryProgressBar = () => 'progress';
   global.inventoryStatusRow = () => 'status-row';
   // toggle-switch's UMD global is the module object; the barrel unwraps it to the
@@ -796,17 +635,14 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
 
   assert.ok(inventory.collapsible, 'collapsible exported');
   assert.ok(inventory.codeBlock, 'codeBlock exported');
-  assert.ok(inventory.faviconBadge, 'faviconBadge exported');
   assert.ok(inventory.statusRow, 'statusRow exported');
   assert.ok(inventory.toggleSwitch, 'toggleSwitch exported');
   assert.equal(typeof inventory.toggleSwitch, 'function', 'toggleSwitch is the render function');
   assert.ok(inventory.selectField, 'selectField exported');
   assert.strictEqual(inventory.Collapsible, undefined, 'no PascalCase alias for collapsible');
   assert.strictEqual(inventory.CodeBlock, undefined, 'no PascalCase alias for codeBlock');
-  assert.strictEqual(inventory.FaviconBadge, undefined, 'no PascalCase alias for faviconBadge');
   assert.strictEqual(inventory.ToggleSwitch, undefined, 'no PascalCase alias for toggleSwitch');
   assert.equal(calls.copy, 1);
-  assert.equal(calls.favicon, 1);
   assert.equal(calls.toggle, 1);
   assert.equal(calls.collapsible, 1);
 
@@ -817,7 +653,6 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
   global.inventorySpinner = prevSpinner;
   global.inventoryCollapsible = prevCollapsible;
   global.inventoryCodeBlock = prevCodeBlock;
-  global.inventoryFaviconBadge = prevFaviconBadge;
   global.inventoryProgressBar = prevProgressBar;
   global.inventoryStatusRow = prevStatusRow;
   global.inventoryToggleSwitch = prevToggle;

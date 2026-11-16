@@ -84,7 +84,14 @@
       : jt('models.library.runtime.buildCantRead', 'Could not start {model}: its llama-server build can\'t read this file\'s format. Choose a build that can in Tune.', { model: model });
   }
 
+  // Row 142: only a launch code that is about the build (it can't read the file, or it is
+  // gone) earns "Use build N" buttons; memory, port or file failures never do.
+  function isBuildFailure(message) {
+    return /\bllama_server_(?:model_unsupported:(?:bundled|custom)|runtime_missing:(?:b\d{3,9}|runtime))\b/.test(String(message == null ? '' : message));
+  }
+
   return {
+    isBuildFailure: isBuildFailure,
     formatHumanSize: formatHumanSize,
     formatBytesShort: formatBytesShort,
     canonicalOllamaTag: canonicalOllamaTag,

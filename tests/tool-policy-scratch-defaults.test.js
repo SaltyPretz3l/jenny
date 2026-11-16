@@ -2,7 +2,7 @@
 
 // Owner decision 2026-09-22: approval is for the user's files and commands.
 // The in-session todo list and inert create_artifact documents are the
-// model's own scratch state (Claude Code parity). Mirrors the sidecar's
+// model's own scratch state. Mirrors the sidecar's
 // tests/sidecar/ai/tools/test_policy.py; the two evaluators must agree,
 // because the Electron execution authority re-checks every call.
 

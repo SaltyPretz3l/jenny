@@ -91,16 +91,41 @@ test('link hrefs that would reach a file host are dropped and the text kept', ()
   }
 });
 
-test('https, http, mailto, in-page and relative link hrefs are unchanged', () => {
+test('https, http, mailto and in-page link hrefs are unchanged', () => {
   for (const [input, href] of [
     ['[x](https://example.com/a?b=1)', 'https://example.com/a?b=1'],
     ['[x](http://example.com/)', 'http://example.com/'],
     ['[x](mailto:someone@example.com)', 'mailto:someone@example.com'],
     ['[x](#section-2)', '#section-2'],
-    ['[x](docs/readme.md)', 'docs/readme.md'],
-    ['[x](./docs/readme.md)', './docs/readme.md'],
-    ['[x](/docs/readme.md)', '/docs/readme.md'],
+    ['[x](#a)', '#a'],
+    ['<a href=" #a">x</a>', '#a'],
   ]) {
     assert.equal(anchor(input).href, href, JSON.stringify(input));
+  }
+});
+
+// Team review R13-F01: a relative link resolves against the app's own file:// page, so a click
+// reloads or replaces the app window (`?jennyUiLanguage=...` even re-runs the boot scripts with
+// the link's query). Any href that resolves to a file: URL, other than an in-page `#` link,
+// keeps its text and loses the href, like a disallowed scheme.
+test('link hrefs that would navigate or reload the app window are dropped and the text kept', () => {
+  for (const input of [
+    '[x](?lang=xx)',
+    '[x](?jennyUiLanguage=qps-ploc&jennyAppearance=%7B%22paletteId%22%3A%22chalk%22%7D)',
+    '[x](index.html?x)',
+    '[x](./?x)',
+    '[x](./index.html?x#a)',
+    '[x](file:///C:/Program%20Files/Jenny/resources/app/index.html?jennyUiLanguage=ar)',
+    '<a href="file:///C:/Program%20Files/Jenny/resources/app/index.html?x=1">x</a>',
+    '[x](other.html)',
+    '[x](docs/readme.md)',
+    '[x](./docs/readme.md)',
+    '[x](/docs/readme.md)',
+    '<a href="">x</a>',
+    '<a href=" ?x">x</a>',
+  ]) {
+    const result = anchor(input);
+    assert.equal(result.href, null, `href dropped for ${JSON.stringify(input)}`);
+    assert.equal(result.text, 'x', `text kept for ${JSON.stringify(input)}`);
   }
 });

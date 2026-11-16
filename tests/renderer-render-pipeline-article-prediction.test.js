@@ -134,3 +134,24 @@ test('a reader following the latest message never gets a painted reservation', (
   prediction.syncPatchedArticlePrediction('m1', 240);
   assert.equal(article.style.minHeight, '240px', 'a reader who scrolled away keeps the reservation');
 });
+
+// Split panes (scroll-away-nav 4): the patch sync reads the pane's own follow state.
+test('the patch sync reserves by the pane’s own follow state, not pane 0’s', (t) => {
+  const dom = new JSDOM('<!doctype html><div id="timeline"><article id="a"></article></div>');
+  t.after(() => dom.window.close());
+  const article = dom.window.document.getElementById('a');
+  const state = { ui: { followLatest: false } };
+  let paneFollows = true;
+  const prediction = createArticlePrediction({
+    state,
+    isFollowingLatest: () => paneFollows,
+    chatTimeline: dom.window.document.getElementById('timeline'),
+    resolveVisibleTurnArticleTarget: () => article,
+  });
+  prediction.syncPatchedArticlePrediction('m1', 240);
+  assert.equal(article.style.minHeight, '', 'this pane follows: no reservation');
+  paneFollows = false;
+  state.ui.followLatest = true;
+  prediction.syncPatchedArticlePrediction('m1', 240);
+  assert.equal(article.style.minHeight, '240px', 'this pane scrolled away keeps the reservation');
+});

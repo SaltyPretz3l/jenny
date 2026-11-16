@@ -19,6 +19,9 @@ class RuntimeOperations {
 
   reserveInitial() { return this.inference.reserveInitial(); }
 
+  // What this request's latest waiting model admit waits behind, or null.
+  inferenceWait() { return this.inference.wait; }
+
   enableContinuation() { return this.tools.enableContinuation(); }
 
   snapshot() {

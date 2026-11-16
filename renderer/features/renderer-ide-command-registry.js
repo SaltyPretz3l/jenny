@@ -1,5 +1,5 @@
 /* renderer/features/renderer-ide-command-registry.js - Workspace IDE command registry
- * and keymap table (row 82, VS Code parity; plan docs/plans/IDE_VSCODE_PARITY_2026-10-26.md
+ * and keymap table (row 82; plan docs/plans/IDE_VSCODE_PARITY_2026-10-26.md
  * section 5.1).
  *
  * One table of commands: each has an id, a palette label and group, optional chords in

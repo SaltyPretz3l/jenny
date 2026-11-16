@@ -74,6 +74,8 @@ const JSDOM_CHAIN_BASENAME_PATTERNS = [
   /^renderer-incremental-dom\.test\.js$/,
   /^renderer-controller-dispose\.test\.js$/,
   /^renderer-workspace-shell\.test\.js$/,
+  // Timed: 24 cases with ceilings ten times a quiet machine's (row 150 P5). In the pool a ceiling would measure the pool.
+  /^board-perf-500\.test\.js$/,
 ];
 SEQUENTIAL_BASENAME_PATTERNS.push(...JSDOM_CHAIN_BASENAME_PATTERNS);
 

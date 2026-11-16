@@ -17,6 +17,10 @@
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
+  // Outside-Workspace documents (row 137) are keyed outside://<id>/<name> and are not in the tree.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+  const isOutsideDoc = (path) => outsideDocs()?.isOutsideKey(path) === true;
+
   // Private DnD payload marker for a file dragged out of the IDE tree (the
   // producer is renderer-ide-tree.js). The stage drop target accepts only this
   // mime, which is what keeps OS/external file drops out. Wire contract - the
@@ -115,7 +119,7 @@
         activePath: ide.activeTabPath,
         isDirty: (path) => !isReviewSurface(path) && isDirty(path),
         displayName: tabsModule.tabDisplayName || ((tab) => String(tab.path).split('/').pop() || String(tab.path)),
-        folderOf: (tab) => (isReviewSurface(tab.path) ? '' : String(tab.path).split('/').slice(0, -1).join('/')),
+        folderOf: (tab) => (isOutsideDoc(tab.path) ? outsideDocs().describe(tab.path)?.dirLabel || '' : isReviewSurface(tab.path) ? '' : String(tab.path).split('/').slice(0, -1).join('/')),
         onActivate: activateTab,
         onCloseSaved: () => closeSaved(),
         onCloseAll: () => closeAll(),
@@ -261,10 +265,11 @@
         );
         // Copy Path / Copy Relative Path / OS reveal ride in through
         // buildExtraMenuItems (the controller's shared path utilities).
-        items.push(
-          { separator: true },
-          { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => revealInExplorer(path) }
-        );
+        // An outside-Workspace document (row 137) is not in the tree: no Reveal in Explorer View.
+        items.push({ separator: true });
+        if (!isOutsideDoc(path)) {
+          items.push({ label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => revealInExplorer(path) });
+        }
         items.push(...buildExtraMenuItems(path));
       } else if (isDiffTabId(path)) {
         // A diff tab can move between editor groups (row 40 W7c): only the move items.

@@ -40,6 +40,8 @@ FIRST_PRINTABLE = 32
 # Shipped already signed by their vendor (CPython by the PSF, node-pty's ConPTY
 # host by Microsoft) and left that way; mirrors the negatives in win.signExts.
 THIRD_PARTY_SIGNED = frozenset({"python.exe", "pythonw.exe", "openconsole.exe"})
+# Jenny's own libraries, signed as Jenny through win.signExts (the same names).
+SIGNED_LIBRARIES = ("jenny_file_access.dll",)
 INSTALLER = "Jenny-Setup-x64.exe"
 BASE_CONFIG = "electron-builder.yml"
 
@@ -98,12 +100,13 @@ def signed_config(settings: Mapping[str, str]) -> dict:
 
 
 def signature_targets(dist: Path) -> list[Path]:
-    """The installer plus every executable in the unpacked app."""
+    """The installer, every executable in the unpacked app, and Jenny's own signed libraries."""
     installer = dist / INSTALLER
     unpacked = dist / "win-unpacked"
     if not installer.is_file() or not unpacked.is_dir():
         raise FileNotFoundError(f"Windows build output not found under {dist}")
-    return [installer, *sorted(unpacked.rglob("*.exe"))]
+    libraries = [path for name in SIGNED_LIBRARIES for path in sorted(unpacked.rglob(name))]
+    return [installer, *sorted(unpacked.rglob("*.exe")), *libraries]
 
 
 def _powershell_runner(command: Sequence[str], env: Mapping[str, str]) -> str:

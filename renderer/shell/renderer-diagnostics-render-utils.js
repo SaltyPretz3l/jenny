@@ -166,6 +166,7 @@
     var activityCache = {
       signature: '',
       filterAnnouncementSignature: '',
+      announceTimer: null,
       ids: [],
       selectedEntryId: '',
     };
@@ -230,6 +231,8 @@
     function dispose() {
       if (frame != null) (window.cancelAnimationFrame || clearTimeout)(frame);
       frame = null;
+      clearTimeout(activityCache.announceTimer);
+      activityCache.announceTimer = null;
       activityCache.ids = [];
       virtualizer?.dispose?.();
       runsPanel?.removeEventListener('click', onRunsClick);

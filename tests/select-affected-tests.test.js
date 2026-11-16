@@ -58,7 +58,7 @@ test('one changed source unmapped -> mode fallback, reason mentions the unmapped
   assert.equal(plan.mode, 'fallback');
   assert.deepEqual(plan.unmappedSources, ['services/mystery.js']);
   assert.match(plan.fallbackReason, /services\/mystery\.js/);
-  assert.match(plan.bannerLine, /falling back to stable lane/);
+  assert.match(plan.bannerLine, /falling back to the fast lane/);
   assert.match(plan.bannerLine, /1 unmapped/);
 });
 
@@ -77,7 +77,7 @@ test('zero changed sources -> mode fallback', () => {
   assert.equal(plan.tests.length, 0);
   assert.equal(plan.combinedCount, 0);
   assert.match(plan.fallbackReason, /no changed sources/);
-  assert.equal(plan.bannerLine, '[affected] 0 sources -> falling back to stable lane');
+  assert.equal(plan.bannerLine, '[affected] 0 sources -> falling back to the fast lane');
 });
 
 test('git unavailable (non-null reason) -> mode fallback, reason mentions git', () => {
@@ -94,7 +94,7 @@ test('git unavailable (non-null reason) -> mode fallback, reason mentions git', 
   assert.equal(plan.mode, 'fallback');
   assert.equal(plan.combinedCount, 0);
   assert.match(plan.fallbackReason, /git unavailable/);
-  assert.equal(plan.bannerLine, '[affected] git unavailable -> falling back to stable lane');
+  assert.equal(plan.bannerLine, '[affected] git unavailable -> falling back to the fast lane');
 });
 
 // --- source admission: JS production sources plus sidecar python -------------
@@ -177,10 +177,27 @@ test('buildLanePlan (affected, node-only) -> pytest lane is null', () => {
   assert.equal(lanes.pytestArgs, null);
 });
 
-test('buildLanePlan (fallback) -> stable node lane only, no pytest lane', () => {
+test('buildLanePlan (fallback) -> fast node lane only, no pytest lane', () => {
   const lanes = sel.buildLanePlan({ mode: 'fallback', tests: [] });
-  assert.deepEqual(lanes.nodeArgs, ['tests/', '--parallel-only', '--timeout-ms=600000']);
+  assert.deepEqual(lanes.nodeArgs, ['tests/', '--fast-only', '--timeout-ms=600000']);
   assert.equal(lanes.pytestArgs, null);
+});
+
+test('buildLanePlan (fallback) names the mapped node tests so the fast lane cannot leave them out', () => {
+  const lanes = sel.buildLanePlan({
+    mode: 'fallback',
+    tests: ['tests/workspace-git-service.test.js', 'tests/sidecar/test_known.py', 'tests/managed-sidecar/managed-sidecar-startup.test.js'],
+  });
+  assert.deepEqual(lanes.nodeArgs, [
+    'tests/',
+    'tests/workspace-git-service.test.js',
+    'tests/managed-sidecar/managed-sidecar-startup.test.js',
+    '--fast-only',
+    '--timeout-ms=600000',
+  ]);
+  assert.deepEqual(lanes.pytestArgs, ['-m', 'pytest', '-q', 'tests/sidecar/test_known.py']);
+  // That a named file survives --fast-only is the runner's promise, tested in
+  // tests/run-node-tests-safe-slow-lane.test.js.
 });
 
 test('CHK-03: unmapped Python fallback runs the existing fast lane and retains mapped tests', () => {

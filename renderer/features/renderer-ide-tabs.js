@@ -108,6 +108,8 @@
   }
 
   const isReviewTab = (tab) => tab?.kind === 'diff' || tab?.kind === 'preview';
+  // Outside-Workspace documents (row 137): the registry knows the real path behind a key.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
 
   // Diff labels read "{file} (Jenny's change)" / "{file} (unsaved vs saved)":
   // the strip shows the file name and moves the parenthetical to the suffix slot.
@@ -130,6 +132,12 @@
       if (!tab || isReviewTab(tab) || typeof tab.path !== 'string') continue;
       const segments = tab.path.replace(/\\/g, '/').split('/').filter(Boolean);
       const name = segments.pop() || tab.path;
+      // An outside document (row 137) tells same-named tabs apart by the last folder of its real path.
+      if (outsideDocs()?.isOutsideKey(tab.path)) {
+        const dirSegments = String(outsideDocs().describe(tab.path)?.dirLabel || '').split(/[\\/]/).filter(Boolean);
+        segments.length = 0;
+        segments.push(...dirSegments.slice(-1));
+      }
       if (!groups.has(name)) groups.set(name, []);
       groups.get(name).push({ path: tab.path, parents: segments });
     }
@@ -192,6 +200,8 @@
     // A secondary editor group points its tabs at its own stage panel.
     const ariaControls = String(deps?.ariaControls || 'ideEditorStage');
 
+    const displayPath = (key) => outsideDocs()?.displayPathFor(key) ?? key;
+
     function buildTabMarkup(tab, { active, dirty, stale, pinned, suffix, git }) {
       if (!actionButton) {
         return '';
@@ -250,7 +260,7 @@
         ariaControls,
         tabIndex: active ? 0 : -1,
         title: isDraft ? jt('ide.tabs.draftTitle', "Jenny's draft of {path}. Not saved.", { path: tab.filePath || fullName })
-          : isDiff ? fullName : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: tab.path }) : tab.path,
+          : isDiff ? fullName : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: displayPath(tab.path) }) : displayPath(tab.path),
         dataset: { 'ide-tab-path': tab.path },
         trustedHtml: icon
           + `<span class="ide-tab-name">${escapeHtml(name)}</span>`

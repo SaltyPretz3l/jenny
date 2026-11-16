@@ -11,6 +11,7 @@ const { command } = require('../helpers/command-router-fixture');
 const { assertOwnerInvariant } = require('./helpers/team-store-fixture');
 const { createTeamCommandsFixture } = require('./helpers/team-commands-fixture');
 const { createTeamHostFixture } = require('./helpers/team-host-fixture');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 const owners = (store) => store.snapshot().members.filter((member) => member.role === 'owner')
   .map((member) => member.member_id);
@@ -161,7 +162,7 @@ test('a crash between the audit write and the document write leaves the old owne
 test('a recovery invite minted before the transfer no longer redeems', async (t) => {
   const f = await createTeamCommandsFixture(t);
   const { owner, alice } = f.seats;
-  const minted = await f.invites.create({ kind: 'recovery' });
+  const minted = await f.invites.create({ kind: 'recovery', actorMemberId: LOCAL_COMMAND });
   assert.equal(minted.ok, true);
   assert.equal((await f.send(owner, 'team.owner.transfer', { member_id: alice.member_id })).ok, true);
   const redeemed = await f.invites.redeem({ inviteId: minted.invite_id, devicePublicKey: f.fx.nextKey('recovered'),

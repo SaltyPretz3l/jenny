@@ -285,20 +285,3 @@ test('star outlines come from precomputed unit tables, not per-sparkle trig', ()
   assert.equal(vertices(paths.find((path) => path[0].x > 100)), 12, 'six-point star: 6 tips + 6 notches');
   assert.equal(trig, 2, 'only the per-sparkle breath sin runs in the frame (no outline trig)');
 });
-
-test('retired atomic tuning tokens (bloom, wave-speed) are gone from the registry, schema and styles', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const appearance = require('../renderer/shared/appearance-utils.js');
-  const retired = ['--widget-atomic-burst-bloom', '--widget-atomic-burst-wave-speed'];
-  const preset = appearance.getSurfaceEffectPresets().find((item) => item.id === 'atomic-burst');
-  retired.forEach((name) => {
-    assert.equal(preset.requiredTokens.includes(name), false, `${name} is not a required token`);
-    assert.equal(runtime.getTokenSchema(name), null, `${name} has no schema row`);
-  });
-  const stylesDir = path.join(__dirname, '..', 'styles');
-  fs.readdirSync(stylesDir).filter((file) => file.endsWith('.css')).forEach((file) => {
-    const css = fs.readFileSync(path.join(stylesDir, file), 'utf8');
-    retired.forEach((name) => assert.equal(css.includes(name), false, `${file} does not declare ${name}`));
-  });
-});

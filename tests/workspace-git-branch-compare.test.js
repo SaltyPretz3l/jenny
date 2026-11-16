@@ -21,6 +21,7 @@ const {
   registryBaseRef,
 } = require('../services/workspace-git-branch-compare');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { createGitTemplates } = require('./helpers/git-template-repo');
 const { fileSymlinkSkip, linkDirectory } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
@@ -54,8 +55,17 @@ async function initRepo(root, { trunk = 'main' } = {}) {
 
 // main: initial commit + one later commit (other.txt); feature: branched at the
 // initial commit with two commits, then uncommitted, untracked and binary work.
+// Built once per file and copied per case (see helpers/git-template-repo.js).
+const templates = createGitTemplates();
+test.after(() => templates.dispose());
+let initialCommit = null;
+
 async function createBranchRepo() {
-  const root = createTrackedTempDir('jenny-branch-compare-');
+  const root = await templates.copy('branch', async (dir) => { initialCommit = await buildBranchRepo(dir); }, 'jenny-branch-compare-');
+  return { root, initial: initialCommit };
+}
+
+async function buildBranchRepo(root) {
   await initRepo(root);
   await write(root, 'README.md', 'one\ntwo\nthree\n');
   await write(root, 'gone.txt', 'bye\n');
@@ -75,7 +85,7 @@ async function createBranchRepo() {
   await write(root, 'feat.txt', 'a\nb\nc\n'); // uncommitted +1
   await write(root, 'fresh.txt', 'x\ny\nz\n'); // untracked +3
   await fs.writeFile(path.join(root, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 255]));
-  return { root, initial };
+  return initial;
 }
 
 function gitService(root) {

@@ -1,13 +1,17 @@
 const path = require('path');
 const { ExclusiveGpuCoordinator } = require('../../backend/exclusive-gpu-coordinator');
 const { registerLlamaServerIpcHandlers } = require('../llama-server-ipc-handlers');
+const { registerGgufCompanions } = require('../gguf-companion-ipc-handlers');
+const { registerLlamaServerRuntimeIpcHandlers } = require('../llama-server-runtime-ipc-handlers');
+const { createLlamaServerRuntimeDownload } = require('../../llama-server-runtime-download');
+const { probeNvidiaSmiVram } = require('../../gpu-vram-probe');
 const { resolveBinaryPath } = require('../../llama-server-lifecycle');
 const { registerCloudModelsWithTransfer } = require('../conversation-transfer-registration');
 const { registerChatGptPlanUsageIpc } = require('../chatgpt-plan-usage-ipc');
 const { registerIpcInvokeHandlers } = require('../../ipc-contract');
 const { t } = require('../../i18n-main');
 const { loadAccelerationCatalog } = require('../../backend/llama-server-acceleration');
-const { writeManagedPatch } = require('../llama-server-runtime');
+const { writeManagedPatch, validateRuntimeExecutable } = require('../llama-server-runtime');
 const { buildFeatureFlags } = require('../../feature-flags');
 const { normalizePreferredEngineType } = require('../../shell-config-state');
 const { triggerProviderSidecarReinit } = require('../../provider-auth-runtime');
@@ -167,8 +171,28 @@ function registerEngineIpcHandlers(ipcMain, {
     authorization: workspaceAuthorization,
     enabled: backendService?.featureFlags?.ollama_tray_remediation === true,
   });
-  registerLlamaServerIpcHandlers(ipcMain, {
+  // Row 142 S3 "Get a build": main owns the catalog, URL and paths; a download starts only on a click.
+  const runtimeChooser = () => getLlamaServerManager()?.runtimeChooser || null;
+  const autoRuntimePickOn = () => buildFeatureFlags(processRef.env, shellConfigService?.getState?.()?.featureOverrides || {})
+    .auto_runtime_pick === true;
+  const runtimeDownload = createLlamaServerRuntimeDownload({
+    userDataPath: () => app.getPath('userData'),
+    platform: processRef.platform,
+    arch: processRef.arch,
+    detectNvidia: async () => (await probeNvidiaSmiVram({ timeoutMs: 3000 }))?.available === true,
+    validateImpl: validateRuntimeExecutable,
+    bundledReads: (architecture) => runtimeChooser()?.bundledReads?.(architecture) || 'unknown',
+    hasReader: (architecture) => runtimeChooser()?.hasReader?.(architecture) !== false,
+    isLocalOnly: () => shellConfigService?.getState?.()?.offlineIntelligence?.mode === 'local_only',
+    isEnabled: autoRuntimePickOn,
+    onReady: () => runtimeChooser()?.prepare?.({ retryFailed: true }),
+    log,
+  });
+  const llamaServerHandlers = registerLlamaServerIpcHandlers(ipcMain, {
     getManager: getLlamaServerManager, authorization: workspaceAuthorization,
+    // Sync, for the import plan: offers only once a runtimeOptions call has warmed the GPU answer;
+    // the add flow asks runtimeOptions itself when the plan carries no offer.
+    runtimeDownloadOffer: (architecture) => runtimeDownload.offerFor({ architecture }),
     userDataPath: app.getPath('userData'),
     repoRoot: processRef.cwd(),
     getMainWindow,
@@ -192,6 +216,16 @@ function registerEngineIpcHandlers(ipcMain, {
       repoRoot: processRef.cwd(),
       resourcesPath: processRef.resourcesPath,
     }) || ''),
+  });
+  // Row 142: runtime folders and build options; a missing authorizer trusts no sender.
+  registerLlamaServerRuntimeIpcHandlers(ipcMain, {
+    getManager: getLlamaServerManager, shellConfigService, dialogImpl: dialog, getMainWindow,
+    authorization: workspaceAuthorization, log, env: processRef.env, runtimeDownload,
+  });
+  // Row 140: Get drafter / Get vision; the service re-resolves every model against this scan.
+  registerGgufCompanions(ipcMain, {
+    listLocalGgufs: llamaServerHandlers.listLocalGgufs, shellConfigService,
+    featureFlags: backendService?.featureFlags, authorization: workspaceAuthorization, log,
   });
   const exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator
     || new ExclusiveGpuCoordinator({ logger: log });
@@ -229,6 +263,8 @@ function registerEngineIpcHandlers(ipcMain, {
   } else if (typeof app?.once === 'function') {
     app.once('will-quit', teardownChatgptPlanUsageIpc);
   }
+  // Row 123 slice 6-5: the discovery scan, for the team model sender and receiver (late-bound in the caller).
+  return { listLocalGgufs: llamaServerHandlers.listLocalGgufs };
 }
 
 function registerModelIpcHandlers(ipcMain, { backendService, setupService, workspaceAuthorization }) {
@@ -343,11 +379,14 @@ function registerEngineSettingsIpcHandlers(ipcMainLike, {
             shellConfigService?.updateLocalEngineAcceleration?.(payload.acceleration);
           }
           if (hasManaged) {
-            // Per-model runtime paths only land when this session's picker recorded them.
+            // Per-model runtime paths and runtime folders only land when this
+            // session's main dialog recorded them.
+            const manager = backendService?.options?.getLlamaServerManager?.();
             writeManagedPatch({
               shellConfigService,
               patch: payload.managed,
-              picks: backendService?.options?.getLlamaServerManager?.()?.runtimePicks || null,
+              picks: manager?.runtimePicks || null,
+              folderPicks: manager?.runtimeFolderPicks || null,
               log: (level, event, details) => log?.(level, event, details),
             });
             log?.('INFO', 'engines.managed_updated', { keys, roots });

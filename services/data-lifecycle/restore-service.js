@@ -8,6 +8,7 @@ const { ElectronSessionStore } = require('../backend/electron-session-store');
 const { importSession } = require('../backend/session-export-import');
 const { removeFile, removeFileSync, removeTree } = require('../fs-remove-no-follow');
 const { normalizeProjectId } = require('../projects/project-schema');
+const { isBoardAssetFileName, isBoardFileName } = require('../boards/board-ids');
 const {
   ARCHIVE_EXTENSION,
   COMPLETE_MARKER,
@@ -31,13 +32,8 @@ const { removeWorkspaceRestoreStage, writeJsonDurable } = restoreDurability;
 const RESTORE_SCHEMA_VERSION = 1;
 const RESTORE_SCAN_LIMIT = 50;
 const MAX_WORKSPACE_RESTORE_FILE_BYTES = 8 * 1024 * 1024 * 1024;
-const PENDING_SUFFIX = '.jenny-restore-pending.json';
-const ACTIVE_RESTORE_RELATIVE_PATH = path.join('data-lifecycle', 'restore-active.json');
-const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'notes', 'workspace', 'runtime', 'coordination']);
-function restorePointerPath(userDataPath) {
-  const root = path.resolve(String(userDataPath || ''));
-  return path.join(path.dirname(root), `.${path.basename(root)}${PENDING_SUFFIX}`);
-}
+const { activeRestoreMarkerPath, restorePointerPath } = require('./restore-paths');
+const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'notes', 'boards', 'board-assets', 'workspace', 'runtime', 'coordination']);
 function writeJsonAtomic(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
@@ -730,6 +726,10 @@ function destinationForEntry(entry, { userDataPath, runtimePath, workspaceRoot, 
     const projectId = rest.length === 1 && rest[0].endsWith('.json') ? rest[0].slice(0, -'.json'.length) : '';
     return projectId && normalizeProjectId(projectId) === projectId ? ensureSafeDestination(userDataPath, path.join(userDataPath, 'project-notes', rest[0])) : null;
   }
+  // Project boards: <userData>/boards/<live board file name>. Temps and anything nested are skipped.
+  if (root === 'boards') return rest.length === 1 && isBoardFileName(rest[0]) ? ensureSafeDestination(userDataPath, path.join(userDataPath, 'boards', rest[0])) : null;
+  // Board pictures: <userData>/board-assets/<sha256>.<ext> and the unreferenced index. Anything else is skipped.
+  if (root === 'board-assets') return rest.length === 1 && isBoardAssetFileName(rest[0]) ? ensureSafeDestination(userDataPath, path.join(userDataPath, 'board-assets', rest[0])) : null;
   if (root === 'runtime') return ensureSafeDestination(userDataPath, runtimeArchive.runtimeDestinationForEntry(entry, userDataPath));
   if (root === 'workspace' && includeWorkspace && workspaceRoot) {
     return ensureSafeDestination(workspaceRoot, path.join(workspaceRoot, '.jenny', ...rest));
@@ -804,7 +804,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   const actions = buildPromotionActions(manifest, context);
   runtimeBackup.assignPromotionOriginals(journal, actions);
   runtimeBackup.assignRuntimeBackups(actions, journal, runtimePath);
-  const activeMarkerPath = path.join(userRoot, ACTIVE_RESTORE_RELATIVE_PATH);
+  const activeMarkerPath = activeRestoreMarkerPath(userRoot);
   if (fs.existsSync(activeMarkerPath)) {
     const active = restorePreferences.readBoundedJson(activeMarkerPath);
     if (active.operation_id === journal.operation_id && active.status === 'promoted') {
@@ -940,7 +940,7 @@ async function attemptPendingRestore(options = {}) {
 }
 
 async function finalizeRestoredBoot(userDataPath, { runtimePath = '' } = {}) {
-  const markerPath = path.join(path.resolve(userDataPath), ACTIVE_RESTORE_RELATIVE_PATH);
+  const markerPath = activeRestoreMarkerPath(userDataPath);
   if (!fs.existsSync(markerPath)) return false;
   const marker = restorePreferences.readBoundedJson(markerPath);
   const rollbackRoot = path.resolve(String(marker.rollback_path || ''));

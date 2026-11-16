@@ -1,6 +1,7 @@
 /* GGUF folders ▸ "Add GGUF model…" ▸ Move and add (row 107): the note under the
    folder list that offers to move a picked file out of Downloads into its own
-   folder, the move's progress, and the newer-build warning after an add. */
+   folder, the move's progress, and what runs the model after an add: the build
+   Jenny picked on its own (row 142), or the warning that none can read it. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(root);
@@ -12,6 +13,13 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var PROGRESS_POLL_MS = 500;
+
+  // The row-142 pieces (Get build, Add runtime folder…) load with the Settings scripts;
+  // until they do the warning below shows as it always has.
+  function resolveBuilds() {
+    return (root && root.modelLibraryRuntimeBuilds)
+      || (typeof require === 'function' ? require('./model-library-runtime-builds') : null);
+  }
 
   function resolveFormatUtils() {
     return (root && root.rendererModelLibraryFormatUtils)
@@ -32,7 +40,8 @@
   // options: windowRef, documentRef, escapeHtml, actionButton, rerender(),
   // announce(message), writeModel(filePath, pickedDir) -> Promise<'added'|null>,
   // addRefusal(filePath) -> Promise<why it can't be added, or ''>,
-  // tagFor(filePath) -> the library tag the file will be added as.
+  // tagFor(filePath) -> the library tag the file will be added as,
+  // addRuntimeFolder() -> Promise<outcome> (the runtime folders list's own add), optional.
   function createModelLibraryAddMove(options) {
     var opts = options || {};
     var windowRef = opts.windowRef || root;
@@ -41,8 +50,9 @@
     var actionButton = opts.actionButton;
     var formatUtils = resolveFormatUtils();
     var size = function (bytes) { return (formatUtils && formatUtils.formatHumanSize(bytes)) || ''; };
-    // { phase: 'confirm'|'moving'|'no-space'|'failed'|'newer-build', ... } or null.
+    // { phase: 'confirm'|'moving'|'no-space'|'failed'|'newer-build'|'auto-build'|'no-reader'|'build-ready', ... } or null.
     var state = null;
+    var download = null;
     var finish = null;
     var pollTimer = 0;
     var disposed = false;
@@ -121,6 +131,18 @@
           + button(jt('common.cancel', 'Cancel'), 'cancel', 'ghost')
           + link(jt('models.library.add.another', 'Another folder…'), 'another')
           + '</div>';
+      } else if (state.phase === 'auto-build') {
+        body = line(escapeHtml(jt('models.library.runtime.autoBuildLine', 'Added. It runs on llama.cpp build {build}.', { build: state.build })))
+          + line(escapeHtml(jt('models.library.runtime.autoBuildSub', 'The bundled build can\'t read {architecture} models, so Jenny picks build {build} each time it starts this model.', { architecture: state.architecture, build: state.build })), 'model-library-add-sub')
+          + '<div class="model-library-add-actions">'
+          + link(jt('models.library.runtime.changeInTune', 'Change in Tune'), 'open-tune')
+          + button(jt('models.library.add.dismiss', 'Dismiss'), 'dismiss', 'ghost')
+          + '</div>';
+      } else if (state.phase === 'build-ready') {
+        body = line(escapeHtml(jt('models.library.runtime.buildReady', 'Build {build} is ready.', { build: state.build })))
+          + '<div class="model-library-add-actions">' + button(jt('models.library.add.dismiss', 'Dismiss'), 'dismiss', 'ghost') + '</div>';
+      } else if (state.phase === 'no-reader') {
+        body = noReaderHtml();
       } else if (state.phase === 'newer-build') {
         body = line(escapeHtml(jt('models.library.add.newerBuild', 'The bundled llama-server can\'t run {architecture} models.', { architecture: state.architecture })))
           + line(escapeHtml(jt('models.library.add.newerBuildHint', 'Choose a newer llama-server build for {model} in Tune, or update Jenny when a newer bundled build ships.', { model: state.tag })), 'model-library-add-sub')
@@ -129,8 +151,103 @@
           + button(jt('models.library.add.dismiss', 'Dismiss'), 'dismiss', 'ghost')
           + '</div>';
       }
-      var role = state.phase === 'moving' ? ' role="status"' : (state.phase === 'confirm' ? ' role="group"' : '');
+      var statusRole = state.phase === 'moving' || state.phase === 'auto-build' || state.phase === 'no-reader' || state.phase === 'build-ready';
+      var role = statusRole ? ' role="status"' : (state.phase === 'confirm' ? ' role="group"' : '');
       return '<div class="model-library-add"' + role + '>' + body + '</div>';
+    }
+
+    function noReaderHtml() {
+      var builds = resolveBuilds();
+      var dl = download && download.state();
+      var dismiss = button(jt('models.library.add.dismiss', 'Dismiss'), 'dismiss', 'ghost');
+      if (dl && (dl.phase === 'starting' || dl.phase === 'running')) {
+        var parts = builds.downloadParts(dl);
+        return line(escapeHtml(parts.line))
+          + '<div class="model-library-add-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + parts.percent + '">'
+          + '<i data-model-library-add-bar style="width:' + parts.percent + '%"></i></div>'
+          + '<p class="model-library-add-sub model-library-add-num" data-model-library-add-progress-text>' + escapeHtml(parts.sub) + '</p>'
+          + '<div class="model-library-add-actions">' + button(jt('common.cancel', 'Cancel'), 'download-cancel', 'ghost') + '</div>';
+      }
+      if (dl && dl.phase === 'failed') {
+        var failed = builds.downloadParts(dl);
+        return line(escapeHtml(failed.line)) + line(escapeHtml(failed.sub), 'model-library-add-sub')
+          + '<div class="model-library-add-actions">' + button(jt('models.library.tuning.companion.retry', 'Try again'), 'get-build') + dismiss + '</div>';
+      }
+      var offer = state.offer;
+      var sub = dl && dl.phase === 'refused' ? dl.message
+        : offer ? jt('models.library.runtime.noReaderSubGet', 'Add a folder of newer llama.cpp builds, or get build {build}.', { build: offer.build })
+          : jt('models.library.runtime.noReaderSub', 'Add a folder of newer llama.cpp builds, or choose a build in Tune.');
+      return line(escapeHtml(jt('models.library.runtime.noReaderLine', 'Added, but no llama-server build Jenny knows can read {architecture} models.', { architecture: state.architecture })))
+        + line(escapeHtml(sub), 'model-library-add-sub')
+        + '<div class="model-library-add-actions">'
+        + button(builds.addFolderText(), 'add-runtime-folder')
+        + (offer ? button(builds.getBuildText(offer.build), 'get-build') : '')
+        + dismiss + '</div>';
+    }
+
+    function paintDownload(dl) {
+      if (!documentRef || !state || state.phase !== 'no-reader') return;
+      var parts = resolveBuilds().downloadParts(dl);
+      var bar = documentRef.querySelector('[data-model-library-add-bar]');
+      if (bar) {
+        bar.style.width = parts.percent + '%';
+        bar.parentNode.setAttribute('aria-valuenow', String(parts.percent));
+      }
+      var text = documentRef.querySelector('[data-model-library-add-progress-text]');
+      if (text) text.textContent = parts.sub;
+    }
+
+    // Asks main again what runs the model: the build Jenny now picks on its own, or no change.
+    function askAgain() {
+      var server = llamaServer();
+      var builds = resolveBuilds();
+      var current = state;
+      if (!builds || !server || typeof server.runtimeOptions !== 'function') return Promise.resolve(null);
+      return Promise.resolve().then(function () { return server.runtimeOptions({ modelTag: current.tag }); }).then(function (answer) {
+        var read = builds.readOptions(answer);
+        if (disposed || state !== current || !read) return null;
+        if (read.current.source === 'auto') {
+          setState({ phase: 'auto-build', architecture: current.architecture, tag: current.tag, build: read.current.build });
+        } else if (current.readyBuild) {
+          setState({ phase: 'build-ready', build: current.readyBuild });
+        } else {
+          current.offer = read.download || current.offer;
+          opts.rerender();
+        }
+        return read;
+      }, function () { return null; });
+    }
+
+    function downloadChanged(dl) {
+      if (disposed || !state || state.phase !== 'no-reader') return;
+      if (dl && dl.phase === 'ready') {
+        state.readyBuild = dl.build;
+        download.reset();
+        void askAgain();
+        return;
+      }
+      opts.rerender();
+    }
+
+    function getBuild() {
+      var builds = resolveBuilds();
+      if (!builds || !state || state.phase !== 'no-reader' || !state.offer) return;
+      if (!download) download = builds.createBuildDownload({ windowRef: windowRef, onChange: downloadChanged, onProgress: paintDownload });
+      void download.start(state.architecture, state.offer.build);
+    }
+
+    function addRuntimeFolder() {
+      var builds = resolveBuilds();
+      var current = state;
+      if (!builds || !current || current.phase !== 'no-reader') return;
+      var run = typeof opts.addRuntimeFolder === 'function' ? opts.addRuntimeFolder()
+        : builds.addRuntimeFolder(windowRef, builds.settingsWriter(windowRef));
+      void Promise.resolve(run).then(function (outcome) {
+        if (disposed || state !== current || !outcome) return null;
+        if (outcome.state === 'added') return askAgain();
+        if (outcome.state === 'refused' || outcome.state === 'failed') opts.announce(builds.folderRefusalText(outcome.reason));
+        return null;
+      });
     }
 
     function stopPolling() {
@@ -163,11 +280,41 @@
       }, PROGRESS_POLL_MS);
     }
 
-    // After any add: the build warning when main is sure the bundled build
+    // The bundled build can't read the file and no build Jenny picks on its own can either: ask main
+    // what is left to offer. Without an answer the warning below shows as it always has.
+    function settleNoReader(plan, tag) {
+      var server = llamaServer();
+      var builds = resolveBuilds();
+      var warning = function () {
+        if (!disposed && !state) setState({ phase: 'newer-build', architecture: plan.architecture, tag: tag });
+      };
+      if (!builds || !server || typeof server.runtimeOptions !== 'function') {
+        warning();
+        return;
+      }
+      Promise.resolve().then(function () { return server.runtimeOptions({ modelTag: tag }); }).then(function (answer) {
+        var read = builds.readOptions(answer);
+        if (disposed || state) return;
+        if (!read) {
+          warning();
+          return;
+        }
+        var offer = read.download || (plan.downloadBuild && Number(plan.downloadBuild.build) > 0 ? { build: Number(plan.downloadBuild.build) } : null);
+        if (read.current.source === 'auto') setState({ phase: 'auto-build', architecture: plan.architecture, tag: tag, build: read.current.build });
+        else setState({ phase: 'no-reader', architecture: plan.architecture, tag: tag, offer: offer });
+      }, warning);
+    }
+
+    // After any add: what runs the model when main is sure the bundled build
     // can't read the file's architecture, else the flow is over.
     function afterAdd(outcome, plan, filePath) {
       if (outcome === 'added' && plan && plan.archSupport === 'no' && plan.architecture) {
-        setState({ phase: 'newer-build', architecture: plan.architecture, tag: opts.tagFor(filePath) });
+        var tag = opts.tagFor(filePath);
+        if (plan.autoBuild && Number(plan.autoBuild.build) > 0) {
+          setState({ phase: 'auto-build', architecture: plan.architecture, tag: tag, build: Number(plan.autoBuild.build) });
+        } else {
+          settleNoReader(plan, tag);
+        }
       } else {
         setState(null);
       }
@@ -335,7 +482,14 @@
         setState(null);
         done(null);
       } else if (action === 'open-tune') openTune();
-      else if (action === 'dismiss') setState(null);
+      else if (action === 'add-runtime-folder') addRuntimeFolder();
+      else if (action === 'get-build') getBuild();
+      else if (action === 'download-cancel') {
+        if (download) void download.cancel();
+      } else if (action === 'dismiss') {
+        if (download) download.reset();
+        setState(null);
+      }
       return true;
     }
 
@@ -347,6 +501,7 @@
       }
       disposed = true;
       stopPolling();
+      if (download) download.dispose();
       done(null);
     }
 
@@ -354,7 +509,7 @@
       begin: begin,
       html: html,
       handleClick: handleClick,
-      isBusy: function () { return Boolean(state && state.phase !== 'newer-build'); },
+      isBusy: function () { return Boolean(state && ['newer-build', 'auto-build', 'no-reader', 'build-ready'].indexOf(state.phase) < 0); },
       dispose: dispose,
     };
   }

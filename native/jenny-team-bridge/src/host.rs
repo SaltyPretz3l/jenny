@@ -2,22 +2,27 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use iroh::endpoint::{presets, BindOpts, VarInt};
+use iroh::endpoint::{presets, BindOpts, Connection, VarInt};
+use iroh::tls::CaTlsConfig;
 use iroh::{Endpoint, EndpointAddr, SecretKey, Watcher};
 use serde_json::json;
 use tokio::io::AsyncBufRead;
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use zeroize::Zeroizing;
 
+use crate::accept;
+use crate::admission::{self, Admission};
 use crate::control::{b64, read_commands, Input, LineRead, LineReader, Out, Reason};
-use crate::host_conn;
 use crate::messages::{parse_host_command, parse_host_start, AdmitKind, HostCommand, HostLimits};
 use crate::pipe::{StreamMode, StreamSignal};
+use crate::portmap;
+use crate::relay::{self, PathKind, RelayStart};
 use crate::RunOptions;
 
 /// How long `stop` waits for connections to report closed, and for the endpoint to close.
@@ -56,9 +61,10 @@ pub(crate) struct Stats {
     streams: u32,
     refused_streams: u64,
     refused_connections: u64,
+    direct_external: usize,
+    relayed: usize,
 }
 
-#[derive(Default)]
 pub(crate) struct State {
     pub stopping: bool,
     pub next_conn: u64,
@@ -67,6 +73,12 @@ pub(crate) struct State {
     pub refused_streams: u64,
     pub refused_connections: u64,
     pub handshakes: u32,
+    /// The handshake slots relayed connections hold, at most their share of `handshakes`.
+    pub relayed_handshakes: u32,
+    pub admission: Admission,
+    /// With a relay configured: each live connection and its selected path, by connection id;
+    /// removed with the connection.
+    pub paths: HashMap<u64, (Connection, Option<PathKind>)>,
 }
 
 pub(crate) struct Shared {
@@ -76,6 +88,9 @@ pub(crate) struct Shared {
     pub boot_secret: Zeroizing<[u8; 32]>,
     pub loopback_port: u16,
     pub limits: HostLimits,
+    /// A relay is configured or internet joining is on: connections keep their path and `stats`
+    /// counts them, so the host can say a member reached it from outside.
+    pub follow_paths: bool,
 }
 
 impl Shared {
@@ -86,13 +101,19 @@ impl Shared {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Publishes the four counters; the stats task writes a line when they changed.
+    /// Publishes the counters; the stats task writes a line when they changed.
     pub fn publish(&self, state: &State) {
+        let paths = state.paths.values().map(|(_, path)| *path);
         let next = Stats {
             connections: state.conns.len(),
             streams: state.streams,
             refused_streams: state.refused_streams,
             refused_connections: state.refused_connections,
+            direct_external: paths
+                .clone()
+                .filter(|path| *path == Some(PathKind::Direct { public: true }))
+                .count(),
+            relayed: paths.filter(|path| *path == Some(PathKind::Relay)).count(),
         };
         self.stats.send_if_modified(|current| {
             if *current == next {
@@ -108,13 +129,26 @@ fn addresses_of(addr: &EndpointAddr) -> Vec<String> {
     addr.ip_addrs().map(|ip| ip.to_string()).collect()
 }
 
-async fn bind(
-    secret_key: Zeroizing<[u8; 32]>,
-    alpn: &[u8],
+struct BindPlan<'a> {
     direct_port: Option<u16>,
     streams_per_connection: u32,
     loopback_only: bool,
+    relay: Option<&'a RelayStart>,
+    relay_tls: Option<&'a CaTlsConfig>,
+}
+
+async fn bind(
+    secret_key: Zeroizing<[u8; 32]>,
+    alpn: &[u8],
+    plan: BindPlan<'_>,
 ) -> Result<Endpoint, ()> {
+    let BindPlan {
+        direct_port,
+        streams_per_connection,
+        loopback_only,
+        relay,
+        relay_tls,
+    } = plan;
     let transport = crate::pipe::bounded_transport()
         .max_concurrent_bidi_streams(VarInt::from_u32(streams_per_connection))
         .build();
@@ -141,7 +175,10 @@ async fn bind(
             )
             .map_err(|_| ())?;
     }
-    builder.bind().await.map_err(|_| ())
+    relay::configure(builder, relay, relay_tls)
+        .bind()
+        .await
+        .map_err(|_| ())
 }
 
 /// Runs host mode until `stop`, end of input, or a protocol error. Returns the exit code.
@@ -160,15 +197,23 @@ where
             Err(reason) => return fail(&out, reason).await,
         },
     };
-    let endpoint = match bind(
-        start.secret_key,
-        &start.alpn,
-        start.direct_port,
-        start.limits.max_streams_per_connection,
-        options.loopback_only || start.loopback_only,
-    )
-    .await
-    {
+    let loopback_only = options.loopback_only || start.loopback_only;
+    // Never the real router client with loopback sockets: no router can map them, and so no
+    // test can reach a real router.
+    if start.map_port && options.mapper.is_none() && loopback_only {
+        return fail(&out, Reason::StartInvalid).await;
+    }
+    let map_port = start.direct_port.filter(|_| start.map_port);
+    let plan = BindPlan {
+        direct_port: start.direct_port,
+        streams_per_connection: start.limits.max_streams_per_connection,
+        loopback_only,
+        relay: start.relay.as_ref(),
+        relay_tls: options.relay_tls.as_ref(),
+    };
+    let relay_on = start.relay.is_some();
+    let follow_paths = relay_on || start.map_port;
+    let endpoint = match bind(start.secret_key, &start.alpn, plan).await {
         Ok(endpoint) => endpoint,
         Err(()) => return fail(&out, Reason::BindFailed).await,
     };
@@ -178,6 +223,7 @@ where
         "t": "ready",
         "public_key": b64(endpoint.id().as_bytes()),
         "addresses": addresses,
+        "bulk": 1,
     }))
     .await;
     out.log("team.bridge.started", json!({})).await;
@@ -185,27 +231,73 @@ where
     let (stats_tx, stats_rx) = watch::channel(Stats::default());
     let (stop_tx, stop_rx) = watch::channel(false);
     let (stats_done_tx, stats_done_rx) = oneshot::channel();
+    let (addresses_tx, addresses_rx) = watch::channel(());
     let shared = Arc::new(Shared {
         state: Mutex::new(State {
+            stopping: false,
             next_conn: 1,
-            ..State::default()
+            conns: HashMap::new(),
+            streams: 0,
+            refused_streams: 0,
+            refused_connections: 0,
+            handshakes: 0,
+            relayed_handshakes: 0,
+            paths: HashMap::new(),
+            admission: Admission::new(
+                start.limits.max_handshakes_per_source,
+                Duration::from_millis(u64::from(start.limits.refused_cooldown_ms)),
+            ),
         }),
         stats: stats_tx,
         out: out.clone(),
         boot_secret: start.boot_secret,
         loopback_port: start.loopback_port,
         limits: start.limits,
+        follow_paths,
     });
+    drop(start.relay);
+    let mapping = map_port.and_then(NonZeroU16::new).map(|port| {
+        tokio::spawn(portmap::run(portmap::Task {
+            mapper: options.mapper.clone().unwrap_or_else(portmap::router),
+            port,
+            external: Arc::new(endpoint.clone()),
+            addresses: addresses_rx,
+            out: out.clone(),
+            stop: stop_rx.clone(),
+        }))
+    });
+    let [relay, paths] = relay::spawn_tasks(
+        relay_on,
+        follow_paths,
+        &shared,
+        &endpoint,
+        options.relay_unreachable_after,
+        &stop_rx,
+    );
     let tasks = Tasks {
-        stats: tokio::spawn(stats_loop(out.clone(), stats_rx, stats_done_rx)),
+        stats: tokio::spawn(stats_loop(
+            out.clone(),
+            stats_rx,
+            stats_done_rx,
+            follow_paths,
+        )),
         stats_done: stats_done_tx,
         addresses: tokio::spawn(address_loop(
             out.clone(),
             endpoint.clone(),
             addresses,
+            addresses_tx,
             stop_rx.clone(),
         )),
-        accept: tokio::spawn(accept_loop(shared.clone(), endpoint.clone(), stop_rx)),
+        mapping,
+        relay,
+        paths,
+        summary: tokio::spawn(admission::summary_loop(shared.clone(), stop_rx.clone())),
+        accept: tokio::spawn(accept::accept_loop(
+            shared.clone(),
+            endpoint.clone(),
+            stop_rx,
+        )),
         stop: stop_tx,
     };
     let (command_tx, mut commands) = mpsc::channel(64);
@@ -253,23 +345,34 @@ async fn fail(out: &Out, reason: Reason) -> i32 {
 }
 
 fn answer_admit(shared: &Shared, conn: u64, kind: Option<AdmitKind>) {
-    let state = shared.lock();
+    let mut state = shared.lock();
     // An answer for an unknown or finished connection is ignored.
-    if let Some(entry) = state.conns.get(&conn) {
-        entry.signal.send_if_modified(|signal| {
-            if *signal != ConnSignal::Waiting {
-                return false;
-            }
-            *signal = kind.map_or(ConnSignal::Refuse, ConnSignal::Admit);
-            true
-        });
+    let Some(entry) = state.conns.get(&conn) else {
+        return;
+    };
+    let decided = entry.signal.send_if_modified(|signal| {
+        if *signal != ConnSignal::Waiting {
+            return false;
+        }
+        *signal = kind.map_or(ConnSignal::Refuse, ConnSignal::Admit);
+        true
+    });
+    // An answer that decided a waiting connection is about its key: a refusal starts the
+    // key's cooldown, an admit ends it. A late answer (admitted, timed out, dropped) does not.
+    if decided {
+        let key = entry.key;
+        match kind {
+            None => state.admission.refused(key, std::time::Instant::now()),
+            Some(_) => state.admission.clear(&key),
+        }
     }
 }
 
 /// Ends every connection of `key`: waiting ones are refused, admitted ones drain.
 /// Returns how many connections this drop ended.
 fn drop_key(shared: &Shared, key: &[u8; 32]) -> usize {
-    let state = shared.lock();
+    let mut state = shared.lock();
+    state.admission.clear(key);
     let deadline = Instant::now() + Duration::from_millis(u64::from(shared.limits.drop_grace_ms));
     let mut ended = 0;
     for entry in state.conns.values().filter(|entry| entry.key == *key) {
@@ -294,12 +397,17 @@ struct Tasks {
     stats: JoinHandle<()>,
     stats_done: oneshot::Sender<()>,
     addresses: JoinHandle<()>,
+    mapping: Option<JoinHandle<()>>,
+    relay: Option<JoinHandle<()>>,
+    paths: Option<JoinHandle<()>>,
+    summary: JoinHandle<()>,
     accept: JoinHandle<()>,
     stop: watch::Sender<bool>,
 }
 
-/// Stops accepting, closes every connection at once (no drain), closes the endpoint
-/// (bounded), then flushes the last `stats`.
+/// Stops accepting, closes every connection at once (no drain), deactivates the port
+/// mapping (bounded, beside the connections), closes the endpoint (bounded), then flushes
+/// the last `stats`.
 async fn shutdown(shared: &Shared, endpoint: &Endpoint, tasks: Tasks) {
     {
         let mut state = shared.lock();
@@ -315,7 +423,25 @@ async fn shutdown(shared: &Shared, endpoint: &Endpoint, tasks: Tasks) {
         }
     }
     let _ = tasks.stop.send(true);
-    join_bounded(tasks.accept, SHUTDOWN_GRACE + Duration::from_secs(1)).await;
+    // `off` goes out before the endpoint closes, so a closing relay adds no line. The path
+    // follower has nothing to flush.
+    if let Some(paths) = tasks.paths {
+        paths.abort();
+    }
+    if let Some(relay) = tasks.relay {
+        join_bounded(relay, Duration::from_secs(1)).await;
+    }
+    let mapping = async {
+        if let Some(task) = tasks.mapping {
+            join_bounded(task, portmap::DEACTIVATE_BOUND + Duration::from_secs(1)).await;
+        }
+    };
+    tokio::join!(
+        join_bounded(tasks.accept, SHUTDOWN_GRACE + Duration::from_secs(1)),
+        mapping
+    );
+    join_bounded(tasks.summary, Duration::from_millis(100)).await;
+    admission::flush_summary(shared).await;
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, endpoint.close()).await;
     join_bounded(tasks.addresses, Duration::from_millis(100)).await;
     let _ = tasks.stats_done.send(());
@@ -335,7 +461,12 @@ pub(crate) async fn join_bounded(mut task: JoinHandle<()>, limit: Duration) {
     }
 }
 
-async fn stats_loop(out: Out, mut stats: watch::Receiver<Stats>, mut done: oneshot::Receiver<()>) {
+async fn stats_loop(
+    out: Out,
+    mut stats: watch::Receiver<Stats>,
+    mut done: oneshot::Receiver<()>,
+    paths: bool,
+) {
     loop {
         tokio::select! {
             biased;
@@ -344,12 +475,12 @@ async fn stats_loop(out: Out, mut stats: watch::Receiver<Stats>, mut done: onesh
                     return;
                 }
                 let current = *stats.borrow_and_update();
-                out.send(stats_line(current)).await;
+                out.send(stats_line(current, paths)).await;
             }
             _ = &mut done => {
                 if stats.has_changed().unwrap_or(false) {
                     let current = *stats.borrow_and_update();
-                    out.send(stats_line(current)).await;
+                    out.send(stats_line(current, paths)).await;
                 }
                 return;
             }
@@ -357,20 +488,28 @@ async fn stats_loop(out: Out, mut stats: watch::Receiver<Stats>, mut done: onesh
     }
 }
 
-fn stats_line(stats: Stats) -> serde_json::Value {
-    json!({
+/// The two path counts are on the line only with a relay configured or internet joining on, so
+/// a LAN bridge sends the same line as before.
+fn stats_line(stats: Stats, paths: bool) -> serde_json::Value {
+    let mut line = json!({
         "t": "stats",
         "connections": stats.connections,
         "streams": stats.streams,
         "refused_streams": stats.refused_streams,
         "refused_connections": stats.refused_connections,
-    })
+    });
+    if paths {
+        line["direct_external_connections"] = json!(stats.direct_external);
+        line["relayed_connections"] = json!(stats.relayed);
+    }
+    line
 }
 
 async fn address_loop(
     out: Out,
     endpoint: Endpoint,
     mut last: Vec<String>,
+    changed: watch::Sender<()>,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut watcher = endpoint.watch_addr();
@@ -385,75 +524,9 @@ async fn address_loop(
                 if now != last {
                     out.send(json!({ "t": "addresses", "addresses": now })).await;
                     last = now;
+                    changed.send_replace(());
                 }
             }
         }
-    }
-}
-
-async fn accept_loop(shared: Arc<Shared>, endpoint: Endpoint, mut stop: watch::Receiver<bool>) {
-    let mut connections = JoinSet::new();
-    loop {
-        let stop_for_task = stop.clone();
-        tokio::select! {
-            biased;
-            _ = stopping(&mut stop) => break,
-            Some(_) = connections.join_next(), if !connections.is_empty() => {}
-            incoming = endpoint.accept() => {
-                let Some(incoming) = incoming else { break };
-                // A source that has not proved its address costs one round trip and no slot,
-                // so spoofed Initials cannot hold the handshake slots.
-                let incoming = if incoming.remote_addr_validated() {
-                    incoming
-                } else {
-                    match incoming.retry() {
-                        Ok(()) => continue,
-                        Err(error) => error.into_incoming(),
-                    }
-                };
-                let admitted = {
-                    let mut state = shared.lock();
-                    if state.stopping {
-                        None
-                    } else if state.handshakes >= shared.limits.max_handshakes {
-                        state.refused_connections += 1;
-                        shared.publish(&state);
-                        Some(false)
-                    } else {
-                        state.handshakes += 1;
-                        Some(true)
-                    }
-                };
-                match admitted {
-                    Some(true) => {}
-                    Some(false) => {
-                        // Ignored, not refused: a refusal would read as host_refused to a member.
-                        incoming.ignore();
-                        let live = shared.lock().conns.len();
-                        shared
-                            .out
-                            .log(
-                                "team.bridge.connection_refused",
-                                json!({ "reason": "handshake_cap", "connections": live }),
-                            )
-                            .await;
-                        continue;
-                    }
-                    None => {
-                        incoming.ignore();
-                        continue;
-                    }
-                }
-                connections.spawn(host_conn::handshake(shared.clone(), incoming, stop_for_task));
-            }
-        }
-    }
-    // Every live connection has its Close signal; give each a bounded time to report.
-    let drained = tokio::time::timeout(SHUTDOWN_GRACE, async {
-        while connections.join_next().await.is_some() {}
-    })
-    .await;
-    if drained.is_err() {
-        connections.shutdown().await;
     }
 }

@@ -18,7 +18,7 @@ function withStorage(t, initial = {}) {
 
 test('Memory is no longer a persistable top-level view', () => {
   assert.equal(activeViewPersistence.PERSISTABLE_VIEW_IDS.includes('memory'), false);
-  assert.deepEqual(activeViewPersistence.PERSISTABLE_VIEW_IDS, ['home', 'chat', 'ide', 'logs', 'settings']);
+  assert.deepEqual(activeViewPersistence.PERSISTABLE_VIEW_IDS, ['home', 'chat', 'ide', 'logs', 'settings', 'team', 'board']);
 });
 
 test('a persisted Memory view migrates to Settings > Memory', (t) => {

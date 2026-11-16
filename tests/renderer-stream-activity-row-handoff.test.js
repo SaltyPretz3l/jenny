@@ -104,12 +104,26 @@ test('renewed silence mounts a fresh row and retires the old one', async (t) => 
   row.reset();
 });
 
-test('terminal events still remove the row at once, and dispose flushes a retiring one', async (t) => {
-  const { row, noteEvent, showRow } = makeHarness(t);
+// Review 2026-11-12 (stale-dup-decor 5): a terminal removed the row in the
+// handler, before the terminal render landed, so a layout in between clamped a
+// followed view by the row's height and the final content regrew it.
+test('a terminal retires the row through the same hand-off, and the stream stays untracked', async (t) => {
+  const { doc, timeline, row, noteEvent, showRow } = makeHarness(t);
   const node = showRow();
   noteEvent('complete');
-  assert.equal(node.isConnected, false, 'terminal events untrack synchronously');
+  assert.equal(node.isConnected, true, 'the row waits for the terminal render');
+  await settleMicrotasks();
+  assert.equal(node.isConnected, true);
 
+  timeline.querySelector('.turn-row-list').appendChild(doc.createElement('div'));
+  await settleMicrotasks();
+  assert.equal(node.isConnected, false, 'the row left in the terminal render task');
+  row.tick();
+  assert.equal(timeline.querySelectorAll('.turn-activity-row').length, 0, 'the ended stream shows no row again');
+});
+
+test('dispose flushes a retiring row', async (t) => {
+  const { row, noteEvent, showRow } = makeHarness(t);
   const retiring = showRow();
   noteEvent('tool_use');
   assert.equal(retiring.isConnected, true);

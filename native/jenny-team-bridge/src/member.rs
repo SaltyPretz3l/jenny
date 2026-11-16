@@ -2,15 +2,12 @@
 //! Every TCP connection must open with the 40-byte member preamble before it becomes a
 //! stream to the host. No retries: a refused or lost connection reports `offline`.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use iroh::endpoint::{
-    presets, BindOpts, ConnectError, ConnectingError, Connection, ConnectionError,
-    TransportErrorCode, VarInt,
-};
-use iroh::{Endpoint, EndpointAddr, PublicKey, SecretKey, TransportAddr};
+use iroh::endpoint::Connection;
+use iroh::{Endpoint, EndpointAddr, PublicKey, RelayUrl, TransportAddr, Watcher};
 use serde_json::json;
 use tokio::io::{AsyncBufRead, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -18,11 +15,14 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use zeroize::Zeroizing;
 
+use crate::bulk::{mark_bulk, CLASS_BULK, MAX_BULK_STREAMS};
 use crate::control::{read_commands, Input, LineRead, LineReader, Out, Reason};
+use crate::member_dial::{bind, connect_reason, offline_reason, turn_away, BindPlan};
 use crate::messages::{parse_member_command, parse_member_start, MemberCommand, MemberLimits};
-use crate::pipe::{close_connection, CODE_CLOSED, CODE_REFUSED};
-use crate::pipe::{closed, pipe, StreamMode, StreamSignal};
+use crate::pipe::{close_connection, CODE_CLOSED};
+use crate::pipe::{closed, pipe, reset_stream, StreamMode, StreamSignal};
 use crate::preamble::{verify_member, MEMBER_PREAMBLE_BYTES, SECRET_BYTES};
+use crate::relay::{self, PathKind};
 use crate::RunOptions;
 
 /// The member's endpoint close bound: a dial that never connected otherwise holds the
@@ -48,7 +48,9 @@ impl StreamSignal for MemberSignal {
 struct Counts {
     online: bool,
     preamble: u32,
+    /// Every stream, bulk ones included.
     streams: u32,
+    bulk: u32,
 }
 
 struct Shared {
@@ -65,19 +67,54 @@ impl Shared {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotKind {
+    Preamble,
+    Stream,
+    /// A stream slot that also counts against the bulk cap.
+    BulkStream,
+}
+
 /// Releases a preamble slot or a stream slot when dropped.
 struct Slot {
     shared: Arc<Shared>,
-    stream: bool,
+    kind: SlotKind,
+}
+
+impl Slot {
+    /// A stream slot, or `None` at the stream cap, at the bulk cap for a bulk socket, or
+    /// once offline: the socket is dropped.
+    fn stream(shared: &Arc<Shared>, bulk: bool) -> Option<Self> {
+        let mut counts = shared.lock();
+        let full = counts.streams >= shared.limits.max_streams
+            || (bulk && counts.bulk >= MAX_BULK_STREAMS);
+        if !counts.online || full {
+            return None;
+        }
+        counts.streams += 1;
+        let kind = if bulk {
+            counts.bulk += 1;
+            SlotKind::BulkStream
+        } else {
+            SlotKind::Stream
+        };
+        Some(Self {
+            shared: shared.clone(),
+            kind,
+        })
+    }
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
         let mut counts = self.shared.lock();
-        if self.stream {
-            counts.streams = counts.streams.saturating_sub(1);
-        } else {
-            counts.preamble = counts.preamble.saturating_sub(1);
+        match self.kind {
+            SlotKind::Preamble => counts.preamble = counts.preamble.saturating_sub(1),
+            SlotKind::Stream => counts.streams = counts.streams.saturating_sub(1),
+            SlotKind::BulkStream => {
+                counts.streams = counts.streams.saturating_sub(1);
+                counts.bulk = counts.bulk.saturating_sub(1);
+            }
         }
     }
 }
@@ -102,49 +139,6 @@ async fn offline(out: &Out, reason: &str) {
         .await;
 }
 
-/// True when the peer refused or closed with the refused code.
-fn refused(error: &ConnectionError) -> bool {
-    match error {
-        ConnectionError::ApplicationClosed(close) => {
-            close.error_code == VarInt::from_u32(CODE_REFUSED)
-        }
-        ConnectionError::ConnectionClosed(close) => {
-            close.error_code == TransportErrorCode::CONNECTION_REFUSED
-        }
-        _ => false,
-    }
-}
-
-fn connect_refused(error: &ConnectError) -> bool {
-    match error {
-        ConnectError::Connecting {
-            source: ConnectingError::ConnectionError { source, .. },
-            ..
-        } => refused(source),
-        ConnectError::Connection { source, .. } => refused(source),
-        _ => false,
-    }
-}
-
-async fn bind(secret_key: Zeroizing<[u8; 32]>, loopback_only: bool) -> Result<Endpoint, ()> {
-    let mut builder = Endpoint::builder(presets::Minimal)
-        .secret_key(SecretKey::from_bytes(&secret_key))
-        .transport_config(crate::pipe::bounded_transport().build());
-    drop(secret_key);
-    if loopback_only {
-        builder = builder
-            .clear_ip_transports()
-            .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .map_err(|_| ())?
-            .bind_addr_with_opts(
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
-                BindOpts::default().set_is_required(false),
-            )
-            .map_err(|_| ())?;
-    }
-    builder.bind().await.map_err(|_| ())
-}
-
 /// Runs member mode until the connection ends, `stop`, end of input, or a protocol error.
 /// Returns the exit code.
 pub async fn run_member_with<R>(input: R, output: mpsc::Sender<String>, options: RunOptions) -> i32
@@ -167,13 +161,22 @@ where
     let (command_tx, mut commands) = mpsc::channel(8);
     let reader_task = tokio::spawn(read_commands(reader, command_tx, parse_member_command));
 
-    let loopback_only = options.loopback_only || start.loopback_only;
-    let Ok(endpoint) = bind(start.secret_key, loopback_only).await else {
+    let relay_url = start.relay.as_ref().map(|relay| relay.url().clone());
+    let plan = BindPlan {
+        loopback_only: options.loopback_only || start.loopback_only,
+        addresses: &start.addresses,
+        relay: start.relay.as_ref(),
+        relay_tls: options.relay_tls.as_ref(),
+    };
+    let bound = bind(start.secret_key, plan).await;
+    drop(start.relay);
+    let Ok(endpoint) = bound else {
         offline(&out, "host_unreachable").await;
         reader_task.abort();
         let _ = reader_task.await;
         return 0;
     };
+    let turning_away = turn_away(&endpoint);
     let shared = Arc::new(Shared {
         counts: Mutex::new(Counts::default()),
         launch_secret: start.launch_secret,
@@ -184,10 +187,15 @@ where
         endpoint: &endpoint,
         shared,
     };
-    let code = session
-        .run(start.host_key, start.addresses, &start.alpn, &mut commands)
-        .await;
+    let dial = Dial {
+        host_key: start.host_key,
+        addresses: start.addresses,
+        relay_url,
+    };
+    let code = session.run(dial, &start.alpn, &mut commands).await;
     let _ = tokio::time::timeout(MEMBER_CLOSE_GRACE, endpoint.close()).await;
+    turning_away.abort();
+    let _ = turning_away.await;
     reader_task.abort();
     let _ = reader_task.await;
     code
@@ -202,6 +210,47 @@ struct Session<'a> {
     out: &'a Out,
     endpoint: &'a Endpoint,
     shared: Arc<Shared>,
+}
+
+/// Where the host is: its key, its addresses and the owner's relay.
+struct Dial {
+    host_key: [u8; 32],
+    addresses: Vec<SocketAddr>,
+    relay_url: Option<RelayUrl>,
+}
+
+/// The two loopback listeners. A socket accepted on `bulk` becomes a bulk stream; both
+/// share the preamble cap and the stream cap, and bulk streams have a cap of their own.
+struct Listeners {
+    ordinary: TcpListener,
+    bulk: TcpListener,
+    port: u16,
+    bulk_port: u16,
+}
+
+impl Listeners {
+    async fn bind() -> std::io::Result<Self> {
+        let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let ordinary = TcpListener::bind(loopback).await?;
+        let bulk = TcpListener::bind(loopback).await?;
+        Ok(Self {
+            port: ordinary.local_addr()?.port(),
+            bulk_port: bulk.local_addr()?.port(),
+            ordinary,
+            bulk,
+        })
+    }
+
+    /// The `online` line; `path` only with a relay configured.
+    fn online_line(&self, path: Option<PathKind>) -> serde_json::Value {
+        let (port, bulk_port) = (self.port, self.bulk_port);
+        let mut line =
+            json!({ "t": "state", "state": "online", "port": port, "bulk_port": bulk_port });
+        if let Some(path) = path {
+            line["path"] = json!(path.as_str());
+        }
+        line
+    }
 }
 
 impl Session<'_> {
@@ -230,68 +279,100 @@ impl Session<'_> {
 
     async fn run(
         &self,
-        host_key: [u8; 32],
-        addresses: Vec<SocketAddr>,
+        dial: Dial,
         alpn: &[u8],
         commands: &mut mpsc::Receiver<Input<MemberCommand>>,
     ) -> i32 {
-        let Ok(host_id) = PublicKey::from_bytes(&host_key) else {
+        let Ok(host_id) = PublicKey::from_bytes(&dial.host_key) else {
             offline(self.out, "host_unreachable").await;
             return 0;
         };
-        let target =
-            EndpointAddr::from_parts(host_id, addresses.into_iter().map(TransportAddr::Ip));
+        let relay = dial.relay_url.is_some();
+        let ips = dial.addresses.into_iter().map(TransportAddr::Ip);
+        let relays = dial.relay_url.into_iter().map(TransportAddr::Relay);
+        let target = EndpointAddr::from_parts(host_id, ips.chain(relays));
         let limit = Duration::from_millis(u64::from(self.shared.limits.connect_timeout_ms));
-        let connected = tokio::select! {
-            biased;
-            input = commands.recv() => return self.exit(exit_of(input)).await,
-            connected = tokio::time::timeout(limit, self.endpoint.connect(target, alpn)) => {
-                connected
+        // The relay is followed for the whole dial: a refusal caught between two of iroh's
+        // retries reads as neither connected nor refused.
+        let mut watcher = self.endpoint.home_relay_status();
+        let mut seen = relay::DialLook::default();
+        seen.see(relay::look(&watcher.get()));
+        let mut watching = relay;
+        let connecting = tokio::time::timeout(limit, self.endpoint.connect(target, alpn));
+        tokio::pin!(connecting);
+        let connected = loop {
+            tokio::select! {
+                biased;
+                input = commands.recv() => return self.exit(exit_of(input)).await,
+                connected = &mut connecting => break connected,
+                update = watcher.updated(), if watching => match update {
+                    Ok(statuses) => seen.see(relay::look(&statuses)),
+                    Err(_) => watching = false,
+                },
             }
+        };
+        seen.see(relay::look(&watcher.get()));
+        let unreachable = if relay {
+            seen.reason()
+        } else {
+            "host_unreachable"
         };
         let conn = match connected {
             Ok(Ok(conn)) => conn,
             Ok(Err(error)) => {
-                let reason = if connect_refused(&error) {
-                    "host_refused"
-                } else {
-                    "host_unreachable"
-                };
-                offline(self.out, reason).await;
+                offline(self.out, connect_reason(&error).unwrap_or(unreachable)).await;
                 return 0;
             }
             Err(_) => {
-                offline(self.out, "host_unreachable").await;
+                offline(self.out, unreachable).await;
                 return 0;
             }
         };
-        let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        let Ok(listener) = TcpListener::bind(loopback).await else {
+        let Ok(listeners) = Listeners::bind().await else {
             close_connection(&conn, CODE_CLOSED);
             offline(self.out, "closed").await;
             return 0;
         };
-        let port = match listener.local_addr() {
-            Ok(address) => address.port(),
-            Err(_) => {
-                close_connection(&conn, CODE_CLOSED);
-                offline(self.out, "closed").await;
-                return 0;
-            }
-        };
         self.shared.lock().online = true;
-        self.out
-            .send(json!({ "t": "state", "state": "online", "port": port }))
-            .await;
-        self.serve(conn, listener, commands).await
+        // With a relay, `path` once iroh has selected one: on this line or a later one.
+        let path = if relay { relay::path_of(&conn) } else { None };
+        self.out.send(listeners.online_line(path)).await;
+        self.serve(conn, listeners, (relay, path), commands).await
     }
 
+    /// Counts an accepted loopback socket against the preamble cap; `None` when it is
+    /// dropped instead.
+    async fn admit(
+        &self,
+        accepted: std::io::Result<(TcpStream, SocketAddr)>,
+    ) -> Option<(Slot, TcpStream)> {
+        let Ok((socket, _)) = accepted else {
+            // Out of descriptors and the like: back off instead of spinning.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            return None;
+        };
+        let mut counts = self.shared.lock();
+        if !counts.online || counts.preamble >= self.shared.limits.max_preamble_sockets {
+            return None;
+        }
+        counts.preamble += 1;
+        let slot = Slot {
+            shared: self.shared.clone(),
+            kind: SlotKind::Preamble,
+        };
+        Some((slot, socket))
+    }
+
+    /// `path` is the path last reported, `None` before one (and always without a relay).
     async fn serve(
         &self,
         conn: Connection,
-        listener: TcpListener,
+        listeners: Listeners,
+        (relay, mut path): (bool, Option<PathKind>),
         commands: &mut mpsc::Receiver<Input<MemberCommand>>,
     ) -> i32 {
+        let mut tick = tokio::time::interval(relay::PATH_POLL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let (signal_tx, signal_rx) = watch::channel(MemberSignal::Live);
         let mut sockets = JoinSet::new();
         let peer_closed = conn.closed();
@@ -300,34 +381,30 @@ impl Session<'_> {
             tokio::select! {
                 biased;
                 input = commands.recv() => break Err(exit_of(input)),
-                error = &mut peer_closed => break Ok(refused(&error)),
+                error = &mut peer_closed => break Ok(offline_reason(&error)),
                 Some(_) = sockets.join_next(), if !sockets.is_empty() => {}
-                accepted = listener.accept() => {
-                    let Ok((socket, _)) = accepted else {
-                        // Out of descriptors and the like: back off instead of spinning.
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        continue;
-                    };
-                    let admitted = {
-                        let mut counts = self.shared.lock();
-                        let cap = self.shared.limits.max_preamble_sockets;
-                        if !counts.online || counts.preamble >= cap {
-                            false
-                        } else {
-                            counts.preamble += 1;
-                            true
-                        }
-                    };
-                    if !admitted {
-                        drop(socket);
-                        continue;
+                _ = tick.tick(), if relay => {
+                    let now = relay::path_of(&conn);
+                    if now.is_some() && now.map(PathKind::as_str) != path.map(PathKind::as_str) {
+                        path = now;
+                        self.out.send(listeners.online_line(path)).await;
                     }
-                    let slot = Slot { shared: self.shared.clone(), stream: false };
-                    sockets.spawn(member_socket(slot, conn.clone(), socket, signal_rx.clone()));
+                }
+                accepted = listeners.ordinary.accept() => {
+                    if let Some((slot, socket)) = self.admit(accepted).await {
+                        let signal = signal_rx.clone();
+                        sockets.spawn(member_socket(slot, conn.clone(), socket, signal, false));
+                    }
+                }
+                accepted = listeners.bulk.accept() => {
+                    if let Some((slot, socket)) = self.admit(accepted).await {
+                        let signal = signal_rx.clone();
+                        sockets.spawn(member_socket(slot, conn.clone(), socket, signal, true));
+                    }
                 }
             }
         };
-        drop(listener);
+        drop(listeners);
         self.shared.lock().online = false;
         if ended.is_err() {
             close_connection(&conn, CODE_CLOSED);
@@ -335,16 +412,8 @@ impl Session<'_> {
         let _ = signal_tx.send(MemberSignal::Close);
         sockets.shutdown().await;
         match ended {
-            Ok(was_refused) => {
-                offline(
-                    self.out,
-                    if was_refused {
-                        "host_refused"
-                    } else {
-                        "closed"
-                    },
-                )
-                .await;
+            Ok(reason) => {
+                offline(self.out, reason.unwrap_or("closed")).await;
                 0
             }
             Err(exit) => self.exit(exit).await,
@@ -352,12 +421,14 @@ impl Session<'_> {
     }
 }
 
-/// Checks the preamble, then carries the socket as one stream to the host.
+/// Checks the preamble, then carries the socket as one stream to the host. A bulk stream
+/// starts with the class byte and is sent after every ordinary stream's data.
 async fn member_socket(
     preamble_slot: Slot,
     conn: Connection,
     mut socket: TcpStream,
     mut signal: watch::Receiver<MemberSignal>,
+    bulk: bool,
 ) {
     let shared = preamble_slot.shared.clone();
     let limit = Duration::from_millis(u64::from(shared.limits.preamble_timeout_ms));
@@ -374,19 +445,7 @@ async fn member_socket(
     if !valid {
         return;
     }
-    let stream_slot = {
-        let mut counts = shared.lock();
-        if !counts.online || counts.streams >= shared.limits.max_streams {
-            None
-        } else {
-            counts.streams += 1;
-            Some(Slot {
-                shared: shared.clone(),
-                stream: true,
-            })
-        }
-    };
-    let Some(_stream_slot) = stream_slot else {
+    let Some(_stream_slot) = Slot::stream(&shared, bulk) else {
         return;
     };
     let opened = tokio::select! {
@@ -394,9 +453,21 @@ async fn member_socket(
         _ = closed(&mut signal) => None,
         opened = conn.open_bi() => opened.ok(),
     };
-    let Some((send, recv)) = opened else {
+    let Some((mut send, mut recv)) = opened else {
         return;
     };
+    if bulk {
+        mark_bulk(&send);
+        let marked = tokio::select! {
+            biased;
+            _ = closed(&mut signal) => false,
+            written = send.write_all(&[CLASS_BULK]) => written.is_ok(),
+        };
+        if !marked {
+            reset_stream(&mut send, &mut recv, CODE_CLOSED);
+            return;
+        }
+    }
     let _ = socket.set_nodelay(true);
     pipe(send, recv, socket, signal).await;
 }

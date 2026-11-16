@@ -257,17 +257,11 @@
       if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
     }
 
+    // True when Reset Appearance would change nothing: the Appearance page's rows are at their defaults.
     function isDefaultAppearancePreferences(preferences) {
       const normalized = normalizeAppearancePreferences(preferences);
       const defaults = getDefaultAppearancePreferences();
-      return (
-        normalized.paletteId === defaults.paletteId &&
-        normalized.typographyId === defaults.typographyId &&
-        normalized.surfaceEffectId === defaults.surfaceEffectId &&
-        normalized.composerHoloId === defaults.composerHoloId &&
-        normalized.fontScaleId === defaults.fontScaleId &&
-        normalized.chatWidthId === defaults.chatWidthId
-      );
+      return appearanceModel().APPEARANCE_PAGE_KEYS.every((key) => normalized[key] === defaults[key]);
     }
 
     function buildSelectOptionMarkup(options, activeValue) {

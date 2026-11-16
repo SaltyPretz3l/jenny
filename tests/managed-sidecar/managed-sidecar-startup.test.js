@@ -177,12 +177,16 @@ test('managed startup timeout leaves a usable model-unavailable shell', async ()
   await service.stop();
 });
 
-test('managed sidecar first chat lazy-loads the configured Ollama model', async () => {
+// The default must be one the catalog carries: a missing default is never loaded (so never pulled),
+// covered in tests/default-chat-model-resolution.test.js. The fake Ollama catalog lists qwen3.5:9b.
+const INSTALLED_OLLAMA_DEFAULT = 'qwen3.5:9b';
+
+test('managed sidecar first chat lazy-loads the configured installed Ollama model', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-first-chat-lazy-ollama-'));
   trackDirectory(userDataPath);
 
   const service = createManagedService(userDataPath, {
-    defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+    defaultModel: INSTALLED_OLLAMA_DEFAULT,
     configService: startupModelLoadOff,
   });
   const logs = collectServiceLogs(service);
@@ -201,11 +205,11 @@ test('managed sidecar first chat lazy-loads the configured Ollama model', async 
   await completed;
 
   assert.equal(service.currentEngineType, 'ollama');
-  assert.equal(service.currentModel, DEFAULT_MANAGED_SHELL_MODEL);
+  assert.equal(service.currentModel, INSTALLED_OLLAMA_DEFAULT);
   assert.equal(
     logs.some(
       (entry) => entry.event === 'backend.model_lazy_load_started'
-        && entry.details?.requestedModel === DEFAULT_MANAGED_SHELL_MODEL
+        && entry.details?.requestedModel === INSTALLED_OLLAMA_DEFAULT
         && entry.details?.reason === 'shell_default_model'
     ),
     true
@@ -213,7 +217,7 @@ test('managed sidecar first chat lazy-loads the configured Ollama model', async 
   assert.equal(
     logs.some(
       (entry) => entry.event === 'backend.model_lazy_load_completed'
-        && entry.details?.requestedModel === DEFAULT_MANAGED_SHELL_MODEL
+        && entry.details?.requestedModel === INSTALLED_OLLAMA_DEFAULT
         && entry.details?.reason === 'shell_default_model'
     ),
     true

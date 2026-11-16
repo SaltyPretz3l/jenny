@@ -146,11 +146,11 @@ test('offline intelligence service keeps force-local enabled but blocked when no
   assert.equal(state.localChatReady, false);
   assert.equal(
     state.unavailableReason,
-    'Select a local inference model in Model Library.'
+    'Pick a local model as the local default.'
   );
   assert.equal(
     state.summary,
-    'Select a local inference model in Model Library.'
+    'Pick a local model as the local default.'
   );
 });
 
@@ -751,4 +751,79 @@ test('the Ollama catalog wins over a library entry for the same model', async ()
   const state = await service.getState();
   assert.equal(state.selectedLocalEngineType, 'ollama');
   assert.equal(state.localChatReady, true);
+});
+
+// NInfer serves its own pinned artifacts (not perModel entries, which only name
+// ollama and llama-server): a pin the preferred model names, present on disk.
+const NINFER_PIN = { id: 'qwen3.8-27b-nvfp4', model_id: 'qwen3.8-27b-nvfp4' };
+
+function createNinferBackendService(present = true) {
+  return {
+    ...createBackendService({ currentEngineType: 'openai-compatible' }),
+    ninferRuntime: {
+      artifacts: {
+        artifacts: [NINFER_PIN],
+        async resolveArtifactPath(id) { return present && id === NINFER_PIN.id ? { ok: true, path: 'D:/models/qwen.ninfer' } : { ok: false }; },
+      },
+    },
+  };
+}
+
+test('a pinned NInfer model present on this PC counts as installed and is not reported missing', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createConfigService({ mode: 'disabled', preferredLocalModel: NINFER_PIN.model_id }),
+    backendService: createNinferBackendService(),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, true);
+  assert.equal(state.selectedManagedEngine, 'ninfer');
+  assert.doesNotMatch(`${state.unavailableReason} ${state.summary}`, /not installed/);
+});
+
+test('force local inference still refuses a NInfer model and names NInfer as the reason', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createConfigService({ mode: 'local_only', preferredLocalModel: NINFER_PIN.model_id }),
+    backendService: createNinferBackendService(),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, true);
+  assert.equal(state.localChatReady, false);
+  assert.equal(
+    state.unavailableReason,
+    `Force local inference cannot use ${NINFER_PIN.model_id} yet: it runs on NInfer. Pick an Ollama model as the local default.`
+  );
+  assert.equal(state.summary, state.unavailableReason);
+});
+
+test('a NInfer pin whose file is missing is not installed', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createConfigService({ mode: 'disabled', preferredLocalModel: NINFER_PIN.model_id }),
+    backendService: createNinferBackendService(false),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, false);
+  assert.equal(state.selectedManagedEngine, '');
+  assert.equal(state.unavailableReason, `Preferred local model ${NINFER_PIN.model_id} is not installed locally.`);
+});
+
+test('the blocked reason names the llama-server engine for a llama-server GGUF and avoids naming a page', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createLibraryConfigService({ mode: 'local_only', preferredLocalModel: LIBRARY_GGUF }),
+    backendService: createBackendService(),
+  });
+  const state = await service.getState();
+  assert.equal(state.selectedManagedEngine, 'llama-server');
+  assert.equal(
+    state.unavailableReason,
+    `Force local inference cannot use ${LIBRARY_GGUF} yet: it runs on llama-server. Pick an Ollama model as the local default.`
+  );
+
+  const empty = await new OfflineIntelligenceService({
+    configService: createConfigService({ mode: 'local_only', preferredLocalModel: '' }),
+    backendService: createBackendService(),
+  }).getState();
+  assert.doesNotMatch(`${empty.unavailableReason} ${empty.summary} ${empty.visionUnavailableReason}`, /Model Library/);
 });

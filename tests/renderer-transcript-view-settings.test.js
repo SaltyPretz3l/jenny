@@ -20,14 +20,17 @@ const SEED_CASES = [
   [undefined, 'thinking'],
 ];
 
-async function bootSeed(saved) {
+test('renderer bootstrap leaves the chatUi read to the boot preferences step', async () => {
+  // The persisted transcript default reaches state through one boot read
+  // (renderer-app-boot-preferences-composition.js); the real boot below covers it.
   const documentStub = {
     getElementById() { return null; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
   };
   const previous = { shell: globalThis.jennyShell, utils: globalThis.rendererTranscriptViewUtils };
-  globalThis.jennyShell = { chatUi: { async getState() { return { transcriptViewDefault: saved }; } } };
+  let reads = 0;
+  globalThis.jennyShell = { chatUi: { async getState() { reads += 1; return { transcriptViewDefault: 'answers' }; } } };
   globalThis.rendererTranscriptViewUtils = transcriptViewUtils;
   try {
     const bootstrap = createRendererBootstrap({
@@ -35,24 +38,17 @@ async function bootSeed(saved) {
       getDefaultAppearancePreferences: () => ({}),
       appearanceUtils: { STORAGE_KEY: 'jenny.appearance.test' },
     });
-    await waitForUiTick();
-    return bootstrap.state.transcriptViewDefault;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(reads, 0);
+    assert.equal(bootstrap.state.transcriptViewDefault, 'thinking');
   } finally {
     globalThis.jennyShell = previous.shell;
     globalThis.rendererTranscriptViewUtils = previous.utils;
   }
-}
-
-const waitForUiTick = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-test('renderer bootstrap seeds transcriptViewDefault from chatUi state and falls back to thinking', async () => {
-  for (const [saved, expected] of SEED_CASES) {
-    assert.equal(await bootSeed(saved), expected, `saved ${String(saved)} seeds ${expected}`);
-  }
 });
 
 test('a real renderer boot applies the persisted default to the timeline and the Settings control', async () => {
-  for (const [saved, expected] of [SEED_CASES[0], SEED_CASES[1], SEED_CASES[3]]) {
+  for (const [saved, expected] of SEED_CASES) {
     const app = await loadRendererApp({ shell: { chatUi: { getState: () => ({ transcriptViewDefault: saved }) } } });
     try {
       const { window } = app;
@@ -99,7 +95,7 @@ test('removing a session forgets its transcript view choice', async (t) => {
   await waitForUi(window, 10);
   [...window.document.querySelectorAll('.inv-context-menu-item')].find((b) => b.textContent.trim() === 'Delete').click();
   await waitForUi(window, 30);
-  window.document.querySelector('[data-toast-action-id="session-delete-now"]').click();
+  window.document.querySelector('[data-toast-action-id="session-delete-undo"]').closest('.inv-toast').querySelector('[data-toast-dismiss]').click();
   await waitForUi(window, 80);
 
   assert.deepEqual(calls.forget, [['session-forget']]);

@@ -122,31 +122,26 @@
       } catch (_error) { /* reporter owns its failures */ }
     }
 
-    function extensionOf(path) {
-      return typeof ideStateUtils.fileExtensionOf === 'function'
-        ? ideStateUtils.fileExtensionOf(path)
-        : '';
-    }
+    const extensionOf = (path) => (typeof ideStateUtils.fileExtensionOf === 'function' ? ideStateUtils.fileExtensionOf(path) : '');
 
     function kindOf(path) {
       const extension = extensionOf(path);
-      if (MARKDOWN_EXTENSIONS.has(extension)) {
-        return 'markdown';
-      }
-      if (HTML_EXTENSIONS.has(extension)) {
-        return 'html';
-      }
-      return '';
+      return MARKDOWN_EXTENSIONS.has(extension) ? 'markdown' : HTML_EXTENSIONS.has(extension) ? 'html' : '';
     }
 
+    // Row 137: an outside-Workspace key (outside://<id>/<name>) previews by its name; other schemes never do.
+    // Its pin is local to the stage: an outside key is never persisted as previewPath.
+    let outsideTarget = '';
+    const isOutside = (path) => typeof path === 'string' && path.startsWith('outside://');
+
     function isPreviewablePath(path) {
-      return !!path && !String(path).includes('://') && kindOf(path) !== '';
+      return !!path && (isOutside(path) || !String(path).includes('://')) && kindOf(path) !== '';
     }
 
     // Handoff §C.3 precedence: explicit target > active editor file > none.
     function resolveDisplayPath() {
       const ide = getIde() || {};
-      const explicit = String(ide.previewPath || '');
+      const explicit = outsideTarget || String(ide.previewPath || '');
       if (explicit && isPreviewablePath(explicit)) {
         return explicit;
       }
@@ -370,6 +365,7 @@
         disposeFrame();
         bar.render(path, 'markdown', '', true);
         bodyEl.innerHTML = `<div class="ide-preview-content">${buildMarkdownHtml(path, text)}</div>`;
+        htmlSurface.loadOutsideImages?.(bodyEl.firstElementChild, path);
         // The chat's lazy mermaid pass (single shared runtime).
         markdownUtils.renderInlineMermaidBlocks?.(bodyEl.firstElementChild, { isStreaming: false });
         shown = { path, text };
@@ -439,9 +435,10 @@
       if (disposed) {
         return '';
       }
-      const applied = typeof ideStateUtils.setPreviewPath === 'function'
+      outsideTarget = isOutside(path) ? path : '';
+      const applied = outsideTarget || (typeof ideStateUtils.setPreviewPath === 'function'
         ? ideStateUtils.setPreviewPath(getIde(), path)
-        : '';
+        : '');
       if (typeof options?.onRendered === 'function') {
         if (renderReport) {
           const { callback } = renderReport;
@@ -458,6 +455,17 @@
       schedulePersist();
       activateStage('preview');
       return applied;
+    }
+
+    // Preview button / palette / Ctrl+Shift+V: the focused editor's file (a split group's
+    // wins); a CSS/JS file keeps the pin. On stage, the toolbar toggle returns to the editor.
+    function openActiveFile({ toggle = false } = {}) {
+      if (disposed) return '';
+      if (toggle && isPreviewActive()) { activateStage('editor'); return ''; }
+      const active = String(editorHost?.getFocusedPath?.() || (getIde() || {}).activeTabPath || '');
+      if (isPreviewablePath(active)) return open(active);
+      activateStage('preview');
+      return resolveDisplayPath();
     }
 
     function refreshLiveCue() {
@@ -571,6 +579,7 @@
       handleModelChange,
       handleWorkspaceRootCommitted,
       open,
+      openActiveFile,
       refreshLiveCue,
       reload,
       sync,

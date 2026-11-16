@@ -9,6 +9,7 @@ failure never prints it.
 from __future__ import annotations
 
 import contextlib
+import gzip
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -22,6 +23,8 @@ from sidecar.ai.engines.api_provider_anthropic_wire import (
     MAX_REPLAY_BYTES,
     ThinkingReplayCache,
     build_messages,
+    build_tools,
+    model_version,
     split_system,
 )
 from sidecar.ai.engines.provider_descriptor_v6 import ProviderDescriptorError
@@ -31,6 +34,7 @@ from sidecar.ai.error_codes import CMP_CLOUD_HTTP_ERROR, CMP_CLOUD_RATE_LIMITED
 from sidecar.ai.tools.models import StreamingEvent, ToolCallRequest
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.multiplexer import TurnCancellationHandle
+from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
 
 FIXTURES = Path(__file__).parent / "fixtures" / "api_provider_anthropic"
 KEY = "sk-ant-test-0123456789abcdefXYZ"
@@ -78,6 +82,10 @@ def _limits(**overrides: Any) -> dict[str, Any]:
     return limits
 
 
+def _pinned_output(limits: dict[str, Any]) -> dict[str, Any]:
+    return {**limits, "sources": {**limits["sources"], "max_output_tokens": "pin"}}
+
+
 def _leaks(*values: Any) -> bool:
     """True when the key appears in any value (never echoes the key itself)."""
     return any(KEY in str(value) for value in values)
@@ -104,6 +112,7 @@ def make_engine() -> Iterator[Callable[..., ApiProviderAnthropicEngine]]:
         *,
         limits: dict[str, Any] | None = None,
         load: bool = True,
+        wire_model: str = WIRE_MODEL,
     ) -> ApiProviderAnthropicEngine:
         engine = ApiProviderAnthropicEngine(
             descriptor=_descriptor(), api_key=KEY, limits=limits or _limits()
@@ -118,7 +127,7 @@ def make_engine() -> Iterator[Callable[..., ApiProviderAnthropicEngine]]:
         old.close()
         built.append(engine)
         if load:
-            engine.load_model(MODEL)
+            engine.load_model(f"api-provider/{PROVIDER_ID}/{wire_model}")
         return engine
 
     yield _make
@@ -343,13 +352,25 @@ def test_other_request_ids_and_released_requests_never_replay(make_engine) -> No
     assert [block["type"] for block in again][0] == "text"
 
 
-def test_clear_request_context_releases_the_cache(make_engine) -> None:
-    engine = make_engine(_replay("tool_round.sse"))
+def test_an_approval_pause_keeps_the_blocks_for_the_resumed_request(make_engine) -> None:
+    sent: list[httpx.Request] = []
+    engine = make_engine(_replay(["tool_round.sse", "tool_round_final.sse"], sent))
     _first_round(engine, "req-9")
-    assert len(engine._replay) == 2
 
+    # The pause: the runtime clears the request context, then resumes under the same id.
     engine.clear_request_context(request_id="req-9")
+    assert len(engine._replay) == 2
+    engine.begin_request_context(request_id="req-9")
+    _drain(
+        engine.stream_with_tools(
+            "w", [WEATHER_TOOL], max_tokens=512, reasoning_effort="high",
+            messages=_round_history(),
+        )
+    )
 
+    resumed = _body(sent[1])["messages"][1]["content"]
+    assert [block["type"] for block in resumed][:2] == ["thinking", "redacted_thinking"]
+    engine.release_request_state("req-9")
     assert len(engine._replay) == 0
 
 
@@ -361,9 +382,29 @@ def test_no_request_id_means_no_cache(make_engine) -> None:
     assert len(engine._replay) == 0
 
 
-def test_no_replay_when_thinking_is_not_requested(make_engine) -> None:
+@pytest.mark.parametrize("effort", [None, "none"])
+def test_blocks_are_replayed_whatever_the_effort_setting(make_engine, effort: str | None) -> None:
     sent: list[httpx.Request] = []
     engine = make_engine(_replay(["tool_round.sse", "tool_round_final.sse"], sent))
+    _first_round(engine, "req-1")
+
+    _drain(
+        engine.stream_with_tools(
+            "w", [WEATHER_TOOL], max_tokens=512, reasoning_effort=effort,
+            messages=_round_history(),
+        )
+    )
+
+    body = _body(sent[1])
+    assert body["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
+    assert [b["type"] for b in body["messages"][1]["content"]][0] == "thinking"
+
+
+def test_no_replay_when_the_request_names_no_thinking_control(make_engine) -> None:
+    sent: list[httpx.Request] = []
+    engine = make_engine(
+        _replay(["tool_round.sse", "tool_round_final.sse"], sent), wire_model="other-model-1"
+    )
     _first_round(engine, "req-1")
 
     _drain(
@@ -403,7 +444,9 @@ def test_request_shape_headers_url_body_and_cache_breakpoints(make_engine) -> No
     assert request.headers["anthropic-version"] == "2026-10-21"
     assert request.headers["content-type"] == "application/json"
     assert request.headers["accept"] == "text/event-stream"
-    assert "anthropic-beta" not in request.headers
+    # The stream is read raw, so the request must not invite a compressed one.
+    assert request.headers["accept-encoding"] == "identity"
+    assert request.headers["anthropic-beta"] == "thinking-binding-controls-2026-08-01"
     body = _body(request)
     assert body["model"] == WIRE_MODEL
     assert body["max_tokens"] == 300
@@ -423,8 +466,74 @@ def test_request_shape_headers_url_body_and_cache_breakpoints(make_engine) -> No
             "eager_input_streaming": True,
         }
     ]
-    assert "thinking" not in body and "output_config" not in body
+    # No effort chosen: the model's own default, with the thinking shown.
+    assert body["thinking"] == {
+        "type": "adaptive",
+        "display": "summarized",
+        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+    }
+    assert "output_config" not in body
     assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+
+
+def test_top_level_schema_alternatives_move_into_the_description() -> None:
+    # The API answers 400 to a top-level anyOf, oneOf or allOf in input_schema.
+    properties = {"a": {"type": "string"}, "b": {"type": "string"}, "c": {"type": "string"}}
+    sent = build_tools(
+        [
+            {
+                "name": "edit",
+                "description": "Edit a file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": ["c"],
+                    "anyOf": [{"required": ["a", "b"]}, {"required": ["a"]}],
+                },
+            },
+            {
+                "name": "show",
+                "description": "Show a view.",
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "oneOf": [{"required": ["a"]}, {"properties": {"b": {"enum": ["x"]}}}],
+                    "allOf": [{"required": ["c"]}],
+                },
+            },
+        ]
+    )
+
+    assert sent[0]["input_schema"] == {"type": "object", "properties": properties, "required": ["c"]}
+    assert sent[0]["description"] == "Edit a file. Give one of these argument sets: a + b; a."
+    # A branch that is more than a required list has no short form: dropped, not described.
+    assert sent[1]["input_schema"] == {"type": "object", "properties": properties}
+    assert sent[1]["description"] == "Show a view."
+
+
+def test_no_manifest_tool_sends_a_top_level_schema_combinator() -> None:
+    manifest = json.loads(
+        (Path(__file__).parents[4] / "services" / "tools" / "tool-manifest.json").read_text("utf-8")
+    )
+    found: list[dict[str, Any]] = []
+
+    def collect(node: Any) -> None:
+        if isinstance(node, dict):
+            schema = node.get("input_schema") or node.get("inputSchema") or node.get("parameters")
+            if isinstance(node.get("name"), str) and isinstance(schema, dict):
+                found.append({"name": node["name"], "parameters": schema})
+            for value in node.values():
+                collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect(value)
+
+    collect(manifest)
+    assert any("anyOf" in tool["parameters"] for tool in found)  # the manifest still uses it
+
+    for tool in build_tools(found):
+        assert not {"anyOf", "oneOf", "allOf"} & set(tool["input_schema"]), tool["name"]
+        assert tool["input_schema"]["type"] == "object", tool["name"]
 
 
 def test_plain_stream_has_no_tools_or_tool_choice(make_engine) -> None:
@@ -438,30 +547,48 @@ def test_plain_stream_has_no_tools_or_tool_choice(make_engine) -> None:
     assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
 
 
+_SHOWN = "summarized"
+_OTHER_MODEL = "other-model-1"
+
+
 @pytest.mark.parametrize(
-    ("reasoning", "effort", "expected"),
+    ("wire_model", "reasoning", "effort", "expected"),
     [
-        (True, "minimal", "low"),
-        (True, "low", "low"),
-        (True, "medium", "medium"),
-        (True, "high", "high"),
-        (True, "xhigh", "xhigh"),
-        (True, "max", "max"),
-        (True, "HIGH", "high"),
-        (True, "ultra", "max"),
-        (True, "bogus", None),
-        (True, None, False),
-        (True, "", False),
-        (True, "default", False),
-        (True, "none", False),
-        (False, "high", False),
+        # A current Claude model always names adaptive thinking: (effort, display).
+        (WIRE_MODEL, True, "minimal", ("low", _SHOWN)),
+        (WIRE_MODEL, True, "low", ("low", _SHOWN)),
+        (WIRE_MODEL, True, "medium", ("medium", _SHOWN)),
+        (WIRE_MODEL, True, "high", ("high", _SHOWN)),
+        (WIRE_MODEL, True, "xhigh", ("xhigh", _SHOWN)),
+        (WIRE_MODEL, True, "max", ("max", _SHOWN)),
+        (WIRE_MODEL, True, "HIGH", ("high", _SHOWN)),
+        (WIRE_MODEL, True, "ultra", ("max", _SHOWN)),
+        (WIRE_MODEL, True, "bogus", (None, _SHOWN)),
+        (WIRE_MODEL, True, None, (None, _SHOWN)),
+        (WIRE_MODEL, True, "", (None, _SHOWN)),
+        (WIRE_MODEL, True, "default", (None, _SHOWN)),
+        # "Off" cannot omit the field (the model would think at its default effort).
+        (WIRE_MODEL, True, "none", ("low", "omitted")),
+        (WIRE_MODEL, False, "high", False),
+        # 4.6 has no xhigh level.
+        ("claude-sonnet-4-6", True, "xhigh", ("high", _SHOWN)),
+        ("claude-opus-4-7", True, "xhigh", ("xhigh", _SHOWN)),
+        # Before 4.6 thinking takes a token budget this transport never sends.
+        ("claude-haiku-4-5-20251001", True, "high", False),
+        ("claude-3-7-sonnet-20250219", True, "high", False),
+        # Not a Claude version: thinking only when an effort is asked for.
+        (_OTHER_MODEL, True, "high", ("high", _SHOWN)),
+        (_OTHER_MODEL, True, "none", False),
+        (_OTHER_MODEL, True, None, False),
     ],
 )
-def test_thinking_only_when_the_model_reasons_and_effort_is_requested(
-    make_engine, reasoning: bool, effort: str | None, expected: Any
+def test_thinking_fields_follow_the_model_generation_and_the_effort_setting(
+    make_engine, wire_model: str, reasoning: bool, effort: str | None, expected: Any
 ) -> None:
     sent: list[httpx.Request] = []
-    engine = make_engine(_replay("text_usage.sse", sent), limits=_limits(reasoning=reasoning))
+    engine = make_engine(
+        _replay("text_usage.sse", sent), limits=_limits(reasoning=reasoning), wire_model=wire_model
+    )
 
     list(engine.stream("hi", max_tokens=64, reasoning_effort=effort))
 
@@ -470,14 +597,38 @@ def test_thinking_only_when_the_model_reasons_and_effort_is_requested(
         assert "thinking" not in body and "output_config" not in body
         assert "anthropic-beta" not in sent[0].headers
         return
-    assert body["thinking"]["type"] == "adaptive"
-    assert body["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
-    assert "disabled" not in json.dumps(body) and "budget_tokens" not in body["thinking"]
+    wire_effort, display = expected
+    assert body["thinking"] == {
+        "type": "adaptive",
+        "display": display,
+        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+    }
+    assert "disabled" not in json.dumps(body)
     assert sent[0].headers["anthropic-beta"] == "thinking-binding-controls-2026-08-01"
-    if expected is None:
+    if wire_effort is None:
         assert "output_config" not in body
     else:
-        assert body["output_config"] == {"effort": expected}
+        assert body["output_config"] == {"effort": wire_effort}
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("claude-sonnet-5-5", (5, 5)),
+        ("claude-opus-4-6", (4, 6)),
+        ("claude-opus-4-1-20250805", (4, 1)),
+        ("claude-sonnet-4-20250514", (4, 0)),
+        ("claude-3-5-sonnet-20241022", (3, 0)),
+        ("vendor/claude-sonnet-4.6", (4, 6)),
+        ("claude-sonnet-latest", None),
+        ("other-model-4.6", None),
+        ("", None),
+    ],
+)
+def test_model_version_reads_claude_ids_and_nothing_else(
+    model: str, expected: tuple[int, int] | None
+) -> None:
+    assert model_version(model) == expected
 
 
 @pytest.mark.parametrize(
@@ -510,7 +661,24 @@ def test_limits_drive_context_and_output_budgets(make_engine) -> None:
         _replay("text_usage.sse"),
         limits=_limits(context_length=1_000_000, max_output_tokens=500_000),
     )
-    assert huge.get_model_max_output_tokens() == 32_768
+    # Thinking counts toward the cap, so a large window defaults to 64,000.
+    assert huge.get_model_max_output_tokens() == 64_000
+    # A 200,000-token window keeps 32,768, so its compaction point does not move.
+    mid = make_engine(
+        _replay("text_usage.sse"),
+        limits=_limits(context_length=200_000, max_output_tokens=128_000),
+    )
+    assert mid.get_model_max_output_tokens() == 32_768
+    pinned = make_engine(
+        _replay("text_usage.sse"),
+        limits=_pinned_output(_limits(context_length=1_000_000, max_output_tokens=128_000)),
+    )
+    assert pinned.get_model_max_output_tokens() == 128_000
+    pinned_past_half = make_engine(
+        _replay("text_usage.sse"),
+        limits=_pinned_output(_limits(context_length=200_000, max_output_tokens=128_000)),
+    )
+    assert pinned_past_half.get_model_max_output_tokens() == 100_000
 
 
 def test_history_mapping_system_demotion_images_and_pairing() -> None:
@@ -598,6 +766,42 @@ def test_replay_cache_is_bounded_by_count_and_bytes() -> None:
     assert len(big) == 0 and big.snapshot("r") == {}
     big.store("", ["a"], [blob])
     assert len(big) == 0
+
+    # A parallel round's ids share one set of blocks, so its bytes count once.
+    shared = ThinkingReplayCache()
+    shared.store("r", ["a", "b", "c", "d"], [blob])
+    assert sorted(shared.snapshot("r")) == ["a", "b", "c", "d"]
+    shared.store("r", [], [blob])
+    assert len(shared) == 4
+
+    # The default holds the longest cloud turn: 500 tool calls plus 30 browser calls.
+    long_turn = ThinkingReplayCache()
+    for index in range(530):
+        long_turn.store("r", [f"t{index}"], [{"type": "thinking", "thinking": "x", "signature": "s"}])
+    assert len(long_turn) == 530
+
+
+def test_a_failed_tool_result_carries_is_error() -> None:
+    history: list[Any] = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "toolu_a", "name": "get_weather", "arguments": {}},
+                {"id": "toolu_b", "name": "get_weather", "arguments": {}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "toolu_a", "content": "no such city", "is_error": True},
+        {"role": "tool", "tool_call_id": "toolu_b", "content": "22C", "is_error": False},
+    ]
+
+    results = build_messages("", history, vision=False, replay={})[2]["content"]
+
+    assert results == [
+        {"type": "tool_result", "tool_use_id": "toolu_a", "content": "no such city", "is_error": True},
+        {"type": "tool_result", "tool_use_id": "toolu_b", "content": "22C"},
+    ]
 
 
 # -- errors -----------------------------------------------------------------
@@ -736,6 +940,35 @@ def test_max_tokens_text_is_length_without_a_truncated_tool_call(make_engine) ->
     assert result.finish_reason == "length" and result.tool_call_truncated is False
 
 
+def test_a_reply_cut_by_the_context_window_is_length(make_engine) -> None:
+    engine = make_engine(_replay("context_window_exceeded.sse"))
+
+    items, result = _drain(engine.stream_with_tools("w", [WEATHER_TOOL], max_tokens=64))
+
+    assert result.finish_reason == "length" and result.content == "Partial"
+    assert _done(items).finish_reason == "length"
+
+
+def test_dropped_thinking_blocks_are_counted_in_turn_diagnostics(make_engine) -> None:
+    store = TurnDiagnosticsStore()
+    store.begin_turn(request_id="req-1", session_id=None, mode="assist")
+    engine = make_engine(_replay("thinking_dropped.sse"))
+    engine.begin_request_context(request_id="req-1", diagnostics_store=store)
+
+    _, result = _drain(engine.stream_with_tools("w", [WEATHER_TOOL], max_tokens=64))
+
+    assert result.finish_reason == "stop"
+    snapshot = store.get_snapshot_for_request("req-1")
+    assert snapshot is not None
+    # Only the type and reason are kept, never the path.
+    assert snapshot["input_transformations"] == {
+        "thinking_dropped.prefix_binding_mismatch": 2,
+        "thinking_mismatch_allowed.model_binding_mismatch": 1,
+        "unknown.x": 1,
+    }
+    assert "messages[" not in json.dumps(snapshot)
+
+
 def test_unparseable_complete_tool_input_is_carried_as_malformed(make_engine) -> None:
     engine = make_engine(_replay("malformed_tool.sse"))
 
@@ -754,6 +987,24 @@ def test_refusal_is_a_terminal_non_retryable_provider_error(make_engine) -> None
 
     assert caught.value.retryable is False
     assert str(caught.value) == "the provider declined this request"
+
+
+def test_a_stream_compressed_anyway_is_still_read(make_engine) -> None:
+    # Seen live: a gzip stream read raw had no SSE line, so a paid reply came back empty.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream", "content-encoding": "gzip"},
+            stream=httpx.ByteStream(gzip.compress((FIXTURES / "thinking_text.sse").read_bytes())),
+        )
+
+    engine = make_engine(handler)
+
+    items, result = _drain(engine.stream_with_tools("hi", [], max_tokens=256))
+
+    assert result.finish_reason == "stop" and result.content == "Answer."
+    assert _text(items, "content") == "Answer."
 
 
 @pytest.mark.parametrize("name", ["cut_midstream.sse", "pause_turn.sse"])

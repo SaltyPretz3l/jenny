@@ -235,7 +235,6 @@
       cancelKickerDrag();
       panes.delete(paneId);
       paneRenderQueued.delete(paneId);
-      safely(function () { if (pane.previewPill) pane.previewPill.destroy(); });
       safely(function () { if (pane.failedSendNotice) pane.failedSendNotice.destroy(); });
       safely(function () { if (pane.attachments && pane.attachments.dispose) pane.attachments.dispose(); });
       safely(function () { if (pane.shell && pane.shell.dispose) pane.shell.dispose(); });

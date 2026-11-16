@@ -41,6 +41,9 @@ test('settings section registry preserves ids and defaults', () => {
     'advanced',
     'runtimeLimits',
     'team',
+    'general',
+    'chat',
+    'permissions',
   ].sort());
   assert.equal(normalizeSettingsSectionId('not-a-section'), 'models');
   assert.equal(normalizeSettingsSectionId(' tools '), 'tools');
@@ -77,23 +80,32 @@ test('Runs lives in Diagnostics, not Settings (owner, 2026-10-03)', () => {
   }
   // Deep links keep resolving: the Developer limits page and Projects keep their ids.
   assert.equal(getSettingsSectionDefinition('runtimeLimits').label, 'Runtime limits');
-  assert.equal(getSettingsSectionDefinition('runtimeLimits').group, 'developer');
+  assert.equal(getSettingsSectionDefinition('runtimeLimits').group, 'system');
   assert.equal(normalizeSettingsSectionId('runtime'), 'runtime');
 });
 
-test('settings section registry exposes six uniform ordered groups', () => {
+test('settings section registry exposes the five rail groups of row 133 (overview unlabelled)', () => {
   const groups = getSettingsGroups();
   assert.deepEqual(groups.map(group => [group.id, group.label, group.sections.map(section => section.id)]), [
-    ['modelTools', 'Model & tools', ['readiness', 'models', 'offline', 'tools']],
+    ['overview', '', ['readiness']],
+    ['jenny', 'Jenny', ['models', 'permissions', 'tools', 'extensions', 'memories', 'personality']],
+    ['app', 'App', ['general', 'appearance', 'chat', 'editor', 'notifications']],
     ['work', 'Work', ['runtime', 'team', 'usage']],
-    ['context', 'Context & memory', ['context', 'memories', 'personality']],
-    ['app', 'App', ['appearance', 'editor', 'home', 'notifications', 'jennyChat', 'dictation']],
-    ['system', 'System', ['extensions', 'account']],
-    ['developer', 'Developer', ['advanced']],
+    ['system', 'System', ['account', 'aboutUpdates', 'advanced']],
   ]);
   assert.ok(groups.every(group => !group.disclosure));
-  assert.equal(getSettingsSectionDefinition('account').label, 'Profile, data & updates');
-  assert.equal(getSettingsSectionDefinition('advanced').label, 'Limits & budgets');
+  assert.equal(getSettingsSectionDefinition('account').label, 'Data & privacy');
+  assert.equal(getSettingsSectionDefinition('dataPrivacy').label, 'Data & Privacy', 'the old key stays with its companion');
+  assert.equal(getSettingsSectionDefinition('aboutUpdates').label, 'About');
+  assert.equal(getSettingsSectionDefinition('permissions').label, 'Permissions');
+  assert.equal(getSettingsSectionDefinition('permissions').lazy, false);
+  assert.equal(getSettingsSectionDefinition('advanced').label, 'Limits');
+  assert.equal(getSettingsSectionDefinition('general').label, 'General');
+  assert.equal(getSettingsSectionDefinition('chat').label, 'Chat');
+  for (const id of ['general', 'chat', 'permissions', 'aboutUpdates']) {
+    assert.equal(getSettingsSectionDefinition(id).hidden, false, id);
+    assert.equal(normalizeSettingsSectionId(id), id);
+  }
   assert.equal(getSettingsSectionDefinition('runtime').label, 'Projects');
   assert.equal(getSettingsSectionDefinition('memories').lazy, true);
 });
@@ -108,22 +120,42 @@ test('Team page (row 123, slice 1g-1) follows Projects and is shown only with th
   for (const word of ['invite', 'host', 'server', 'members']) assert.ok(section.keywords.includes(word), word);
 });
 
-test('Jenny chat page (row 86, pick S1) sits after Notifications and is found by its words', () => {
-  const section = getSettingsSectionDefinition('jennyChat');
-  assert.equal(section.label, 'Jenny chat');
-  assert.equal(section.group, 'app');
-  assert.equal(Boolean(section.lazy), false);
-  for (const word of ['digest', 'away', 'quiet hours', 'summary']) assert.ok(section.keywords.includes(word), word);
+test('row 133 merged pages keep their old search words on the host page', () => {
+  const words = (id) => getSettingsSectionDefinition(id).keywords;
+  for (const word of ['digest', 'away', 'voice', 'microphone', 'speech', 'talk']) assert.ok(words('chat').includes(word), word);
+  assert.ok(words('notifications').includes('quiet hours'));
+  for (const word of ['home', 'quick capture']) assert.ok(words('general').includes(word), word);
+  for (const word of ['offline', 'local only']) assert.ok(words('models').includes(word), word);
+  assert.equal(words('jennyChat').includes('quiet hours'), false);
+  for (const word of ['approval', 'safety mode', 'run mode', 'auto']) assert.ok(words('permissions').includes(word), word);
+  assert.deepEqual(words('tools').filter((word) => /approv|safety|run mode|^auto$/i.test(word)), []);
+});
+
+test('About is its own page and Permissions sits after Models (row 133, slice 3)', () => {
+  assert.equal(normalizeSettingsSectionId('aboutUpdates'), 'aboutUpdates');
+  assert.equal(normalizeSettingsSectionId('permissions'), 'permissions');
+  assert.equal(getSettingsSectionDefinition('aboutUpdates').mergedInto, '');
+  assert.equal(getSettingsSectionDefinition('permissions').group, 'jenny');
+  assert.deepEqual(getSettingsCompanionSectionIds('aboutUpdates'), []);
+  assert.deepEqual(getSettingsCompanionSectionIds('permissions'), []);
 });
 
 test('merged pages normalize to hosts and retain companion lifecycle metadata', () => {
-  for (const [id, host] of [['dataPrivacy', 'account'], ['aboutUpdates', 'account'], ['runtimeLimits', 'advanced']]) {
+  for (const [id, host] of [
+    ['dataPrivacy', 'account'], ['runtimeLimits', 'advanced'],
+    ['offline', 'models'], ['home', 'general'], ['dictation', 'chat'], ['context', 'chat'], ['jennyChat', 'chat'],
+  ]) {
     assert.equal(normalizeSettingsSectionId(id), host);
     assert.equal(getSettingsSectionDefinition(id).hidden, true);
     assert.equal(getSettingsSectionDefinition(id).mergedInto, host);
+    assert.equal(getSettingsSectionDefinition(id).group, getSettingsSectionDefinition(host).group, id);
   }
-  assert.deepEqual(getSettingsCompanionSectionIds('account'), ['dataPrivacy', 'aboutUpdates']);
+  assert.deepEqual(getSettingsCompanionSectionIds('account'), ['dataPrivacy']);
   assert.deepEqual(getSettingsCompanionSectionIds('advanced'), ['runtimeLimits']);
+  assert.deepEqual(getSettingsCompanionSectionIds('models'), ['offline']);
+  assert.deepEqual(getSettingsCompanionSectionIds('general'), ['home']);
+  assert.deepEqual(getSettingsCompanionSectionIds('chat'), ['context', 'jennyChat', 'dictation']);
+  assert.equal(getSettingsSectionDefinition('offline').lazy, true);
   assert.equal(getSettingsSectionDefinition('advanced').lazy, true);
   assert.equal(getSettingsSectionDefinition('runtimeLimits').lazy, true);
 });
@@ -140,26 +172,25 @@ test('settings section registry merges skills into extensions and retires tips/p
   assert.deepEqual(getSettingsCompanionSectionIds('extensions'), ['skills']);
   assert.deepEqual(getSettingsCompanionSectionIds('tools'), []);
   assert.deepEqual(getSettingsCompanionSectionIds('proactive'), []);
-  assert.deepEqual(getSettingsCompanionSectionIds('models'), []);
   // A persisted/deep-linked hidden section resolves to its host (no blank panel).
   assert.equal(normalizeSettingsSectionId('skills'), 'extensions');
   assert.equal(normalizeSettingsSectionId('tips'), 'models');
 });
 
-test('settings section registry registers Home so it no longer redirects to models', () => {
+test('settings section registry keeps Home known so it opens General, not the default', () => {
   // Regression: `home` was historically absent from the registry, so
   // normalizeSettingsSectionId('home') silently fell back to the default ('models').
-  assert.equal(normalizeSettingsSectionId('home'), 'home');
+  assert.equal(normalizeSettingsSectionId('home'), 'general');
   const home = getSettingsSectionDefinition('home');
   assert.equal(home.group, 'app');
   assert.equal(home.lazy, false);
   assert.equal(home.label, 'Home');
 });
 
-test('settings section registry registers Extensions in the System group and retires plugins', () => {
+test('settings section registry registers Extensions in the Jenny group and retires plugins', () => {
   assert.equal(normalizeSettingsSectionId('extensions'), 'extensions');
   const extensions = getSettingsSectionDefinition('extensions');
-  assert.equal(extensions.group, 'system');
+  assert.equal(extensions.group, 'jenny');
   assert.equal(extensions.label, 'Extensions');
   assert.equal(extensions.lazy, false);
   assert.equal(extensions.hidden, false);

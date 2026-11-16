@@ -8,6 +8,7 @@ const {
   mergePromotedObservationsIntoTurnEvents,
 } = require('./tool-observation-promotion');
 const { normalizeSourceCitations } = require('./tool-result-source-metadata');
+const { normalizeToolResultDiffMetadata } = require('./tool-result-diff-metadata');
 const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-ownership');
 const {
   cloneJsonValue,
@@ -154,6 +155,7 @@ class CanonicalTurnEventCollector {
         tool_call_id: normalizeId(artifact?.tool_call_id || artifact?.toolCallId || toolCallId),
       }));
     }
+    if (kind === 'tool_result') this._fillEmptyDiffIds(payload, toolCallId);
     attachStreamEnvelopeMetadata(payload, source.stream_envelope);
     const capturedEvent = {
       event_id: normalizeId(source.event_id || source.eventId)
@@ -190,6 +192,22 @@ class CanonicalTurnEventCollector {
     }
     this._maybeDeriveSourceCitations(capturedEvent);
     return capturedEvent;
+  }
+
+  // Gate sitting 2026-11-14 (G5): the sidecar's turn event carries `diff_id: ""` while the
+  // message copy gets Electron's generated id, and the chat row reads the turn event, so its
+  // "Open diff in editor" link never rendered. Fill an empty id with the message copy's id.
+  _fillEmptyDiffIds(payload, toolCallId) {
+    const metadata = payload && payload.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return;
+    const options = { streamId: this.attemptId, callId: toolCallId, input: payload.tool_input };
+    const fill = (diff) => {
+      if (!diff || typeof diff !== 'object' || Array.isArray(diff) || String(diff.diff_id || '').trim()) return;
+      const generated = normalizeToolResultDiffMetadata(diff, options)?.diff_id;
+      if (generated) diff.diff_id = generated;
+    };
+    fill(metadata.diff);
+    if (Array.isArray(metadata.diffs)) metadata.diffs.forEach(fill);
   }
 
   // Citations: derive the persisted `source_citations` kind from a tool_result

@@ -120,3 +120,25 @@ test('another chat finishing leaves a waiting session\'s approval toast up', asy
   });
   assert.equal(approvalToasts().length, 1, 'back-2 finishing must not clear back-1\'s still-valid toast');
 });
+
+// Split view: pane 1 shows its own Allow/Deny card, so its chat is on screen,
+// not in the background. Only a chat in no pane gets the toast.
+test('an approval in the chat a second pane shows raises no background toast', async (t) => {
+  const { createHarness } = require('./helpers/renderer-stream-handler-harness');
+  const savedVisibility = globalThis.rendererPaneVisibilityUtils;
+  globalThis.rendererPaneVisibilityUtils = {
+    isSessionVisibleInAnyPane: (_state, id) => id === 'session-1' || id === 'session-2',
+    isSessionVisibleInPane: (_state, id, paneIndex) => (paneIndex === 0 ? id === 'session-1' : id === 'session-2'),
+  };
+  const harness = createHarness();
+  t.after(() => { harness.restore(); globalThis.rendererPaneVisibilityUtils = savedVisibility; });
+  const approvalToasts = () => harness.calls.toasts.filter((toast) => JSON.stringify(toast).includes('approval'));
+  for (const [sessionId, streamId] of [['session-2', 'stream-pane-1'], ['session-3', 'stream-hidden']]) {
+    await harness.emit({ type: 'started', sessionId, streamId });
+    await harness.emit({ type: 'tool_approval_needed', sessionId, streamId, callId: `call-${sessionId}`,
+      approvalId: `approval-${sessionId}`, toolName: 'todo_write', input: { todos: [] } });
+  }
+  const toasts = approvalToasts();
+  assert.equal(toasts.length, 1, `one toast, for the hidden chat: ${JSON.stringify(toasts)}`);
+  assert.match(JSON.stringify(toasts[0]), /session-3/);
+});

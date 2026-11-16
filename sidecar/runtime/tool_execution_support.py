@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.error_codes import (
     CMP_LOOP_INVALID_TOOL_CALL,
@@ -42,6 +42,17 @@ from sidecar.ai.tools.tool_search_handler import (
 if TYPE_CHECKING:
     from sidecar.ai.routing.router import ApprovalRequest, ToolExecutionOutcome
 
+
+def number_turn_web_citations(
+    runtime: Any, tool_result: Any, messages: list[dict[str, object]]
+) -> Any:
+    """Load the web citation numbering on the first tool result, not at sidecar start."""
+    from sidecar.ai.tools.builtins.web_citation_numbering import (
+        number_turn_web_citations as _number_turn_web_citations,
+    )
+
+    return _number_turn_web_citations(runtime, tool_result, messages)
+
 __all__ = [
     "ApprovalRequest",
     "CMP_LOOP_INVALID_TOOL_CALL",
@@ -62,6 +73,7 @@ __all__ = [
     "cmd_exe_multiline_refusal",
     "escalate_out_of_root",
     "is_feature_flag_enabled",
+    "number_turn_web_citations",
     "read_snapshot_from_metadata",
     "sanitize_tool_output",
     "scan_tool_arguments",

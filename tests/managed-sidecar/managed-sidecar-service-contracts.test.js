@@ -429,7 +429,8 @@ test('managed sidecar first send lazy-loads and resolves the shell default model
   markManagedSidecarReady(service);
   const logs = collectServiceLogs(service);
   service.currentModel = '';
-  service.listModels = async () => ({ active_model: '', data: [] });
+  // Installed but not loaded: only a listed default is lazy-loaded (never a silent pull).
+  service.listModels = async () => ({ active_model: '', data: [{ id: DEFAULT_MANAGED_SHELL_MODEL }] });
   const modelLoads = [];
   service.loadModel = async (model) => {
     modelLoads.push(model);

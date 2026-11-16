@@ -17,7 +17,8 @@
  * canonical "limit navigation + handle window.open" guards
  * (https://www.electronjs.org/docs/latest/tutorial/security) to the MAIN window
  * only:
- *   - same-document navigations (reload, hash routing, query changes) are allowed,
+ *   - same-document navigations (an exact reload, hash routing) are allowed;
+ *     a query change of the app's own page is not (see isSameDocumentNavigation),
  *   - http(s) targets are opened in the OS default browser,
  *   - everything else is denied.
  *
@@ -36,32 +37,35 @@ function urlScheme(value) {
   return match ? match[1].toLowerCase() : '';
 }
 
-/* Return the document identity key: protocol + host + pathname, lowercased.
- * Hash and query string are deliberately excluded — they represent same-document
- * routing rather than a navigation to a different resource. */
-function documentIdentity(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
+/* The parts of a URL that name one loaded document: protocol + host + pathname
+ * (lowercased: Windows file paths are case-insensitive) and the query, exactly. */
+function documentParts(value) {
   try {
-    const u = new URL(raw);
-    return `${u.protocol}//${u.host}${u.pathname}`.toLowerCase();
+    const u = new URL(value);
+    return { path: `${u.protocol}//${u.host}${u.pathname}`.toLowerCase(), search: u.search, hash: u.hash };
   } catch (_e) {
-    return raw.toLowerCase();
+    return null;
   }
 }
 
-/* A navigation that keeps us on our own loaded document. "Same document" means
- * the same protocol + host + pathname — hash routing and query-only changes are
- * allowed; a different local file (e.g. report.html resolved against the app's
- * file:// base) would replace the frameless window and strand the user, so it
- * must be blocked exactly like an external http(s) link. */
+/* A navigation that keeps us on our own loaded document: the exact current URL
+ * (the app's own location.reload()) or a hash-only change of it. A query change
+ * is a new load of index.html with someone else's query — the boot scripts then
+ * persist the language and appearance it names (team review R13-F01) — and a
+ * different local file (report.html resolved against the app's file:// base)
+ * would replace the frameless window and strand the user, so both are blocked
+ * exactly like an external http(s) link. The app's own loads with a query are
+ * main's loadFile(index.html, { query }) and reloadIgnoringCache(): programmatic,
+ * they never fire will-navigate, so this guard never sees them. */
 function isSameDocumentNavigation(targetUrl, currentUrl) {
   const target = String(targetUrl || '').trim();
+  const current = String(currentUrl || '').trim();
   if (!target) return true;
-  if (target === String(currentUrl || '').trim()) return true;
-  const targetId = documentIdentity(target);
-  const currentId = documentIdentity(String(currentUrl || '').trim());
-  return targetId !== '' && targetId === currentId;
+  if (target === current) return true;
+  const to = documentParts(target);
+  const from = documentParts(current);
+  if (!to || !from || to.path !== from.path || to.search !== from.search) return false;
+  return target.includes('#') || to.hash === from.hash;
 }
 
 function attachMainWindowNavigationGuards({ windowRef, shell, log = () => {} } = {}) {

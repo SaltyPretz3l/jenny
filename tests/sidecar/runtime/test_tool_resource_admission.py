@@ -145,6 +145,8 @@ def test_a_rejection_reason_reaches_the_model_as_a_sentence() -> None:
     assert _failure("project_authority_stale").message.startswith("This call did not start")
     assert _failure("something_new").message == "Tool resource admission failed: something_new"
     assert "repeat it unchanged" in _failure("busy", waiting=True).message
+    # Session review F6: the model read the busy failure as the stale-read guard.
+    assert "not a stale read" in _failure("busy", waiting=True).message
 
 
 def test_opted_wait_raises_typed_deferral_without_wire_self_enable() -> None:

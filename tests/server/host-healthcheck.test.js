@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 
-const { checkTeam, parseArgs, probe } = require('../../server/healthcheck');
+const { checkTeam, main, parseArgs, probe } = require('../../server/healthcheck');
 
 test('healthcheck CLI accepts only an absolute config and optional readiness probe', () => {
   assert.deepEqual(parseArgs(['--config', '/etc/jenny/host.json']), {
@@ -81,4 +81,28 @@ test('healthcheck team variant rejects with host_unhealthy when no live marker e
   const missing = require('node:path').join(require('node:os').tmpdir(), 'jenny-no-such-team-profile');
   await assert.rejects(checkTeam({ userDataPath: missing, team: {} }, { isProcessAlive: () => true }),
     (error) => error.message === 'host_unhealthy');
+});
+
+test('3-11: healthcheck main hands the start-time reader to the team check', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { writeReadyMarker } = require('../../server/team/ready-marker');
+  const root = fs.mkdtempSync(path.join(process.cwd(), 'tmp-team-health-311-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.mock.method(os, 'homedir', () => path.join(root, 'home'));
+  fs.mkdirSync(path.join(root, 'profile'));
+  const configPath = path.join(root, 'host.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    schema_version: 3, host_mode: 'server', host_execution_policy_version: 1, listen_host: '127.0.0.1', port: 0,
+    user_data_path: path.join(root, 'profile'), workspace_root: null, secrets_dir: path.join(root, 'secrets'),
+    team: { name: 'Core', key_source: 'secret_file', direct_port: null },
+  }));
+  writeReadyMarker({ userDataPath: fs.realpathSync.native(path.join(root, 'profile')), bootEpoch: 'boot', pid: 1, startTime: '10' });
+  const requestImpl = () => { assert.fail('a team host must make no network request'); };
+  const alive = (pid) => pid === 1;
+  assert.equal(await main(['--config', configPath, '--ready'], { requestImpl, isProcessAlive: alive, readStartTime: () => '10' }), undefined);
+  // The container restarted: pid 1 is alive again but started later, so the old marker is not ready.
+  await assert.rejects(main(['--config', configPath, '--ready'], { requestImpl, isProcessAlive: alive, readStartTime: () => '11' }),
+    /host_unhealthy/);
 });

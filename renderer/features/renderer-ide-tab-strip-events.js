@@ -26,6 +26,9 @@
     try { return require('./renderer-ide-tabs'); } catch (_error) { return {}; }
   }
 
+  // Outside-Workspace documents (row 137): a dragged tab carries the real path, never the key.
+  const dragText = (path) => (globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null))?.displayPathFor(path) ?? path;
+
   const NAV_KEYS = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
 
   function createIdeTabStripEvents(deps) {
@@ -200,7 +203,7 @@
       draggedPath = tabPathOf(tabEl);
       const transfer = event.dataTransfer;
       if (transfer) {
-        transfer.setData?.('text/plain', draggedPath);
+        transfer.setData?.('text/plain', dragText(draggedPath));
         transfer.setData?.(TAB_MIME, JSON.stringify({ path: draggedPath, fromGroup: groupId }));
         transfer.effectAllowed = 'move';
       }

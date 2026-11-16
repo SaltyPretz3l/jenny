@@ -18,8 +18,9 @@
 
   // Row 131: after a chat opens, the bottom stays pinned (instantly, never by
   // the streaming glide) while late height changes settle.
-  const LANDING_HOLD_IDLE_MS = 400;
-  const LANDING_HOLD_MAX_MS = 2000;
+  // The hold lasts while the reader stays latched and has not scrolled, so a
+  // diagram or image that renders late is still re-pinned (owner, 2026-11-12).
+  const LANDING_HOLD_MAX_MS = 10000;
 
   function createViewportSchedulingUtils(deps) {
     const { state, readerAwayPauseReason } = deps;
@@ -45,6 +46,8 @@
       snapThreadToBottom,
       startLiveStreamingFollow,
       cancelLiveStreamingFollow,
+      releaseIfReaderScrolledAway = () => false,
+      relatchFollowAtBottom = () => {},
       updateComposerSafeOffset,
       updateAssistantSpritePosition,
       getSessionId = () => state.currentSessionId,
@@ -61,7 +64,7 @@
     let postLayoutViewportSyncTimer = 0;
     let pendingPostLayoutViewportSync = null;
     // Session whose viewport last synced (null before the first sync) and the
-    // one landing hold of this pane: { sessionId, observer, idleTimer, maxTimer, timelineHeight }.
+    // one landing hold of this pane: { sessionId, observer, maxTimer, timelineHeight }.
     let lastSyncedSessionId = null;
     let landingHold = null;
     const transientViewportFrames = new Set();
@@ -163,15 +166,8 @@
       const hold = landingHold;
       if (!hold) return;
       landingHold = null;
-      if (hold.idleTimer) window.clearTimeout(hold.idleTimer);
       if (hold.maxTimer) window.clearTimeout(hold.maxTimer);
       try { hold.observer?.disconnect?.(); } catch (_error) { /* observer already gone */ }
-    }
-
-    function armLandingHoldIdleTimer() {
-      if (!landingHold) return;
-      if (landingHold.idleTimer) window.clearTimeout(landingHold.idleTimer);
-      landingHold.idleTimer = startHoldTimer(endLandingHold, LANDING_HOLD_IDLE_MS);
     }
 
     // The hold stays live only for a latched reader on the same chat with no
@@ -207,8 +203,6 @@
       const height = readHoldTimelineHeight(entries);
       if (height === landingHold.timelineHeight) return;
       landingHold.timelineHeight = height;
-      if (!isLandingHoldLive()) return;
-      armLandingHoldIdleTimer();
       repinForLandingHold();
     }
 
@@ -217,7 +211,6 @@
       landingHold = {
         sessionId: String(getSessionId() || ''),
         observer: null,
-        idleTimer: 0,
         maxTimer: 0,
         timelineHeight: readHoldTimelineHeight(null),
       };
@@ -229,7 +222,6 @@
           landingHold.observer = null;
         }
       }
-      armLandingHoldIdleTimer();
       landingHold.maxTimer = startHoldTimer(endLandingHold, LANDING_HOLD_MAX_MS);
     }
 
@@ -292,6 +284,12 @@
                   // position; the next streaming sync follows normally.
                   if (approvalHoldReleasePending && !forceBottom) {
                     approvalHoldReleasePending = false;
+                    // The held position is the new follow baseline; a gesture
+                    // made while reading the prompt is spent with the brake.
+                    relatchFollowAtBottom(Number(chatThreadScroll.scrollTop) || 0);
+                  } else if (!forceBottom && reducedMotionQuery.matches && releaseIfReaderScrolledAway()) {
+                    // Reduced motion snaps, never glides: a fresh wheel notch
+                    // away from the bottom releases follow instead of being undone.
                   } else if (forceBottom || reducedMotionQuery.matches) {
                     approvalHoldReleasePending = false;
                     snapThreadToBottom({ behavior: 'auto' });

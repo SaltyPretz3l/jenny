@@ -91,6 +91,7 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "session_status",
         "session_transcript",
         "session_stop",
+        "session_prioritize",
         "jenny_help",
         "settings_get",
         "settings_change",

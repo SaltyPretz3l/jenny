@@ -39,7 +39,9 @@ function attachPrimaryChat(backendService, {
     featureFlags: () => backendService.featureFlags,
     projectService: () => backendService.projectService,
     resumeWake: (sessionId) => backendService.chatMessages?.resumeWake?.(sessionId) ?? null,
-    emit,
+    setSessionPreferences: (sessionId, preferences) => backendService.setSessionPreferences?.(sessionId, preferences),
+    // Row 144: a write to the block (a model pin, Resume) lets checks held for a model try again.
+    emit: (event) => { emit(event); void backendService.primaryScheduledChecks?.onModelsChanged?.(); },
     log,
   });
   // Row 87 D2: the per-action rules matcher. A wake, fired check or digest turn, or a turn that admitted another
@@ -154,6 +156,7 @@ function attachPrimaryChat(backendService, {
   // Row 85 D5: the notifier's port; a due Jenny check runs a turn in the Jenny chat.
   wirePrimaryScheduledChecks(backendService, {
     log,
+    notify: (notice) => sendBridgeEvent('primaryChat.onCheckHeld', notice), // row 144: held / cleared
     getReminder: (id) => {
       const reminders = configService()?.getState?.()?.proactive?.reminders;
       return Array.isArray(reminders) ? reminders.find((entry) => entry?.id === id) || null : undefined;

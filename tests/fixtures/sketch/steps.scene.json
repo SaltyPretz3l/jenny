@@ -1,0 +1,63 @@
+{
+  "nodes": [
+    {
+      "id": "a",
+      "label": "Client"
+    },
+    {
+      "id": "b",
+      "label": "Server"
+    },
+    {
+      "id": "c",
+      "label": "Disk"
+    }
+  ],
+  "edges": [
+    {
+      "id": "a->b",
+      "from": "a",
+      "to": "b",
+      "label": "ask"
+    },
+    {
+      "id": "b->c",
+      "from": "b",
+      "to": "c",
+      "label": "read"
+    }
+  ],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": [
+    {
+      "title": "Ask",
+      "text": "The client sends a request",
+      "highlight": [
+        "a",
+        "a->b"
+      ]
+    },
+    {
+      "title": "Look up",
+      "text": "The server reads the disk",
+      "highlight": [
+        "b",
+        "b->c"
+      ]
+    },
+    {
+      "title": "Answer",
+      "text": "The data goes back",
+      "highlight": [
+        "c",
+        "a"
+      ]
+    }
+  ],
+  "title": "One request"
+}

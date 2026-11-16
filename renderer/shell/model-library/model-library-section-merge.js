@@ -12,7 +12,7 @@
   'use strict';
 
   // deps: { state, windowRef, sourcesModule, mergeModule, loadFailureReader,
-  //   getSourceData(), getEngineBlocks() }
+  //   getSourceData(), getEngineBlocks(), getMerged() }
   function createModelLibrarySectionMerge(deps) {
     var d = deps || {};
     var state = d.state || {};
@@ -123,7 +123,22 @@
       return result;
     }
 
+    // The llama-server row of Engines and providers: serving or idle, and how many GGUF files it runs.
+    function llamaServerInfo() {
+      var source = d.getSourceData() || {};
+      var server = source.llamaServer;
+      var merged = typeof d.getMerged === 'function' ? d.getMerged() : null;
+      var cards = merged && Array.isArray(merged.cards) ? merged.cards : [];
+      return {
+        running: Boolean(server) && server.state === 'ready' && server.port > 0,
+        port: server ? server.port : 0,
+        unavailable: Boolean(source.unavailable && source.unavailable.llamaServer),
+        fileCount: cards.filter(function (card) { return card.installed === true && card.selectedEngine === 'llama-server'; }).length,
+      };
+    }
+
     return {
+      llamaServerInfo: llamaServerInfo,
       activeModel: activeModel,
       preferredLocalModel: preferredLocalModel,
       accelerationFlagEnabled: accelerationFlagEnabled,

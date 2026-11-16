@@ -54,8 +54,8 @@ _WIND_DOWN_MESSAGE = (
     "Prioritize finishing the user's request with the information already gathered."
 )
 _MODE_DEFAULTS = {
-    _CHAT_MODE: ("max_chat_loop_iterations", 8),
-    "task": ("max_task_loop_iterations", 30),
+    _CHAT_MODE: ("max_chat_loop_iterations", 40),
+    "task": ("max_task_loop_iterations", 300),
 }
 _CLOUD_MODE_DEFAULTS = {
     _CHAT_MODE: ("cloud_max_chat_loop_iterations", 40),
@@ -126,7 +126,7 @@ def effective_max_loop_wall_seconds(config: Any) -> float:
         cloud_attr="cloud_max_loop_wall_seconds",
         local_attr="max_loop_wall_seconds",
         cloud_default=28_800.0,
-        local_default=3_600.0,
+        local_default=7_200.0,
     )
 
 
@@ -165,7 +165,7 @@ def effective_max_tools_per_turn(config: Any) -> int:
         cloud_attr="cloud_max_tools_per_turn",
         local_attr="max_tools_per_turn",
         cloud_default=200,
-        local_default=20,
+        local_default=200,
     )
 
 
@@ -199,7 +199,7 @@ def effective_max_web_tool_calls_per_turn(config: Any) -> int:
         cloud_attr="cloud_max_web_tool_calls_per_turn",
         local_attr="max_web_tool_calls_per_turn",
         cloud_default=30,
-        local_default=10,
+        local_default=30,
     )
 
 
@@ -393,9 +393,11 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
 
 # -- Speed-scaled local task step limit (TR-005 follow-up, owner decision 2026-09-28)
 #
-# A slow local thinker (Bonsai 2 27B: ~60-230 s of reasoning per step) spends the
-# local task cap of 30 steps long before the turn's working-time limit, so the
-# turn ends on the step count while most of its time budget is unused. When the
+# A slow local thinker (Bonsai 2 27B: ~60-230 s of reasoning per step) spent the
+# then local task cap of 30 steps long before the turn's working-time limit, so the
+# turn ended on the step count while most of its time budget was unused. The cap
+# is 300 since 2026-11-11, where the working-time limit usually ends a slow turn
+# first; the rule is kept for a raised working-time limit. When the
 # local task cap is left at its default, reaching it therefore re-evaluates the
 # cap from the measured model-generation wall time of this run:
 #
@@ -412,7 +414,7 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
 # (renderer/shared/engine-tuning-schema.js ``normalizeEngineTuningValue``), so an
 # override of exactly the default cannot exist.
 
-DEFAULT_LOCAL_TASK_LOOP_ITERATIONS = 30
+DEFAULT_LOCAL_TASK_LOOP_ITERATIONS = _MODE_DEFAULTS["task"][1]
 SLOW_STEP_SECONDS = 30.0
 MAX_SCALE_FACTOR = 4
 

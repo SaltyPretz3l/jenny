@@ -49,6 +49,9 @@ _USAGE_KEYS = (
     "cache_read_input_tokens",
     "output_tokens",
 )
+# Stop reasons that mean the reply was cut short by a token limit.
+_LENGTH_STOP_REASONS = frozenset({"max_tokens", "model_context_window_exceeded"})
+_MAX_INPUT_TRANSFORMATIONS = 256
 # In-band error type -> (retryable, classification, error code).
 _ERROR_TYPES = {
     "overloaded_error": (True, "server_overload", CMP_CLOUD_HTTP_ERROR),
@@ -90,15 +93,36 @@ class AnthropicHttpService(ProviderHttpService):
 # -- folding -----------------------------------------------------------------------
 
 
-def _safe_error_type(value: Any) -> str:
+def _safe_token(value: Any, fallback: str) -> str:
     raw = value.strip() if isinstance(value, str) else ""
     if not raw or len(raw) > _MAX_SAFE_ERROR_FIELD_CHARS:
-        return "unknown_error"
-    return raw if all(ch.isalnum() or ch in "._-" for ch in raw) else "unknown_error"
+        return fallback
+    return raw if all(ch.isalnum() or ch in "._-" for ch in raw) else fallback
+
+
+def _count_transformations(raw: Any) -> dict[str, int]:
+    """``type.reason`` -> count for the history edits the API reports it made.
+
+    Only the charset-gated type and reason are kept: a dropped thinking block means the
+    sent history no longer matched what the block was signed against.
+    """
+    counts: dict[str, int] = {}
+    if not isinstance(raw, list):
+        return counts
+    for entry in raw[:_MAX_INPUT_TRANSFORMATIONS]:
+        if not isinstance(entry, dict):
+            continue
+        key = _safe_token(entry.get("type"), "unknown")
+        if entry.get("reason") is not None:
+            key = f"{key}.{_safe_token(entry.get('reason'), 'unknown')}"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _stream_error(error: Any) -> ProviderHttpError:
-    error_type = _safe_error_type(error.get("type") if isinstance(error, dict) else None)
+    error_type = _safe_token(
+        error.get("type") if isinstance(error, dict) else None, "unknown_error"
+    )
     retryable, classification, code = _ERROR_TYPES.get(
         error_type, (False, "client_error", CMP_CLOUD_HTTP_ERROR)
     )
@@ -129,6 +153,8 @@ class FoldOutcome:
     result: GenerationResult
     # Completed signed thinking blocks of this response, in wire order.
     replay_blocks: tuple[dict[str, Any], ...] = ()
+    # History edits the API made to this request (``type.reason`` -> count).
+    input_transformations: dict[str, int] = field(default_factory=dict)
 
 
 def _count(value: Any) -> int | None:
@@ -149,6 +175,7 @@ class MessageFolder:
         self._tool_calls: list[ToolCallRequest] = []
         self._replay: list[dict[str, Any]] = []
         self._usage: dict[str, int] = {}
+        self._transformations: dict[str, int] = {}
         self._stop_reason = ""
         self.stopped = False
         self._handlers: dict[str, Callable[[dict[str, Any]], tuple[StreamChunk, ...]]] = {
@@ -179,7 +206,9 @@ class MessageFolder:
 
     def _on_message_start(self, event: dict[str, Any]) -> tuple[StreamChunk, ...]:
         message = event.get("message")
-        self._absorb_usage(message.get("usage") if isinstance(message, dict) else None)
+        if isinstance(message, dict):
+            self._absorb_usage(message.get("usage"))
+            self._transformations = _count_transformations(message.get("input_transformations"))
         return ()
 
     def _on_block_start(self, event: dict[str, Any]) -> tuple[StreamChunk, ...]:
@@ -282,7 +311,7 @@ class MessageFolder:
     def _finish_reason(self) -> str:
         if not self.stopped or self._stop_reason == "pause_turn":
             return "incomplete"
-        if self._stop_reason == "max_tokens":
+        if self._stop_reason in _LENGTH_STOP_REASONS:
             return "length"
         return "tool_calls" if self._tool_calls else "stop"
 
@@ -328,21 +357,37 @@ class MessageFolder:
             tool_call_truncated=cut_off and finish == "length",
         )
         replay = tuple(self._replay) if finish == "tool_calls" else ()
-        return FoldOutcome(result=result, replay_blocks=replay)
+        return FoldOutcome(
+            result=result,
+            replay_blocks=replay,
+            input_transformations=dict(self._transformations),
+        )
 
 
 # -- transport ---------------------------------------------------------------------
 
 
+def _byte_chunks(response: Any) -> Any:
+    """The response body as plain bytes, in arrival-sized chunks.
+
+    ``iter_raw`` skips content decoding. The request asks for an uncompressed stream,
+    but a server or proxy that compresses anyway would otherwise yield no SSE line at
+    all: a paid reply read as empty, reported as a dropped connection.
+    """
+    encoding = str((getattr(response, "headers", None) or {}).get("content-encoding") or "")
+    iter_bytes = getattr(response, "iter_bytes", None)
+    if encoding.strip().lower() not in ("", "identity") and callable(iter_bytes):
+        return iter_bytes(chunk_size=None)
+    iter_raw = getattr(response, "iter_raw", None)
+    if callable(iter_raw):
+        return iter_raw(chunk_size=None)
+    return (f"{line}\n".encode() for line in response.iter_lines())
+
+
 def _iter_events(
     response: Any, cancel_handle: Any, on_first_chunk: Callable[[], None] | None
 ) -> Iterator[dict[str, Any]]:
-    iter_raw = getattr(response, "iter_raw", None)
-    chunks = (
-        iter_raw(chunk_size=None)
-        if callable(iter_raw)
-        else (f"{line}\n".encode() for line in response.iter_lines())
-    )
+    chunks = _byte_chunks(response)
     first = True
     pending_name = ""
     try:

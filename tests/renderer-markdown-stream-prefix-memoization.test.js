@@ -162,11 +162,38 @@ test('html and fingerprints are lazy, cached, enumerable, and survive object spr
 //
 // Each case streams a document whose tail contains an id-shaped string and
 // asserts the streamed html is byte-identical to a one-shot render.
-function streamToCompletion(source, chunkSize) {
-  let previousUnits = [];
-  let previousStreamState = null;
+//
+// Every case below shares one bulk-fence prefix. A frame ending inside that prefix
+// renders the same text whichever tail follows, and stream states are immutable
+// (frozen, persistent), so those frames are rendered once per chunk size and each
+// case resumes from the state after the last frame that still ends inside the
+// prefix. Every case still renders each frame that reaches its own tail.
+const prefixFrameCache = new Map();
+
+function streamPrefixFrames(prefix, chunkSize) {
+  const key = `${chunkSize}:${prefix.length}`;
+  if (!prefixFrameCache.has(key)) {
+    let resume = { end: 0, previousUnits: [], previousStreamState: null };
+    for (let end = chunkSize; end <= prefix.length; end += chunkSize) {
+      const model = markdownUtils.renderStreamingMarkdownUnits(prefix.slice(0, end), {
+        mermaid: 'plain', previousUnits: resume.previousUnits, previousStreamState: resume.previousStreamState,
+      });
+      resume = { end, previousUnits: model.units, previousStreamState: model.streamState };
+    }
+    prefixFrameCache.set(key, { prefix, resume });
+  }
+  const cached = prefixFrameCache.get(key);
+  assert.equal(cached.prefix, prefix);
+  return cached.resume;
+}
+
+function streamToCompletion(source, chunkSize, sharedPrefix = '') {
+  const resume = sharedPrefix && source.startsWith(sharedPrefix)
+    ? streamPrefixFrames(sharedPrefix, chunkSize)
+    : { end: 0, previousUnits: [], previousStreamState: null };
+  let { previousUnits, previousStreamState } = resume;
   let model;
-  for (let end = chunkSize; ; end += chunkSize) {
+  for (let end = resume.end + chunkSize; ; end += chunkSize) {
     model = markdownUtils.renderStreamingMarkdownUnits(source.slice(0, Math.min(end, source.length)), {
       mermaid: 'plain', previousUnits, previousStreamState,
     });
@@ -200,7 +227,7 @@ test('streamed output never rewrites answer text that looks like a code-block id
     const oneShot = markdownUtils.renderStreamingMarkdownUnits(source, { mermaid: 'plain' });
     for (const chunkSize of [200, 61]) {
       assert.equal(
-        streamToCompletion(source, chunkSize).html,
+        streamToCompletion(source, chunkSize, prefix).html,
         oneShot.html,
         `${name} diverged from a one-shot render at chunk size ${chunkSize}`
       );

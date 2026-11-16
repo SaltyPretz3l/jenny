@@ -165,66 +165,131 @@ test('Ctrl+? is ignored — modifier-suppressed (E7)', () => {
   assert.equal(helper.isOpen(), false);
 });
 
-test('buildCatalogBodyHtml emits the shortcut catalog with kbd chiclets (E7)', () => {
+function rowHtml(html, id) {
+  const match = html.match(new RegExp('<div class="chat-help-overlay-row" data-shortcut="' + id + '">[\\s\\S]*?</dd></div>'));
+  assert.ok(match, 'row ' + id + ' should render');
+  return match[0];
+}
+
+function groupHtml(html, id) {
+  const match = html.match(new RegExp('<section class="chat-help-overlay-section" data-group="' + id + '">[\\s\\S]*?</section>'));
+  assert.ok(match, 'group ' + id + ' should render');
+  return match[0];
+}
+
+function openOverlayEnv() {
+  const dom = buildEnv();
+  const helpOverlayFactory = (opts) => createHelpOverlay({ document: dom.window.document, hostId: opts && opts.hostId });
+  const helper = createChatHelpOverlay({ document: dom.window.document, helpOverlayFactory });
+  return { dom, helper };
+}
+
+test('catalog renders six groups in two columns with the app-wide chords', () => {
   const html = buildCatalogBodyHtml();
-  // Section headings present.
-  assert.match(html, /Navigation/);
-  assert.match(html, /Search/);
-  assert.match(html, /Composer/);
-  assert.match(html, /Help/);
-  // Roving-tabindex shortcuts are documented.
-  assert.match(html, /<kbd[^>]*>Alt<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>↓<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>↑<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>Home<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>End<\/kbd>/);
-  // Search shortcuts (F1+E6).
-  assert.match(html, /<kbd[^>]*>Ctrl<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>F<\/kbd>/);
-  assert.match(html, /Search messages in this conversation/);
-  // Composer shortcuts.
-  assert.match(html, /<kbd[^>]*>Enter<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>Shift<\/kbd>/);
-  // Help shortcuts.
-  assert.match(html, /<kbd[^>]*>\?<\/kbd>/);
-  assert.match(html, /<kbd[^>]*>Esc<\/kbd>/);
-  // Plus separator between chiclets is decorative.
-  assert.match(html, /<span class="chat-help-overlay-plus" aria-hidden="true">\+<\/span>/);
+  const columns = html.split('<div class="chat-help-overlay-column">');
+  assert.equal(columns.length, 3, 'two column wrappers');
+  assert.match(html, /^<div class="chat-help-overlay-columns">/);
+  const groupIds = (chunk) => Array.from(chunk.matchAll(/data-group="(\w+)"/g)).map((m) => m[1]);
+  assert.deepEqual(groupIds(columns[1]), ['everywhere', 'find', 'editing']);
+  assert.deepEqual(groupIds(columns[2]), ['composer', 'messages', 'selecting']);
+  for (const id of ['commandPalette', 'quickSettings', 'splitView', 'quickCapture', 'reload']) {
+    assert.ok(groupHtml(html, 'everywhere').includes('data-shortcut="' + id + '"'), id + ' lives in Everywhere');
+  }
+  assert.doesNotMatch(html, /Hover/);
+  assert.doesNotMatch(html, /data-group="help"/);
+  assert.match(rowHtml(html, 'quickCapture'), /<kbd class="chat-help-overlay-kbd">Space<\/kbd>/);
+  assert.match(rowHtml(html, 'shortcuts'), /<kbd class="chat-help-overlay-kbd">\?<\/kbd>/);
+  // Description is the dt, the keys are the dd.
+  assert.match(rowHtml(html, 'send'), /<dt class="chat-help-overlay-description">Send<\/dt><dd class="chat-help-overlay-keys"/);
 });
 
-test('the run-mode shortcuts are documented in the catalog (spec §5, decision 3)', () => {
-  const html = buildCatalogBodyHtml();
-  assert.match(html, /Cycle run mode \(Ask → Auto → Plan → Propose\)/);
-  assert.match(html, /<kbd[^>]*>Tab<\/kbd>/);
-  assert.match(html, /Toggle Plan mode/);
-  assert.match(html, /<kbd[^>]*>P<\/kbd>/);
+test('headings and descriptions go through the translator', () => {
+  const previous = globalThis.jennyI18n;
+  const modulePath = require.resolve('../renderer/chat/renderer-chat-help-overlay');
+  const cached = require.cache[modulePath];
+  delete require.cache[modulePath];
+  globalThis.jennyI18n = { t: (key) => '[' + key + ']' };
+  try {
+    const fresh = require('../renderer/chat/renderer-chat-help-overlay');
+    const html = fresh.buildCatalogBodyHtml();
+    for (const id of ['everywhere', 'composer', 'messages', 'find', 'editing', 'selecting']) {
+      assert.match(groupHtml(html, id), new RegExp('<h3 class="chat-help-overlay-section-heading">\\[help\\.group\\.' + id + '\\]</h3>'));
+    }
+    assert.match(rowHtml(html, 'splitView'), /\[help\.shortcut\.splitView\]/);
+  } finally {
+    delete require.cache[modulePath];
+    if (cached) require.cache[modulePath] = cached;
+    if (previous === undefined) delete globalThis.jennyI18n; else globalThis.jennyI18n = previous;
+  }
 });
 
-test('F2: catalog includes an Editing section with Enter / Esc / Ctrl+Enter / Shift+Enter chiclets', () => {
+test('chords that share their modifiers render them once', () => {
   const html = buildCatalogBodyHtml();
-  assert.match(html, /Editing/);
-  assert.match(html, /Edit the focused user message/);
-  assert.match(html, /Cancel editing/);
-  assert.match(html, /Save edit and resend/);
-  assert.match(html, /Insert a new line \(in editor\)/);
-  // Sanity: chiclets present (these keys are reused in Search + Composer too,
-  // so we just verify the descriptions are unique to the Editing section).
-  const editingSection = html.match(/Editing[\s\S]*?<\/section>/);
-  assert.ok(editingSection, 'Editing section block should be findable');
+  const kbd = (key) => '<kbd class="chat-help-overlay-kbd">' + key + '</kbd>';
+  const plus = '<span class="chat-help-overlay-plus" aria-hidden="true">+</span>';
+  const alt = '<span class="chat-help-overlay-alt" aria-hidden="true">/</span>';
+  const nextPrevious = rowHtml(html, 'nextPrevious');
+  assert.ok(nextPrevious.includes(kbd('Alt') + plus + kbd('↓') + alt + kbd('↑')), nextPrevious);
+  assert.equal(nextPrevious.split(kbd('Alt')).length, 2, 'Alt appears once');
+  assert.match(nextPrevious, /aria-label="Alt\+↓ or Alt\+↑"/);
+  const zoom = rowHtml(html, 'zoom');
+  assert.ok(zoom.includes(kbd('Ctrl') + plus + kbd('+') + alt + kbd('−') + alt + kbd('0')), zoom);
+  assert.equal(zoom.split(kbd('Ctrl')).length, 2, 'Ctrl appears once');
+  const firstLast = rowHtml(html, 'firstLast');
+  assert.ok(firstLast.includes(kbd('Home') + alt + kbd('End')), firstLast);
+  const nextMatch = rowHtml(html, 'nextPreviousMatch');
+  assert.ok(nextMatch.includes(kbd('Enter') + alt + kbd('Shift') + plus + kbd('Enter')), nextMatch);
 });
 
-test('F4/F5/F6: catalog includes a Selection section with multi-select chiclets', () => {
-  const html = buildCatalogBodyHtml();
-  assert.match(html, /Selection/);
-  assert.match(html, /Enter selection mode \(or extend the range\)/);
-  assert.match(html, /Select all messages \(while in selection mode\)/);
-  assert.match(html, /Cancel selection/);
-  assert.match(html, /Delete selected and everything after/);
-  assert.match(html, /Branching/);
-  assert.match(html, /Branch from the focused message/);
-  assert.match(html, /Branch from any message hover action/);
+test('the filter keeps matching rows, whole groups on a heading hit, and escapes the query', () => {
+  const split = buildCatalogBodyHtml('split');
+  assert.match(split, /data-group="everywhere"/);
+  assert.match(split, /data-shortcut="splitView"/);
+  assert.doesNotMatch(split, /data-shortcut="commandPalette"/);
+  assert.doesNotMatch(split, /data-group="composer"/);
+  assert.match(split, /<mark class="chat-help-overlay-mark">Split<\/mark> view/);
+
+  const composer = buildCatalogBodyHtml('  COMPOSER ');
+  const group = groupHtml(composer, 'composer');
+  assert.equal((group.match(/data-shortcut=/g) || []).length, 6, 'a heading hit keeps the whole group');
+  assert.doesNotMatch(composer, /data-group="everywhere"/);
+
+  const hostile = buildCatalogBodyHtml('<img>');
+  assert.match(hostile, /<p class="chat-help-overlay-empty">/);
+  assert.match(hostile, /&lt;img&gt;/);
+  assert.doesNotMatch(hostile, /<img>/);
+
+  const none = buildCatalogBodyHtml('zzzz');
+  assert.match(none, /<p class="chat-help-overlay-empty">No shortcut matches “zzzz”\.<\/p>/);
+  assert.doesNotMatch(none, /data-group=/);
 });
 
+test('open() focuses the search field, filters as you type, and resets the query on reopen', () => {
+  const { dom, helper } = openOverlayEnv();
+  const doc = dom.window.document;
+  helper.open();
+  const dialog = doc.querySelector('.inv-help-overlay-dialog');
+  assert.ok(dialog.classList.contains('inv-help-overlay-dialog--wide'));
+  const search = doc.getElementById('chatHelpOverlaySearch');
+  assert.ok(search);
+  assert.equal(doc.activeElement, search, 'search field is focused on open');
+  assert.equal(search.getAttribute('aria-label'), 'Search keyboard shortcuts');
+  assert.equal(search.getAttribute('placeholder'), 'Search shortcuts');
+  assert.ok(doc.querySelector('.inv-help-overlay-header .inv-help-overlay-header-extra #chatHelpOverlaySearch'));
+  assert.ok(doc.querySelector('[data-shortcut="reload"]'));
+
+  search.value = 'reload';
+  search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.ok(doc.querySelector('[data-shortcut="reload"]'));
+  assert.equal(doc.querySelector('[data-shortcut="send"]'), null, 'body re-rendered with the filter');
+  assert.equal(doc.getElementById('chatHelpOverlaySearch'), search, 'the field itself is not replaced');
+
+  helper.close();
+  helper.open();
+  const reopened = doc.getElementById('chatHelpOverlaySearch');
+  assert.equal(reopened.value, '');
+  assert.ok(doc.querySelector('[data-shortcut="send"]'), 'the full catalog is back');
+});
 test('close() closes the overlay programmatically (E7)', () => {
   const dom = buildEnv();
   const helpOverlayFactory = (opts) => createHelpOverlay({ document: dom.window.document, hostId: opts && opts.hostId });

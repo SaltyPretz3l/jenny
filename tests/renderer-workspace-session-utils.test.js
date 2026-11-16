@@ -29,7 +29,7 @@ function createWorkspaceShell() {
 // Ctrl+Tab handler drives (openSession / renderAll).
 function createHarness({
   getOpenSessionsInNewTab, openSession: openSessionImpl, isSessionBusy, chrome = null,
-  workspaceRailShell = null, windowRef = globalThis, sessions = [], chatsPanel = null, paneModel,
+  workspaceRailShell = null, windowRef = globalThis, sessions = [], chatsPanel = null, paneModel, multiStream = null,
 } = {}) {
   const wsc = createWorkspaceStateController({ jennyShell: createWorkspaceShell(), isSessionBusy, paneModel });
   const toasts = [];
@@ -75,7 +75,7 @@ function createHarness({
     controllers: {
       // The app hands the state controller the coordinator's own busy
       // predicate; mirror that so both sides agree on which tabs are busy.
-      getMultiStreamController: () => (isSessionBusy ? {
+      getMultiStreamController: () => multiStream || (isSessionBusy ? {
         getStreamingSessionIds: () => wsc.getState().openSessionIds.filter((id) => isSessionBusy(id)),
         getApprovalPendingSessionIds: () => [],
       } : null),
@@ -511,4 +511,32 @@ test('a runtime-only chrome pass patches the chats panel runtime state', async (
   state.ui.activeView = 'plugin';
   coordinator.renderWorkspaceChrome({ runtimeOnly: true });
   assert.deepEqual(patches, ['patchRuntimeState', 'patchRuntimeState'], 'the sidebar outlives the chat view');
+});
+
+// Row 158: a question, a failed send or a stuck send waits on the person too, so the chat rows get a
+// dot for every wait the inbox lists. The stream controller's own states always win.
+test('the chat row dots merge the inbox snapshot without overriding or mutating the stream controller', () => {
+  const seen = [];
+  const chrome = { renderSidebarBadges: (...args) => seen.push(args[5]), syncTabTitles() {} };
+  const streamStates = new Map([['s1', 'approval']]);
+  const asked = [];
+  const { coordinator, state } = createHarness({
+    chrome,
+    multiStream: { getSessionAttentionStates: (ids) => { asked.push(ids); return streamStates; } },
+  });
+  state.attentionInboxController = {
+    getSnapshot: () => ({ states: new Map([['s1', 'input_needed'], ['s2', 'input_needed'], ['s3', 'plan_review']]) }),
+  };
+  coordinator.renderWorkspaceSidebarBadges([], []);
+  assert.deepEqual([...seen[0]], [['s1', 'approval'], ['s2', 'input_needed'], ['s3', 'plan_review']]);
+  assert.notEqual(seen[0], streamStates, 'a new map is handed on');
+  assert.deepEqual([...streamStates], [['s1', 'approval']], 'the stream controllers own map is untouched');
+  assert.equal(asked.length, 1, 'the stream controller is still asked once, for the ids that stream or wait on an approval');
+
+  state.attentionInboxController = null;
+  coordinator.renderWorkspaceSidebarBadges([], []);
+  assert.equal(seen[1], streamStates, 'no inbox controller: the stream states alone, not copied');
+  const bare = createHarness({ chrome });
+  bare.coordinator.renderWorkspaceSidebarBadges([], []);
+  assert.equal(seen[2], undefined, 'no stream controller and no inbox: unchanged from before row 158');
 });

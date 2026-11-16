@@ -181,3 +181,127 @@
     margin-inline-start: 0;
   }
 }
+
+/* Slice 2a-6c: the Leave confirmation's export result, a plain line under the sentence. */
+.team-set-confirm .team-set-note { margin: 0 0 var(--space-4); }
+/* Slice 4e: Share this PC's GPU (renderer-settings-team-gpu.js). The state line under the switch, its
+ * buttons on the right, then what this PC offers. */
+[data-settings-field="teamShareRow"] .settings-field-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.team-share-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  padding: var(--space-4) 0 var(--space-2);
+}
+
+.team-share-state .inv-status-row {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.team-share-state__acts {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.team-share-offers {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.team-share-offers code {
+  font-size: inherit;
+  color: var(--text-primary);
+}
+
+.team-set-confirm .team-set-inline .btn + .btn {
+  margin-inline-start: 0;
+}
+
+/* The owner's GPU use: per-person totals, then the request lines. */
+.team-set-list + .team-set-log--use {
+  margin-top: 12px;
+}
+
+.team-set-log--use li {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.team-set-log--use .team-use-who {
+  color: var(--text-primary);
+  min-width: 64px;
+}
+
+/* Slice 5-6 (picks_5-6.md, mockup fable.css): the Network group, the delete confirmation and the export form.
+   The verdict under the switch: one status line. */
+.team-net-state { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) 0 var(--space-2); }
+
+/* The relay fields fold away (owner's pick 1). */
+.team-net-fold { margin-top: var(--space-6); }
+.team-net-fold > summary { cursor: pointer; color: var(--accent); font-size: var(--font-size-footnote); list-style: none; }
+.team-net-fold > summary::-webkit-details-marker { display: none; }
+.team-net-fold[open] > summary { margin-bottom: var(--space-4); }
+.team-net-note { margin: var(--space-3) 0 0; max-width: 640px; color: var(--text-secondary); font-size: var(--font-size-footnote); line-height: 1.5; }
+.team-net-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-5); margin-top: var(--space-6); }
+.team-net-save span { color: var(--text-muted); font-size: var(--font-size-footnote); }
+
+/* A confirm that lists things: plain lines, no box. */
+.team-set-confirm ul { margin: 0 0 var(--space-4); padding-inline-start: 18px; max-width: 640px; color: var(--text-secondary); font-size: var(--font-size-body); line-height: 1.55; }
+.team-set-confirm li + li { margin-top: var(--space-2); }
+
+/* Delete this team: what goes, by name and number. A label column and a text column; hierarchy by alignment only. */
+.team-del__lead strong { color: var(--text-primary); }
+.team-del__what { display: grid; grid-template-columns: 96px minmax(0, 640px); gap: var(--space-5) var(--space-8); margin: var(--space-5) 0; }
+.team-del__what dt { color: var(--text-primary); font-weight: 600; font-size: var(--font-size-body); }
+.team-del__what dd { margin: 0; color: var(--text-secondary); font-size: var(--font-size-body); line-height: 1.55; }
+.team-del__what dd p { margin: 0; max-width: none; }
+.team-del__what dd p + p { margin-top: var(--space-2); }
+.team-del__projects { width: 100%; max-width: 520px; margin: var(--space-3) 0; border-collapse: collapse; font-size: var(--font-size-footnote); font-variant-numeric: tabular-nums; }
+.team-del__projects td { padding-block: var(--space-2); padding-inline: 0 var(--space-6); color: var(--text-secondary); white-space: nowrap; }
+.team-del__projects td:first-child { color: var(--text-primary); white-space: normal; overflow-wrap: anywhere; }
+.team-del__projects td.n { text-align: end; }
+.team-del__projects tr.sum td { padding-top: var(--space-3); border-top: 1px solid var(--line); color: var(--text-primary); }
+.team-del__type { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-top: var(--space-5); }
+.team-del__type .inv-text-field { flex: 0 1 280px; min-width: 0; }
+.team-del__type label { flex-basis: 100%; color: var(--text-secondary); font-size: var(--font-size-footnote); }
+
+@media (max-width: 720px) {
+  .team-del__what { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .team-del__what dd { margin-bottom: var(--space-4); }
+}
+
+/* The state picture (fork 5 A): this PC, the router or relay, people elsewhere. A link is solid when it works,
+   broken where it stops, dotted while Jenny is still finding out. No boxes: three labels and two lines. */
+.team-net-path { display: flex; align-items: flex-start; gap: var(--space-4); max-width: 760px; padding: var(--space-4) 0 var(--space-3); }
+.team-net-stop { display: grid; grid-template-columns: auto 1fr; column-gap: var(--space-3); align-items: center; flex: 0 1 auto; min-width: 0; }
+.team-net-stop__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--net-c, var(--line-strong)); }
+.team-net-stop b { color: var(--text-primary); font-size: var(--font-size-body); font-weight: 600; white-space: nowrap; }
+.team-net-stop > span:last-child { grid-column: 2; color: var(--text-secondary); font-size: var(--font-size-footnote); line-height: 1.4; }
+.team-net-link { flex: 1 1 48px; min-width: 32px; margin-top: 9px; border-top: 2px solid var(--net-c, var(--line-strong)); position: relative; }
+.team-net-stop[data-s="ok"], .team-net-link[data-s="ok"] { --net-c: var(--status-fg-success); }
+.team-net-stop[data-s="bad"], .team-net-link[data-s="bad"] { --net-c: var(--status-fg-danger); }
+.team-net-stop[data-s="pending"], .team-net-link[data-s="pending"] { --net-c: var(--status-fg-pending); }
+.team-net-stop[data-s="bad"] > span:last-child { color: var(--status-fg-danger); }
+.team-net-stop[data-s="off"] b { color: var(--text-muted); }
+.team-net-link[data-s="bad"] { border-top-style: dashed; }
+.team-net-link[data-s="bad"]::after { content: "\00d7"; position: absolute; top: -11px; inset-inline: 0; margin-inline: auto; width: max-content; padding: 0 var(--space-2); background: var(--bg-base); color: var(--status-fg-danger); font-size: var(--font-size-body); line-height: 20px; font-weight: 700; }
+.team-net-link[data-s="pending"], .team-net-link[data-s="unknown"] { border-top-style: dotted; }
+.team-net-link[data-s="off"] { border-top-color: var(--line); }
+.team-net-fix { margin: var(--space-3) 0 0; padding-inline-start: 20px; max-width: 640px; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.6; }
+@media (max-width: 720px) {
+  .team-net-path { flex-direction: column; gap: var(--space-2); }
+  .team-net-link { flex: none; width: 0; height: 18px; min-width: 0; margin-block: 0; margin-inline: 3.5px 0; border-top: 0; border-inline-start: 2px solid var(--net-c, var(--line-strong)); }
+  .team-net-link[data-s="bad"] { border-inline-start-style: dashed; }
+  .team-net-link[data-s="bad"]::after { top: -1px; inset-inline: 10px auto; margin-inline: 0; }
+}

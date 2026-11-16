@@ -63,6 +63,21 @@ test('the lock holder becomes the primary and wires the second-instance callback
   assert.deepEqual(app.calls, []);
 });
 
+test('the lock request carries the files this launch asked to open (row 137)', () => {
+  const app = fakeApp();
+  let lockArgs = null;
+  const file = require('node:path').resolve(require('node:path').sep, 'notes', 'a.md');
+  resolveMainBootMode({
+    app,
+    argv: ['electron.exe', '.', '--', file, '--original-process-start-time=1'],
+    shouldAutoStart: () => true,
+    acquireLock: (...args) => { lockArgs = args; return false; },
+  });
+  assert.equal(lockArgs[2].additionalData.v, 1);
+  assert.deepEqual(lockArgs[2].additionalData.outsidePaths, [file]);
+  assert.deepEqual(app.calls, [['exit', 0]]);
+});
+
 test('a second launch exits immediately with code 0 once the lock is refused', () => {
   const app = fakeApp();
   const mode = resolveMainBootMode({

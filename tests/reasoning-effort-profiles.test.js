@@ -90,6 +90,23 @@ test('declared provider metadata overrides conservative catalog defaults', () =>
   );
 });
 
+test('a model that cannot turn thinking off names its lowest choice Minimal, not None', () => {
+  const capabilities = {
+    default_reasoning_effort: 'default',
+    reasoning_efforts: ['none', 'low', 'high'],
+    reasoning_always_on: true,
+  };
+  assert.deepEqual(
+    buildReasoningEffortOptions('api-provider/anthropic/claude-haiku-5-5', capabilities),
+    [
+      { value: 'default', label: 'Use default' },
+      { value: 'none', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High' },
+    ],
+  );
+});
+
 test('Qwen3.8 declared metadata exposes provider-native effort labels', () => {
   const capabilities = {
     default_reasoning_effort: 'medium',

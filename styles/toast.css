@@ -32,6 +32,8 @@
 /* One fill, one hairline, sharpened radius. Tone is carried by the mark alone —
  * no tinted background, no tinted border. */
 .inv-toast {
+  position: relative;
+  overflow: hidden;
   pointer-events: auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -159,6 +161,28 @@
   border-radius: var(--radius-xs);
 }
 
+/* Time left on an Undo toast (row 162): a hairline that drains along the
+ * bottom edge and stops while the stack is held, the same moments the store
+ * holds the clock. Out of the grid flow, so it never moves the content. */
+.inv-toast__countdown {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  transform-origin: left center;
+  animation: toast-countdown var(--toast-countdown-ms, 6000ms) linear forwards;
+  pointer-events: none;
+}
+
+[dir="rtl"] .inv-toast__countdown {
+  transform-origin: right center;
+}
+
+.toast-viewport:is(:hover, :focus-within) .inv-toast__countdown {
+  animation-play-state: paused;
+}
+
 .toast-viewport__overflow {
   pointer-events: none;
   width: 100%;
@@ -168,6 +192,17 @@
   color: var(--text-muted);
   font-size: var(--font-size-footnote);
   text-align: end;
+}
+
+/* With Clear all the line is a quiet footer: the hidden count, then the action. */
+.toast-viewport__overflow--actions {
+  pointer-events: auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: var(--space-6);
+  padding-top: var(--space-2);
+  border-top: 0;
 }
 
 .inv-toast.toast-exiting {
@@ -194,12 +229,25 @@
   }
 }
 
+@keyframes toast-countdown {
+  from {
+    transform: scaleX(var(--toast-countdown-from, 1));
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}
+
 /* With no animation to wait on, the controller removes the node synchronously
  * rather than listening for an animationend that never fires. */
 @media (prefers-reduced-motion: reduce) {
   .inv-toast {
     animation: none;
   }
+
+  /* The countdown carries information and moves no content, so it stays;
+   * only the entrance and exit stop. */
 
   .inv-toast.toast-exiting {
     animation: none;

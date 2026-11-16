@@ -108,12 +108,6 @@ test('deriveTurnPhase accepts a realistic Phase 2 view-model shape without re-wa
   assert.equal(deriveTurnPhase(vm), 'needs_approval');
 });
 
-test('the removed comet presence mapping is no longer exported', () => {
-  assert.equal(Object.hasOwn(turnPhase, 'phaseToPresenceState'), false);
-  assert.equal(Object.hasOwn(turnPhase, 'phaseKindToPresenceState'), false);
-  assert.equal(Object.hasOwn(turnPhase, 'phaseToComposerCopy'), false);
-});
-
 test('normalizeTerminalStatus maps raw backend timeout into canonical timed_out', () => {
   assert.equal(normalizeTerminalStatus('timeout'), 'timed_out');
   assert.equal(normalizeTerminalStatus('TIMEOUT'), 'timed_out');

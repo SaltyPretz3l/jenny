@@ -83,8 +83,9 @@ test('flag on, no host: host handlers exist; member calls load no host module an
   const shutdown = [];
   const secureStore = createMemorySecureStore();
   registerTeam(ipcMain, { featureFlags: { team: true }, backendService: fakeBackend({ team: true }), userDataPath: dir,
-    getSecureStore: () => secureStore, getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }) });
-  for (const channel of ['team:host-deploy', 'team:host-stop', 'team:host-status', 'team:host-recover']) {
+    getSecureStore: () => secureStore, getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
+    readOfflineMode: () => 'disabled' });
+  for (const channel of ['team:host-deploy', 'team:host-stop', 'team:host-status', 'team:host-recover', 'team:host-internet']) {
     assert.equal(ipcMain.handlers.has(channel), true, channel);
   }
   assert.equal(shutdown.length, 1, 'still one shutdown task');
@@ -98,7 +99,8 @@ test('flag on, no host: host handlers exist; member calls load no host module an
 });
 
 // Since slice 1g-1 the status opens the saved config (read only) to say whether this PC hosted a team
-// before; with none saved it writes nothing, makes no directory and never asks the key store.
+// before; with none saved it writes nothing, makes no directory and never asks the key store. Since slice 5-6
+// the controller's start-up sweep first looks (lstat, read only) whether a team-host folder is there at all.
 test('flag on: hostStatus with no host answers stopped, deployed false, and only opens the config to read it', async (t) => {
   const dir = tempProfile(t, 'jenny-host-off-');
   clearModules();
@@ -109,14 +111,14 @@ test('flag on: hostStatus with no host answers stopped, deployed false, and only
   let storeAsked = 0;
   registerTeam(ipcMain, { featureFlags: { team: true }, backendService: fakeBackend({ team: true }), userDataPath: dir,
     getSecureStore: () => { storeAsked += 1; return createMemorySecureStore(); },
-    getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
+    getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }), readOfflineMode: () => 'disabled',
     hostOptions: { fork: () => { throw new Error('no spawn expected'); } } });
   const answer = await ipcMain.handlers.get('team:host-status')({ sender: {} }, undefined);
   assert.equal(answer.ok, true);
   assert.equal(answer.host.state, 'stopped');
   assert.equal(answer.host.deployed, false);
   assert.equal(answer.host.team_id, null);
-  assert.deepEqual(touched, [['openSync', path.join(dir, 'team-host', 'host-config.json')]]);
+  assert.deepEqual(touched, [['lstatSync', path.join(dir, 'team-host')], ['openSync', path.join(dir, 'team-host', 'host-config.json')]]);
   assert.equal(fs.existsSync(path.join(dir, 'team-host')), false, 'nothing created');
   assert.equal(storeAsked, 0, 'the key store is never asked');
   await shutdown[0]();
@@ -135,7 +137,7 @@ test('the shutdown task waits for both stops even when one of them fails', async
   registerTeam(ipcMain, { featureFlags: { team: true }, backendService: fakeBackend({ team: true }), userDataPath: dir,
     getSecureStore: () => createMemorySecureStore(), getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
     loadService: () => ({ createTeamService: () => fakeService }), loadHost: () => ({ createHostController: () => fakeHost }),
-    loadHostLaunch: () => ({ hostEnvironment: () => ({}) }) });
+    loadHostLaunch: () => ({ hostEnvironment: () => ({}) }), readOfflineMode: () => 'disabled' });
   await ipcMain.handlers.get('team:status')({ sender: {} }, undefined);
   await ipcMain.handlers.get('team:host-status')({ sender: {} }, undefined);
   await assert.doesNotReject(shutdown[0]());

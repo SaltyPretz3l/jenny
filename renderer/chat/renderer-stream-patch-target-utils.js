@@ -10,6 +10,29 @@
   // The live bubble is the ground truth for which article is streaming.
   const STREAMING_BUBBLE_SELECTOR = '[data-streaming-bubble="true"]';
 
+  // Bounded walks for the per-delta live patch: a row list's rows, and a
+  // reasoning row's blocks, found without entering any row body or reasoning
+  // panel. A selector query over the list walks every finished thinking
+  // checkpoint's (hidden) body on each delta.
+  function collectChildElements(root, isMatch, shouldDescend) {
+    const found = [];
+    const pending = root?.children ? Array.from(root.children) : [];
+    while (pending.length) {
+      const node = pending.shift();
+      if (isMatch(node)) found.push(node);
+      else if (shouldDescend(node) && node.children) pending.unshift(...node.children);
+    }
+    return found;
+  }
+  function listRowsOf(rowModelList, kind) {
+    return collectChildElements(rowModelList, (node) => node.classList?.contains('chat-row'), () => true)
+      .filter((row) => !kind || row.getAttribute('data-row-kind') === kind);
+  }
+  function reasoningBlocksOf(root) {
+    return collectChildElements(root, (node) => node.classList?.contains('reasoning-row-block'),
+      (node) => !node.classList?.contains('reasoning-row-panel'));
+  }
+
   // The key a reasoning block aligns on: its phase key, else its thinking id,
   // else its ordinal. Shared by the stack patch and the block resolver.
   function getReasoningBlockKey(block, index) {
@@ -47,8 +70,8 @@
     if (alignedBlocks.some((block) => !block)) {
       return reject('block_unaligned');
     }
-    const otherBlocks = Array.from(rowModelList.querySelectorAll('.reasoning-row-block'))
-      .filter((block) => !scope.contains(block));
+    const otherBlocks = listRowsOf(rowModelList, 'reasoning')
+      .filter((row) => row !== scope).flatMap(reasoningBlocksOf);
     const otherByKey = new Map(otherBlocks.map((block, index) => [getBlockKey(block, index), block]));
     if (otherByKey.size !== otherBlocks.length) {
       return reject('sibling_duplicate_key');
@@ -76,12 +99,14 @@
   // so every reasoning delta failed its block-key check and rebuilt the whole
   // turn's row list, large diff rows included. Last resort stays the last stack.
   function resolveLiveReasoningScope(rowModelList, messageId, escapeSelectorValue) {
-    const escape = typeof escapeSelectorValue === 'function' ? escapeSelectorValue : (value) => String(value || '');
     const normalizedId = String(messageId || '').trim();
     if (normalizedId) {
-      const reasoningRow = '.chat-row[data-row-kind="reasoning"]';
-      for (const attribute of ['data-source-message-id=', 'data-source-message-ids~=']) {
-        const rows = rowModelList.querySelectorAll(`${reasoningRow}[${attribute}"${escape(normalizedId)}"]`);
+      const reasoningRows = listRowsOf(rowModelList, 'reasoning');
+      for (const names of [
+        (row) => row.getAttribute('data-source-message-id') === normalizedId,
+        (row) => String(row.getAttribute('data-source-message-ids') || '').split(/\s+/).includes(normalizedId),
+      ]) {
+        const rows = reasoningRows.filter(names);
         if (rows.length) return rows[rows.length - 1];
       }
     }
@@ -97,9 +122,27 @@
       || String(row?.getAttribute?.('data-source-message-ids') || '').split(/\s+/).includes(messageId);
   }
 
+  // A cheap key of what the live segment's reasoning render reads off the
+  // message (entry ids and lengths, phase state and labels, status, view).
+  function buildLiveReasoningKey(message, latestAssistantMessageId, transcriptView) {
+    const source = message || {};
+    const entries = Array.isArray(source.reasoning?.entries) ? source.reasoning.entries : [];
+    const phases = Array.isArray(source.reasoning_phases) ? source.reasoning_phases : [];
+    const transcriptPhases = Array.isArray(source.phases) ? source.phases : [];
+    return [
+      'k', String(source.id || ''), String(source.status || ''),
+      String(source.id || '') === String(latestAssistantMessageId || '') ? '1' : '0', String(transcriptView || ''),
+      entries.map((entry) => `${entry?.id || ''}~${entry?.thinking_id || entry?.thinkingId || ''}~${String(entry?.text || '').length}`).join(','),
+      phases.map((phase) => [phase?.phaseId, phase?.thinkingId, phase?.completed === true ? 1 : 0, phase?.completedAt,
+        phase?.startedAt, phase?.summary, phase?.renderCollapsed === true ? 1 : 0, phase?.tokensPerSecond]
+        .map((value) => String(value ?? '')).join('~')).join(','),
+      transcriptPhases.map((phase) => `${phase?.phase_id || phase?.phaseId || ''}~${phase?.phase_kind || phase?.phaseKind || ''}`).join(','),
+    ].join('|');
+  }
+
   function sameReasoningState(left, right) {
-    const leftBlocks = Array.from(left.querySelectorAll('.reasoning-row-block'));
-    const rightBlocks = Array.from(right.querySelectorAll('.reasoning-row-block'));
+    const leftBlocks = reasoningBlocksOf(left);
+    const rightBlocks = reasoningBlocksOf(right);
     return leftBlocks.length === rightBlocks.length && leftBlocks.every((block, index) => (
       ['data-phase-key', 'data-reasoning-status', 'data-reasoning-fp']
         .every((name) => block.getAttribute(name) === rightBlocks[index].getAttribute(name))
@@ -135,8 +178,7 @@
     if (!rowNamesMessage(scope, normalizedId)) return reject('scope_names_other_segment');
     const template = doc.createElement('template');
     template.innerHTML = String(buildLiveReasoningRowsMarkup() || '').trim();
-    const renderedById = new Map(Array.from(rowModelList.querySelectorAll('.chat-row[data-row-kind="reasoning"]'))
-      .map((row) => [row.getAttribute('data-row-id'), row]));
+    const renderedById = new Map(listRowsOf(rowModelList, 'reasoning').map((row) => [row.getAttribute('data-row-id'), row]));
     let scopeStack = null;
     for (const freshRow of template.content.querySelectorAll('.chat-row[data-row-kind="reasoning"]')) {
       const freshId = freshRow.getAttribute('data-row-id');
@@ -393,6 +435,7 @@
   }
 
   return {
+    buildLiveReasoningKey,
     getReasoningBlockKey,
     buildLiveReasoningRowStackMarkup,
     createStreamPatchTargetUtils,

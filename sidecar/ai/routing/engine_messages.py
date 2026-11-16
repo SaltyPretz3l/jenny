@@ -537,12 +537,13 @@ def build_tool_use_nudge(
 
 
 def _apply_tool_fields(entry: EngineMessage, message: dict[str, object]) -> None:
-    tool_call_id = message.get("tool_call_id")
+    tool_call_id, name = message.get("tool_call_id"), message.get("name")
     if isinstance(tool_call_id, str):
         entry["tool_call_id"] = tool_call_id
-    name = message.get("name")
     if isinstance(name, str):
         entry["name"] = name
+    if message.get("is_error") is True:
+        entry["is_error"] = True
 
 
 def engine_messages(

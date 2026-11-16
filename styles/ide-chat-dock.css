@@ -215,8 +215,7 @@
 
   /* Preserve the primary Chat semantic fills/rings, but give the compact dock
    * dots enough interior paint to read as filled at their smaller scale. */
-  .ide-chat-dock-body .chat-thread-toggle::before,
-  .ide-chat-dock-body .chat-row-node-dot {
+  .ide-chat-dock-body .chat-thread-toggle::before {
     border-width: 1px;
   }
 
@@ -344,35 +343,9 @@
     gap: var(--space-2);
   }
 
-  /* Attachment chips (settings-responsive.css L252-283 port). */
-  .ide-chat-dock-body .attachment-chip {
-    gap: 6px;
-    padding-block: 0;
-    padding-inline-end: 6px;
-    padding-inline-start: 10px;
-  }
-
-  .ide-chat-dock-body .attachment-chip-image {
-    min-height: 42px;
-    padding-block: 4px;
-    padding-inline-end: 6px;
-    padding-inline-start: 4px;
-    border-radius: var(--radius-md);
-  }
-
-  .ide-chat-dock-body .attachment-chip-preview {
-    width: 34px;
-    height: 34px;
-    border-radius: var(--radius-base);
-  }
-
-  .ide-chat-dock-body .attachment-chip-name {
-    max-width: min(132px, 100%);
-  }
-
-  .ide-chat-dock-body .message-attachments {
-    gap: var(--space-4);
-    margin-top: var(--space-4);
+  .ide-chat-dock-body .message-files {
+    gap: var(--space-3);
+    margin-top: var(--space-3);
   }
 
   .ide-chat-dock-body .message-attachment-card {
@@ -382,9 +355,4 @@
   .ide-chat-dock-body .inv-artifact-figure--attachment {
     --inv-image-attachment-size: min(220px, 100%);
   }
-}
-
-/* §17 decision 10: attachment tray hugs the composer's trailing edge. */
-.ide-chat-dock-body .attachment-tray {
-  justify-content: flex-end;
 }

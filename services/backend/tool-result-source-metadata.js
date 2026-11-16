@@ -15,6 +15,13 @@
  * are `web:N` with N 1-BASED; `sources` entries carry {url, title, snippet,
  * source_type}, `citations` carry {id, url, title}. Sources are preferred
  * (they have the snippet); citations fill in urls the sources missed.
+ *
+ * Each ref keeps the web:N number the model cites it by (row 154): a source's
+ * N is its 1-based slot in the raw `sources` array (citations_from_sources
+ * numbers every slot, invalid ones included), a citation's N comes from its
+ * `id`. A url dropped as a duplicate leaves its N on the surviving ref in
+ * `alsoN`, so a marker naming the duplicate still resolves. Refs without a
+ * readable N simply carry no `n` (older persisted events have none either).
  */
 
 const MAX_CITATIONS = 12;
@@ -25,7 +32,12 @@ const MAX_URL_CHARS = 2048;
 // payloads are far smaller (the sidecar bounds provider responses at 1 MiB
 // pre-shaping); anything bigger is not a citations payload.
 const MAX_OUTPUT_TEXT_PARSE_CHARS = 262144;
-const ALLOWED_SOURCE_TYPES = new Set(['web', 'news', 'image', 'video', 'knowledge']);
+const MAX_CITATION_NUMBER = 999;
+const MAX_ALSO_NUMBERS = 12;
+const CITATION_ID_PATTERN = /^web:(\d{1,3})$/;
+const ALLOWED_SOURCE_TYPES = new Set(['web', 'news', 'image', 'video', 'knowledge', 'page']);
+// web_fetch labels its single source `fetched_url`; the renderer calls it a page.
+const SOURCE_TYPE_ALIASES = new Map([['fetched_url', 'page']]);
 
 function safeString(value) {
   if (typeof value === 'symbol') return '';
@@ -56,20 +68,45 @@ function normalizeHttpUrl(value) {
 }
 
 function normalizeSourceType(value) {
-  const token = safeString(value).trim().toLowerCase();
+  const raw = safeString(value).trim().toLowerCase();
+  const token = SOURCE_TYPE_ALIASES.get(raw) || raw;
   return ALLOWED_SOURCE_TYPES.has(token) ? token : '';
 }
 
-function normalizeRef(entry, { withSnippet }) {
+function validCitationNumber(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_CITATION_NUMBER ? value : null;
+}
+
+function citationNumberFromId(value) {
+  const match = CITATION_ID_PATTERN.exec(safeString(value).trim().toLowerCase());
+  return match ? validCitationNumber(Number(match[1])) : null;
+}
+
+function normalizeRef(entry, { withSnippet, n }) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
   const url = normalizeHttpUrl(entry.url);
   if (!url) return null;
-  return {
+  const ref = {
     url,
     title: boundedString(entry.title, MAX_TITLE_CHARS),
     snippet: withSnippet ? boundedString(entry.snippet, MAX_SNIPPET_CHARS) : '',
     sourceType: normalizeSourceType(entry.source_type ?? entry.sourceType),
   };
+  if (n != null) ref.n = n;
+  return ref;
+}
+
+// A duplicate url keeps the first ref; the duplicate's own N joins `alsoN`.
+function addRef(byUrl, ref) {
+  const existing = byUrl.get(ref.url);
+  if (!existing) {
+    byUrl.set(ref.url, ref);
+    return;
+  }
+  if (ref.n == null || ref.n === existing.n) return;
+  const also = existing.alsoN || [];
+  if (also.includes(ref.n) || also.length >= MAX_ALSO_NUMBERS) return;
+  existing.alsoN = [...also, ref.n];
 }
 
 // The LIVE wire shape (chat-stream-tool-handling.js noteEvent payload) never
@@ -83,10 +120,12 @@ function resolveCitationBearingSource(payload) {
   if (Array.isArray(payload.sources) || Array.isArray(payload.citations)) {
     return payload;
   }
-  const outputText = typeof payload.output_text === 'string' ? payload.output_text : '';
+  // The legacy tool.result wire shape carries `output_text`; the sidecar's canonical turn event
+  // (what the collector sees with the canonical bridge on) carries `tool_output_summary`.
+  const outputText = [payload.output_text, payload.tool_output_summary]
+    .find((value) => typeof value === 'string' && value.trim().startsWith('{')) || '';
   if (!outputText || outputText.length > MAX_OUTPUT_TEXT_PARSE_CHARS) return null;
   const trimmed = outputText.trim();
-  if (!trimmed.startsWith('{')) return null;
   if (!trimmed.includes('"citations"') && !trimmed.includes('"sources"')) return null;
   let parsed;
   try {
@@ -112,18 +151,18 @@ function normalizeSourceCitations(payload) {
   const sources = Array.isArray(source.sources) ? source.sources : [];
   const citations = Array.isArray(source.citations) ? source.citations : [];
   const byUrl = new Map();
-  for (const entry of sources) {
-    const ref = normalizeRef(entry, { withSnippet: true });
-    if (!ref) continue;
-    if (!byUrl.has(ref.url)) {
-      byUrl.set(ref.url, ref);
-    }
-  }
+  // Later web calls of a turn carry citation_offset: slot N is marker N + offset.
+  const offset = Number.isInteger(source.citation_offset) && source.citation_offset >= 0
+    ? source.citation_offset
+    : 0;
+  sources.forEach((entry, index) => {
+    const ref = normalizeRef(entry, { withSnippet: true, n: validCitationNumber(index + 1 + offset) });
+    if (ref) addRef(byUrl, ref);
+  });
   for (const entry of citations) {
-    const ref = normalizeRef(entry, { withSnippet: false });
-    if (!ref) continue;
-    if (byUrl.has(ref.url)) continue; // sources win (they carry the snippet)
-    byUrl.set(ref.url, ref);
+    const n = entry && typeof entry === 'object' ? citationNumberFromId(entry.id) : null;
+    const ref = normalizeRef(entry, { withSnippet: false, n });
+    if (ref) addRef(byUrl, ref); // sources win (they carry the snippet)
   }
   if (byUrl.size === 0) return null;
   const refs = [...byUrl.values()].slice(0, MAX_CITATIONS);

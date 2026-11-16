@@ -461,3 +461,44 @@ def test_expired_provider_deadline_prevents_first_attempt() -> None:
         )
 
     assert excinfo.value.status == TURN_STATE_TIMEOUT
+
+
+def test_a_wait_for_the_model_is_credited_to_the_working_time_deadline() -> None:
+    # Row 136: a chat held behind another chat is waiting, not working. The
+    # operation must see a deadline pushed forward by exactly the time the
+    # admit took.
+    clock = {"now": 1000.0}
+    waits = [900.0, 0.25]
+    runtime = LoopRuntime(
+        request_id="req-wait", wall_clock_deadline=1100.0, clock=lambda: clock["now"]
+    )
+    seen: list[float | None] = []
+
+    class _Lease:
+        def settle(self, _outcome: object) -> None:
+            return None
+
+    def _admission(_context: object) -> _Lease:
+        clock["now"] += waits.pop(0)
+        return _Lease()
+
+    def _operation(_context: RetryExecutionContext) -> str:
+        seen.append(runtime.wall_clock_deadline)
+        return "ok"
+
+    for _ in range(2):
+        assert execute_with_provider_retry(
+            operation=_operation,
+            logger=logging.getLogger("test.retry"),
+            component="test.retry",
+            event_prefix="test.retry",
+            request_source=QUERY_SOURCE_CHAT_SEND,
+            provider="ollama",
+            model="local",
+            initial_max_tokens=4096,
+            feature_flags={"api_retry": True},
+            runtime=runtime,
+            inference_admission=_admission,
+        ) == "ok"
+
+    assert seen == [2000.0, 2000.25]

@@ -303,3 +303,219 @@ test('sessions: list, show and rm through the real composition, scoped to the wo
   assert.equal(run.code, EXIT_CODES.OK, run.stderr + run.stdout);
   assert.equal(jsonOf(run.stdout).kind, 'doctor');
 });
+
+// Second-PC readiness: `doctor --team`. The team effects are fakes handed through main
+// (tests/helpers/doctor-team-fakes.js); only the profile-write test composes a real CLI host.
+const doctorTeam = require('../../cli/doctor-team');
+const { PROBE_TIMEOUT_MS, probeBridgeVersion } = require('../../server/team/transport/bridge-binary');
+const { createCliHost } = require('../../services/cli-host/host');
+const { acquireCliProfile } = require('../../services/cli-host/profile-lock');
+const { hostLaunchOptions, lockOptions, resolveCliRuntime } = require('../../services/cli-host/runtime-layout');
+const { FAKE_BRIDGE, fakeChild, fakeCliHost, fakeTimers, snapshot, teamFakes } = require('../helpers/doctor-team-fakes');
+
+const TEAM_ROWS = ['team_flag', 'team_bridge', 'team_versions', 'team_free_disk', 'team_engine_model'];
+const row = (report, name) => report.checks.find((entry) => entry.name === name);
+
+async function teamDoctor(t, args, { env = {}, ...overrides } = {}) {
+  const dirs = tempRoot(t);
+  const fakes = teamFakes(overrides);
+  const binary = path.join(dirs.root, 'resources', 'sidecar', process.platform === 'win32' ? 'sidecar.exe' : 'sidecar');
+  const runtime = packagedRuntime(dirs, { ok: true, launchCommand: binary, launchArgs: [], launchSource: 'packaged-binary' });
+  const run = await inProcess(['doctor', '--cwd', dirs.workspace, ...args], { JENNY_PROFILE: dirs.profile, JENNY_ENABLE_TEAM: '1', ...env },
+    { runtime, doctorTeamDeps: fakes.deps });
+  return { run, dirs, runtime, ...fakes };
+}
+
+test('doctor --team: every team row passes, the manual rows carry their own instruction, --team is doctor\'s alone', async (t) => {
+  assert.equal(parseArguments(['doctor', '--team']).flags.team, true);
+  assert.equal(parseArguments(['doctor']).flags.team, false);
+  for (const bad of [['sessions', 'list', '--team'], ['--team', '-p', 'x'], ['config', 'list', '--team']]) {
+    assert.throws(() => parseArguments(bad), (error) => error.usage === true && /--team works only with jenny doctor/u.test(error.message), bad.join(' '));
+  }
+  assert.ok(words().includes('--team'), 'completion offers --team');
+
+  const { run, seen, runtime } = await teamDoctor(t, ['--team', '--json']);
+  assert.equal(run.code, EXIT_CODES.OK, run.stdout);
+  const report = jsonOf(run.stdout);
+  assert.equal(report.ok, true);
+  const names = report.checks.map((entry) => entry.name);
+  assert.deepEqual(names.slice(-TEAM_ROWS.length), TEAM_ROWS, 'the team rows come after the existing ones');
+  assert.deepEqual(names.slice(0, 3), ['node', 'versions', 'runtime']);
+  for (const name of TEAM_ROWS) assert.equal(row(report, name).ok, true, name);
+  assert.equal(row(report, 'team_bridge').detail, 'jenny-team-bridge protocol 1');
+  assert.match(row(report, 'team_versions').detail, /^app \d\S*, team protocol 1, bridge protocol 1$/u);
+  assert.equal(row(report, 'team_free_disk').detail, '50.0 GiB free on the profile\'s drive (needs 20 GiB)');
+  assert.match(row(report, 'team_engine_model').detail, /^\S+, 2 models$/u);
+  assert.deepEqual(report.manual.map((entry) => entry.name), ['team_firewall', 'team_port_mapping']);
+  assert.match(report.manual[0].detail, /^when Windows asks, allow Jenny on Private networks only \(checklist "Team: getting a second PC ready", Firewall\)$/u);
+  assert.match(report.manual[1].detail, /^a member PC needs no port mapping; .*\(checklist "Team: getting a second PC ready", Port mapping\)$/u);
+  for (const entry of [...report.checks.slice(-TEAM_ROWS.length), ...report.manual]) {
+    assert.doesNotMatch(entry.detail, /fake-install|\.md\b|[\\/]docs[\\/]/u, `${entry.name} names no path`);
+  }
+
+  // The bridge is resolved from the install, run once with no window and no environment.
+  assert.deepEqual(seen.resolved, [{ resourcesPath: runtime.resourcesPath, root: runtime.root }]);
+  assert.equal(seen.spawned.length, 1);
+  assert.deepEqual([seen.spawned[0].file, seen.spawned[0].args, seen.spawned[0].options.windowsHide], [FAKE_BRIDGE, ['--version'], true]);
+  assert.deepEqual(Object.keys(seen.spawned[0].options.env).filter((key) => key !== 'SystemRoot'), [], 'the probe passes no environment');
+  assert.deepEqual([seen.probes, seen.stops], [1, 1]);
+
+  const text = await teamDoctor(t, ['--team']);
+  assert.equal(text.run.code, EXIT_CODES.OK, text.run.stdout);
+  const lines = text.run.stdout.trimEnd().split('\n');
+  assert.match(lines.at(-2), /^manual {2}team_firewall {2}when Windows asks/u);
+  assert.match(lines.at(-1), /^manual {2}team_port_mapping {2}a member PC/u);
+  assert.match(lines.at(-3), /^ok {3}team_engine_model /u);
+});
+
+test('doctor without --team prints no team row and no manual key, validates, and loads no team module', async (t) => {
+  // A fresh main and doctor, with no team module cached, run a plain doctor.
+  const teamModule = (key) => /[\\/]server[\\/]team[\\/]transport[\\/]|[\\/]cli[\\/]doctor-team\.js$/u.test(key);
+  for (const key of Object.keys(require.cache).filter((entry) => teamModule(entry) || /[\\/]cli[\\/](main|doctor)\.js$/u.test(entry))) {
+    delete require.cache[key];
+  }
+  const fresh = captureStreams();
+  const freshDirs = tempRoot(t);
+  await require('../../cli/main').main(['doctor', '--json', '--cwd', freshDirs.workspace], { env: { JENNY_PROFILE: freshDirs.profile },
+    stdin: { isTTY: false }, ...fresh, runtime: packagedRuntime(freshDirs, { ok: true, launchCommand: 'x', launchArgs: [] }) });
+  assert.equal(jsonOf(fresh.out.stdout).kind, 'doctor');
+  assert.deepEqual(Object.keys(require.cache).filter(teamModule), [], 'a plain doctor loads no team module');
+  const { run, seen } = await teamDoctor(t, ['--json']);
+  const report = jsonOf(run.stdout);
+  assert.equal(Object.hasOwn(report, 'manual'), false);
+  assert.equal(report.checks.some((entry) => entry.name.startsWith('team_')), false);
+  assert.deepEqual([seen.resolved.length, seen.spawned.length, seen.statfs.length, seen.probes], [0, 0, 0, 0]);
+  const text = await teamDoctor(t, []);
+  assert.doesNotMatch(text.run.stdout, /team_|manual/u);
+});
+
+test('doctor --team: each failure fails its rows and the exit code, and the manual rows stay out of it', async (t) => {
+  const cases = [
+    { label: 'flag off', env: { JENNY_ENABLE_TEAM: '0' }, failed: ['team_flag'], detail: /JENNY_ENABLE_TEAM=0.*app/u },
+    { label: 'no binary', noBinary: true, failed: ['team_bridge', 'team_versions'], detail: /not found/u },
+    { label: 'non-zero exit', child: { code: 3 }, failed: ['team_bridge', 'team_versions'], detail: /exited with code 3/u },
+    { label: 'another line', child: { stdout: 'jenny-team-bridge 0.1.0\n' }, failed: ['team_bridge', 'team_versions'], detail: /something other/u },
+    { label: 'never answers', child: { hang: true }, fire: [PROBE_TIMEOUT_MS], failed: ['team_bridge', 'team_versions'], detail: /within 5 s and was stopped/u },
+    { label: 'other protocol', child: { stdout: 'jenny-team-bridge protocol 2\n' }, failed: ['team_bridge', 'team_versions'], detail: /speaks protocol 2; this build expects 1/u },
+    { label: 'statfs throws', statfsThrows: true, failed: ['team_free_disk'], detail: /could not be read/u },
+    { label: 'under 20 GiB', freeBlocks: 19 * 262_144, failed: ['team_free_disk'], detail: /^19\.0 GiB free/u },
+    { label: 'no model', models: 0, failed: ['team_engine_model'], detail: /, 0 models$/u },
+    { label: 'model question times out', probeHangs: true, fire: [doctorTeam.MODEL_TIMEOUT_MS], failed: ['team_engine_model'],
+      detail: /no answer within 30 s \(a first sidecar start on a new PC can take that long, or the engine is silent\)/u },
+  ];
+  for (const { label, failed, detail, ...overrides } of cases) {
+    const { run, seen } = await teamDoctor(t, ['--team', '--json'], overrides);
+    seen.events.push('returned');
+    assert.equal(run.code, EXIT_CODES.RUNTIME_ERROR, label);
+    const report = jsonOf(run.stdout);
+    assert.equal(report.ok, false, label);
+    assert.deepEqual(report.checks.filter((entry) => !entry.ok).map((entry) => entry.name), failed,
+      `${label}: ${JSON.stringify(report.checks.slice(-TEAM_ROWS.length))}`);
+    assert.match(row(report, failed[0]).detail, detail, label);
+    assert.equal(report.manual.length, 2, label);
+    if (label === 'other protocol') assert.match(row(report, 'team_versions').detail, /bridge protocol 2 \(this build expects 1\)$/u);
+    if (label === 'never answers') assert.equal(seen.children[0].killed, 1, 'the hung child is ended by its handle');
+    if (label === 'model question times out') {
+      assert.deepEqual(seen.events, [`fire:${doctorTeam.MODEL_TIMEOUT_MS}`, 'stop', 'returned'], 'stopped after the timeout won, before the row');
+    }
+  }
+
+  // An app version that could not be read cannot be compared across two PCs.
+  const dirs = tempRoot(t);
+  const unknown = await doctorTeam.runTeamDoctor({ settings: { profilePath: dirs.profile, engine: 'ollama' }, env: { JENNY_ENABLE_TEAM: '1' },
+    appVersion: '', runtime: packagedRuntime(dirs, { ok: true }), deps: teamFakes().deps });
+  assert.deepEqual([row(unknown, 'team_versions').ok, row(unknown, 'team_bridge').ok], [false, true]);
+  assert.match(row(unknown, 'team_versions').detail, /^app unknown, .*could not be read, so the two PCs cannot be compared/u);
+});
+
+test('probeBridgeVersion parses at close, ends a hung child by its handle, and clears its timer on every way out', async () => {
+  const probe = async (child, { fire = [], spawnThrows = false } = {}) => {
+    const timers = fakeTimers(fire);
+    let made = null;
+    const answer = await probeBridgeVersion({ binaryPath: FAKE_BRIDGE, timers,
+      spawnChild: () => { if (spawnThrows) throw new Error('EACCES'); made = fakeChild(child); return made; } });
+    assert.equal(timers.clears, timers.sets, `timer cleared: ${JSON.stringify(answer)}`);
+    return { answer, child: made };
+  };
+  assert.deepEqual((await probe({ late: true })).answer, { ok: true, line: 'jenny-team-bridge protocol 1', protocol: 1 }, 'data after exit');
+  assert.deepEqual((await probe({ stdout: 'jenny-team-bridge protocol 1' })).answer.ok, true, 'no newline');
+  assert.deepEqual((await probe({}, { spawnThrows: true })).answer, { ok: false, reason: 'not_started' });
+  assert.deepEqual((await probe({ errors: 1 })).answer, { ok: false, reason: 'not_started' });
+  assert.deepEqual((await probe({ errors: 2 })).answer, { ok: false, reason: 'not_started' }, 'a second error is handled');
+  assert.deepEqual((await probe({ stdout: 'x'.repeat(5000) })).answer, { ok: false, reason: 'bad_line' });
+  assert.deepEqual((await probe({ stdout: `jenny-team-bridge protocol 1\n${'x'.repeat(5000)}` })).answer, { ok: false, reason: 'bad_line' });
+  assert.deepEqual((await probe({ stdout: 'jenny-team-bridge protocol 01\n' })).answer, { ok: false, reason: 'bad_line' });
+  assert.deepEqual((await probe({ code: 2 })).answer, { ok: false, reason: 'exited', code: 2 });
+  const hung = await probe({ hang: true }, { fire: [PROBE_TIMEOUT_MS] });
+  assert.deepEqual(hung.answer, { ok: false, reason: 'timeout' });
+  assert.deepEqual([hung.child.killed, hung.child.stdout.destroyed, hung.child.unrefs], [1, 1, 1]);
+});
+
+// A profile the CLI has used: shell-config.json naming `root` as its working folder.
+function usedProfile(dirs, root = dirs.workspace) {
+  fs.mkdirSync(dirs.profile, { recursive: true });
+  fs.writeFileSync(path.join(dirs.profile, 'shell-config.json'), JSON.stringify({ toolsWorkspaceRoot: root }));
+}
+
+test('the model probe: a stop that does not confirm the sidecar exited fails the row, and each fault has its own detail', async (t) => {
+  const modelRow = async (hostOptions, prepare = usedProfile) => {
+    const dirs = tempRoot(t);
+    prepare(dirs);
+    const fake = fakeCliHost(hostOptions);
+    const report = await doctorTeam.runTeamDoctor({ settings: { profilePath: dirs.profile, engine: 'ollama', model: '' },
+      env: { JENNY_ENABLE_TEAM: '1' }, appVersion: '1.7.0', runtime: packagedRuntime(dirs, { ok: true }),
+      deps: { ...teamFakes().deps, startModelProbe: (args) => doctorTeam.startCliModelProbe(args, fake.host) } });
+    return { result: row(report, 'team_engine_model'), seen: fake.seen, dirs };
+  };
+  const clean = await modelRow({});
+  assert.deepEqual(clean.result, { name: 'team_engine_model', ok: true, detail: 'ollama, 2 models' });
+  assert.equal(clean.seen.created[0].workspaceRoot, clean.dirs.workspace, 'the root the profile already holds');
+  assert.deepEqual([clean.seen.closed, clean.seen.released], [1, 1]);
+  for (const [options, pattern] of [
+    [{ close: 'alive' }, /^ollama: the sidecar did not confirm it stopped, so a Jenny sidecar may still be running \(pid 4242\): check Task Manager$/u],
+    [{ close: 'hang' }, /may still be running: check Task Manager$/u],
+    [{ busy: true }, /in use by another jenny command: close it/u],
+    [{ startFails: true }, /the sidecar did not start: run plain `jenny doctor`/u],
+    [{ engineDown: true }, /the engine did not answer: start it/u],
+  ]) {
+    const { result, seen } = await modelRow(options);
+    assert.equal(result.ok, false, JSON.stringify(options));
+    assert.match(result.detail, pattern, JSON.stringify(options));
+    assert.equal(seen.released, options.busy ? 0 : 1, `lock released: ${JSON.stringify(options)}`);
+  }
+  const unused = await modelRow({}, () => {});
+  assert.match(unused.result.detail, /has not been used yet: run `jenny sessions list`/u);
+  assert.deepEqual([unused.seen.created.length, fs.existsSync(unused.dirs.profile)], [0, false], 'nothing composed or created');
+  const gone = await modelRow({}, (dirs) => usedProfile(dirs, path.join(dirs.root, 'missing')));
+  assert.match(gone.result.detail, /last worked in is gone/u);
+});
+
+test('the model probe writes nothing to a used CLI profile (the real composition, the sidecar faked)', { timeout: 120_000 }, async (t) => {
+  const dirs = tempRoot(t);
+  const runtime = resolveCliRuntime({ root: ROOT, env: { JENNY_BACKEND_PYTHON: PYTHON } });
+  const options = (workspaceRoot) => ({ profilePath: dirs.profile, workspaceRoot, ...hostLaunchOptions(runtime),
+    engine: { type: 'ollama', model: '' }, permissions: { allowedTools: [], disallowedTools: [], permissionMode: 'plan' }, logger: () => {} });
+  // Use the profile once, as `jenny sessions list` does: the lock, then the composition with no sidecar.
+  const held = await acquireCliProfile({ userDataPath: dirs.profile, ...lockOptions(runtime) });
+  await createCliHost(options(dirs.workspace)).close();
+  held.release();
+  const before = snapshot(dirs.profile);
+  assert.ok(Object.keys(before).includes('shell-config.json'), JSON.stringify(Object.keys(before)));
+  const host = { acquireCliProfile, closeTimeoutMs: 20_000,
+    createCliHost: (given) => { const real = createCliHost(given); return { start: async () => {}, close: () => real.close() }; },
+    hostComposition: () => ({ backend: { listModelsForEngine: async () => ({ available: true, data: [{ id: 'm' }] }) } }) };
+  const probe = doctorTeam.startCliModelProbe({ settings: { profilePath: dirs.profile, engine: 'ollama', model: '' }, runtime }, host);
+  assert.equal(await probe.result, 1);
+  assert.deepEqual(await probe.stop(), { exited: true });
+  assert.deepEqual(snapshot(dirs.profile), before, 'the probe wrote nothing to the profile');
+});
+
+test('doctor-team pins its protocol constants to the sources that own them and loads no Electron', () => {
+  const session = fs.readFileSync(path.join(ROOT, 'services/team/team-session.js'), 'utf8');
+  assert.equal(Number(/^const PROTOCOL_VERSION = (\d+);$/mu.exec(session)?.[1]), doctorTeam.TEAM_PROTOCOL_VERSION);
+  const lib = fs.readFileSync(path.join(ROOT, 'native/jenny-team-bridge/src/lib.rs'), 'utf8');
+  assert.equal(/pub const VERSION_LINE: &str = "jenny-team-bridge protocol (\d+)";/u.exec(lib)?.[1], String(doctorTeam.BRIDGE_PROTOCOL));
+  assert.equal(fs.readFileSync(path.join(ROOT, 'cli/doctor-team.js'), 'utf8').includes("'electron'"), false);
+  // In this process main, doctor and doctor-team are loaded, and nothing loaded the package.
+  assert.equal(Object.keys(require.cache).some((key) => /[\\/]node_modules[\\/]electron[\\/]/u.test(key)), false);
+});

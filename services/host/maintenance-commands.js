@@ -12,6 +12,7 @@ const { removeTree } = require('../fs-remove-no-follow');
 const { extractArchive, readManifest } = require('../data-lifecycle/archive-service');
 const { importSession, validateSessionImportPayload } = require('../backend/session-export-import');
 const { readJson, writeJson } = require('./durable-json');
+const { isSessionId } = require('../../server/team/ids');
 
 const RECEIPT_SCHEMA_VERSION = 1;
 const RECEIPT_FILE = 'host-import.json';
@@ -19,7 +20,6 @@ const MAX_ARCHIVE_ENTRIES = 1000;
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const MAX_SESSION_BYTES = 16 * 1024 * 1024;
 const MAX_SESSION_IDS = 128;
-const SESSION_ID_PATTERN = /^sess_[A-Za-z0-9_-]{1,123}$/u;
 const STAGING_PREFIX = '.host-import-';
 const STAGING_NAME_PATTERN = /^\.host-import-[A-Za-z0-9_-]{1,128}$/u;
 const MAX_STAGING_CLEANUP_ENTRIES = 64;
@@ -71,7 +71,7 @@ function validUserDataPath(value) {
 }
 
 function isStrictSessionId(value) {
-  return SESSION_ID_PATTERN.test(String(value || ''));
+  return isSessionId(String(value || ''));
 }
 
 function manifestDigest(manifest) {

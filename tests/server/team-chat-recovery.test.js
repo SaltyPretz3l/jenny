@@ -14,6 +14,7 @@ const test = require('node:test');
 const {
   ALICE, DAY_MS, createChatFixture, seeded, assertFailure,
 } = require('./helpers/team-chat-fixture');
+const durable = require('../../services/host/durable-json');
 const { createFileIo } = require('../../services/host/team-chat-files');
 
 const PERSISTENCE = 'CMP-HOST-0006';
@@ -150,6 +151,36 @@ test('a prune interrupted by a crash after channel.json reopens with the floor r
   assert.equal(fs.existsSync(path.join(fx.chatDir, 'chan_team', 'seg-1.json')), false, 'the stray is swept');
 });
 
+// Review sweeps, second run (first-run X1-F02). Fault: a write that fails after the first file of a mutation, whose
+// temp file cannot be removed either, latches the store and its `team_chat.broken` line carries durable-json's
+// cleanup Error as `cause` (its errno, syscall and the temp file's path under the profile).
+test('a latching write whose temp file cannot be removed logs fs code words, never the error or its path', async (t) => {
+  const { fx } = await seeded(t);
+  const logs = [];
+  const writeText = (filePath, text) => {
+    if (path.basename(filePath) !== 'channel.json') return durable.writeText(filePath, text);
+    const { renameSync, unlinkSync } = fs;
+    const fsError = (code, syscall, target) => Object.assign(new Error(`${code}: ${syscall} '${target}'`),
+      { errno: -1, code, syscall, path: target });
+    fs.renameSync = (from) => { throw fsError('EXDEV', 'rename', from); };
+    fs.unlinkSync = (target) => { throw fsError('EPERM', 'unlink', target); };
+    try { return durable.writeText(filePath, text); } finally { Object.assign(fs, { renameSync, unlinkSync }); }
+  };
+  const store = fx.openStore({ fileOps: { writeText }, logger: (level, event, fields) => logs.push({ level, event, fields }) });
+  assertFailure(await fx.post(store), PERSISTENCE, 'team_chat_store_failed');
+  const broken = logs.filter((entry) => entry.event === 'team_chat.broken');
+  assert.equal(broken.length, 1);
+  assert.deepEqual(broken[0].fields, { stage: broken[0].fields.stage, reason: 'team_chat_store_failed', cause: 'EPERM',
+    code: null, written: 1 });
+  const printed = JSON.stringify(logs);
+  for (const leak of [fx.profileDir, JSON.stringify(fx.profileDir).slice(1, -1), 'unlink', 'errno', '.tmp']) {
+    assert.equal(printed.includes(leak), false, `no ${leak} in a log line`);
+  }
+  for (const entry of logs) {
+    for (const value of Object.values(entry.fields)) assert.ok(value === null || typeof value !== 'object', `${entry.event}: scalars only`);
+  }
+});
+
 // ------------------------------------------------------------ item 4
 
 test('one broken channel leaves the others working and nothing in it is rewritten', async (t) => {
@@ -205,10 +236,14 @@ test('a linked team-chat directory creates nothing at the link target', { skip: 
 
 // ------------------------------------------------------------ item 10 and gaps
 
-test('pins naming a missing or deleted message are dropped on load', async (t) => {
+test('pins naming a missing, deleted or unpinned message are dropped on load', async (t) => {
   const { fx, store } = await seeded(t);
   const live = await fx.postOk(store);
   const gone = await fx.postOk(store);
+  // The pin list follows the records (slice 2b-1): only a record that is pinned stays listed.
+  const pinned = await store.pin({ channelId: 'chan_team', actorId: ALICE, deviceId: 'device_alice1', requestId: 'req_pin_live',
+    messageId: live.message_id, on: true });
+  assert.equal(pinned.ok, true);
   await fx.del(store, { messageId: gone.message_id });
   const doc = fx.readDoc('chan_team/channel.json');
   doc.pins = [gone.message_id, live.message_id, 'msg_00000000000000000000000000'];

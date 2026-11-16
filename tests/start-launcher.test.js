@@ -170,3 +170,16 @@ test('resolveAgentWorkspaceRoot precedence: flag > inherited env > cwd default',
     path.resolve(CWD, 'G:/flag')
   );
 });
+
+test('files after -- are forwarded after the agent CDP switch and never parsed as launcher flags', () => {
+  const { forwardedArgs, env } = resolveLaunch({
+    argv: ['--agent', '--', 'C:\\notes\\--agent.md', '--workspace-root'],
+    env: { JENNY_CDP_PORT: '9333' },
+    cwd: CWD,
+  });
+  const separator = forwardedArgs.indexOf('--');
+  assert.ok(separator > 0, 'the separator is kept');
+  assert.ok(forwardedArgs.indexOf('--remote-debugging-port=9333') < separator, 'Chromium reads the CDP switch only before --');
+  assert.deepEqual(forwardedArgs.slice(separator + 1), ['C:\\notes\\--agent.md', '--workspace-root']);
+  assert.equal(env.JENNY_TOOLS_WORKSPACE_ROOT, CWD);
+});

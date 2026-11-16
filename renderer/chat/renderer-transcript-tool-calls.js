@@ -452,6 +452,7 @@
         ? _calendarChatBlock.buildHomeResultBlockMarkup(viewModel.metadata, {
           escapeHtml,
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
+          isExpanded: globalThis.rendererCalendarChatBindings?.isCalendarBlockExpanded,
         }) : '';
       const notesMarkup = viewModel.metadata?.result_kind === 'project_notes'
         ? _projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(viewModel.metadata, { escapeHtml }) || ''

@@ -330,6 +330,9 @@ class _ToolCallPhasesMixin(_ToolCallStateMixin):
             runtime.raise_if_cancelled()
             approval_tool_calls = _tl_hub._bind_missing_approval_call_id(
                 result.tool_calls, approval.tool_call_id)
+            # D10: the card may list the round's later edits of the same tool.
+            from sidecar.runtime.approval_round_carry import with_round_hint
+            approval = with_round_hint(approval, tuple(approval_tool_calls))
             approval_result = (
                 replace(result, tool_calls=approval_tool_calls)
                 if approval_tool_calls != result.tool_calls

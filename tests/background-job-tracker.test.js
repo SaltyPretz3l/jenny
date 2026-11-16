@@ -34,6 +34,7 @@ function makeTracker(t, overrides = {}) {
       return { ok: true, text: JSON.stringify(statusByPath.get(statusPath)) };
     }),
     readProgressFileImpl: overrides.readProgressFileImpl,
+    readLiveOutputImpl: overrides.readLiveOutputImpl,
     isPidAliveImpl: overrides.isPidAliveImpl || (() => true),
     getProcessStartTimeImpl: overrides.getProcessStartTimeImpl || (() => 'generation-1'),
     killPidTreeImpl: overrides.killPidTreeImpl || (async () => ({ ok: true, reason: '' })),
@@ -511,4 +512,52 @@ test('a job without a progress file reports progress null', (t) => {
   statusByPath.set(statusPath(), { state: 'running' });
   tracker.pollNow();
   assert.equal(tracker.getSessionJobs('s1')[0].progress, null);
+});
+
+// Row 138: readOutput on a live job returns the sidecar's live-output.json tail.
+test('readOutput returns the live tail for a running job', (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-bg-live-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const tracker = createBackgroundJobTracker({
+    getWorkspaceRoot: () => root, log: () => {}, isPidAliveImpl: () => true,
+    getProcessStartTimeImpl: () => 'generation-1', pollIntervalMs: 3_600_000,
+  });
+  t.after(() => tracker.dispose());
+  const jobDir = path.join(root, '.jenny', 'tool-results', JOB_ID);
+  fs.mkdirSync(jobDir, { recursive: true });
+  fs.writeFileSync(path.join(jobDir, 'status.json'), JSON.stringify({ job_id: JOB_ID, state: 'running' }));
+  tracker.registerJob({ jobId: JOB_ID, sessionId: 's1' });
+  tracker.pollNow();
+  fs.writeFileSync(path.join(jobDir, 'live-output.json'), JSON.stringify({
+    schema_version: 1, job_id: JOB_ID, text: 'step 1\nstep 2\n', truncated: true, updated_at_ms: 1,
+    full_output_path: path.join(os.tmpdir(), 'elsewhere.txt'),
+  }));
+  const live = tracker.readOutput(JOB_ID);
+  assert.equal(live.text, 'step 1\nstep 2');
+  assert.deepEqual(live, { ok: true, state: 'running', live: true, text: 'step 1\nstep 2', truncated: true, fullOutputPath: '' },
+    'no path is ever taken from the live file');
+  fs.writeFileSync(path.join(jobDir, 'live-output.json'), JSON.stringify({ schema_version: 1, job_id: 'ffffffffffff', text: 'other job' }));
+  assert.equal(tracker.readOutput(JOB_ID).text, '', 'a live file for another job is ignored');
+  fs.rmSync(path.join(jobDir, 'live-output.json'));
+  assert.deepEqual(tracker.readOutput(JOB_ID), { ok: true, state: 'running', live: true, text: '', truncated: false, fullOutputPath: '', stale: true },
+    'a missing live file gives empty text');
+});
+
+test('readOutput reads live-output.json beside the registered status path and marks finished jobs live: false', (t) => {
+  const reads = [];
+  const { tracker, statusByPath, statusPath } = makeTracker(t, {
+    readLiveOutputImpl: (livePath, options) => { reads.push({ livePath, jobId: options.jobId }); return null; },
+  });
+  tracker.registerJob({ jobId: JOB_ID, sessionId: 's1' });
+  statusByPath.set(statusPath(), { state: 'running' });
+  tracker.pollNow();
+  assert.deepEqual(tracker.readOutput(JOB_ID), { ok: true, state: 'running', live: true, text: '', truncated: false, fullOutputPath: '', stale: true });
+  assert.deepEqual(reads, [{ livePath: path.join(path.dirname(statusPath()), 'live-output.json'), jobId: JOB_ID }]);
+  statusByPath.set(statusPath(), { state: 'completed', exit_code: 0, stdout: 'done\n' });
+  tracker.pollNow();
+  const finished = tracker.readOutput(JOB_ID);
+  assert.deepEqual([finished.ok, finished.live, finished.text], [true, false, 'done']);
+  assert.equal(reads.length, 1, 'a finished job never reads the live file');
 });

@@ -12,8 +12,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlagDefaults } = require('../services/feature-flags');
+const { createReplayEmitter, flushFrames } = require('./helpers/replay-chat-stream');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 const SESSION_ID = 'sess_hb010_live_reasoning';
 const STREAM_ID = 'stream_hb010_live_reasoning';
@@ -68,6 +70,25 @@ function toolBatch(iteration) {
   return out;
 }
 
+// The prior iterations only build the turn the case then probes; no assertion
+// reads their intermediate frames. The payloads go in back to back and the
+// replay waits once per WAIT_EVERY_ITERATIONS for the state they build: the
+// iteration's tool cards in the DOM (two per tool batch).
+const WAIT_EVERY_ITERATIONS = 6;
+async function replayPriorIterations({ postAll, waitFor, document }, count) {
+  const toolRowCount = () => document.querySelectorAll('.chat-row[data-row-kind="tool_call"]').length;
+  for (let iteration = 1; iteration <= count; iteration += 1) {
+    await postAll([
+      reasoningPhaseEvent('phase_started', iteration),
+      reasoningDelta(iteration, `Planning step ${iteration}.`),
+      reasoningPhaseEvent('phase_completed', iteration),
+      ...toolBatch(iteration),
+    ]);
+    if (iteration % WAIT_EVERY_ITERATIONS !== 0 && iteration !== count) continue;
+    await waitFor(() => toolRowCount() === 2 * iteration, `iteration ${iteration} to render its ${2 * iteration} tool rows (have ${toolRowCount()})`);
+  }
+}
+
 function timelineDomWrites(window) {
   const meta = window.__rendererState.ui.chatTimelineRowModelMetaBySession?.get(SESSION_ID);
   return Number(meta?.telemetry_counters?.timeline_dom_write || 0);
@@ -89,31 +110,16 @@ test('HB-010: reasoning deltas on a long row-model turn patch the live row witho
   t.after(() => app.dispose());
   const { window, shell } = app;
   const document = window.document;
-  let aggregate = '';
-  const emit = async (payload, settleMs = 5) => {
-    const full = { sessionId: SESSION_ID, streamId: STREAM_ID, ...payload };
-    if (payload.type === 'delta') {
-      aggregate += payload.content || '';
-      full.aggregate = aggregate;
-    }
-    await shell.__emitChat(full);
-    await waitForUi(window, settleMs);
-  };
+  const { emit, postAll, waitFor, flush, waitForActiveStream } = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId: STREAM_ID });
 
   const input = document.getElementById('chatInput');
   input.value = 'reconcile the statements';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   document.getElementById('sendButton').click();
-  await waitForUi(window, 30);
+  await waitForActiveStream();
   await emit({ type: 'started' });
 
-  for (let iteration = 1; iteration <= PRIOR_ITERATIONS; iteration += 1) {
-    await emit(reasoningPhaseEvent('phase_started', iteration));
-    await emit(reasoningDelta(iteration, `Planning step ${iteration}.`));
-    await emit(reasoningPhaseEvent('phase_completed', iteration));
-    for (const payload of toolBatch(iteration)) await emit(payload);
-    await waitForUi(window, 30);
-  }
+  await replayPriorIterations({ postAll, waitFor, document }, PRIOR_ITERATIONS);
 
   const live = PRIOR_ITERATIONS + 1;
   await emit(reasoningPhaseEvent('phase_started', live));
@@ -121,9 +127,9 @@ test('HB-010: reasoning deltas on a long row-model turn patch the live row witho
   // Opening the live row is legitimately structural: the row appears, and the
   // segment message gains its first reasoning entry (the 'R' in the structure
   // signature) one delta later. One write per segment, never per delta.
-  await emit(reasoningDelta(live, text), 40);
+  await emit(reasoningDelta(live, text));
   text += ' Let me write the tests.';
-  await emit(reasoningDelta(live, text), 40);
+  await emit(reasoningDelta(live, text));
   const earlierReasoningRow = document.querySelector('.chat-row[data-row-kind="reasoning"]');
   const earlierToolRow = document.querySelector('.chat-row[data-row-kind="tool_call"]');
   assert.ok(earlierReasoningRow && earlierToolRow, 'the prior segments rendered as rows');
@@ -133,10 +139,12 @@ test('HB-010: reasoning deltas on a long row-model turn patch the live row witho
   const deltas = 8;
   for (let index = 0; index < deltas; index += 1) {
     text += ` Checking the parser, pass ${index}.`;
-    await emit(reasoningDelta(live, text), 40);
+    await emit(reasoningDelta(live, text));
   }
   // Let the last rAF-batched render land before reading the counters.
-  await waitForUi(window, 120);
+  await waitFor(() => /pass 7\./.test([...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop()?.textContent || ''),
+    'the last reasoning delta to paint in the live row');
+  await flush();
 
   const metrics = window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID);
   assert.equal(
@@ -159,7 +167,7 @@ test('HB-010: reasoning deltas on a long row-model turn patch the live row witho
   assert.strictEqual(document.querySelector('.chat-row[data-row-kind="tool_call"]'), earlierToolRow);
   assert.doesNotMatch(earlierReasoningRow.textContent, /pass 7/, 'the delta never lands in an earlier segment');
 
-  await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' }, 80);
+  await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
 });
 
 function textPhaseStarted(iteration) {
@@ -192,48 +200,35 @@ async function streamAnswerAfterReasoning(t, priorIterations) {
   t.after(() => app.dispose());
   const { window, shell } = app;
   const document = window.document;
-  let aggregate = '';
-  const emit = async (payload, settleMs = 5) => {
-    const full = { sessionId: SESSION_ID, streamId: STREAM_ID, ...payload };
-    if (payload.type === 'delta') {
-      aggregate += payload.content || '';
-      full.aggregate = aggregate;
-    }
-    await shell.__emitChat(full);
-    await waitForUi(window, settleMs);
-  };
+  const { emit, postAll, waitFor, flush, waitForActiveStream } = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId: STREAM_ID });
 
   const input = document.getElementById('chatInput');
   input.value = 'give me an overview';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   document.getElementById('sendButton').click();
-  await waitForUi(window, 30);
+  await waitForActiveStream();
   await emit({ type: 'started' });
 
-  for (let iteration = 1; iteration <= priorIterations; iteration += 1) {
-    await emit(reasoningPhaseEvent('phase_started', iteration));
-    await emit(reasoningDelta(iteration, `Planning step ${iteration}.`));
-    await emit(reasoningPhaseEvent('phase_completed', iteration));
-    for (const payload of toolBatch(iteration)) await emit(payload);
-    await waitForUi(window, 30);
-  }
+  await replayPriorIterations({ postAll, waitFor, document }, priorIterations);
 
   const live = priorIterations + 1;
   await emit(reasoningPhaseEvent('phase_started', live));
   let reasoning = 'I have what I need.';
-  await emit(reasoningDelta(live, reasoning), 40);
+  await emit(reasoningDelta(live, reasoning));
   reasoning += ' Time to write the answer.';
-  await emit(reasoningDelta(live, reasoning), 40);
-  await emit(reasoningPhaseEvent('phase_completed', live), 40);
-  await emit(textPhaseStarted(live), 40);
+  await emit(reasoningDelta(live, reasoning));
+  await emit(reasoningPhaseEvent('phase_completed', live));
+  await emit(textPhaseStarted(live));
 
   const writesBefore = timelineDomWrites(window);
   window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID);
   const deltas = 8;
   for (let index = 0; index < deltas; index += 1) {
-    await emit(textDelta(live, `Answer part ${index}. `), 40);
+    await emit(textDelta(live, `Answer part ${index}. `));
   }
-  await waitForUi(window, 120);
+  await waitFor(() => /Answer part 7\./.test(document.querySelector('[data-streaming-bubble="true"]')?.textContent || ''),
+    'the last answer delta to paint');
+  await flush();
   const metrics = window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID);
 
   const bubbles = [...document.querySelectorAll('[data-streaming-bubble="true"]')];
@@ -249,7 +244,10 @@ async function streamAnswerAfterReasoning(t, priorIterations) {
     'opening the answer row is one structural write; later answer deltas patch in place');
   assert.equal(metrics?.full_renders || 0, 0, `no full render per answer delta (${JSON.stringify(metrics?.full_render_reasons || {})})`);
 
-  await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' }, 80);
+  await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
+  await waitFor(() => window.__rendererState.activeStreamId !== STREAM_ID && !document.querySelector('[data-streaming-bubble="true"]'),
+    'the terminal to close the stream');
+  await flush();
   assert.equal(document.querySelectorAll('.chat-row[data-row-kind="assistant_text"]').length, 1, 'one answer row after the terminal');
 }
 
@@ -277,13 +275,13 @@ test('S4: five answer deltas reuse the completed live reasoning stack after the 
   const emit = async (payload) => {
     if (payload.type === 'delta') aggregate += payload.content || '';
     await shell.__emitChat({ sessionId: SESSION_ID, streamId: STREAM_ID, aggregate, ...payload });
-    await waitForUi(window, 80);
+    await flushFrames(window, 2);
   };
   const input = window.document.getElementById('chatInput');
   input.value = 'answer after thinking';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.getElementById('sendButton').click();
-  await waitForUi(window, 40);
+  await waitUntil(window, () => window.__rendererState.activeStreamId === STREAM_ID, `${STREAM_ID} to become the active stream`);
   await emit({ type: 'started' });
   await emit(reasoningPhaseEvent('phase_started', 1));
   await emit(reasoningDelta(1, 'A completed thought.'));
@@ -311,12 +309,8 @@ test('S4: five answer deltas reuse the completed live reasoning stack after the 
   await emit({ type: 'complete', content: aggregate, interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
 });
 
-async function waitUntil(window, predicate, label) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await waitForUi(window, 20);
-  }
-  throw new Error(`timed out waiting for ${label}`);
+function waitUntil(window, predicate, label) {
+  return waitForUiState(window, predicate, { timeoutMs: 20_000, stepMs: 10, message: `timed out waiting for ${label}` });
 }
 
 // timeline-perf (dogfood G5, 2026-09-30): the HB-010 contract held on a
@@ -387,49 +381,49 @@ async function runLongManagedTurn(t, { priorIterations = LONG_PRIOR_ITERATIONS, 
   t.after(() => app.dispose());
   const { window, shell } = app;
   const document = window.document;
-  let aggregate = '';
-  const emit = async (payload, settleMs = 5) => {
-    const full = { sessionId: SESSION_ID, streamId: STREAM_ID, ...payload };
-    if (payload.type === 'delta') {
-      aggregate += payload.content || '';
-      full.aggregate = aggregate;
-    }
-    await shell.__emitChat(full);
-    await waitForUi(window, settleMs);
-  };
+  const { emit, post, postAll, waitFor, flush, waitForActiveStream } = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId: STREAM_ID });
 
   const input = document.getElementById('chatInput');
   input.value = 'build the reconciler';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   document.getElementById('sendButton').click();
-  await waitForUi(window, 30);
+  await waitForActiveStream();
   await emit({ type: 'started' });
 
+  // The prior iterations only build the long turn; no assertion reads their
+  // intermediate frames. Deliver the payloads back to back and wait once per
+  // WAIT_EVERY_ITERATIONS for the state they build: the last tool card in the DOM.
+  const toolRowCount = () => document.querySelectorAll('.chat-row[data-row-kind="tool_call"]').length;
   for (let iteration = 1; iteration <= priorIterations; iteration += 1) {
-    await emit(reasoningPhaseEvent('phase_started', iteration));
-    await emit(reasoningDelta(iteration, longReasoningBody(iteration, 'Reading the source.')));
-    await emit(reasoningDelta(iteration, longReasoningBody(iteration, 'Reading the source. Now the tests.')));
-    await emit(reasoningPhaseEvent('phase_completed', iteration));
+    await post(reasoningPhaseEvent('phase_started', iteration));
+    await post(reasoningDelta(iteration, longReasoningBody(iteration, 'Reading the source.')));
+    await post(reasoningDelta(iteration, longReasoningBody(iteration, 'Reading the source. Now the tests.')));
+    await post(reasoningPhaseEvent('phase_completed', iteration));
     if (checkpoints && iteration % 5 === 0) {
-      await emit(checkpointEvent('phase_started', iteration));
-      await emit(checkpointDelta(iteration, `Checkpoint ${iteration}: the plan still holds.`));
-      await emit(checkpointEvent('phase_completed', iteration));
+      await postAll([
+        checkpointEvent('phase_started', iteration),
+        checkpointDelta(iteration, `Checkpoint ${iteration}: the plan still holds.`),
+        checkpointEvent('phase_completed', iteration),
+      ]);
     }
     if (commentary && iteration % 4 !== 0) {
-      await emit(textPhaseStarted(iteration));
-      await emit(textDelta(iteration, `Segment ${iteration}: the balance formula matches the spec; `));
-      await emit(textDelta(iteration, 'moving on to the exception path.'));
+      await postAll([
+        textPhaseStarted(iteration),
+        textDelta(iteration, `Segment ${iteration}: the balance formula matches the spec; `),
+        textDelta(iteration, 'moving on to the exception path.'),
+      ]);
     }
-    for (const payload of bigToolBatch(iteration)) await emit(payload);
-    await waitForUi(window, 30);
+    await postAll(bigToolBatch(iteration));
+    if (iteration % WAIT_EVERY_ITERATIONS !== 0 && iteration !== priorIterations) continue;
+    await waitFor(() => toolRowCount() === 2 * iteration, `iteration ${iteration} to render its ${2 * iteration} tool rows (have ${toolRowCount()})`);
   }
 
   const live = priorIterations + 1;
   await emit(reasoningPhaseEvent('phase_started', live));
   let text = 'Now I have all the APIs.';
-  await emit(reasoningDelta(live, text), 40);
+  await emit(reasoningDelta(live, text));
   text += ' Let me write the tests.';
-  await emit(reasoningDelta(live, text), 40);
+  await emit(reasoningDelta(live, text));
   const rowsBefore = document.querySelectorAll('.chat-row').length;
   const earlierReasoningRow = document.querySelector('.chat-row[data-row-kind="reasoning"]');
   const earlierToolRow = document.querySelector('.chat-row[data-row-kind="tool_call"]');
@@ -440,12 +434,14 @@ async function runLongManagedTurn(t, { priorIterations = LONG_PRIOR_ITERATIONS, 
   const deltas = 8;
   for (let index = 0; index < deltas; index += 1) {
     text += ` Checking the parser, pass ${index}.`;
-    await emit(reasoningDelta(live, text), 40);
+    await emit(reasoningDelta(live, text));
   }
-  await waitForUi(window, 120);
+  await waitFor(() => /pass 7\./.test([...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop()?.textContent || ''),
+    'the last reasoning delta to paint in the live row');
+  await flush();
   const metrics = window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID) || {};
   const liveRow = [...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop();
-  return { window, document, emit, metrics, rowsBefore, writesBefore, deltas, earlierReasoningRow, earlierToolRow, liveRow };
+  return { window, document, emit, waitFor, flush, metrics, rowsBefore, writesBefore, deltas, earlierReasoningRow, earlierToolRow, liveRow };
 }
 
 test('timeline-perf: reasoning deltas on a long managed turn with commentary, checkpoints and code never rebuild the row list', async (t) => {
@@ -482,11 +478,13 @@ test('timeline-perf: reasoning deltas on a long managed turn with commentary, ch
     full_render_reasons: snapshot.full_render_reasons,
   });
   shared.take(STREAM_ID);
-  await run.emit(reasoningPhaseEvent('phase_completed', LONG_PRIOR_ITERATIONS + 1), 40);
-  await run.emit(textPhaseStarted(LONG_PRIOR_ITERATIONS + 1), 40);
-  await run.emit(textDelta(LONG_PRIOR_ITERATIONS + 1, 'The answer starts here. '), 40);
-  await run.emit(textDelta(LONG_PRIOR_ITERATIONS + 1, 'And continues. '), 40);
-  await waitForUi(window, 120);
+  await run.emit(reasoningPhaseEvent('phase_completed', LONG_PRIOR_ITERATIONS + 1));
+  await run.emit(textPhaseStarted(LONG_PRIOR_ITERATIONS + 1));
+  await run.emit(textDelta(LONG_PRIOR_ITERATIONS + 1, 'The answer starts here. '));
+  await run.emit(textDelta(LONG_PRIOR_ITERATIONS + 1, 'And continues. '));
+  await run.waitFor(() => /And continues/.test(document.querySelector('.chat-row[data-row-kind="assistant_text"] [data-streaming-bubble="true"]')?.textContent || ''),
+    'the answer delta to paint');
+  await run.flush();
   const cold = shared.take(STREAM_ID) || {};
   assert.equal(cold.full_renders || 0, 0, `the answer row opens without a full render: ${describe(cold)}`);
   assert.ok((cold.row_list_morphs || 0) >= 1, `the answer row opening is a structural row-list write: ${describe(cold)}`);
@@ -497,10 +495,12 @@ test('timeline-perf: reasoning deltas on a long managed turn with commentary, ch
   // The next structural write (a new reasoning row after the answer text) is
   // warm: settled rows are kept, only the live rows rebuild.
   const next = LONG_PRIOR_ITERATIONS + 2;
-  await run.emit(reasoningPhaseEvent('phase_started', next), 40);
-  await run.emit(reasoningDelta(next, 'A second look at the parser.'), 40);
-  await run.emit(reasoningDelta(next, 'A second look at the parser. It holds.'), 40);
-  await waitForUi(window, 120);
+  await run.emit(reasoningPhaseEvent('phase_started', next));
+  await run.emit(reasoningDelta(next, 'A second look at the parser.'));
+  await run.emit(reasoningDelta(next, 'A second look at the parser. It holds.'));
+  await run.waitFor(() => /It holds/.test([...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop()?.textContent || ''),
+    'the second reasoning row to paint');
+  await run.flush();
   const warm = shared.take(STREAM_ID) || {};
   const warmMorphs = warm.row_list_morphs || 0;
   assert.equal(warm.full_renders || 0, 0, `the new reasoning row opens without a full render: ${describe(warm)}`);
@@ -510,5 +510,69 @@ test('timeline-perf: reasoning deltas on a long managed turn with commentary, ch
   assert.strictEqual(document.querySelector('.chat-row[data-row-kind="reasoning"]'), run.earlierReasoningRow, 'settled rows keep identity through the warm reconcile');
   assert.strictEqual(document.querySelector('.chat-row[data-row-kind="tool_call"]'), run.earlierToolRow);
   assert.match([...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop().textContent, /It holds/, 'the new reasoning row is painted');
-  await run.emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' }, 80);
+  await run.emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
+});
+
+async function startStreamingChat(t) {
+  const app = await loadRendererApp({ shell: {
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
+    chat: { async startStream(_payload, { state }) {
+      state.sessions = [{ id: SESSION_ID, title: 'live rows', conversation_mode: 'chat', preferred_model: 'gpt-test',
+        updated_at: new Date().toISOString(), linked_session_ids: [], context_preferences: { history_scope: 'session' } }];
+      state.messagesBySession.set(SESSION_ID, []);
+      return { sessionId: SESSION_ID, streamId: STREAM_ID };
+    } },
+  } });
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  const replay = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId: STREAM_ID });
+  const input = window.document.getElementById('chatInput');
+  input.value = 'think hard';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  window.document.getElementById('sendButton').click();
+  await replay.waitForActiveStream();
+  await replay.emit({ type: 'started' });
+  return { ...replay, window, document: window.document };
+}
+
+// 4th-checkpoint cost (owner, 2026-11-12): a live delta at checkpoint 3 must
+// not re-render the finished checkpoints' markup; they stay on screen untouched.
+test('a later thinking checkpoint streams without re-rendering the finished ones', async (t) => {
+  const { window, document, emit, waitFor, flush } = await startStreamingChat(t);
+  const phase = (n) => ({ phase_id: `phase_reasoning_${STREAM_ID}_ckpt${n}`, phase_kind: 'reasoning', thinking_id: `think_ckpt${n}`, iteration: n, summary: `Checkpoint ${n}` });
+  const phaseEvent = (type, n) => ({ type, phaseId: phase(n).phase_id, phaseKind: 'reasoning', iteration: n, thinkingId: phase(n).thinking_id, summary: phase(n).summary, phase: phase(n) });
+  const delta = (n, text) => ({ type: 'delta', content: '', channel: 'reasoning', phase: phase(n),
+    reasoning: { source: 'provider', entriesDelta: [{ id: `r${n}`, text, thinking_id: phase(n).thinking_id }] } });
+  const body = (n, count) => Array.from({ length: count }, (_, i) => `Finished checkpoint ${n} paragraph ${i} about the parser.`).join('\n\n');
+  for (const n of [1, 2]) {
+    await emit(phaseEvent('phase_started', n));
+    await emit(delta(n, body(n, 40)));
+    await emit(phaseEvent('phase_completed', n));
+    await waitFor(() => document.querySelectorAll('[data-reasoning-status="complete"]').length >= n, `checkpoint ${n} to settle`);
+  }
+  await emit(phaseEvent('phase_started', 3));
+  let text = 'Live checkpoint text.';
+  await emit(delta(3, text));
+  await emit(delta(3, `${text} More.`));
+  const finishedRow = document.querySelector('.chat-row[data-row-kind="reasoning"]');
+  const writes = { finished: 0 };
+  const descriptor = Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML');
+  Object.defineProperty(window.Element.prototype, 'innerHTML', { configurable: true, get: descriptor.get,
+    set(value) { if (/Finished checkpoint [12] paragraph/.test(String(value))) writes.finished += 1; descriptor.set.call(this, value); } });
+  t.after(() => Object.defineProperty(window.Element.prototype, 'innerHTML', descriptor));
+  window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID);
+  for (let index = 0; index < 6; index += 1) {
+    text += ` Pass ${index}.`;
+    await emit(delta(3, text));
+  }
+  await waitFor(() => /Pass 5\./.test([...document.querySelectorAll('.chat-row[data-row-kind="reasoning"]')].pop()?.textContent || ''), 'the live delta to paint');
+  await flush();
+  const metrics = window.rendererStreamClientMetricsModule.getShared().take(STREAM_ID) || {};
+  Object.defineProperty(window.Element.prototype, 'innerHTML', descriptor);
+  assert.equal(metrics.full_renders || 0, 0);
+  assert.equal(metrics.row_list_morphs || 0, 0, JSON.stringify(metrics.row_list_morph_reasons || {}));
+  assert.equal(writes.finished, 0, 'no live delta renders a finished checkpoint’s text');
+  assert.strictEqual(document.querySelector('.chat-row[data-row-kind="reasoning"]'), finishedRow, 'the finished row is untouched');
+  assert.match(finishedRow.textContent, /Finished checkpoint 1 paragraph 39/);
+  await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
 });

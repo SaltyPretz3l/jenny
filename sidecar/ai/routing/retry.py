@@ -53,6 +53,39 @@ class RetryExecutionContext:
     max_tokens: int
 
 
+def _crediting_admission_wait(
+    admission: Callable[[InferenceAttemptContext], Any] | None,
+    runtime: Any | None,
+) -> Callable[[InferenceAttemptContext], Any] | None:
+    """Wrap *admission* so a wait for the model lane is not charged as working time.
+
+    A chat held behind another chat (or behind one the user put first) is
+    waiting, not working: once the request is admitted, the time the admit
+    took is pushed onto ``runtime.wall_clock_deadline`` before the provider
+    call reads it, as the human-wait credits do. A refused or abandoned admit
+    credits nothing: that turn is ending.
+    """
+    clock = getattr(runtime, "clock", None)
+    if admission is None or runtime is None or not callable(clock):
+        return admission
+
+    def _admit(context: InferenceAttemptContext) -> Any:
+        started_at = clock()
+        admitted = admission(context)
+        try:
+            deadline = runtime.wall_clock_deadline
+            if deadline is not None:
+                runtime.wall_clock_deadline = deadline + max(0.0, clock() - started_at)
+        except (AttributeError, TypeError):
+            pass  # accounting must never drop a granted admission
+        return admitted
+
+    _admit.requires_budget = (  # type: ignore[attr-defined]
+        getattr(admission, "requires_budget", False)
+    )
+    return _admit
+
+
 def execute_with_provider_retry(
     *,
     operation: Callable[[RetryExecutionContext], T],
@@ -75,7 +108,9 @@ def execute_with_provider_retry(
     max_tokens = max(1, int(initial_max_tokens))
     _raise_if_interrupted(runtime=runtime, cancel_handle=cancel_handle)
     runtime_admission = getattr(runtime, "inference_admission", None)
-    admission = inference_admission if inference_admission is not None else runtime_admission
+    admission = _crediting_admission_wait(
+        inference_admission if inference_admission is not None else runtime_admission, runtime
+    )
 
     def execute_attempt(context: RetryExecutionContext) -> T:
         runtime_request_id = str(getattr(runtime, "request_id", "") or request_id or "")

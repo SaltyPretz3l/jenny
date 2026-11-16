@@ -1,5 +1,6 @@
 /* renderer/shell/renderer-global-shortcuts.js – app-level keyboard shortcuts (UMD)
-   Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+N (new chat), Ctrl+B
+   Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+6 (the Team tab, only
+   while it exists; same rules as the other digits), Ctrl+N (new chat), Ctrl+B
    (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
    most recent other tab beside, or close the non-focused pane), Ctrl+Alt+W
    (row 92: Wide transcript on/off), Ctrl+\ (row 115: close the open side panel,
@@ -32,6 +33,8 @@
   root.rendererGlobalShortcuts = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   var DIGIT_KEYS = ['1', '2', '3', '4', '5'];
+  // Ctrl+6 / Ctrl+Alt+6 open the Team tab, which is not in VIEW_TAB_ORDER: it exists only with a team.
+  var TEAM_DIGIT = '6';
 
   // Same predicate as renderer-chat-keyboard-utils.js's isTextInputFocused,
   // duplicated (not required) so this module has no load-order dependency on
@@ -182,8 +185,9 @@
       if (event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
         && !event.defaultPrevented && !event.isComposing
         && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'))
-        && DIGIT_KEYS.indexOf(digitOf(event)) >= 0) {
-        switchView(event, DIGIT_KEYS.indexOf(digitOf(event)), `Ctrl+Alt+${digitOf(event)}`);
+        && (DIGIT_KEYS.indexOf(digitOf(event)) >= 0 || digitOf(event) === TEAM_DIGIT)) {
+        if (digitOf(event) === TEAM_DIGIT) openTeamView(event, 'Ctrl+Alt+6');
+        else switchView(event, DIGIT_KEYS.indexOf(digitOf(event)), `Ctrl+Alt+${digitOf(event)}`);
         return;
       }
       if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
@@ -208,11 +212,15 @@
       const digitIndex = DIGIT_KEYS.indexOf(key);
       const lower = key.toLowerCase();
       // The Workspace keymap owns Ctrl+1..5 (editor groups) and Ctrl+N (new file).
-      if ((digitIndex >= 0 || lower === 'n') && isInsideWorkspaceView(event)) {
+      if ((digitIndex >= 0 || key === TEAM_DIGIT || lower === 'n') && isInsideWorkspaceView(event)) {
         return;
       }
       if (digitIndex >= 0) {
         switchView(event, digitIndex, `Ctrl+${key}`);
+        return;
+      }
+      if (key === TEAM_DIGIT) {
+        openTeamView(event, 'Ctrl+6');
         return;
       }
       if (lower === 'n') {
@@ -234,7 +242,15 @@
     // changes event.key.
     function digitOf(event) {
       const code = String(event.code || '');
-      return /^Digit[1-5]$/.test(code) ? code.slice(5) : String(event.key || '');
+      return /^Digit[1-6]$/.test(code) ? code.slice(5) : String(event.key || '');
+    }
+
+    // The Team tab exists only with a team (row 123, slice 1g-2): the shell opens it and lands focus on
+    // its tab, and says whether it did. Without the tab the chord is not claimed and the key keeps its default.
+    function openTeamView(event, chord) {
+      if (rootRef.rendererTopNavShellController?.openTeamView?.() !== true) return;
+      event.preventDefault();
+      appendClientLog?.('INFO', 'shortcuts.view_switch', { viewId: 'team', key: chord });
     }
 
     function switchView(event, digitIndex, chord) {

@@ -14,11 +14,15 @@ const { pathToFileURL } = require('url');
 const { removeTree } = require('../fs-remove-no-follow');
 
 const PICTURE_STATES = Object.freeze(['ready', 'same', 'after_failed', 'new', 'deleted']);
-const META_VERSION = 1;
+// 2: pages that wait on a file from the internet or move on their own are no
+// longer pictured, so records made under the earlier rules are not shown.
+const META_VERSION = 2;
 const MAX_PAGES = 3;
 const MAX_ID_LENGTH = 200;
 const MAX_SIGNATURE_LENGTH = 200;
 const MAX_PATH_LENGTH = 500;
+const MAX_BLOCKED_HOSTS = 4;
+const MAX_HOST_LENGTH = 253;
 const MAX_META_BYTES = 256 * 1024;
 const WORKSPACE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const TURN_DIRECTORY = /^[0-9a-f]{32}$/;
@@ -40,6 +44,25 @@ function isIdText(value) {
 
 function toDimension(value) {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+}
+
+// The external hosts a page's renders were refused, joined across renders:
+// hostname strings only, each bounded, at most four.
+function joinBlockedHosts(...lists) {
+  const hosts = [];
+  for (const list of lists) {
+    for (const host of Array.isArray(list) ? list : []) {
+      if (typeof host === 'string' && host && host.length <= MAX_HOST_LENGTH && !hosts.includes(host)) hosts.push(host);
+    }
+  }
+  return hosts.slice(0, MAX_BLOCKED_HOSTS);
+}
+
+// The optional record field: absent when there are no hosts, so a record from
+// before this field reads back unchanged.
+function blockedHostsField(...lists) {
+  const hosts = joinBlockedHosts(...lists);
+  return hosts.length > 0 ? { blockedHosts: hosts } : {};
 }
 
 function createChangePictureStore({
@@ -113,6 +136,7 @@ function createChangePictureStore({
         afterUrl: pictureUrl(directory, page.after),
         width: toDimension(page.width),
         height: toDimension(page.height),
+        ...blockedHostsField(page.blockedHosts),
       });
     }
     return {
@@ -247,6 +271,7 @@ function createChangePictureStore({
           after: await writePicture(index, 'after', page.after),
           width: toDimension(page.width),
           height: toDimension(page.height),
+          ...blockedHostsField(page.blockedHosts),
         });
       }
       const meta = {
@@ -322,4 +347,4 @@ function createChangePictureStore({
   return { write, read, list, remove, getRootDir: () => root };
 }
 
-module.exports = { createChangePictureStore, turnKey, PICTURE_STATES };
+module.exports = { createChangePictureStore, turnKey, PICTURE_STATES, joinBlockedHosts, blockedHostsField };

@@ -34,10 +34,28 @@ test('switching shape retains bounds, reselect is inert, and Clear keeps the too
 
 test('canvas allocation only changes with dimensions and no-region draws allocate no bitmap',()=>{
   const {draw}=require('../renderer/features/renderer-image-selection');let allocations=0;let w=0,h=0;
-  const ctx={clearRect(){},beginPath(){},rect(){},stroke(){},fillRect(){}};
+  const ctx={clearRect(){},beginPath(){},rect(){},stroke(){},fillRect(){},save(){},restore(){},fill(){},arc(){},globalCompositeOperation:'source-over'};
   const canvas={get width(){return w;},set width(x){allocations++;w=x;},get height(){return h;},set height(x){allocations++;h=x;},getContext:()=>ctx};
   draw(canvas,null,4096,4096);assert.equal(allocations,0);
   const region={kind:'box',points:[[0,0],[100,100]]};draw(canvas,region,4096,4096);assert.equal(allocations,2);
   for(let i=0;i<100;i++)draw(canvas,region,4096,4096,1+i/10);assert.equal(allocations,2);
   draw(canvas,null,4096,4096);assert.equal(w*h,0);
+});
+
+test('a region dims the picture, cuts the region out and strokes a dark halo then white, with ringed handles',()=>{
+  const {draw}=require('../renderer/features/renderer-image-selection');const log=[];let style='';let composite='source-over';
+  const ctx={clearRect(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},rect(){log.push(['rect']);},save(){log.push(['save']);},restore(){log.push(['restore']);},
+    fill(){log.push(['fill',composite]);},arc(...a){log.push(['arc',a[2]]);},fillRect(...a){log.push(['fillRect',style,a.join()]);},
+    stroke(){log.push(['stroke',style,this.lineWidth]);},set fillStyle(v){style=v;},get fillStyle(){return style;},set strokeStyle(v){style=v;},get strokeStyle(){return style;},
+    set globalCompositeOperation(v){composite=v;log.push(['composite',v]);},get globalCompositeOperation(){return composite;}};
+  const canvas={width:0,height:0,getContext:()=>ctx};
+  draw(canvas,{kind:'box',points:[[10,10],[60,50]]},100,80,2);
+  assert.deepEqual(log[0],['fillRect','rgba(8, 10, 14, 0.55)','0,0,100,80'],'the dim comes first');
+  assert.ok(log.some(e=>e[0]==='fill'&&e[1]==='destination-out'),'the region is cut out');
+  const strokes=log.filter(e=>e[0]==='stroke');
+  assert.deepEqual(strokes.slice(0,2),[['stroke','rgba(0, 0, 0, 0.55)',2],['stroke','#ffffff',0.75]],'halo first, white last');
+  assert.deepEqual(log.filter(e=>e[0]==='arc').map(e=>e[1]),[3,3],'a white handle circle of 6 / zoom at each corner');
+  assert.equal(strokes.length,4,'two handle rings after the outline');
+  log.length=0;draw(canvas,{kind:'freehand',points:[[1,1],[20,5],[9,30]]},100,80,1);
+  assert.equal(log.some(e=>e[0]==='arc'),false,'freehand has no handles');
 });

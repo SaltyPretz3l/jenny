@@ -24,9 +24,9 @@ const { ToolPathPolicy } = require('./tools/tool-path-policy');
 const ACTIONS = Object.freeze(['settings', 'chat', 'file', 'terminal', 'activity', 'chat_panel', 'close', 'split', 'sidebar']);
 // Mirrors SETTINGS_SECTION_DEFINITIONS in renderer/shell/renderer-settings-section-registry.js (pinned by
 // tests/app-view-service.test.js; the renderer UMD and services cannot share an import).
-const SETTINGS_SECTIONS = Object.freeze(['readiness', 'models', 'offline', 'context', 'tools', 'skills', 'memories',
-  'personality', 'appearance', 'editor', 'home', 'notifications', 'jennyChat', 'dictation', 'runtime', 'usage',
-  'extensions', 'account', 'dataPrivacy', 'aboutUpdates', 'advanced', 'runtimeLimits', 'team']);
+const SETTINGS_SECTIONS = Object.freeze(['readiness', 'models', 'offline', 'permissions', 'tools', 'skills', 'memories',
+  'personality', 'general', 'appearance', 'chat', 'context', 'editor', 'home', 'notifications', 'jennyChat', 'dictation',
+  'runtime', 'usage', 'extensions', 'account', 'dataPrivacy', 'aboutUpdates', 'advanced', 'runtimeLimits', 'team']);
 // Mirrors the surfaces of renderer/features/renderer-chat-workspace-detail.js.
 const CHAT_PANEL_SURFACES = Object.freeze(['outputs', 'changes', 'background_tasks', 'context', 'environment']);
 const ACTIVITY_PANES = Object.freeze(['activity', 'permissions']);
@@ -138,6 +138,8 @@ function createAppViewService({
     if (!ACTIONS.includes(action)) return refusal('invalid_input');
     const payload = payloadFor(action, target);
     if (!payload) return refusal('invalid_input');
+    // Settings > Team is hidden with the team flag off; a push would land the user on another page.
+    if (payload.section === 'team' && read(featureFlags)?.team !== true) return refusal('unavailable');
     // No window (closed to the tray): nothing could show it, and no outcome would ever come back.
     if (!read(isRendererAvailable)) return refusal('unavailable');
     sequence += 1;

@@ -772,29 +772,19 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   flex: 1 1 auto;
 }
 
+/* Line and kind are plain meta text, so only Preview / Code reads as a control. */
 .artifact-file-preview-line,
 .artifact-file-preview-kind {
   font-size: var(--tl-font-meta);
   color: var(--text-muted);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-xs);
-  padding: 0 6px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.artifact-file-preview-line {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-}
+.artifact-file-preview-line { color: var(--accent); font-variant-numeric: tabular-nums; }
+.artifact-file-preview-line + .artifact-file-preview-kind::before { content: '·' / ''; margin-inline-end: var(--space-2); color: var(--text-muted); }
+.artifact-file-preview-views { flex-shrink: 0; }
 
-.artifact-file-preview-views {
-  display: inline-flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.artifact-file-preview-view-btn,
 .artifact-file-preview-ide-btn,
 .artifact-file-preview-retry-btn {
   font-size: var(--tl-font-meta);
@@ -807,20 +797,12 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   flex-shrink: 0;
 }
 
-.artifact-file-preview-view-btn:hover,
 .artifact-file-preview-ide-btn:hover,
 .artifact-file-preview-retry-btn:hover {
   color: var(--text-primary);
   background: var(--rail-hover-bg);
 }
 
-.artifact-file-preview-view-btn[aria-pressed="true"] {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: var(--rail-hover-bg);
-}
-
-.artifact-file-preview-view-btn:focus-visible,
 .artifact-file-preview-ide-btn:focus-visible,
 .artifact-file-preview-retry-btn:focus-visible {
   outline: 2px solid var(--focus-outline);
@@ -833,6 +815,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   padding: 0;
   font-size: var(--tl-font-code);
   font-family: var(--font-family-mono);
+  line-height: 1.45; /* = the row min-height, so wrapped lines keep the row rhythm */
   tab-size: 2;
   overflow-x: auto;
 }
@@ -879,13 +862,14 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   user-select: none;
 }
 
+/* No side accent bar (owner pick, 57efa12de): a stronger tint and a bold number carry the cited line. */
 .artifact-file-preview-row.is-cited {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-radius: 0;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .artifact-file-preview-row.is-cited .artifact-file-preview-gutter {
   color: var(--accent);
+  font-weight: 600;
 }
 
 .artifact-file-preview-state {

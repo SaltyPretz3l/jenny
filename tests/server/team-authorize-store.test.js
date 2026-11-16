@@ -11,15 +11,25 @@ const { createFixture } = require('./helpers/team-store-fixture');
 
 const TEAM = { kind: 'team', id: '' };
 
+// Slice 3-2: the real directory has project roles, so every conversation here
+// sits in one project the owner created (admin) with Alice and Bob writing and
+// Rae reading.
+const PROJECT = 'project_shared';
+
 async function team(t) {
   const fx = createFixture(t);
   const store = fx.openStore();
-  const { authorize } = createAuthorizer({ directory: store.directory });
+  const { authorize } = createAuthorizer({ directory: store.directory, sessionProject: () => PROJECT });
   const owner = await fx.bootstrapOwner(store);
   const alice = await fx.joinMember(store, owner.member_id, { displayName: 'Alice' });
   const bob = await fx.joinMember(store, owner.member_id, { displayName: 'Bob' });
   const reader = await fx.joinMember(store, owner.member_id, { displayName: 'Rae', role: 'read_only' });
   const pending = await fx.joinMember(store, owner.member_id, { displayName: 'Pat', admit: false });
+  assert.equal((await store.createProject({ actorMemberId: owner.member_id, projectId: PROJECT })).ok, true);
+  for (const [seat, role] of [[alice, 'writer'], [bob, 'writer'], [reader, 'reader']]) {
+    assert.equal((await store.addProjectMember({ actorMemberId: owner.member_id, projectId: PROJECT,
+      memberId: seat.member_id, role })).ok, true);
+  }
   const actor = (seat) => ({ device_id: seat.device_id });
   const reason = (verdict) => (verdict.ok ? 'ok' : verdict.error.reason);
   return { fx, store, authorize, owner, alice, bob, reader, pending, actor, reason };
@@ -48,6 +58,9 @@ test('a store change is the next answer, for the same actor object', async (t) =
   await f.store.setRole({ actorMemberId: f.owner.member_id, memberId: f.alice.member_id, role: 'read_only' });
   assert.equal(f.reason(f.authorize(alice, 'session.write', session)), 'role_forbidden');
   await f.store.admit({ actorMemberId: f.owner.member_id, memberId: f.pending.member_id });
+  assert.equal(f.reason(f.authorize(pat, 'session.write', session)), 'team_not_found', 'admitted, not yet in the project');
+  await f.store.addProjectMember({ actorMemberId: f.owner.member_id, projectId: PROJECT,
+    memberId: f.pending.member_id, role: 'writer' });
   assert.equal(f.reason(f.authorize(pat, 'session.write', session)), 'ok');
   await f.store.revokeMember({ actorMemberId: f.owner.member_id, memberId: f.pending.member_id });
   assert.equal(f.reason(f.authorize(pat, 'session.read', session)), 'member_revoked');
@@ -115,4 +128,21 @@ test('a resource of the wrong kind for the action reads as not existing', async 
   assert.equal(f.reason(f.authorize(f.actor(f.owner), 'team.member.admin', TEAM)), 'team_not_found');
   assert.equal(f.reason(f.authorize(f.actor(f.owner), 'session.read', { kind: 'project', id: 'p' })), 'team_not_found');
   assert.equal(f.reason(f.authorize(f.actor(f.owner), 'session.read', { kind: 'session', id: 's' })), 'ok');
+});
+
+test('slice 3-2: project roles from the real store decide the next answer', async (t) => {
+  const f = await team(t);
+  const session = { kind: 'session', id: 'session_1' };
+  const project = { kind: 'project', id: PROJECT };
+  assert.equal(f.reason(f.authorize(f.actor(f.alice), 'session.delete', session)), 'role_forbidden', 'a writer');
+  assert.equal(f.reason(f.authorize(f.actor(f.owner), 'session.delete', session)), 'ok', 'the creator is admin');
+  assert.equal(f.reason(f.authorize(f.actor(f.reader), 'project.read', project)), 'ok');
+  await f.store.removeProjectMember({ actorMemberId: f.owner.member_id, projectId: PROJECT, memberId: f.alice.member_id });
+  assert.equal(f.reason(f.authorize(f.actor(f.alice), 'session.read', session)), 'team_not_found');
+  assert.equal(f.reason(f.authorize(f.actor(f.alice), 'project.read', project)), 'team_not_found');
+  // A deleting project is the owner's alone, read only.
+  await f.store.markProjectDeleting({ actorMemberId: f.owner.member_id, projectId: PROJECT });
+  assert.equal(f.reason(f.authorize(f.actor(f.bob), 'session.read', session)), 'team_not_found');
+  assert.equal(f.reason(f.authorize(f.actor(f.owner), 'session.read', session)), 'ok');
+  assert.equal(f.reason(f.authorize(f.actor(f.owner), 'session.write', session)), 'team_project_deleting');
 });

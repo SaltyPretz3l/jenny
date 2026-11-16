@@ -39,6 +39,7 @@ const {
   normalizePathList,
 } = require('./workspace-git-operation-context');
 const {
+  createNonRepoMemo,
   detectRepoScope,
   notRepoToplevelResult,
   probeHeadState,
@@ -114,6 +115,7 @@ class WorkspaceGitService {
     this._exec = createReadOnlyGitExec(this._writeExec);
     this._fs = fs;
     this._path = path;
+    this._nonRepos = createNonRepoMemo({ fs, path });
     this._pathPolicy = new ToolPathPolicy({ fs, path, logger });
     this._logger = typeof logger === 'function' ? logger : null;
     this._trashItemImpl = typeof trashItemImpl === 'function' ? trashItemImpl : null;
@@ -244,6 +246,12 @@ class WorkspaceGitService {
     const operation = this._operations.acquire({ kind: 'read', signal });
     if (!operation.acquired) return this._unavailable(op, operation.code);
     try {
+      // A known miss needs neither the whole-root lease nor a spawn.
+      const known = await this._nonRepos.recall(operation.root);
+      if (known) {
+        if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
+        return known === 'not_repo' ? this._notARepo(op) : notRepoToplevelResult(op);
+      }
       return await this._resources.run({
         root: operation.root,
         signal: operation.signal,
@@ -251,6 +259,7 @@ class WorkspaceGitService {
       }, async () => {
         const detect = await detectRepoScope(this._exec, operation.root, { signal: operation.signal, fs: this._fs, isCurrent: operation.isCurrent });
         if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
+        this._nonRepos.remember(operation.root, detect);
         if (detect.failure) return this._execFailure(op, detect.failure);
         if (!detect.isRepo) return this._notARepo(op);
         if (!detect.isToplevel) return notRepoToplevelResult(op);

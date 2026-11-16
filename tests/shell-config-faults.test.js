@@ -514,8 +514,9 @@ test('C12 EPERM from the rename fails the save, leaves the file and state alone,
 
   const realRename = fs.renameSync;
   let injected = 0;
+  let locked = true; // a lasting lock: every try fails, FileJsonStore's three EPERM retries included
   fs.renameSync = function failingRename(from, to, ...rest) {
-    if (injected === 0 && path.basename(String(to)) === CONFIG_NAME) {
+    if (locked && path.basename(String(to)) === CONFIG_NAME) {
       injected += 1;
       throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
     }
@@ -527,7 +528,8 @@ test('C12 EPERM from the rename fails the save, leaves the file and state alone,
     () => service.updateAssistantIdentity({ agentName: 'Blocked' }),
     (error) => error && error.code === 'EPERM'
   );
-  assert.equal(injected, 1);
+  assert.equal(injected, 4, 'the first try and three retries all hit the lock');
+  locked = false;
   const failures = named(events, 'shell_config.write_failed');
   assert.equal(failures.length, 1);
   assert.equal(failures[0].level, 'WARN');

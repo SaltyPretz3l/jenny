@@ -63,7 +63,8 @@ const UI_LANGUAGE_TAGS = Object.freeze([
 const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
 const UNATTENDED_GUARD_MINUTES_DEFAULT = 0;
 const UNATTENDED_GUARD_MINUTES_MAX = 120;
-const AUTO_APPROVE_STREAK_CAP_DEFAULT = 50;
+// 250 (owner 2026-11-11): above the 200-call reply budget plus the browser's 30 steps.
+const AUTO_APPROVE_STREAK_CAP_DEFAULT = 250;
 const AUTO_APPROVE_STREAK_CAP_MAX = 500;
 
 function normalizeUiLanguage(value) {

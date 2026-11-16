@@ -10,6 +10,8 @@
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 
+const { isCanonicalRelayUrl } = require('./relay-url');
+
 const ALPN = 'jenny-team/1';
 const MAX_LINE_BYTES = 65536;
 // The binary dials at most this many direct addresses.
@@ -25,10 +27,28 @@ const LOG_EVENTS = new Set([
   'team.bridge.stream_refused',
   'team.bridge.dropped',
   'team.bridge.stopped',
+  // Counts by cause of what was ignored or refused before the admit question, at most once a second.
+  'team.bridge.refusal_summary',
+  // The port mapping's state word; its address never reaches a log.
+  'team.bridge.mapping',
+  // The owner's relay's state word; its URL and token never reach a log.
+  'team.bridge.relay',
 ]);
-const LOG_FIELDS = new Set(['kind', 'reason', 'connections', 'streams']);
+// The states of the child's `mapping` line; only `mapped` carries an address.
+const MAPPING_STATES = Object.freeze(['requesting', 'mapped', 'unavailable', 'off']);
+// The states of the host child's `relay` line.
+const RELAY_STATES = Object.freeze(['connecting', 'connected', 'denied', 'unreachable', 'off']);
+// The member child's `path` word while online, with a relay configured.
+const PATHS = Object.freeze(['direct', 'relay']);
+// The bridge's own token rule: 1 to 256 printable ASCII characters, no space.
+const MAX_RELAY_TOKEN_CHARS = 256;
+const RELAY_TOKEN = /^[\x21-\x7e]+$/u;
+const LOG_FIELDS = new Set([
+  'kind', 'reason', 'connections', 'streams', 'rate', 'cooldown', 'waiting_cap', 'handshake_cap', 'state',
+]);
 const LOG_WORDS = new Set([
-  'device', 'invite', 'not_admitted', 'connection_cap', 'handshake_cap', 'total_cap', 'closing',
+  'device', 'invite', 'not_admitted', 'connection_cap', 'key_cap', 'total_cap', 'closing', 'early_data',
+  ...MAPPING_STATES, ...RELAY_STATES,
 ]);
 
 /** Starts the bridge binary in `mode` ('host' or 'member'). The argument list is exactly [mode]. */
@@ -52,6 +72,62 @@ function isSocketAddress(text) {
   const port = Number(match[3]);
   if (port < 1 || port > 65535) return false;
   return match[1] !== undefined ? net.isIPv6(match[1]) : net.isIPv4(match[2]);
+}
+
+/**
+ * False for an IPv4 address no router's outside address can be: unspecified (a router whose WAN
+ * is down), loopback, multicast, broadcast or link-local. Private and 100.64/10 addresses pass:
+ * they mean "behind another router". The bridge refuses the same classes.
+ */
+function isOutsideAddress(ip) {
+  const [a, b] = ip.split('.').map(Number);
+  if (ip === '0.0.0.0' || ip === '255.255.255.255') return false;
+  if (a === 127 || (a >= 224 && a <= 239)) return false;
+  return !(a === 169 && b === 254);
+}
+
+/**
+ * The child's `mapping` line as `{ state, external }`, or null when it is malformed: a known
+ * state, with an IPv4 `ip:port` that can be a router's outside address for `mapped`, and null
+ * for every other state.
+ */
+function parseMapping(message) {
+  const { state, external } = message;
+  if (!MAPPING_STATES.includes(state)) return null;
+  if (state === 'mapped') {
+    const ipv4 = isSocketAddress(external) && !external.startsWith('[');
+    return ipv4 && isOutsideAddress(external.split(':')[0]) ? { state, external } : null;
+  }
+  return external === null ? { state, external: null } : null;
+}
+
+/**
+ * The `relay` field of a start line in either mode: null when there is no relay, or exactly
+ * `{ url, token }` with the owner's canonical relay URL and a token or null. A bad option throws a
+ * TypeError that names the field, never its value.
+ */
+function relayField(relay) {
+  if (relay === undefined || relay === null) return null;
+  const keys = typeof relay === 'object' && !Array.isArray(relay) ? Object.keys(relay) : [];
+  if (keys.length !== 2 || !keys.includes('url') || !keys.includes('token')) {
+    throw new TypeError('relay must be null or { url, token }');
+  }
+  if (!isCanonicalRelayUrl(relay.url)) throw new TypeError('relay.url must be a canonical relay URL');
+  const { token } = relay;
+  const tokenOk = token === null
+    || (typeof token === 'string' && token.length <= MAX_RELAY_TOKEN_CHARS && RELAY_TOKEN.test(token));
+  if (!tokenOk) throw new TypeError('relay.token must be null or a relay token');
+  return { url: relay.url, token };
+}
+
+/** The host child's `relay` line as its state word, or null for an unknown state. */
+function parseRelay(message) {
+  return RELAY_STATES.includes(message.state) ? message.state : null;
+}
+
+/** The member child's `path` word, or null when absent or unknown. */
+function parsePath(value) {
+  return PATHS.includes(value) ? value : null;
 }
 
 function isLogValue(value) {
@@ -235,6 +311,11 @@ module.exports = {
   encodeKey,
   filterLog,
   isSocketAddress,
+  parseMapping,
+  parsePath,
+  parseRelay,
+  relayField,
+  childEnv,
   spawnBridgeChild,
   stopChild,
 };

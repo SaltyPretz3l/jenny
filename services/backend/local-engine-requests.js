@@ -25,6 +25,7 @@ const { normalizeRequestApplicationTurn } = require('./application-turns');
 const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
 const { normalizeImagePromptPin, storedImagePromptPin } = require('./image-prompt-pin');
 const { normalizeMessageAuthor } = require('./message-author');
+const { resolveBoardStamp } = require('../boards/board-turn-stamp');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
@@ -182,6 +183,7 @@ async function prepareLocalEngineChatRequest(service, {
   clientTiming,
   skillInvocation,
   imagePromptPin,
+  boardId,
   author,
   editedMessageId,
   failureRetry,
@@ -254,6 +256,9 @@ async function prepareLocalEngineChatRequest(service, {
   }
 
   throwIfStartCancelled();
+  // Row 150: a turn sent from the composer beside a board keeps its stamp only for a live board of this chat's project.
+  const normalizedBoardId = await resolveBoardStamp(service, { boardId, sessionId: sessionKey, editedMessageId });
+  throwIfStartCancelled();
   return {
     sessionId,
     prompt,
@@ -272,6 +277,7 @@ async function prepareLocalEngineChatRequest(service, {
     clientTiming,
     skillInvocation: normalizedSkillInvocation,
     ...(normalizedImagePromptPin !== undefined ? { imagePromptPin: normalizedImagePromptPin } : {}),
+    ...(normalizedBoardId ? { boardId: normalizedBoardId } : {}),
     ...(normalizedAuthor ? { author: normalizedAuthor } : {}),
     editedMessageId,
     failureRetry,

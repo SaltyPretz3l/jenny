@@ -253,3 +253,28 @@ test('focus flush routes a question request to that question\'s first option', (
 
   renderer.clearStalledTimer();
 });
+
+// Gate sitting 2026-11-14 (G6): renderComposerState swaps the placeholder to "Or answer in your own
+// words…" while an ask_user card waits, then calls renderComposerInteractivePanel, whose idle branch
+// wrote "Message Jenny..." back on every render, so the row 157 placeholder never stayed visible.
+test('an idle interactive panel render leaves a question-reply placeholder in place', () => {
+  const chatInput = { placeholder: 'Or answer in your own words…', dataset: { questionReplyDefault: 'Message Jenny...' } };
+  const renderer = createInteractivePanelRenderer({
+    state: { ui: {}, backend: { phase: 'ready' }, auth: { authenticated: true } },
+    dom: { composer: null, chatInput, chatTimeline: { querySelector: () => null } },
+    callbacks: {
+      getPendingQuestionBatch: () => null,
+      hasStalePendingQuestionBatch: () => false,
+      getInteractiveDraft: () => ({}),
+      isSendBusy: () => false,
+      escapeHtml,
+    },
+  });
+  renderer.renderComposerInteractivePanel();
+  assert.equal(chatInput.placeholder, 'Or answer in your own words…');
+
+  delete chatInput.dataset.questionReplyDefault;
+  chatInput.placeholder = 'stale';
+  renderer.renderComposerInteractivePanel();
+  assert.equal(chatInput.placeholder, 'Message Jenny...', 'without the swap the idle reset still runs');
+});

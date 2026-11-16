@@ -39,12 +39,15 @@ async function createTeamChatCommandsFixture(t, {
   const invite = await store.createInvite({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member',
     invitePublicKey });
   const invites = createInviteService({ store, clock: fx.clock, randomBytes: fx.randomBytes, logger: fx.logger });
-  const { authorize } = createAuthorizer({ directory: store.directory });
+  // As team-main.js wires it: a direct conversation's participants come from the chat store, built below.
+  let chat = null;
+  const { authorize } = createAuthorizer({ directory: store.directory,
+    dmParticipants: (channelId) => chat?.store?.participantsOf(channelId) });
 
   if (beforeStart) beforeStart(fx);
   const published = [];
   const eventStream = { publish: (type, payload, options) => published.push({ type, payload, options }) };
-  const chat = createTeamChatHost({
+  chat = createTeamChatHost({
     profileDir: fx.dir, directory: store.directory, logger: fx.logger, clock: fx.clock,
     randomBytes: fx.randomBytes, publish: (type, payload, options) => eventStream.publish(type, payload, options),
     ...(maxResponseBytes ? { maxResponseBytes } : {}), ...(storeLimits ? { storeLimits } : {}),
@@ -94,8 +97,21 @@ async function createTeamChatCommandsFixture(t, {
   const chatEvents = () => published.filter((entry) => entry.type.startsWith('team_chat_'));
 
   return {
-    fx, store, chat, router, seats, send, dispatch, command, reasonOf, published, chatEvents,
+    fx, store, chat, router, seats, send, dispatch, command, reasonOf, published, chatEvents, authorize,
     setAdmit(value) { admit = value; },
+    // Slice 3-2: a project channel's audience is that project's members. The
+    // owner creates the project (and is its admin), then adds each seat as a writer.
+    async addToProject(projectId, ...names) {
+      if (store.directory.projectState(projectId) === null) {
+        const created = await store.createProject({ actorMemberId: owner.member_id, projectId });
+        if (!created.ok) throw new Error(`project create failed: ${created.error.reason}`);
+      }
+      for (const name of names.filter((entry) => entry !== 'owner')) {
+        const added = await store.addProjectMember({ actorMemberId: owner.member_id, projectId,
+          memberId: seats[name].member_id, role: 'writer' });
+        if (!added.ok) throw new Error(`project add failed: ${added.error.reason}`);
+      }
+    },
     receiptsPath: path.join(fx.dir, 'command-receipts.json'),
     async post(seat, text, extra = {}) {
       const answer = await send(seat, 'team.chat.post', { channel_id: 'chan_team', text, ...extra });

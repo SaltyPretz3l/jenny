@@ -193,6 +193,53 @@ test('findDrafterFile matches case-insensitively, sorts, and rejects unsafe patt
   }
 });
 
+test('findDrafterFile names the drafter of the model in a mixed folder', () => {
+  const mixedFs = {
+    readdirSync: () => [
+      'gemma-4-31B-it-Q5.gguf',
+      'Qwen3.8-27B-UD-Q6_K.gguf',
+      'mtp-gemma-4-31B-it.gguf',
+      'mtp-Qwen3.8-27B-Q4_0.gguf',
+    ],
+  };
+  const pick = (modelFile, fsImpl = mixedFs) => path.basename(findDrafterFile({
+    modelDir: MODEL_DIR, drafterPattern: 'mtp-*.gguf', modelFile, fsImpl,
+  }));
+  assert.equal(pick('Qwen3.8-27B-UD-Q6_K.gguf'), 'mtp-Qwen3.8-27B-Q4_0.gguf');
+  assert.equal(pick('gemma-4-31B-it-Q5.gguf'), 'mtp-gemma-4-31B-it.gguf');
+  // No model file: today's first-by-name behavior.
+  assert.equal(path.basename(findDrafterFile({
+    modelDir: MODEL_DIR, drafterPattern: 'mtp-*.gguf', fsImpl: mixedFs,
+  })), 'mtp-Qwen3.8-27B-Q4_0.gguf');
+  // A fine-tune whose name carries the family after other words still has no
+  // naming drafter, so the only drafter in the folder is its drafter.
+  const loneFs = { readdirSync: () => ['Swift-1.5-Qwen3.8-27B-Q6_K_S.gguf', 'mtp-Qwen3.8-27B-Q4_0.gguf'] };
+  assert.equal(pick('Swift-1.5-Qwen3.8-27B-Q6_K_S.gguf', loneFs), 'mtp-Qwen3.8-27B-Q4_0.gguf');
+  // Two drafters naming neither model: none, not the first.
+  const neitherFs = { readdirSync: () => ['mtp-aaa-7B.gguf', 'mtp-bbb-7B.gguf', 'ccc-9B-Q4_K_M.gguf'] };
+  assert.equal(pick('ccc-9B-Q4_K_M.gguf', neitherFs), '');
+  // A longer name is another model: "27b" is no prefix of "270b-...".
+  const lookalikeFs = { readdirSync: () => ['mtp-qwen-27B.gguf', 'mtp-other-7B.gguf'] };
+  assert.equal(pick('qwen-270B-Q4_K_M.gguf', lookalikeFs), '');
+  assert.equal(pick('qwen-27B-instruct-Q4_K_M.gguf', lookalikeFs), 'mtp-qwen-27B.gguf');
+});
+
+test('resolveAccelerationArgs hands the model file to the drafter pick', () => {
+  const mixedFs = { readdirSync: () => ['mtp-gemma-4-31B-it.gguf', 'mtp-Qwen3.8-27B-Q4_0.gguf'] };
+  const gemma = resolve({
+    modelTag: 'gemma4:31b', modelFile: 'gemma-4-31B-it-Q5.gguf', fsImpl: mixedFs,
+  });
+  assert.equal(gemma.drafter, 'mtp-gemma-4-31B-it.gguf');
+  const qwen = resolve({
+    modelTag: 'qwen3.8:27b', modelFile: 'Qwen3.8-27B-UD-Q6_K.gguf', fsImpl: mixedFs,
+  });
+  assert.equal(qwen.drafter, 'mtp-Qwen3.8-27B-Q4_0.gguf');
+  const neither = resolve({
+    modelTag: 'qwen3.8:27b', modelFile: 'Other-7B-Q4_K_M.gguf', fsImpl: mixedFs,
+  });
+  assert.equal(neither.reason, 'drafter_missing');
+});
+
 test('resolver applies precedence rules before mode eligibility', () => {
   const realQwenProfile = JSON.parse(fs.readFileSync(path.join(
     REPO_ROOT,

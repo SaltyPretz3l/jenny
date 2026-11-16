@@ -220,6 +220,30 @@ class TurnDiagnosticsStore:
                 call["stream_counters"] = dict(counters)
             turn["_updated_at"] = now
 
+    def record_input_transformations(
+        self,
+        *,
+        request_id: str,
+        counts: Mapping[str, Any],
+    ) -> None:
+        """Add the history edits a provider reports it made to a request of this turn.
+
+        A bounded ``type.reason`` -> count histogram, summed over the turn's calls: a
+        dropped thinking block is otherwise invisible, and it costs cached input.
+        """
+        reported = _normalize_type_histogram(counts)
+        if not reported:
+            return
+        with self._lock:
+            turn = self._get_turn_locked(request_id)
+            if turn is None:
+                return
+            merged = dict(turn.get("input_transformations") or {})
+            for key, count in reported.items():
+                merged[key] = merged.get(key, 0) + count
+            turn["input_transformations"] = _normalize_type_histogram(merged)
+            turn["_updated_at"] = time.monotonic()
+
     def record_provider_completion_shape(
         self,
         *,

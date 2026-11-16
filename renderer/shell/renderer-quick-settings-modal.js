@@ -1,43 +1,25 @@
 /* renderer/shell/renderer-quick-settings-modal.js
  *
- * Tier D quick-settings modal (JENNY_UIUX_OVERHAUL_PLAN.md L91-94, resolved
- * decisions L123-138, hardening L146-181): a compact Ctrl/Cmd+, overlay over
- * a curated subset of the settings catalog -- palette, a current-model tuning
- * shortcut + force-local inference, text size + session opening. Same
- * inventory controls + write paths as the full settings page; this is a VIEW,
- * not a second store.
+ * Quick settings (Ctrl/Cmd+,): a compact overlay over a curated subset of the
+ * settings catalog. Three groups: Appearance (theme swatches, text size, Wide
+ * transcript), Model (current model + Tune link, Force local with a live
+ * status line) and Chats (open in a new tab). A VIEW over the existing write
+ * paths, not a second store. styles/quick-settings.css documents the markup.
  *
- * DOM contract: styles/quick-settings.css documents the exact markup shape
- * (quick-settings-overlay/scrim/dialog/header/body/slot/row/row-label/
- * row-control/row-note/footer). Built lazily on first open(), appended once
- * to documentRef.body, reused after (hidden attribute toggles).
+ * Raw-HTML-primitive discipline: scripts/checks/check_no_raw_html_primitives.py
+ * forbids literal form-control markup here, so every interactive control is
+ * TRUSTED HTML from an inventory builder assigned via innerHTML onto a plain
+ * host element. The overlay manager owns Escape, the focus trap, focus restore
+ * and the inert background.
  *
- * Raw-HTML-primitive discipline: this file lives outside renderer/inventory,
- * so scripts/checks/check_no_raw_html_primitives.py forbids literal
- * form-control tag markup and matching createElement calls for those same
- * tag names here. Every interactive control is TRUSTED HTML from an
- * inventory builder (selectField/toggleSwitch/segmentedControl/actionButton)
- * assigned via innerHTML onto a plain structural host element.
- *
- * Overlay integration: renderer-overlay-manager.js owns Escape + focus-trap +
- * focus-restore + the inert background -- open()/close() just call
- * manager.open()/close() and the scrim/close button call close() directly.
- * The shell binds the manager before this modal (index.html loads it first);
- * without one the modal logs a WARN and opens with none of those.
- *
- * Persistence contracts (independent adapters -- NEVER cross-write):
- *   - appearance (palette + text size): adapters.appearance
- *     (createAppearanceAdapter, localStorage).
- *   - force-local inference: adapters.offline (createOfflineAdapter,
- *     offline.updateSettings IPC).
- *   - session opening: adapters.sessionOpen (sessionOpenPrefUtils).
- *   - runtimePrefs.getCurrent() reads the active session model only to scope
- *     the model tuning shortcut. Composer remains the sole model selector.
+ * Adapters never cross-write: appearance (palette + text size), offline
+ * (force local), sessionOpen. chatWidth ({read, toggle}) is the one Wide
+ * transcript toggle owned by the shell controllers. runtimePrefs.getCurrent()
+ * only scopes the Tune link; the composer stays the sole model selector.
  *
  * Every dependency is injected via `deps`, with a globalThis-then-require()
- * production fallback mirroring renderer-settings-persistence-adapters.js /
- * renderer-status-chip-utils.js, so this module is fully testable with fake
- * deps and works unmodified from a plain <script> tag in the browser.
+ * production fallback, so the module is testable with fakes and loads from a
+ * plain <script> tag.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -84,15 +66,12 @@
     const getCurrentRuntimePreferences = typeof runtimePrefs.getCurrent === 'function'
       ? runtimePrefs.getCurrent
       : function fallbackGetCurrent() { return {}; };
-    const openSettingsSection = typeof options.openSettingsSection === 'function'
-      ? options.openSettingsSection
-      : noop;
-    const openModelTuning = typeof options.openModelTuning === 'function'
-      ? options.openModelTuning
-      : noop;
-    const appendClientLog = typeof options.appendClientLog === 'function'
-      ? options.appendClientLog
-      : noop;
+    const fnOrNoop = (value) => (typeof value === 'function' ? value : noop);
+    const openSettingsSection = fnOrNoop(options.openSettingsSection);
+    const openModelTuning = fnOrNoop(options.openModelTuning);
+    const appendClientLog = fnOrNoop(options.appendClientLog);
+    const onOpen = fnOrNoop(options.onOpen);
+    const onOfflineWritten = fnOrNoop(options.onOfflineWritten);
     const inertTargetsSource = options.inertTargets || [];
 
     const inventory = resolveModule(options, 'inventory', 'inventory', '../inventory');
@@ -100,6 +79,7 @@
     const statusChipUtils = resolveModule(
       options, 'statusChipUtils', 'rendererStatusChipUtils', './renderer-status-chip-utils'
     );
+    const offlineUtils = resolveModule(options, 'offlineUtils', 'rendererOfflineUtils', '../features/renderer-offline-utils');
     const OVERLAY_ID = 'quick-settings';
 
     let els = null;
@@ -124,16 +104,11 @@
         && targets.indexOf(target) === index);
     }
 
-    // ── generic write-with-rollback-reflect helper ──
-    // Every control's write goes through its OWN adapter (appearance / zoom /
-    // offline) -- never merged. On failure the adapter has already rolled its
-    // own cache back and rethrown; this just logs and re-renders the row so
-    // the control reflects whatever the adapter now reads as current.
-    function writeAdapterValue(adapter, nextValue, refreshRow, contextLabel) {
-      if (!adapter || typeof adapter.write !== 'function') {
-        return;
-      }
-      Promise.resolve(adapter.write(nextValue)).catch((error) => {
+    // Each control writes through its OWN adapter. On failure the adapter has
+    // already rolled back; this logs and re-renders the row from its value.
+    function writeAdapterValue(adapter, nextValue, refreshRow, contextLabel, onWritten) {
+      if (!adapter || typeof adapter.write !== 'function') return;
+      Promise.resolve(adapter.write(nextValue)).then(() => { try { onWritten?.(); } catch (_e) { /* best-effort */ } }, (error) => {
         appendClientLog('WARN', 'quick_settings.write_failed', {
           context: contextLabel,
           message: describeError(error),
@@ -151,11 +126,14 @@
         : {};
     }
 
-    // ── DOM construction ──
-
     function buildInventoryHtml(el, html) {
       el.innerHTML = html || '';
       return el;
+    }
+
+    function buildButton(opts) {
+      return buildInventoryHtml(documentRef.createElement('div'), inv('actionButton', opts)).firstElementChild
+        || documentRef.createElement('span');
     }
 
     function buildRow(labelText, className) {
@@ -171,81 +149,162 @@
       return { row, label, control };
     }
 
-    function buildAppearanceSlot() {
+    function buildSlot(slotName, titleText) {
       const slotRoot = documentRef.createElement('section');
       slotRoot.className = 'quick-settings-slot';
-      slotRoot.dataset.slot = 'appearance';
+      slotRoot.dataset.slot = slotName;
       const title = documentRef.createElement('h3');
       title.className = 'quick-settings-slot-title';
-      title.textContent = jt('quickSettings.theme', 'Theme');
-      const { row, control } = buildRow(jt('quickSettings.palette', 'Palette'));
+      title.textContent = titleText;
       slotRoot.appendChild(title);
-      slotRoot.appendChild(row);
+      return slotRoot;
+    }
 
-      function render() {
-        const presets = appearanceUtils && typeof appearanceUtils.getPalettePresets === 'function'
-          ? appearanceUtils.getPalettePresets()
-          : [];
-        const current = readAppearance();
-        buildInventoryHtml(control, inv('selectField', {
-          id: 'quickSettingsPalette',
-          ariaLabel: jt('quickSettings.palette', 'Palette'),
-          value: current.paletteId,
-          options: presets.map((p) => ({ value: p.id, label: p.label })),
-        }));
-        const selectEl = control.querySelector('select');
-        if (selectEl) {
-          selectEl.addEventListener('change', () => {
-            writeAdapterValue(
-              adapters.appearance,
-              Object.assign({}, readAppearance(), { paletteId: selectEl.value }),
-              render,
-              'appearance-palette'
-            );
-          });
-        }
+    // In-place switch sync keeps focus; a full re-render is the fallback.
+    function syncSwitch(host, checked, renderFull) {
+      const track = host.querySelector('[data-inv-toggle]');
+      const setChecked = inventory && inventory.toggleSwitch && inventory.toggleSwitch.setChecked;
+      if (track && typeof setChecked === 'function') setChecked(track, checked);
+      else renderFull();
+    }
+
+    // Dark palettes first, then light, the first light one starting a new group.
+    function paletteOptions(presets) {
+      const ordered = presets.filter((p) => p.scheme !== 'light').concat(presets.filter((p) => p.scheme === 'light'));
+      const firstLightId = (presets.find((p) => p.scheme === 'light') || {}).id;
+      return ordered.map((p) => {
+        const colors = typeof appearanceUtils.resolvePaletteBootColors === 'function'
+          ? appearanceUtils.resolvePaletteBootColors(p.id)
+          : null;
+        const pair = colors ? [colors.bg, colors.accent] : null;
+        const option = { value: p.id, label: p.label };
+        if (pair) option.swatch = pair;
+        if (p.id === firstLightId && ordered[0] !== p) option.groupStart = true;
+        return option;
+      });
+    }
+
+    function buildAppearanceSlot() {
+      const slotRoot = buildSlot('appearance', jt('quickSettings.appearance', 'Appearance'));
+      const themeRow = buildRow(jt('quickSettings.theme', 'Theme'));
+      themeRow.row.classList.add('quick-settings-row--stacked');
+      const themeValue = documentRef.createElement('span');
+      themeValue.className = 'quick-settings-row-value';
+      themeRow.label.appendChild(themeValue);
+      const fontScaleRow = buildRow(jt('quickSettings.fontScale', 'Text size'));
+      const wideRow = buildRow(jt('quickSettings.wideTranscript', 'Wide transcript'));
+      wideRow.label.id = 'quickSettingsWideLabel';
+      slotRoot.append(themeRow.row, fontScaleRow.row, wideRow.row);
+
+      const presets = appearanceUtils && typeof appearanceUtils.getPalettePresets === 'function'
+        ? appearanceUtils.getPalettePresets()
+        : [];
+      const fontScalePresets = appearanceUtils && typeof appearanceUtils.getFontScalePresets === 'function'
+        ? appearanceUtils.getFontScalePresets()
+        : [];
+      // No container-level install of the inventory toggle/segmented handlers: the
+      // document-level install (renderer/inventory/index.js) covers these hosts, and
+      // the toggle handler flips relatively, so a second install double-fires.
+
+      function showPaletteLabel(paletteId) {
+        const preset = presets.find((p) => p.id === paletteId);
+        themeValue.textContent = preset ? preset.label : '';
       }
 
-      return { root: slotRoot, render };
+      function renderTheme() {
+        const current = readAppearance();
+        buildInventoryHtml(themeRow.control, inv('segmentedControl', {
+          id: 'quickSettingsPalette',
+          ariaLabel: jt('quickSettings.theme', 'Theme'),
+          value: current.paletteId,
+          options: paletteOptions(presets),
+        }));
+        showPaletteLabel(current.paletteId);
+      }
+
+      themeRow.control.addEventListener('inv-segmented-change', (event) => {
+        const paletteId = (event && event.detail && event.detail.value) || '';
+        // The swatch the user is on keeps focus; only the value label follows.
+        showPaletteLabel(paletteId);
+        writeAdapterValue(
+          adapters.appearance,
+          Object.assign({}, readAppearance(), { paletteId }),
+          renderTheme,
+          'appearance-palette'
+        );
+      });
+
+      function renderFontScale() {
+        const current = readAppearance();
+        buildInventoryHtml(fontScaleRow.control, inv('segmentedControl', {
+          id: 'quickSettingsFontScale',
+          ariaLabel: jt('quickSettings.fontScale', 'Text size'),
+          value: current.fontScaleId,
+          options: fontScalePresets.map((p) => ({ value: p.id, label: p.label })),
+        }));
+      }
+
+      fontScaleRow.control.addEventListener('inv-segmented-change', (event) => {
+        const nextValue = (event && event.detail && event.detail.value) || '';
+        writeAdapterValue(
+          adapters.appearance,
+          Object.assign({}, readAppearance(), { fontScaleId: nextValue }),
+          renderFontScale,
+          'appearance-font-scale'
+        );
+      });
+
+      // The shell owns the one Wide toggle; read at click time, never cached.
+      const chatWidth = options.chatWidth || null;
+      const canToggleWide = () => (typeof chatWidth?.available === 'function' ? chatWidth.available() === true : typeof chatWidth?.toggle === 'function');
+      const readWide = () => typeof chatWidth?.read === 'function' && chatWidth.read() === true;
+
+      function renderWide() {
+        buildInventoryHtml(wideRow.control, inv('toggleSwitch', {
+          id: 'quickSettingsWideTranscript',
+          bare: true,
+          labelledBy: 'quickSettingsWideLabel',
+          checked: readWide(),
+          disabled: !canToggleWide(),
+          tooltip: canToggleWide() ? undefined : jt('quickSettings.wideTranscriptUnavailable', 'Open a chat to use this'),
+        }));
+      }
+
+      wideRow.control.addEventListener('inv-toggle-change', (event) => {
+        if (!canToggleWide() || event.detail?.id !== 'quickSettingsWideTranscript') return;
+        try { chatWidth.toggle(); } catch (error) { appendClientLog('WARN', 'quick_settings.write_failed', { context: 'chat-width', message: describeError(error) }); }
+        syncSwitch(wideRow.control, readWide(), renderWide);
+      });
+
+      return {
+        root: slotRoot,
+        render() { renderTheme(); renderFontScale(); renderWide(); },
+      };
     }
 
     function buildModelSlot() {
-      const slotRoot = documentRef.createElement('section');
-      slotRoot.className = 'quick-settings-slot';
-      slotRoot.dataset.slot = 'model';
-      const title = documentRef.createElement('h3');
-      title.className = 'quick-settings-slot-title';
-      title.textContent = jt('quickSettings.modelRuntime', 'Model runtime');
-      slotRoot.appendChild(title);
+      const slotRoot = buildSlot('model', jt('quickSettings.model', 'Model'));
 
-      const contextRow = buildRow(jt('quickSettings.modelProfile', 'Model profile'));
-      slotRoot.appendChild(contextRow.row);
-      const contextNote = documentRef.createElement('div');
-      contextNote.className = 'quick-settings-row-note';
-      slotRoot.appendChild(contextNote);
-
+      const modelRow = buildRow('');
+      modelRow.label.classList.add('quick-settings-model-name');
       const localOnlyRow = buildRow(jt('quickSettings.forceLocalInference', 'Force local inference'));
       localOnlyRow.label.id = 'quickSettingsLocalOnlyLabel';
-      slotRoot.appendChild(localOnlyRow.row);
-      // Do NOT install initToggleHandlers on this host: production's
-      // renderer/inventory/index.js already delegates on `document`, and the
-      // toggle handler flips RELATIVELY (no already-checked guard), so a
-      // second install double-fires every click (checked:true then
-      // checked:false = two conflicting offline IPC writes). Harnesses must
-      // install the inventory handlers on their documentRef, exactly like
-      // production does.
-
       const noteRow = documentRef.createElement('div');
       noteRow.className = 'quick-settings-row-note';
       const noteChip = documentRef.createElement('span');
-      noteRow.appendChild(noteChip);
-      slotRoot.appendChild(noteRow);
+      const noteLink = documentRef.createElement('span');
+      noteRow.append(noteChip, noteLink);
+      // E64: the owner's sentence under the switch, only while the Team feature applies.
+      const teamNoteRow = documentRef.createElement('div');
+      teamNoteRow.className = 'quick-settings-row-note';
+      slotRoot.append(modelRow.row, localOnlyRow.row, noteRow, teamNoteRow);
+
       function currentModelId() {
         const prefs = getCurrentRuntimePreferences() || {};
         return String(prefs.preferredModel || state?.status?.model || '').trim();
       }
 
-      function renderContextWindow() {
+      function renderModel() {
         const modelId = currentModelId();
         const models = Array.isArray(state?.modelList?.data) ? state.modelList.data : [];
         const modelEntry = models.find((entry) => String(entry?.id || entry?.model || entry || '').trim() === modelId);
@@ -261,19 +320,23 @@
           || ''
         ).trim().toLowerCase();
         const tuningSupported = !engineType || ['ollama', 'vllm', 'openai-compatible'].includes(engineType);
-        buildInventoryHtml(contextRow.control, tuningSupported ? inv('actionButton', {
-          id: 'open-model-tuning', label: jt('quickSettings.tuneCurrentModel', 'Tune current model'), variant: 'secondary',
-          disabled: !modelKnown, ariaLabel: jt('quickSettings.openCurrentModelTuning', 'Open current model tuning'),
-          title: jt('quickSettings.openCurrentModelTuningTitle', 'Open per-model tuning for the current model'),
-        }) : '');
-        contextNote.textContent = !tuningSupported
+        modelRow.label.textContent = modelId || jt('quickSettings.noModel', 'No model selected');
+        if (modelId) modelRow.label.setAttribute('title', modelId); else modelRow.label.removeAttribute('title');
+        modelRow.label.toggleAttribute('data-empty', !modelId);
+        const title = !tuningSupported
           ? jt('quickSettings.engineOwnsGenerationControls', 'This engine owns its generation controls.')
-          : modelKnown
-          ? jt('quickSettings.opensModelLibraryProfile', 'Opens the authoritative per-model profile in Model Library.')
-          : jt('quickSettings.selectModelFirst', 'Select a model first.');
+          : (modelKnown
+            ? jt('quickSettings.openCurrentModelTuningTitle', 'Open per-model tuning for the current model')
+            : jt('quickSettings.pickModelFirst', 'Pick a model in the composer first'));
+        buildInventoryHtml(modelRow.control, inv('actionButton', {
+          id: 'open-model-tuning', label: jt('quickSettings.tune', 'Tune'), plain: true, className: 'quick-settings-link',
+          disabled: !modelKnown || !tuningSupported,
+          ariaLabel: jt('quickSettings.openCurrentModelTuning', 'Open current model tuning'),
+          title,
+        }));
       }
 
-      contextRow.control.addEventListener('click', (event) => {
+      modelRow.control.addEventListener('click', (event) => {
         const action = event.target?.closest?.('[data-action="open-model-tuning"]');
         const modelId = currentModelId();
         if (!action || !modelId || action.disabled) return;
@@ -281,30 +344,61 @@
         openModelTuning(modelId, documentRef?.activeElement || null);
       });
 
-      function renderLocalOnly() {
-        const offlineState = state && state.offline && typeof state.offline === 'object' ? state.offline : {};
+      noteLink.addEventListener('click', (event) => {
+        if (!event.target?.closest?.('[data-action="quick-settings-open-models"]')) return;
+        close();
+        try { openSettingsSection('models'); } catch (_e) { /* best-effort */ }
+      });
+
+      function offlineSnapshot() {
+        return state && state.offline && typeof state.offline === 'object' ? state.offline : {};
+      }
+
+      function renderLocalOnlySwitch() {
         buildInventoryHtml(localOnlyRow.control, inv('toggleSwitch', {
           id: 'quickSettingsLocalOnly',
           // The row label names the switch; a second visible label repeated it.
           bare: true,
           labelledBy: 'quickSettingsLocalOnlyLabel',
-          checked: offlineState.mode === 'local_only',
+          checked: offlineSnapshot().mode === 'local_only',
         }));
-        renderReadinessNote(offlineState);
       }
 
-      function renderReadinessNote(offlineState) {
-        if (!statusChipUtils || typeof statusChipUtils.applyStatusChip !== 'function') {
-          return;
-        }
+      // One status line: what the local engine is doing now, and a way out when it blocks chat.
+      function renderStatusLine(offlineState) {
+        teamNoteRow.textContent = offlineUtils?.forceLocalTeamNote?.(state) || '';
+        teamNoteRow.hidden = !teamNoteRow.textContent;
+        if (!statusChipUtils || typeof statusChipUtils.applyStatusChip !== 'function') return;
         const resolved = offlineState.resolved === true;
-        const ok = offlineState.localChatReady === true;
-        const chipState = !resolved ? 'loading' : (ok ? 'live' : 'error');
-        const label = !resolved
-          ? jt('quickSettings.checkingLocalInference', 'Checking local inference...')
-          : (ok ? jt('quickSettings.localInferenceReady', 'Local inference ready') : jt('quickSettings.localInferenceBlocked', 'Local inference blocked'));
-        const title = !resolved || ok ? '' : String(offlineState.summary || offlineState.unavailableReason || '');
+        const ready = offlineState.localChatReady === true;
+        const forced = offlineState.mode === 'local_only';
+        let chipState = 'loading';
+        let label = jt('quickSettings.localChecking', 'Checking the local engine…');
+        if (resolved && ready) {
+          chipState = 'live';
+          label = jt('quickSettings.localReady', 'Local engine ready');
+        } else if (resolved) {
+          chipState = 'error';
+          label = forced
+            ? jt('quickSettings.localUnreachableBlocking', 'The local engine is not reachable, so chats will not send while this is on.')
+            : jt('quickSettings.localUnreachable', 'Local engine not reachable');
+        }
+        const title = resolved && !ready ? String(offlineState.summary || offlineState.unavailableReason || '') : '';
         statusChipUtils.applyStatusChip(noteChip, { state: chipState, label, title });
+        buildInventoryHtml(noteLink, resolved && !ready && forced ? inv('actionButton', {
+          id: 'quick-settings-open-models', label: jt('quickSettings.openModels', 'Open Models'), plain: true, className: 'quick-settings-link',
+        }) : '');
+      }
+
+      function renderLocalOnly() {
+        renderLocalOnlySwitch();
+        renderStatusLine(offlineSnapshot());
+      }
+
+      // A live repaint after a state change must not replace a focused switch.
+      function refreshOffline() {
+        syncSwitch(localOnlyRow.control, offlineSnapshot().mode === 'local_only', renderLocalOnlySwitch);
+        renderStatusLine(offlineSnapshot());
       }
 
       localOnlyRow.control.addEventListener('inv-toggle-change', (event) => {
@@ -313,86 +407,28 @@
         const previousOffline = adapters.offline && typeof adapters.offline.read === 'function'
           ? adapters.offline.read()
           : (state && state.offline) || {};
-        writeAdapterValue(
-          adapters.offline,
-          { mode: nextMode, preferredLocalModel: previousOffline.preferredLocalModel || '' },
-          renderLocalOnly,
-          'offline-local-only'
-        );
+        const write = () => writeAdapterValue(adapters.offline, { mode: nextMode, preferredLocalModel: previousOffline.preferredLocalModel || '' },
+          renderLocalOnly, 'offline-local-only', () => { refreshOffline(); onOfflineWritten(); });
+        // E64: turning it on asks first while this PC's team server runs; Cancel draws the switch back off.
+        if (nextMode !== 'local_only' || !offlineUtils?.confirmForceLocal || !offlineUtils.teamApplies?.(state)) { write(); return; }
+        Promise.resolve(offlineUtils.confirmForceLocal({ state, win: windowRef || undefined })).then((go) => { if (go) write(); else renderLocalOnly(); }, () => renderLocalOnly());
       });
 
-      function render() {
-        renderContextWindow();
-        renderLocalOnly();
-      }
-
-      return { root: slotRoot, render, renderLocalOnly };
+      return { root: slotRoot, render() { renderModel(); renderLocalOnly(); }, refreshOffline };
     }
 
-    function buildDisplaySlot() {
-      const slotRoot = documentRef.createElement('section');
-      slotRoot.className = 'quick-settings-slot';
-      slotRoot.dataset.slot = 'zoom';
-      const title = documentRef.createElement('h3');
-      title.className = 'quick-settings-slot-title';
-      title.textContent = jt('quickSettings.display', 'Display');
-      slotRoot.appendChild(title);
-
-      const fontScaleRow = buildRow(jt('quickSettings.fontScale', 'Text size'));
-      slotRoot.appendChild(fontScaleRow.row);
-      const sessionOpenRow = buildRow(jt('quickSettings.sessionOpening', 'Session opening'));
+    function buildChatsSlot() {
+      const slotRoot = buildSlot('chats', jt('quickSettings.chats', 'Chats'));
+      const sessionOpenRow = buildRow(jt('quickSettings.openChatsInNewTab', 'Open chats in a new tab'));
+      sessionOpenRow.label.id = 'quickSettingsSessionsLabel';
       slotRoot.appendChild(sessionOpenRow.row);
 
-      const fontScalePresets = appearanceUtils && typeof appearanceUtils.getFontScalePresets === 'function'
-        ? appearanceUtils.getFontScalePresets()
-        : [];
-      const useSegmentedFontScale = fontScalePresets.length >= 2 && fontScalePresets.length <= 4;
-      // No container-level initSegmentedHandlers either: the document-level
-      // install from renderer/inventory/index.js covers this host. (Segmented
-      // double-handling happens to be idempotent -- select() early-returns on
-      // an already-checked option -- but the duplicate install is the same
-      // latent pattern that made the toggle double-fire; see the model slot.)
-
-      function renderFontScale() {
-        const current = readAppearance();
-        const options = fontScalePresets.map((p) => ({ value: p.id, label: p.label }));
-        buildInventoryHtml(fontScaleRow.control, inv(useSegmentedFontScale ? 'segmentedControl' : 'selectField', {
-          id: 'quickSettingsFontScale',
-          ariaLabel: jt('quickSettings.fontScale', 'Text size'),
-          value: current.fontScaleId,
-          options,
-        }));
-        if (!useSegmentedFontScale) {
-          const selectEl = fontScaleRow.control.querySelector('select');
-          if (selectEl) {
-            selectEl.addEventListener('change', () => {
-              writeAdapterValue(
-                adapters.appearance,
-                Object.assign({}, readAppearance(), { fontScaleId: selectEl.value }),
-                renderFontScale,
-                'appearance-font-scale'
-              );
-            });
-          }
-        }
-      }
-
-      fontScaleRow.control.addEventListener('inv-segmented-change', (event) => {
-        const nextValue = (event && event.detail && event.detail.value) || '';
-        writeAdapterValue(
-          adapters.appearance,
-          Object.assign({}, readAppearance(), { fontScaleId: nextValue }),
-          renderFontScale,
-          'appearance-font-scale'
-        );
-      });
-
       function renderSessionOpen() {
-        const checked = adapters.sessionOpen?.read?.() === true;
         buildInventoryHtml(sessionOpenRow.control, inv('toggleSwitch', {
           id: 'quickSettingsSessionsOpenInNewTab',
-          label: jt('quickSettings.openSessionsInNewTab', 'Open sessions in a new tab'),
-          checked,
+          bare: true,
+          labelledBy: 'quickSettingsSessionsLabel',
+          checked: adapters.sessionOpen?.read?.() === true,
         }));
       }
       sessionOpenRow.control.addEventListener('inv-toggle-change', (event) => {
@@ -400,12 +436,19 @@
         writeAdapterValue(adapters.sessionOpen, event.detail.checked === true, renderSessionOpen, 'session-open');
       });
 
-      function render() {
-        renderFontScale();
-        renderSessionOpen();
-      }
+      return { root: slotRoot, render: renderSessionOpen };
+    }
 
-      return { root: slotRoot, render };
+    function buildChordHint() {
+      const chord = documentRef.createElement('span');
+      chord.className = 'quick-settings-chord';
+      const isMac = /Mac/i.test(String(windowRef?.navigator?.platform || ''));
+      const modKey = documentRef.createElement('kbd');
+      modKey.textContent = isMac ? '⌘' : jt('quickSettings.ctrlKey', 'Ctrl');
+      const comma = documentRef.createElement('kbd');
+      comma.textContent = ',';
+      chord.append(modKey, '+', comma, ' ' + jt('quickSettings.chordHint', 'opens and closes this'));
+      return chord;
     }
 
     function buildDom() {
@@ -428,59 +471,45 @@
       const heading = documentRef.createElement('h2');
       heading.id = 'quickSettingsTitle';
       heading.textContent = jt('quickSettings.title', 'Quick settings');
-      const closeHost = documentRef.createElement('div');
-      buildInventoryHtml(closeHost, inv('actionButton', {
+      const closeButton = buildButton({
         id: 'quick-settings-close',
         ariaLabel: jt('common.close', 'Close'),
         title: jt('quickSettings.close', 'Close quick settings'),
         plain: true,
         className: 'quick-settings-close',
-      }));
-      const closeButton = closeHost.firstElementChild;
-      header.appendChild(heading);
-      if (closeButton) header.appendChild(closeButton);
+      });
+      header.append(heading, closeButton);
 
       const body = documentRef.createElement('div');
       body.className = 'quick-settings-body';
       const appearanceSlot = buildAppearanceSlot();
       const modelSlot = buildModelSlot();
-      const displaySlot = buildDisplaySlot();
-      body.appendChild(appearanceSlot.root);
-      body.appendChild(modelSlot.root);
-      body.appendChild(displaySlot.root);
+      const chatsSlot = buildChatsSlot();
+      body.append(appearanceSlot.root, modelSlot.root, chatsSlot.root);
 
       const footer = documentRef.createElement('footer');
       footer.className = 'quick-settings-footer';
-      const allSettingsHost = documentRef.createElement('div');
-      buildInventoryHtml(allSettingsHost, inv('actionButton', {
+      const allSettingsButton = buildButton({
         id: 'quick-settings-all',
         label: jt('quickSettings.allSettings', 'All settings'),
         plain: true,
-        className: 'quick-settings-all',
-      }));
-      const allSettingsButton = allSettingsHost.firstElementChild;
-      if (allSettingsButton) footer.appendChild(allSettingsButton);
+        className: 'quick-settings-link',
+      });
+      footer.append(allSettingsButton, buildChordHint());
 
-      dialog.appendChild(header);
-      dialog.appendChild(body);
-      dialog.appendChild(footer);
-      overlay.appendChild(scrim);
-      overlay.appendChild(dialog);
+      dialog.append(header, body, footer);
+      overlay.append(scrim, dialog);
 
       scrim.addEventListener('click', () => close());
-      if (closeButton) closeButton.addEventListener('click', () => close());
-      if (allSettingsButton) {
-        allSettingsButton.addEventListener('click', () => {
-          close();
-          try {
-            openSettingsSection((state && state.ui && state.ui.activeSettingsSection) || 'models');
-          } catch (_e) { /* best-effort */ }
-        });
-      }
+      closeButton.addEventListener('click', () => close());
+      allSettingsButton.addEventListener('click', () => {
+        close();
+        try { openSettingsSection((state && state.ui && state.ui.activeSettingsSection) || 'models'); } catch (_e) { /* best-effort */ }
+      });
 
       return {
         overlay, scrim, dialog, header, closeButton, body, footer, allSettingsButton,
-        appearanceSlot, modelSlot, displaySlot,
+        appearanceSlot, modelSlot, chatsSlot,
       };
     }
 
@@ -494,7 +523,7 @@
     function refreshAll() {
       els.appearanceSlot.render();
       els.modelSlot.render();
-      els.displaySlot.render();
+      els.chatsSlot.render();
     }
 
     // ── open / close / toggle ──
@@ -508,6 +537,7 @@
       refreshAll();
       dom.overlay.hidden = false;
       opened = true;
+      try { onOpen(); } catch (_e) { /* best-effort */ }
       registeredWithOverlayManager = typeof overlayManager?.open === 'function' && overlayManager.open({
         id: OVERLAY_ID,
         root: dom.dialog,
@@ -517,7 +547,8 @@
       if (!registeredWithOverlayManager) {
         appendClientLog('WARN', 'quick_settings.overlay_manager_unavailable', { present: Boolean(overlayManager) });
       }
-      const focusTarget = dom.body.querySelector('select, button, [tabindex]');
+      const focusTarget = dom.body.querySelector('[role="radio"][aria-checked="true"]')
+        || dom.body.querySelector('button:not(:disabled), [tabindex]');
       Promise.resolve().then(() => {
         // A close() racing this microtask leaves the overlay hidden; don't
         // pull focus into it (overlayManager already restored focus).
@@ -542,15 +573,14 @@
     }
 
     function toggle() {
-      if (opened) {
-        close();
-        return false;
-      }
+      if (opened) { close(); return false; }
       return open();
     }
 
-    function isOpen() {
-      return opened;
+    function isOpen() { return opened; }
+    // Repaint the Force local row and status line from state.offline while open.
+    function refreshOffline() {
+      if (opened && els) els.modelSlot.refreshOffline();
     }
 
     function dispose() {
@@ -562,13 +592,7 @@
       els = null;
     }
 
-    return {
-      open,
-      close,
-      toggle,
-      isOpen,
-      dispose,
-    };
+    return { open, close, toggle, isOpen, refreshOffline, dispose };
   }
 
   return { createQuickSettingsModal };

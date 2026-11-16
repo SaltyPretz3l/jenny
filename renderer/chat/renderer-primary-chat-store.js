@@ -12,8 +12,12 @@
   // records live in the main process; this holds the last answer, coalesces refetches, and
   // mirrors { paused, session_id } onto state.ui.primaryChat for the sidebar row. A missing
   // bridge (hosted browser, tests) reads as an unavailable store and never throws.
+  // Row 144: it also holds the model pins and shows the held-check toast.
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || ((k, d, p) => String(d).replace(/\{(\w+)\}/g, (m, n) => (p && Object.hasOwn(p, n) ? p[n] : m)));
   const SCHEMA_VERSION = 1;
+  const HELD_REASONS = new Set(['model_too_small', 'model_unavailable']);
+  const heldKey = (reminderId) => `primary:check-held:${reminderId}`;
   const FLAGS_ON = Object.freeze({ controls: true, launch_permission: true, activity_log: true });
   const FLAGS_OFF = Object.freeze({ controls: false, launch_permission: false, activity_log: false });
   const NO_FULL_AUTO = Object.freeze({ available: false, armed: false });
@@ -31,6 +35,8 @@
     return isObject(answer) && typeof answer.reason === 'string' && answer.reason ? answer.reason : 'unavailable';
   }
 
+  const cleanText = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+
   function normalizeFlags(flags) {
     const source = isObject(flags) ? flags : {};
     return {
@@ -46,12 +52,16 @@
     const state = isObject(o.state) ? o.state : null;
     const onChanged = typeof o.onChanged === 'function' ? o.onChanged : () => {};
     const log = typeof o.appendClientLog === 'function' ? o.appendClientLog : () => {};
+    const showToast = typeof o.showToast === 'function' ? o.showToast : null;
+    const dismissToast = typeof o.dismissToast === 'function' ? o.dismissToast : () => {};
+    const openSettingsAt = typeof o.openSettings === 'function' ? o.openSettings : () => {};
     const listeners = new Set();
-    let data = { paused: false, paused_at: null, session_id: null, flags: { ...FLAGS_ON }, status: 'idle', full_auto: NO_FULL_AUTO };
+    let data = { paused: false, paused_at: null, session_id: null, model: '', check_model: '', flags: { ...FLAGS_ON }, status: 'idle', full_auto: NO_FULL_AUTO };
     let signature = '';
     let inflight = null;
     let queued = null;
     let unsubscribe = null;
+    let unsubscribeHeld = null;
     let disposed = false;
 
     function currentBridge() {
@@ -72,7 +82,7 @@
         if (data.status === 'ready') state.ui.primaryChat = { paused: data.paused, session_id: data.session_id };
         else delete state.ui.primaryChat;
       }
-      const next = JSON.stringify([data.paused, data.paused_at, data.session_id, data.flags, data.status, data.full_auto]);
+      const next = JSON.stringify([data.paused, data.paused_at, data.session_id, data.flags, data.status, data.full_auto, data.model, data.check_model]);
       if (next === signature) return false;
       signature = next;
       for (const listener of [...listeners]) {
@@ -93,6 +103,8 @@
         paused: answer.paused === true,
         paused_at: typeof answer.paused_at === 'string' ? answer.paused_at : null,
         session_id: typeof answer.session_id === 'string' && answer.session_id ? answer.session_id : data.session_id,
+        model: cleanText(answer.model, 200),
+        check_model: cleanText(answer.check_model, 200),
         flags: normalizeFlags(answer.flags),
         status: 'ready',
         full_auto: fullAuto,
@@ -189,10 +201,101 @@
       return { ...answer, ok: true };
     }
 
+    // One bridge call: { ok: true, answer } or { ok: false, reason }.
+    async function call(method, payload) {
+      const bridge = currentBridge();
+      if (!bridge || typeof bridge[method] !== 'function') return { ok: false, reason: 'unavailable' };
+      try {
+        const answer = await bridge[method]({ schema_version: SCHEMA_VERSION, ...payload });
+        return isObject(answer) && answer.ok === true ? { ok: true, answer } : { ok: false, reason: failureReason(answer) };
+      } catch (error) {
+        log('WARN', `primary_chat.${method}_failed`, { reason: (error && (error.code || error.name)) || 'error' });
+        return { ok: false, reason: 'unavailable' };
+      }
+    }
+
+    async function setModels(patch) {
+      const result = isObject(patch) ? await call('setModels', patch) : { ok: false, reason: 'unavailable' };
+      if (result.ok) await refresh();
+      return result.ok ? { ok: true } : result;
+    }
+
+    // `ran` / `skipped` false carries a reason.
+    async function heldCommand(method, reminderId, flag) {
+      const result = await call(method, { reminder_id: reminderId });
+      if (!result.ok) return result;
+      const done = result.answer[flag] === true;
+      return { ok: true, [flag]: done, reason: done ? '' : failureReason(result.answer) };
+    }
+
+    const runHeld = (reminderId) => heldCommand('runHeldCheck', reminderId, 'ran');
+    const skipHeld = (reminderId) => heldCommand('skipHeldCheck', reminderId, 'skipped');
+
+    const toast = (message, options) => {
+      try { showToast(message, { source: 'primary.scheduled_check', ...options }); } catch (_error) { /* best-effort */ }
+    };
+
+    // Untrusted IPC entry -> toast: Choose a model, Run on (too small only), Skip.
+    function showHeld(entry) {
+      const id = isObject(entry) && HELD_REASONS.has(entry.reason) ? cleanText(entry.reminder_id, 200) : '';
+      if (!id || !showToast) return;
+      const label = cleanText(entry.label, 200) || jt('chat.primary.held.fallbackLabel', 'Scheduled check');
+      const model = cleanText(entry.model, 200) || jt('chat.primary.held.unknownModel', 'the model');
+      const small = entry.reason === 'model_too_small';
+      const key = heldKey(id);
+      const runAnyway = async () => {
+        const answer = await runHeld(id);
+        if (answer.ok && answer.ran) {
+          dismissToast(key);
+          toast(jt('chat.primary.held.running', 'Running “{label}” on {model}. Every tool still asks first.', { label, model }), { tone: 'info', dedupeKey: `${key}:run` });
+        } else if (answer.ok && answer.reason === 'not_held') dismissToast(key); // no longer held: the toast is stale
+        else {
+          toast(answer.reason === 'still_waiting' ? jt('chat.primary.held.stillWaiting', '“{label}” is still waiting for a model.', { label })
+            : jt('chat.primary.held.notRun', '“{label}” could not be changed just now.', { label }), { tone: 'warning', dedupeKey: `${key}:run` });
+        }
+      };
+      const skip = async () => {
+        if ((await skipHeld(id)).ok) dismissToast(key);
+        else toast(jt('chat.primary.held.notRun', '“{label}” could not be changed just now.', { label }), { tone: 'warning', dedupeKey: `${key}:skip` });
+      };
+      // The check stays held until it runs or is skipped; the handlers close the toast then.
+      const actions = [{ id: 'choose_model', label: jt('chat.primary.held.choose', 'Choose a model'), kind: 'primary', keepOpen: true, onClick: () => openSettingsAt('chat', { focusId: 'checkModelSelect' }) }];
+      if (small) actions.push({ id: 'run_anyway', label: jt('chat.primary.held.run', 'Run on {model}', { model }), keepOpen: true, onClick: runAnyway });
+      actions.push({ id: 'skip', label: jt('chat.primary.held.skip', 'Skip'), keepOpen: true, onClick: skip });
+      toast(small ? jt('chat.primary.held.tooSmall', '“{label}” is waiting: {model} is too small for checks (under 7B).', { label, model })
+        : jt('chat.primary.held.unavailable', '“{label}” is waiting: {model} is not available.', { label, model }),
+      { title: jt('chat.primary.held.title', 'Scheduled check waiting'), tone: 'warning', sticky: true, dedupeKey: key, actions });
+    }
+
+    function onHeldEvent(event) {
+      if (disposed || !isObject(event)) return;
+      if (event.type === 'held') showHeld(event);
+      else if (event.type === 'cleared') {
+        const id = cleanText(event.reminder_id, 200);
+        if (id) dismissToast(heldKey(id));
+      }
+    }
+
+    async function loadHeld(bridge) {
+      if (!showToast || typeof bridge.heldChecks !== 'function') return;
+      try {
+        const answer = await bridge.heldChecks({ schema_version: SCHEMA_VERSION });
+        if (disposed || !isObject(answer) || answer.ok !== true || !Array.isArray(answer.held)) return;
+        answer.held.slice(0, 20).forEach(showHeld);
+      } catch (_error) { /* a held-check read never breaks the store */ }
+    }
+
     function start() {
       if (disposed) return;
       const bridge = currentBridge();
       if (!bridge) { markUnavailable('unavailable'); return; }
+      if (!unsubscribeHeld && typeof bridge.onCheckHeld === 'function') {
+        try {
+          const off = bridge.onCheckHeld(onHeldEvent);
+          unsubscribeHeld = typeof off === 'function' ? off : null;
+        } catch (_error) { unsubscribeHeld = null; }
+        void loadHeld(bridge);
+      }
       if (!unsubscribe && typeof bridge.onChanged === 'function') {
         try {
           const off = bridge.onChanged(() => { void refresh(); });
@@ -208,6 +311,10 @@
         try { unsubscribe(); } catch (_error) { /* best-effort teardown */ }
         unsubscribe = null;
       }
+      if (unsubscribeHeld) {
+        try { unsubscribeHeld(); } catch (_error) { /* best-effort teardown */ }
+        unsubscribeHeld = null;
+      }
       listeners.clear();
     }
 
@@ -219,6 +326,10 @@
       resume: () => command('resume'),
       armFullAuto: () => fullAutoCommand('armFullAuto'),
       disarmFullAuto: () => fullAutoCommand('disarmFullAuto'),
+      setModels,
+      runHeld,
+      skipHeld,
+      openSettings: (target) => openSettingsAt('chat', { focusId: target === 'check' ? 'checkModelSelect' : 'primaryModelSelect' }),
       // '' for every chat but the Jenny chat, and while the switch is off; else 'offered' or 'armed'.
       fullAutoFor(sessionId) {
         if (!sessionId || data.session_id !== sessionId || data.full_auto.available !== true) return '';

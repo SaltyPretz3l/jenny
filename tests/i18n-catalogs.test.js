@@ -11,6 +11,8 @@ const { spawnSync } = require('node:child_process');
 const REPO_ROOT = path.resolve(__dirname, '..');
 const BUILD_CLI = path.join(REPO_ROOT, 'scripts', 'i18n', 'build-catalogs.js');
 const VALIDATE_CLI = path.join(REPO_ROOT, 'scripts', 'i18n', 'validate-catalogs.js');
+const PASS_CLI = path.join(REPO_ROOT, 'scripts', 'i18n', 'translation-pass.js');
+const { applyTranslations, computeWorklist, englishDigest } = require('../scripts/i18n/translation-pass');
 const I18N_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'renderer', 'shared', 'i18n-utils.js'), 'utf8');
 const createdFixtures = [];
 
@@ -151,8 +153,12 @@ test('validator fails on a missing key under --strict', () => {
   expectValidationFailure((strings) => delete strings.plain, /de\.json:plain: missing English key/, '--strict');
 });
 
-test('validator catches an extra key', () => {
-  expectValidationFailure((strings) => { strings.extra = 'Zusätzlich'; }, /de\.json:extra: unknown key/);
+test('validator fails on an extra key under --strict and only warns by default', () => {
+  expectValidationFailure((strings) => { strings.extra = 'Zusätzlich'; }, /de\.json:extra: unknown key/, '--strict');
+  const root = mutateGermanCatalog((strings) => { strings.extra = 'Zusätzlich'; });
+  const result = run(VALIDATE_CLI, root, '--only', 'de');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /WARN: de\.json:extra: unknown key/);
 });
 
 test('validator catches a placeholder mismatch', () => {
@@ -259,3 +265,117 @@ for (const invalid of [[], { tag: 'wrong', strings: {} }, { strings: [] }, { key
     assert.match(validated.stdout + validated.stderr, /must (?:be|match)/);
   });
 }
+
+// --- translation pass: English-only feature commits, one pass before a public release ---
+
+test('worklist lists new, reworded and missing families per language and what to prune', () => {
+  const base = { 'count#one': '{count} item', 'count#other': '{count} items', gone: 'Gone', kept: 'Kept', plain: 'Save' };
+  const english = { 'count#one': '{count} item', 'count#other': '{count} items', fresh: 'New', kept: 'Kept', plain: 'Save changes' };
+  const worklist = computeWorklist(base, english, {
+    de: { 'count#one': 'a', 'count#other': 'b', gone: 'Weg', kept: 'Behalten', plain: 'Speichern' },
+    ru: { gone: 'x', kept: 'y', plain: 'z' },
+  });
+  assert.deepEqual(worklist.removed, ['gone']);
+  assert.deepEqual(worklist.locales.de.families, ['fresh', 'plain']);
+  assert.deepEqual(worklist.locales.de.unknown, ['gone']);
+  assert.deepEqual(worklist.locales.ru.families, ['count', 'fresh', 'plain']);
+  assert.deepEqual(worklist.locales.ru.pluralCategories, ['few', 'many', 'one', 'other']);
+  assert.deepEqual(worklist.english.plain, { text: 'Save changes', previous: 'Save' });
+  assert.deepEqual(worklist.english.fresh, { text: 'New' });
+  assert.deepEqual(Object.keys(worklist.english), ['count#one', 'count#other', 'fresh', 'plain']);
+});
+
+test('apply replaces whole plural families, prunes dead keys and keeps the catalog order', () => {
+  const english = { 'count#one': '{count} item', 'count#other': '{count} items', fresh: 'New', plain: 'Save changes', zeta: 'Z' };
+  const next = applyTranslations(
+    { zeta: 'Я', gone: 'x', 'count#one': 'old', 'count#other': 'old', plain: 'старое' },
+    english,
+    { plain: 'Сохранить', fresh: 'Новое', 'count#one': 'a', 'count#few': 'b', 'count#many': 'c', 'count#other': 'd' }
+  );
+  assert.deepEqual(Object.entries(next), [
+    ['zeta', 'Я'], ['count#few', 'b'], ['count#many', 'c'], ['count#one', 'a'], ['count#other', 'd'],
+    ['plain', 'Сохранить'], ['fresh', 'Новое'],
+  ]);
+  assert.throws(() => applyTranslations({}, english, { nope: 'x' }), /nope: not an English key/);
+});
+
+test('a reworded English string leaves its old translations stale, not failing, until --strict', () => {
+  const root = validFixture();
+  const base = path.join(root, 'base-en.snapshot');
+  fs.copyFileSync(path.join(root, 'en.json'), base);
+  const target = path.join(root, 'en.json');
+  const english = JSON.parse(fs.readFileSync(target, 'utf8'));
+  english.strings.greeting = 'Hello {name}, welcome to {place}';
+  english.strings.plain = 'Save all changes';
+  fs.writeFileSync(target, `${JSON.stringify(english, null, 2)}\n`, 'utf8');
+
+  const blind = run(VALIDATE_CLI, root, '--only', 'de');
+  assert.equal(blind.status, 1, blind.stdout + blind.stderr);
+  const aware = run(VALIDATE_CLI, root, '--only', 'de', '--base-english', base);
+  assert.equal(aware.status, 0, aware.stdout + aware.stderr);
+  assert.match(aware.stderr, /WARN: de\.json:greeting: stale translation/);
+  assert.doesNotMatch(aware.stderr, /de\.json:plain/);
+  const strict = run(VALIDATE_CLI, root, '--only', 'de', '--base-english', base, '--strict');
+  assert.equal(strict.status, 1);
+  assert.match(strict.stderr, /de\.json:greeting: placeholder set/);
+
+  // A family English did not touch is still judged in full.
+  const german = JSON.parse(fs.readFileSync(path.join(root, 'de.json'), 'utf8'));
+  german.strings['count#one'] = 'Ein Element {oops}';
+  fs.writeFileSync(path.join(root, 'de.json'), `${JSON.stringify(german, null, 2)}\n`, 'utf8');
+  const broken = run(VALIDATE_CLI, root, '--only', 'de', '--base-english', base);
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /de\.json:count#one: placeholder set/);
+});
+
+function passFixture() {
+  const root = fixture();
+  fs.mkdirSync(path.join(root, 'locales'));
+  fs.mkdirSync(path.join(root, 'scripts', 'i18n'), { recursive: true });
+  const english = { greeting: 'Hello {name}', plain: 'Save changes' };
+  fs.writeFileSync(path.join(root, 'locales', 'en.json'), `${JSON.stringify(english, null, 2)}
+`);
+  fs.writeFileSync(path.join(root, 'locales', 'de.json'), `${JSON.stringify({ plain: 'Speichern' }, null, 2)}
+`);
+  fs.writeFileSync(
+    path.join(root, 'scripts', 'i18n', 'translation-sync.json'),
+    JSON.stringify({ englishCommit: 'unused', englishSha256: englishDigest(english) })
+  );
+  return root;
+}
+
+function runPass(root, ...args) {
+  return spawnSync(process.execPath, [PASS_CLI, ...args, '--root', root], { cwd: REPO_ROOT, encoding: 'utf8' });
+}
+
+test('pass check fails once English moves, and apply refuses a malformed translation', () => {
+  const root = passFixture();
+  assert.equal(runPass(root, 'check').status, 0);
+
+  const answers = path.join(root, 'answers.json');
+  fs.writeFileSync(answers, JSON.stringify({ greeting: 'Hallo {person}' }));
+  const baseFile = path.join(root, 'locales', 'en.json');
+  const refused = runPass(root, 'apply', '--tag', 'de', '--from', answers, '--base-file', baseFile);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /de\.json:greeting: placeholder set/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'locales', 'de.json'), 'utf8')), { plain: 'Speichern' });
+
+  fs.writeFileSync(answers, JSON.stringify({ greeting: 'Hallo {name}' }));
+  const applied = runPass(root, 'apply', '--tag', 'de', '--from', answers, '--base-file', baseFile);
+  assert.equal(applied.status, 0, applied.stdout + applied.stderr);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(root, 'locales', 'de.json'), 'utf8')),
+    { plain: 'Speichern', greeting: 'Hallo {name}' }
+  );
+
+  fs.writeFileSync(path.join(root, 'locales', 'en.json'), JSON.stringify({ greeting: 'Hi {name}', plain: 'Save changes' }));
+  const moved = runPass(root, 'check');
+  assert.equal(moved.status, 1);
+  assert.match(moved.stderr, /changed since the last translation pass/);
+});
+
+test('the committed sync marker names a commit and an English digest', () => {
+  const marker = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'i18n', 'translation-sync.json'), 'utf8'));
+  assert.match(marker.englishCommit, /^[0-9a-f]{40}$/);
+  assert.match(marker.englishSha256, /^[0-9a-f]{64}$/);
+});

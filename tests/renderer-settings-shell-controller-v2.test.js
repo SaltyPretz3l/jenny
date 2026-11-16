@@ -144,7 +144,7 @@ test('settings shell controller centralizes programmatic navigation through the 
 });
 // A host with a nav controller that runs the shell's leave guard the way the
 // real one does (renderer-settings-nav-utils.js setActiveSection).
-function createGuardedHost({ state, callbacks = {}, shown = [] }) {
+function createGuardedHost({ state, callbacks = {}, shown = [], resolve = (id) => id }) {
   let navArgs = null;
   const controller = createSettingsShellController({
     state,
@@ -170,12 +170,14 @@ function createGuardedHost({ state, callbacks = {}, shown = [] }) {
           navArgs = args;
           return {
             bind() {}, dispose() {}, restoreActiveSection() {},
+            resolveSectionId: resolve,
             setActiveSection(sectionId) {
               const previous = state.ui.activeSettingsSection;
-              if (sectionId !== previous && args.beforeSectionChange(sectionId, previous) === false) return false;
-              state.ui.activeSettingsSection = sectionId;
-              if (sectionId !== previous) args.onSectionChange(sectionId, previous);
-              return true;
+              const id = resolve(sectionId);
+              if (id !== previous && args.beforeSectionChange(id, previous) === false) return false;
+              state.ui.activeSettingsSection = id;
+              if (id !== previous) args.onSectionChange(id, previous);
+              return id;
             },
           };
         },
@@ -375,6 +377,29 @@ test('showing Runtime limits (view switch or section pick) tells the section, an
     // Runtime limits is merged into Limits & budgets ('advanced'), whose engine
     // lines re-read their state when shown (SW1-2 / F14).
     assert.deepEqual(shown, ['runtimeLimits', 'advanced']);
+    controller.dispose();
+  } finally {
+    global.window = previousWindow;
+    global.document = previousDocument;
+  }
+});
+
+test('navigateSettingsSection refuses a section the nav would resolve to another one, before anything moves', () => {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  global.window = { localStorage: createLocalStorage() };
+  global.document = { getElementById() { return null; } };
+  const state = { ui: { activeView: 'chat', activeSettingsSection: 'usage' } };
+  const shown = [];
+  try {
+    const { controller } = createGuardedHost({ state, shown, resolve: (id) => (id === 'team' ? 'models' : id) });
+    assert.equal(controller.navigateSettingsSection('team'), false, 'the hidden Team page is not shown');
+    assert.equal(state.ui.activeView, 'chat', 'the view did not move');
+    assert.equal(state.ui.activeSettingsSection, 'usage', 'the section did not move');
+    assert.deepEqual(shown, [], 'no page was told it is shown');
+    assert.equal(controller.navigateSettingsSection('tools'), true, 'a section that resolves to itself is shown');
+    assert.equal(state.ui.activeView, 'settings');
+    assert.equal(state.ui.activeSettingsSection, 'tools');
     controller.dispose();
   } finally {
     global.window = previousWindow;

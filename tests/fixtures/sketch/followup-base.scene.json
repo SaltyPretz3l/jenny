@@ -1,0 +1,46 @@
+{
+  "nodes": [
+    {
+      "id": "in",
+      "label": "Input"
+    },
+    {
+      "id": "parse",
+      "label": "Parse"
+    },
+    {
+      "id": "check",
+      "label": "Check"
+    },
+    {
+      "id": "out",
+      "label": "Output"
+    }
+  ],
+  "edges": [
+    {
+      "id": "in->parse",
+      "from": "in",
+      "to": "parse"
+    },
+    {
+      "id": "parse->check",
+      "from": "parse",
+      "to": "check"
+    },
+    {
+      "id": "check->out",
+      "from": "check",
+      "to": "out"
+    }
+  ],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": [],
+  "title": "Pipeline",
+  "direction": "right"
+}

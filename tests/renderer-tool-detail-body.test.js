@@ -164,9 +164,8 @@ test('settled single and multi-file structured diffs use the shared lazy view wi
     outputText: '{"should":"not render"}', domToken: 'edit-single',
     metadata: { diff: { diff_id: 'diff:single', additions: 1, deletions: 0, hunks: [{ oldStart: 1, newStart: 1, lines: ['+new'] }] } },
   });
-  assert.match(single, /class="file-diff"/);
-  assert.match(single, /src\/a\.js/);
-  assert.match(single, /data-file-diff-pending/);
+  assert.match(single, /class="file-diff file-diff--bare"/);
+  assert.match(single, /data-file-diff-materialized/);
   assert.doesNotMatch(single, /should|tool-call-section-kicker">Output/);
 
   const multi = builder.buildDetailBodyMarkup({
@@ -222,7 +221,7 @@ test('structured diff metadata selects the diff view independently of the file t
         hunks: [{ oldStart: 1, newStart: 1, lines: ['+changed'] }],
       } },
     });
-    assert.match(html, /class="file-diff"/, `${toolKind} should use its structured diff`);
+    assert.match(html, /class="file-diff file-diff--bare"/, `${toolKind} should use its structured diff`);
     assert.match(html, /data-file-diff-materialized/, `${toolKind} diff should default open`);
     assert.doesNotMatch(html, /tool-call-section-kicker">Output/);
   }

@@ -23,6 +23,7 @@ const { createHostCore } = require('../../server/host-core');
 const { createAuthorizer } = require('../../server/team/authorize');
 const { decodeBase64url, keyPairFromSeed } = require('../../server/team/ids');
 const { createInviteService, parseInvite } = require('../../server/team/invites');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 const { MemberStore } = require('../../server/team/member-store');
 const { REVOKE_EVENT_KINDS } = require('../../server/team/membership-events');
 const { createRateLimiter } = require('../../server/team/rate-limit');
@@ -33,6 +34,7 @@ const { createFakeBridgeSpawner } = require('../server/helpers/fake-bridge');
 const { createFakeTransport, hex } = require('../server/helpers/fake-team-transport');
 const { HOST_SEED, createTeamHostFixture, randomKey } = require('../server/helpers/team-host-fixture');
 const { createClock, pause, waitUntil } = require('../server/helpers/team-http-fixture');
+const { createProjectParts } = require('./team-project-client-host');
 
 const HINT = '192.0.2.7:4242';
 
@@ -58,6 +60,7 @@ function ed25519Transport(fake, reach) {
     async connect(options) {
       reach.dials.push([...options.addresses]);
       if (reach.gate) await reach.gate;
+      if (reach.failWith) throw Object.assign(new Error('relay'), { code: reach.failWith });
       if (reach.allowed && !options.addresses.some((address) => reach.allowed.has(address))) {
         throw Object.assign(new Error('unreachable'), { code: 'host_unreachable' });
       }
@@ -110,21 +113,31 @@ function readTree(root) {
 }
 
 // The host side: team-main's steps 5 to 8 over a controllable clock. `bridge()` is read lazily for `dropKey`.
-async function createHostEnv(t, clock, bridge) {
+// Slice 3-9: `projects` (true, or the project files options) adds the shared project half (team-project-client-host.js)
+// and a scoped event stream.
+async function createHostEnv(t, clock, bridge, { projects = null } = {}) {
   const fx = createTeamHostFixture(t);
   const config = loadHostConfig(fx.configPath);
   const store = new MemberStore({ userDataPath: fx.profile, hostPublicKey: fx.hostPublicKey, teamName: fx.teamName,
     clock, logger: fx.logger });
   const opened = store.open();
   if (!opened.ok) throw new Error(`store open failed: ${opened.error.reason}`);
-  const { authorize } = createAuthorizer({ directory: store.directory });
+  // The listener's stream identity (slice 3-3). The host core here stays unscoped: these client
+  // tests publish their own probe event types, which a scoped team host would drop.
+  // A direct conversation's participants come from `env.dmParticipants` (the chat hook sets the store's own
+  // lookup); unset, it answers undefined and a conversation is visible to nobody, as team-main.js fails closed.
+  const dmParticipants = (channelId) => env.dmParticipants?.(channelId);
+  const parts = projects ? await createProjectParts(t, { fx, store, config, logger: fx.logger, core: () => live?.core ?? null,
+    leases: () => live?.leases ?? null, dmParticipants, files: projects === true ? {} : projects }) : null;
+  const { authorize, sessionScope } = parts ? parts.authorizer : createAuthorizer({ directory: store.directory, dmParticipants });
   const realInvites = createInviteService({ store, clock, logger: fx.logger });
   const redeemCalls = [];
   // Mutable on purpose: a test may replace `redeem` to lose its answer.
   const invites = { ...realInvites, redeem: async (input) => { redeemCalls.push({ inviteId: input.inviteId }); return realInvites.redeem(input); } };
   const addresses = () => [HINT];
   const teamCommands = createTeamCommands({ store, invites, directory: store.directory, addresses, clock,
-    limiter: createRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 64, clock }), logger: fx.logger });
+    limiter: createRateLimiter({ limit: 30, windowMs: 60_000, maxKeys: 64, clock }), logger: fx.logger,
+    ...(parts ? parts.commandOptions : {}) });
   const dropKey = (text) => {
     const bytes = decodeBase64url(text, 32);
     const active = bridge();
@@ -156,7 +169,9 @@ async function createHostEnv(t, clock, bridge) {
     const clients = new ClientRegistry({ capacity: 64, perDeviceCapacity: 4 });
     const leases = new ControlLeases();
     const core = createHostCore({ config, clients, leases, authorize, guardRequired: true, maxEventClients: 64,
-      logger: fx.logger, createBackend: fx.createBackend, teamCommands });
+      logger: fx.logger, createBackend: parts ? parts.createBackend : fx.createBackend, teamCommands,
+      ...(parts ? parts.coreOptions : {}) });
+    const detach = parts ? parts.attach(core) : [];
     const subscribe = core.events.subscribe.bind(core.events);
     core.events.subscribe = (options) => {
       subscribesSeen.push({ bootEpoch: options.bootEpoch ?? null, cursor: options.cursor });
@@ -168,30 +183,39 @@ async function createHostEnv(t, clock, bridge) {
       return hooked || core.router.dispatch(value, ctx);
     } } });
     const bootSecret = crypto.randomBytes(32);
+    const directory = Object.create(store.directory, { liveActor: { value: (deviceId) => {
+      const live = store.directory.liveActor(deviceId);
+      return live && env.statusActor ? env.statusActor(live) : live;
+    } } });
     const context = Object.freeze({
-      config, bootEpoch: core.bootEpoch, bootSecret, store, directory: store.directory, invites, authorize, clients,
-      leases, events: core.events, router, assetRoutes: core.assetRoutes,
+      config, bootEpoch: core.bootEpoch, bootSecret, store, directory, invites, authorize, clients,
+      leases, events: core.events, router, assetRoutes: parts ? parts.routes(core) : core.assetRoutes,
+      ...(parts ? { onMemberStream: parts.onMemberStream } : {}),
       resourceLimits: config.resourceLimits, isReady: () => true, addresses, dropKey: dropAfterAnswer,
       notifyMembership: () => {},
-      logger: fx.logger,
+      logger: fx.logger, sessionScope,
     });
     const listener = await createTeamListener(context);
-    live = { clients, leases, core, listener };
+    live = { clients, leases, core, listener, detach };
     Object.assign(env, { core, context, port: listener.port, bootSecret });
   }
   async function stopCore() {
     const current = live;
     live = null;
-    if (current) { await current.listener.close(); await current.core.dispose(); }
+    if (current) { for (const off of current.detach) off(); await current.listener.close(); await current.core.dispose(); }
   }
   const env = {
-    fx, store, core: null, context: null, port: 0, bootSecret: null, redeemCalls, logs: fx.logs, clock,
+    fx, store, core: null, context: null, port: 0, bootSecret: null, redeemCalls, logs: fx.logs, clock, parts,
     commandsSeen, subscribesSeen,
     // When set, `commandHook(command)` may return an answer the routes send instead of dispatching.
     commandHook: null,
+    // Set by tests/helpers/team-chat-hook.js: the chat store's `participantsOf`, read by the authorizer.
+    dmParticipants: null,
+    // When set, `statusActor(live)` answers the caller the status route reports (never the guard's).
+    statusActor: null,
     // A host process restart over the same member store: a new boot epoch and an empty event replay.
     async restart() { await stopCore(); await startCore(); },
-    async redeemDirect({ kind = 'new_member', actor = null, role = 'member', name, label = 'Laptop' }) {
+    async redeemDirect({ kind = 'new_member', actor = LOCAL_COMMAND, role = 'member', name, label = 'Laptop' }) {
       const created = await store.createInvite({ kind, actorMemberId: actor, ...(kind === 'new_member' ? { role } : {}),
         invitePublicKey: randomKey() });
       if (!created.ok) throw new Error(`invite failed: ${created.error.reason}`);
@@ -207,11 +231,11 @@ async function createHostEnv(t, clock, bridge) {
   return env;
 }
 
-async function createTeamClientHost(t, { clock = createClock(), startBridge = true } = {}) {
+async function createTeamClientHost(t, { clock = createClock(), startBridge = true, projects = null } = {}) {
   let hostBridge = null;
-  const env = await createHostEnv(t, clock, () => hostBridge);
+  const env = await createHostEnv(t, clock, () => hostBridge, { projects });
   const fake = createFakeTransport();
-  const reach = { allowed: null, dials: [], gate: null };
+  const reach = { allowed: null, dials: [], gate: null, failWith: null };
   let releaseGate = null;
   const transport = ed25519Transport(fake, reach);
   const hostSpawner = createFakeBridgeSpawner({ transport });
@@ -243,10 +267,12 @@ async function createTeamClientHost(t, { clock = createClock(), startBridge = tr
     },
     refuseNextAdmits: 0,
     setReachable(addresses) { reach.allowed = addresses ? new Set(addresses) : null; },
+    // Every member dial fails with this bridge reason ('relay_denied', 'relay_unreachable'), or null.
+    failDialsWith(reason) { reach.failWith = reason; },
     // Holds every member dial until `releaseDials()`.
     holdDials() { reach.gate = new Promise((resolve) => { releaseGate = resolve; }); },
     releaseDials() { const release = releaseGate; reach.gate = null; releaseGate = null; if (release) release(); },
-    async invite({ kind = 'new_member', actor = null, role = 'member', hints = [HINT] } = {}) {
+    async invite({ kind = 'new_member', actor = LOCAL_COMMAND, role = 'member', hints = [HINT] } = {}) {
       const created = await env.context.invites.create({ kind, actorMemberId: actor,
         ...(kind === 'new_member' ? { role } : {}), hints });
       if (!created.ok) throw new Error(`invite create failed: ${created.error.reason}`);

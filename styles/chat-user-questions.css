@@ -4,6 +4,7 @@
   color: var(--text-primary);
 }
 
+.user-questions-kicker,
 .user-questions-header,
 .user-questions-question,
 .user-questions-actions,
@@ -11,6 +12,54 @@
   max-width: min(100%, var(--chat-card-max-width));
 }
 
+/* The kicker: a breathing dot (the approval card's timing), who is asking, and
+   how many questions have an answer so far. */
+.user-questions-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+}
+
+.user-questions-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  animation: user-questions-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+@keyframes user-questions-breathe {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+
+.user-questions-block[aria-busy="true"] .user-questions-dot {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .user-questions-dot {
+    animation: none;
+  }
+
+  .user-questions-key {
+    transition: none;
+  }
+}
+
+.user-questions-progress {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Header, eyebrow and rules: used by the proposal cards (renderer-proposal-*cards.js). */
 .user-questions-header {
   display: grid;
   grid-template-columns: auto minmax(24px, 1fr);
@@ -29,10 +78,6 @@
   display: block;
   height: 1px;
   background: var(--border-subtle);
-}
-
-.user-questions-block[data-stalled="true"] .user-questions-eyebrow {
-  color: var(--state-warning);
 }
 
 .user-questions-question {
@@ -87,7 +132,7 @@
 }
 
 .user-questions-option > input[data-user-question-option],
-.user-questions-other-toggle-label > input[data-user-question-other-toggle] {
+.user-questions-option > input[data-user-question-other-toggle] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -98,6 +143,27 @@
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+.user-questions-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The row's number: shown only while the question has keyboard focus. */
+.user-questions-key {
+  flex: none;
+  min-width: 1.2em;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.user-questions-question:focus-within .user-questions-key {
+  opacity: 0.8;
 }
 
 .user-questions-glyph {
@@ -149,15 +215,10 @@
 
 .user-questions-other-option {
   align-items: center;
-  cursor: default;
 }
 
-.user-questions-other-toggle-label {
-  display: flex;
-  flex: none;
-  align-items: flex-start;
-  gap: var(--space-5);
-  cursor: pointer;
+.user-questions-other-option .user-questions-glyph {
+  margin-top: 0;
 }
 
 .user-questions-other-input,
@@ -174,19 +235,32 @@
   line-height: 1.45;
 }
 
+.user-questions-other-input::placeholder,
+.user-questions-free-text::placeholder {
+  color: var(--text-muted);
+}
+
 .user-questions-other-input {
-  flex: 1 1 180px;
+  flex: 1 1 auto;
   padding: 0 0 var(--space-1);
+  cursor: text;
 }
 
 /* A question with no options is answered only here, so it reads as a field
-   (a bare subtle underline was nearly invisible, dogfood HB-001). */
+   (a bare subtle underline was nearly invisible, dogfood HB-001). It grows from
+   one line to about six. */
 .user-questions-free-text {
+  display: block;
+  box-sizing: border-box;
   width: 100%;
+  max-height: 9.5em;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-base);
   background: var(--surface-input-background);
+  field-sizing: content;
+  overflow-y: auto;
+  resize: none;
 }
 
 .user-questions-other-input:focus {
@@ -197,8 +271,8 @@
   border-color: var(--focus-ring-color);
 }
 
-.user-questions-other-input:disabled {
-  opacity: 0.55;
+.user-questions-block[aria-busy="true"] .user-questions-other-input,
+.user-questions-block[aria-busy="true"] .user-questions-free-text {
   cursor: default;
 }
 
@@ -258,40 +332,64 @@
   font-size: var(--font-size-caption);
 }
 
+@media (max-width: 560px) {
+  .user-questions-enter-hint {
+    display: none;
+  }
+}
+
 .user-questions-block[aria-busy="true"] {
   opacity: 0.72;
 }
 
 .user-questions-receipt {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-5) 0;
-}
-
-.user-questions-receipt-rule {
-  margin-bottom: var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
 }
 
 .user-questions-receipt-status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   line-height: 1.45;
 }
 
+.user-questions-receipt-mark {
+  color: var(--text-muted);
+}
+
+.user-questions-receipt-mark.is-ok {
+  color: var(--tl-status-ok);
+}
+
 .user-questions-receipt-line {
+  display: grid;
+  gap: 1px;
   min-width: 0;
-  overflow: hidden;
   color: var(--text-secondary);
   font-size: var(--font-size-footnote);
   line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .user-questions-receipt-prompt {
   color: var(--text-muted);
 }
 
-.user-questions-receipt-answer {
+.user-questions-receipt-answer,
+.user-questions-receipt-reply {
   color: color-mix(in srgb, var(--text-primary) 82%, var(--text-secondary));
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.user-questions-receipt-reply {
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+.user-questions-receipt-answer.is-skipped {
+  color: var(--text-muted);
 }

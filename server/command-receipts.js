@@ -15,13 +15,23 @@ function stableJson(value) {
 
 // These are operation receipts, never conversation history. Pending records
 // recovered after a crash remain indeterminate; the host must not repeat them.
+// A receipt stamped in the future (the clock stepped back) is not corruption and
+// is never dropped: at load it keeps its key, digest, state and result and is
+// re-stamped to the load time, so a settled one still answers its retry and a
+// pending one stays indeterminate. The re-stamp is written with the next save.
+// The store holds no authority, so a stepped clock never stops the host.
+// A full store makes room by forgetting its oldest settled receipt (owner, 2026-11-15) instead of refusing every
+// change on the host until receipts age out. The cost: an exact retry of that forgotten command would run again.
+// A receipt that is running, or that a crash left unresolved, is never forgotten; a store full of those refuses.
 class CommandReceipts {
-  constructor({ filePath, now = Date.now, capacity = 10_000, ttlMs = 86_400_000, write = writeJson }) {
+  constructor({ filePath, now = Date.now, capacity = 10_000, ttlMs = 86_400_000, write = writeJson, logger = null }) {
     this.filePath = filePath;
     this.now = now;
     this.capacity = requireBoundedInteger(capacity, 10_000);
     this.ttlMs = requireBoundedInteger(ttlMs, 86_400_000);
     this.write = write;
+    this.logger = logger;
+    this.fullLogged = false;
     this.running = new Map();
     this.broken = false;
     const stored = readJson(filePath, { maxBytes: 64 * 1024 * 1024 });
@@ -29,7 +39,7 @@ class CommandReceipts {
       || stored.receipts.length > capacity || stored.receipts.some((entry) =>
         !entry || typeof entry.key !== 'string' || entry.key.length > 300
         || !/^[a-f0-9]{64}$/.test(entry.digest) || !Number.isSafeInteger(entry.created_at)
-        || entry.created_at < 0 || entry.created_at > now() + 300_000
+        || entry.created_at < 0
         || !['pending', 'settled'].includes(entry.state)
         || (entry.state === 'settled' && (!entry.result || typeof entry.result.ok !== 'boolean'
           || Buffer.byteLength(JSON.stringify(entry.result)) > 4096))))) {
@@ -38,6 +48,14 @@ class CommandReceipts {
     this.entries = new Map((stored?.receipts || []).map((entry) => [entry.key, entry]));
     if (this.entries.size !== (stored?.receipts.length || 0)) {
       throw Object.assign(new Error('duplicate_receipt_identity'), { code: 'CMP-HOST-0006' });
+    }
+    const loadedAt = now();
+    let future = 0;
+    for (const entry of this.entries.values()) {
+      if (entry.created_at > loadedAt) { entry.created_at = loadedAt; future += 1; }
+    }
+    if (future > 0) {
+      try { logger?.('WARN', 'host.receipts_future_restamped', { count: future }); } catch { /* best effort */ }
     }
   }
 
@@ -52,6 +70,22 @@ class CommandReceipts {
       || entry.created_at + this.ttlMs > this.now()) return false;
     this.entries.delete(key);
     this._save();
+    return true;
+  }
+
+  // Removes the oldest settled receipt nothing is running for. The caller's next save writes the removal.
+  _dropOldestSettled() {
+    let oldest = null;
+    for (const [key, entry] of this.entries) {
+      if (entry.state !== 'settled' || this.running.has(key)) continue;
+      if (!oldest || entry.created_at < oldest.created_at) oldest = entry;
+    }
+    if (!oldest) return false;
+    this.entries.delete(oldest.key);
+    if (!this.fullLogged) {
+      this.fullLogged = true; // once a process: at capacity every command drops one
+      try { this.logger?.('WARN', 'host.receipts_full_oldest_dropped', { capacity: this.capacity }); } catch { /* best effort */ }
+    }
     return true;
   }
 
@@ -94,7 +128,9 @@ class CommandReceipts {
       if (entry.state === 'settled' && !this.running.has(entryKey)
         && entry.created_at + this.ttlMs <= now) this.entries.delete(entryKey);
     }
-    if (this.entries.size >= this.capacity) return hostFailure('limit', 'receipt_capacity', requestId);
+    if (this.entries.size >= this.capacity && !this._dropOldestSettled()) {
+      return hostFailure('limit', 'receipt_capacity', requestId);
+    }
     const entry = { key, digest, created_at: now, state: 'pending' };
     this.entries.set(key, entry);
     try { this._save(); }

@@ -137,18 +137,23 @@
         return;
       }
 
+      // Status and the catalog do not depend on each other: both reads start
+      // now and commit in the same order as before, so the refresh waits for
+      // the slower of the two instead of their sum.
+      if (!stillUseful()) return;
+      const modelsRead = includeModels
+        ? Promise.resolve().then(() => timed('modelsList', () => shell.models.list()))
+          .then((value) => ({ ok: true, value }), () => ({ ok: false, value: null }))
+        : null;
       let status = null;
       try { status = await timed('statusGet', () => shell.status.get()); } catch (_error) { /* keep null */ }
       if (!commit(() => { state.status = status; }) && !stillUseful()) return;
 
       let fullRender = false;
       if (includeModels) {
-        let models = null;
-        let modelsReadSucceeded = false;
-        try {
-          models = await timed('modelsList', () => shell.models.list());
-          modelsReadSucceeded = true;
-        } catch (_error) { /* keep null */ }
+        const modelsResult = await modelsRead;
+        const models = modelsResult.value;
+        const modelsReadSucceeded = modelsResult.ok;
         const unavailable = !modelsReadSucceeded || isModelListUnavailable(models);
         // Scheduled even when a newer refresh wins the commit: the retry
         // re-reads whatever the newest catalog is, so it cannot do harm.
@@ -180,10 +185,15 @@
 
     // Picker openings refresh ChatGPT metadata and retry unavailable local lists.
     // The host catalog owns discovery TTL/backoff; this gesture re-arms local retries.
+    // With the Team feature on and a team held (main's `teamData`, or a team row already
+    // listed) they also re-read the list: a team's models come and go with its connection,
+    // and the backend drops its cached list when they do. No team held: as before.
     function refreshModelsIfUnavailable() {
       const chatgpt = state.modelList?.engine_type === 'chatgpt'
         || state.preferredEngineType === 'chatgpt';
-      if (disposed || (!chatgpt && !isModelListUnavailable(state.modelList))) return Promise.resolve(false);
+      const team = state.features?.featureFlags?.team === true && (state.features?.teamData !== false
+        || (Array.isArray(state.modelList?.data) && state.modelList.data.some((row) => Boolean(row?.team_id))));
+      if (disposed || (!chatgpt && !team && !isModelListUnavailable(state.modelList))) return Promise.resolve(false);
       if (userRefreshInFlight) return userRefreshInFlight;
       clearModelRetry();
       modelRetryAttempt = 0;

@@ -254,8 +254,9 @@ describe('session import message bounds', () => {
     assert.ok(Object.isFrozen(IMPORTED_MESSAGE_KEY_ALLOWLIST));
     const entries = collectFixtureMessages(FIXTURES_ROOT);
     assert.ok(entries.length > 20);
-    // Team slice 3-5: a stored member `author` is deliberately never imported or restored.
-    const NEVER_IMPORTED = new Set(['author']);
+    // Team slice 3-5: a stored member `author` is deliberately never imported or restored. Row 150: nor is the
+    // `board_id` a turn was sent from, which names a board of the profile the chat came from.
+    const NEVER_IMPORTED = new Set(['author', 'board_id']);
     let strippedAuthors = 0;
     for (const { file, message } of entries) {
       const { strippedKeys } = stripUnknownImportedMessageKeys(message);

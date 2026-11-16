@@ -210,7 +210,7 @@ def test_native_capture_executor_bridge_admission_and_next_generation(captured, 
     assert OllamaEngine._build_messages("", "", delivered)[-1]["images"] == [PNG_BASE64]
     compatible = openai_messages(prompt="", system="", messages=delivered)
     assert (
-        compatible[-1]["content"][-1]["image_url"]["url"] == "data:image/png;base64," + PNG_BASE64
+        compatible[-1]["content"][0]["image_url"]["url"] == "data:image/png;base64," + PNG_BASE64
     )
     assert "capture_1" in delivered[-1]["content"]
     assert PNG_BASE64 not in json.dumps(asdict(outcome))
@@ -497,7 +497,7 @@ def test_generated_image_is_labelled_application_tool_output_with_one_primary_im
     assert compatible[-2]["role"] == "tool"
     assert compatible[-2]["tool_call_id"] == "image_1"
     assert compatible[-1]["role"] == "user"
-    assert compatible[-1]["content"][-1]["image_url"]["url"] == "data:image/png;base64," + PNG_BASE64
+    assert compatible[-1]["content"][0]["image_url"]["url"] == "data:image/png;base64," + PNG_BASE64
 
 
 def test_text_only_model_is_told_plainly_it_cannot_see_the_generated_image():

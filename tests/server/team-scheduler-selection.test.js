@@ -37,8 +37,8 @@ test('eligibility: online, not paused, a free slot, the model advertised, not ex
   assert.equal(isEligible(node('a'), want, { excludedNodeId: 'a' }), false);
   assert.equal(isEligible(node('a'), { model: 'alpha', wantsVision: true }, {}), false, 'vision needs a vision model');
   assert.equal(isEligible(node('a'), { model: 'seer', wantsVision: true }, {}), true);
-  assert.equal(isEligible(node('a', { models: [model('alpha', { contextLength: 4096 })] }), want,
-    { contextFloor: 8192 }), false, 'a model below the pool context floor is not eligible');
+  assert.equal(isEligible(node('a', { models: [model('alpha', { contextLength: 4096 })] }), want, {}), true,
+    'a context length never decides eligibility (slice 4f: each turn is sized for its own model)');
 });
 
 test('choice: the affinity node when eligible and free, else the oldest last_served_at', () => {
@@ -62,6 +62,8 @@ test('the wait order: continuations first, then the node owner\'s own turns, the
   ];
   assert.deepEqual(orderWaiting(items, { member_id: 'member_owner' }).map((i) => i.id), ['cont', 'own', 'new-0', 'new-1']);
   assert.deepEqual(orderWaiting(items, null).map((i) => i.id), ['cont', 'new-0', 'new-1', 'own']);
+  assert.deepEqual(orderWaiting(items, { member_id: 'member_owner' }, true).map((i) => i.id),
+    ['cont', 'new-0', 'new-1', 'own'], 'E52: an owner who just went ahead waits behind the others');
   assert.deepEqual(items.map((i) => i.id), ['new-1', 'own', 'cont', 'new-0'], 'the input is not reordered');
 });
 
@@ -189,6 +191,60 @@ test('a cancel does not exclude the node', () => {
   assert.equal(requestLease(scheduler).lease.node_id, a);
 });
 
+test('R16-F02: a busy node (paused) fails its unclaimed job at once, excludes nothing, and a pause is contact', () => {
+  const fx = createScheduler();
+  const start = fx.clock();
+  const a = registerNode(fx.scheduler, { deviceId: 'device_1', memberId: 'member_a' });
+  const { lease } = activeLease(fx.scheduler);
+  const job = fx.scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).job;
+  fx.clock.set(start + 20 * SECOND);
+  assert.equal(fx.scheduler.setNodePaused(a, { on: true }).ok, true);
+  const ended = fx.scheduler.getLease(lease.lease_id);
+  assert.deepEqual([fx.scheduler.getJob(job.job_id).state, ended.state, ended.reason], ['failed', 'failed', 'node_busy']);
+  fx.clock.set(start + 45 * SECOND);
+  fx.scheduler.sweep(fx.clock());
+  assert.equal(fx.scheduler.listNodes()[0].online, true, 'the pause counted as contact');
+  assert.equal(requestLease(fx.scheduler).error.reason, 'no_eligible_node', 'no turn goes to a busy node');
+  fx.scheduler.setNodePaused(a, { on: false });
+  assert.equal(requestLease(fx.scheduler).lease.node_id, a, 'the conversation is not locked out');
+});
+
+test('R16-F02: a job asked of a busy node is refused node_busy; its lease ends at once and excludes nothing', () => {
+  const { scheduler } = createScheduler();
+  const a = registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a' });
+  const { lease } = activeLease(scheduler);
+  scheduler.setNodePaused(a, { on: true });
+  assert.equal(scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).error.reason, 'node_busy');
+  assert.equal(scheduler.getLease(lease.lease_id).state, 'failed');
+  assert.equal(scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).error.reason, 'lease_not_active',
+    'a retried job finds no lease');
+  scheduler.setNodePaused(a, { on: false });
+  assert.equal(requestLease(scheduler).lease.node_id, a);
+});
+
+test('R16-F02: a job a node gives back node_busy excludes it like any fail; a job never claimed excludes nothing', () => {
+  const fx = createScheduler();
+  const start = fx.clock();
+  const a = registerNode(fx.scheduler, { deviceId: 'device_1', memberId: 'member_a' });
+  const { lease } = activeLease(fx.scheduler);
+  const job = fx.scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).job;
+  fx.scheduler.claim(a, 1);
+  assert.equal(fx.scheduler.failJob(job.job_id, a, 'node_busy').ok, true);
+  assert.equal(fx.scheduler.getLease(lease.lease_id).reason, 'node_busy');
+  const again = requestLease(fx.scheduler);
+  assert.equal(again.lease?.state === 'active' && again.lease.node_id === a, false,
+    'a node cannot fail turn after turn for free: its own give-back excludes it for the conversation');
+  const second = activeLease(fx.scheduler, { conversationKey: 'conv:p:9' }).lease;
+  assert.equal(second.node_id, a, 'another conversation still reaches it');
+  fx.scheduler.createJob(second.lease_id, { requestBytes: Buffer.from('{}') });
+  fx.scheduler.sweep(start + 30 * SECOND);
+  assert.deepEqual([fx.scheduler.getLease(second.lease_id).state, fx.scheduler.getLease(second.lease_id).reason],
+    ['expired', 'node_contact_timeout']);
+  fx.scheduler.touchNode(a);
+  assert.equal(requestLease(fx.scheduler, { conversationKey: 'conv:p:9' }).lease.node_id, a,
+    'a job the node never claimed excludes nothing');
+});
+
 test('the owner\'s own turn on their node goes ahead of an earlier turn from someone else', () => {
   const { scheduler, changes } = createScheduler();
   registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner' });
@@ -196,12 +252,80 @@ test('the owner\'s own turn on their node goes ahead of an earlier turn from som
   const other = requestLease(scheduler, { conversationKey: 'conv:p:1', memberId: 'member_x' }).lease;
   const own = requestLease(scheduler, { conversationKey: 'conv:p:2', memberId: 'member_owner' }).lease;
   const queue = changes.filter((c) => c.type === 'queue').at(-1);
-  assert.deepEqual(queue.positions.map((p) => [p.lease_id, p.position]), [[other.lease_id, 1], [own.lease_id, 2]],
-    'positions are reported through onChange in arrival order');
+  assert.deepEqual(queue.positions.map((p) => [p.lease_id, p.position]), [[own.lease_id, 1], [other.lease_id, 2]],
+    'positions are reported through onChange in the order they are served (slice 4d: the owner never served goes first)');
   scheduler.releaseLease(running.lease_id);
   assert.equal(scheduler.getLease(own.lease_id).state, 'active');
   assert.equal(scheduler.getLease(other.lease_id).state, 'queued');
   assert.equal(scheduler.getLease(other.lease_id).position, 1);
+});
+
+// E52 (owner, 2026-11-11; refines N8 and E7): a node's owner goes next on their own
+// node, never twice in a row while someone else is waiting there.
+
+// A queued lease for `memberId` on the model `modelId` (one node per model in these tests).
+function waitFor52(scheduler, memberId, i, modelId = 'alpha') {
+  return requestLease(scheduler, { conversationKey: `conv:p:${memberId}:${modelId}:${i}`, memberId, model: modelId }).lease;
+}
+
+// Releases the model's active lease; answers the member whose lease takes the slot, or null.
+function handOut(scheduler, modelId = 'alpha') {
+  const activeOn = () => scheduler.listLeases().find((lease) => lease.state === 'active' && lease.model === modelId);
+  scheduler.releaseLease(activeOn().lease_id);
+  return activeOn()?.member_id ?? null;
+}
+
+test('E52: with others waiting, the owner and the others take turns on the owner\'s node', () => {
+  const { scheduler } = createScheduler();
+  registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner' });
+  activeLease(scheduler, { conversationKey: 'conv:p:filler', memberId: 'member_x' });
+  waitFor52(scheduler, 'member_a', 1);
+  waitFor52(scheduler, 'member_b', 1);
+  for (let i = 1; i <= 3; i += 1) waitFor52(scheduler, 'member_owner', i);
+  const order = [1, 2, 3, 4, 5].map(() => handOut(scheduler));
+  assert.deepEqual(order, ['member_owner', 'member_a', 'member_owner', 'member_b', 'member_owner']);
+});
+
+test('E52: with nobody else waiting the owner goes twice in a row and is never held back', () => {
+  const { scheduler } = createScheduler();
+  registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner' });
+  activeLease(scheduler, { conversationKey: 'conv:p:filler', memberId: 'member_x' });
+  for (let i = 1; i <= 2; i += 1) waitFor52(scheduler, 'member_owner', i);
+  assert.deepEqual([handOut(scheduler), handOut(scheduler)], ['member_owner', 'member_owner']);
+  // The owner went ahead of a waiting member, who then gives up: the owner alone is not held back.
+  const other = waitFor52(scheduler, 'member_a', 1);
+  for (let i = 3; i <= 4; i += 1) waitFor52(scheduler, 'member_owner', i);
+  assert.equal(handOut(scheduler), 'member_owner');
+  scheduler.cancelLease(other.lease_id);
+  assert.equal(handOut(scheduler), 'member_owner');
+});
+
+test('E52: the memory goes with the node: a node registered again lets its owner go first', () => {
+  const { scheduler } = createScheduler();
+  const nodeId = registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner' });
+  activeLease(scheduler, { conversationKey: 'conv:p:filler', memberId: 'member_x' });
+  waitFor52(scheduler, 'member_a', 1);
+  for (let i = 1; i <= 2; i += 1) waitFor52(scheduler, 'member_owner', i);
+  assert.equal(handOut(scheduler), 'member_owner', 'the owner went ahead of member_a');
+  assert.equal(scheduler.unregisterNode(nodeId).ok, true);
+  registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner' });
+  const active = scheduler.listLeases().filter((lease) => lease.state === 'active');
+  assert.deepEqual(active.map((lease) => lease.member_id), ['member_owner'], 'a new node remembers nothing');
+});
+
+test('E52: one node\'s memory does not change the order on another node', () => {
+  const { scheduler } = createScheduler();
+  registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_owner', models: [model('alpha')] });
+  registerNode(scheduler, { deviceId: 'device_2', memberId: 'member_p', models: [model('beta')] });
+  activeLease(scheduler, { conversationKey: 'conv:p:filler-a', memberId: 'member_x', model: 'alpha' });
+  activeLease(scheduler, { conversationKey: 'conv:p:filler-b', memberId: 'member_x', model: 'beta' });
+  waitFor52(scheduler, 'member_a', 1);
+  for (let i = 1; i <= 2; i += 1) waitFor52(scheduler, 'member_owner', i);
+  waitFor52(scheduler, 'member_a', 2, 'beta');
+  waitFor52(scheduler, 'member_p', 1, 'beta');
+  assert.equal(handOut(scheduler), 'member_owner', 'the first node\'s owner went ahead');
+  assert.equal(handOut(scheduler, 'beta'), 'member_p', 'the second node\'s owner still goes first there');
+  assert.equal(handOut(scheduler), 'member_a', 'the first node now serves the waiting member');
 });
 
 test('a continuation job is claimed before a newer first job on the same node', () => {
@@ -235,9 +359,9 @@ test('a throwing listener does not break the scheduler', () => {
   assert.equal(requestLease(fx.scheduler).lease.state, 'active');
 });
 
-test('the pool summary: union of online models, smallest context length, any vision or thinking', () => {
+test('the pool summary: union of online models, smallest length per model, the largest across them', () => {
   const { scheduler } = createScheduler();
-  assert.deepEqual(scheduler.poolSummary(), { models: [], context_length: null, vision: false, thinking: false,
+  assert.deepEqual(scheduler.poolSummary(), { models: [], largest_context_length: null, vision: false, thinking: false,
     online_slots: 0 });
   registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a',
     models: [model('alpha', { contextLength: 16384 }), model('seer', { contextLength: 65536, vision: true })] });
@@ -245,7 +369,8 @@ test('the pool summary: union of online models, smallest context length, any vis
     models: [model('alpha', { contextLength: 32768, thinking: true })] });
   const summary = scheduler.poolSummary();
   assert.deepEqual(summary.models.map((m) => m.id), ['alpha', 'seer']);
-  assert.equal(summary.context_length, 16384);
+  assert.deepEqual(summary.models.map((m) => m.context_length), [16384, 65536], 'alpha: the smaller of its two nodes');
+  assert.equal(summary.largest_context_length, 65536);
   assert.equal(summary.vision, true);
   assert.equal(summary.thinking, true);
   assert.equal(summary.online_slots, 3);
@@ -336,7 +461,7 @@ test('A4: a member registers at most two nodes', () => {
     true, 'a known device may re-register');
 });
 
-test('A4: an offline node with no active lease is removed after 10 minutes and may register again', () => {
+test('A4: an offline node with no active lease is removed after 10 minutes and registers again as the same node', () => {
   const fx = createScheduler();
   const start = fx.clock();
   const first = registerNode(fx.scheduler, { deviceId: 'device_1', memberId: 'member_n' });
@@ -348,7 +473,7 @@ test('A4: an offline node with no active lease is removed after 10 minutes and m
   assert.equal(fx.scheduler.listNodes().length, 0);
   fx.clock.set(start + 30 * SECOND + 10 * MINUTE);
   const again = registerNode(fx.scheduler, { deviceId: 'device_1', memberId: 'member_n' });
-  assert.notEqual(again, first);
+  assert.equal(again, first, 'the node id is a fixed function of the device');
   assert.equal(fx.scheduler.listNodes().length, 1);
 });
 

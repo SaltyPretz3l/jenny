@@ -79,7 +79,9 @@
     const conflictUtils = resolveModule('rendererIdeScmConflicts', './renderer-ide-scm-conflicts');
     const gitActionsUtils = resolveModule('rendererIdeGitActions', './renderer-ide-git-actions');
 
-    const relPathOf = (path) => ideStateUtils.normalizeIdeRelativePath?.(path) || String(path || '');
+    // An outside-Workspace document (row 137) has no repo path: '' makes every caller's empty-path guard skip it.
+    const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
+    const relPathOf = (path) => (isOutsideKey(path) ? '' : ideStateUtils.normalizeIdeRelativePath?.(path) || String(path || ''));
     const fileNameOf = (path) => ideStateUtils.fileNameOf?.(path) || String(path || '');
 
     const client = options.client
@@ -482,7 +484,7 @@
       getApi: () => (client && client.getApi && client.getApi()) || null,
       getStore: () => store,
       getDecoration: (relPath, kind) => {
-        if (!store) {
+        if (!store || isOutsideKey(relPath)) {
           return null;
         }
         return kind === 'directory' ? store.getFolderRollup(relPath) : store.getDecoration(relPath);
@@ -493,7 +495,7 @@
       // git dirty count (a checkout would otherwise strand them silently).
       getUnsavedCount: () => {
         const dirtyByPath = getIde().dirtyByPath || {};
-        return Object.keys(dirtyByPath).filter((key) => dirtyByPath[key] === true).length;
+        return Object.keys(dirtyByPath).filter((key) => dirtyByPath[key] === true && !isOutsideKey(key)).length;
       },
       getAheadBehind: () => {
         const snap = store && typeof store.getSnapshot === 'function' ? store.getSnapshot() : null;

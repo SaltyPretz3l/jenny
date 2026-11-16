@@ -75,10 +75,12 @@
 .file-diff-truncated {
   flex: 0 0 auto;
   margin-inline-start: auto;
-  color: var(--text-decorative);
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
   font-size: var(--tl-font-meta);
-  font-style: italic;
 }
+/* The Changes page overrides this from chat-changes-detail.css, which loads later. */
+.file-diff-list .file-diff-note { flex: 0 0 auto; color: var(--text-muted); font-size: var(--tl-font-meta); }
 
 .file-diff-open {
   display: inline-flex;
@@ -95,6 +97,16 @@
 }
 .file-diff-open:hover,
 .file-diff-open:focus-visible { color: var(--text-primary); }
+.file-diff-open--text {
+  padding: 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.file-diff-open--text:hover,
+.file-diff-open--text:focus-visible { color: var(--text-primary); }
 .file-diff-toggle:focus-visible,
 .file-diff-open:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
 
@@ -139,10 +151,25 @@
 .file-diff-body .diff-line-meta .diff-content { color: var(--text-decorative); }
 .file-diff-body .diff-gap {
   display: flex;
-  height: 18px;
   min-width: max-content;
+  padding: 3px 0;
   align-items: center;
 }
+.file-diff-body .diff-gap-label {
+  padding-inline-start: 1.5ch;
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-size: var(--tl-font-meta);
+}
+/* The changed words of an isolated removed/added pair read stronger than the line wash. */
+.file-diff-body mark.diff-word { border-radius: 2px; color: inherit; }
+.file-diff-body .diff-line-add mark.diff-word { background: color-mix(in srgb, var(--tl-status-ok) 26%, transparent); }
+.file-diff-body .diff-line-remove mark.diff-word { background: color-mix(in srgb, var(--tl-status-error) 26%, transparent); }
+/* A created file is plain code: line numbers stay, the + column and the add wash go. */
+.file-diff-body--new-file .diff-line-add { background: transparent; }
+.file-diff-body--new-file .diff-marker { display: none; }
+
+.file-diff-foot { display: flex; justify-content: flex-end; }
 
 /* The code-review rail remains an independent product surface. */
 .jenny-code-review-affordance {

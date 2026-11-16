@@ -6,6 +6,8 @@
 // (no streaming message). That lane rebuilt the reasoning body without the
 // box marker and never re-synced the follow module, so a long phase un-capped
 // for the whole gap and grew the timeline by its full height in one frame.
+// Since 2026-11-11 a finished phase collapses on its own, so the open settled
+// phase here is one the reader re-opened during the gap.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -97,6 +99,13 @@ test('live box: a settled open phase stays marked through an active-turn-root re
   assert.ok(await waitFor(window, marked), `streaming body is a live box: ${JSON.stringify(describeBodies(document))}`);
 
   await emit(reasoningPhaseEvent('phase_completed', 1), 30);
+  const closed = () => {
+    const panel = document.querySelector('.reasoning-row-panel');
+    return Boolean(panel) && (panel.hidden || !panel.classList.contains('expanded'));
+  };
+  assert.ok(await waitFor(window, closed), `a finished phase collapses on its own: ${JSON.stringify(describeBodies(document))}`);
+  document.querySelector('[data-reasoning-toggle]').click();
+  await waitForUi(window, 60);
   const rebuildsBefore = activeRootRebuilds(window);
   await emit(pendingToolUse('call_gap_a'), 40);
   await emit(pendingToolUse('call_gap_b'), 60);

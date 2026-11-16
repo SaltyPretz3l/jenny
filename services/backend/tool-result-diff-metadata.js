@@ -472,6 +472,9 @@ function normalizeUserQuestionsResultMetadata(source) {
     }
     if (answers.length) normalized.answers = answers;
   }
+  // An answer typed in the composer instead of the form (ask-user-tool.js LIMITS.reply).
+  const reply = kind === 'user_questions_answered' && typeof source.reply === 'string' ? source.reply.trim().slice(0, 2000) : '';
+  if (reply) normalized.reply = reply;
   return normalized;
 }
 

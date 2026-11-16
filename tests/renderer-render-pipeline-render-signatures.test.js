@@ -37,10 +37,21 @@ test('the ambient signature folds the edit target and the sorted selection of th
   const state = { ui: { editingMessageId: 'm9', selectedMessageIdsBySession: new Map([['s1', new Set(['b', 'a'])]]) } };
   let selecting = true;
   const buildAmbientUiSignature = createAmbientUiSignature({ state, isPaneSelecting: () => selecting });
-  assert.equal(buildAmbientUiSignature('s1'), 'E:m9\u001dB:\u001dS:1\u001dSEL:a,b');
+  assert.equal(buildAmbientUiSignature('s1'), 'E:m9\u001dB:\u001dS:1\u001dSEL:a,b\u001dC:');
   state.ui.branchCommitting = true;
-  assert.equal(buildAmbientUiSignature('s2'), 'E:m9\u001dB:1\u001dS:1\u001dSEL:');
+  assert.equal(buildAmbientUiSignature('s2'), 'E:m9\u001dB:1\u001dS:1\u001dSEL:\u001dC:');
   selecting = false;
-  assert.equal(buildAmbientUiSignature('s1'), 'E:m9\u001dB:1\u001dS:\u001dSEL:', 'another pane owns selection: no membership');
-  assert.equal(createAmbientUiSignature({ state: {} })('s1'), 'E:\u001dB:\u001dS:\u001dSEL:');
+  assert.equal(buildAmbientUiSignature('s1'), 'E:m9\u001dB:1\u001dS:\u001dSEL:\u001dC:', 'another pane owns selection: no membership');
+  assert.equal(createAmbientUiSignature({ state: {} })('s1'), 'E:\u001dB:\u001dS:\u001dSEL:\u001dC:');
+});
+
+test('the ambient signature changes when only the edit-commit flag flips', () => {
+  const state = { ui: { editingMessageId: 'm9', editCommitting: false } };
+  const buildAmbientUiSignature = createAmbientUiSignature({ state, isPaneSelecting: () => false });
+  const idle = buildAmbientUiSignature('s1');
+  state.ui.editCommitting = true;
+  const committing = buildAmbientUiSignature('s1');
+  assert.notEqual(committing, idle, 'Save must re-render the editor into its resending state');
+  state.ui.editCommitting = false;
+  assert.equal(buildAmbientUiSignature('s1'), idle, 'clearing the flag restores the idle signature');
 });

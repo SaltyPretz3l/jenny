@@ -34,7 +34,6 @@
     const {
       resetAttachmentQueue,
       removeQueuedAttachment,
-      renderAttachmentTray,
       suppressFileDropNavigation,
       setDropActive,
       prepareDroppedAttachments,
@@ -215,26 +214,72 @@
       });
     }
 
+    function focusComposerInput() {
+      try { chatInput?.focus?.(); } catch (_error) { /* noop */ }
+    }
+
+    // Row 153: after a remove, focus stays in the tray (the next item, else the one before),
+    // and leaves for the message box only when the tray has no items left.
+    function restoreTrayFocus(removedId, index) {
+      const items = [...attachmentTray.querySelectorAll('[data-attachment-id]')]
+        .filter((node) => node.dataset.attachmentId !== removedId);
+      const target = items[index] || items[index - 1];
+      const control = target?.querySelector('[data-attachment-remove]');
+      if (control) control.focus();
+      else focusComposerInput();
+    }
+
+    // Row 153: a thumbnail opens the image viewer, view-only, on the tray's images in their order.
+    function openTrayImage(button) {
+      const viewer = globalThis.rendererImageViewerController || window.rendererImageViewerController;
+      if (!viewer || typeof viewer.open !== 'function') return;
+      const thumbs = [...attachmentTray.querySelectorAll('[data-attachment-open]')]
+        .filter((thumb) => thumb.querySelector('img')?.getAttribute('src'));
+      const index = thumbs.indexOf(button);
+      if (index < 0) return;
+      const items = thumbs.map((thumb) => ({
+        kind: 'source',
+        src: thumb.querySelector('img').getAttribute('src'),
+        title: thumb.dataset.attachmentTitle || '',
+        caption: thumb.dataset.attachmentCaption || '',
+      }));
+      Promise.resolve(viewer.open({ items, index, contextNode: button })).catch(() => false);
+    }
+
     function handleAttachmentTrayClick(event) {
       const removeButton = event.target.closest('[data-attachment-remove]');
       if (removeButton) {
-        removeQueuedAttachment(removeButton.dataset.attachmentRemove, ...sessionArgs());
+        const removedId = removeButton.dataset.attachmentRemove;
+        const items = [...attachmentTray.querySelectorAll('[data-attachment-id]')];
+        const index = items.findIndex((node) => node.dataset.attachmentId === removedId);
+        removeQueuedAttachment(removedId, ...sessionArgs());
+        restoreTrayFocus(removedId, Math.max(index, 0));
+        return;
+      }
+
+      const openButton = event.target.closest('[data-attachment-open]');
+      if (openButton) {
+        openTrayImage(openButton);
         return;
       }
 
       const clearButton = event.target.closest('[data-attachment-clear]');
       if (clearButton) {
+        // resetAttachmentQueue renders the tray of the session it cleared (this pane's).
         resetAttachmentQueue(...sessionArgs());
-        renderAttachmentTray();
+        focusComposerInput();
       }
     }
 
     function handleAttachmentTrayKeydown(event) {
-      const removeButton = event.target.closest('[data-attachment-remove], [data-attachment-clear]');
+      const removeButton = event.target.closest('[data-attachment-remove], [data-attachment-clear]')
+        || event.target.closest('[data-attachment-id]')?.querySelector('[data-attachment-remove]');
       if (!removeButton || (event.key !== 'Delete' && event.key !== 'Backspace')) {
         return;
       }
       event.preventDefault();
+      // Focus moves to the next item after a remove: a held key must not walk through the tray.
+      if (event.repeat) return;
       removeButton.click();
     }
 

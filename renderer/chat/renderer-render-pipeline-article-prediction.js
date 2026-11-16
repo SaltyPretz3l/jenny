@@ -26,6 +26,8 @@
       resolveArticlePredictionCacheKey = () => '',
       resolveVisibleTurnArticleTarget = () => null,
       buildTurnRowListMarkup = () => '',
+      // This pane's follow state (one pane: state.ui.followLatest).
+      isFollowingLatest = () => state?.ui?.followLatest === true,
     } = deps || {};
 
     function getPretextUtils() {
@@ -238,7 +240,7 @@
         article.dataset.predictedHeight = String(nextHeight);
         // No reservation under a reader following the latest message: an overshoot is blank room
         // the follow scrolls into, and the reply jumps back down when the room goes (row 131, D5).
-        article.style.minHeight = state?.ui?.followLatest === true ? '' : `${nextHeight}px`;
+        article.style.minHeight = isFollowingLatest() === true ? '' : `${nextHeight}px`;
         return;
       }
       article.style.minHeight = '';

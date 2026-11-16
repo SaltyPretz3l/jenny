@@ -18,6 +18,7 @@
 //   prune   channel.json, then unlink the removed segments (best effort); a
 //           prune is a whole commit on its own
 //   create  channel.json, then index.json
+//   remove  index.json, then the channel's folders (a project channel, E67: team-chat-remove.js)
 // A crash before channel.json leaves the previous commit: on load a message at
 // or past next_seq is dropped (a retry creates it once), an unreferenced new
 // segment is a stray, a revision past channel.rev rolls forward so none is
@@ -43,17 +44,22 @@ const channels = require('./team-chat-channel');
 const files = require('./team-chat-files');
 const { readStateMethods } = require('./team-chat-read-state');
 const { readMethods } = require('./team-chat-reads');
+const { marksMethods } = require('./team-chat-marks');
 const { loaderMethods, yieldToEventLoop } = require('./team-chat-loader');
+const { blobMethods, createTeamChatBlobs, isIdList, itemOf } = require('./team-chat-blobs');
+const { roomMethods } = require('./team-chat-room');
+const { removeMethods } = require('./team-chat-remove');
 
 const { LIMITS, SCHEMA_VERSION } = schema;
 const { bytesOf, segmentMeta } = channels;
-const { checked, corrupt, isTransient, refuse } = files;
+const { checked, corrupt, isTransient, logChannel, refuse } = files;
 const { sumBytes } = retention;
 const INDEX_FILE = 'index.json';
 const CHANNEL_FILE = 'channel.json';
 const HARD = LIMITS.SEGMENT_HARD_MAX_BYTES;
 
 const iso = (ms) => new Date(ms).toISOString();
+const { logCode } = durable; // null, a fixed token (corrupt(), readFailure), or an fs code word
 
 class TeamChatStore {
   constructor({
@@ -77,6 +83,8 @@ class TeamChatStore {
       listDir: fileOps.listDir || ((target) => fs.readdirSync(target)),
     };
     this._files = files.createFileIo({ guard: assertSafePath, ops, log: this._log });
+    // Slice 2c host: attachment blobs under team-chat/blobs (team-chat-blobs.js).
+    this._blobs = createTeamChatBlobs({ dir: this.dir, guard: assertSafePath, clock, randomBytes, log: this._log });
     this._io = {
       readSegment: (channelId, n) => this._readSegment(channelId, n),
       listDir: (channelId) => this._files.list(path.join(this.dir, channelId)),
@@ -99,6 +107,8 @@ class TeamChatStore {
 
   _file(channelId, name) { return path.join(this.dir, channelId, name); }
 
+  _nowIso() { return iso(this._clock()); }
+
   // ------------------------------------------------------------ failure
 
   _brokenFailure() { return hostFailure('persistence', this._broken); }
@@ -108,14 +118,14 @@ class TeamChatStore {
       if (error?.refusal) return error.refusal;
       if (error?.duringWrite || isTransient(error)) {
         if (error.duringWrite) this._forgetWrite(error.filePath);
-        this._log('WARN', 'team_chat.io_failed', { stage, code: error.code || null });
+        this._log('WARN', 'team_chat.io_failed', { stage, code: logCode(error.code) });
         return hostFailure('persistence', 'team_chat_store_failed');
       }
       const state = error?.brokenReason && error.channelId ? this._channels.get(error.channelId) : null;
       if (state) {
         state.broken = error.brokenReason;
-        this._log('ERROR', 'team_chat.channel_broken', { channel_id: error.channelId, reason: state.broken,
-          cause: error.cause || null });
+        this._log('ERROR', 'team_chat.channel_broken', { channel_id: logChannel(error.channelId), reason: state.broken,
+          cause: logCode(error.cause) });
         return hostFailure('persistence', state.broken);
       }
     }
@@ -123,8 +133,8 @@ class TeamChatStore {
     this._index = null;
     this._channels = new Map();
     this._loadFailures = new Map();
-    this._log('ERROR', 'team_chat.broken', { stage, reason: this._broken, cause: error?.cause || null,
-      code: error?.code || null, written: this._files.written });
+    this._log('ERROR', 'team_chat.broken', { stage, reason: this._broken, cause: logCode(error?.cause),
+      code: logCode(error?.code), written: this._files.written });
     return this._brokenFailure();
   }
 
@@ -150,21 +160,42 @@ class TeamChatStore {
     this._files.written = 0;
     try {
       const stored = this._files.read(path.join(this.dir, INDEX_FILE), LIMITS.INDEX_MAX_BYTES);
-      const index = stored || { schema_version: SCHEMA_VERSION, channels: [] };
+      const index = stored || this._rebuiltIndex();
       checked(schema.validateIndexDoc(index));
       const states = new Map();
       for (const entry of index.channels) {
         const doc = this._files.read(this._file(entry.channel_id, CHANNEL_FILE), LIMITS.CHANNEL_MAX_BYTES);
         if (doc === null) throw corrupt('channel_missing');
         checked(schema.validateChannelDoc(doc, entry.channel_id));
-        states.set(entry.channel_id, channels.newState(doc));
+        states.set(entry.channel_id, channels.newState(schema.currentChannelDoc(doc)));
       }
+      this._blobs.open((channelId) => states.has(channelId));
       this._index = index;
       this._channels = states;
       return { ok: true };
     } catch (error) {
       return this._fail(error, 'open');
     }
+  }
+
+  // An absent index.json (review round two, R07-F02; X4-F04 chat half): rebuilt in memory from the channel folders,
+  // each by its own channel.json (the next create writes it). A channel folder without channel.json, or a blob
+  // folder no channel folder lists, cannot be rebuilt: corruption `index_missing`, which latches the store with
+  // nothing read further, removed or rewritten. A tree with neither is a new store.
+  _rebuiltIndex() {
+    const named = (dir) => (fs.existsSync(dir) ? this._files.list(dir).filter((name) => schema.channelKind(name) !== null) : []);
+    const found = named(this.dir).map((channelId) => {
+      const doc = this._files.read(this._file(channelId, CHANNEL_FILE), LIMITS.CHANNEL_MAX_BYTES);
+      if (doc === null) throw corrupt('index_missing');
+      checked(schema.validateChannelDoc(doc, channelId));
+      return { channel_id: channelId, kind: doc.kind, created_at: doc.created_at };
+    });
+    const listed = new Set(found.map((entry) => entry.channel_id));
+    if (named(path.join(this.dir, 'blobs')).some((channelId) => !listed.has(channelId))) throw corrupt('index_missing');
+    found.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1
+      : a.channel_id < b.channel_id ? -1 : 1));
+    if (found.length > 0) this._log('WARN', 'team_chat.index_rebuilt', { channels: found.length });
+    return { schema_version: SCHEMA_VERSION, channels: found };
   }
 
   _loadChannel(state) {
@@ -176,7 +207,7 @@ class TeamChatStore {
       throw error;
     }
     if (outcome.strays > 0 || outcome.rolledForward > 0) {
-      this._log('WARN', 'team_chat.reconciled', { channel_id: state.doc.channel_id, strays: outcome.strays,
+      this._log('WARN', 'team_chat.reconciled', { channel_id: logChannel(state.doc.channel_id), strays: outcome.strays,
         rolled_forward: outcome.rolledForward });
     }
   }
@@ -185,6 +216,7 @@ class TeamChatStore {
     const segment = this._files.read(this._file(channelId, `seg-${n}.json`), HARD);
     const result = segment === null ? { ok: false, reason: 'segment_missing' } : schema.validateSegmentDoc(segment, channelId, n);
     if (!result.ok) throw Object.assign(corrupt(result.reason, result.schema), { channelId });
+    this._blobs.note(channelId, segment);
     return segment;
   }
 
@@ -277,7 +309,7 @@ class TeamChatStore {
       const id = schema.newMessageId(now, this._randomBytes);
       if (!state.byId.has(id)) return id;
     }
-    this._log('WARN', 'team_chat.id_collision', { channel_id: state.doc.channel_id });
+    this._log('WARN', 'team_chat.id_collision', { channel_id: logChannel(state.doc.channel_id) });
     return refuse('persistence', 'team_chat_store_failed');
   }
 
@@ -294,79 +326,54 @@ class TeamChatStore {
       && !this._files.remove(this._file(state.doc.channel_id, name), state.doc.channel_id));
   }
 
-  // ------------------------------------------------------------ retention
-
-  // Plans from segment metadata and applies the pruning a mutation needs.
-  // Refuses team_chat_storage_limit, writing nothing, when no plan makes room.
-  _makeRoom(state, protectedNs, incoming, delta) {
-    const removals = retention.planRoom({ states: [...this._channels.values()], target: state, protectedNs, incoming,
-      delta, now: this._clock(), limits: this._limits });
-    if (removals === null) refuse('limit', 'team_chat_storage_limit');
-    return [...removals].map(([id, count]) => this._prune(this._channels.get(id), count));
-  }
-
-  // Commits the removal of the channel's `count` oldest segments (loading the
-  // channel only now), then unlinks them. A whole commit on its own.
-  _prune(state, count) {
-    this._loadChannel(state);
-    const doc = state.doc;
-    const removed = doc.segments.slice(0, count);
-    const kept = doc.segments.slice(count);
-    const floorSeq = removed[removed.length - 1].last_seq + 1;
-    const { removedIds, orphanIds } = retention.prunedThreads(state.entries, floorSeq);
-    const gone = (messageId) => removedIds.has(messageId) || orphanIds.has(messageId);
-    this._commitChannel(state, { ...doc, segments: kept, floor_seq: floorSeq, rev: doc.rev + 1, bytes: sumBytes(kept),
-      pins: doc.pins.filter((messageId) => !gone(messageId)) });
-    channels.forgetMessages(state, gone);
-    for (const meta of removed) {
-      const name = `seg-${meta.n}.json`;
-      if (!this._files.remove(this._file(doc.channel_id, name), doc.channel_id)) state.strays.push(name);
-    }
-    this._files.written = 0;
-    const report = {
-      channel_id: doc.channel_id, reason: 'pruned', floor_seq: floorSeq, channel_rev: state.doc.rev,
-      segments_removed: count, messages_removed: removedIds.size, replies_removed: orphanIds.size,
-      bytes_removed: sumBytes(removed),
-    };
-    this._log('INFO', 'team_chat.pruned', report);
-    this._pruned.push(report);
-    return report;
-  }
-
-  applyRetention() {
-    return this._afterLoads(() => this._mutate(() => {
-      const plan = retention.planSweep({ states: [...this._channels.values()], now: this._clock(), limits: this._limits });
-      const pruned = plan.map(([id, count]) => this._prune(this._channels.get(id), count));
-      for (const state of this._channels.values()) if (state.loaded) this._sweep(state);
-      return { ok: true, pruned };
-    }));
-  }
+  // Retention and the room a mutation needs (`_makeRoom`, `_prune`, `applyRetention`): team-chat-room.js.
 
   // ------------------------------------------------------------ channels
 
   createChannel(input = {}) {
+    return this._mutate(() => this._create(input.channelId, null));
+  }
+
+  // The direct conversation of `memberIds` (2 to 8 distinct member ids, the caller included): its id comes from
+  // the participants alone, the participants are stored with the channel and never change. An existing one
+  // answers its id and changes nothing.
+  openDirect(input = {}) {
     return this._mutate(() => {
-      const channelId = input.channelId;
-      const kind = schema.channelKind(channelId);
-      if (kind === null) refuse('forbidden', 'team_chat_not_found');
-      const existing = this._channels.get(channelId);
-      if (existing) return { ok: true, channel_id: channelId, kind, created: false, rev: existing.doc.rev };
-      const folded = channelId.toLowerCase();
-      if ([...this._channels.keys()].some((other) => other.toLowerCase() === folded)) {
-        refuse('invalid', 'team_chat_request_invalid');
-      }
-      if (this._channels.size >= LIMITS.CHANNELS_MAX) refuse('limit', 'team_chat_storage_limit');
-      const createdAt = iso(this._clock());
-      const doc = schema.emptyChannelDoc(channelId, kind, createdAt);
-      this._files.write(this._file(channelId, CHANNEL_FILE), doc, LIMITS.CHANNEL_MAX_BYTES);
-      const index = { schema_version: SCHEMA_VERSION,
-        channels: [...this._index.channels, { channel_id: channelId, kind, created_at: createdAt }] };
-      this._files.write(path.join(this.dir, INDEX_FILE), index, LIMITS.INDEX_MAX_BYTES);
-      this._index = index;
-      this._channels.set(channelId, channels.newState(doc));
-      this._log('INFO', 'team_chat.channel_created', { channel_id: channelId });
-      return { ok: true, channel_id: channelId, kind, created: true, rev: 0 };
+      const participants = Array.isArray(input.memberIds) ? [...input.memberIds].sort() : null;
+      if (!schema.isParticipantList(participants)) refuse('invalid', 'team_chat_request_invalid');
+      return this._create(schema.dmChannelId(participants), participants);
     });
+  }
+
+  // The members of a stored direct conversation, or null (not a direct channel, no stored participants, an
+  // unknown id, a store that is not open or is latched). Synchronous, never loads or writes: the audience rule
+  // asks it on every check.
+  participantsOf(channelId) {
+    const state = this._broken || !this._index || typeof channelId !== 'string' ? undefined : this._channels.get(channelId);
+    return state?.doc.participants ?? null;
+  }
+
+  _create(channelId, participants) {
+    const kind = schema.channelKind(channelId);
+    // A direct conversation exists only through openDirect: one made without its participants would show to nobody.
+    if (kind === null || (kind === 'dm' && participants === null)) refuse('forbidden', 'team_chat_not_found');
+    const existing = this._channels.get(channelId);
+    if (existing) return { ok: true, channel_id: channelId, kind, created: false, rev: existing.doc.rev };
+    const folded = channelId.toLowerCase();
+    if ([...this._channels.keys()].some((other) => other.toLowerCase() === folded)) {
+      refuse('invalid', 'team_chat_request_invalid');
+    }
+    if (this._channels.size >= LIMITS.CHANNELS_MAX) refuse('limit', 'team_chat_storage_limit');
+    const createdAt = iso(this._clock());
+    const doc = schema.emptyChannelDoc(channelId, kind, createdAt, participants);
+    this._files.write(this._file(channelId, CHANNEL_FILE), doc, LIMITS.CHANNEL_MAX_BYTES);
+    const index = { schema_version: SCHEMA_VERSION,
+      channels: [...this._index.channels, { channel_id: channelId, kind, created_at: createdAt }] };
+    this._files.write(path.join(this.dir, INDEX_FILE), index, LIMITS.INDEX_MAX_BYTES);
+    this._index = index;
+    this._channels.set(channelId, channels.newState(doc));
+    this._log('INFO', 'team_chat.channel_created', { kind, channel_id: logChannel(channelId) });
+    return { ok: true, channel_id: channelId, kind, created: true, rev: 0 };
   }
 
   archiveChannel(input = {}) {
@@ -390,20 +397,25 @@ class TeamChatStore {
       if (input.refs !== undefined && !schema.isRefList(input.refs)) refuse('invalid', 'team_chat_ref_invalid');
       const refs = schema.normalizeRefs(input.refs || []);
       const threadRootId = input.threadRootId === undefined ? null : input.threadRootId;
-      const digest = channels.digestOf('post', [key.actorId, authorKind, text, refs, threadRootId]);
+      const attachmentIds = input.attachmentIds === undefined ? [] : input.attachmentIds;
+      if (!isIdList(attachmentIds)) refuse('invalid', 'team_chat_request_invalid');
+      // The ids join the digest only when there are some, so a post's digest without them is unchanged.
+      const digest = channels.digestOf('post', [key.actorId, authorKind, text, refs, threadRootId,
+        ...(attachmentIds.length > 0 ? [attachmentIds] : [])]);
       const replay = this._replay(state, key, digest);
       if (replay) return replay;
       if (state.doc.archived) refuse('forbidden', 'team_chat_archived');
+      const records = this._postAttachments(state, key.actorId, attachmentIds);
       const root = threadRootId === null ? null : this._find(state, this._rootEntry(state, threadRootId).id);
       const now = this._clock();
       const message = {
         id: this._newId(state, now), channel_id: state.doc.channel_id, seq: state.doc.next_seq, rev: state.doc.rev + 2,
         author: { kind: authorKind, member_id: key.actorId }, created_at: iso(now), edited_at: null, text,
         thread_root_id: root ? root.entry.id : null, reply_count: 0, last_reply_at: null, mentions: [...mentions],
-        refs, attachments: [], edits: [], reactions: {}, pinned: null, deleted: null, served_by: null,
+        refs, attachments: records.map(itemOf), edits: [], reactions: {}, pinned: null, deleted: null, served_by: null,
       };
       if (!schema.validateMessage(message, state.doc.channel_id)) throw corrupt('message_build_invalid');
-      return this._append(state, key, digest, message, root);
+      return this._withAttachments(state, records, () => this._append(state, key, digest, message, root, records));
     }));
   }
 
@@ -411,7 +423,7 @@ class TeamChatStore {
   // the real one (a prune adds at most one), so it never under-counts. The
   // current head is protected as well as the target: retention removes it on
   // a later pass.
-  _append(state, key, digest, message, root) {
+  _append(state, key, digest, message, root, records = []) {
     const channelId = state.doc.channel_id;
     const estimate = channels.buildAppend(state, message, root, this._limits);
     const rootSegment = estimate.rootSegment;
@@ -422,21 +434,27 @@ class TeamChatStore {
     const pruned = this._makeRoom(state, protectedNs, 1, bytesOf(estimate.target) - estimate.headBytes + rootGrowth);
     message.rev = state.doc.rev + 1;
     const built = channels.buildAppend(state, message, root, this._limits);
-    if (built.roll && state.headDirty) this._files.write(this._file(channelId, `seg-${headN}.json`), state.head, HARD);
-    const targetBytes = this._files.write(this._file(channelId, `seg-${built.n}.json`), built.target, HARD);
-    const rootBytes = built.rootSegment
-      ? this._files.write(this._file(channelId, `seg-${root.entry.n}.json`), built.rootSegment, HARD) : 0;
+    // Every size is known before a byte is written (a write answers bytesOf of what it wrote), so after the blobs
+    // move (2c host) nothing but an I/O failure can stop the post.
+    const targetBytes = bytesOf(built.target);
+    const rootBytes = built.rootSegment ? bytesOf(built.rootSegment) : 0;
     const metas = state.doc.segments.filter((meta) => meta.n !== built.n).map((meta) => (
       built.rootSegment && meta.n === root.entry.n ? segmentMeta(meta.n, built.rootSegment, rootBytes, meta.newest_at) : meta));
     metas.push(segmentMeta(built.n, built.target, targetBytes, built.newestAt));
     const result = { message_id: message.id, seq: message.seq, rev: message.rev };
-    this._commitChannel(state, {
-      ...state.doc, next_seq: message.seq + 1, rev: message.rev, segments: metas, bytes: sumBytes(metas),
-      requests: channels.requestsWith(state.doc, key, digest, result, this._clock()),
-    });
+    const nextDoc = { ...state.doc, next_seq: message.seq + 1, rev: message.rev, segments: metas, bytes: sumBytes(metas),
+      requests: channels.requestsWith(state.doc, key, digest, result, this._clock()) };
+    if (targetBytes > HARD || rootBytes > HARD || bytesOf(nextDoc) > LIMITS.CHANNEL_MAX_BYTES) {
+      refuse('limit', 'team_chat_storage_limit');
+    }
+    if (records.length > 0) this._blobs.attach(channelId, message.id, records); // before the message names them
+    if (built.roll && state.headDirty) this._files.write(this._file(channelId, `seg-${headN}.json`), state.head, HARD);
+    this._files.write(this._file(channelId, `seg-${built.n}.json`), built.target, HARD);
+    if (built.rootSegment) this._files.write(this._file(channelId, `seg-${root.entry.n}.json`), built.rootSegment, HARD);
+    this._commitChannel(state, nextDoc);
     channels.rememberAppend(state, message, built.n, built.target, root ? root.message : null);
     this._sweep(state);
-    this._log('INFO', 'team_chat.posted', { channel_id: channelId, seq: message.seq, rev: message.rev, bytes: targetBytes });
+    this._log('INFO', 'team_chat.posted', { channel_id: logChannel(channelId), seq: message.seq, rev: message.rev, bytes: targetBytes });
     return { ok: true, ...result, replayed: false, pruned };
   }
 
@@ -449,9 +467,7 @@ class TeamChatStore {
       const digest = channels.digestOf('edit', [key.actorId, input.messageId, text, input.expectedRev]);
       const replay = this._replay(state, key, digest);
       if (replay) return replay;
-      if (state.doc.archived) refuse('forbidden', 'team_chat_archived');
-      const found = this._find(state, input.messageId);
-      if (!found || found.message.deleted !== null) refuse('forbidden', 'team_chat_not_found');
+      const found = this._markTarget(state, input.messageId);
       if (found.message.rev !== input.expectedRev) refuse('conflict', 'team_chat_stale');
       const old = found.message;
       const edits = [...old.edits, { text: old.text, edited_at: old.edited_at || old.created_at }].slice(-LIMITS.EDITS_MAX);
@@ -470,19 +486,23 @@ class TeamChatStore {
       if (state.doc.archived) refuse('forbidden', 'team_chat_archived');
       const found = this._find(state, input.messageId);
       if (!found) refuse('forbidden', 'team_chat_not_found');
+      this._blobsReady(state);
       // Already deleted: its tombstone's revision, flagged so nothing is announced twice.
       if (found.message.deleted !== null) {
         return { ok: true, rev: found.message.rev, replayed: false, already_deleted: true, pruned: [] };
       }
       const old = found.message;
-      return this._rewrite(state, key, digest, found, (rev) => ({
+      const result = this._rewrite(state, key, digest, found, (rev) => ({
         ...old, text: '', edits: [], reactions: {}, attachments: [], refs: [], pinned: null,
         deleted: { by: key.actorId, at: iso(this._clock()) }, rev,
       }), (pins) => pins.filter((messageId) => messageId !== old.id));
+      this._blobs.removeMessage(state.doc.channel_id, old.id);
+      return result;
     }));
   }
 
-  // Rewrites the one segment holding a message, then channel.json.
+  // Rewrites the one segment holding a message, then channel.json. A null `key` records no request in the
+  // ledger (reactions and pins are idempotent by state and must not evict the entries that protect a post).
   _rewrite(state, key, digest, found, change, pinsAfter = (pins) => pins) {
     const channelId = state.doc.channel_id;
     const n = found.entry.n;
@@ -502,17 +522,18 @@ class TeamChatStore {
     const metas = state.doc.segments.map((meta) => (meta.n === n ? segmentMeta(n, segment, bytes, meta.newest_at) : meta));
     this._commitChannel(state, {
       ...state.doc, rev, segments: metas, bytes: sumBytes(metas), pins: pinsAfter(state.doc.pins),
-      requests: channels.requestsWith(state.doc, key, digest, { rev }, this._clock()),
+      requests: key === null ? state.doc.requests : channels.requestsWith(state.doc, key, digest, { rev }, this._clock()),
     });
     if (state.head && state.head.n === n) Object.assign(state, { head: segment, headDirty: false });
     found.entry.rev = rev;
     channels.rememberMentions(state, updated);
     this._sweep(state);
-    this._log('INFO', 'team_chat.rewritten', { channel_id: channelId, seq: found.entry.seq, rev });
+    this._log('INFO', 'team_chat.rewritten', { channel_id: logChannel(channelId), seq: found.entry.seq, rev });
     return { ok: true, rev, replayed: false, pruned };
   }
 }
 
-Object.assign(TeamChatStore.prototype, readStateMethods, readMethods, loaderMethods);
+Object.assign(TeamChatStore.prototype, readStateMethods, readMethods, loaderMethods, marksMethods, blobMethods,
+  roomMethods, removeMethods);
 
 module.exports = { TeamChatStore };

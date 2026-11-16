@@ -11,8 +11,12 @@
 // Electron's `parentPort` has no close event, so the desktop sends `ping` every
 // few seconds and a silence of `parentSilenceMs` is the stop message, once
 // (slice 1f-2). A late watchdog tick restarts the window instead of counting. `ping` is this file's own: it reaches no listener.
+// `team_deleting` (slice 5-6): the owner is deleting the team; it carries nothing.
+// `model_relay` (slice 6-7): inbound, the owner's relay setting `flowing` (0 off, 1 to 4 at once), applied without a
+// restart; outbound, the setting the relay holds and how many transfers flow through it now (`passing`), on change.
 
 const { PUBLIC_KEY_BYTES, decodeBase64url } = require('./ids');
+const { isRelayToken } = require('./invites');
 
 // Messages that arrive before the first listener subscribes are held (a parent
 // may send `start` the moment the child spawns) and handed to that listener.
@@ -23,7 +27,9 @@ const SYSTEM_CLOCK = Object.freeze({ now: () => Date.now(), setInterval, clearIn
 
 // The host's messages to its parent. The desktop supervisor parses the same table
 // (services/team/host/host-supervisor.js) with its own stricter value checks.
-// `owner_exists`: --team-init found an owner already, so no invite is coming.
+// `owner_exists`: --team-init found an owner already, so no invite is coming. `reach`: the
+// host's reachability verdict (server/team/transport/reach.js), sent on change. `mapped`: the
+// router's outside `ip:port` for the direct port, or null once it is gone; for the reconnect code.
 const OUTBOUND_FIELDS = Object.freeze({
   ready: ['type', 'boot_epoch', 'team_id', 'public_key', 'addresses'],
   owner_invite: ['type', 'invite'],
@@ -31,9 +37,15 @@ const OUTBOUND_FIELDS = Object.freeze({
   membership_changed: ['type', 'kind', 'member_id'],
   stopped: ['type'],
   error: ['type', 'reason'],
+  reach: ['type', 'result', 'reason'],
+  mapped: ['type', 'external'],
+  model_relay: ['type', 'flowing', 'passing'],
 });
 
 const PING = Object.freeze({ type: 'ping' });
+// The relay's highest flowing setting (model-manifest.js MODEL_TRANSFER_LIMITS.maxFlowingPerHost, pinned by a test;
+// not required here so the desktop's supervisor loads no model module).
+const MAX_RELAY_FLOWING = 4;
 
 function isPlainRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -47,10 +59,20 @@ function parseInbound(value) {
   const keys = Object.keys(value);
   if (value.type === 'stop') return keys.length === 1 ? Object.freeze({ type: 'stop' }) : null;
   if (value.type === 'ping') return keys.length === 1 ? PING : null;
+  // Slice 5-6: the desktop is deleting this team; the host tells connected members before it is stopped.
+  if (value.type === 'team_deleting') return keys.length === 1 ? Object.freeze({ type: 'team_deleting' }) : null;
+  if (value.type === 'model_relay') {
+    const n = value.flowing;
+    const ok = keys.length === 2 && Number.isSafeInteger(n) && n >= 0 && n <= MAX_RELAY_FLOWING;
+    return ok ? Object.freeze({ type: 'model_relay', flowing: n }) : null;
+  }
   if (value.type === 'start') {
-    if (keys.length !== 2 || !Object.hasOwn(value, 'host_key')) return null;
+    // `relay_token` is the owner's relay token; it arrives only here.
+    const withToken = Object.hasOwn(value, 'relay_token');
+    if (keys.length !== (withToken ? 3 : 2) || !Object.hasOwn(value, 'host_key')) return null;
     if (decodeBase64url(value.host_key, PUBLIC_KEY_BYTES) === null) return null;
-    return Object.freeze({ type: 'start', host_key: value.host_key });
+    if (withToken && !isRelayToken(value.relay_token)) return null;
+    return Object.freeze({ type: 'start', host_key: value.host_key, ...(withToken ? { relay_token: value.relay_token } : {}) });
   }
   return null;
 }
@@ -180,4 +202,4 @@ function createParentChannel(processLike = process, { parentSilenceMs = DEFAULT_
   };
 }
 
-module.exports = { createParentChannel, isOutbound };
+module.exports = { MAX_RELAY_FLOWING, createParentChannel, isOutbound };

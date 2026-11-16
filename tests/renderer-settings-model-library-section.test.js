@@ -2,17 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
 const {
-  createModelLibrarySectionController,
-} = require('../renderer/shell/renderer-settings-model-library-section');
-
-async function flush() {
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-}
+  flush, deferred, diagnostics, state, click, harness, contextMenuOptions, contextMenuItem, rowKeys,
+} = require('./helpers/model-library-section-harness');
 
 test('section publishes the first recommended fit and exposes the shared pull actions', async (t) => {
   const h = harness(t);
@@ -35,13 +28,12 @@ test('section publishes the first recommended fit and exposes the shared pull ac
   assert.equal(events, before + 1);
 });
 
-test('settings model status is empty with an active model and keeps catalog reasons', async (t) => {
+test('the catalog note is the one place a catalog failure and its reason show', async (t) => {
   const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
   for (const [model, available, reason, expected] of [
     ['installed:1b', true, '', ''],
-    ['installed:1b', false, 'Engine unreachable', 'Loaded model: installed:1b (catalog unavailable: Engine unreachable)'],
-    ['', false, 'Engine unreachable', 'Engine unreachable'],
-    ['', true, '', 'No model is currently loaded.'],
+    ['installed:1b', false, 'Engine unreachable', 'Model catalog unavailable: Engine unreachable Using the backend default; load actions may not work until the local engine is reachable.'],
+    ['', false, '', 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.'],
   ]) {
     const app = await loadRendererApp({ shell: {
       status: { async get() { return { model, model_loaded: Boolean(model) }; } },
@@ -51,211 +43,13 @@ test('settings model status is empty with an active model and keeps catalog reas
     // The Settings page paints on activation (renderAll no longer paints it on the chat view).
     app.window.document.querySelector('[data-tab-id="settings"]').click();
     await waitForUi(app.window, 20);
-    assert.equal(app.window.document.getElementById('modelStatus').textContent, expected);
+    const note = app.window.document.getElementById('modelCatalogEmpty');
+    assert.equal(note.textContent, expected);
+    assert.equal(note.hidden, !expected);
+    assert.equal(app.window.document.getElementById('modelStatus'), null);
     await app.dispose();
   }
 });
-
-function deferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-function makeDom() {
-  return new JSDOM(`<!doctype html><body>
-    <nav class="settings-nav">
-      <button data-settings-section="models">Models</button>
-    </nav>
-    <section class="settings-card settings-section-active" data-settings-section="models">
-      <div class="settings-card-header"><h3>Models</h3></div>
-      <div id="modelLibrarySectionToolbarHost"></div>
-      <div class="settings-note model-library-section-status" aria-live="polite"></div>
-      <div id="modelLibrarySectionHost"></div>
-    </section>
-  </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
-}
-
-function diagnostics() {
-  return {
-    hardwareProfile: {
-      gpu: { type: 'cuda', name: 'Test GPU', vram_mb: 12000 },
-      memory: { total_mb: 32000, available_mb: 24000 },
-    },
-    memory: { totalMb: 32000, availableMb: 24000 },
-    modelRecommendations: [
-      {
-        pullTag: 'installed:1b',
-        displayName: 'Installed model',
-        tier: 'Fast',
-        params: '1B',
-        recommended: false,
-        fitsInVram: true,
-        vramRequiredMb: 1000,
-      },
-      {
-        pullTag: 'recommended:3b',
-        displayName: 'Recommended model',
-        tier: 'Balanced',
-        params: '3B',
-        recommended: true,
-        fitsInVram: true,
-        vramRequiredMb: 3000,
-      },
-    ],
-    catalogMeta: { version: 4 },
-  };
-}
-
-function state() {
-  return {
-    features: {
-      featureFlags: {},
-    },
-    status: { model: '' },
-    offline: { preferredLocalModel: '' },
-    ui: { activeSettingsSection: 'models' },
-  };
-}
-
-function click(windowRef, element) {
-  element.dispatchEvent(new windowRef.MouseEvent('click', { bubbles: true }));
-}
-
-function harness(t, options = {}) {
-  const dom = makeDom();
-  const { window: windowRef } = dom;
-  const calls = [];
-  const inventoryContextMenu = options.inventoryContextMenu || {
-    show(config) { calls.push(['contextMenu.show', config]); },
-    hide() {},
-  };
-  const currentState = options.state || state();
-  const engine = { loadedModel: String(currentState.status?.model || '') };
-  let featureChanged = null;
-  let progressListener = null;
-  const models = {
-    async list() {
-      calls.push(['list']);
-      return { data: [{ id: 'installed:1b', size: 1024, engine_type: 'ollama' }] };
-    },
-    async listOllamaTags() {
-      calls.push(['listOllamaTags']);
-      return { data: [] };
-    },
-    async delete(payload) {
-      calls.push(['delete', payload]);
-      return { status: 'deleted' };
-    },
-    // The load/unload fakes mutate only engine-side state; the renderer's
-    // state.status moves solely through the refreshModelPickers snapshot sync
-    // below, mirroring the real seam (models.load cannot touch renderer state).
-    async load(payload) {
-      calls.push(['load', payload]);
-      engine.loadedModel = typeof payload === 'string' ? payload : payload.model;
-      return { status: 'ok', model: engine.loadedModel };
-    },
-    async unload() {
-      calls.push(['unload']);
-      engine.loadedModel = '';
-      return { status: 'ok', model: '' };
-    },
-    ...(options.models || {}),
-  };
-  const offline = {
-    async getDiagnostics() {
-      calls.push(['getDiagnostics']);
-      return diagnostics();
-    },
-    async updateSettings(payload) {
-      calls.push(['updateSettings', payload]);
-      return payload;
-    },
-    ...(options.offline || {}),
-  };
-  windowRef.jennyShell = {
-    models,
-    offline,
-    engines: {
-      async updateSettings(payload) {
-        calls.push(['engineSettings', payload]);
-        return { localEngines: { openaiCompatible: { managed: payload.managed } } };
-      },
-      ...(options.engines || {}),
-    },
-    llamaServer: {
-      async listLocalGgufs() { return { ok: true, entries: [] }; },
-      async getStatus() { return { ok: true, state: 'stopped' }; },
-      async chooseLibraryFolder() { return { ok: true, picked: false, path: '' }; },
-      ...(options.llamaServer || {}),
-    },
-    features: {
-      onChanged(listener) {
-        featureChanged = listener;
-        return () => { featureChanged = null; };
-      },
-    },
-  };
-  const setupService = {
-    subscribePullProgress(listener) {
-      progressListener = listener;
-      calls.push(['subscribePullProgress']);
-      return () => calls.push(['unsubscribePullProgress']);
-    },
-    async startOllamaPull(payload) {
-      calls.push(['startOllamaPull', payload]);
-      return { requestId: payload.requestId, status: 'running' };
-    },
-    async cancelOllamaPull(payload) {
-      calls.push(['cancelOllamaPull', payload]);
-      return { cancelled: true };
-    },
-    ...(options.setupService || {}),
-  };
-  const controllerDeps = {
-    state: currentState,
-    windowRef,
-    documentRef: windowRef.document,
-    appendClientLog: (...entry) => calls.push(['log', ...entry]),
-    refreshModelPickers: async () => {
-      calls.push(['refreshModelPickers']);
-      currentState.status = Object.assign({}, currentState.status, { model: engine.loadedModel });
-    },
-    openModelTuning: (...args) => calls.push(['tune', ...args]),
-    openDiagnostics: () => calls.push(['diagnostics']),
-    setupService,
-    inventoryContextMenu,
-  };
-  if (options.showToast !== false) {
-    controllerDeps.showToastMessage = (...args) => calls.push(['toast', ...args]);
-  }
-  const controller = createModelLibrarySectionController(controllerDeps);
-  t.after(() => controller.dispose());
-  return {
-    controller,
-    windowRef,
-    document: windowRef.document,
-    calls,
-    engine,
-    state: currentState,
-    card: windowRef.document.querySelector('.settings-card[data-settings-section="models"]'),
-    nav: windowRef.document.querySelector('.settings-nav [data-settings-section="models"]'),
-    featureChanged: () => featureChanged,
-    progressListener: () => progressListener,
-  };
-}
-
-function contextMenuOptions(h) {
-  return h.calls.slice().reverse().find((entry) => entry[0] === 'contextMenu.show')?.[1];
-}
-
-function contextMenuItem(h, label) {
-  return contextMenuOptions(h)?.items.find((item) => item.label === label);
-}
 
 test('controller exposes state and engine-settings sync methods', (t) => {
   const h = harness(t);
@@ -263,22 +57,18 @@ test('controller exposes state and engine-settings sync methods', (t) => {
   assert.equal(typeof h.controller.syncEngineSettings, 'function');
 });
 
-test('renders rows, filters through counted chips, and refreshes all isolated sources', async (t) => {
+test('renders the installed rows, switches scope through counted chips, and refreshes all isolated sources', async (t) => {
   const h = harness(t);
   h.controller.bind();
   await flush();
 
   assert.equal(h.card.hidden, false);
-  assert.equal(h.document.querySelectorAll('.model-row').length, 2);
+  assert.deepEqual(rowKeys(h), ['installed:1b']);
   assert.match(h.card.textContent, /Installed model/);
-  assert.match(h.card.textContent, /Recommended model/);
   assert.equal(h.card.querySelectorAll('.model-library-filter-chips').length, 1);
-  assert.equal(h.card.querySelector('[data-inv-chip="all"] .inv-chip-count').textContent, '2');
-  assert.equal(h.card.querySelector('[data-inv-chip="installed"] .inv-chip-count').textContent, '1');
-  assert.equal(h.card.querySelector('[data-inv-chip="recommended"] .inv-chip-count').textContent, '1');
 
-  click(h.windowRef, h.card.querySelector('[data-inv-chip="recommended"]'));
-  assert.equal(h.document.querySelectorAll('.model-row').length, 1);
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="scope-get"]'));
+  assert.deepEqual(rowKeys(h), ['recommended:3b']);
   assert.match(h.card.textContent, /Recommended model/);
   assert.doesNotMatch(h.card.textContent, /Installed model/);
 
@@ -307,64 +97,19 @@ test('the boot seed defers the first source load: startup reads the sources once
   assert.equal(h.calls.filter((entry) => entry[0] === 'getDiagnostics').length, 1);
 });
 
-test('GGUF folders render only behind llama-server acceleration', async (t) => {
-  const enabledState = state();
-  enabledState.features.featureFlags.llama_server_acceleration = true;
-  enabledState.localEngines = {
-    openaiCompatible: { managed: { libraryRoots: ['D:\\models\\gguf'] } },
-  };
-  const enabledHarness = harness(t, { state: enabledState });
-  enabledHarness.controller.bind();
+test('the folder, NInfer and Image engine hosts are no longer written into the Models page', async (t) => {
+  const flagged = state();
+  Object.assign(flagged.features.featureFlags, { llama_server_acceleration: true, tools_image_generate_enabled: true, ninfer: true });
+  flagged.localEngines = { openaiCompatible: { managed: { libraryRoots: ['D:\\models\\gguf'] } } };
+  const h = harness(t, { state: flagged });
+  h.controller.bind();
   await flush();
-  const host = enabledHarness.document.getElementById('modelLibraryFoldersHost');
-  assert.ok(host);
-  assert.match(host.textContent, /D:\\models\\gguf/);
-
-  const disabledState = state();
-  disabledState.features.featureFlags.llama_server_acceleration = false;
-  disabledState.localEngines = {
-    openaiCompatible: { managed: { libraryRoots: ['D:\\models\\must-not-render'] } },
-  };
-  const disabledHarness = harness(t, { state: disabledState });
-  disabledHarness.controller.bind();
-  await flush();
-  assert.equal(disabledHarness.document.getElementById('modelLibraryFoldersHost'), null);
+  for (const id of ['modelLibraryFoldersHost', 'modelLibraryNinferHost', 'modelLibraryImageEngineHost', 'modelLibrarySectionExtrasHost']) {
+    assert.equal(h.document.getElementById(id), null, `${id} belongs to the engine drawers now`);
+  }
+  assert.ok(h.card.querySelector('.mlib-searchline'), 'the library itself still renders');
 });
 
-test('the Image engine section renders only behind the image_generate kill switch', async (t) => {
-  const enabledState = state();
-  enabledState.features.featureFlags.tools_image_generate_enabled = true;
-  const enabledHarness = harness(t, { state: enabledState });
-  enabledHarness.windowRef.jennyShell.imageEngine = {
-    async getState() {
-      return { status: 'not_installed', engine_tag: 'master-929-3f8527a', download_size_bytes: 337915440,
-        handoff: { retained: false }, model_sets: { sets: [], default_id: null }, families: {} };
-    },
-    onChanged() { return () => {}; },
-  };
-  let subscribed = 0;
-  enabledHarness.windowRef.jennyShell.imageEngine.onChanged = () => { subscribed += 1; return () => { subscribed -= 1; }; };
-  enabledHarness.controller.bind();
-  await flush();
-  const host = enabledHarness.document.getElementById('modelLibraryImageEngineHost');
-  assert.ok(host);
-  assert.match(host.textContent, /Image engine/);
-  assert.match(host.textContent, /Install engine… \(322 MB\)/);
-  assert.equal(subscribed, 1);
-  // The flag turning off at runtime drops the section and its bridge subscription.
-  enabledState.features.featureFlags.tools_image_generate_enabled = false;
-  enabledHarness.controller.render();
-  await flush();
-  assert.equal(enabledHarness.document.getElementById('modelLibraryImageEngineHost'), null);
-  assert.equal(subscribed, 0);
-
-  const disabledState = state();
-  disabledState.features.featureFlags.tools_image_generate_enabled = false;
-  const disabledHarness = harness(t, { state: disabledState });
-  disabledHarness.controller.bind();
-  await flush();
-  assert.equal(disabledHarness.document.getElementById('modelLibraryImageEngineHost'), null);
-});
 
 test('an installed non-catalog model with a fit estimate renders an estimated fit row', async (t) => {
   const h = harness(t, {
@@ -395,11 +140,12 @@ test('an installed non-catalog model with a fit estimate renders an estimated fi
   h.controller.bind();
   await flush();
 
-  const row = [...h.document.querySelectorAll('.model-row')]
+  const row = [...h.document.querySelectorAll('.mrow')]
     .find((el) => el.textContent.includes('private/estimated:q4'));
   assert.ok(row);
-  const fit = row.querySelector('.model-row-fit-text');
+  const fit = row.querySelector('.mrow-fit');
   assert.doesNotMatch(fit.textContent, /estimated/);
+  assert.match(fit.textContent, /^~/, 'an estimate carries the ~');
   assert.match(fit.title, /estimated/);
 });
 
@@ -407,6 +153,7 @@ test('pull action starts one pull and patches only that row, leaving siblings an
   const h = harness(t);
   h.controller.bind();
   await flush();
+  click(h.windowRef, h.card.querySelector('[data-model-library-section-action="show-catalog"]'));
 
   const untouchedBefore = h.card.querySelector('[data-model-key="installed:1b"]');
   const targetBefore = h.card.querySelector('[data-model-key="recommended:3b"]');
@@ -427,7 +174,7 @@ test('pull action starts one pull and patches only that row, leaving siblings an
   assert.equal(h.calls.filter((entry) => entry[0] === 'startOllamaPull').length, 1);
 });
 
-test('row-only rerenders preserve focus on the same model action', async (t) => {
+test('a rerender keeps unchanged rows and puts focus back on the same action of a repainted row', async (t) => {
   const h = harness(t);
   h.controller.bind();
   await flush();
@@ -436,14 +183,19 @@ test('row-only rerenders preserve focus on the same model action', async (t) => 
     '[data-model-key="installed:1b"] [data-model-card-action="tune"]'
   );
   tuneBefore.focus();
-  // A filter-chip click runs a full render (toolbar + rows), which rebuilds
-  // every row; the focused action must land on its rebuilt twin.
-  click(h.windowRef, h.card.querySelector('[data-inv-chip="all"]'));
+  // A scope-chip click re-renders the rows; an unchanged row keeps its node and its focus.
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="scope-all"]'));
+  assert.equal(h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="tune"]'), tuneBefore);
+  assert.equal(h.document.activeElement, tuneBefore);
 
+  // A changed row is repainted; the focused action must land on its new twin.
+  h.state.offline.preferredLocalModel = 'installed:1b';
+  h.controller.syncFromState();
   const tuneAfter = h.card.querySelector(
     '[data-model-key="installed:1b"] [data-model-card-action="tune"]'
   );
   assert.notEqual(tuneAfter, tuneBefore);
+  assert.match(h.card.querySelector('[data-model-key="installed:1b"]').textContent, /Local default/);
   assert.equal(h.document.activeElement, tuneAfter);
 });
 
@@ -477,22 +229,17 @@ test('row menu enables Ollama removal, opens the existing modal, and confirms de
   assert.equal(h.card.querySelector('.model-library-section-status').textContent, '"installed:1b" removed.', 'the refresh keeps the result');
 });
 
-test('row menu disables removal for the loaded model', async (t) => {
-  // The standalone Remove button was gated on active !== true; the overflow
-  // menu is now the only Remove path, and models.delete rejects the loaded
-  // model with model_in_use, so the item must not be offered as enabled.
+test('the loaded model is not a library row, so the library offers no way to remove it', async (t) => {
+  // Running now shows the loaded model. The overflow menu is the only Remove
+  // path and models.delete rejects the loaded model with model_in_use.
   const activeState = state();
   activeState.status.model = 'installed:1b';
   const h = harness(t, { state: activeState });
   h.controller.bind();
   await flush();
 
-  const row = h.card.querySelector('[data-model-key="installed:1b"]');
-  assert.equal(row.getAttribute('data-active'), 'true');
-  click(h.windowRef, row.querySelector('[data-model-card-action="menu"]'));
-
-  assert.equal(contextMenuItem(h, 'Remove…').disabled, true);
-  assert.equal(contextMenuItem(h, 'Copy tag').disabled, undefined);
+  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null);
+  assert.equal(h.card.querySelector('[data-model-card-action="menu"]'), null);
 });
 
 test('row menu disables removal for a vllm model', async (t) => {
@@ -584,7 +331,7 @@ test('a background row render never dismisses a context menu this section did no
   h.controller.bind();
   await flush();
 
-  h.state.status.model = 'installed:1b';
+  h.state.offline.preferredLocalModel = 'recommended:3b';
   h.controller.syncFromState();
   assert.deepEqual(hides, []);
 
@@ -621,10 +368,7 @@ test('use activates through the model lifecycle, persists preference after succe
     h.calls.find((entry) => entry[0] === 'toast'),
     ['toast', 'Now chatting with "installed:1b"', { tone: 'success' }]
   );
-  const activeCard = h.card.querySelector('[data-model-key="installed:1b"]');
-  assert.equal(activeCard.dataset.active, 'true');
-  assert.match(activeCard.textContent, /Active/);
-  assert.ok(activeCard.querySelector('[data-model-card-action="unload"]'));
+  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model leaves the library for Running now');
 });
 
 test('use renders its pending card synchronously before the load settles', async (t) => {
@@ -692,7 +436,7 @@ test('preferred-model persistence failure stays a successful activation', async 
   ));
   await flush();
 
-  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]').dataset.active, 'true');
+  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model is no library row');
   assert.ok(h.calls.some((entry) => entry[0] === 'toast'));
   assert.ok(h.calls.some((entry) => entry[0] === 'log'
     && entry[2] === 'model_library.preferred_local_update_failed'));
@@ -716,7 +460,7 @@ test('an unacknowledged preference echo is reported as a preference failure, not
   ));
   await flush();
 
-  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]').dataset.active, 'true');
+  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model is no library row');
   assert.notEqual(h.state.offline.preferredLocalModel, 'installed:1b');
   assert.ok(h.calls.some((entry) => entry[0] === 'log'
     && entry[2] === 'model_library.preferred_local_update_failed'));
@@ -726,6 +470,11 @@ test('an unacknowledged preference echo is reported as a preference failure, not
   );
 });
 
+// Running now owns Unload.
+function runningNowUnload(h) {
+  return h.document.querySelector('#modelRunningHost [data-model-card-action="unload"]');
+}
+
 test('unload succeeds for the canonical active model and refreshes on a stale active card', async (t) => {
   const activeState = state();
   activeState.status.model = 'installed:1b';
@@ -733,9 +482,7 @@ test('unload succeeds for the canonical active model and refreshes on a stale ac
   active.controller.bind();
   await flush();
 
-  click(active.windowRef, active.card.querySelector(
-    '[data-model-key="installed:1b"] [data-model-card-action="unload"]'
-  ));
+  click(active.windowRef, runningNowUnload(active));
   await flush();
   assert.deepEqual(active.calls.find((entry) => entry[0] === 'unload'), ['unload']);
   assert.deepEqual(
@@ -752,9 +499,7 @@ test('unload succeeds for the canonical active model and refreshes on a stale ac
   const stale = harness(t, { state: staleState });
   stale.controller.bind();
   await flush();
-  const staleUnload = stale.card.querySelector(
-    '[data-model-key="installed:1b"] [data-model-card-action="unload"]'
-  );
+  const staleUnload = runningNowUnload(stale);
   staleState.status.model = 'changed:2b';
   stale.engine.loadedModel = 'changed:2b';
   click(stale.windowRef, staleUnload);
@@ -790,7 +535,7 @@ test('controller without a toast dependency completes activation through the liv
   );
 });
 
-test('split hosts populate while full renders preserve the live region and pull-tag focus', async (t) => {
+test('split hosts populate while full renders preserve the live region and search focus', async (t) => {
   const h = harness(t);
   h.controller.bind();
   await flush();
@@ -799,16 +544,15 @@ test('split hosts populate while full renders preserve the live region and pull-
   const rowsHost = h.document.getElementById('modelLibrarySectionHost');
   const statusBefore = h.card.querySelector('.model-library-section-status');
   assert.match(toolbarHost.textContent, /All/);
-  assert.match(toolbarHost.textContent, /Test GPU/);
-  assert.equal(rowsHost.querySelectorAll('.model-row').length, 2);
+  assert.equal(rowsHost.querySelectorAll('.mrow').length, 1);
   statusBefore.textContent = 'Persistent status';
-  const inputBefore = h.card.querySelector('[data-model-library-section-input="pull-tag"]');
+  const inputBefore = h.card.querySelector('[data-model-library-section-input="search"]');
   inputBefore.value = 'recommended:3b';
   inputBefore.focus();
   inputBefore.setSelectionRange(2, 9, 'forward');
   h.controller.render();
 
-  const inputAfter = h.card.querySelector('[data-model-library-section-input="pull-tag"]');
+  const inputAfter = h.card.querySelector('[data-model-library-section-input="search"]');
   assert.equal(h.card.querySelector('.model-library-section-status'), statusBefore);
   assert.equal(statusBefore.textContent, 'Persistent status');
   assert.equal(h.document.activeElement, inputAfter);
@@ -867,7 +611,7 @@ test('a row re-render keeps the open delete modal and the focus inside it', asyn
   assert.equal(h.document.activeElement, modal.querySelector('[data-step-modal-action="cancel"]'), 'Cancel takes focus first');
   const confirm = modal.querySelector('[data-step-modal-action="confirm"]');
   confirm.focus();
-  click(h.windowRef, h.card.querySelector('[data-inv-chip="all"]')); // a full render (toolbar + rows)
+  h.controller.render(); // a full render (toolbar + rows)
   assert.equal(h.document.querySelectorAll(modalSelector).length, 1);
   assert.equal(h.document.querySelector(modalSelector), modal, 'the same dialog node stays');
   assert.equal(h.document.activeElement, confirm);
@@ -882,6 +626,7 @@ test('pull completion performs no stale-card repaint before the terminal refresh
   const h = harness(t);
   h.controller.bind();
   await flush();
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="scope-get"]'));
 
   click(h.windowRef, h.card.querySelector(
     '[data-model-key="recommended:3b"] [data-model-card-action="pull"]'
@@ -906,25 +651,22 @@ test('unthrottled pull progress for an off-list tag never rebuilds the whole row
   h.controller.bind();
   await flush();
 
-  const input = h.card.querySelector('[data-model-library-section-input="pull-tag"]');
+  const input = h.card.querySelector('[data-model-library-section-input="search"]');
   input.value = 'ghost:7b';
   input.dispatchEvent(new h.windowRef.Event('input', { bubbles: true }));
   click(h.windowRef, h.card.querySelector('[data-model-library-section-action="pull-tag"]'));
 
   // 'ghost:7b' is neither installed nor in the catalog, so no row carries its
   // key and replaceRow always misses. Only the start transition may repaint.
-  const listAfterStart = h.document.getElementById('modelLibrarySectionHost').firstElementChild;
-  const rowAfterStart = h.card.querySelector('[data-model-key="installed:1b"]');
+  const listAfterStart = h.card.querySelector('.mrow-list');
+  const pullRowAfterStart = h.card.querySelector('.mrow--pull');
   const startCall = h.calls.find((entry) => entry[0] === 'startOllamaPull');
   for (const percent of [10, 45, 90]) {
     h.progressListener()({ requestId: startCall[1].requestId, status: 'pulling', percent });
   }
 
-  assert.equal(
-    h.document.getElementById('modelLibrarySectionHost').firstElementChild,
-    listAfterStart
-  );
-  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), rowAfterStart);
+  assert.equal(h.card.querySelector('.mrow-list'), listAfterStart);
+  assert.equal(h.card.querySelector('.mrow--pull'), pullRowAfterStart);
 });
 
 test('in-flight activation and deletion latches surface bounded status instead of dropping clicks', async (t) => {
@@ -987,9 +729,12 @@ test('failed row routes recovery and repaints when the failure changes or clears
   h.windowRef.jennyShell.modelTuning = { async update(payload) { h.calls.push(['persist', payload]); return { status: 'applied' }; } };
   h.controller.bind();
   await flush();
-  const row = () => [...h.card.querySelectorAll('.model-row')].find((el) => el.querySelector('[data-model-tag="qwen3:8b"]'));
+  const row = () => [...h.card.querySelectorAll('.mrow')].find((el) => el.querySelector('[data-model-tag="qwen3:8b"]'));
   assert.equal(row().dataset.loadFailed, 'true');
   assert.match(row().textContent, /Didn't load/);
+  click(h.windowRef, row().querySelector('[data-model-card-action="showFits"]'));
+  assert.equal(h.card.querySelector('[data-inv-chip="scope-get"]').getAttribute('aria-pressed'), 'true', 'Show models that fit opens the downloadable scope');
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="scope-all"]'));
   click(h.windowRef, row().querySelector('[data-model-card-action="loadSmaller"]'));
   await flush();
   const persistIndex = h.calls.findIndex(([action]) => action === 'persist');
@@ -997,9 +742,11 @@ test('failed row routes recovery and repaints when the failure changes or clears
   assert.deepEqual(h.calls[persistIndex], ['persist', { modelId: 'qwen3:8b', contextLength: 32768 }]);
   assert.ok(loadIndex > persistIndex);
   assert.equal(h.calls[loadIndex][1].model || h.calls[loadIndex][1], 'qwen3:8b');
-  click(h.windowRef, row().querySelector('[data-model-card-action="showFits"]'));
-  assert.equal(h.card.querySelector('[data-inv-chip="recommended"]').getAttribute('aria-pressed'), 'true');
-  click(h.windowRef, h.card.querySelector('[data-inv-chip="all"]'));
+  // The model loaded, so Running now owns it; unload it to see the library row again.
+  assert.equal(row(), undefined);
+  current.status.model = '';
+  h.engine.loadedModel = '';
+  h.controller.syncFromState();
   current.backend.model_lifecycle.failure = { ...failure, cause: 'timeout', at: '2026-10-07T12:01:00Z' };
   h.controller.syncFromState();
   assert.ok(row().querySelector('[data-model-card-action="retry"]'));
@@ -1013,3 +760,5 @@ test('failed row routes recovery and repaints when the failure changes or clears
   assert.equal(row().dataset.loadFailed, 'false');
   assert.doesNotMatch(row().textContent, /Didn't load/);
 });
+
+// --- Settings > Models > Library: one search line, scope chips, sort, keyed rows ---

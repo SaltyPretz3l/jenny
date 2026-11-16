@@ -91,6 +91,8 @@
     if (raw === 'notes') return 'notes';
     // The browser panel (renderer-browser-use-panel.js). Renderer-local too: its page never outlives the app.
     if (raw === 'browser') return 'browser';
+    // The Background tasks panel (row 138, renderer-background-tasks-panel.js). Renderer-local like `notes`.
+    if (raw === 'background_tasks') return 'background_tasks';
     return 'artifact';
   }
 

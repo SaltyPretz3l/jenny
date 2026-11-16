@@ -47,7 +47,10 @@ test('a restored unresolved row stays in attention without Stop or background re
 
 test('source failure invalidates existing subscribers and recovery advances revision',()=>{
  let fail=false,listener;const notices=[];
- const source={getActivityRuns:()=>{if(fail)throw Error('offline');return [row('one')];},subscribeActivity:fn=>{listener=fn;return()=>{};}};
+ // One row object: row() stamps the current time, and a fresh stamp on every read made the
+ // projection see a change (and add a revision) whenever a millisecond ticked between two reads.
+ const one=row('one');
+ const source={getActivityRuns:()=>{if(fail)throw Error('offline');return [one];},subscribeActivity:fn=>{listener=fn;return()=>{};}};
  const projection=createActivityProjection({source,enabled:()=>true,resolveScope:scope=>({scope,matches:()=>true}),notify:n=>notices.push(n)});
  const first=projection.getSnapshot(query);fail=true;listener();
  assert.equal(notices.at(-1).revision,first.revision+1);

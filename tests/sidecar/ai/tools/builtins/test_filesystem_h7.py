@@ -282,8 +282,13 @@ def test_read_file_accepts_exact_full_read_byte_cap(tmp_path: Path) -> None:
 
     assert result.success is True
     # Over the output budget the read comes back as a window; its one line is
-    # still the whole file.
-    assert len(result.output.split("\n\n", 1)[1].encode("utf-8")) == MAX_READ_BYTES
+    # the whole file, clipped to the per-line cap with its true length.
+    body = result.output.split("\n\n", 1)[1]
+    assert body == "a" * 2000 + f" [line clipped: {MAX_READ_BYTES} chars]"
+    assert "1 long line clipped" in result.output
+    # Every byte was hashed (full snapshot) but the model saw the line clipped.
+    assert _snapshot(result)["scope"] == "full"
+    assert result.metadata["content_display_truncated"] is True
 
 
 def test_read_file_includes_path_in_size_limit_error(tmp_path: Path) -> None:
@@ -876,18 +881,23 @@ def test_read_file_pagination_truncates_when_selected_output_exceeds_byte_cap(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "truncated-window.txt"
-    oversized_line = ("a" * (filesystem_module.MAX_PAGINATED_OUTPUT_BYTES // 2)) + "\n"
-    target.write_text(oversized_line * 3, encoding="utf-8", newline="")
+    # Lines just under the per-line cap, so nothing is clipped and the 200 KB
+    # byte cap is what stops the selection.
+    wide_line = ("a" * 1999) + "\n"
+    row_count = filesystem_module.MAX_PAGINATED_OUTPUT_BYTES // len(wide_line) + 20
+    target.write_text(wide_line * row_count, encoding="utf-8", newline="")
 
     result = read_file_tool(
-        {"path": "truncated-window.txt", "offset": 0, "limit": 3}, _guard(tmp_path)
+        {"path": "truncated-window.txt", "offset": 0, "limit": row_count}, _guard(tmp_path)
     )
 
     assert isinstance(result, ToolHandlerResult)
     assert result.metadata["truncated_by_bytes"] is True
-    assert result.metadata["returned_line_count"] == 1
+    returned = result.metadata["returned_line_count"]
+    assert isinstance(returned, int) and 0 < returned < row_count
     assert "truncated: selected output exceeded" in result.output
-    assert result.output.endswith(oversized_line)
+    assert "clipped" not in result.output
+    assert result.output.endswith(wide_line)
     # Offset 0 alone must NOT authorize a write: a byte-truncated window never showed the
     # whole file, so the snapshot stays partial (guards against a false read-before-write
     # authorize / silent data loss on the next overwrite).
@@ -898,19 +908,21 @@ def test_read_file_pagination_truncates_when_selected_output_exceeds_byte_cap(
 
 def test_read_file_pagination_guards_large_single_line_payloads(tmp_path: Path) -> None:
     target = tmp_path / "large-line.txt"
-    target.write_text(
-        "a" * (filesystem_module.MAX_PAGINATED_OUTPUT_BYTES + 64),
-        encoding="utf-8",
-        newline="",
-    )
+    line_chars = filesystem_module.MAX_PAGINATED_OUTPUT_BYTES + 64
+    target.write_text("a" * line_chars, encoding="utf-8", newline="")
 
     result = read_file_tool({"path": "large-line.txt", "offset": 0, "limit": 1}, _guard(tmp_path))
 
     assert isinstance(result, ToolHandlerResult)
-    assert result.metadata["truncated_by_bytes"] is True
-    assert result.metadata["returned_line_count"] == 0
-    assert "returned: lines empty of 1" in result.output
-    assert "truncated: selected output exceeded" in result.output
+    # The oversized line is returned clipped with its true length instead of
+    # being dropped, and the clipped read can never license a write.
+    assert result.metadata["truncated_by_bytes"] is False
+    assert result.metadata["returned_line_count"] == 1
+    assert f"[line clipped: {line_chars} chars]" in result.output
+    assert "1 long line clipped" in result.output
+    snapshot = _snapshot(result)
+    assert snapshot["scope"] == "partial"
+    assert "sha256" not in snapshot
 
 
 def test_read_file_image_support_stays_disabled_by_default(tmp_path: Path) -> None:

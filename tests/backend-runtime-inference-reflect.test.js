@@ -74,3 +74,34 @@ test('memory.reflect refuses an OpenAI-compatible endpoint that is not on this m
   await assert.rejects(requestRuntimeInference(target, 'memory.reflect', { session_id: 's1' },
     { sessionId: 's1', engineType: 'openai-compatible' }), error => error.reason !== 'runtime_route_not_local');
 });
+
+// Slice 4b member wiring, fix list items 3 and 19: while a team model is loaded only the chat that chose it
+// reaches the team host. One case per caller of requestRuntimeInference, with the params that caller sends.
+test('4b member wiring: a loaded team model refuses every caller but its own chat, through the runtime and the legacy path', async () => {
+  const selection = { id: 'team/team_alpha1/alpha', teamId: 'team_alpha1', modelId: 'alpha' };
+  const withTeam = (target) => Object.assign(target, { currentEngineType: 'openai-compatible', _teamEngineSelection: selection,
+    configService: { getState: () => ({ localEngines: { openaiCompatible: { apiUrl: 'http://127.0.0.1:8080/v1' } } }) } });
+  const target = withTeam(service());
+  const legacyCalls = [];
+  const legacy = withTeam({ featureFlags: {}, _emitServiceLog() {}, sidecarClient: {
+    request: async (method) => { legacyCalls.push(method); return {}; } } });
+  // backend-suggestions.js (titles, memory titles, the briefing) and backend-commit.js (the staged diff).
+  for (const [method, params] of [['suggestions.generate', { recent_session_titles: ['t'] }],
+    ['commit.generate_message', { diff: 'd' }]]) {
+    for (const owner of [target, legacy]) {
+      await assert.rejects(requestRuntimeInference(owner, method, params),
+        (error) => error.reason === 'team_engine_other_chat' && error.error_code === 'CMP-TEAM-0010', method);
+    }
+  }
+  // memory-reflection-run.js / memory-reflection-scheduler.js and session-auto-title.js: refused as not local.
+  await assert.rejects(requestRuntimeInference(target, 'memory.reflect', { session_id: 's1' }, { sessionId: 's1' }),
+    (error) => error.reason === 'runtime_route_not_local');
+  await assert.rejects(requestRuntimeInference(target, 'session.generate_title', { messages: [] }),
+    (error) => error.reason === 'runtime_route_not_local');
+  assert.deepEqual([target.calls.length, legacyCalls.length], [0, 0], 'no text left for the team host');
+  assert.equal(target.sessionRuntime.lanes.snapshot().active_leases, 0);
+  // chat.compact and handoff.generate_note (backend-chat-stream.js, backend-handoff.js) pass this gate: their
+  // own team_engine_other_chat check runs in prepareSessionHistoryRequest (backend-service-compact-context).
+  await requestRuntimeInference(legacy, 'handoff.generate_note', { session_id: 's1' }, { sessionId: 's1' });
+  assert.deepEqual(legacyCalls, ['handoff.generate_note']);
+});

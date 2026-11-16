@@ -125,7 +125,10 @@ STAGES: list[Stage] = [
     # and left the wave mostly idle); it still never overlaps the Node lane.
     Stage("pytest_sidecar", _PYTEST_CMD, wave=1),
     Stage("coverage_ratchet_sidecar", _COVERAGE_RATCHET_CMD, wave=3),
-    Stage("node_test_safe", _NODE_TEST_CMD, wave=3, env={"JENNY_TEST_WORKERS": _NODE_WORKERS}),
+    # JENNY_REQUIRE_PYTHON_TESTS: without a .venv the safe runner leaves the
+    # sidecar-backed suites out of a directory run; at this gate that is a failure.
+    Stage("node_test_safe", _NODE_TEST_CMD, wave=3,
+          env={"JENNY_TEST_WORKERS": _NODE_WORKERS, "JENNY_REQUIRE_PYTHON_TESTS": "1"}),
 ]
 
 _PRINT_LOCK = threading.Lock()

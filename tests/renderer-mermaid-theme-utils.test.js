@@ -126,6 +126,21 @@ const PALETTE_FIXTURES = [
     },
   },
   {
+    paletteId: 'aurora',
+    mode: 'dark',
+    tokens: {
+      '--bg-surface': '#16222f',
+      '--surface-input-background': '#132030',
+      '--bg-panel': '#0b141e',
+      '--surface-input-background-strong': '#0d1723',
+      '--text-primary': '#eef4f7',
+      '--accent': '#5fd3a0',
+      '--accent-cyan': '#74bde0',
+      '--border-default': 'rgba(150, 182, 208, 0.14)',
+      color: '#eef4f7',
+    },
+  },
+  {
     paletteId: 'lexicon',
     mode: 'dark',
     tokens: {

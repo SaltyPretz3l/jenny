@@ -1,5 +1,5 @@
 /* renderer/features/renderer-ide-palette-commands.js - Workspace IDE palette rows
- * (row 82, VS Code parity; plan docs/plans/IDE_VSCODE_PARITY_2026-10-26.md
+ * (row 82; plan docs/plans/IDE_VSCODE_PARITY_2026-10-26.md
  * sections 6.1, 6.2 and 7.2 "Slice C").
  *
  * Registers the file, view, focus, problem, run and terminal rows on the command
@@ -30,6 +30,10 @@
     const value = String(id || '');
     return REVIEW_PREFIXES.some((prefix) => value.startsWith(prefix));
   }
+
+  // Outside-Workspace documents (row 137) are keyed outside://<id>/<name>.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+  const isOutsideId = (id) => outsideDocs()?.isOutsideKey(id) === true;
 
   // The shared command registry (loaded before this module on the IDE manifest).
   const registryUtils = (typeof globalThis !== 'undefined' && globalThis.rendererIdeCommandRegistry) || require('./renderer-ide-command-registry');
@@ -77,9 +81,15 @@
       return fromHost || String(getIde().activeTabPath || '');
     }
 
+    // A Workspace-relative path; '' for review tabs and outside documents (which have their own rows).
     function activeFilePath() {
       const path = activeTabId();
-      return path && !isReviewId(path) ? path : '';
+      return path && !isReviewId(path) && !isOutsideId(path) ? path : '';
+    }
+
+    function activeOutsideKey() {
+      const path = activeTabId();
+      return isOutsideId(path) ? path : '';
     }
 
     function openTabs() {
@@ -118,8 +128,10 @@
       label: jt('ide.paletteCommands.revertFile', 'File: Revert File'),
       description: jt('ide.paletteCommands.revertFileDescription', 'Reload the active file from disk and discard your edits'),
       // The reload seam the Source Control discard uses: capture, reload (allowing a dirty buffer), release.
-      when: (ctx) => ctx.hasActiveFile && has(d.getFileLifecycle?.(), 'reloadAfterGitDiscard'),
+      when: (ctx) => ctx.activeKind === 'outside' || (ctx.hasActiveFile && has(d.getFileLifecycle?.(), 'reloadAfterGitDiscard')),
       run: async () => {
+        const outsideKey = activeOutsideKey();
+        if (outsideKey) return outsideDocs().revert(outsideKey);
         const lifecycle = d.getFileLifecycle();
         const path = activeFilePath();
         const snapshot = path ? lifecycle.captureGitDiscard?.(path) : null;
@@ -184,8 +196,10 @@
       id: 'ide:copy-path',
       label: jt('ide.paletteCommands.copyPath', 'File: Copy Path of Active File'),
       description: jt('ide.paletteCommands.copyPathDescription', 'Copy the full path of the active file'),
-      when: (ctx) => canCopy(ctx) && typeof d.getWorkspaceRoot === 'function',
+      when: (ctx) => (ctx.activeKind === 'outside' ? has(d.getClipboardApi?.(), 'writeText') : canCopy(ctx) && typeof d.getWorkspaceRoot === 'function'),
       run: () => {
+        const outsideKey = activeOutsideKey();
+        if (outsideKey) return copyText(outsideDocs().displayPathFor(outsideKey), 'ide:copy-path');
         const path = activeFilePath();
         const absolute = path ? joinRootPath(d.getWorkspaceRoot()?.rootPath, path) : '';
         return absolute ? copyText(absolute, 'ide:copy-path') : undefined;
@@ -199,6 +213,31 @@
       run: () => {
         const path = activeFilePath();
         return path ? copyText(path, 'ide:copy-relative-path') : undefined;
+      },
+    });
+
+    // Row 137: files from outside the Workspace (native picker in main; the bridge may be missing).
+    const outsideBridge = () => (d.windowRef || globalThis).jennyShell?.outsideFiles || null;
+    add({
+      id: 'ide:open-outside-file',
+      label: jt('ide.paletteCommands.openOutsideFile', 'File: Open File...'),
+      description: jt('ide.paletteCommands.openOutsideFileDescription', 'Open a file from anywhere on this computer in the editor'),
+      when: () => typeof outsideBridge()?.pick === 'function',
+      run: () => outsideBridge().pick(),
+    });
+    add({
+      id: 'ide:outside-attach',
+      label: jt('ide.paletteCommands.outsideAttach', 'Attach File to Chat'),
+      description: jt('ide.paletteCommands.outsideAttachDescription', 'Attach the active file to the current chat'),
+      when: (ctx) => ctx.activeKind === 'outside',
+      run: async () => {
+        const key = activeOutsideKey();
+        if (!key) return;
+        const result = await outsideDocs().attachToChat(key, String(d.state?.currentSessionId || ''));
+        if (!result || result.ok === false) {
+          const name = outsideDocs().describe(key)?.name || key.split('/').pop();
+          d.showToastMessage?.(jt('ide.outside.attachFailed', 'Couldn’t attach {name}.', { name }), { dedupeKey: 'ide:outside:attach' });
+        }
       },
     });
 

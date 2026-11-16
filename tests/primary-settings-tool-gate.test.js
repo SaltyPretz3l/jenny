@@ -17,7 +17,7 @@ const PLACEMENT = ['project_create', 'projects_list']; // row 94 P2
 const SCHEDULE = ['schedule_change', 'schedule_list']; // row 85
 const VIEW = ['app_view']; // row 94 P3
 const P4 = ['session_export', 'terminal_run']; // row 94 P4: the export and terminal_run (same gate; terminal_read reaches project chats)
-const NAMES = [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run']; // sorted, as the gate sorts a deny list
+const NAMES = [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run']; // sorted, as the gate sorts a deny list
 const PRIMARY = { id: 'p', session_role: 'primary' };
 
 test('the gate names the settings and chat tools, which are Helpers tools and not always on (so the deny list holds)', () => {
@@ -42,7 +42,7 @@ test('an ordinary chat gets every primary-only tool added to its deny list, keep
   assert.deepEqual(withPrimarySettingsToolGate(service, { session }, undefined), { disabled_tools: NAMES });
   assert.deepEqual(withPrimarySettingsToolGate(service, { session },
     { disabled_tools: ['read_file', 'settings_get'], disabled_tool_families: ['web'] }),
-  { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run'], disabled_tool_families: ['web'] });
+  { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run'], disabled_tool_families: ['web'] });
   assert.deepEqual(withPrimarySettingsToolGate(service, { session }, ['not', 'an', 'object']), { disabled_tools: NAMES });
 });
 
@@ -82,19 +82,19 @@ test('each kill switch leaves only its own tools alone (the tools are not regist
   const target = { session: { id: 's' } };
   const settingsOff = { featureFlags: { primary_settings_writes: false } };
   assert.equal(primarySettingsToolsOffered(settingsOff, target), true);
-  assert.deepEqual(withPrimarySettingsToolGate(settingsOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'terminal_run'] });
+  assert.deepEqual(withPrimarySettingsToolGate(settingsOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', 'terminal_run'] });
   const chatOff = { featureFlags: { primary_chat_manage: false } };
   assert.equal(primaryChatManageToolsOffered(chatOff, target), true);
-  assert.deepEqual(withPrimarySettingsToolGate(chatOff, target, prefs), { disabled_tools: [...VIEW, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(withPrimarySettingsToolGate(chatOff, target, prefs), { disabled_tools: [...VIEW, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run'] });
   const scheduleOff = { featureFlags: { primary_scheduled_checks: false } };
   assert.equal(primaryScheduleToolsOffered(scheduleOff, target), true);
-  assert.deepEqual(withPrimarySettingsToolGate(scheduleOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', 'session_export', ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(withPrimarySettingsToolGate(scheduleOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run'] });
   const placementOff = { featureFlags: { primary_chat_placement: false } };
   assert.equal(primaryChatPlacementToolsOffered(placementOff, target), true);
-  assert.deepEqual(withPrimarySettingsToolGate(placementOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, 'read_file', ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(withPrimarySettingsToolGate(placementOff, target, prefs), { disabled_tools: [...VIEW, ...CHAT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run'] });
   const viewOff = { featureFlags: { primary_app_view: false } };
   assert.equal(primaryAppViewToolsOffered(viewOff, target), true);
-  assert.deepEqual(withPrimarySettingsToolGate(viewOff, target, prefs), { disabled_tools: [...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(withPrimarySettingsToolGate(viewOff, target, prefs), { disabled_tools: [...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run'] });
   // Row 94 P4: each of the two new switches lifts only its own tool.
   const exportOff = { featureFlags: { primary_chat_export: false } };
   assert.equal(primaryExportToolsOffered(exportOff, target), true);
@@ -102,7 +102,7 @@ test('each kill switch leaves only its own tools alone (the tools are not regist
   const terminalOff = { featureFlags: { terminal_tools: false } };
   assert.equal(primaryTerminalToolsOffered(terminalOff, target), true);
   assert.deepEqual(withPrimarySettingsToolGate(terminalOff, target, prefs).disabled_tools.filter((name) => P4.includes(name)), ['session_export']);
-  const allOff = { featureFlags: { primary_settings_writes: false, primary_chat_manage: false, primary_chat_placement: false, primary_scheduled_checks: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false } };
+  const allOff = { featureFlags: { primary_settings_writes: false, primary_chat_manage: false, primary_chat_placement: false, primary_scheduled_checks: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false, tools_session_directory_enabled: false } };
   assert.equal(withPrimarySettingsToolGate(allOff, target, prefs), prefs);
 });
 
@@ -129,10 +129,10 @@ test('away_digest (row 86, default off) is denied to every other chat only once 
   }
   const on = { featureFlags: { primary_digests: true } };
   assert.equal(primaryDigestToolsOffered(on, ordinary), false);
-  assert.deepEqual(withPrimarySettingsToolGate(on, ordinary, prefs).disabled_tools, [...VIEW, 'away_digest', ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run']);
+  assert.deepEqual(withPrimarySettingsToolGate(on, ordinary, prefs).disabled_tools, [...VIEW, 'away_digest', ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', 'session_prioritize', ...SETTINGS, 'terminal_run']);
   assert.equal(primaryDigestToolsOffered(on, { session: PRIMARY }), true);
   assert.equal(primaryDigestToolsOffered({ featureFlags: { primary_digests: true, primary_chat: false } }, { session: PRIMARY }), false);
   assert.equal(primaryDigestToolsOffered(on, { session: { get session_role() { throw new Error('boom'); } } }), false);
-  const allOff = { featureFlags: { primary_settings_writes: false, primary_chat_manage: false, primary_chat_placement: false, primary_scheduled_checks: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false } };
+  const allOff = { featureFlags: { primary_settings_writes: false, primary_chat_manage: false, primary_chat_placement: false, primary_scheduled_checks: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false, tools_session_directory_enabled: false } };
   assert.equal(withPrimarySettingsToolGate(allOff, ordinary, prefs), prefs);
 });

@@ -367,8 +367,8 @@ class TestGenerateWithTools:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "inspect"},
                     {"type": "image_url", "image_url": {"url": image.as_data_uri()}},
+                    {"type": "text", "text": "inspect"},
                 ],
             },
             {"role": "assistant", "content": "prior answer"},

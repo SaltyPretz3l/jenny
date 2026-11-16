@@ -27,6 +27,7 @@
       'atomic-burst': ['rendererAtomicBurstUtils', 'createAtomicBurstController'],
       'circuit-trace': ['rendererCircuitTraceUtils', 'createCircuitTraceController'],
       'context-weave': ['rendererContextWeaveUtils', 'createContextWeaveController'],
+      'aurora-ridge': ['rendererAuroraRidgeUtils', 'createAuroraRidgeController'],
     };
     var entry = modules[effectId];
     if (!entry || !windowRef) { return null; }

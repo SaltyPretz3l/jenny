@@ -431,7 +431,7 @@ for (const minutes of [0, 45]) {
     assert.equal(await harness.control.confirmAutoRun(), true);
     const text = harness.calls.confirm[0].message;
     assert.match(text, minutes === 0 ? /Inactivity pause is off/ : /after 45 minutes/);
-    assert.match(text, /Settings > Tools/);
+    assert.match(text, /Settings > Permissions > Pause Auto when you are away/);
   });
 }
 

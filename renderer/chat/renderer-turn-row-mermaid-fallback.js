@@ -163,7 +163,18 @@
         return true;
       }
       const lastRowKind = normalizeId(turnRows[turnRows.length - 1]?.kind).toLowerCase();
-      return hasAssistantText && lastRowKind !== 'tool_call' && lastRowKind !== 'tool_result';
+      if (phase) {
+        return hasAssistantText && lastRowKind !== 'tool_call' && lastRowKind !== 'tool_result';
+      }
+      // No phase (the live projected path): the next call's thinking after a
+      // tool result is still mid-turn, so the answer must follow the last tool row.
+      let answeredAfterTools = false;
+      for (const candidate of turnRows) {
+        const kind = normalizeId(candidate && candidate.kind).toLowerCase();
+        if (kind === 'tool_call' || kind === 'tool_result') answeredAfterTools = false;
+        else if (kind === 'assistant_text' && String(candidate?.payload?.text || '').trim()) answeredAfterTools = true;
+      }
+      return answeredAfterTools;
     }
 
     function answerHasMatchingMermaidFence(options, mermaidSource) {

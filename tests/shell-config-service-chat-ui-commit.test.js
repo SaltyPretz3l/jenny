@@ -114,3 +114,24 @@ test('digest quiet hours are chatUi scalars: normalized, persisted and read back
   service.updateChatUiSettings({ digestQuietStart: '22:00', digestQuietEnd: '06:00' });
   assert.equal(service.getChatUiState().digestQuietStart, '22:00');
 });
+
+test('drawing instructions are a chatUi scalar: short by default, normalized, persisted, and refresh the sidecar', (t) => {
+  const { service, userDataPath, writes, events } = createService(t);
+  assert.equal(service.getChatUiState().drawingInstructions, 'short');
+
+  const next = service.updateChatUiSettings({ drawingInstructions: 'full' });
+  assert.equal(writes.length, 1);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].reason, 'drawing_instructions_updated');
+  assert.equal(next.drawingInstructions, 'full');
+  assert.equal(Object.hasOwn(service.getState().chatUi, 'drawingInstructions'), false, 'a top-level scalar, not the chatUi block');
+  assert.equal(new ShellConfigService({ userDataPath, env: {} }).getChatUiState().drawingInstructions, 'full');
+
+  assert.equal(service.updateChatUiSettings({ drawingInstructions: 'mermaid' }).drawingInstructions, 'mermaid');
+  for (const stored of ['bogus', '', null, 3, ' FULL ']) {
+    assert.equal(service.updateChatUiSettings({ drawingInstructions: stored }).drawingInstructions, 'short', String(stored));
+  }
+  const before = writes.length;
+  service.updateChatUiSettings({ drawingInstructions: 'short' });
+  assert.equal(writes.length, before, 'an unchanged value writes nothing');
+});

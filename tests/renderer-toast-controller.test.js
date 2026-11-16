@@ -340,11 +340,12 @@ test('the queued remainder is surfaced instead of silently dropped', (t) => {
   t.after(() => app.dispose());
 
   for (let index = 1; index <= 6; index += 1) {
-    app.showToastMessage(`Failure ${index}`, { tone: 'danger' });
+    app.showToastMessage(`Note ${index}`, { tone: 'info' });
   }
 
   assert.equal(app.nodes().length, 4);
   assert.equal(app.toastViewport.querySelector('.toast-viewport__overflow').textContent, '2 more notifications');
+  assert.equal(app.toastViewport.querySelector('[data-toast-clear-all]'), null, 'nothing sticky: no Clear all');
 
   app.dismissToast(app.toastStore.getSnapshot()[0].id);
   assert.equal(app.toastViewport.querySelector('.toast-viewport__overflow').textContent, '1 more notification');
@@ -444,4 +445,96 @@ test('two panes on the chat view: the toast stack is placed below pane 1\'s kick
   doc.getElementById('chatView').dataset.paneCount = '1';
   ctx.showToastMessage('One pane', { tone: 'info' });
   assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '', 'one pane keeps the CSS default');
+});
+
+test('a countdown toast draws its line from the time left; others draw none', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+
+  const timed = app.showToastMessage('Moved 2 files.', { durationMs: 8000, countdown: true, actions: [{ id: 'undo', label: 'Undo', onClick() {} }] });
+  const plain = app.showToastMessage('Saved.', {});
+  const line = app.toastViewport.querySelector(`[data-toast-id="${timed}"] > .inv-toast__countdown`);
+  assert.ok(line, 'the Undo toast drains a line');
+  assert.equal(line.getAttribute('aria-hidden'), 'true');
+  const drainMs = parseInt(line.style.getPropertyValue('--toast-countdown-ms'), 10);
+  assert.ok(drainMs > 7900 && drainMs <= 8000, `drains over the time left (${drainMs}ms)`);
+  assert.equal(app.toastViewport.querySelector(`[data-toast-id="${plain}"] > .inv-toast__countdown`), null);
+
+  app.renderToastViewport();
+  assert.equal(app.toastViewport.querySelector(`[data-toast-id="${timed}"] > .inv-toast__countdown`), line, 'an unrelated render keeps the running line');
+});
+
+test('Clear all appears once a sticky toast can pile up, and empties the stack', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+
+  let committed = 0;
+  app.showToastMessage('Deleted "Trip".', { durationMs: 6000, countdown: true, onExpire: () => { committed += 1; } });
+  assert.equal(app.toastViewport.querySelector('[data-toast-clear-all]'), null, 'one toast: no footer');
+  app.showShellErrorToast('Export failed.');
+  const clearAll = app.toastViewport.querySelector('[data-toast-clear-all]');
+  assert.ok(clearAll, 'two toasts, one sticky');
+  assert.equal(clearAll.closest('.toast-viewport__overflow').hasAttribute('aria-hidden'), false, 'Clear all stays reachable');
+
+  clearAll.click();
+  assert.equal(app.nodes().length, 0);
+  assert.equal(app.toastViewport.querySelector('.toast-viewport__overflow'), null);
+  assert.equal(committed, 1, 'an Undo toast cleared away lets its work go through');
+});
+
+test('clicking an action closes its toast unless it keeps it open, and a failure names the toast\'s source', async (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+
+  let opened = 0;
+  const closing = app.showToastMessage('Chat deleted. Some files remain.', {
+    tone: 'warning', source: 'shell.session', actions: [{ id: 'open', label: 'Your data', onClick() { opened += 1; } }],
+  });
+  app.toastViewport.querySelector(`[data-toast-id="${closing}"] .inv-toast__action`).click();
+  assert.equal(opened, 1);
+  assert.equal(app.record(closing), undefined, 'the action closed its toast');
+
+  const staying = app.showToastMessage('Model not loaded.', {
+    tone: 'warning', sticky: true, actions: [{ id: 'retry', label: 'Retry', keepOpen: true, onClick() {} }],
+  });
+  app.toastViewport.querySelector(`[data-toast-id="${staying}"] .inv-toast__action`).click();
+  assert.ok(app.record(staying), 'keepOpen leaves it up');
+
+  const failing = app.showToastMessage('Ollama tray app is running.', {
+    tone: 'warning', source: 'ollama_tray_remediation', actions: [{ id: 'quit', label: 'Quit tray app', onClick: async () => { throw new Error('Access denied.'); } }],
+  });
+  app.toastViewport.querySelector(`[data-toast-id="${failing}"] .inv-toast__action`).click();
+  await new Promise((resolve) => setImmediate(resolve));
+  const error = app.toastStore.getSnapshot().find((toast) => toast.message === 'Access denied.');
+  assert.ok(error, 'the failure is reported');
+  assert.equal(error.source, 'ollama_tray_remediation', 'under the toast\'s own source, not memory');
+});
+
+test('an Undo that cancels synchronously is not committed by the click that closes its toast', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+
+  let pending = true;
+  let committed = 0;
+  const toastId = app.showToastMessage('Deleted "Trip".', {
+    durationMs: 6000,
+    countdown: true,
+    onExpire: () => { if (pending) committed += 1; },
+    actions: [{ id: 'undo', label: 'Undo', kind: 'primary', onClick: () => { pending = false; app.dismissToast(toastId); } }],
+  });
+  app.toastViewport.querySelector('.inv-toast__action').click();
+  assert.equal(committed, 0);
+  assert.equal(app.nodes().length, 0);
+});
+
+test('a focused Clear all keeps focus across unrelated renders', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+
+  app.showShellErrorToast('Export failed.');
+  app.showShellErrorToast('Delete failed.');
+  const clearAll = app.toastViewport.querySelector('[data-toast-clear-all]');
+  clearAll.focus();
+  app.renderToastViewport();
+  assert.equal(app.window.document.activeElement, clearAll);
 });

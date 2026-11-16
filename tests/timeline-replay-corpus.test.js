@@ -248,10 +248,11 @@ test('timeline replay fixture 21 settles and rehydrates the same in-row file dif
   assert.deepEqual(hydratedMarkup, settledMarkup);
   assert.equal(settledMarkup.length, 2);
   for (const markup of settledMarkup) {
-    assert.match(markup, /class="file-diff"/);
+    // Row 160: a one-file write renders as the bare diff, its body already materialized.
+    assert.match(markup, /class="file-diff file-diff--bare"/);
     assert.match(markup, /README\.md/);
-    assert.match(markup, /data-file-diff-pending/);
-    assert.doesNotMatch(markup, /class="diff-line|tool-call-section-kicker">Output/);
+    assert.match(markup, /data-file-diff-materialized/);
+    assert.doesNotMatch(markup, /tool-call-section-kicker">Output/);
   }
 });
 

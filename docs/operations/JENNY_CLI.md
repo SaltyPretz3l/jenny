@@ -42,7 +42,7 @@ jenny config get <key> [--json]
 jenny config set <key> <value> [--json]   (an empty value removes the key)
 jenny mcp serve [run options]
 jenny completion bash|zsh|powershell
-jenny doctor [--json]
+jenny doctor [--team] [--json]
 jenny help
 ```
 
@@ -127,6 +127,8 @@ Settings resolve in this order: flags, then the non-secret environment variables
 - `workspace`: the `--cwd` directory exists.
 - `profile`: the profile can be created and its lock taken (busy means another CLI holds it).
 - `engine`, `permissions`: the resolved engine and model, and the run's permission mode and tool lists. The engine is reported, not contacted.
+
+`jenny doctor --team` adds, after the rows above, `team_flag`, `team_bridge`, `team_versions`, `team_free_disk` and `team_engine_model`; any failing team row makes the exit code 1. Two `manual` rows follow, `team_firewall` and `team_port_mapping`, which never change the exit code; with `--json` they are the `doctor` object's optional `manual` array of `{name, detail}` in `cli/schemas/commands-v1.json`, present only with `--team`. What each row checks, what the command writes, and what to do on a failure: [Team: getting a second PC ready](TEAM_SECOND_PC.md).
 
 ## Known limits
 

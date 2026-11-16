@@ -1,9 +1,7 @@
+/* The block sits in a Manage drawer under its own heading: no rule or box around it. */
 .model-library-image-engine {
   display: grid;
   gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-subtle);
 }
 
 .model-library-image-engine-help,

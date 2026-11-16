@@ -41,6 +41,10 @@ test('in the app: hero Download reaches the section bridge, shared progress repa
   assert.equal(calls[1][1].requestId, calls[0][1].requestId);
   assert.equal(doc.getElementById('heroTitle').textContent, 'Pick a model to start');
   assert.equal(Object.keys(window.__rendererState.modelPulls).length, 0);
+  doc.querySelector('#heroRuntimeHint [data-hero-action="cloud"]').click();
+  await waitForUi(window);
+  assert.equal(window.__rendererState.ui.activeView, 'settings', 'the ChatGPT link opens Settings');
+  assert.equal(window.__rendererState.ui.activeSettingsSection, 'models');
   const input = doc.getElementById('chatInput');
   input.value = 'retry'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await shell.__emitBackendStatus({ phase: 'model_unavailable', model_lifecycle: { failure: { cause: 'timeout', model: 'large' } } });
@@ -77,8 +81,10 @@ test('hero delegation dispatches download, browse, cancel and every recovery; cl
     page.window.document.querySelector('span').click();
     await new Promise((resolve) => setImmediate(resolve));
   }
-  for (const action of ['download', 'browse', 'cancel-download', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails']) await click(action);
-  assert.deepEqual(calls, [['start', 'fit'], ['settings', 'models'], ['cancel', 'fit'], ['load', load],
+  // `cloud` is the no-model hint's "sign in with ChatGPT": the ChatGPT row lives
+  // in Settings › Models (Engines and providers), registry id `models`.
+  for (const action of ['download', 'browse', 'cancel-download', 'cloud', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails']) await click(action);
+  assert.deepEqual(calls, [['start', 'fit'], ['settings', 'models'], ['cancel', 'fit'], ['settings', 'models'], ['load', load],
     ['persist', { modelId: 'large', contextLength: 32768 }], ['load', load], ['settings', 'models'], ['logs'],
     ['copy', reader.failureDetails(reader.readModelLoadFailure(state.backend))]]);
   applied = false;

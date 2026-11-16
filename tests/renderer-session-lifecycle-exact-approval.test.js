@@ -41,3 +41,40 @@ test('a reopened chat keeps the exact command presentation, so its approval card
   assert.deepEqual(state.pendingToolApprovals.get('approval-1').exactApproval, exactApproval);
   assert.deepEqual(resolveApprovalCardState(state, { callId: 'call-1' }), { state: 'live', exactApproval });
 });
+
+// Switching back to a chat whose live stream waits on
+// ask_user must not replay 'started' into that stream (it resets the stream's
+// segment and phase state); a reload, where no stream is live here, still does.
+test('switching back to a chat whose live stream waits on a question replays nothing into it', async () => {
+  const { createMultiStreamController } = require('../renderer/chat/renderer-multi-stream-utils');
+  const run = async (alreadyLive) => {
+    const state = { currentSessionId: 'other', sessionMessageAccessOrder: new Map(),
+      pendingToolApprovals: new Map(), messagesBySession: new Map() };
+    const multiStream = createMultiStreamController({ getState: () => state });
+    if (alreadyLive) multiStream.registerStream('asked', 'live');
+    const replays = [];
+    const controller = createSessionLifecycleController({ state,
+      getMultiStreamController: () => multiStream,
+      sessionCacheController: { async evictColdSessionCaches() {} },
+      thinkingController: { resumeAutoScroll() {} },
+      jennyShell: {
+        sessions: { async getMessages() { return { data: [], turn_events: [] }; } },
+        chat: { async getActiveTurnState() { return { stream_id: 'live', turn_id: 'live', state: 'streaming',
+          pending_user_questions: [{ question_id: 'q1', question_ref: 'ref1', call_id: 'call_q', tool_name: 'ask_user',
+            questions: [{ id: 'season', prompt: 'Which season?' }] }] }; } },
+      },
+      callbacks: {
+        setSessionMessages: (id, messages) => state.messagesBySession.set(id, messages),
+        rehydrateLiveTurnState: (id, options) => { if (options?.pendingPayloads) replays.push(options.pendingPayloads.map((p) => p.type)); },
+      },
+    });
+    await controller.openSession('asked', { silent: true });
+    return { replays, streamId: multiStream.getStreamIdForSession('asked') };
+  };
+  const switchedBack = await run(true);
+  assert.deepEqual(switchedBack.replays, [], 'the live stream keeps its own state');
+  assert.equal(switchedBack.streamId, 'live');
+  const reloaded = await run(false);
+  assert.deepEqual(reloaded.replays, [['started', 'user_questions_requested']], 'a reload still brings the card back');
+  assert.equal(reloaded.streamId, 'live');
+});

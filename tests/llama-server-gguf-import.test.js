@@ -42,6 +42,8 @@ function service(root, options = {}) {
     getLibraryRoots: () => options.roots || [],
     readArchitecture: () => options.architecture || '',
     resolveBundledRuntime: () => options.runtime || '',
+    ...(options.chooseRuntimeForArchitecture ? { chooseRuntimeForArchitecture: options.chooseRuntimeForArchitecture } : {}),
+    ...(options.runtimeDownloadOffer ? { runtimeDownloadOffer: options.runtimeDownloadOffer } : {}),
     fsImpl: options.fsImpl || fs,
     platform: process.platform,
   });
@@ -348,4 +350,66 @@ test('the plan carries the bundled build\'s verdict for the file\'s architecture
   const planned = imports.plan(file);
   assert.equal(planned.architecture, 'lfm3');
   if (process.platform === 'win32') assert.equal(planned.archSupport, 'no');
+});
+
+test('row 142: a bundled no names the automatic build, and only then', (t) => {
+  if (process.platform !== 'win32') return t.skip('the library scan answers no only on Windows');
+  const root = tempRoot(t);
+  const runtimeDir = path.join(root, 'runtime');
+  fs.mkdirSync(runtimeDir);
+  fs.writeFileSync(path.join(runtimeDir, 'llama.dll'), Buffer.from('\0lfm2\0', 'latin1'));
+  const asked = [];
+  const chooseRuntimeForArchitecture = (architecture) => {
+    asked.push(architecture);
+    return { binaryPath: 'G:\\never\\shown\\llama-server.exe', build: 12098, label: 'b12098' };
+  };
+  const file = write(path.join(root, 'Downloads'), 'LFM3-Omni-2B-F16.gguf');
+  const lfm3 = service(root, { architecture: 'lfm3', runtime: path.join(runtimeDir, 'llama-server.exe'), chooseRuntimeForArchitecture });
+  lfm3.recordModelPick(file);
+  assert.deepEqual(lfm3.plan(file).autoBuild, { build: 12098, label: 'b12098' });
+  const lfm2 = service(root, { architecture: 'lfm2', runtime: path.join(runtimeDir, 'llama-server.exe'), chooseRuntimeForArchitecture });
+  lfm2.recordModelPick(file);
+  assert.equal('autoBuild' in lfm2.plan(file), false);
+  assert.deepEqual(asked, ['lfm3']);
+  return undefined;
+});
+
+test('row 142 S3: a bundled no with no trusted reader carries the download offer, and only then', (t) => {
+  if (process.platform !== 'win32') return t.skip('the library scan answers no only on Windows');
+  const root = tempRoot(t);
+  const runtimeDir = path.join(root, 'runtime');
+  fs.mkdirSync(runtimeDir);
+  fs.writeFileSync(path.join(runtimeDir, 'llama.dll'), Buffer.from('\0lfm2\0', 'latin1'));
+  const file = write(path.join(root, 'Downloads'), 'LFM3-Omni-2B-F16.gguf');
+  const asked = [];
+  const runtimeDownloadOffer = (architecture) => {
+    asked.push(architecture);
+    return { build: 12098, sizeBytes: 592000000, path: 'G:\\never\\shown' };
+  };
+  const runtime = path.join(runtimeDir, 'llama-server.exe');
+  const lfm3 = service(root, { architecture: 'lfm3', runtime, runtimeDownloadOffer });
+  lfm3.recordModelPick(file);
+  const planned = lfm3.plan(file);
+  assert.deepEqual(planned.downloadBuild, { build: 12098, sizeBytes: 592000000 });
+  assert.equal('autoBuild' in planned, false);
+  // A model the bundled build reads, or one an installed build already serves, never asks.
+  const lfm2 = service(root, { architecture: 'lfm2', runtime, runtimeDownloadOffer });
+  lfm2.recordModelPick(file);
+  assert.equal('downloadBuild' in lfm2.plan(file), false);
+  const chosen = service(root, {
+    architecture: 'lfm3', runtime, runtimeDownloadOffer,
+    chooseRuntimeForArchitecture: () => ({ build: 12098, label: 'b12098' }),
+  });
+  chosen.recordModelPick(file);
+  const withBuild = chosen.plan(file);
+  assert.equal('downloadBuild' in withBuild, false);
+  assert.equal(withBuild.autoBuild.build, 12098);
+  const refused = service(root, { architecture: 'lfm3', runtime, runtimeDownloadOffer: () => null });
+  refused.recordModelPick(file);
+  assert.equal('downloadBuild' in refused.plan(file), false);
+  const throwing = service(root, { architecture: 'lfm3', runtime, runtimeDownloadOffer: () => { throw new Error('boom'); } });
+  throwing.recordModelPick(file);
+  assert.equal('downloadBuild' in throwing.plan(file), false);
+  assert.deepEqual(asked, ['lfm3']);
+  return undefined;
 });

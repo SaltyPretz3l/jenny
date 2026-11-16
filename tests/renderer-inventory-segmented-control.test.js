@@ -252,6 +252,21 @@ test('ArrowRight moves selection and focus to the next option, wrapping at the e
   assert.equal(document.activeElement, optA, 'focus moved with selection');
 });
 
+test('ArrowDown and ArrowUp move like ArrowRight and ArrowLeft (radio group keys)', () => {
+  const { document, group } = buildDom(THREE_OPTIONS, 'a');
+  segmentedControl.initSegmentedHandlers(document);
+
+  const optA = group.querySelector('[data-value="a"]');
+  const optB = group.querySelector('[data-value="b"]');
+  optA.focus();
+  dispatchKeydown(optA, 'ArrowDown');
+  assert.equal(optB.getAttribute('aria-checked'), 'true', 'Down selects the next option');
+  assert.equal(document.activeElement, optB, 'focus moved with selection');
+  dispatchKeydown(optB, 'ArrowUp');
+  assert.equal(optA.getAttribute('aria-checked'), 'true', 'Up selects the previous option');
+  assert.equal(document.activeElement, optA);
+});
+
 test('ArrowLeft moves selection and focus to the previous option, wrapping at the start', () => {
   const { document, group } = buildDom(THREE_OPTIONS, 'a');
   segmentedControl.initSegmentedHandlers(document);
@@ -350,4 +365,81 @@ test('inventory barrel exposes segmentedControl with select/initSegmentedHandler
   global.document = prevDocument;
   global.__inventoryHandlersInstalled = prevHandlersInstalled;
   global.inventorySegmentedControl = prevSegmented;
+});
+
+/* ── Swatch options (palette picker) ── */
+
+test('swatch options render the swatch layout with label, title and both colour properties', () => {
+  const options = [
+    { value: 'a', label: 'Alpha', swatch: ['#0b0d14', '#6d82ff'] },
+    { value: 'b', label: 'Beta', swatch: ['#fff', '#3568f0'], groupStart: true },
+    { value: 'c', label: 'Gamma' },
+  ];
+  const html = segmentedControl({ id: 'theme', ariaLabel: 'Theme', value: 'b', options });
+  const doc = new JSDOM(`<div>${html}</div>`).window.document;
+  const group = doc.querySelector('[role="radiogroup"]');
+  assert.ok(group.classList.contains('inv-segmented--swatch'));
+  const radios = [...doc.querySelectorAll('[role="radio"]')];
+  assert.equal(radios.length, 3);
+  assert.equal(radios[0].getAttribute('aria-label'), 'Alpha');
+  assert.equal(radios[0].getAttribute('title'), 'Alpha');
+  assert.equal(radios[0].getAttribute('data-value'), 'a');
+  const swatch = radios[0].querySelector('.inv-segmented-swatch');
+  assert.ok(swatch);
+  assert.equal(swatch.getAttribute('aria-hidden'), 'true');
+  assert.match(swatch.getAttribute('style'), /--inv-swatch-bg:#0b0d14/);
+  assert.match(swatch.getAttribute('style'), /--inv-swatch-accent:#6d82ff/);
+  assert.equal(radios[0].querySelector('.inv-segmented-option-label'), null, 'the name lives in aria-label, not hidden text');
+  assert.equal(radios[1].getAttribute('data-group-start'), 'true');
+  assert.equal(radios[0].hasAttribute('data-group-start'), false);
+  assert.equal(radios[1].getAttribute('aria-checked'), 'true');
+  assert.equal(radios[2].querySelector('.inv-segmented-swatch'), null, 'an option without a swatch keeps the text layout');
+});
+
+test('a swatch control may hold a full palette list (more than the plain ceiling)', () => {
+  const options = Array.from({ length: 13 }, (_, index) => ({ value: 'p' + index, label: 'P' + index, swatch: ['#000000', '#ffffff'] }));
+  const html = segmentedControl({ value: 'p0', options });
+  assert.equal((html.match(/role="radio"/g) || []).length, 13);
+});
+
+test('a swatch that is not hex colours is ignored', () => {
+  const options = [
+    { value: 'a', label: 'Alpha', swatch: ['red', '#fff'] },
+    { value: 'b', label: 'Beta', swatch: ['url(javascript:x)', '#abcdef'] },
+    { value: 'c', label: 'Gamma', swatch: ['#12345', '#ffffff'] },
+  ];
+  const html = segmentedControl({ value: 'a', options });
+  assert.ok(!html.includes('inv-segmented--swatch'));
+  assert.ok(!html.includes('inv-segmented-swatch'));
+  assert.equal(html, segmentedControl({ value: 'a', options: options.map(({ value, label }) => ({ value, label })) }));
+});
+
+test('options without swatches render the same markup as before', () => {
+  const html = segmentedControl({ id: 'view', ariaLabel: 'View', value: 'b', options: THREE_OPTIONS });
+  assert.ok(!html.includes('inv-segmented--swatch'));
+  assert.ok(!html.includes('aria-label="Alpha"'));
+  assert.ok(!html.includes('data-group-start'));
+  assert.ok(html.includes('<button type="button" role="radio" class="inv-segmented-option" data-value="a" aria-checked="false" tabindex="-1"><span class="inv-segmented-option-label">Alpha</span></button>'));
+});
+
+test('swatch options keep arrow-key navigation and the change event', () => {
+  const dom = new JSDOM(`<div id="root">${segmentedControl({
+    id: 'theme', value: 'a',
+    options: [
+      { value: 'a', label: 'Alpha', swatch: ['#000000', '#111111'] },
+      { value: 'b', label: 'Beta', swatch: ['#222222', '#333333'] },
+      { value: 'c', label: 'Gamma', swatch: ['#444444', '#555555'] },
+    ],
+  })}</div>`, { pretendToBeVisual: true });
+  const { document, KeyboardEvent } = dom.window;
+  segmentedControl.initSegmentedHandlers(document);
+  const seen = [];
+  document.addEventListener('inv-segmented-change', (event) => seen.push(event.detail.value));
+  const first = document.querySelector('[data-value="a"]');
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  assert.deepEqual(seen, ['b']);
+  assert.equal(document.activeElement.getAttribute('data-value'), 'b');
+  document.querySelector('[data-value="c"]').click();
+  assert.deepEqual(seen, ['b', 'c']);
 });

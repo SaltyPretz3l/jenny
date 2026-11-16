@@ -20,7 +20,6 @@
       handlePersonalityOpenFolder,
       toErrorMessage,
       showSessionActionError,
-      openSettingsSection,
       updateSkillsSettings,
       handleOfflineModeChange,
       handleWorkspaceRootChoose,
@@ -68,8 +67,15 @@
       optimistic: false,
       read: () => ({ localOnly: state.offline?.mode === 'local_only' }),
       normalize: (value) => ({ localOnly: value.localOnly === true }),
-      write: (patch) => handleOfflineModeChange(patch.localOnly),
+      // E64: turning it on asks first while this PC's team server runs; Cancel writes nothing and draws the switch off.
+      write: async (patch) => {
+        const offline = windowRef.rendererOfflineUtils;
+        const go = !patch.localOnly || !offline?.confirmForceLocal || !offline.teamApplies?.(state)
+          || await offline.confirmForceLocal({ state, win: windowRef });
+        return go ? handleOfflineModeChange(patch.localOnly) : { ...state.offline, cancelled: true };
+      },
       ack: (echo, patch) => {
+        if (echo?.cancelled === true) return { localOnly: echo.mode === 'local_only' };
         if ((echo?.mode === 'local_only') !== patch.localOnly) throw confirmError();
         return { localOnly: patch.localOnly };
       },
@@ -142,10 +148,7 @@
           if (!shown?.inline) showSessionActionError(error, jt('settings.offline.updateFailed', 'Offline Update Failed'));
         },
       });
-      registerSectionListener(offlineDom.offlineModelActions, 'click', (event) => {
-        if (!event.target?.closest?.('[data-action="openOfflineModelLibrary"]')) return;
-        openSettingsSection('models', { source: 'offline_model_remediation' });
-      });
+      // Row 133: this group sits on Models, so the old "Manage in Model Library" shortcut is gone.
       return finalizeSectionBindings();
     }
 

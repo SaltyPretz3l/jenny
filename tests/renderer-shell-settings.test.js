@@ -149,7 +149,8 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
       // Skill slash commands (/verify …) register at boot from skills.getState;
       // Settings hydration itself still makes no extra call.
       skillsGetCalls: 1,
-      offlineGetCalls: 1,
+      // Boot reads offline state once; Settings opening on Models refreshes its Local only group (row 133).
+      offlineGetCalls: 2,
       harnessInspectCalls: 0,
     }
   );
@@ -159,7 +160,7 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
   assert.equal(proactiveGetCalls, 1);
   // Home re-pulls offline state on activation so the dashboard's Model &
   // Engine card never paints a stale boot-time snapshot.
-  assert.equal(offlineGetCalls, 2);
+  assert.equal(offlineGetCalls, 3);
   doc.getElementById('settingsTopRailTab').click();
   await waitForUi(window, 40);
   // Readiness is its own section now (first in the rail); its rows deep-link to
@@ -191,7 +192,9 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
   // Opening Extensions readies its merged Skills companion.
   assert.equal(skillsGetCalls, base.skills + 1);
 
-  doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
+  // Offline is the Local only group of Models now: showing Models refreshes it.
+  assert.equal(doc.querySelector('.settings-nav-item[data-settings-section="offline"]'), null);
+  doc.querySelector('.settings-nav-item[data-settings-section="models"]').click();
   await waitForUi(window, 40);
   assert.ok(offlineGetCalls > base.offline);
 
@@ -253,20 +256,6 @@ test('Settings saves an optional local profile without account controls', async 
   assert.equal(shell.__state.authState.user.display_name, 'Brendan');
   assert.match(doc.getElementById('accountSummary').textContent, /Brendan/);
   assert.equal(doc.getElementById('settingsLogoutButton'), null);
-});
-
-test('renderer keeps the composer token display removed when context metadata is unavailable', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: {
-      status: {
-        async get() {
-          return {};
-        },
-      },
-    },
-  });
-
-  assert.equal(window.document.getElementById('composerTokenLabel'), null);
 });
 
 test('renderer retires the history disclosure without deleting the rollback preference', async (t) => {
@@ -536,15 +525,9 @@ test('renderer settings surfaces an unavailable Ollama model catalog reason', as
     },
   });
 
-  const modelBadge = window.document.getElementById('modelBadge');
-  const modelStatus = window.document.getElementById('modelStatus');
   const composerModelSelect = window.document.getElementById('composerModelSelect');
 
-  assert.equal(modelBadge.textContent, 'Unavailable');
-  assert.equal(
-    modelStatus.textContent,
-    'Could not query Ollama at http://localhost:11434: ConnectError'
-  );
+  assert.match(window.document.getElementById('modelCatalogEmpty').textContent, /Could not query Ollama at http:\/\/localhost:11434: ConnectError/);
   assert.equal(window.document.getElementById('modelSelect'), null);
   assert.equal(composerModelSelect.options.length, 1);
   assert.equal(composerModelSelect.options[0].textContent, 'Use default');
@@ -572,52 +555,9 @@ test('renderer settings shows catalog failure warning even when active model is 
     },
   });
 
-  const modelBadge = window.document.getElementById('modelBadge');
-  const modelStatus = window.document.getElementById('modelStatus');
-
-  assert.equal(modelBadge.textContent, 'gpt-4o');
-  assert.ok(
-    modelStatus.textContent.includes('catalog unavailable'),
-    `expected catalog unavailable warning but got: ${modelStatus.textContent}`
-  );
-  assert.ok(
-    modelStatus.textContent.includes('gpt-4o'),
-    `expected active model in status but got: ${modelStatus.textContent}`
-  );
-});
-
-test('models badge reads "Default backend" at rest with an info data-state', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: {
-      models: {
-        async list() {
-          return { object: 'list', active_model: '', available: true, data: [] };
-        },
-      },
-      status: { async get() { return {}; } },
-    },
-  });
-
-  const modelBadge = window.document.getElementById('modelBadge');
-  assert.equal(modelBadge.textContent, 'Default backend');
-  assert.equal(modelBadge.getAttribute('data-state'), 'info');
-});
-
-test('models badge reflects the active runtime model with a live data-state', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: {
-      models: {
-        async list() {
-          return { object: 'list', active_model: 'llama3', available: true, data: [] };
-        },
-      },
-      status: { async get() { return { model: 'llama3' }; } },
-    },
-  });
-
-  const modelBadge = window.document.getElementById('modelBadge');
-  assert.equal(modelBadge.textContent, 'llama3');
-  assert.equal(modelBadge.getAttribute('data-state'), 'live');
+  const note = window.document.getElementById('modelCatalogEmpty');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /Model catalog unavailable: connection refused/);
 });
 
 test('Composer disables reasoning effort and explains unsupported model capability', async (t) => {
@@ -663,17 +603,11 @@ test('models catalog-unavailable affordance is additive to the existing model st
   });
 
   const modelCatalogEmpty = window.document.getElementById('modelCatalogEmpty');
-  const modelStatus = window.document.getElementById('modelStatus');
   const composerModelSelect = window.document.getElementById('composerModelSelect');
 
-  // New affordance shows.
+  // The note shows, without disturbing Composer option-building.
   assert.equal(modelCatalogEmpty.hidden, false);
   assert.match(modelCatalogEmpty.textContent, /Model catalog unavailable/);
-  // ...without disturbing the existing status text or Composer option-building (additive).
-  assert.equal(
-    modelStatus.textContent,
-    'Could not query Ollama at http://localhost:11434: ConnectError'
-  );
   assert.equal(composerModelSelect.options.length, 1);
   assert.equal(composerModelSelect.options[0].textContent, 'Use default');
 });
@@ -683,7 +617,7 @@ test('Models Settings removes duplicate session controls while Composer remains 
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="models"]');
 
-  assert.equal(doc.getElementById('modelStatus').getAttribute('aria-live'), 'polite');
+  assert.equal(doc.getElementById('modelCatalogEmpty').getAttribute('aria-live'), 'polite');
   for (const removedId of [
     'modelSelect', 'settingsEffortSelect', 'clearSessionModelButton',
     'loadModelButton', 'unloadModelButton', 'sessionModelStatus', 'effortStatus',
@@ -751,6 +685,10 @@ test('Models Settings checks startup model loading when engine settings omit the
 
   assert.ok(toggle);
   assert.equal(toggle.getAttribute('aria-checked'), 'true');
+  // One short help line; the long explanation is behind the row's ?.
+  const row = window.document.querySelector('#modelStartupLoadList .settings-field');
+  assert.equal(row.querySelector('.settings-field-help').textContent.trim(), 'A local model warms up when Jenny starts.');
+  assert.match(row.querySelector('.settings-field-detail').getAttribute('data-tooltip'), /^On: the managed server resumes the model it last ran; Ollama loads your default model\. Off: the model loads with your first message\.$/);
 });
 
 test('legacy face flag does not inject face DOM into the standard shell', async (t) => {

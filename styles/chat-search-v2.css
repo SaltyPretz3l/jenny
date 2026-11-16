@@ -1,141 +1,217 @@
 /*
  * styles/chat-search-v2.css
  *
- * Track F1 + E6: in-conversation search overlay (Ctrl+F).
- * Owns the search bar layout (anchored top of #chatThreadStage,
- * non-modal) and the highlight pseudo-elements painted via the
- * CSS Custom Highlight API.
+ * Track F1 + E6, row 156: in-conversation find (Ctrl+F).
+ * The find field lives in the pane's session bar (the utility cluster,
+ * styles/chat-session-bar.css): closed, a magnifier button (CSS order 50,
+ * before the Session button); open (`data-find-open` on the cluster), the
+ * field takes the chat title's place at the bar's start. One surface, no
+ * border inside a border, nothing floating over the text. The highlight
+ * pseudo-elements are painted via the CSS Custom Highlight API.
+ *
+ * This sheet loads before chat-session-bar.css, so every bar rule here repeats
+ * the bar's own selector prefix to outrank its `> *` and title rules.
  */
 
-/* F8 (owner pick B): a compact find pill floating at the stage's top inline-end,
-   inside the conversation utility cluster (28 px buttons with a --space-4
-   end margin; it sits at justify-self: end, so this mirrors with it in RTL),
-   so Close never sits under the Artifacts toggle. */
-.chat-search-overlay-host {
-  position: absolute;
-  top: var(--space-4);
-  inset-inline-end: calc(28px + 2 * var(--space-4) + var(--space-2));
-  width: min(28rem, calc(100% - 28px - 3 * var(--space-4) - var(--space-2)));
-  z-index: var(--z-chat-search, 5);
-  margin: 0;
-  padding: 0;
-}
-
-.chat-search-overlay-host[hidden] {
-  display: none !important;
-}
-
-.chat-search-bar {
-  /* Enter-only: replays each time the host's [hidden] flips off (Ctrl+F). */
-  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+/* ── Placement in the bar ── */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .chat-find {
+  order: 1;
   display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 34rem;
+  margin-inline-end: auto;
+  container-type: inline-size;
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .chat-find[hidden] {
+  display: none;
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .chat-find-toggle {
+  order: 50;
+}
+
+/* Open: the field takes the title's place. */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-find-open] > .session-bar-title {
+  display: none;
+}
+
+/* Open in a narrow bar, the group keeps a floor so the field holds about ten characters next to its
+   counter and buttons, and in a compact bar the diff control steps aside until find closes; its
+   numbers never truncate, so squeezed it spilled over the find toggle (gate sitting 2026-11-14). */
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-find-open] > .chat-find {
+  min-inline-size: min(18rem, 70%);
+}
+
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-find-open][data-session-bar-compact] > .session-bar-diff {
+  display: none;
+}
+
+/* Split view: the cluster shares the kicker's cell at its end; open, it
+   stretches over the kicker's title (the close glyph keeps its room). */
+.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster[data-find-open] {
+  justify-self: stretch;
+  margin-inline-start: var(--space-4);
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane:has(> .chat-timeline-utility-cluster[data-find-open]) > .chat-pane-kicker > :not(.chat-pane-close) {
+  visibility: hidden;
+}
+
+/* The IDE dock and a Workspace-hosted pane keep the floating column, and
+   Monaco owns Ctrl+F there: no find. */
+.chat-pane.ide-chat-dock-body > .chat-timeline-utility-cluster > :is(.chat-find, .chat-find-toggle),
+.chat-pane[data-pane-hosted] > .chat-timeline-utility-cluster > :is(.chat-find, .chat-find-toggle) {
+  display: none;
+}
+
+/* ── The field: one soft surface ── */
+.chat-search-bar {
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  background: var(--chat-search-bg, var(--surface-toolbar-background));
-  color: var(--chat-search-fg, var(--text-primary));
-  border: 1px solid var(--chat-search-border, var(--border-subtle));
-  border-radius: 10px;
-  box-shadow: 0 2px 8px var(--chat-search-shadow, rgba(0, 0, 0, 0.08));
-  font: var(--chat-search-font, var(--font-size-body)/1.4 var(--font-family-body, system-ui, sans-serif));
+  gap: 4px;
+  min-inline-size: 0;
+  block-size: 30px;
+  box-sizing: border-box;
+  padding-inline: 10px 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.chat-search-bar:focus-within {
+  box-shadow: 0 0 0 1px var(--focus-outline);
+}
+
+.chat-search-bar-glyph {
+  flex: none;
+  inline-size: 15px;
+  block-size: 15px;
+  color: var(--text-muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
 }
 
 .chat-search-bar-input {
   flex: 1 1 auto;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--chat-search-input-border, var(--border-default));
-  border-radius: 6px;
-  background: var(--chat-search-input-bg, var(--surface-input-background));
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: inherit;
   font: inherit;
   outline: none;
 }
 
-.chat-search-bar-input:focus-visible {
-  border-color: var(--chat-search-focus-ring, var(--focus-outline));
-  box-shadow: 0 0 0 2px var(--chat-search-focus-ring-soft, var(--border-focus));
+.chat-search-bar-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-search-bar-count {
+  flex: none;
+  margin-inline-end: 6px;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.chat-search-bar-count:empty {
+  margin: 0;
 }
 
 .chat-search-bar-toggles,
 .chat-search-bar-nav {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 2px;
-  flex: 0 0 auto;
 }
 
 .chat-search-bar-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid transparent;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
   border-radius: 6px;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 0.92em;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.chat-search-bar-button:hover {
-  background: var(--chat-search-button-hover-bg, var(--tl-row-hover));
+.chat-search-bar-button svg {
+  inline-size: 14px;
+  block-size: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-search-bar-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
 }
 
 .chat-search-bar-button:focus-visible {
-  outline: 2px solid var(--chat-search-focus-ring, var(--focus-outline));
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-outline);
 }
 
-.chat-search-bar-toggle[aria-pressed="true"] {
-  background: var(--chat-search-toggle-on-bg, rgba(59, 130, 246, 0.15));
-  border-color: var(--chat-search-toggle-on-border, rgba(59, 130, 246, 0.45));
-  color: var(--chat-search-toggle-on-fg, var(--accent));
+.chat-search-bar-button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
-.chat-search-bar-count {
-  flex: 0 0 auto;
-  min-width: 6ch;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.88em;
-  color: var(--chat-search-count-fg, var(--text-muted));
-  user-select: none;
+.chat-search-bar-toggle[aria-pressed="true"],
+.chat-search-bar-toggle[aria-pressed="true"]:hover {
+  color: var(--toprail-item-active-color);
+  background: var(--toprail-item-active-bg);
 }
 
-.chat-search-bar-close {
-  font-size: 1.2em;
-  line-height: 1;
+.chat-search-bar-word-glyph {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
-/* Highlight pseudo-elements painted via the CSS Custom Highlight API.
- * The Highlight registry is populated from
- * renderer-chat-search-highlight.js â€” these rules style the painted
- * regions. Electron 40 / Chromium 128+ supports them natively. */
-::highlight(chat-search-match) {
-  background-color: var(--chat-search-match-bg, rgba(255, 235, 59, 0.45));
+/* ── Highlight paint (CSS Custom Highlight API, renderer-chat-search-highlight.js) ──
+   Amber mixed with transparent reads on every palette, light or dark, so the
+   paint does not key off the OS colour scheme. The current match takes a
+   stronger fill and dark text, which stays readable on that fill.
+   A second pane paints under its own names (-1). */
+::highlight(chat-search-match),
+::highlight(chat-search-match-1) {
+  background-color: color-mix(in srgb, #f2b33d 34%, transparent);
   color: inherit;
 }
 
-::highlight(chat-search-current) {
-  background-color: var(--chat-search-current-bg, rgba(255, 152, 0, 0.7));
-  color: inherit;
+::highlight(chat-search-current),
+::highlight(chat-search-current-1) {
+  background-color: color-mix(in srgb, #f2b33d 78%, transparent);
+  color: #1b1404;
 }
 
-/* The bar chrome above is palette-driven (foundation tokens + the 11 palette
- * sheets), so it must NOT be re-themed off the OS colour scheme — palette and
- * OS scheme disagree routinely and the override painted a light bar behind
- * palette-coloured text. The highlight paints stay scheme-tuned because the
- * Highlight API regions sit on message text and have no palette token yet. */
-@media (prefers-color-scheme: dark) {
-  ::highlight(chat-search-match) {
-    background-color: var(--chat-search-match-bg-dark, rgba(250, 204, 21, 0.4));
-  }
-  ::highlight(chat-search-current) {
-    background-color: var(--chat-search-current-bg-dark, rgba(251, 146, 60, 0.7));
+/* A narrow pane (split view, the IDE explorer filter): the field keeps the input, count and steps.
+   Last in the file: it overrides the base display rules above at the same specificity. */
+@container (max-width: 300px) {
+  .chat-search-bar-glyph,
+  .chat-search-bar-toggles {
+    display: none;
   }
 }

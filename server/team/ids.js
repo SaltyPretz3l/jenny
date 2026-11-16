@@ -12,6 +12,10 @@ const ID_PATTERNS = Object.freeze({
   member: /^member_[A-Za-z0-9_-]{1,64}$/u,
   device: /^device_[A-Za-z0-9_-]{1,64}$/u,
   invite: /^invite_[A-Za-z0-9_-]{1,64}$/u,
+  // Slice 6-3: the model relay's offer and transfer ids (16 random bytes, base64url), the same patterns as
+  // model-relay-core.js MODEL_RELAY_ID_PATTERNS (pinned equal by tests/server/team-model-commands.test.js).
+  model_offer: /^offer_[A-Za-z0-9_-]{22}$/u,
+  model_transfer: /^mxfer_[A-Za-z0-9_-]{22}$/u,
 });
 
 const ID_PREFIX = Object.freeze({
@@ -19,6 +23,10 @@ const ID_PREFIX = Object.freeze({
 });
 
 const PUBLIC_KEY_BYTES = 32;
+// Host conversation ids: `sess_` plus the store's suffix. One rule for the viewer store, the project
+// audit and `services/host/maintenance-commands.js` (slice 3-6b). An imported conversation whose id is
+// longer fails it: such a conversation is never viewing and gets no audit entry (fail closed).
+const SESSION_ID_PATTERN = /^sess_[A-Za-z0-9_-]{1,123}$/u;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 // PKCS#8 wrapper of an Ed25519 private key, followed by the 32-byte seed.
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -47,6 +55,10 @@ function isPublicKey(value) {
 
 function isId(kind, value) {
   return typeof value === 'string' && ID_PATTERNS[kind].test(value);
+}
+
+function isSessionId(value) {
+  return typeof value === 'string' && SESSION_ID_PATTERN.test(value);
 }
 
 function newId(kind, randomBytes = crypto.randomBytes) {
@@ -81,6 +93,7 @@ module.exports = {
   encodeBase64url,
   isPublicKey,
   isId,
+  isSessionId,
   newId,
   deriveTeamId,
   keyPairFromSeed,

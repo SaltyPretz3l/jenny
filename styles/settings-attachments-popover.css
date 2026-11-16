@@ -89,11 +89,19 @@
   color: var(--widget-attachment-clear-color);
 }
 
+/* A column of the marks line and the files row (chat-attachments-v2.css), both on the bubble's right edge; the
+ * children carry the spacing. An assistant row's attachments (a spoken reply) start on the left, as its text does. */
 .message-attachments {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-5);
-  margin-top: var(--space-5);
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 100%;
+}
+
+.chat-entry:not(.user) .message-attachments,
+.chat-entry:not(.user) .message-files {
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 .message-attachment-card {

@@ -96,12 +96,12 @@ test('searchSettingsIndex exposes the local profile editor and retires sign-out 
   assert.equal(fieldCopy.SETTINGS_FIELD_COPY.settingsLogoutButton, undefined);
 });
 
-test('field-copy index has entries for retained account and editor sections', () => {
+test('field-copy index has entries for the profile (General since row 133) and editor sections', () => {
   const index = buildSettingsSearchIndex();
   const fieldEntries = index.filter((entry) => entry.kind === 'field');
 
-  const accountFields = fieldEntries.filter((entry) => entry.sectionId === 'account');
-  assert.ok(accountFields.length >= 1, 'account section has at least one searchable field');
+  assert.equal(fieldEntries.find((entry) => entry.id === 'saveLocalProfileButton')?.sectionId, 'general', 'the profile name moved to General');
+  assert.ok(index.some((entry) => entry.kind === 'section' && entry.sectionId === 'account'), 'Data & privacy stays a search hit');
 
   const editorFields = fieldEntries.filter((entry) => entry.sectionId === 'editor');
   assert.ok(editorFields.length >= 1, 'editor section has at least one searchable field');
@@ -128,9 +128,10 @@ test('searchSettingsIndex orders field hits before section hits and returns [] f
 
 test('searchSettingsSectionIds returns distinct, host-resolved section ids', () => {
   const index = buildSettingsSearchIndex();
-  // 'quick capture' is the retained Home entry; the contextual-tips control is gone (checkpoint 1, D2).
+  // 'quick capture' is the retained Home entry, on General since row 133; the contextual-tips control is gone (checkpoint 1, D2).
   const ids = searchSettingsSectionIds(index, 'quick capture');
-  assert.ok(ids.includes('home'));
+  assert.ok(ids.includes('general'));
+  assert.ok(!ids.includes('home'), 'a merged page resolves to its host');
   assert.ok(!ids.includes('tips'), 'retired Settings section must not appear');
   assert.ok(!ids.includes('proactive'), 'retired Settings section must not appear');
   assert.equal(new Set(ids).size, ids.length, 'ids are distinct');
@@ -147,14 +148,14 @@ function buildNavDom() {
           <div class="settings-nav-header"></div>
           <div class="settings-nav-scroll">
             <button class="settings-nav-item" data-settings-section="models" role="tab" tabindex="0" aria-selected="true">Models</button>
-            <button class="settings-nav-item" data-settings-section="context" role="tab" tabindex="-1" aria-selected="false">Context</button>
+            <button class="settings-nav-item" data-settings-section="chat" role="tab" tabindex="-1" aria-selected="false">Chat</button>
             <button class="settings-nav-item" data-settings-section="tools" role="tab" tabindex="-1" aria-selected="false">Tools</button>
             <button class="settings-nav-item" data-settings-section="account" role="tab" tabindex="-1" aria-selected="false">Account</button>
           </div>
         </nav>
         <div class="settings-content-scroll">
           <section class="settings-card" data-settings-section="models"></section>
-          <section class="settings-card" data-settings-section="context">
+          <section class="settings-card" data-settings-section="chat">
             <div data-settings-field="contextHistoryScopeSelect"></div>
           </section>
           <section class="settings-card" data-settings-section="tools"></section>
@@ -211,7 +212,7 @@ test('createSettingsSearchController renders results and filters the nav rail', 
   assert.ok(hits.length >= 1);
   assert.equal(hits[0].id, 'contextHistoryScopeSelect');
 
-  const contextItem = settingsNav.querySelector('[data-settings-section="context"]');
+  const contextItem = settingsNav.querySelector('[data-settings-section="chat"]');
   const modelsItem = settingsNav.querySelector('[data-settings-section="models"]');
   assert.equal(contextItem.classList.contains('settings-nav-item-search-hidden'), false);
   assert.equal(modelsItem.classList.contains('settings-nav-item-search-hidden'), true);
@@ -264,7 +265,7 @@ test('UIUX-038: a nonblank query with zero matches announces no-results and filt
   // that section's nav visibility.
   controller.runQuery('history scope');
   assert.equal(status.textContent, '', 'a real match clears the no-results announcement');
-  const contextItem = settingsNav.querySelector('[data-settings-section="context"]');
+  const contextItem = settingsNav.querySelector('[data-settings-section="chat"]');
   assert.equal(contextItem.classList.contains('settings-nav-item-search-hidden'), false);
 
   // Clearing the query (not just a miss) also clears the announcement and
@@ -299,7 +300,7 @@ test('activating a result navigates to the host section and flashes the hit row'
   const input = documentRef.getElementById(searchInputDomId);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
-  assert.deepEqual(activated, ['context']);
+  assert.deepEqual(activated, ['chat']);
   const toggleWrapper = documentRef.querySelector('[data-settings-field="contextHistoryScopeSelect"]');
   assert.equal(toggleWrapper.getAttribute('data-search-hit'), 'true');
 
@@ -331,7 +332,7 @@ test('activating a result with no data-inv-toggle/id falls back to [data-setting
   const input = documentRef.getElementById(searchInputDomId);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
-  assert.deepEqual(activated, ['context']);
+  assert.deepEqual(activated, ['chat']);
   const target = documentRef.querySelector('[data-settings-field="contextHistoryScopeSelect"]');
   assert.equal(target.getAttribute('data-search-hit'), 'true');
 
@@ -390,11 +391,17 @@ test('ArrowDown/ArrowUp move the active result without changing section yet', (t
   assert.ok(before.length > 1, 'need at least two hits to exercise arrow nav');
 
   const input = documentRef.getElementById(searchInputDomId);
+  // jsdom has no scrollIntoView; record which row asks to be brought into view.
+  const scrolled = [];
+  window.Element.prototype.scrollIntoView = function scrollIntoView(options) {
+    scrolled.push([this.getAttribute('data-search-result-index'), options && options.block]);
+  };
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
   const results = documentRef.getElementById(searchResultsDomId);
   const activeItem = results.querySelector('.settings-search-result.active');
   assert.ok(activeItem);
   assert.equal(activeItem.getAttribute('data-search-result-index'), '1');
+  assert.deepEqual(scrolled.at(-1), ['1', 'nearest'], 'a long result list keeps the highlight in view');
   assert.equal(activated.length, 0, 'arrow keys must not activate a section');
 
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
@@ -423,7 +430,7 @@ test('activating a hit whose section refresh is pending flashes only after the r
     documentRef,
     settingsNav,
     navigateToSection: (sectionId) => activated.push(sectionId),
-    getSectionRefreshPromise: (sectionId) => (sectionId === 'context' ? pending : null),
+    getSectionRefreshPromise: (sectionId) => (sectionId === 'chat' ? pending : null),
   });
   controller.bind();
 
@@ -431,7 +438,7 @@ test('activating a hit whose section refresh is pending flashes only after the r
   const input = documentRef.getElementById(searchInputDomId);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
-  assert.deepEqual(activated, ['context']);
+  assert.deepEqual(activated, ['chat']);
   const toggleWrapper = documentRef.querySelector('[data-settings-field="contextHistoryScopeSelect"]');
   assert.equal(toggleWrapper.getAttribute('data-search-hit'), null, 'must not flash while the section refresh is still pending');
 
@@ -468,7 +475,7 @@ test('activating a hit into an already-ready section still flashes on the single
   const input = documentRef.getElementById(searchInputDomId);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
-  assert.deepEqual(activated, ['context']);
+  assert.deepEqual(activated, ['chat']);
   const toggleWrapper = documentRef.querySelector('[data-settings-field="contextHistoryScopeSelect"]');
   assert.equal(toggleWrapper.getAttribute('data-search-hit'), 'true', 'flashes immediately on the rAF path');
   assert.equal(rafCalls, 1, 'exactly one rAF hop — no double-flash');
@@ -499,7 +506,7 @@ test('activateHit falls back to the single-rAF path when getSectionRefreshPromis
   const input = documentRef.getElementById(searchInputDomId);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
-  assert.deepEqual(activated, ['context']);
+  assert.deepEqual(activated, ['chat']);
   const toggleWrapper = documentRef.querySelector('[data-settings-field="contextHistoryScopeSelect"]');
   assert.equal(toggleWrapper.getAttribute('data-search-hit'), 'true');
 
@@ -565,8 +572,12 @@ test('a section hit on a page folded into another lands on its group, not on its
   controller.bind();
 
   controller.runQuery('data & privacy');
-  assert.equal(controller.getActiveHits()[0].rawSectionId, 'dataPrivacy');
-  documentRef.getElementById(searchInputDomId).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  // Row 133: "Data & privacy" is also the label of the visible host page now, so the folded page's hit is not the first one.
+  const pick = controller.getActiveHits().findIndex((hit) => hit.rawSectionId === 'dataPrivacy');
+  assert.ok(pick > 0);
+  const input = documentRef.getElementById(searchInputDomId);
+  for (let step = 0; step < pick; step += 1) input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 
   assert.deepEqual(activated, ['account']);
   assert.equal(documentRef.querySelector('[data-settings-merged-section="dataPrivacy"]').getAttribute('data-search-hit'), 'true');

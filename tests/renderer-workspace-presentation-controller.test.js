@@ -24,7 +24,7 @@ function makeController(overrides = {}) {
   const calls = {
     previews: [], maps: 0, reveals: [], logs: [],
     diffs: [], panels: 0, toasts: [], subscribed: 0, unsubscribed: 0,
-    reports: [], previewOptions: [], files: [],
+    reports: [], previewOptions: [], files: [], workspaceShown: 0,
   };
   let clock = 100_000;
   const timers = [];
@@ -61,6 +61,7 @@ function makeController(overrides = {}) {
     escapeHtml: (v) => String(v == null ? '' : v).replace(/[<>&"]/g, ''),
     appendClientLog: (level, event, meta) => calls.logs.push({ level, event, meta }),
     getActiveView: overrides.getActiveView || (() => 'ide'),
+    showWorkspace: overrides.noShowWorkspace ? undefined : () => { calls.workspaceShown += 1; },
     openPreview: (path, options) => {
       calls.previews.push(path);
       calls.previewOptions.push(options);
@@ -106,6 +107,7 @@ test('safe request applies after the coalesce window; newest request wins', (t) 
 
   h.fireTimers();
   assert.deepEqual(h.calls.previews, ['docs/b.md'], 'only the newest coalesced request applies');
+  assert.equal(h.calls.workspaceShown, 0, 'already in the Workspace: no view switch');
   assert.equal(h.chip(), null, 'safe apply raises no chip');
   assert.ok(h.calls.logs.some((l) => l.event === 'workspace_presentation.applied'));
 });
@@ -249,7 +251,7 @@ test('missing change-diff integration degrades without opening or throwing', (t)
   assert.ok(h.calls.logs.some((entry) => entry.event === 'workspace_presentation.change_context_rejected'));
 });
 
-test('a file request opens from an idle chat; a draft or any other view still waits', (t) => {
+test('a file or preview request opens from an idle chat; a draft or any other view still waits', (t) => {
   const idle = makeController({ getActiveView: () => 'chat' });
   const draft = makeController({ getActiveView: () => 'chat', draft: 'half a sentence' });
   t.after(() => { idle.controller.dispose(); draft.controller.dispose(); });
@@ -259,15 +261,30 @@ test('a file request opens from an idle chat; a draft or any other view still wa
   assert.deepEqual(idle.calls.files, [['src/app.js', 40]]);
   assert.equal(idle.chip(), null);
 
-  idle.controller.handleRequest({ view: 'preview', path: 'docs/plan.md' });
+  idle.controller.handleRequest({ view: 'preview', path: 'game/index.html' });
   idle.advance(1000);
   idle.fireTimers();
-  assert.deepEqual(idle.calls.previews, [], 'a preview never pulls the reader out of the chat');
+  assert.deepEqual(idle.calls.previews, ['game/index.html'], 'the preview opens instead of a chip in the hidden IDE');
+  assert.equal(idle.calls.workspaceShown, 1, 'the app switches to the Workspace so the preview is seen');
+  assert.equal(idle.chip(), null);
 
   draft.controller.handleRequest({ view: 'file', path: 'src/app.js', line: 40 });
   draft.fireTimers();
   assert.deepEqual(draft.calls.files, []);
   assert.ok(draft.chip());
+  draft.controller.handleRequest({ view: 'preview', path: 'game/index.html' });
+  draft.advance(1000);
+  draft.fireTimers();
+  assert.deepEqual(draft.calls.previews, [], 'a half-written message keeps the chat in front');
+});
+
+test('without a way to show the Workspace, a preview from the chat stays a chip', (t) => {
+  const h = makeController({ getActiveView: () => 'chat', noShowWorkspace: true });
+  t.after(() => h.controller.dispose());
+  h.controller.handleRequest({ view: 'preview', path: 'game/index.html' });
+  h.fireTimers();
+  assert.deepEqual(h.calls.previews, [], 'never opened out of sight');
+  assert.ok(h.chip());
 });
 
 test('recent typing defers to the non-stealing chip; Show applies user-initiated', (t) => {
@@ -369,7 +386,7 @@ test('oscillation guard: the fourth rapid auto-apply defers, then drains with ti
 });
 
 test('user-initiated Show does not count toward the oscillation guard', (t) => {
-  const h = makeController({ getActiveView: () => 'chat' });
+  const h = makeController({ getActiveView: () => 'chat', draft: 'half a sentence' });
   t.after(() => h.controller.dispose());
 
   for (let i = 0; i < 4; i += 1) {
@@ -544,6 +561,7 @@ test('outcome reports: a chip left pending across a chat or root switch is dropp
   let workspaceId = WORKSPACE_ID;
   const h = makeController({
     getActiveView: () => 'chat',
+    draft: 'half a sentence',
     getSessionId: () => sessionId,
     getWorkspaceId: () => workspaceId,
   });

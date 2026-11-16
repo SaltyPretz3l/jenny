@@ -43,7 +43,16 @@ const EFFECT_MODULE_TABLE = {
     modulePath: '../renderer/shell/renderer-context-weave-utils.js',
     exportName: 'createContextWeaveController',
   },
+  'aurora-ridge': {
+    modulePath: '../renderer/shell/renderer-aurora-ridge-utils.js',
+    exportName: 'createAuroraRidgeController',
+  },
 };
+
+// A still painting has no motion for the motion axis to scale, so it carries
+// no data-motion selector (tests/renderer-aurora-ridge-utils.test.js proves it
+// runs no animation loop). An effect that gains motion leaves this list.
+const STILL_EFFECT_IDS = ['aurora-ridge'];
 
 // Pre-existing naming inconsistency (not introduced by this slice): every other
 // canvas/svg effect module reads its per-effect CSS custom properties under the
@@ -162,7 +171,7 @@ test('the "none" preset is untouched by the Rev 2 registry metadata', () => {
 
 test('every non-none surface-effect preset declares full Rev 2 registry metadata', () => {
   const presets = getNonNonePresets();
-  assert.equal(presets.length, 5, 'expected exactly five non-none surface-effect presets');
+  assert.equal(presets.length, 6, 'expected exactly six non-none surface-effect presets');
 
 
   presets.forEach((preset) => {
@@ -227,19 +236,20 @@ test('every non-none surface-effect preset declares full Rev 2 registry metadata
   });
 });
 
-test('S9 native migration roster contains all five shipped effects', () => {
+test('S9 native migration roster contains all six shipped effects', () => {
   const v3Ids = getNonNonePresets()
     .filter((preset) => preset.contractVersion === 3 && preset.inputMode === 'manager')
     .map((preset) => preset.id)
     .sort();
   assert.deepEqual(v3Ids, [
-    'atomic-burst', 'circuit-trace', 'context-weave', 'playlist-scroll', 'reactive-grid',
+    'atomic-burst', 'aurora-ridge', 'circuit-trace', 'context-weave', 'playlist-scroll', 'reactive-grid',
   ]);
   // Owner direction (2026-09-30): no v3 effect consumes model activity.
   const activityModes = {};
   getNonNonePresets().forEach((preset) => { activityModes[preset.id] = preset.activityMode; });
   assert.deepEqual(activityModes, {
     'atomic-burst': 'none',
+    'aurora-ridge': 'none',
     'circuit-trace': 'none',
     'context-weave': 'none',
     'playlist-scroll': 'none',
@@ -264,18 +274,28 @@ test('S9 native migration roster contains all five shipped effects', () => {
   assert.deepEqual(contextWeave.interaction, {
     hover: true, click: true, press: false, captureOnPress: false,
   });
+  // Owner pick 2026-11-13: Aurora Ridge v1 is a still painting and answers nothing.
+  const auroraRidge = getNonNonePresets().find((preset) => preset.id === 'aurora-ridge');
+  assert.deepEqual(auroraRidge.interaction, {
+    hover: false, click: false, press: false, captureOnPress: false,
+  });
 });
 
 test('parsed motion CSS covers every registered effect id in a data-motion selector', () => {
-  const expectedIds = getNonNonePresets().map((preset) => preset.id).sort();
-  const coveredIds = Array.from(getMotionCoveredEffectIds())
+  const expectedIds = getNonNonePresets().map((preset) => preset.id)
+    .filter((id) => !STILL_EFFECT_IDS.includes(id))
+    .sort();
+  const covered = getMotionCoveredEffectIds();
+  const coveredIds = Array.from(covered)
     .filter((id) => expectedIds.includes(id))
     .sort();
   assert.deepEqual(
     coveredIds,
     expectedIds,
-    'foundation.css + views-surface-effects.css must give all five effects an explicit motion-axis selector',
+    'foundation.css + views-surface-effects.css must give every moving effect an explicit motion-axis selector',
   );
+  assert.deepEqual(STILL_EFFECT_IDS.filter((id) => covered.has(id)), [],
+    'a still effect with a motion-axis selector is no longer still: take it off STILL_EFFECT_IDS');
 });
 
 test('no surface effect claims fresh-install candidacy and the fresh defaults match the owner-reviewed picks', () => {
@@ -298,6 +318,7 @@ test('recommendedPalettes preserve the intentional effect-to-palette recommendat
   const byId = Object.fromEntries(presets.map((preset) => [preset.id, preset]));
 
   assert.deepEqual(byId['circuit-trace'].recommendedPalettes, ['obsidian']);
+  assert.deepEqual(byId['aurora-ridge'].recommendedPalettes, ['aurora']);
 
   // context-weave joined the empty list on 2026-08-21: one neutral thread
   // colour per palette means it no longer favours any particular canvas.
@@ -347,7 +368,7 @@ test('renderer field matches the real DOM node each effect module creates (canva
   const presets = getSurfaceEffectPresets();
   const byId = Object.fromEntries(presets.map((preset) => [preset.id, preset]));
 
-  ['reactive-grid', 'playlist-scroll', 'atomic-burst', 'circuit-trace', 'context-weave'].forEach((id) => {
+  ['reactive-grid', 'playlist-scroll', 'atomic-burst', 'circuit-trace', 'context-weave', 'aurora-ridge'].forEach((id) => {
     assert.equal(byId[id].renderer, 'canvas2d', `${id}.renderer should be canvas2d`);
   });
   // The svg renderer left the roster with darkroom-living-ink (2026-08-21);
@@ -393,6 +414,7 @@ test('the dev gallery factory map has exactly one key per non-none preset id (bi
     rendererAtomicBurstUtils: { createAtomicBurstController() {} },
     rendererCircuitTraceUtils: { createCircuitTraceController() {} },
     rendererContextWeaveUtils: { createContextWeaveController() {} },
+    rendererAuroraRidgeUtils: { createAuroraRidgeController() {} },
   };
   const factoryMap = gallery.buildFactoryMap(windowRef);
   assert.deepEqual(
@@ -460,7 +482,7 @@ test('every requiredTokens entry is declared; reactive-grid colors in foundation
   const declaring = ['foundation.css'].concat(
     fs.readdirSync(STYLES_DIR).filter((name) => /^palette-.*[.]css$/.test(name))
   );
-  assert.equal(declaring.length, 12);
+  assert.equal(declaring.length, 13);
   declaring.forEach((name) => {
     const css = fs.readFileSync(path.join(STYLES_DIR, name), 'utf8');
     reactiveGrid.requiredTokens.forEach((token) => {

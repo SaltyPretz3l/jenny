@@ -56,3 +56,25 @@ test('a user-denied terminal logs stream.handle_error at INFO, a failure at ERRO
     ['stream-denied', 'INFO', 'denied'], ['stream-failed', 'ERROR', undefined],
   ]);
 });
+
+// A question batch ends the turn like `complete`: the live turn is stamped
+// terminal and its open Thinking row settles, so no spinner stays beside the card.
+test('a question batch settles the live turn the way complete does', async (t) => {
+  const { createHarness: createRowModelHarness } = require('./helpers/renderer-stream-handler-harness');
+  const harness = createRowModelHarness();
+  t.after(() => harness.restore());
+  harness.state.ui.chatTimelineRowModelBySession = new Map([['session-qb', true]]);
+  const base = { sessionId: 'session-qb', streamId: 'stream-qb' };
+  await harness.emit({ type: 'started', ...base });
+  await harness.emit({ type: 'phase_started', ...base, phaseId: 'phase-r1', phaseKind: 'reasoning', thinkingId: 'think-1' });
+  await harness.emit({ type: 'delta', ...base, content: '', aggregate: '', thinkingId: 'think-1',
+    reasoning: { source: 'provider', entriesDelta: [{ id: 'r1', text: 'Which file?', thinkingId: 'think-1' }] } });
+  await harness.emit({
+    type: 'question_batch', ...base,
+    batch: { batch_id: 'batch-1', round_index: 1, intro_text: 'One question',
+      questions: [{ id: 'q1', prompt: 'Pick one', options: [{ id: 'a', label: 'A' }] }] },
+  });
+  const liveState = harness.state.ui.chatTimelineLiveStateBySession?.get('session-qb');
+  // Reconciled like a completed turn: no provisional turn is left to overlay.
+  assert.equal(liveState?.turns_by_id?.['stream-qb'], undefined, 'the provisional turn is settled');
+});

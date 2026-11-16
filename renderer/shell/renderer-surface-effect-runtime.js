@@ -679,6 +679,10 @@
     '--widget-context-weave-interlace': Object.freeze({ name: '--widget-context-weave-interlace', type: 'length-px', fallback: 3, min: 0, max: 6 }),
     '--widget-context-weave-weft-alpha': Object.freeze({ name: '--widget-context-weave-weft-alpha', type: 'alpha', fallback: 0.7, min: 0, max: 1 }),
     '--widget-context-weave-lit-gain': Object.freeze({ name: '--widget-context-weave-lit-gain', type: 'number', fallback: 3, min: 1, max: 5 }),
+    // aurora-ridge: the two lights in the still painting. Hex only; another
+    // colour form falls back to the default inside the painter.
+    '--widget-aurora-ridge-aurora-color': Object.freeze({ name: '--widget-aurora-ridge-aurora-color', type: 'color', fallback: '#46e3a0' }),
+    '--widget-aurora-ridge-lamp-color': Object.freeze({ name: '--widget-aurora-ridge-lamp-color', type: 'color', fallback: '#ffb85c' }),
     // Motion axis scales pointer gain and pluck amplitude, never resting alpha.
     '--widget-context-weave-motion-scale': Object.freeze({ name: '--widget-context-weave-motion-scale', type: 'number', fallback: 1, min: 0.5, max: 2 }),
   });

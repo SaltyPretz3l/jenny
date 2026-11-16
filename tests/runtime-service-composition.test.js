@@ -325,8 +325,10 @@ test('the stats monitor pauses while the window is hidden or minimised and resum
 
   stats.stop();
   pause.setVisible(false);
+  assert.equal(services.skillsService._windowVisible, false, 'the skills folder poll follows the same signal');
   pause.setVisible(true);
   assert.equal(stats.timer, null, 'a show after stop never restarts a stopped monitor');
+  assert.equal(services.skillsService._windowVisible, true);
 });
 
 test('the stats tick runs at 2 s only while a renderer watcher shows the numbers, else 15 s', (t) => {

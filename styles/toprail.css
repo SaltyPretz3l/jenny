@@ -119,3 +119,18 @@
 .toprail-tab__label {
   white-space: nowrap;
 }
+
+/* The one count a tab may carry (Team: people waiting to be let in). The tab's
+   aria-label says the same in words. */
+.toprail-tab__count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}

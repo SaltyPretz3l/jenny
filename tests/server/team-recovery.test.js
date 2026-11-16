@@ -10,6 +10,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { parseInvite, keyPairFromSeed } = require('../../server/team/invites');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 const { MemberStore } = require('../../server/team/member-store');
 const {
   createOutputStream, createTeamHostFixture, randomKey, writeSingleOwnerConfig,
@@ -151,6 +152,35 @@ test('a recovery invite is invite_not_valid at 15 minutes', async (t) => {
   const answer = await store.redeem({ inviteId: inviteIdOf(store, parsed), devicePublicKey: randomKey(),
     displayName: 'ignored', label: 'New laptop' });
   assert.equal(answer.error.reason, 'invite_not_valid');
+});
+
+test('X4c-F05: team-init and team-recover refuse over an unfinished delete or restore and write nothing', async (t) => {
+  const cases = { '.jenny-team-deleting': 'team_delete_unfinished', '.jenny-team-restoring': 'team_restore_unfinished' };
+  for (const [marker, reason] of Object.entries(cases)) {
+    for (const kind of ['owner_first', 'recovery']) {
+      await t.test(`${kind} over ${marker}`, async (st) => {
+        const fx = createTeamHostFixture(st);
+        fs.writeFileSync(path.join(fx.profile, marker), JSON.stringify({ team_name: fx.teamName }));
+        const before = snapshotFiles(fx.root);
+        const minted = await mint(fx, kind);
+        assert.deepEqual(minted.result, { ok: false, reason });
+        assert.deepEqual(invitesIn(minted.output.text()), [], 'nothing printed');
+        assert.deepEqual(snapshotFiles(fx.root), before, 'no store written');
+        assert.equal(fx.lock.released, fx.lock.acquired, 'the lock is let go');
+      });
+    }
+  }
+});
+
+// Review pass (2026-11-14): staging a finished restore could not remove sits beside a working team; the owner's
+// recovery is not refused for it.
+test('team-recover is not refused by restore staging left beside a team that is there', async (t) => {
+  const fx = createTeamHostFixture(t);
+  await fx.seedMembers(randomKey());
+  fs.mkdirSync(path.join(fx.profile, '.jenny-restoring-0123456789ab'));
+  const minted = await mint(fx, 'recovery');
+  assert.notEqual(minted.result.reason, 'team_restore_unfinished', JSON.stringify(minted.result));
+  assert.equal(minted.result.ok, true, JSON.stringify(minted.result));
 });
 
 test('team-init refuses when a member exists and team-recover refuses on an empty store', async (t) => {
@@ -328,7 +358,7 @@ test('a failed print revokes the invite it minted: nothing live is left and no l
   assert.equal(emptyStore.isInviteLive(emptyStore.snapshot().invites[0].invite_id), false);
 });
 
-test('the local revoke (actor exactly null) reaches only an invite a local command minted', async (t) => {
+test('the local revoke (the local command marker) reaches only an invite a local command minted', async (t) => {
   const fx = createTeamHostFixture(t);
   const { owner } = await fx.seedMembers(randomKey());
   const store = storeAt(fx, Date.now);
@@ -340,10 +370,14 @@ test('the local revoke (actor exactly null) reaches only an invite a local comma
     assert.equal(refused.ok, false, String(actorMemberId));
   }
   assert.equal(store.isInviteLive(member.invite_id), true);
-  const local = await store.createInvite({ kind: 'recovery', actorMemberId: null, invitePublicKey: randomKey() });
-  assert.equal((await store.revokeInvite({ actorMemberId: undefined, inviteId: local.invite_id })).ok, false);
-  assert.equal((await store.revokeInvite({ actorMemberId: null, inviteId: local.invite_id })).ok, true);
-  assert.equal((await store.revokeInvite({ actorMemberId: null, inviteId: local.invite_id })).error.reason,
+  const local = await store.createInvite({ kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: randomKey() });
+  for (const actorMemberId of [null, undefined]) {
+    assert.equal((await store.revokeInvite({ actorMemberId, inviteId: local.invite_id })).error.reason, 'team_not_found',
+      `${String(actorMemberId)} is not the local command`);
+  }
+  assert.equal(store.isInviteLive(local.invite_id), true);
+  assert.equal((await store.revokeInvite({ actorMemberId: LOCAL_COMMAND, inviteId: local.invite_id })).ok, true);
+  assert.equal((await store.revokeInvite({ actorMemberId: LOCAL_COMMAND, inviteId: local.invite_id })).error.reason,
     'invite_not_valid', 'a spent or revoked invite cannot be revoked again');
 });
 
@@ -371,4 +405,25 @@ test('a config that changes between the preflight and the locked load is re-chec
   assert.equal(fx.lock.released, 2);
   assert.equal(noTeam.output.text(), '');
   assert.deepEqual(snapshotFiles(fx.profile), before);
+});
+
+// Slice 5-3 review item 6. Fault: the headless path with no internet setting filtering or ordering its
+// hints (a host reached only over a 100.64/10 overlay would print none): it keeps 1.7.0's result, the
+// first four non-internal IPv4 addresses the codec accepts, in interface order.
+test('with no internet setting the headless hints are 1.7.0\'s: non-internal IPv4, overlay and link-local kept', async (t) => {
+  const fx = createTeamHostFixture(t, { directPort: 4242 });
+  const interfaces = () => ({
+    eth0: [{ family: 'IPv4', address: '192.168.1.20', internal: false },
+      { family: 'IPv6', address: 'fe80::1', internal: false },
+      { family: 'IPv6', address: '2001:db8::20', internal: false }],
+    tailnet: [{ family: 'IPv4', address: '100.101.1.2', internal: false }],
+    apipa: [{ family: 4, address: '169.254.9.9', internal: false }],
+    ula: [{ family: 6, address: 'fd00::20', internal: false }],
+    lo: [{ family: 'IPv6', address: '::1', internal: true }],
+  });
+  const minted = await mint(fx, 'owner_first', { networkInterfaces: interfaces });
+  assert.equal(minted.result.ok, true);
+  const parsed = parseInvite(invitesIn(minted.output.text())[0]);
+  assert.equal(parsed.version, 1, 'the headless path has no internet setting yet: version 1');
+  assert.deepEqual(parsed.hints, ['192.168.1.20:4242', '100.101.1.2:4242', '169.254.9.9:4242']);
 });

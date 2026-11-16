@@ -125,6 +125,7 @@ def test_release_workflow_same_step_preload_must_precede_builder(
         "  build:\n"
         "    steps:\n"
         "      - run: python scripts/packaging/build_team_bridge.py\n"
+        "      - run: npm run build:sketch\n"
         "      - run: npm exec -- electron-builder && npm run build:preload\n",
         encoding="utf-8",
     )
@@ -135,6 +136,33 @@ def test_release_workflow_same_step_preload_must_precede_builder(
     assert violations == [
         "preload.yml job 'build' runs electron-builder without a preceding "
         "'npm run build:preload' command"
+    ]
+
+
+def test_release_workflow_needs_the_sketch_bundle_before_the_builder(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_script_module("check_release_version_policy.py")
+    workflow = tmp_path / "sketch.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  build:\n"
+        "    steps:\n"
+        "      - run: python scripts/packaging/build_team_bridge.py\n"
+        "      - run: npm run build:preload\n"
+        "      - run: npm exec -- electron-builder\n"
+        "  packed:\n"
+        "    steps:\n"
+        "      - run: npm run pack:release\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "RELEASE_WORKFLOWS", (Path("sketch.yml"),))
+
+    violations = module._validate_release_workflows(tmp_path)
+
+    assert violations == [
+        "sketch.yml job 'build' runs electron-builder without a preceding "
+        "'npm run build:sketch' command"
     ]
 
 

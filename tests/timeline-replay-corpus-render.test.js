@@ -480,3 +480,74 @@ test('P2 aggregate: the live-vs-hydrated divergence ledger is exact', () => {
     'live-vs-hydrated divergence changed: update DIVERGENCE_LEDGER in the same commit',
   );
 });
+
+// The row-order invariant reads the painted rows of a settled turn against the
+// persisted events. Every corpus shape, rendered from its persisted log, is a
+// canonical paint, so the invariant must find nothing in any of them.
+test('P7 the row-order invariant stays silent on every corpus scenario', () => {
+  const { findRowOrderViolations } = require('../renderer/chat/renderer-row-order-invariant');
+  const loud = [];
+  for (const scenarioName of SCENARIOS) {
+    const messages = normalizeChatMessages(readJson(path.join(FIXTURE_ROOT, scenarioName, 'session.json')));
+    const persisted = buildPersistedTurnEvents(projectTurnTree({ messages }));
+    const hydrated = projectTurnTree({ messages, turn_event_log_version: 1, turn_events: persisted });
+    const markup = hydrated.turns.map((turn) => `<article data-turn-id="${escapeHtml(turn.turn_id)}">`
+      + `${renderRows(projectTurnRows(turn.events, DETERMINISTIC_ROW_OPTIONS), messages)}</article>`).join('');
+    const { dom, host } = createMarkupHost(markup);
+    const violations = findRowOrderViolations(host, persisted);
+    if (violations.length) loud.push(`${scenarioName}: ${JSON.stringify(violations)}`);
+    dom.window.close();
+  }
+  assert.deepEqual(loud, []);
+});
+
+// P8: rows sort by the projection's sort_key, not by event_seq. The store
+// records the prompt, attachments and notices first, then the live-captured
+// events, then every other projected kind (canonical-turn-event-collector.js).
+// Under that real seq order, the sort_key change must leave every captured
+// row where event_seq put it; only rows of the moved kinds may change place.
+test('P8 sort_key row order moves only the rows the store records out of place', () => {
+  const { LIVE_CAPTURED_KINDS } = require('../services/backend/canonical-turn-event-collector-normalize');
+  const PREFIX_KINDS = new Set(['user_prompt', 'attachment_cluster', 'system_notice']);
+  const bucket = (event) => (PREFIX_KINDS.has(event.kind) ? 0 : LIVE_CAPTURED_KINDS.has(event.kind) ? 1 : 2);
+  const paintedOrder = (rows, messages) => {
+    const { dom, host } = createMarkupHost(renderRows(rows, messages));
+    const order = Array.from(host.querySelectorAll('[data-row-id]')).map((el) => el.getAttribute('data-row-id'));
+    dom.window.close();
+    return order;
+  };
+  const unchanged = [];
+  let movedScenarios = 0;
+  for (const scenarioName of SCENARIOS) {
+    const messages = normalizeChatMessages(readJson(path.join(FIXTURE_ROOT, scenarioName, 'session.json')));
+    const projected = projectTurnTree({ messages });
+    const storeOrdered = { turns: projected.turns.map((turn) => ({
+      ...turn,
+      events: turn.events.map((event, index) => ({ event, index }))
+        .sort((a, b) => bucket(a.event) - bucket(b.event) || a.index - b.index)
+        .map((entry) => entry.event),
+    })) };
+    const persisted = buildPersistedTurnEvents(storeOrdered);
+    const hydrated = projectTurnTree({ messages, turn_event_log_version: 1, turn_events: persisted });
+    for (const turn of hydrated.turns) {
+      const movedIds = new Set(turn.events.filter((event) => bucket(event) !== 1 && event.kind !== 'user_prompt')
+        .map((event) => event.event_id));
+      const after = projectTurnRows(turn.events, DETERMINISTIC_ROW_OPTIONS);
+      const before = projectTurnRows(turn.events.map(({ sort_key: _ignored, ...event }) => event), DETERMINISTIC_ROW_OPTIONS);
+      const movedRowIds = new Set(after.filter((row) => movedIds.has(row.source_events[0])).map((row) => row.row_id));
+      const afterOrder = paintedOrder(after, messages);
+      const beforeOrder = paintedOrder(before, messages);
+      if (movedRowIds.size === 0) {
+        if (afterOrder.join('|') !== beforeOrder.join('|')) unchanged.push(`${scenarioName}/${turn.turn_id}: order changed`);
+        continue;
+      }
+      movedScenarios += 1;
+      // The painted data-row-id prefixes the turn and kind to the row id.
+      const isMoved = (paintedId) => [...movedRowIds].some((rowId) => paintedId.endsWith(`:${rowId}`));
+      const keep = (order) => order.filter((id) => !isMoved(id)).join('|');
+      if (keep(afterOrder) !== keep(beforeOrder)) unchanged.push(`${scenarioName}/${turn.turn_id}: a captured row moved`);
+    }
+  }
+  assert.deepEqual(unchanged, []);
+  assert.ok(movedScenarios > 0, 'the corpus must hold at least one turn with a moved kind');
+});

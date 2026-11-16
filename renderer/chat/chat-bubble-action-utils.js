@@ -304,7 +304,13 @@
     const unsavedReplyVisible = isAssistant
       && !isStreamingAssistant
       && normalizeString(durability?.state).toLowerCase() === 'unsaved';
-    const showHoverRow = isUser || (isAssistant && !isStreamingAssistant && !isSpecialAssistantCard);
+    const editingMessageId = normalizeId(settings.editingMessageId);
+    const isEditingThisRow = !!editingMessageId
+      && !!messageId
+      && editingMessageId === messageId;
+    // The editor's footer takes the hover row's place while its message is edited.
+    const showHoverRow = !isEditingThisRow
+      && (isUser || (isAssistant && !isStreamingAssistant && !isSpecialAssistantCard));
     const regenerateEnabled = isLatestReplyAssistant
       && !followUpDisabledReason
       && regenerateRequest?.allowed === true;
@@ -312,10 +318,6 @@
       ? ''
       : followUpDisabledReason || normalizeString(regenerateRequest?.reason) || REGENERATE_DISABLED_REASON;
 
-    const editingMessageId = normalizeId(settings.editingMessageId);
-    const isEditingThisRow = !!editingMessageId
-      && !!messageId
-      && editingMessageId === messageId;
     const editLockedByOtherEdit = !!editingMessageId
       && !!messageId
       && editingMessageId !== messageId;
@@ -337,6 +339,9 @@
         editReason = EDIT_DISABLED_REASON_DURING_EDIT;
       }
     }
+    // Pin to board (row 150 slice C5): only when the caller says the `project_boards` flag is on, so a row without it is unchanged.
+    const pinVisible = settings.pinToBoard === true && !!messageId && !!normalizeString(source.content)
+      && (isUser || isReplyEligibleAssistantMessage(source));
     return {
       role,
       status,
@@ -374,6 +379,7 @@
           enabled: isLatestReplyAssistant && !followUpDisabledReason,
           reason: isLatestReplyAssistant ? followUpDisabledReason : '',
         },
+        ...(settings.pinToBoard === true ? { pin: { visible: pinVisible, enabled: pinVisible } } : {}),
       },
     };
   }

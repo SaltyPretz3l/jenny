@@ -118,7 +118,7 @@ test('not installed: install button carries the download size and no model contr
   const h = createHarness(t);
   h.controller.bind();
   await flush();
-  assert.match(h.text(), /Image engine/);
+  assert.doesNotMatch(h.text(), /Image engine/,'the drawer title names the engine; the block has no title of its own');
   assert.match(h.text(), /Status/);
   assert.match(h.text(), /Not installed/);
   assert.equal(h.button('install').textContent, 'Install engine… (322 MB)');
@@ -470,4 +470,23 @@ test('a record that cannot be cleared keeps the stuck state and says to restart'
   assert.equal(h.document.querySelector('.model-library-image-engine-confirm'), null);
   assert.ok(h.button('force-clear-ask'));
   assert.equal(h.button('reconcile').textContent, 'Try again');
+});
+
+test('summary() and the change callback work without any host, and watch() keeps the state live', async (t) => {
+  const h = createHarness(t, { state: { status: 'installed', model_sets: { sets: [savedSet('0123456789ab', 'Q4_K_M')], default_id: null } } });
+  const seen = [];
+  const controller = require('../renderer/shell/model-library/model-library-image-engine').createModelLibraryImageEngineController({
+    windowRef: h.dom.window, documentRef: h.document, hostId: 'nowhere', onChange: () => seen.push(1),
+  });
+  t.after(() => controller.dispose());
+  assert.equal(controller.summary('sdcpp'), null, 'unknown until the first state answer');
+  controller.watch();
+  controller.watch();
+  await controller.refresh();
+  assert.deepEqual(controller.summary('sdcpp'), { text: 'Installed · 1 model set', tone: 'ready', set: true });
+  assert.ok(seen.length >= 1);
+  h.setState({ status: 'installed', model_sets: { sets: [], default_id: null } });
+  h.emit({ status: 'installed' });
+  await flush();
+  assert.equal(controller.summary('sdcpp').text, 'Installed · 0 model sets');
 });

@@ -3,7 +3,14 @@
  * reply's copy / save-retry / discard, the inline editor's Save and Cancel,
  * and the hover actions (edit, copy, regenerate, branch, elaborate,
  * follow-up, proactive suggestion use / save / later). Loaded before
- * renderer-chat-event-transcript-bindings.js, which creates it per pane. */
+ * renderer-chat-event-transcript-bindings.js, which creates it per pane.
+ *
+ * It also owns the chat's one "Pin to board" entry (row 150 slice C5): openPinMenu() is what the message's Pin button,
+ * a sketch drawing, a picture, a file link and the side panel's selected text all call. It answers false at once with
+ * the `project_boards` flag off, takes the project from the chat (General when it has none), loads the board picker
+ * (renderer/features/board/board-pin-menu.js) on first use through the script loader, and opens it. pinEnabled() is
+ * the flag as the last bindings made here saw it, for the places that draw a Pin control without an app state.
+ * openBoardFromMark(): a named board under a sent prompt opens that board, through the same module. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-unsaved-reply-actions'));
@@ -12,6 +19,61 @@
   root.rendererChatMessageActionBindings = factory(root.rendererUnsavedReplyActions || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (unsavedReplyActions) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+
+  const GENERAL_PROJECT_ID = 'project_general';
+  const PIN_MENU_SRC = 'renderer/features/board/board-pin-menu.js';
+  const pinHolder = { state: null };
+  const flagOf = (state) => Boolean(state && state.features && state.features.featureFlags && state.features.featureFlags.project_boards === true);
+  const oneLine = (text, max) => String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, max);
+  const elementOf = (node) => (node && node.nodeType === 1 ? node : (node && node.parentElement) || null);
+
+  function pinEnabled() { return flagOf(pinHolder.state); }
+
+  function projectIdOf(state, chatId) {
+    const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => String(entry && entry.id || '').trim() === chatId);
+    return String(session && session.project_id || '').trim() || GENERAL_PROJECT_ID;
+  }
+
+  // Runs `call(module)` once the lazy board-pin-menu module is in the page; false when it cannot be loaded.
+  function withPinMenu(win, call) {
+    const run = () => (win.rendererBoardPinMenu ? call(win.rendererBoardPinMenu) : undefined);
+    if (win.rendererBoardPinMenu) { void Promise.resolve(run()).catch(() => {}); return true; }
+    const loader = win.scriptLoaderUtils;
+    if (!loader || typeof loader.ensureScript !== 'function') return false;
+    Promise.resolve(loader.ensureScript({ src: PIN_MENU_SRC, isReady: () => Boolean(win.rendererBoardPinMenu) })).then(run).catch(() => {});
+    return true;
+  }
+
+  function openPinMenu(args) {
+    const options = args || {};
+    const state = options.state || pinHolder.state;
+    if (!flagOf(state)) return false;
+    const win = options.windowRef || globalThis;
+    const call = {
+      anchorEl: options.anchorEl, anchorX: options.anchorX, anchorY: options.anchorY, rootEl: options.rootEl,
+      item: options.item, heading: options.heading, sessionId: options.sessionId, messageId: options.messageId,
+      projectId: projectIdOf(state, String(options.sessionId || state.currentSessionId || '').trim()),
+      deps: { state, windowRef: win },
+    };
+    return withPinMenu(win, (menu) => (typeof menu.open === 'function' ? menu.open(call) : undefined));
+  }
+
+  // The named board under a sent prompt opens that board (saved as the project's open one, then the Board view).
+  function openBoardFromMark(args) {
+    const options = args || {};
+    const state = options.state || pinHolder.state;
+    const boardId = String(options.boardId || '').trim();
+    if (!boardId || !flagOf(state)) return false;
+    const win = options.windowRef || globalThis;
+    const deps = { state, windowRef: win, projectId: projectIdOf(state, String(state.currentSessionId || '').trim()) };
+    return withPinMenu(win, (menu) => (typeof menu.openBoard === 'function' ? menu.openBoard(boardId, deps) : undefined));
+  }
+
+  /** A context-menu item that opens the picker for `args.item`, or null while the flag is off. */
+  function pinMenuItem(args) {
+    if (!flagOf((args && args.state) || pinHolder.state)) return null;
+    return { label: (args && args.label) || jt('board.pin.menuItem', 'Pin to board'), action: () => { openPinMenu(args); } };
+  }
 
   function createMessageActionBindings(deps) {
     const {
@@ -41,6 +103,33 @@
       appendClientLog,
       onResolved: refreshRecoveredSession,
     }) || null;
+    if (state) pinHolder.state = state;
+    // The text selected inside this message's own entry (never in its hover row), or ''.
+    function selectedTextIn(entry) {
+      const selection = doc && typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+      if (!entry || !selection || selection.isCollapsed || selection.rangeCount < 1) return '';
+      const inside = (node) => {
+        const el = elementOf(node);
+        return Boolean(el) && entry.contains(el) && !el.closest('[data-hover-row]');
+      };
+      return inside(selection.anchorNode) && inside(selection.focusNode) ? selection.toString().trim() : '';
+    }
+
+    function pinMessage(messageId, button) {
+      const chatId = String(state && state.currentSessionId || '').trim();
+      const list = state && state.messagesBySession && typeof state.messagesBySession.get === 'function' ? state.messagesBySession.get(chatId) : null;
+      const message = Array.isArray(list) ? list.find((entry) => String(entry && entry.id || '').trim() === messageId) : null;
+      if (!message || !chatId) return;
+      const selected = selectedTextIn(button.closest('.chat-entry'));
+      const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => String(entry && entry.id || '').trim() === chatId);
+      openPinMenu({
+        state, windowRef: doc && doc.defaultView, anchorEl: button, rootEl: doc && doc.body, sessionId: chatId, messageId,
+        item: selected ? { kind: 'note', text: selected }
+          : { kind: 'chat', sessionId: chatId, messageId, title: oneLine(session && session.title, 200), excerpt: oneLine(message.content, 400) },
+        heading: selected ? jt('board.pin.headingSelection', 'Pin selection to board') : undefined,
+      });
+    }
+
     let handleSelectClick;
     if (typeof handleSelectClickInput === 'function') {
       handleSelectClick = handleSelectClickInput;
@@ -95,6 +184,12 @@
             });
           }
         }
+        return true;
+      }
+
+      const boardMark = event.target.closest('[data-message-mark="board"][data-board-id]');
+      if (boardMark && openBoardFromMark({ state, windowRef: doc && doc.defaultView, boardId: boardMark.dataset.boardId })) {
+        event.preventDefault();
         return true;
       }
 
@@ -167,6 +262,10 @@
           });
           return true;
         }
+        if (messageAction === 'pin') {
+          pinMessage(messageId, actionButton);
+          return true;
+        }
         if (messageAction === 'regenerate') {
           handleRegenerateMessage(messageId).catch((error) => {
             showComposerActionError(error, jt('chat.transcript.regenerateFailedTitle', 'Regenerate Failed'));
@@ -217,5 +316,5 @@
     return { handleMessageActionClick };
   }
 
-  return { createMessageActionBindings };
+  return { createMessageActionBindings, openPinMenu, openBoardFromMark, pinMenuItem, pinEnabled };
 });

@@ -95,3 +95,41 @@ test('NSIS uninstall drops the CLI bin directory from the user Path on every rea
   assert.ok(insert > 0, 'customUnInstall inserts the PATH removal');
   assert.ok(insert < hook.indexOf('StrCmp $JennyRemovalMode "cleanup"'), 'it runs before the cleanup-mode gate');
 });
+
+test('NSIS lists Jenny in Open with for text and code without ever claiming the default (row 137)', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  const macro = (name) => {
+    const start = source.indexOf(`!macro ${name}`);
+    assert.ok(start >= 0, `${name} exists`);
+    return source.slice(start, source.indexOf('!macroend', start));
+  };
+  const register = macro('JennyOpenWithRegisterType');
+  const install = macro('customInstall');
+  const remove = macro('RemoveJennyOpenWith');
+  // One extension list drives both directions.
+  assert.match(install, /!insertmacro JennyOpenWithTypes JennyOpenWithRegisterType/);
+  assert.match(remove, /!insertmacro JennyOpenWithTypes JennyOpenWithUnregisterType/);
+  assert.equal([...source.matchAll(/!macro JennyOpenWithTypes\b/g)].length, 1);
+  // OpenWithProgids entries are REG_NONE; the `.<ext>` default value and UserChoice are never written.
+  assert.match(register, /WriteRegNone HKCU "Software\\Classes\\\.\$\{EXT\}\\OpenWithProgids" "Jenny\.File"/);
+  const writes = `${register}\n${install}`;
+  assert.doesNotMatch(writes, /Classes\\\.\$\{EXT\}" ""/);
+  const code = source.split('\n').filter((line) => !/^\s*;/.test(line)).join('\n');
+  assert.doesNotMatch(code, /UserChoice/);
+  for (const line of writes.split('\n').filter((entry) => /WriteReg/.test(entry))) {
+    assert.match(line, /WriteReg\w+ HKCU /, `HKCU only: ${line.trim()}`);
+  }
+  // `--` stops Chromium switch parsing before the file path.
+  const commands = [...install.matchAll(/shell\\open\\command" "" '([^']+)'/g)].map((match) => match[1]);
+  assert.equal(commands.length, 2);
+  for (const command of commands) assert.equal(command, '"$INSTDIR\\Jenny.exe" -- "%1"');
+  assert.match(install, /"Software\\RegisteredApplications" "Jenny" "Software\\Jenny\\Capabilities"/);
+  // Removal: own update guard, HKCU only, and before the cleanup-mode gate so every mode runs it.
+  assert.match(remove, /\$\{ifNot\} \$\{isUpdated\}/);
+  assert.doesNotMatch(remove, /HKLM/);
+  assert.match(remove, /DeleteRegKey \/ifempty HKCU "Software\\Jenny"/);
+  const hook = source.slice(source.indexOf('!macro customUnInstall'));
+  const insert = hook.indexOf('!insertmacro RemoveJennyOpenWith');
+  assert.ok(insert > 0, 'customUnInstall removes the registration');
+  assert.ok(insert < hook.indexOf('StrCmp $JennyRemovalMode "cleanup"'), 'before the cleanup-mode gate');
+});

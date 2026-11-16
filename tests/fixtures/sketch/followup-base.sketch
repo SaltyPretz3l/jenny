@@ -1,0 +1,9 @@
+title Pipeline
+dir right
+in Input
+parse Parse
+check Check
+out Output
+in -> parse
+parse -> check
+check -> out

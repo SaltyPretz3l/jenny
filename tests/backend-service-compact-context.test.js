@@ -118,7 +118,8 @@ test('compactContextNow maps plain canonical messages to exact {role, content} r
   assert.deepEqual(
     calls[0].messages,
     [
-      { role: 'user', content: 'hello' },
+      // The attachment itself is dropped; the replay note naming it stays (LFM3 findings F2).
+      { role: 'user', content: 'hello\n\n[Attached to this message earlier, not shown again: Attachment (text file)]' },
       { role: 'assistant', content: 'hi there' },
     ],
     'messages must be mapped to plain {role, content}, dropping ids/attachments/timestamps'
@@ -504,6 +505,37 @@ test('compactContextNow loads the forced local model, and refuses a switch while
 
   await service.compactContextNow('sess-cloud');
   assert.deepEqual(order, [['resolve', 'qwen3.5:9b', 'ollama'], ['compact', 'qwen3.5:9b']]);
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+test('row 123: with a team model loaded only the conversation that chose it is compacted, and on its own model', async () => {
+  const { service } = createMinimalService();
+  const calls = [];
+  service.sidecarManager.getStatus = () => ({ phase: 'ready' });
+  service.sidecarClient = {
+    chatCompact: async (...args) => { calls.push(args); return { status: 'ok', compacted: true, messages: [] }; },
+    dispose: () => {},
+    off: () => {},
+  };
+  const team = 'team/team_alpha1/alpha';
+  service.currentEngineType = 'openai-compatible';
+  service.currentModel = team;
+  service._teamEngineSelection = { id: team, teamId: 'team_alpha1', modelId: 'alpha' };
+  const teamState = { online: true, active: true, portReady: true, models: ['alpha'] };
+  service.options.getTeamEngine = () => ({ teamState: () => ({ ...teamState }) });
+  let preferred = '';
+  service.sessionStore.getSession = () => ({ id: 'sess-1', preferred_model: preferred });
+  service.sessionStore.getSessionMessages = () => [{ id: 'm1', role: 'user', content: 'hello' }];
+  assert.deepEqual(await service.compactContextNow('sess-1'), { status: 'error', reason: 'team_engine_other_chat' });
+  assert.deepEqual(calls, [], 'a chat with no pick never reaches the team');
+  preferred = team;
+  assert.notEqual((await service.compactContextNow('sess-1')).reason, 'team_engine_other_chat');
+  assert.equal(calls.length, 1, 'the chat that chose the team model is compacted on it');
+  teamState.online = false;
+  assert.deepEqual(await service.compactContextNow('sess-1'), { status: 'error', reason: 'team_not_connected' },
+    'its own chat too, once the team is not usable');
+  assert.equal(calls.length, 1);
   service.sidecarClient = null;
   service.dispose();
 });

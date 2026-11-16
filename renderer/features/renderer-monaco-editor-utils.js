@@ -74,10 +74,22 @@
   // which Monaco's URI.parse splits into fragment/query — losing the suffix of
   // a legal filename like foo#bar.ts. Escaping those two delimiters makes the
   // round trip lossless: URI.parse(...).path decodes back to '/<path>'.
+  // Row 137: an outside-file key (outside://<id>/<name>) maps to jenny-outside:/<id>/<name>.
+  const OUTSIDE_KEY_URI_RE = /^outside:\/\/(o[0-9a-f]{24}\/[^/\\]+)$/;
   function workspacePathToMonacoUriString(path) {
-    return 'jenny-workspace:/' + encodeURI(String(path == null ? '' : path))
+    const text = String(path == null ? '' : path);
+    const outside = OUTSIDE_KEY_URI_RE.exec(text);
+    return (outside ? 'jenny-outside:/' : 'jenny-workspace:/') + encodeURI(outside ? outside[1] : text)
       .replace(/#/g, '%23')
       .replace(/\?/g, '%3F');
+  }
+
+  // Pure: the reverse for a model URI ({ scheme, path } with Monaco's decoded path) -> the
+  // IDE key; '' for any other scheme.
+  function monacoUriToWorkspacePath(uri) {
+    const path = String(uri?.path || '').replace(/^\/+/, '');
+    if (uri?.scheme === 'jenny-workspace') return path;
+    return uri?.scheme === 'jenny-outside' ? `outside://${path}` : '';
   }
 
   // Pure: classify a file's text as "large" (degrade + exclude from context).
@@ -942,6 +954,7 @@
     IDE_DIFF_EDITOR_OPTIONS,
     normalizeEditorLanguage,
     workspacePathToMonacoUriString,
+    monacoUriToWorkspacePath,
     classifyLargeFile,
     fingerprintText,
     largeFileEditorOptions,

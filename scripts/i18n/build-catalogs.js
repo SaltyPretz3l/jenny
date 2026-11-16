@@ -96,4 +96,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { buildCatalogs, main, parseCatalog, renderCatalog };
+module.exports = { buildCatalogs, compareOrdinal, main, parseCatalog, renderCatalog };

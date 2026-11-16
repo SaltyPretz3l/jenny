@@ -171,3 +171,44 @@ test('a Node IPC parent that goes away is the stop message; closing the channel 
   assert.deepEqual(quiet, []);
   assert.equal(closing.proc.listenerCount('disconnect'), 0);
 });
+
+test('`reach` goes out only with exactly type, result and reason', () => {
+  const { isOutbound } = require('../../server/team/parent-channel');
+  assert.equal(isOutbound({ type: 'reach', result: 'relay', reason: 'relay_connected' }), true);
+  for (const bad of [{ type: 'reach' }, { type: 'reach', result: 'relay' }, { type: 'reach', reason: 'relay_connected' },
+    { type: 'reach', result: 'relay', reason: 'relay_connected', addresses: [] }]) {
+    assert.equal(isOutbound(bad), false, JSON.stringify(bad));
+  }
+});
+
+test('`start` may carry a valid relay_token; a bad token or another extra key drops it', () => {
+  const carrier = ipcProcess();
+  const channel = createParentChannel(carrier.proc);
+  const received = [];
+  channel.onMessage((message) => received.push(message));
+  carrier.deliver({ type: 'start', host_key: KEY, relay_token: 'owner-relay-token' });
+  carrier.deliver({ type: 'start', host_key: KEY });
+  for (const bad of [{ type: 'start', host_key: KEY, relay_token: '' }, { type: 'start', host_key: KEY, relay_token: 'has space' },
+    { type: 'start', host_key: KEY, relay_token: 7 }, { type: 'start', host_key: KEY, relay_token: 'x'.repeat(257) },
+    { type: 'start', host_key: KEY, relay_token: null }, { type: 'start', host_key: KEY, relay_url: 'https://r.example.com' },
+    { type: 'start', host_key: KEY, relay_token: 'ok-token', extra: 1 }, { type: 'start', relay_token: 'ok-token', extra: 1 }]) {
+    carrier.deliver(bad);
+  }
+  assert.deepEqual(received, [{ type: 'start', host_key: KEY, relay_token: 'owner-relay-token' }, { type: 'start', host_key: KEY }]);
+  assert.equal(Object.hasOwn(received[1], 'relay_token'), false, 'no relay_token key when none was sent');
+  assert.equal(received.every((message) => Object.isFrozen(message)), true);
+  assert.equal(channel.droppedCount(), 8);
+});
+
+// Slice 5-6: the desktop's `team_deleting` (the owner is deleting the team) carries nothing else.
+test('`team_deleting` arrives with its type alone; any extra field drops it', () => {
+  const carrier = ipcProcess();
+  const channel = createParentChannel(carrier.proc);
+  const received = [];
+  channel.onMessage((message) => received.push(message));
+  carrier.deliver({ type: 'team_deleting' });
+  carrier.deliver({ type: 'team_deleting', by: 'Olive' });
+  assert.deepEqual(received, [{ type: 'team_deleting' }]);
+  assert.equal(Object.isFrozen(received[0]), true);
+  assert.equal(channel.droppedCount(), 1);
+});

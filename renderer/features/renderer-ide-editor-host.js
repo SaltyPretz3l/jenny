@@ -244,9 +244,9 @@
 
     // Loads (or refreshes) a document. Content comes from workspaceFs.readFile;
     // the document store owns the buffer from here until closeDocument.
-    async function openDocument({ path, content, mtimeMs, eol, encoding, shouldApply = null, onApplied = null }) {
+    async function openDocument({ path, content, mtimeMs, eol, encoding, readOnly = false, shouldApply = null, onApplied = null }) {
       const hasMonaco = await ensureEditor(); if (disposalFence.isDisposed() || (typeof shouldApply === 'function' && shouldApply() !== true)) return null;
-      const doc = documents.openFile({ path, content, mtimeMs, eol, encoding, monacoApi: hasMonaco ? monacoApi : null });
+      const doc = documents.openFile({ path, content, mtimeMs, eol, encoding, readOnly, monacoApi: hasMonaco ? monacoApi : null });
       if (typeof onApplied === 'function') onApplied();
       return doc;
     }
@@ -370,10 +370,11 @@
         }
         // A draft is read-only and numbers its own lines; the next file takes the editor back.
         const draft = doc.draft === true;
-        if (draft || draftLocked) {
+        const locked = draft || doc.readOnly === true; // an outside legacy-encoding file is locked like a draft
+        if (locked || draftLocked) {
           const numbers = baseEditorOptions().lineNumbers;
-          monacoEditor.updateOptions?.({ readOnly: draft, lineNumbers: draft && doc.lineNumbers && numbers !== 'off' ? doc.lineNumbers : numbers });
-          draftLocked = draft;
+          monacoEditor.updateOptions?.({ readOnly: locked, lineNumbers: draft && doc.lineNumbers && numbers !== 'off' ? doc.lineNumbers : numbers });
+          draftLocked = locked;
         }
         return dispatchActiveFileChanged(normalizedPath);
       }
@@ -381,7 +382,7 @@
       if (textarea) {
         documents.runApplying(() => {
           textarea.value = doc.buffer;
-          textarea.readOnly = doc.draft === true;
+          textarea.readOnly = doc.draft === true || doc.readOnly === true;
         });
         setFallbackVisible(true);
       }

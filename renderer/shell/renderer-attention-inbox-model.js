@@ -22,7 +22,10 @@
  *     its composer strip for a send with no row);
  *   - a send the runtime cannot start is listed only when its last reply's
  *     cleanup is unconfirmed (renderer-stuck-send.js): every other wait ends
- *     by itself, and the queue strip already says why.
+ *     by itself, and the queue strip already says why;
+ *   - a row for the conversation on screen shows its title and one line and
+ *     offers no decisions (`onScreen`), because the transcript card beside it
+ *     is where that wait is answered; it still counts.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -239,6 +242,24 @@
         introText: clip(batch.intro_text, INTRO_MAX_CHARS),
       });
     });
+    // A live question card (ask_user) in a chat's current turn (G7). Its desktop toast comes from the
+    // stream listener, so the row says where it came from. A chat whose batch is already listed keeps one row.
+    var batchSessions = new Set(rows.map(function sessionOf(row) { return row.sessionId; }));
+    (Array.isArray(options.questionCards) ? options.questionCards : []).forEach(function addCardRow(card) {
+      var sessionId = text(card && card.sessionId);
+      var callId = text(card && card.callId);
+      if (!sessionId || !callId || !options.sessionIndex.has(sessionId) || batchSessions.has(sessionId)) return;
+      rows.push({
+        key: 'question:' + sessionId + ':' + callId,
+        kind: 'question',
+        source: 'card',
+        sessionId: sessionId,
+        sessionTitle: sessionTitleFor(options.sessionIndex.get(sessionId)),
+        callId: callId,
+        questionCount: Math.max(1, Math.floor(Number(card.questionCount)) || 0),
+        introText: clip(card.introText, INTRO_MAX_CHARS),
+      });
+    });
     return rows;
   }
 
@@ -274,6 +295,94 @@
     return row.introText ? waiting + LINE_SEPARATOR + row.introText : waiting;
   }
 
+  /* Every kind's wait as the dot a chat row or strip chip wears: approval
+   * beats plan review beats input needed, so a chat with several waits shows
+   * its most pressing one. A question, a failed delivery and a stuck send are
+   * all "input needed" (no new state names). */
+  var STATE_BY_KIND = { approval: 'approval', plan_review: 'plan_review', question: 'input_needed',
+    delivery_failed: 'input_needed', stuck_send: 'input_needed' };
+  var STATE_RANK = { approval: 0, plan_review: 1, input_needed: 2 };
+
+  function waitingStates(rows) {
+    var states = new Map();
+    (Array.isArray(rows) ? rows : []).forEach(function addState(row) {
+      var next = row && STATE_BY_KIND[row.kind];
+      if (!next || !row.sessionId) return;
+      var current = states.get(row.sessionId);
+      if (!current || STATE_RANK[next] < STATE_RANK[current]) states.set(row.sessionId, next);
+    });
+    return states;
+  }
+
+  /* Field separators for the source fingerprint: never valid in an id, a
+   * title or a batch id, so two different sets of sources cannot collide. */
+  var FIELD = '\u0001';
+  var PART = '\u0002';
+  var GROUP = '\u0003';
+
+  function sortedKeys(set) {
+    return [...set].sort().join(FIELD);
+  }
+
+  /* A cheap read of the sources THEMSELVES, taken before the model is built.
+   * render() runs on every workspace-chrome pass, which during streaming is
+   * every frame, and a model build is two source scans, a facts-helper call
+   * per approval, a sort and a signature serialization. The approval map's
+   * keys, each summary's id, title and pending batch, the conversation on
+   * screen and the view it is shown in, the collapsed choice and the
+   * controller's own local verdicts (`extras`) are everything a rendered row
+   * can be made of, so an unchanged fingerprint means an unchanged inbox. */
+  function sourceFingerprint(state, extras) {
+    var approvals = state.pendingToolApprovals;
+    var entries = [];
+    if (approvals && typeof approvals.values === 'function') entries = [...approvals.values()];
+    else if (Array.isArray(approvals)) entries = approvals;
+    // The key AND the fields a row is made of: rehydration re-sets the same
+    // key synchronously with the persisted fields, so no pass sees the key
+    // move (the input never changes under one call id).
+    var approvalKeys = entries.map(function sourceOf(entry) {
+      if (!entry || typeof entry !== 'object') return '';
+      return [entry.approvalId || entry.callId || '', entry.sessionId || '', entry.toolName || '',
+        entry.policyScope || '', entry.policyConsequence || '', entry.reason || '', entry.summary || '',
+        entry.oneOffOnly === true ? '1' : '0'].join(PART);
+    }).join(FIELD);
+    var sessions = Array.isArray(state.sessions) ? state.sessions : [];
+    var sessionKeys = sessions.map(function sourceOf(summary) {
+      if (!summary || typeof summary !== 'object') return '';
+      var batch = summary.pending_question_batch;
+      var questions = batch && Array.isArray(batch.questions) ? batch.questions.length : 0;
+      // The title is in here because a conversation renamed mid-wait must
+      // rename its row, and nothing else in these sources would say so.
+      // The intro, clipped as the model clips it: revised under one batch id.
+      return String(summary.id || '') + PART + String(summary.title || '')
+        + PART + String((batch && batch.batch_id) || '') + PART + questions
+        + PART + String((batch && batch.intro_text) || '').slice(0, 120) + PART + String(summary.failed_delivery_count || 0);
+    }).join(FIELD);
+    var cardKeys = (Array.isArray(extras.questionCards) ? extras.questionCards : []).map(function keyOf(card) {
+      return [card.sessionId, card.callId, card.questionCount, String(card.introText || '').slice(0, 120)].join(PART);
+    }).join(FIELD);
+    return [
+      extras.collapsed ? '1' : '0', String(state.currentSessionId || ''), String(state.ui && state.ui.activeView || ''),
+      approvalKeys, sessionKeys, cardKeys,
+      (Array.isArray(extras.stuckSends) ? extras.stuckSends : []).map(function keyOf(entry) { return entry.key + PART + entry.sessionId; }).join(FIELD),
+    ].concat(extras.verdicts.map(sortedKeys)).join(GROUP);
+  }
+
+  /* What the collapsed strip and the chat dots read: the chats that wait, in
+   * row order, how each one waits, and a key that moves whenever any of that
+   * does. Built from the rows a person can still act on. */
+  function snapshotOf(rows) {
+    var list = Array.isArray(rows) ? rows : [];
+    var ids = [...new Set(list.map(function idOf(row) { return row.sessionId; }))];
+    var states = waitingStates(list);
+    return Object.freeze({
+      answerable: list.length,
+      waitingSessionIds: Object.freeze(ids),
+      states: states,
+      key: [list.length].concat(ids.map(function keyOf(id) { return id + PART + states.get(id); })).join(FIELD),
+    });
+  }
+
   /**
    * Build the frozen "Needs you" view.
    *
@@ -281,16 +390,19 @@
    * @param {Array<Object>} [options.sessions] - Session summaries (state.sessions)
    * @param {Map|Array} [options.pendingToolApprovals] - state.pendingToolApprovals
    * @param {string} [options.currentSessionId] - The conversation on screen
+   * @param {boolean} [options.currentSessionOnScreen] - The chat view is showing it (rows get `onScreen`)
    * @param {Object} [options.facts] - { getApprovalFacts, getApprovalCommandPreview }
    * @param {Array<Object>} [options.stuckSends] - runtimeSendController.listStuckSends()
+   * @param {Array<Object>} [options.questionCards] - live ask_user cards { sessionId, callId, questionCount, introText }
    * @returns {{rows: Array<Object>, counts: Object, hidden: boolean}} frozen
    */
   function buildAttentionInbox(options) {
     var input = options && typeof options === 'object' ? options : {};
     var sessionIndex = buildSessionIndex(input.sessions);
     var currentSessionId = text(input.currentSessionId);
+    var currentSessionOnScreen = input.currentSessionOnScreen === true;
     var context = { sessionIndex: sessionIndex, facts: input.facts, pendingToolApprovals: input.pendingToolApprovals,
-      stuckSends: input.stuckSends };
+      stuckSends: input.stuckSends, questionCards: input.questionCards };
     var rows = buildApprovalRows(context).concat(buildQuestionRows(context), buildDeliveryFailedRows(context),
       buildStuckSendRows(context));
     // Stable sort: kind first, then the conversation on screen last within its
@@ -309,6 +421,7 @@
       })
       .map(function freezeRow(entry, order) {
         entry.row.order = order;
+        entry.row.onScreen = currentSessionOnScreen && currentSessionId !== '' && entry.row.sessionId === currentSessionId;
         return Object.freeze(entry.row);
       });
     function countOf(kind) { return rows.filter(function isKind(row) { return row.kind === kind; }).length; }
@@ -327,5 +440,6 @@
     });
   }
 
-  return { buildAttentionInbox: buildAttentionInbox, policyLine: policyLine, rowNote: rowNote, PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
+  return { buildAttentionInbox: buildAttentionInbox, policyLine: policyLine, rowNote: rowNote, waitingStates: waitingStates,
+    snapshotOf: snapshotOf, sourceFingerprint: sourceFingerprint, PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
 });

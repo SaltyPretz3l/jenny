@@ -22,10 +22,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { chromium } = require('playwright-core');
 
 const ROOT = path.resolve(__dirname, '..');
-const { SKIP, browserPath } = require('./helpers/composer-layout-harness');
+const { SKIP } = require('./helpers/composer-layout-harness');
+const { withSharedBrowser, closeSharedBrowser } = require('./helpers/layout-shared-browser');
+
+// One browser serves every case of the file, each on its own page; it exits with the file.
+test.after(closeSharedBrowser);
 
 const MODULES = [
   'renderer/shared/string-utils.js',
@@ -37,15 +40,6 @@ const MODULES = [
 ];
 
 const WIDTHS = [519, 719, 900, 1200, 1600];
-
-async function withBrowser(fn) {
-  const browser = await chromium.launch({ executablePath: browserPath, headless: true });
-  try {
-    await fn(browser);
-  } finally {
-    await browser.close();
-  }
-}
 
 /* The title bar as the app paints it: the nav rendered by the real rail
    controller (gear included), the health dot with an Auto chip and one unseen
@@ -128,6 +122,26 @@ function measure(page) {
   });
 }
 
+/* The first three cases only read the title bar at a width, so each width is mounted and measured once and
+   they share the plain numbers. The read-out case changes the bar and keeps its own page. */
+const widthMeasurements = new Map();
+function measureAtWidth(width) {
+  if (!widthMeasurements.has(width)) {
+    const pending = withSharedBrowser(async (browser) => {
+      const page = await mountTitlebar(browser, { width });
+      try {
+        return await measure(page);
+      } finally {
+        await page.close();
+      }
+    });
+    widthMeasurements.set(width, pending);
+    // A failed measurement is not kept, so a later case measures that width again instead of inheriting the error.
+    pending.catch(() => widthMeasurements.delete(width));
+  }
+  return widthMeasurements.get(width);
+}
+
 function assertNoOverlap(boxes, label) {
   const sorted = [...boxes].sort((a, b) => a.left - b.left);
   sorted.slice(1).forEach((item, index) => {
@@ -137,69 +151,57 @@ function assertNoOverlap(boxes, label) {
 }
 
 test('one 52px row at >= 1200px, a 40px nav row below; the rail height is 0 and content starts under the header', { skip: SKIP }, async () => {
-  await withBrowser(async (browser) => {
-    for (const width of WIDTHS) {
-      const page = await mountTitlebar(browser, { width });
-      const m = await measure(page);
-      const expected = width >= 1200 ? 52 : 92;
-      assert.equal(m.toprailHeight, '0px', `${width}: --toprail-height resolves to 0`);
-      assert.equal(m.header.top, 0);
-      assert.equal(m.header.height, expected, `${width}: header height`);
-      assert.equal(m.workspaceTop, expected, `${width}: content starts right under the header`);
-      for (const tab of m.tabs) {
-        if (width >= 1200) assert.ok(tab.bottom <= 52, `${width}: "${tab.name}" sits in the one row`);
-        else assert.ok(tab.top >= 52 && tab.bottom <= 92, `${width}: "${tab.name}" sits in the second row`);
-      }
-      assert.deepEqual(m.tabs.map((tab) => tab.name), ['Home', 'Chat', 'Workspace', 'Diagnostics']);
-      await page.close();
+  for (const width of WIDTHS) {
+    const m = await measureAtWidth(width);
+    const expected = width >= 1200 ? 52 : 92;
+    assert.equal(m.toprailHeight, '0px', `${width}: --toprail-height resolves to 0`);
+    assert.equal(m.header.top, 0);
+    assert.equal(m.header.height, expected, `${width}: header height`);
+    assert.equal(m.workspaceTop, expected, `${width}: content starts right under the header`);
+    for (const tab of m.tabs) {
+      if (width >= 1200) assert.ok(tab.bottom <= 52, `${width}: "${tab.name}" sits in the one row`);
+      else assert.ok(tab.top >= 52 && tab.bottom <= 92, `${width}: "${tab.name}" sits in the second row`);
     }
-  });
+    assert.deepEqual(m.tabs.map((tab) => tab.name), ['Home', 'Chat', 'Workspace']);
+  }
 });
 
 test('no overlap at 519 / 719 / 900 / 1200 / 1600; the wordmark is never under the cluster; the gutter keeps 48px', { skip: SKIP }, async () => {
-  await withBrowser(async (browser) => {
-    for (const width of WIDTHS) {
-      const page = await mountTitlebar(browser, { width });
-      const m = await measure(page);
-      const label = `${width}px`;
-      assert.ok(m.brandHit, `${label}: a click on the wordmark lands on the wordmark`);
-      const rowOne = [
-        { name: 'wordmark', ...m.brand },
-        ...(width >= 1200 ? m.tabs : []),
-        { name: 'gutter', ...m.gutter },
-        ...m.clusterItems,
-        { name: 'window controls', ...m.controls },
-      ];
-      assertNoOverlap(rowOne, label);
-      for (const item of rowOne) {
-        assert.ok(item.left >= -0.5 && item.right <= m.viewport + 0.5, `${label}: "${item.name}" [${item.left}, ${item.right}] stays inside the window`);
-      }
-      assert.ok(m.gutter.width >= 48 - 0.5, `${label}: drag gutter keeps 48px (got ${m.gutter.width})`);
-      assert.ok(m.clusterItems.some((item) => item.name === 'titlebarSettingsSlot'), `${label}: the gear is in the cluster`);
-      await page.close();
+  for (const width of WIDTHS) {
+    const m = await measureAtWidth(width);
+    const label = `${width}px`;
+    assert.ok(m.brandHit, `${label}: a click on the wordmark lands on the wordmark`);
+    const rowOne = [
+      { name: 'wordmark', ...m.brand },
+      ...(width >= 1200 ? m.tabs : []),
+      { name: 'gutter', ...m.gutter },
+      ...m.clusterItems,
+      { name: 'window controls', ...m.controls },
+    ];
+    assertNoOverlap(rowOne, label);
+    for (const item of rowOne) {
+      assert.ok(item.left >= -0.5 && item.right <= m.viewport + 0.5, `${label}: "${item.name}" [${item.left}, ${item.right}] stays inside the window`);
     }
-  });
+    assert.ok(m.gutter.width >= 48 - 0.5, `${label}: drag gutter keeps 48px (got ${m.gutter.width})`);
+    assert.ok(m.clusterItems.some((item) => item.name === 'titlebarSettingsSlot'), `${label}: the gear is in the cluster`);
+  }
 });
 
 test('three 46px window tiles stretch to the 52px row, flush top-right, at every width and at <= 480px', { skip: SKIP }, async () => {
-  await withBrowser(async (browser) => {
-    for (const width of [...WIDTHS, 480, 420]) {
-      const page = await mountTitlebar(browser, { width });
-      const m = await measure(page);
-      assert.equal(m.tiles.length, 3, `${width}: three tiles`);
-      assert.equal(m.controls.width, 138, `${width}: cluster width`);
-      assert.equal(m.controls.height, 52, `${width}: tiles stretch to the row`);
-      assert.equal(m.controls.top, 0, `${width}: flush to the top`);
-      assert.equal(m.controls.right, m.viewport, `${width}: flush to the right`);
-      for (const tile of m.tiles) assert.equal(tile.width, 46, `${width}: tile width`);
-      assert.ok(m.brandHit, `${width}: wordmark stays clickable`);
-      await page.close();
-    }
-  });
+  for (const width of [...WIDTHS, 480, 420]) {
+    const m = await measureAtWidth(width);
+    assert.equal(m.tiles.length, 3, `${width}: three tiles`);
+    assert.equal(m.controls.width, 138, `${width}: cluster width`);
+    assert.equal(m.controls.height, 52, `${width}: tiles stretch to the row`);
+    assert.equal(m.controls.top, 0, `${width}: flush to the top`);
+    assert.equal(m.controls.right, m.viewport, `${width}: flush to the right`);
+    for (const tile of m.tiles) assert.equal(tile.width, 46, `${width}: tile width`);
+    assert.ok(m.brandHit, `${width}: wordmark stays clickable`);
+  }
 });
 
 test('the machine-load read-out keeps the cluster width constant across ticks', { skip: SKIP }, async () => {
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountTitlebar(browser, { width: 1600, readout: true });
     const widths = [];
     const samples = [

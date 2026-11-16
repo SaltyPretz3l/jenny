@@ -17,12 +17,14 @@ async function loadSettings(t, options) {
 
 const toggleOf = (window) => window.document.querySelector('[data-inv-toggle="changePicturesToggle"]');
 
-test('the pictures switch is a Chat layout row, on by default, and follows the flag', async (t) => {
+test('the pictures switch is a Chat › Side panel row, on by default, and follows the flag', async (t) => {
   const { window, shell } = await loadSettings(t);
   const doc = window.document;
-  const chatLayout = doc.getElementById('appearanceChatLayoutHeading').closest('.settings-group');
-  const mount = chatLayout.querySelector('[data-setting-mount="changePicturesToggle"]');
-  assert.ok(mount, 'the switch mounts in Chat layout');
+  // Row 133: it left Appearance › Chat layout for Settings › Chat › Side panel.
+  const sidePanel = doc.getElementById('chatSidePanelHeading').closest('.settings-group');
+  assert.ok(sidePanel.closest('.settings-card[data-settings-section="chat"]'));
+  const mount = sidePanel.querySelector('[data-setting-mount="changePicturesToggle"]');
+  assert.ok(mount, 'the switch mounts in Side panel');
   assert.ok(mount.contains(toggleOf(window)));
   assert.equal(toggleOf(window).getAttribute('aria-checked'), 'true');
   assert.match(mount.textContent, /Show before and after pictures of page changes/);
@@ -34,11 +36,11 @@ test('the pictures switch is a Chat layout row, on by default, and follows the f
   assert.equal(toggleOf(window).getAttribute('aria-checked'), 'true');
 });
 
-test('the pictures switch is searchable and assigned to Appearance', async (t) => {
+test('the pictures switch is searchable and assigned to Chat', async (t) => {
   const { window } = await loadSettings(t);
   const entry = window.rendererSettingsFieldCopy.listSettingsSearchEntries()
     .find((candidate) => candidate.id === 'changePicturesToggle');
-  assert.equal(entry?.sectionId, 'appearance');
+  assert.equal(entry?.sectionId, 'chat');
   assert.equal(entry?.label, 'Show before and after pictures of page changes');
   for (const term of ['before and after', 'pictures', 'screenshot']) {
     assert.equal(entry?.keywords?.includes(term), true, `the copy must index "${term}"`);

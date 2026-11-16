@@ -2,8 +2,8 @@
  * Per-session transcript view vocabulary: answers | thinking | everything.
  * A session's explicit choice (state.ui.transcriptViewBySession) wins; other
  * sessions follow the persisted global default (state.transcriptViewDefault).
- * Also owns the per-pane More (three dots) button and its menu (Back to prompt, the
- * three views, Wide transcript, Activity, and Tasks and Notes while the bar is short of room),
+ * Also owns the per-pane More (three dots) button and its menu (Back to prompt, the panel
+ * toggles, the three views, Wide transcript),
  * the Settings field builder (Transcript views plan, po-review A1/B1/C1), and the
  * shell's Wide toggle (row 92: Chat width `full` on and off). Row 115 slice 2a.
  */
@@ -22,6 +22,9 @@
   // The bar is "compact" below this width: Tasks and Notes leave it and appear in More.
   const COMPACT_MAX_WIDTH = 560;
   const WIDE_SHORTCUT_HINT = 'Ctrl+Alt+W';
+  // Change pictures: a per-device "hide the pictures in Changes" view preference (not the feature flag).
+  const PICTURES_HIDDEN_KEY = 'jenny.changesPictures.hidden.v1';
+  const PICTURES_HIDDEN_ATTR = 'data-change-pictures-hidden';
 
   // Row 92: Wide is the Chat width preset `full`; off returns to the width chosen before it.
   const WIDE_CHAT_WIDTH = 'full';
@@ -103,15 +106,17 @@
   /**
    * Mount this pane's More (three dots) button into its session bar: one
    * inventory icon button that opens the inventory context menu. Menu, top to
-   * bottom: Back to prompt (`promptJump`; disabled with no prompt yet), Tasks and
-   * Notes (only while the bar is compact and the real button is shown), a
-   * separator, the three transcript views as radios, a separator,
+   * bottom: Back to prompt (`promptJump`; disabled with no prompt yet), a separator,
+   * the panel group (ticked toggles: Artifacts, Tasks and Notes while the bar is
+   * compact; Background tasks; Subagents, Changes and Change pictures with `panels`;
+   * Activity), a separator, the three transcript views as radios, a separator and
    * Wide transcript (the shell's single toggle owns the width; this dispatches
-   * its event) and Activity (when its button is shown in this pane). Idempotent
-   * per cluster: a rebind reuses the button and only re-registers its listener.
-   * `signal` disposes the width observer with the bind.
+   * its event). Idempotent per cluster: a rebind reuses the button and only
+   * re-registers its listener. `signal` disposes the width observer with the bind.
+   * `panels` ({ railMode(), closeRail(), featureEnabled(key) }) reaches the
+   * right-hand rail; without it the Subagents, Changes and Change pictures items are omitted.
    */
-  function mountTranscriptViewControl({ cluster, getSessionId, registerListener, listenerOptions, signal, promptJump = null, jt = moduleJt } = {}) {
+  function mountTranscriptViewControl({ cluster, getSessionId, registerListener, listenerOptions, signal, promptJump = null, panels = null, jt = moduleJt } = {}) {
     const build = globalThis.inventoryActionButton;
     const menu = globalThis.inventoryContextMenu;
     if (!cluster || typeof build !== 'function' || typeof getSessionId !== 'function' || typeof registerListener !== 'function') return null;
@@ -137,6 +142,75 @@
       return node && !node.hidden ? node : null;
     };
 
+    const doc = button.ownerDocument;
+    const pictures = {
+      hidden: () => doc.documentElement.hasAttribute(PICTURES_HIDDEN_ATTR),
+      set(hidden) {
+        if (hidden) doc.documentElement.setAttribute(PICTURES_HIDDEN_ATTR, 'true');
+        else doc.documentElement.removeAttribute(PICTURES_HIDDEN_ATTR);
+        try {
+          const storage = doc.defaultView.localStorage;
+          if (hidden) storage.setItem(PICTURES_HIDDEN_KEY, '1');
+          else storage.removeItem(PICTURES_HIDDEN_KEY);
+        } catch (_error) { /* a view preference: the menu works without storage */ }
+      },
+    };
+    if (panels) {
+      try { if (doc.defaultView.localStorage.getItem(PICTURES_HIDDEN_KEY) === '1') doc.documentElement.setAttribute(PICTURES_HIDDEN_ATTR, 'true'); } catch (_error) { /* no storage: pictures stay shown */ }
+    }
+
+    // The panel group: one ticked toggle per panel that has no always-visible button.
+    function panelItems() {
+      const items = [];
+      const toggle = (label, checked, action) => items.push({ label, toggle: true, checked: checked === true, action });
+      if (cluster.hasAttribute('data-session-bar-compact')) {
+        for (const [selector, label] of [
+          ['[data-chat-node="artifactSplitViewToggle"]', jt('artifacts.review.toggleTitle', 'Artifacts')],
+          ['#chatTimelineTasksToggle', jt('artifactPanelV2Render.tasks', 'Tasks')],
+          ['#chatTimelineNotesToggle', jt('projectNotes.toggle', 'Notes')],
+        ]) {
+          const real = shown(selector);
+          if (real) toggle(label, real.getAttribute('aria-pressed') === 'true', () => real.click());
+        }
+      }
+      const background = globalThis.rendererBackgroundTasksPanel;
+      if (typeof background?.toggle === 'function') {
+        toggle(jt('chat.utilities.panels.backgroundTasks', 'Background tasks'), background.isOpen?.() === true,
+          () => background.toggle({ sessionId: getSessionId(), opener: button }));
+      }
+      const pane = cluster.closest('.chat-pane');
+      const railMode = panels ? String(panels.railMode?.() || '') : '';
+      const cards = pane ? pane.querySelectorAll('[data-subagent-open]') : [];
+      if (panels && cards.length) {
+        const showing = railMode === 'subagents';
+        toggle(jt('chat.utilities.panels.subagents', 'Subagents'), showing, () => {
+          if (!showing) { cards[cards.length - 1].click(); return; }
+          const close = doc.querySelector('.subagent-monitor-shell [data-subagent-close]');
+          if (close) close.click(); else panels.closeRail?.();
+        });
+      }
+      if (panels && cluster.querySelector('[data-session-bar-diff]')) {
+        const detail = () => globalThis.rendererChatWorkspaceDetail;
+        const openChanges = () => detail()?.open?.({ surface: 'changes', ownerSessionId: getSessionId(), opener: button });
+        const changesOpen = railMode === 'code_review';
+        toggle(jt('chat.utilities.panels.changes', 'Changes'), changesOpen, () => {
+          if (!changesOpen) { openChanges(); return; }
+          detail()?.close?.();
+          if (panels.railMode?.() === 'code_review') panels.closeRail?.();
+        });
+        if (panels.featureEnabled?.('change_pictures') !== false) {
+          toggle(jt('chat.utilities.panels.changePictures', 'Change pictures'), changesOpen && !pictures.hidden(), () => {
+            if (changesOpen) { pictures.set(!pictures.hidden()); return; }
+            pictures.set(false);
+            openChanges();
+          });
+        }
+      }
+      const activity = shown('[data-activity-open]');
+      if (activity) toggle(jt('activity.title', 'Activity'), activity.getAttribute('aria-pressed') === 'true', () => activity.click());
+      return items;
+    }
+
     function menuItems() {
       room.measure();
       const view = currentView();
@@ -145,12 +219,9 @@
         const promptId = promptJump.targetId();
         items.push({ label: jt('chat.wayfinder.backToPrompt', 'Back to prompt'), disabled: !promptId, action: () => promptJump.jump(promptId) });
       }
-      if (cluster.hasAttribute('data-session-bar-compact')) {
-        for (const [selector, label] of [['#chatTimelineTasksToggle', jt('artifactPanelV2Render.tasks', 'Tasks')], ['#chatTimelineNotesToggle', jt('projectNotes.toggle', 'Notes')]]) {
-          const real = shown(selector);
-          if (real) items.push({ label, action: () => real.click() });
-        }
-      }
+      const group = panelItems();
+      if (items.length && group.length) items.push({ separator: true });
+      items.push(...group);
       if (items.length) items.push({ separator: true });
       TRANSCRIPT_VIEWS.forEach((candidate, index) => items.push({
         label: transcriptViewLabel(candidate, jt),
@@ -162,7 +233,6 @@
       const tail = [];
       // The dock sets its own widths, so Chat width does not apply there.
       if (!hostedElsewhere(cluster.closest('.chat-pane'))) {
-        const doc = button.ownerDocument;
         tail.push({
           label: jt('chat.chatWidthToggle.label', 'Wide transcript'), toggle: true,
           checked: String(doc.documentElement?.dataset?.chatWidth || '') === WIDE_CHAT_WIDTH,
@@ -170,8 +240,6 @@
           action: () => { button.dispatchEvent(new (doc.defaultView.CustomEvent)(CHAT_WIDTH_TOGGLE_EVENT, { bubbles: true, detail: { source: 'button' } })); },
         });
       }
-      const activity = shown('[data-activity-open]');
-      if (activity) tail.push({ label: jt('activity.title', 'Activity'), action: () => activity.click() });
       if (tail.length) items.push({ separator: true }, ...tail);
       return items;
     }

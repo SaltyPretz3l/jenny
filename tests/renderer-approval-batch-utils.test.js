@@ -560,3 +560,27 @@ test('an exact-content message approval is never part of a batch decision', asyn
   assert.deepEqual(approvals, ['approval-exact-batch-1', 'approval-exact-batch-2']);
   controller.dispose();
 });
+
+// 4th-checkpoint cost: a delta that touches no approval row or banner schedules no sync.
+test('approval batch syncs only for mutations that touch an approval row or banner', async (t) => {
+  const { window } = createApprovalDom();
+  const previous = [globalThis.window, globalThis.MutationObserver];
+  [globalThis.window, globalThis.MutationObserver] = [window, window.MutationObserver];
+  t.after(() => { [globalThis.window, globalThis.MutationObserver] = previous; });
+  const frames = { count: 0 };
+  const requestFrame = window.requestAnimationFrame;
+  window.requestAnimationFrame = (callback) => { frames.count += 1; return requestFrame(callback); };
+  const controller = bindApprovalBatchUx({ scopeRoot: window.document.getElementById('timeline'), document: window.document,
+    callbacks: { async approveOne() { return true; }, async denyOne() { return true; } } });
+  t.after(() => controller.dispose());
+  await flush();
+  frames.count = 0;
+  const children = window.document.querySelector('.chat-thread-children');
+  children.insertAdjacentHTML('beforeend', '<div class="reasoning-row-body">streamed thinking<p></p></div>');
+  await flush();
+  assert.equal(frames.count, 0, 'a streaming delta elsewhere schedules no sync');
+  children.insertAdjacentHTML('beforeend', '<div class="approval-gap-row" data-approval-status="pending" data-tool-call-id="call-3" data-approval-id="approval-stream-a-call-3"></div>');
+  await flush();
+  assert.ok(frames.count >= 1, 'a new approval row schedules a sync');
+  assert.equal(window.document.querySelector('.approval-batch-banner')?.getAttribute('data-pending-count'), '3');
+});

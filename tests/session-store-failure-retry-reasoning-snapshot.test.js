@@ -21,7 +21,6 @@ const { STORE_SCHEMA_VERSION } = require('../services/backend/session-store-migr
 const {
   SessionTurnActorRegistry,
 } = require('../services/backend/session-turn-actor');
-const { buildFeatureFlags } = require('../services/feature-flags');
 const {
   cleanupTrackedResources,
 } = require('./helpers/resource-cleanup');
@@ -31,19 +30,6 @@ const {
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
-});
-
-test('the retired carry flag is gone and the store no longer offers a capture', () => {
-  assert.equal(Object.hasOwn(buildFeatureFlags({}), 'failure_retry_reasoning_carry'), false);
-  assert.equal(
-    Object.hasOwn(
-      buildFeatureFlags({ JENNY_ENABLE_FAILURE_RETRY_REASONING_CARRY: '1' }),
-      'failure_retry_reasoning_carry'
-    ),
-    false
-  );
-  const { store } = freshStore();
-  assert.equal(typeof store.captureFailureRetryReasoning, 'undefined');
 });
 
 function reasoningEntry(id, text, timestamp, thinkingId = '') {

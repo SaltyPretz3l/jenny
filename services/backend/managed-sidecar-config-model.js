@@ -2,6 +2,7 @@
 // endpoint it talks to. Split out of managed-sidecar-config.js (the public
 // entry point, which re-exports both resolvers).
 const { managedServerAlias, ninferManagedOrigin } = require('./managed-server-owner');
+const { liveTeamSelection, teamEngineApiUrl } = require('./team-engine-models');
 const {
   DEFAULT_MANAGED_OLLAMA_FALLBACK_MODEL,
 } = require('./backend-config');
@@ -70,6 +71,9 @@ function resolveManagedConfiguredModel(service) {
   if (hostedEndpoint?.model) {
     return String(hostedEndpoint.model).trim();
   }
+  // A team model goes on the wire as the team's own model id (team-engine-models.js).
+  const teamSelection = liveTeamSelection(service);
+  if (teamSelection) return teamSelection.modelId;
   const engineType = service.currentEngineType
     || inferEngineTypeFromModel(service.currentModel || service.defaultModel);
   // Only the endpoint that IS a managed server (llama-server or NInfer) takes
@@ -94,13 +98,16 @@ function resolveManagedConfiguredModel(service) {
 }
 
 // The api_url the sidecar's openai-compatible engine will talk to: a hosted
-// endpoint wins, then a serving NInfer (its own port, while it is the active
+// endpoint wins, then a live team selection (its team's engine port while it serves, '' otherwise:
+// never another endpoint), then a serving NInfer (its own port, while it is the active
 // managed server), then an explicit endpoint, otherwise the configured port.
 function resolveOpenAICompatibleApiUrl(service) {
   const hostedEndpoint = getHostedModelEndpoint(service);
   if (hostedEndpoint?.engine === 'openai-compatible' && hostedEndpoint.apiUrl) {
     return String(hostedEndpoint.apiUrl).trim();
   }
+  const teamUrl = teamEngineApiUrl(service);
+  if (teamUrl !== null) return teamUrl;
   const ninferOrigin = ninferManagedOrigin(service);
   if (ninferOrigin) {
     return ninferOrigin;

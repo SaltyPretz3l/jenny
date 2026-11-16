@@ -22,10 +22,15 @@ function applySingleInstance(app, onSecondInstance, dependencies = {}) {
       return false;
     }
   }
-  const hasLock = app.requestSingleInstanceLock();
+  const additionalData = dependencies.additionalData && typeof dependencies.additionalData === 'object'
+    ? dependencies.additionalData
+    : null;
+  const hasLock = additionalData ? app.requestSingleInstanceLock(additionalData) : app.requestSingleInstanceLock();
   if (!hasLock) {
     const env = dependencies.env || process.env;
-    if (env.JENNY_LAUNCH_PATH === 'dev') {
+    // A launch that only hands files to the running app has done its job.
+    const handedOffFiles = Array.isArray(additionalData?.outsidePaths) && additionalData.outsidePaths.length > 0;
+    if (env.JENNY_LAUNCH_PATH === 'dev' && !handedOffFiles) {
       const showErrorBox = dependencies.showErrorBox || defaultShowProfileOwnerError;
       showErrorBox(
         'Jenny (Dev) did not start',

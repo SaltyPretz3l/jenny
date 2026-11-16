@@ -278,7 +278,7 @@ test('the Read detail prefers canonical path and accepts legacy file_path', (t) 
   assert.match(legacy, /tool-call-output-meta">legacy\.md</);
 });
 
-test('Edit and Write details share the lazy file diff presentation', (t) => {
+test('Edit and Write details share the bare single-file diff presentation', (t) => {
   const base = {
     callId: 'call-edit', sessionId: 'session-a', displayToolName: 'Edit', summary: 'src/a.js',
     status: 'completed', statusLabel: 'Completed', isRunning: false, defaultExpanded: true,
@@ -288,10 +288,10 @@ test('Edit and Write details share the lazy file diff presentation', (t) => {
   const edit = detailBody(t, { ...base, toolKind: 'Edit', toolName: 'edit_file' });
   const write = detailBody(t, { ...base, toolKind: 'Write', toolName: 'write_file' });
   for (const html of [edit, write]) {
-    assert.match(html, /class="file-diff"/);
-    assert.match(html, /data-file-diff-pending/);
-    assert.match(html, />−1</);
-    assert.doesNotMatch(html, /&quot;raw&quot;|diff-hunk-header/);
+    assert.match(html, /class="file-diff file-diff--bare"/);
+    assert.match(html, /data-file-diff-materialized/);
+    assert.match(html, /diff-line-remove/);
+    assert.doesNotMatch(html, /file-diff-head|&quot;raw&quot;|diff-hunk-header/);
   }
 });
 
@@ -455,4 +455,45 @@ test('python detail images with a trusted ref id open the image viewer; legacy i
   assert.match(html, /<button type="button" class="inv-artifact-figure-frame" data-image-viewer-open="tool" data-image-id="chart-1" data-session-id="" aria-label="View Python output image 2 of 2" title="View Python output image 2 of 2"><img class="inv-artifact-figure-image" src="file:\/\/\/C:\/stored\/chart\.png"/);
   assert.match(html, /<span class="inv-artifact-figure-frame"><img class="inv-artifact-figure-image" src="file:\/\/\/C:\/legacy\.png"/);
   assert.doesNotMatch(html, /example\.invalid/);
+});
+
+// Chat tool diff rows: status notes, real reasons, and the bare single file.
+function diffRowDeps(extra) {
+  const fileDiffBindings = require('../renderer/chat/renderer-file-diff-bindings');
+  return {
+    fileDiffView: require('../renderer/chat/renderer-file-diff-view'), fileDiffBindings,
+    codeHighlight: require('../renderer/chat/renderer-code-highlight'),
+    escapeHtml, actionButton: require('../renderer/inventory/action-button'),
+    resolveExpanded: () => false, ...extra,
+  };
+}
+
+test('diff rows note created and deleted files and give the real reason for a summary-only file', () => {
+  const html = toolShellUtils.buildFileDiffRowsMarkup({ sessionId: 's', callId: 'c', metadata: { diffs: [
+    { diff_id: 'd:new', path: 'src/new.js', status: 'created', additions: 2, deletions: 0, hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, lines: ['+a', '+b'] }] },
+    { diff_id: 'd:gone', path: 'src/gone.js', status: 'deleted', additions: 0, deletions: 1, hunks: [{ oldStart: 1, oldLines: 1, newStart: 0, newLines: 0, lines: ['-a'] }] },
+    { diff_id: 'd:bin', path: 'assets/logo.png', status: 'modified', truncated: true, truncation_reason: 'binary', hunks: [] },
+  ] } }, diffRowDeps());
+  assert.match(html, /file-diff-note">new file</);
+  assert.match(html, /file-diff-note">deleted</);
+  assert.match(html, /file-diff-truncated">binary file</);
+  assert.doesNotMatch(html, /too large to show inline/);
+  assert.equal((html.match(/file-diff-open--text/g) || []).length, 3, 'chat rows open with a word');
+  assert.equal((html.match(/class="file-diff-head"/g) || []).length, 3);
+});
+
+test('bareSingle turns exactly one diff with hunks into the bare body; two diffs keep their rows', () => {
+  const one = { diff_id: 'd:1', path: 'src/a.js', status: 'modified', additions: 1, deletions: 1, hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-x', '+y'] }] };
+  const bare = toolShellUtils.buildFileDiffRowsMarkup({ sessionId: 's', callId: 'c', metadata: { diff: one } }, diffRowDeps({ bareSingle: true }));
+  assert.match(bare, /file-diff--bare/);
+  assert.doesNotMatch(bare, /file-diff-head/);
+  assert.match(bare, /Open diff in editor/);
+  const plain = toolShellUtils.buildFileDiffRowsMarkup({ sessionId: 's', callId: 'c', metadata: { diff: one } }, diffRowDeps());
+  assert.match(plain, /file-diff-head/);
+  const two = toolShellUtils.buildFileDiffRowsMarkup({ sessionId: 's', callId: 'c', metadata: { diffs: [one, { ...one, diff_id: 'd:2', path: 'src/b.js' }] } }, diffRowDeps({ bareSingle: true }));
+  assert.equal((two.match(/class="file-diff-head"/g) || []).length, 2);
+  assert.doesNotMatch(two, /file-diff--bare/);
+  const summary = toolShellUtils.buildFileDiffRowsMarkup({ sessionId: 's', callId: 'c', metadata: { diff: { diff_id: 'd:3', path: 'big.js', truncated: true, truncation_reason: 'line_limit', hunks: [] } } }, diffRowDeps({ bareSingle: true }));
+  assert.match(summary, /file-diff-head/);
+  assert.match(summary, /too long to show here/);
 });

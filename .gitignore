@@ -42,6 +42,13 @@ uninstall-preload.bundle.js
 # can skip esbuild; it is regenerated, never committed.
 .preload-build-stamp.json
 
+# Generated sketch-block drawing bundles (built by scripts/build/build-sketch.js on every dev
+# launch and before packaging from vendor/sketchy; never hand-edited, never committed).
+# sketch-frame.bundle.js ships in the app; sketch-core.bundle.cjs is for Node tests only.
+sketch-frame.bundle.js
+sketch-core.bundle.cjs
+.sketch-build-stamp.json
+
 # Workspace-local state
 .claude/
 .jenny/

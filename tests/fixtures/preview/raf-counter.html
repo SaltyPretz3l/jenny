@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>rAF counter</title>
+<style>body { font: 16px sans-serif; margin: 2rem; }</style>
+</head>
+<body>
+<!--
+  Owner-gated probe for session review F11 (docs/plans/SESSION_REVIEW_2026_11_11_REMEDIATION.md):
+  does the hidden preview window run requestAnimationFrame at display rate?
+  Copy into a workspace and run preview_test with path=raf-counter.html, wait_ms=4000 (or the
+  longest wait the tool accepts), observe=["#frames", "#state"]. Expected at 60 Hz: about 180
+  frames in 3 s. A count far below that means the hidden window throttles animation.
+-->
+<p>frames in 3 s: <span id="frames">0</span></p>
+<p>state: <span id="state">counting</span></p>
+<script>
+  (function () {
+    var frames = 0;
+    var start = performance.now();
+    function tick(now) {
+      if (now - start >= 3000) {
+        document.getElementById('frames').textContent = String(frames);
+        document.getElementById('state').textContent = 'done';
+        return;
+      }
+      frames += 1;
+      document.getElementById('frames').textContent = String(frames);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  })();
+</script>
+</body>
+</html>

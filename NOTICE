@@ -32,6 +32,36 @@ This repository vendors the following third-party code:
   (`static_analyzer/clustering/names/`); the role-word list is copied as data.
   Deviations are recorded in `docs/plans/FILE_MAP_COMPONENTS_2026-10-25.md`.
 
+## Sketchy and its drawing dependencies (vendor/sketchy, bundled into sketch-frame.bundle.js)
+
+Sketch blocks in chat are drawn by the drawing core of Sketchy, vendored unedited
+at one pinned commit and built into `sketch-frame.bundle.js` by
+`scripts/build/build-sketch.js`. The record of what is vendored, replaced and
+shimmed is `vendor/sketchy/JENNY_VENDORING.md`. The bundle contains no network
+address and fetches nothing at run time.
+
+- Sketchy 0.2.0 (commit c246cd47) — MIT License, Copyright (c) 2026 ddkbs:
+  https://github.com/ddkbs/sketchy. Its licence and notices are kept beside the
+  code as `vendor/sketchy/LICENSE` and `vendor/sketchy/THIRD_PARTY_NOTICES.md`.
+  The faint "sketchy" mark it draws on every picture credits the author and is kept.
+- elkjs 0.12.1 — Eclipse Public License 2.0, Copyright (c) the Kieler project and
+  contributors. It is included in the bundle unmodified (its published
+  `lib/elk.bundled.js`). Source: https://github.com/kieler/elkjs, and the
+  corresponding source for this version is the `v0.12.1` tag there. Licence text:
+  https://www.eclipse.org/legal/epl-2.0/
+- rough.js 4.6.6 — MIT License, Copyright (c) 2019 Preet Shihn:
+  https://github.com/rough-stuff/rough
+- Kalam (handwriting font, via @fontsource/kalam 5.3.0) — SIL Open Font License 1.1,
+  Copyright (c) 2014 Indian Type Foundry: https://fonts.google.com/specimen/Kalam.
+  The font files are embedded unmodified as data URLs.
+- Lucide icons (via @iconify-json/lucide 1.2.154) — ISC License, the Lucide
+  Contributors (portions derived from Feather, MIT): https://lucide.dev
+- d3-geo 3.1.2, topojson-client 3.1.0 and world-atlas 2.0.2 — ISC License,
+  Copyright (c) Mike Bostock and contributors: https://github.com/d3/d3-geo,
+  https://github.com/topojson/topojson-client and
+  https://github.com/topojson/world-atlas (country outlines originate from
+  Natural Earth, public domain).
+
 ## Sidecar media site (`vendor/sidecar-media-site`, packaged as `resources/sidecar-media-site`)
 
 - Pillow — MIT-CMU; numpy — BSD-3-Clause.

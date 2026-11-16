@@ -48,6 +48,10 @@ class InferenceOperations {
     this.routes = new Map([route, ...fallbackRoutes].map(item => [item.engine_type, item]));
     this.assertRouteCurrent = assertRouteCurrent;
     this.initialLease = initialLease;
+    // What the latest waiting admit waits behind, for the chat's wait line (the wire answer
+    // carries none of it): { blocking_session_id, held_for_first }, or null when it is not
+    // another chat (a quarantined lane, or this chat's own helper has the model).
+    this.wait = null;
     this.reserving = false;
     this.closed = false;
   }
@@ -124,8 +128,16 @@ class InferenceOperations {
         const blockers = admission.blockers || [];
         const quarantined = !admission.queued && blockers.length > 0
           && blockers.every(blocker => blocker.quarantined_at !== null);
+        const own = this.sessionId !== null && blockers.length > 0
+          && blockers.every(blocker => blocker.session_id === this.sessionId);
+        this.wait = quarantined || own ? null : Object.freeze({
+          blocking_session_id: blockers.map(blocker => blocker.session_id)
+            .find(holder => holder && holder !== this.sessionId) || null,
+          held_for_first: admission.held_for_first === true,
+        });
         return response(id, 'waiting', quarantined ? 'lane_quarantined' : admission.reason);
       }
+      this.wait = null;
       record.lease = admission.lease;
       this.initialLease = null;
       // Lane observers may synchronously revoke authority or close this gateway.

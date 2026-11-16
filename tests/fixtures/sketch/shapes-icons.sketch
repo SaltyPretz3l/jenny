@@ -1,0 +1,11 @@
+title Shapes and icons
+db Storage @database (cylinder) ~ Keeps the data
+u Reader @user (person)
+n Note (note) !muted
+c Hub (circle) !accent
+r Rounded (rounded)
+t Plain text (text)
+g Web @globe
+u -> db read
+db -> c feeds
+c -> g serves

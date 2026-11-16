@@ -56,7 +56,6 @@
   --widget-composer-scrollbar-color: rgba(121, 136, 196, 0.62);
 
   /* Hero / Sprites */
-  --widget-hero-avatar-bg: linear-gradient(180deg, #7f97ff, #6682ff);
   --widget-sprite-color: rgba(239, 243, 255, 0.94);
   /* Home orbit */
   --widget-face-glow-color: var(--accent-cyan);
@@ -140,10 +139,6 @@
   --widget-attachment-clear-color: #aeb7db;
 
   /* Activity States */
-  --widget-activity-pending-glow: rgba(109, 130, 255, 0.08);
-  --widget-activity-pending-border: rgba(142, 163, 255, 0.56);
   --widget-activity-pending-color: #e6ecff;
-  --widget-activity-success-color: #a9e9c6;
-  --widget-activity-error-color: #ffb1bc;
   --widget-activity-pulse-color: rgba(124, 147, 255, 0.14);
 }

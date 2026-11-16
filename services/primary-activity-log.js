@@ -35,7 +35,7 @@ const UNKNOWN_PROJECT = 'a project';
 const EVERY_PROJECT = 'Every project';
 const HISTORY_KINDS = new Set(['paused', 'resumed', 'reset', 'forgot']);
 const SCHEDULE_HISTORY_KINDS = new Set(['schedule_created', 'schedule_updated', 'schedule_enabled', 'schedule_disabled',
-  'schedule_cancelled', 'schedule_skipped', 'schedule_missed']);
+  'schedule_cancelled', 'schedule_skipped', 'schedule_missed', 'schedule_held', 'schedule_run_anyway']);
 
 const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.length > 0;

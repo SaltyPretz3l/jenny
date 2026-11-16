@@ -210,6 +210,32 @@ def test_verify_rejects_unsigned_or_foreign_signed_files(tmp_path, statuses, exp
         windows_signing.verify(fake_dist(tmp_path), PUBLISHER, runner_for(statuses))
 
 
+def test_signature_targets_list_the_file_access_library_only_when_it_is_shipped(tmp_path):
+    dist = fake_dist(tmp_path)
+    before = windows_signing.signature_targets(dist)
+    assert not any(p.suffix == ".dll" for p in before)
+    library = dist / "win-unpacked" / "resources" / "sidecar" / "jenny_file_access.dll"
+    library.write_bytes(b"MZ")
+    other = dist / "win-unpacked" / "resources" / "sidecar" / "other.dll"
+    other.write_bytes(b"MZ")
+    after = windows_signing.signature_targets(dist)
+    assert library in after and other not in after
+    assert [p for p in after if p != library] == before
+
+
+def test_verify_requires_the_file_access_library_to_carry_the_publishers_signature(tmp_path):
+    dist = fake_dist(tmp_path)
+    (dist / "win-unpacked" / "resources" / "sidecar" / "jenny_file_access.dll").write_bytes(b"MZ")
+    checked = windows_signing.verify(dist, PUBLISHER, runner_for({}))
+    assert "jenny_file_access.dll" in {p.name for p in checked}
+    for statuses, expected in (
+        ({"jenny_file_access.dll": ("NotSigned", "")}, "jenny_file_access.dll: signature status NotSigned"),
+        ({"jenny_file_access.dll": ("Valid", "Someone Else")}, "signed by 'Someone Else'"),
+    ):
+        with pytest.raises(RuntimeError, match=expected):
+            windows_signing.verify(dist, PUBLISHER, runner_for(statuses))
+
+
 def test_verify_fails_when_a_signature_row_is_missing(tmp_path):
     with pytest.raises(RuntimeError, match="Could not read a signature"):
         windows_signing.verify(fake_dist(tmp_path), PUBLISHER, lambda c, e: "[]")
@@ -272,6 +298,6 @@ def test_builder_config_keeps_vendor_signatures():
     win = yaml.safe_load((ROOT / "electron-builder.yml").read_text(encoding="utf-8"))["win"]
     assert {name.lower() for name in win["signExts"]} == {
         f"!{name}" for name in windows_signing.THIRD_PARTY_SIGNED
-    }
+    } | {"jenny_file_access.dll"}
     assert "azureSignOptions" not in win
     assert win["verifyUpdateCodeSignature"] is False

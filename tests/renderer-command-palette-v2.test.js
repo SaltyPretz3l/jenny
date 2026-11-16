@@ -422,6 +422,38 @@ test('B8: a Settings field is findable and jumps to its section', async () => {
   }
 });
 
+const HOSTILE = '<b>Ev&e</b><img src=x onerror=alert(1)>\u0007\u202E';
+test('row 123 2a-6c: team rows marked landing open the empty list, typed-only rows wait for a query, channels join the Chats scope', () => {
+  const { doc, dialogDom } = buildPaletteDom();
+  const previous = global.rendererTeamPalette;
+  const row = (id, label, over) => Object.assign({ id, group: 'Team', label, description: '', run: () => {} }, over);
+  global.rendererTeamPalette = { paletteItems: () => [row('team:search', 'Search messages', { landing: true }), row('team:chan:t:chan_team', '#team', { landing: true, scopes: ['chats'] }),
+    row('team:chan:t:chan_jenny', '#jenny', { queryOnly: true, scopes: ['chats'], tag: 'Channel' }), row('team:person:t:m', 'Maya', { queryOnly: true, tag: 'Person' }),
+    row('team:person:t:x', HOSTILE, { landing: true, description: HOSTILE, tag: 'Person' })] };
+  try {
+    withGlobalDocument(doc, () => {
+      const controller = createCommandPaletteController({ state: buildState({ features: { featureFlags: { command_palette: true, team: true } } }), dom: dialogDom });
+      controller.bind();
+      controller.open();
+      const ids = () => [...dialogDom.commandPaletteList.querySelectorAll('[data-palette-id]')].map((el) => el.dataset.paletteId);
+      assert.ok(ids().includes('team:search') && ids().includes('team:chan:t:chan_team'), 'landing rows show with nothing typed');
+      assert.equal(ids().some((id) => id === 'team:chan:t:chan_jenny' || id === 'team:person:t:m'), false, 'typed-only rows do not');
+      const hostile = dialogDom.commandPaletteList.querySelector('[data-palette-id="team:person:t:x"]'); // fix list item 18, through the real escapeHtml
+      assert.deepEqual([hostile.querySelectorAll('b, img').length, rowText(hostile).includes('<b>Ev&amp;e</b>'), rowText(hostile).includes('<b>Ev&e</b>')], [0, false, true]);
+      typeQuery(doc, dialogDom.commandPaletteInput, 'maya');
+      assert.ok(ids().includes('team:person:t:m'), 'typing finds a person');
+      typeQuery(doc, dialogDom.commandPaletteInput, '');
+      typeQuery(doc, dialogDom.commandPaletteInput, '#');
+      assert.equal(dialogDom.commandPaletteScope.textContent, 'Chats');
+      typeQuery(doc, dialogDom.commandPaletteInput, 'jenny');
+      assert.deepEqual(ids(), ['team:chan:t:chan_jenny'], 'the Chats scope finds a team channel');
+      assert.match(rowText(dialogDom.commandPaletteList.querySelector('[data-palette-id="team:chan:t:chan_jenny"]')), /Channel$/);
+    });
+  } finally {
+    global.rendererTeamPalette = previous;
+  }
+});
+
 test('B8: an absent settings-search seam yields no Settings rows and does not throw', () => {
   const { doc, dialogDom } = buildPaletteDom();
   const previousSearch = global.rendererSettingsSearch;

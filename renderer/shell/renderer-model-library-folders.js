@@ -22,6 +22,11 @@
       || (typeof require === 'function' ? require('./model-library/model-library-merge') : null);
   }
 
+  function resolveRuntimeFolders() {
+    return (root && root.modelLibraryRuntimeFolders)
+      || (typeof require === 'function' ? require('./model-library/model-library-runtime-folders') : null);
+  }
+
   function resolveSources() {
     return (root && root.modelLibrarySources)
       || (typeof require === 'function' ? require('./model-library/model-library-sources') : null);
@@ -121,10 +126,30 @@
           announce: function (message) { announce(message); },
           writeModel: function (filePath, pickedDir) { return writeModel(filePath, pickedDir, resolveEngineUtils()); },
           addRefusal: addRefusal,
+          addRuntimeFolder: function () { var list = runtimeList(); return list ? list.add() : null; },
           tagFor: function (filePath) { return sources.libraryTagFromPath(firstShardPath(filePath)); },
         });
       }
       return addMove;
+    }
+
+    // Row 142: the "llama-server builds" list under the GGUF folders. It loads with the Settings
+    // scripts, so it is made on first use and shows nothing until then.
+    var runtimeFolders = null;
+    function runtimeList() {
+      var module = !runtimeFolders && !disposed ? resolveRuntimeFolders() : null;
+      if (module && typeof module.createRuntimeFolders === 'function') {
+        runtimeFolders = module.createRuntimeFolders({
+          windowRef: windowRef,
+          escapeHtml: escapeHtml,
+          actionButton: actionButton,
+          getRoots: function () { return library().managed.runtimeRoots; },
+          onSettings: onSettings,
+          rerender: function () { render(); },
+          announce: function (message) { announce(message); },
+        });
+      }
+      return runtimeFolders;
     }
 
     function host() {
@@ -192,7 +217,8 @@
           dataset: { 'model-library-folder-action': 'add-model' },
         })
         + '</div>'
-        + '</div>';
+        + '</div>'
+        + (runtimeList() ? runtimeList().html() : '');
       var region = liveRegion();
       if (region && target.firstElementChild) target.firstElementChild.appendChild(region);
     }
@@ -486,6 +512,7 @@
       var target = event && event.target;
       if (!target || typeof target.closest !== 'function') return;
       if (addMove && boundHost && boundHost.contains(target) && addMove.handleClick(target)) return;
+      if (runtimeFolders && boundHost && boundHost.contains(target) && runtimeFolders.handleClick(target)) return;
       var add = target.closest('[data-model-library-folder-action="add"]');
       if (add && boundHost && boundHost.contains(add)) {
         void addFolder();
@@ -516,11 +543,12 @@
       disposed = true;
       generation += 1;
       if (addMove) addMove.dispose();
+      if (runtimeFolders) runtimeFolders.dispose();
       if (boundHost) boundHost.removeEventListener('click', handleClick);
       boundHost = null;
     }
 
-    return { render: render, bind: bind, dispose: dispose, removeLibraryModel: removeLibraryModel };
+    return { render: render, bind: bind, dispose: dispose, removeLibraryModel: removeLibraryModel, addModel: addModel };
   }
 
   return { createModelLibraryFoldersController: createModelLibraryFoldersController };

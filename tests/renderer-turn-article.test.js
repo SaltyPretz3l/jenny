@@ -170,6 +170,7 @@ function createArticleMarkupHarness(options = {}) {
         return `<div class="message-hover-row" data-action-target-message-id="${escapeHtml(message.id)}" data-meta-label="${escapeHtml(metaLabel || '')}"></div>`;
       },
       recordTurnArticleRolloutSignal,
+      ...(options.callbacks || {}),
     },
   });
 }
@@ -682,6 +683,42 @@ test('F8: legacy user message articles include estimated token hover meta', () =
   );
 
   assert.match(model.innerHtml, /data-meta-label="~2 tokens est\. · ~2 cumulative text tokens est\."/);
+});
+
+test('legacy rows hand the hover row a short label next to the full one', () => {
+  const chatMessageUtils = require('../renderer/chat/chat-message-utils');
+  const saved = { chat: globalThis.chatMessageUtils, usage: globalThis.rendererContextUsageUtils };
+  globalThis.chatMessageUtils = chatMessageUtils;
+  globalThis.rendererContextUsageUtils = contextUsageUtils;
+  try {
+    const pipeline = createArticleMarkupHarness({
+      callbacks: {
+        buildAssistantMetaLabel: chatMessageUtils.buildAssistantMetaLabel,
+        // Both formatters return '' for an invalid date, as formatDate does.
+        formatMessageTerminalTimestamp: (value) => (Number.isNaN(Date.parse(value)) ? '' : `@${value}`),
+        formatMessageClockTime: (value) => (Number.isNaN(Date.parse(value)) ? '' : `clock ${value}`),
+        renderMessageHoverRow(message, _actionOptions, metaLabel, shortMetaLabel) {
+          return `<div class="message-hover-row" data-meta-label="${escapeHtml(metaLabel || '')}" data-short-meta-label="${escapeHtml(shortMetaLabel || '')}"></div>`;
+        },
+      },
+    });
+    const messages = [
+      { id: 'user_short', role: 'user', content: '12345678', status: 'complete', timestamp: '2026-09-08T09:00:00Z' },
+      { id: 'assistant_short', role: 'assistant', content: '123456789', status: 'complete', model_used: 'm', timestamp: '2026-09-08T09:01:00Z', finalizedAt: '2026-09-08T09:02:00Z' },
+    ];
+    const user = pipeline.buildMessageInnerMarkup(messages[0], messages, '', 'assistant_short', '', null, null);
+    assert.match(user.innerHtml, /data-short-meta-label="clock 2026-09-08T09:00:00Z · 2 tokens"/);
+    assert.match(user.innerHtml, /data-meta-label="@2026-09-08T09:00:00Z · ~2 tokens est\. · ~2 cumulative text tokens est\."/);
+    const assistant = pipeline.buildMessageInnerMarkup(messages[1], messages, '', 'assistant_short', '', null, null);
+    assert.match(assistant.innerHtml, /data-short-meta-label="clock 2026-09-08T09:02:00Z · m · 3 tokens"/);
+    assert.match(assistant.innerHtml, /data-meta-label="Completed @2026-09-08T09:02:00Z · m · ~3 tokens est\. · ~5 cumulative text tokens est\."/);
+    const noStamp = pipeline.buildMessageInnerMarkup({ ...messages[0], timestamp: 'invalid' }, messages, '', 'assistant_short', '', null, null);
+    assert.match(noStamp.innerHtml, /data-short-meta-label="2 tokens"/);
+  } finally {
+    for (const [key, value] of [['chatMessageUtils', saved.chat], ['rendererContextUsageUtils', saved.usage]]) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
 });
 
 test('F8: projected turn article hover meta preserves assistant meta and appends token estimates', () => {

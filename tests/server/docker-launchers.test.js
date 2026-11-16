@@ -144,17 +144,30 @@ function runBashInteractive(fixture, args, env) {
   });
 }
 
+// Tool probes spawn a shell and are asked once per registered test; the answer
+// cannot change within this process, so each probe runs at most once.
+const probeResults = new Map();
+function probeOnce(name, probe) {
+  if (!probeResults.has(name)) probeResults.set(name, probe());
+  return probeResults.get(name);
+}
+
+function bashRuns() {
+  return probeOnce('bash', () => {
+    const result = spawnSync(bashExecutable(), ['-c', 'exit 0'], { encoding: 'utf8', windowsHide: true });
+    return !result.error && result.status === 0;
+  });
+}
+
 function bashAvailable() {
   // Windows bash.exe may launch WSL, where Windows fixture paths and .cmd
   // shims do not apply. Exercise this lane in Linux (including its real PTY).
   if (process.platform === 'win32') return false;
-  const result = spawnSync(bashExecutable(), ['-c', 'exit 0'], { encoding: 'utf8', windowsHide: true });
-  return !result.error && result.status === 0;
+  return bashRuns();
 }
 
 function startupBashAvailable() {
-  const result = spawnSync(bashExecutable(), ['-c', 'exit 0'], { encoding: 'utf8', windowsHide: true });
-  return !result.error && result.status === 0;
+  return bashRuns();
 }
 
 function runWithTerminal(fixture, label, args, env) {
@@ -226,17 +239,21 @@ function missingLauncherTool(label, bashProbe) {
 }
 
 function powershellAvailable() {
-  const executable = powershellExecutable();
-  const result = spawnSync(executable, ['-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8', windowsHide: true });
-  return !result.error && result.status === 0;
+  return probeOnce('powershell', () => {
+    const executable = powershellExecutable();
+    const result = spawnSync(executable, ['-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8', windowsHide: true });
+    return !result.error && result.status === 0;
+  });
 }
 
 function bashPtyAvailable() {
   if (!bashAvailable()) return false;
-  const result = spawnSync('script', ['-qefc', 'exit 0', os.devNull], {
-    encoding: 'utf8', windowsHide: true,
+  return probeOnce('bash-pty', () => {
+    const result = spawnSync('script', ['-qefc', 'exit 0', os.devNull], {
+      encoding: 'utf8', windowsHide: true,
+    });
+    return !result.error && result.status === 0;
   });
-  return !result.error && result.status === 0;
 }
 
 function assertNoDestructiveLauncherText(source) {

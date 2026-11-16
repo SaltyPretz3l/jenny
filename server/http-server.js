@@ -342,5 +342,5 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
 
 module.exports = {
   createHttpServer, readJson, json, requireBodyless, sendHostFailure,
-  headers, retainResponseAdmission, failure, openEventStream, STATUS_BY_CODE,
+  headers, retainResponseAdmission, failure, openEventStream, STATUS_BY_CODE, RESPONSE_WRITE_TIMEOUT_MS,
 };

@@ -285,7 +285,7 @@ test('GGUF picker enables llama-server and cancellation is a no-op', async () =>
   assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 2 changes');
   // The picked folder has no mtp-* drafter: the MTP note must say so now.
   assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent,
-    'Drafter file missing \u00b7 falls back to plain decoding');
+    'No drafter file yet. MTP falls back to plain decoding');
   host.querySelector('[data-action="choose-model-gguf"]').click();
   await flush();
   assert.equal(host.querySelector('[data-model-tuning-gguf]').title, 'D:\\x\\m.gguf');
@@ -366,7 +366,7 @@ test('engine notes distinguish blob-backed, normal missing, and present drafters
   const base = { eligible: true, headroomMb: 512 };
   assert.equal(engineUtils.engineNote({
     ...base, ggufEntry: { source: 'persisted', mainGguf: 'model.gguf', drafterGguf: '' },
-  }), 'Drafter file missing \u00b7 falls back to plain decoding');
+  }), 'No drafter file yet. MTP falls back to plain decoding');
   assert.equal(engineUtils.engineNote({
     ...base, ggufEntry: { source: 'persisted', ollamaBlob: true, drafterGguf: 'mtp-model.gguf' },
   }), 'MTP uses about 0.5 GB more VRAM');
@@ -564,7 +564,7 @@ test('a persisted path outside the scanned directory owns the drafter verdict', 
   });
   assert.equal(view.ggufEntry.source, '');
   assert.equal(host.querySelector('[data-model-tuning-row="mtp"] [data-model-tuning-note]').textContent,
-    'Drafter file missing \u00b7 falls back to plain decoding');
+    'No drafter file yet. MTP falls back to plain decoding');
   harness.controller.dispose();
 });
 

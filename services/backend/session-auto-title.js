@@ -11,6 +11,7 @@ const { isDefaultSessionTitle } = require('./interactive-session-utils');
 const { PLUGIN_SESSION_TYPE, readSessionType } = require('./session-type');
 // The title rule the send path applies, so the stored title can be recognised.
 const { deriveSessionTitleFromMessage } = require('../../renderer/shared/string-utils');
+const { stubBoardBlocks } = require('../boards/board-fence');
 
 const METHOD = 'session.generate_title';
 const MAX_MESSAGE_CHARS = 2000;
@@ -100,7 +101,7 @@ async function generate(service, sessionId, requestInference) {
   if (!isTitleEligible(session)) return { applied: false, reason: 'not_eligible' };
   const messages = session.messages.filter((m) => m?.role !== 'context');
   const userMessage = text(messages.find((m) => m.role === 'user').content).slice(0, MAX_MESSAGE_CHARS);
-  const assistantMessage = text(messages.filter(isUsableAssistant).pop().content).slice(0, MAX_MESSAGE_CHARS);
+  const assistantMessage = stubBoardBlocks(text(messages.filter(isUsableAssistant).pop().content)).slice(0, MAX_MESSAGE_CHARS);
   let outcome = { applied: false, reason: 'not_applied' };
 
   const consumeResult = (result, { assertNotPreempted } = {}) => {

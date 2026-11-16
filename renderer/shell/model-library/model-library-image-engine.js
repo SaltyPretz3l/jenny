@@ -1,12 +1,9 @@
 /**
- * Model Library › Image engine (UMD).
- *
- * The section under GGUF folders that installs the pinned stable-diffusion.cpp
- * engine (or points at the user's own sd-cli.exe), scans a model folder into
- * three slots and keeps the saved model sets. It talks to main only through
- * `jennyShell.imageEngine.*`; every path comes from a main-owned dialog, never
- * from a text field. The capability ships, the model does not: nothing here
- * names, links or recommends a model.
+ * Model Library › Image engines (UMD): the stable-diffusion.cpp and ComfyUI
+ * drawers of the Engines and providers table. Main is reached only through
+ * `jennyShell.imageEngine.*`; every path comes from a main-owned dialog. The
+ * host's `data-image-engine-part` picks the part drawn; summary() feeds the
+ * rows. The capability ships, the model does not: nothing here names a model.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -25,6 +22,7 @@
   var REQUIRED_SLOTS = ['diffusion', 'text_encoder', 'vae'];
   var OPTIONAL_SLOTS = ['vision_projector'];
   var ID_RE = /^[a-f0-9]{12}$/;
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   if (typeof actionButton !== 'function' || typeof actionButton.escapeHtml !== 'function'
     || typeof statusRow !== 'function' || typeof selectField !== 'function') {
@@ -38,15 +36,9 @@
       || (typeof module === 'object' && module.exports ? require('./model-library-image-engine-comfyui') : null);
   }
 
-  function megabytes(bytes) {
-    var value = Number(bytes);
-    return Number.isFinite(value) && value > 0 ? Math.round(value / 1048576) : 0;
-  }
+  function megabytes(bytes) { return Number(bytes) > 0 && Number.isFinite(Number(bytes)) ? Math.round(Number(bytes) / 1048576) : 0; }
 
-  function gigabytes(bytes) {
-    var value = Number(bytes);
-    return Number.isFinite(value) && value > 0 ? (value / 1073741824).toFixed(1) : '0.0';
-  }
+  function gigabytes(bytes) { return Number(bytes) > 0 && Number.isFinite(Number(bytes)) ? (Number(bytes) / 1073741824).toFixed(1) : '0.0'; }
 
   function installFailureMessage(reason) {
     switch (reason) {
@@ -100,8 +92,10 @@
     var windowRef = opts.windowRef || globalThis;
     var documentRef = opts.documentRef || windowRef.document || null;
     var hostId = String(opts.hostId || '');
+    var onChange = typeof opts.onChange === 'function' ? opts.onChange : null;
     var isEnabled = typeof opts.isEnabled === 'function' ? opts.isEnabled : function () { return true; };
     var boundHost = null;
+    var boundPart = null;
     var disposed = false;
     var unsubscribe = null;
     // Latest getState answer: engine status, install progress, handoff and sets.
@@ -120,34 +114,18 @@
     var generation = 0;
     var lastFocusKey = '';
 
-    function bridge() {
-      var shell = windowRef.jennyShell;
-      return shell && shell.imageEngine && typeof shell.imageEngine === 'object' ? shell.imageEngine : null;
-    }
+    function bridge() { return windowRef.jennyShell && typeof windowRef.jennyShell.imageEngine === 'object' ? windowRef.jennyShell.imageEngine : null; }
 
-    function host() {
-      return documentRef && documentRef.getElementById ? documentRef.getElementById(hostId) : null;
-    }
+    function host() { return documentRef && documentRef.getElementById ? documentRef.getElementById(hostId) : null; }
 
     // Family presets ride along with getState (labels only matter here).
-    function families() {
-      return engine && engine.families && typeof engine.families === 'object' ? engine.families : {};
-    }
+    function families() { return engine && engine.families && typeof engine.families === 'object' ? engine.families : {}; }
 
-    function familyLabel(id) {
-      var family = families()[id];
-      return family && family.label ? String(family.label) : String(id || '');
-    }
+    function familyLabel(id) { return families()[id] && families()[id].label ? String(families()[id].label) : String(id || ''); }
 
-    function sets() {
-      var store = engine && engine.model_sets;
-      return store && Array.isArray(store.sets) ? store.sets : [];
-    }
+    function sets() { return engine && engine.model_sets && Array.isArray(engine.model_sets.sets) ? engine.model_sets.sets : []; }
 
-    function defaultId() {
-      var store = engine && engine.model_sets;
-      return store && typeof store.default_id === 'string' ? store.default_id : null;
-    }
+    function defaultId() { return engine && engine.model_sets && typeof engine.model_sets.default_id === 'string' ? engine.model_sets.default_id : null; }
 
     // A retained lease a clean-up attempt in this run could not prove ended;
     // only then is the record offered for an unproven clear.
@@ -212,6 +190,19 @@
       }
       if (status === 'installed') return { tone: 'success', message: jt('models.library.imageEngine.installed', 'Installed · {tag}', { tag: tag }) };
       return { tone: 'default', message: jt('models.library.imageEngine.notInstalled', 'Not installed') };
+    }
+
+    // The table row for a part: { text, tone, set }, or null while the row does not apply.
+    function summary(part) {
+      if (!engine) return null;
+      if (part === 'comfyui') return comfy() ? comfy().summary(engine.comfyui, pending && comfyChecking) : null;
+      var model = statusModel();
+      var count = sets().filter(function (set) { return set.backend !== 'comfyui'; }).length;
+      if (model.tone === 'pending') return { text: model.message, tone: 'busy', set: true };
+      if (cleanupStuck() || (engine.handoff && engine.handoff.retained)) return { text: jt('settings.models.services.sdcpp.cleanup', 'Render needs clean-up'), tone: 'warn', set: true };
+      if (engine.status === 'error' && engine.last_error !== 'cancelled') return { text: jt('settings.models.services.sdcpp.failed', 'Install failed'), tone: 'warn', set: false };
+      if (engine.status !== 'installed' && engine.status !== 'custom') return { text: model.message, tone: 'off', set: false };
+      return { text: jtn('settings.models.services.sdcpp.sets', count, { n: count }, 'Installed · {n} model set', 'Installed · {n} model sets'), tone: 'ready', set: true };
     }
 
     function button(id, label, variant, extra) {
@@ -315,13 +306,10 @@
       return Boolean(picks.diffusion && picks.text_encoder && picks.vae && (detectedFamily() || picks.family));
     }
 
-    function markup() {
+    function sdcppMarkup() {
       var status = statusModel();
       var notInstalled = !engine || engine.status === 'not_installed' || engine.status === 'error';
-      return '<div class="model-library-image-engine">'
-        + '<span class="model-library-folders-title">' + escapeHtml(jt('models.library.imageEngine.title', 'Image engine')) + '</span>'
-        + '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.help', 'Lets Jenny draw images in chat from models you already have, with stable-diffusion.cpp or your own ComfyUI. The models and their licences are yours.')) + '</span>'
-        + '<span class="model-library-image-engine-subtitle">' + escapeHtml(jt('models.library.imageEngine.sdcppTitle', 'stable-diffusion.cpp')) + '</span>'
+      return '<span class="model-library-image-engine-subtitle">' + escapeHtml(jt('models.library.imageEngine.sdcppTitle', 'stable-diffusion.cpp')) + '</span>'
         + statusRow({ tone: status.tone, spinner: status.spinner === true, progress: status.progress || null, compact: true,
           label: jt('models.library.imageEngine.statusLabel', 'Status'), message: status.message, className: 'model-library-image-engine-status' })
         + (confirmRemove ? '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.removeConfirm', 'Remove the image engine? Saved model sets stay.')) + '</span>' : '')
@@ -331,9 +319,15 @@
           ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.workingNote', 'Then: verify fingerprint → unpack → ready. Chats keep working meanwhile.')) + '</span>' : '')
         + (notInstalled
           ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.sourceNote', 'Downloads from github.com, checked against a fingerprint built into this version of Jenny. Nothing is sent anywhere.')) + '</span>' : '')
-        + modelsMarkup()
-        + (comfy() ? comfy().blockMarkup({ comfyui: engine && engine.comfyui, sets: sets(), picks: comfyPicks, pending: pending, checking: pending && comfyChecking, button: button }) : '')
-        + (engine && comfy() ? comfy().setsMarkup({ sets: sets(), defaultId: defaultId(), recipes: engine.recipes, familyLabel: familyLabel, button: button }) : '')
+        + modelsMarkup();
+    }
+
+    function markup(part) {
+      var comfyPart = part === 'comfyui';
+      var mine = sets().filter(function (set) { return (set.backend === 'comfyui') === comfyPart; });
+      return '<div class="model-library-image-engine">'
+        + (comfyPart ? (comfy() ? comfy().blockMarkup({ comfyui: engine && engine.comfyui, sets: sets(), picks: comfyPicks, pending: pending, checking: pending && comfyChecking, button: button }) : '') : sdcppMarkup())
+        + (engine && comfy() ? comfy().setsMarkup({ sets: mine, defaultId: defaultId(), recipes: engine.recipes, familyLabel: familyLabel, button: button }) : '')
         + '<span class="model-library-image-engine-note" aria-live="polite">' + escapeHtml(note) + '</span>'
         + '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.pathNote', 'Folders on this computer or a mapped drive letter. Network paths (\\\\server\\share) are not supported.')) + '</span>'
         + '</div>';
@@ -374,6 +368,7 @@
 
     function render() {
       if (disposed) return;
+      if (onChange) onChange();
       var target = host();
       if (!target) return;
       if (!isEnabled()) { target.innerHTML = ''; return; }
@@ -383,7 +378,7 @@
       // A control that disables itself while an action runs still loses focus;
       // remember the last focused control until the next interactive render.
       if (key) lastFocusKey = key;
-      target.innerHTML = markup();
+      target.innerHTML = markup(target.getAttribute('data-image-engine-part')); // 'comfyui' or, by default, stable-diffusion.cpp
       if (!pending && lastFocusKey) {
         focusByKey(target, lastFocusKey);
         lastFocusKey = '';
@@ -396,6 +391,7 @@
       // Main's answer clears the engine-side failure once the engine is back.
       if (engine.status !== 'installed') confirmRemove = false;
       if (!cleanupStuck()) confirmClear = false;
+      loadComfy();
       render();
     }
 
@@ -527,7 +523,7 @@
       }
     }
 
-    function onChange(event) {
+    function onChangeEvent(event) {
       var target = event && event.target;
       var slot = target && typeof target.getAttribute === 'function' ? target.getAttribute('data-image-engine-slot') : '';
       if (!slot || !host() || !host().contains(target)) return;
@@ -543,27 +539,33 @@
       render();
     }
 
+    // Live updates also reach the rows while no drawer is open.
+    function watch() {
+      var api = bridge();
+      if (disposed || unsubscribe || !api || typeof api.onChanged !== 'function') return;
+      try {
+        var maybe = api.onChanged(function (next) {
+          if (next && typeof next === 'object' && !Array.isArray(next)) {
+            // A change event carries the engine record only; sets and handoff come from getState.
+            applyState(Object.assign({}, engine || {}, next));
+            void refresh();
+          }
+        });
+        if (typeof maybe === 'function') unsubscribe = maybe;
+      } catch (_error) { /* the drawer still works without live updates */ }
+    }
+
     function bind() {
       if (disposed) return;
       var target = host();
       if (!target || target === boundHost) return;
       unbind();
+      // The two drawers share this controller: a note or focus key from one part never shows in the other.
+      if (target.getAttribute('data-image-engine-part') !== boundPart) { note = ''; lastFocusKey = ''; boundPart = target.getAttribute('data-image-engine-part'); }
       boundHost = target;
       target.addEventListener('click', onClick);
-      target.addEventListener('change', onChange);
-      var api = bridge();
-      if (api && typeof api.onChanged === 'function') {
-        try {
-          var maybe = api.onChanged(function (next) {
-            if (next && typeof next === 'object' && !Array.isArray(next)) {
-              // A change event carries the engine record only; sets and handoff come from getState.
-              applyState(Object.assign({}, engine || {}, next));
-              void refresh();
-            }
-          });
-          if (typeof maybe === 'function') unsubscribe = maybe;
-        } catch (_error) { /* the section still works without live updates */ }
-      }
+      target.addEventListener('change', onChangeEvent);
+      watch();
       // A parent re-render swaps the host; the cached state paints at once
       // and the bridge is only asked again when nothing is cached yet.
       if (engine) render();
@@ -573,12 +575,8 @@
     function unbind() {
       if (boundHost) {
         boundHost.removeEventListener('click', onClick);
-        boundHost.removeEventListener('change', onChange);
+        boundHost.removeEventListener('change', onChangeEvent);
         boundHost = null;
-      }
-      if (typeof unsubscribe === 'function') {
-        try { unsubscribe(); } catch (_error) { /* best effort */ }
-        unsubscribe = null;
       }
     }
 
@@ -587,9 +585,13 @@
       disposed = true;
       generation += 1;
       unbind();
+      if (typeof unsubscribe === 'function') {
+        try { unsubscribe(); } catch (_error) { /* best effort */ }
+      }
+      unsubscribe = null;
     }
 
-    return { bind: bind, render: render, refresh: refresh, dispose: dispose, getPicks: function () { return Object.assign({}, picks); } };
+    return { bind: bind, watch: watch, render: render, refresh: refresh, summary: summary, dispose: dispose, getPicks: function () { return Object.assign({}, picks); } };
   }
 
   return { createModelLibraryImageEngineController: createModelLibraryImageEngineController, quantOf: function (name) { return comfy() ? comfy().quantOf(name) : ''; } };

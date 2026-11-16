@@ -37,7 +37,8 @@ async function sidecarChecks(runtime) {
   ];
 }
 
-async function runDoctor({ settings, env = process.env, appVersion = '', runtime = resolveCliRuntime({ root: ROOT, env }) }) {
+async function runDoctor({ settings, env = process.env, appVersion = '', runtime = resolveCliRuntime({ root: ROOT, env }),
+  team = false, teamDeps = undefined }) {
   const checks = [];
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   checks.push(check('node', nodeMajor >= MIN_NODE_MAJOR, `node ${process.versions.node} (needs ${MIN_NODE_MAJOR}+)`));
@@ -66,12 +67,24 @@ async function runDoctor({ settings, env = process.env, appVersion = '', runtime
 
   checks.push(check('engine', true, `${settings.engine}${settings.model ? ` / ${settings.model}` : ' (model chosen by the engine)'}`));
   checks.push(check('permissions', true, `${settings.permissionMode}; allowed ${settings.allowedTools.join(', ') || '(none)'}; disallowed ${settings.disallowedTools.join(', ') || '(none)'}`));
-  return { ok: checks.every((entry) => entry.ok), checks };
+  let manual;
+  if (team) {
+    // Required here so a plain doctor (and every other command) never loads the team modules.
+    const teamReport = await require('./doctor-team').runTeamDoctor({ settings, env, appVersion, runtime, deps: teamDeps });
+    checks.push(...teamReport.checks);
+    manual = teamReport.manual;
+  }
+  // The manual rows never count toward ok.
+  return { ok: checks.every((entry) => entry.ok), checks, ...(manual ? { manual } : {}) };
 }
 
 function formatDoctor(report, { json = false } = {}) {
-  if (json) return JSON.stringify({ v: 1, kind: 'doctor', ok: report.ok, checks: report.checks });
-  return report.checks.map((entry) => `${entry.ok ? 'ok  ' : 'FAIL'} ${entry.name.padEnd(16)} ${entry.detail}`).join('\n');
+  const { manual } = report;
+  if (json) return JSON.stringify({ v: 1, kind: 'doctor', ok: report.ok, checks: report.checks, ...(manual ? { manual } : {}) });
+  return [
+    ...report.checks.map((entry) => `${entry.ok ? 'ok  ' : 'FAIL'} ${entry.name.padEnd(16)} ${entry.detail}`),
+    ...(manual || []).map((entry) => `manual  ${entry.name}  ${entry.detail}`),
+  ].join('\n');
 }
 
-module.exports = { formatDoctor, runDoctor };
+module.exports = { check, formatDoctor, runDoctor };

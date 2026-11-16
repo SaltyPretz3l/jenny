@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createFixture, assertOwnerInvariant } = require('./helpers/team-store-fixture');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 function reasonOf(result) {
   assert.equal(result.ok, false, 'expected a failure');
@@ -69,7 +70,7 @@ test('a member revokes only an invite they created; the owner revokes any', asyn
 
 test('a recovery invite is void once ownership has moved', async (t) => {
   const { fx, store, owner, alice } = await team(t);
-  const minted = await store.createInvite({ kind: 'recovery', actorMemberId: null, invitePublicKey: fx.nextKey('r') });
+  const minted = await store.createInvite({ kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey('r') });
   assert.equal(minted.ok, true);
   assert.equal((await store.transferOwner({ actorMemberId: owner.member_id, memberId: alice.member_id })).ok, true);
   const redeemed = await store.redeem({
@@ -142,4 +143,50 @@ test('a failed write of "last seen" does not take the team offline', async (t) =
   });
   assert.equal(reasonOf(invite), 'team_store_failed');
   assert.equal(store.directory.liveActor(owner.device_id), null);
+});
+
+test('only the local command marker mints an owner invite; null, undefined and the marker elsewhere are refused', async (t) => {
+  const { fx, store, alice } = await team(t);
+  const before = store.rev();
+  for (const kind of ['recovery', 'owner_first']) {
+    for (const actorMemberId of [null, undefined]) {
+      const refused = await store.createInvite({ kind, actorMemberId, invitePublicKey: fx.nextKey('o') });
+      assert.equal(reasonOf(refused), 'role_forbidden', `${kind} ${String(actorMemberId)}`);
+    }
+  }
+  for (const kind of ['new_member', 'add_device']) {
+    const refused = await store.createInvite({ kind, actorMemberId: LOCAL_COMMAND, role: 'member', invitePublicKey: fx.nextKey('m') });
+    assert.equal(reasonOf(refused), 'team_not_found', kind);
+  }
+  assert.equal(store.rev(), before, 'nothing was written');
+  assert.equal((await store.createInvite({ kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey('r') })).ok,
+    true);
+  assert.equal(reasonOf(await store.createInvite({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND,
+    invitePublicKey: fx.nextKey('f') })), 'team_member_state_invalid', 'past the actor check: the team has an owner');
+  assert.equal((await store.createInvite({ kind: 'new_member', actorMemberId: alice.member_id, role: 'member',
+    invitePublicKey: fx.nextKey('n') })).error?.reason, 'role_forbidden', 'a member is still not the owner');
+});
+
+test('the local command marker is refused by every other transition family, without a throw', async (t) => {
+  const { store, owner, alice } = await team(t);
+  const before = store.rev();
+  assert.equal(reasonOf(await store.setRole({ actorMemberId: LOCAL_COMMAND, memberId: alice.member_id, role: 'read_only' })),
+    'team_not_found', 'an owner-only transition');
+  assert.equal(reasonOf(await store.revokeDevice({ actorMemberId: LOCAL_COMMAND, deviceId: owner.device_id })),
+    'team_not_found', 'an active-member transition');
+  assert.equal(reasonOf(await store.createProject({ actorMemberId: LOCAL_COMMAND, name: 'Atlas' })),
+    'team_not_found', 'a project transition');
+  assert.equal(store.rev(), before);
+});
+
+test('a local mint and a local revoke are audited with a null actor, and the written log loads again', async (t) => {
+  const { fx, store } = await team(t);
+  const minted = await store.createInvite({ kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey('r') });
+  assert.equal((await store.revokeInvite({ actorMemberId: LOCAL_COMMAND, inviteId: minted.invite_id })).ok, true);
+  const [created, revoked] = store.audit.read({}).entries.slice(-2);
+  assert.deepEqual([created.kind, created.actor_member_id, revoked.kind, revoked.actor_member_id],
+    ['invite_created', null, 'invite_revoked', null]);
+  const reread = fx.openStore().audit.read({});
+  assert.equal(reread.ok, true, 'the audit schema accepts the written file');
+  assert.deepEqual(reread.entries.slice(-2).map((entry) => entry.actor_member_id), [null, null]);
 });

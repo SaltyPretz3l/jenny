@@ -11,7 +11,7 @@ const { workspaceRootId } = require('../workspace-root-identity');
 // Seam 17 for a new manifest tool: tests/desktop-command-sandbox-approval.test.js pins this set.
 const ALLOWED = new Set(['run_command', 'ask_user', 'suggest_next_step', 'exit_plan_mode', 'home', 'task_board', 'project_notes', 'propose_command',
   'propose_session', 'complete_session_handoff', 'conversations_recent', 'conversation_open', 'conversations_search',
-  'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
+  'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'session_prioritize', 'jenny_help',
   'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
   'session_export', 'terminal_read', 'browser']); // row 94 P4: not terminal_run, which types into a real shell
 // What the model reads for a refusal it cannot fix by retrying; other reasons keep the plain form.

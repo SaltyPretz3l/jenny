@@ -362,3 +362,26 @@ def test_engine_messages_without_images_never_adds_images_key() -> None:
     )
 
     assert all("images" not in row for row in result)
+
+
+def test_engine_messages_carries_the_failed_flag_of_a_tool_row() -> None:
+    result = engine_messages(
+        [
+            {"role": "user", "content": "current"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call-1", "name": "read_file", "arguments": {}},
+                    {"id": "call-2", "name": "read_file", "arguments": {}},
+                ],
+            },
+            {"role": "tool", "content": "missing", "tool_call_id": "call-1", "is_error": True},
+            {"role": "tool", "content": "text", "tool_call_id": "call-2"},
+        ],
+        primary_system_text="system",
+        vision_images=(),
+    )
+
+    tool_rows = [row for row in result if row["role"] == "tool"]
+    assert [row.get("is_error") for row in tool_rows] == [True, None]

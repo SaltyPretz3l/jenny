@@ -111,6 +111,7 @@ test('no managed input preserves the projection with neutral engine and accelera
       fitSource: 'catalog',
       fitConfidence: 'high',
       accelerationEligible: false,
+      mtpRunnable: false,
       accelerationHeadroomMb: 0,
       managedKey: 'baseline-latest',
       engines: {
@@ -516,73 +517,13 @@ test('identifies the frozen set of local engine types', () => {
   assert.equal(merge.isLocalEngine({ engineType: 'plugin_host' }), false);
   assert.equal(merge.isLocalEngine(null), false);
   assert.equal(merge.isLocalEngine('ollama'), false);
-  // The row renderer's tune/menu gates share the second predicate with
-  // groupModelCards; drift strands an installed card with engine_type '' in
-  // "Installed" with no Tune and no overflow menu (its only Remove path).
+  // The library row's tune/menu gates use the second predicate; drift strands an
+  // installed card with engine_type '' with no Tune and no overflow menu (its
+  // only Remove path).
   for (const [entry, local] of [[{ installed: true, engineType: '' }, true],
     [{ installed: true }, true], [{ engineType: 'ollama' }, true],
     [{ engineType: 'plugin_host' }, false], [null, false], ['ollama', false]]) {
     assert.equal(merge.isLocalOrUnknownEngine(entry), local);
   }
-  const grouped = merge.groupModelCards([{ key: 'no-engine', installed: true, engineType: '' }]);
-  assert.deepEqual(grouped[1].cards.map((card) => card.key), ['no-engine']);
 });
 
-test('groups model cards by use, local install, cloud, and availability', () => {
-  const cards = [
-    { key: 'cloud-active', active: true, installed: false, engineType: 'plugin_host' },
-    { key: 'ollama-a', installed: true, engineType: 'ollama' },
-    { key: 'plugin-a', installed: true, engineType: 'plugin_host' },
-    { key: 'vllm-a', installed: true, engineType: 'vllm' },
-    { key: 'catalog-only', installed: false, engineType: '' },
-    { key: 'compatible-a', installed: true, engineType: 'openai-compatible' },
-    { key: 'ollama-only', installed: true, engineType: '', ollamaOnly: true },
-    { key: 'unknown-engine', installed: true, engineType: '', ollamaOnly: false },
-  ];
-  const groups = merge.groupModelCards(cards);
-
-  assert.deepEqual(groups.map(({ id, label }) => ({ id, label })), [
-    { id: 'in-use', label: 'In use' },
-    { id: 'installed', label: 'Installed' },
-    { id: 'cloud', label: 'Cloud' },
-    { id: 'available', label: 'Available to download' },
-  ]);
-  assert.deepEqual(groups.map((group) => group.cards.map((card) => card.key)), [
-    ['cloud-active'],
-    ['ollama-a', 'vllm-a', 'compatible-a', 'ollama-only', 'unknown-engine'],
-    ['plugin-a'],
-    ['catalog-only'],
-  ]);
-});
-
-test('grouping returns four empty groups for empty or non-array input and skips invalid entries', () => {
-  for (const input of [null, undefined, 'bad', 42, {}]) {
-    const groups = merge.groupModelCards(input);
-    assert.equal(groups.length, 4);
-    assert.deepEqual(groups.map((group) => group.cards), [[], [], [], []]);
-  }
-
-  const groups = merge.groupModelCards([null, 'bad', 42, [], { key: 'valid' }]);
-  assert.deepEqual(groups.map((group) => group.cards.map((card) => card.key)), [
-    [],
-    [],
-    [],
-    ['valid'],
-  ]);
-});
-
-test('filter counts use strict card flags over the unfiltered list', () => {
-  const cards = [
-    { key: 'both', installed: true, recommended: true },
-    { key: 'installed', installed: true, recommended: false },
-    { key: 'recommended', installed: false, recommended: true },
-    { key: 'neither', installed: false, recommended: 'ranked' },
-    null,
-    'bad',
-    [],
-  ];
-
-  assert.deepEqual(merge.filterCounts(cards), { all: 4, installed: 2, recommended: 2 });
-  assert.deepEqual(merge.filterCounts(null), { all: 0, installed: 0, recommended: 0 });
-  assert.deepEqual(merge.filterCounts('bad'), { all: 0, installed: 0, recommended: 0 });
-});

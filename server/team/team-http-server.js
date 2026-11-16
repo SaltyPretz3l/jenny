@@ -6,7 +6,9 @@
 // resolves its actor from that key, builds one guard, and passes the hello gate
 // before any route runs. There is no cookie, CSRF, Origin, static file, login or
 // session route: the transport key is the identity. A key that is no longer on
-// the list destroys its socket without a byte. Logs carry request ids only.
+// the list destroys its socket without a byte, before any capacity or disposed
+// answer, and drops every connection of that key at the bridge (a revoked or
+// expired invite emits no membership event that would). Logs carry request ids only.
 //
 // Node starts its header and request timers, and the connection list behind
 // `closeAllConnections()`, only when a server listens. This one never does, so
@@ -19,10 +21,10 @@ const { randomUUID } = require('node:crypto');
 const { DEFAULT_RESOURCE_LIMITS } = require('../config');
 const { hostFailure } = require('../api-contract');
 const {
-  STATUS_BY_CODE, failure, headers, json, openEventStream, readJson, requireBodyless, retainResponseAdmission,
+  RESPONSE_WRITE_TIMEOUT_MS, STATUS_BY_CODE, failure, headers, json, openEventStream, readJson, requireBodyless,
+  retainResponseAdmission,
 } = require('../http-server');
 const { requireBoundedInteger } = require('../resource-limits');
-const { streamIdentity } = require('./authorize');
 const { REVOKE_EVENT_KINDS } = require('./membership-events');
 const { createPreambleListener } = require('./preamble-listener');
 const { actionForRoute } = require('./operation-registry');
@@ -33,7 +35,6 @@ const { createTeamRoutes, jsonReader, permit } = require('./team-routes');
 const TEAM_HOST = 'jenny-team.invalid';
 const HELLO_ROUTE = 'POST /api/v1/team/hello';
 const HELLO_STATE_MAX = 128;
-const RESPONSE_WRITE_TIMEOUT_MS = 60_000;
 const IDLE_TIMEOUT_MS = 15_000;
 const SESSION_RESOURCE = Object.freeze({ kind: 'session', id: '' });
 
@@ -42,7 +43,8 @@ function guardAllows(guard, action, resource) {
 }
 
 function createTeamHttpServer(context) {
-  const { directory, authorize, clients, events, router, assetRoutes } = context;
+  const { directory, authorize, clients, events, router, assetRoutes, dropKey } = context;
+  if (typeof dropKey !== 'function') throw new TypeError('A team HTTP layer requires a dropKey function.');
   const log = safeLogger(context.logger);
   const limits = { ...DEFAULT_RESOURCE_LIMITS, ...context.resourceLimits };
   const writeTimeoutMs = requireBoundedInteger(limits.responseWriteTimeoutMs ?? RESPONSE_WRITE_TIMEOUT_MS,
@@ -75,9 +77,9 @@ function createTeamHttpServer(context) {
     const authorized = () => isAuthenticated() && directory.isDeviceActive(deviceId)
       && guardAllows(guard, ctx.action, resource) && clients.authorize(clientId, clientToken, deviceId);
     if (!authorized()) { failure(response, 'forbidden', 'client_required', requestId); return; }
-    // A member's stream carries its identity, so audience-scoped events (team chat) can reach it.
+    // A member's stream carries its identity, so audience-scoped events (team chat and session events) can reach it.
     openEventStream({ request, response, requestId, deviceId, clientId, clientToken, authorized,
-      clients, events, streams, identity: streamIdentity(directory, ctx.actor) });
+      clients, events, streams, identity: context.sessionScope.identity(ctx.actor) });
     // Presence (slice 2a-3b): an admitted member stream reports its open and its close, once each.
     const memberId = ctx.actor?.member_id;
     if (typeof context.onMemberStream !== 'function' || typeof memberId !== 'string' || !memberId
@@ -93,7 +95,8 @@ function createTeamHttpServer(context) {
     if (!permit({ ...ctx, action: 'client.register' })) return;
     const { value } = await readJson(request, commandBody);
     const result = await router.dispatch(value, { deviceId,
-      clientToken: request.headers['x-client-token'], isAuthenticated, actor, guard });
+      clientToken: request.headers['x-client-token'], isAuthenticated, actor, guard,
+      onClose: (listener) => { response.once('close', listener); return () => response.off('close', listener); } });
     if (!isAuthenticated()) { failure(response, 'forbidden', 'member_revoked', requestId); return; }
     if (Buffer.byteLength(JSON.stringify(result)) > limits.maxResponseBytes) {
       failure(response, 'limit', 'response_limit', requestId); return;
@@ -132,7 +135,24 @@ function createTeamHttpServer(context) {
     }
   }
 
+  // The actor of a request's key, or null after the socket was closed without a byte. A key
+  // that no longer resolves loses all of its connections; a directory that throws closes only this one.
+  function admittedActor(socket) {
+    let actor = null;
+    let threw = false;
+    try { actor = directory.resolveActor(socket.teamKey); } catch { threw = true; }
+    if (actor) return actor;
+    if (!threw) {
+      try { dropKey(socket.teamKey); } catch { /* the destroy below still runs */ }
+    }
+    socket.destroy();
+    return null;
+  }
+
   async function dispatch(request, response) {
+    // A key that is no longer on the list gets no answer at all, not even a capacity one.
+    const actor = admittedActor(request.socket);
+    if (!actor) return;
     const requestId = randomUUID();
     headers(response, requestId);
     if (disposed || active >= limits.maxConcurrentRequests) { failure(response, 'limit', 'request_capacity', requestId); return; }
@@ -148,9 +168,6 @@ function createTeamHttpServer(context) {
       if (inFlight.get(socket) === request) inFlight.delete(socket);
     });
     try {
-      // A key that is no longer on the list gets no answer at all.
-      const actor = directory.resolveActor(request.socket.teamKey);
-      if (!actor) { request.socket.destroy(); return; }
       if (request.headers.host !== TEAM_HOST) { failure(response, 'forbidden', 'authentication_failed', requestId); return; }
       if (!request.url.startsWith('/') || request.url.startsWith('//') || request.url.length > 2048) {
         failure(response, 'invalid', 'invalid_route', requestId); return;

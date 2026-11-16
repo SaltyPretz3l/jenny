@@ -244,3 +244,26 @@ test('jump reaches a reply segment whose id sits on a row inside the turn entry'
   assert.ok(harness.calls.some((entry) => entry[0] === 'scroll' && entry[1] === 'seg4'));
   assert.equal(harness.state.ui.firstUnreadMessageIdBySession.has('s1'), false);
 });
+
+// Gate sitting 2026-11-14 (G1): the jump centred the unread entry, so a reply taller than the view
+// landed with its start (heading, first part) above the fold, 323 px past it in the live run.
+test('F10: a first unread entry taller than the view is jumped to by its start', () => {
+  const harness = buildHarness({ metrics: { scrollTop: 0, scrollHeight: 4000, clientHeight: 300 } });
+  const tall = harness.dom.window.document.querySelector('[data-message-id="a1"]');
+  tall.getBoundingClientRect = () => ({ top: 900, bottom: 1600, height: 700, left: 0, right: 10, width: 10 });
+  harness.controller.noteTimelineMessageCreated({ sessionId: 's1', messageId: 'a1', role: 'assistant', visible: true });
+  assert.equal(harness.controller.jumpToFirstUnread(), true);
+  assert.deepEqual(harness.calls.find((entry) => entry[0] === 'scroll'), ['scroll', 'a1', 'start', false]);
+});
+
+test('F10: a segment merged into a tall turn article is measured by that article', (t) => {
+  const harness = buildHarness({ metrics: { scrollTop: 0, scrollHeight: 4000, clientHeight: 300 } });
+  const article = harness.dom.window.document.querySelector('[data-message-id="a1"]');
+  article.getBoundingClientRect = () => ({ top: 900, bottom: 3263, height: 2363, left: 0, right: 10, width: 10 });
+  const previous = globalThis.rendererTurnShell;
+  globalThis.rendererTurnShell = { resolveVisibleMessageDomTarget: (container, id) => (id === 'a1_seg2' ? article : null) };
+  t.after(() => { globalThis.rendererTurnShell = previous; });
+  harness.controller.noteTimelineMessageCreated({ sessionId: 's1', messageId: 'a1_seg2', role: 'assistant', visible: true });
+  assert.equal(harness.controller.jumpToFirstUnread(), true);
+  assert.deepEqual(harness.calls.find((entry) => entry[0] === 'scroll'), ['scroll', 'a1_seg2', 'start', false]);
+});

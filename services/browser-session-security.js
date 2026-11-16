@@ -46,6 +46,54 @@ function classifyAllowedUrl(rawUrl, session, deps) {
   return { allowed, policy };
 }
 
+const MAX_BLOCKED_HOSTS = 4;
+
+// Which external hosts the request filter turned away, so a render can say why
+// a page came out bare. Bounded; the host is lower-cased and never empty.
+function noteBlockedExternalHost(session, policy) {
+  if (policy?.reason !== 'external_url_disabled') return;
+  const host = typeof policy.host === 'string' ? policy.host.trim().toLowerCase() : '';
+  if (!host) return;
+  if (!Array.isArray(session.blockedExternalHosts)) session.blockedExternalHosts = [];
+  if (session.blockedExternalHosts.length < MAX_BLOCKED_HOSTS && !session.blockedExternalHosts.includes(host)) {
+    session.blockedExternalHosts.push(host);
+  }
+}
+
+const MAX_BLOCKED_PAGE_ASSETS = 16;
+const MAX_ASSET_URL_LENGTH = 2000;
+
+// The external scripts the request filter turned away, so a caller that takes
+// pictures can ask whether the page waits on one. Bounded. A refused
+// stylesheet is not recorded: a page still draws without its web fonts.
+function noteBlockedPageAsset(session, policy, details) {
+  if (policy?.reason !== 'external_url_disabled') return;
+  const type = details?.resourceType;
+  const url = typeof details?.url === 'string' ? details.url : '';
+  if (type !== 'script' || !url || url.length > MAX_ASSET_URL_LENGTH) return;
+  if (!Array.isArray(session.blockedPageAssets)) session.blockedPageAssets = [];
+  const assets = session.blockedPageAssets;
+  if (assets.length < MAX_BLOCKED_PAGE_ASSETS && !assets.some((asset) => asset.url === url)) assets.push({ type, url });
+}
+
+// Read in the page: every script tag with its address and whether it is async.
+const PAGE_SCRIPT_TAGS_SCRIPT = '(() => Array.from(document.scripts).filter((tag) => tag.src).slice(0, 400)'
+  + '.map((tag) => ({ url: String(tag.src), async: tag.async === true })))()';
+
+// True when the page waits on one of the blocked scripts: every one counts
+// unless each tag that asked for it is async (an analytics tag, a script the
+// page adds from code); a script with no tag is a module the page imports. `scriptTags` not being a list means the page could
+// not be asked, and in doubt the answer is yes.
+function waitsOnBlockedAsset(blockedAssets, scriptTags) {
+  const blocked = Array.isArray(blockedAssets) ? blockedAssets : [];
+  if (blocked.length === 0) return false;
+  if (!Array.isArray(scriptTags)) return true;
+  return blocked.some((asset) => {
+    const tags = scriptTags.filter((tag) => tag?.url === asset.url);
+    return tags.length === 0 || tags.some((tag) => tag.async !== true);
+  });
+}
+
 function preventDisallowedNavigation(event, nextUrl, session, source, deps) {
   const policyResult = classifyAllowedUrl(nextUrl, session, deps);
   if (policyResult.allowed) {
@@ -110,6 +158,8 @@ function configureWebContentsSecurity(session, deps) {
     browserSession.webRequest.onBeforeRequest((details, callback) => {
       const policyResult = classifyAllowedUrl(details?.url, session, deps);
       if (!policyResult.allowed) {
+        noteBlockedExternalHost(session, policyResult.policy);
+        noteBlockedPageAsset(session, policyResult.policy, details);
         deps.logger('WARN', 'browser.request_blocked', {
           sessionId: session.sessionId,
           reason: policyResult.policy.reason,
@@ -156,5 +206,7 @@ module.exports = {
   classifyAllowedUrl,
   clearWebContentsSecurity,
   configureWebContentsSecurity,
+  PAGE_SCRIPT_TAGS_SCRIPT,
+  waitsOnBlockedAsset,
   resolvedFileRoots,
 };

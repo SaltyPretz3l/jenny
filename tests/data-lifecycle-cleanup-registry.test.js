@@ -28,7 +28,7 @@ describe('cleanup registry covers the stores later features write', () => {
       }
       const files = [
         'workspace-active-use.json', 'model-fit-observations.json', 'model-load-durations.json',
-        'chatgpt-plan-usage.json', 'profile-owner.json', 'ninfer-serve.pid',
+        'chatgpt-plan-usage.json', 'profile-owner.json', 'ninfer-serve.pid', 'outside-files.json',
         'sidecar-memory.db', 'sidecar-memory.db-wal', 'sidecar-memory.db-shm',
       ];
       for (const name of files) fs.writeFileSync(path.join(userDataPath, name), 'data');

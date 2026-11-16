@@ -63,14 +63,18 @@
   );
   const chatUiNormalizers = window.rendererSettingsSupport || {};
   state.use24HourTime = persistedChatZoomState?.use24HourTime === true;
+  state.drawingInstructions = persistedChatZoomState?.drawingInstructions === 'full' || persistedChatZoomState?.drawingInstructions === 'mermaid' ? persistedChatZoomState.drawingInstructions : 'short';
   state.transcriptViewDefault = globalThis.rendererTranscriptViewUtils?.normalizeTranscriptView?.(persistedChatZoomState?.transcriptViewDefault) || 'thinking';
   globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
   state.uiLanguage = chatUiNormalizers.normalizeUiLanguageTag?.(persistedChatZoomState?.uiLanguage) || state.uiLanguage || 'en';
   state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
   state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 0;
-  state.autoApproveStreakCap = chatUiNormalizers.normalizeAutoApproveStreakCap?.(persistedChatZoomState?.autoApproveStreakCap) ?? state.autoApproveStreakCap ?? 50;
+  state.autoApproveStreakCap = chatUiNormalizers.normalizeAutoApproveStreakCap?.(persistedChatZoomState?.autoApproveStreakCap) ?? state.autoApproveStreakCap ?? 250;
   state.digestQuietStart = chatUiNormalizers.normalizeDigestQuietStart?.(persistedChatZoomState?.digestQuietStart) ?? state.digestQuietStart ?? '22:00';
   state.digestQuietEnd = chatUiNormalizers.normalizeDigestQuietEnd?.(persistedChatZoomState?.digestQuietEnd) ?? state.digestQuietEnd ?? '07:00';
+  // The one boot read of chatUi state: the default run mode seeds the empty-chat draft too.
+  state.defaultRunMode = chatUiNormalizers.normalizeRunMode?.(persistedChatZoomState?.defaultRunMode) || state.defaultRunMode || 'ask';
+  if (!state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state.defaultRunMode;
   // Fallback mirrors services/shell-config-zoom-state.js APP_ZOOM_DEFAULT.
   state.ui.appZoomPercent = Number(
     persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 110

@@ -89,7 +89,6 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/app/renderer-app-lifecycle-composition.js|chatTimelineUtilityCluster',
   'renderer/chat/renderer-approval-focus-restore.js|chatInput',
   'renderer/chat/renderer-chat-accessibility-wiring.js|chatSelectionOverlayHost',
-  'renderer/chat/renderer-chat-accessibility-wiring.js|chatView',
   'renderer/shell/renderer-shell-runtime-utils.js|chatTimeline',
   // W3-2 -- chat path open over the subagent inspector (pane 0's; pane 1's
   // timeline and inspector are found per event under the document since the
@@ -97,7 +96,6 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/shell/renderer-shell-runtime-utils.js|subagentInspector',
   // Wave 2 -- chat search (its HOST_ID constant lookup is in INDIRECT_LOOKUP_SITES)
   'renderer/chat/renderer-chat-search-overlay.js|chatTimeline',
-  'renderer/chat/renderer-chat-search-overlay.js|chatView',
   // Wave 2 -- codebase citations
   'renderer/chat/renderer-chat-codebase-cite-utils.js|chatTimeline',
   // Wave 2 -- plan document
@@ -134,15 +132,11 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
 ]);
 
 // The lookups the pattern above cannot see: the id is reached through a
-// CONSTANT (`var HOST_ID = 'chatSearchOverlayHost'; ... getElementById(HOST_ID)`).
+// CONSTANT (`var HOST_ID = 'chatSelectionOverlayHost'; ... getElementById(HOST_ID)`).
 // A second scan resolves the identifier through its string assignment in the
-// same file, and this list is pinned by the same equality. One site today.
-const INDIRECT_LOOKUP_SITES = Object.freeze([
-  // Wave 2 -- chat search (HOST_ID; the overlay also CREATES a duplicate-id host
-  // when the node is missing, so its pane migration must go through the pane's
-  // own chatSearchOverlayHost)
-  'renderer/chat/renderer-chat-search-overlay.js|chatSearchOverlayHost',
-]);
+// same file, and this list is pinned by the same equality. None today (row 156
+// moved the chat search host into the pane's session bar, found from its timeline).
+const INDIRECT_LOOKUP_SITES = Object.freeze([]);
 
 // Built from strings rather than written as /regex/ literals: the vacuous-oracle
 // gate (scripts/checks/check_vacuous_oracle.py) lexes a skeleton that does not
@@ -340,10 +334,10 @@ test('the Wave 2 burn-down ledger of un-migrated getElementById lookups is exact
   );
   assert.equal(
     REMAINING_LOOKUP_SITES.length,
-    40,
+    38,
     'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form); '
     + 'W3-2 (2026-09-26) added the subagentInspector name and its one un-migrated path-open lookup: 41; '
-    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43; the merged jump control (2026-11-09) retired the three composerWayfinderHost lookups: 40'
+    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43; the merged jump control (2026-11-09) retired the three composerWayfinderHost lookups: 40; row 156 (2026-11-14) retired the two chatView lookups of the search overlay and its wiring: 38'
   );
   assert.equal(
     new Set(REMAINING_LOOKUP_SITES.map((pair) => pair.split('|')[0])).size,
@@ -397,11 +391,11 @@ test('the ledger scan itself detects both an added and a removed lookup', () => 
   // assignment, in either call form, and ignores constants naming non-pane ids.
   assert.deepEqual(
     collectIndirectLookupSites({
-      'renderer/chat/fake-e.js': "var HOST_ID = 'chatSearchOverlayHost';\nfunction f(doc) { return doc.getElementById(HOST_ID); }",
+      'renderer/chat/fake-e.js': "var HOST_ID = 'chatSelectionOverlayHost';\nfunction f(doc) { return doc.getElementById(HOST_ID); }",
       'renderer/chat/fake-f.js': "const TIMELINE_ID = 'chatTimeline';\ndoc?.getElementById?.(TIMELINE_ID);",
       'renderer/chat/fake-g.js': "var HOST_ID = 'settingsView';\ndoc.getElementById(HOST_ID);",
     }),
-    ['renderer/chat/fake-e.js|chatSearchOverlayHost', 'renderer/chat/fake-f.js|chatTimeline'],
+    ['renderer/chat/fake-e.js|chatSelectionOverlayHost', 'renderer/chat/fake-f.js|chatTimeline'],
     'a constant resolving to a pane node id is a lookup; one resolving elsewhere is not'
   );
   assert.deepEqual(collectIndirectLookupSites({}), [], 'and an empty tree yields an empty ledger');

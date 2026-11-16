@@ -65,3 +65,50 @@ test('ensureMermaidRuntime short-circuits to true when the runtime is already pr
   assert.equal(await loader.ensureMermaidRuntime(), true);
   assert.equal(ensureScriptCalls, 0, 'an already-loaded runtime should not re-inject the script');
 });
+
+test('a board block loads the row module only while project_boards is on, and a reply with none loads nothing', async () => {
+  const loader = loadFreshRuntimeLoader();
+  const prevLoader = global.scriptLoaderUtils;
+  const loaded = [];
+  global.scriptLoaderUtils = { ensureScript({ src }) { loaded.push(src); return Promise.resolve(false); } };
+  try {
+    loader._resetForTests();
+    const container = { querySelector: (selector) => (selector === 'pre > code.language-board' ? {} : null), ownerDocument: null };
+    loader.setBoardBlocksEnabled(false);
+    assert.equal(loader.renderBoardBlocks(container, {}), false);
+    loader.setBoardBlocksEnabled(true);
+    assert.equal(loader.renderBoardBlocks({ querySelector: () => null }, {}), false);
+    assert.equal(loader.renderBoardBlocks(container, {}), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(loaded, ['renderer/features/renderer-board-block-row.js']);
+  } finally {
+    loader._resetForTests();
+    global.scriptLoaderUtils = prevLoader;
+  }
+});
+
+test('when the flag turns on, board blocks already in the page get their rows: a chat restored before the flag was known', async () => {
+  const loader = loadFreshRuntimeLoader();
+  const prev = { loader: global.scriptLoaderUtils, row: global.rendererBoardBlockRow, document: global.document };
+  const drawn = [];
+  global.scriptLoaderUtils = { ensureScript() { return Promise.resolve(true); } };
+  global.rendererBoardBlockRow = { render(container) { drawn.push(container); return 1; } };
+  global.document = { querySelector: (selector) => (selector === 'pre > code.language-board' ? {} : null), querySelectorAll: () => [] };
+  try {
+    loader._resetForTests();
+    loader.setBoardBlocksEnabled(false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(drawn, [], 'off: nothing is drawn');
+    loader.setBoardBlocksEnabled(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(drawn, [global.document], 'on: one pass over the page');
+    loader.setBoardBlocksEnabled(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(drawn.length, 1, 'told again, nothing more');
+  } finally {
+    loader._resetForTests();
+    global.scriptLoaderUtils = prev.loader;
+    if (prev.row === undefined) delete global.rendererBoardBlockRow; else global.rendererBoardBlockRow = prev.row;
+    if (prev.document === undefined) delete global.document; else global.document = prev.document;
+  }
+});

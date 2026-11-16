@@ -75,7 +75,7 @@ async function startManagedSidecarChatStream(service, {
   approvalMode,
   debugOptions,
   clientTiming,
-  skillInvocation, imagePromptPin, author = null,
+  skillInvocation, imagePromptPin, boardId = null, author = null,
   editedMessageId,
   failureRetry,
   turnLease = null,
@@ -180,7 +180,7 @@ async function startManagedSidecarChatStream(service, {
       normalizedInteractiveResponse,
       normalizedAttachments,
       transcriptPrompt,
-      userMessageId, skillInvocation, imagePromptPin, author, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
+      userMessageId, skillInvocation, imagePromptPin, boardId, author, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
       reuseExistingUserMessage: Boolean(editedAnchorMessageId), failureRetry,
       turnLease: activeTurnLease, runtimeAdmission,
       getSuspendedDecision: () => controller._runtimeDecisionControl?.suspendedDecision(),
@@ -426,10 +426,11 @@ async function startManagedSidecarChatStream(service, {
         recentUserTurns,
         preparedMessages,
         recallQuery,
+        hasImageAttachments: imageAttachments.length > 0,
         logTiming,
         activeFileContext,
         mentionContents,
-        executionAuthority,
+        executionAuthority, boardId,
       });
       Object.assign(promptContributions, assembledPromptContributions || {});
       turnDiagnosticState.promptContributions = promptContributions;
@@ -488,7 +489,7 @@ async function startManagedSidecarChatStream(service, {
         executionAuthority, checkpointHistory, canonicalSessionMessages, compactedHistory, preparedHistoryMessages,
         contextPreferences, sessionSummary, prompt, textAttachments, skillInvocation, imagePromptPin, wireKinds,
         resolvedSessionId, streamId, requestId, requestTraceId, userMessageId, toolContext, normalizedPreferences,
-        streamWatchdog, activeTurnLease, engineType,
+        streamWatchdog, activeTurnLease, engineType, author,
       });
       recordTiming('chat.sidecar_request_settled', sidecarRequestStartedAt, 'sidecar_request_settled', {
         status: String(result?.status || ''),

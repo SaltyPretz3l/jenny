@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import builtins
 import errno
+import json
 import os
 import socket
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
 from sidecar.ai.tools.builtins import (
     edit_file,
     file_atomic_write,
@@ -50,6 +54,131 @@ def test_unconfigured_host_root_fails_closed(tmp_path: Path):
     configure_hosted_file_io(None, enabled=True)
     with pytest.raises(ToolExecutionFailure), open_regular_file(file):
         pass
+
+
+def test_a_hosted_store_write_without_a_confined_backend_fails_closed(tmp_path: Path) -> None:
+    """R12-F01: the `.jenny` artifact copy, the overwrite backup and their lock and
+    temp files go through the pinned primitive; with no backend nothing is written."""
+    (tmp_path / "notes.txt").write_bytes(b"old")
+    workspace = WorkspaceGuard(str(tmp_path))
+    configure_hosted_file_io(None, enabled=True)  # hosted, with no root and no backend
+    artifact = filesystem.write_file_tool(
+        {"path": ".jenny/artifacts/s1/note.md", "content": "x"}, workspace)
+    overwrite = filesystem.write_file_tool({"path": "notes.txt", "content": "new"}, workspace)
+    assert artifact.success is False and artifact.error_code == CMP_TOOL_INVALID_PATH, artifact
+    assert overwrite.success is False, overwrite
+    assert not (tmp_path / ".jenny").exists()
+    assert (tmp_path / "notes.txt").read_bytes() == b"old"
+
+
+_RECEIPT_NAME = "workspace-recovery.json"
+
+
+def _receipt_journal(tmp_path: Path):
+    from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+    from tests.sidecar.ai.tools.test_workspace_mutation_journal import _create_record
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    record = _create_record(workspace, 1, state="committed", operation_status="applied")
+    return workspace, record, WorkspaceMutationJournalStore(tmp_path / "recovery")
+
+
+def test_a_desktop_journal_still_writes_its_recovery_receipt(tmp_path: Path) -> None:
+    """E78: with hosted file IO off the receipt is written exactly as before."""
+    workspace, record, store = _receipt_journal(tmp_path)
+    assert store.write_transition(record, workspace_root=workspace).ok is True
+    receipt = json.loads((workspace / ".jenny" / _RECEIPT_NAME).read_text(encoding="utf-8"))
+    assert receipt["latest_change_set_id"] == record["change_set_id"]
+
+
+def test_a_hosted_journal_never_touches_the_recovery_receipt_path(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """E78: while hosted file IO is on, no by-path open, write, rename or unlink of
+    `.jenny/workspace-recovery.json` (or a temp file of it) happens. The journal
+    itself, under the recovery root outside the project, is still written."""
+    workspace, record, store = _receipt_journal(tmp_path)
+    touched: list[str] = []
+
+    def refuse_receipt(name: str, real):
+        def call(*args, **kwargs):
+            text = " ".join(str(value) for value in (*args, *kwargs.values()))
+            if _RECEIPT_NAME in text:
+                touched.append(name)
+                raise AssertionError(f"{name} touched the recovery receipt by path")
+            return real(*args, **kwargs)
+        return call
+
+    for module, name in ((builtins, "open"), (os, "open"), (os, "replace"), (os, "rename"),
+                         (os, "unlink"), (os, "remove"), (tempfile, "mkstemp")):
+        monkeypatch.setattr(module, name, refuse_receipt(name, getattr(module, name)))
+    for name in ("open", "replace", "rename", "unlink", "touch", "write_bytes", "write_text",
+                 "read_bytes", "read_text"):
+        monkeypatch.setattr(Path, name, refuse_receipt(f"Path.{name}", getattr(Path, name)))
+    configure_hosted_file_io(None, enabled=True)
+    try:
+        result = store.write_transition(record, workspace_root=workspace)
+    finally:
+        monkeypatch.undo()
+    assert touched == []
+    assert result.ok is True, result.failure
+    workspace_id = record["workspace"]["workspace_id"]
+    assert store.load(workspace_id, record["change_set_id"]).ok is True
+    assert not (workspace / ".jenny").exists()
+
+
+@_HOSTED_POSIX
+def test_a_hosted_artifact_write_stays_in_the_root_when_its_folder_becomes_a_symlink(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from sidecar.ai.tools import hosted_file_io_posix, workspace_store
+
+    root, outside = tmp_path / "workspace", tmp_path / "outside"
+    (root / ".jenny" / "artifacts" / "s1").mkdir(parents=True)
+    outside.mkdir()
+    folder = root / ".jenny" / "artifacts" / "s1"
+    swapped: list[bool] = []
+
+    def swap(parent: Path) -> None:
+        if not swapped and parent == folder:
+            folder.rename(folder.with_name("s1.moved"))
+            folder.symlink_to(outside, target_is_directory=True)
+            swapped.append(True)
+
+    real_mkstemp, real_write = workspace_store.tempfile.mkstemp, hosted_file_io_posix.write_atomic
+    monkeypatch.setattr(workspace_store.tempfile, "mkstemp",
+                        lambda *a, **k: (swap(Path(k["dir"])), real_mkstemp(*a, **k))[1])
+    monkeypatch.setattr(hosted_file_io_posix, "write_atomic",
+                        lambda pin, base, path, *a: (swap(Path(path).parent),
+                                                     real_write(pin, base, path, *a))[1])
+    with scoped_hosted_file_io(str(root), enabled=True):
+        result = filesystem.write_file_tool(
+            {"path": ".jenny/artifacts/s1/note.md", "content": "MODEL"}, WorkspaceGuard(str(root)))
+    assert swapped and result.success is False
+    assert os.listdir(outside) == []
+
+
+@_HOSTED_POSIX
+def test_hosted_backup_retention_removes_old_snapshots_through_the_pin(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from sidecar.ai.tools.builtins import file_history
+
+    monkeypatch.setattr(file_history, "MAX_BACKUP_SNAPSHOTS", 1)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "notes.txt").write_bytes(b"v0")
+    workspace = WorkspaceGuard(str(root))
+    with scoped_hosted_file_io(str(root), enabled=True):
+        for version in range(1, 4):
+            snapshot = filesystem.read_file_tool(
+                {"path": "notes.txt"}, workspace).metadata["read_snapshot"]
+            result = filesystem.write_file_tool({"path": "notes.txt", "content": f"v{version}",
+                                                 "expected_read_snapshot": snapshot}, workspace)
+            assert result.success, result
+    snapshots = [name for name in os.listdir(root / ".jenny" / "backups") if name.endswith(".bak")]
+    assert len(snapshots) == 1, snapshots
 
 
 def test_tool_failure_preserves_hosted_effect_classification() -> None:
@@ -358,3 +487,45 @@ def test_hosted_list_dir_rejects_directory_swapped_for_symlink(tmp_path: Path) -
     with scoped_hosted_file_io(str(root), enabled=True), pytest.raises(ToolExecutionFailure) as caught:
         filesystem_listing.list_dir_tool({"path": "dir"}, guard)
     assert "secret-name" not in caught.value.message
+
+
+@_HOSTED_POSIX
+def test_hosted_list_dir_stops_at_scan_budget_and_marks_unknown_total(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path.resolve() / "workspace"
+    root.mkdir()
+    for index in range(8):
+        (root / f"file-{index}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(filesystem_listing, "MAX_LIST_SCAN_ENTRIES", 3)
+
+    with scoped_hosted_file_io(str(root), enabled=True):
+        result = filesystem_listing.list_dir_tool({"path": "."}, WorkspaceGuard(str(root)))
+
+    assert result.metadata == {
+        "returned_count": 3,
+        "total_size_bytes": 3,
+        "entries_scanned": 3,
+        "entries_skipped": 0,
+        "truncated": True,
+        "totals_known": False,
+        "total_entries": None,
+        "cursor": None,
+    }
+
+
+@_HOSTED_POSIX
+def test_posix_directory_scans_once_per_scope(tmp_path: Path) -> None:
+    from sidecar.ai.tools.hosted_file_io_posix import PosixDirectory
+
+    for index in range(4):
+        (tmp_path / f"file-{index}.txt").write_text("x", encoding="utf-8")
+    fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    directory = PosixDirectory(fd)
+    try:
+        assert len(directory.scan(2)) == 2
+        with pytest.raises(ToolExecutionFailure):
+            directory.scan(2)
+    finally:
+        directory.close()
+        os.close(fd)

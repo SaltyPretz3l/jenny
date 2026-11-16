@@ -191,6 +191,38 @@ test('only file URLs become pictures and bridge strings are escaped', async () =
   assert.equal(env.root.querySelector('img[src="x"]'), null);
 });
 
+test('a page whose external files were blocked says so under its picture, whatever its state', async () => {
+  const hosts = ['cdn.jsdelivr.net', 'fonts.example'];
+  const record = rec('t1', [
+    page('a.html', 'ready', { blockedHosts: hosts }),
+    page('b.html', 'same', { blockedHosts: ['cdn.jsdelivr.net'] }),
+    page('c.html', 'new'),
+    page('d.html', 'ready', { blockedHosts: [] }),
+  ]);
+  const env = build(slot('t1'), { capture: { t1: ok(record) } }, makeTurns([['t1', 'a.html']]));
+  attach(env);
+  await flush();
+  const label = (name) => env.root.querySelector(`[data-cp-page="${name}"] [data-cp-blocked]`);
+  assert.equal(text(label('a.html')), 'blocked: cdn.jsdelivr.net, fonts.example');
+  assert.equal(text(label('b.html')), 'blocked: cdn.jsdelivr.net');
+  assert.equal(label('c.html'), null);
+  assert.equal(label('d.html'), null);
+  assert.equal(env.root.querySelectorAll('[data-cp-blocked]').length, 2);
+});
+
+test('blocked hosts are shown as text only and bounded to four short strings', async () => {
+  const record = rec('t1', [page('a.html', 'same', {
+    blockedHosts: ['<img src=x onerror=alert(1)>', 7, 'x'.repeat(300), 'b.example', 'c.example', 'd.example', 'e.example'],
+  })]);
+  const env = build(slot('t1'), { capture: { t1: ok(record) } }, makeTurns([['t1', 'a.html']]));
+  attach(env);
+  await flush();
+  const label = env.root.querySelector('[data-cp-blocked]');
+  assert.equal(text(label), 'blocked: <img src=x onerror=alert(1)>, b.example, c.example, d.example');
+  assert.equal(label.querySelector('img'), null);
+  assert.equal(env.root.querySelector('img[onerror]'), null);
+});
+
 test('a pending request shows one plain line until the pictures arrive', async () => {
   const env = build(slot('t1'), { capture: () => never() }, makeTurns([['t1', 'index.html']]));
   attach(env);

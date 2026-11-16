@@ -212,6 +212,7 @@
       for (const tab of [...(getIde()?.openTabs || [])]) {
         const path = tab?.path;
         if (!path || tab.kind !== 'file' || writes >= MAX_WRITES_PER_TICK) continue;
+        if (/^outside:\/\//.test(path)) continue; // row 137: an outside file is never backed up; the exit prompt covers it
         if (editorHost.hasDocument?.(path) !== true || editorHost.getDocumentKind?.(path) !== 'file') continue;
         if (editorHost.isDirty?.(path) !== true || editorHost.isLargeFile?.(path) === true) continue;
         const state = stateFor(path);

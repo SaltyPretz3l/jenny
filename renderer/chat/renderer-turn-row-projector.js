@@ -25,6 +25,7 @@
     normalizeId,
     cloneSortKey,
     traceEventCompare,
+    projectionEventCompare,
     pushDistinct,
     normalizeGeneratedArtifact,
     normalizeToolLifecycleStatus,
@@ -654,8 +655,10 @@
     }
 
     // A late call can now own earlier events. Place its row at its first owned
-    // event, retaining the canonical sequence and one-row-per-event partition.
-    const eventOrder = new Map(events.map((event, index) => [event && event.event_id, index]));
+    // event, retaining the one-row-per-event partition. Rows follow the turn's
+    // position order, the same order the terminal fold and turn.events use.
+    const positioned = typeof projectionEventCompare === 'function' ? events.slice().sort(projectionEventCompare) : events;
+    const eventOrder = new Map(positioned.map((event, index) => [event && event.event_id, index]));
     rows.sort((left, right) => eventOrder.get(left.source_events[0]) - eventOrder.get(right.source_events[0]));
     return assignRenderMessageIds(rows);
   }

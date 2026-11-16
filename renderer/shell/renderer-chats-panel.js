@@ -217,9 +217,12 @@
       treeUi.writeChildrenExpanded({ state: state, bridge: windowRef.jennyShell && windowRef.jennyShell.chatWorkspace, chains: treeChains, onChange: scheduleRender }, sessionId, !node.expanded);
     }
 
+    function firstTag(sessionId) { return windowRef.rendererStreamWaitingLine ? windowRef.rendererStreamWaitingLine.firstChatRowTag(sessionId) : null; }
+
     function rowSignature(session, active, node) {
       var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       return JSON.stringify({
+        first: (firstTag(session.id) || {}).title || '',
         unread: unreadUi.count(session), sound: soundUi.rowMarkup(session),
         title: resolveDefaultTitle(session.title),
         updatedAt: session.updated_at || session.created_at || '',
@@ -277,6 +280,8 @@
           + '<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg>'
           + '</span>'
         : '';
+      var first = firstTag(session.id);
+      var firstMarkup = first ? '<span class="session-row__first" title="' + escapeHtml(first.title) + '">' + escapeHtml(first.label) + '</span>' : '';
       var openMarkup = actionButton({
         id: 'open-session',
         plain: true,
@@ -289,7 +294,7 @@
         trustedHtml: '<span class="session-row__dot" aria-hidden="true"></span>'
           + '<span class="conversation-title session-row__title' + unreadUi.titleClass(session) + '">' + pinMarkup + typeMarkup + lockdownMarkup
           + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + pausedMarkup + outboxMarkup + '</span>'
-          + unreadUi.markup(session) + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatSessionTime(timestamp)) + '</time>'
+          + unreadUi.markup(session) + firstMarkup + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatSessionTime(timestamp)) + '</time>'
           + treeUi.relationMarkup(session, node),
       });
       var menuMarkup = actionButton({
@@ -946,6 +951,7 @@
 
     function dispose() {
       disposed = true;
+      if (stopFirstChat) stopFirstChat();
       if (scheduledFrame) cancelFrame(scheduledFrame);
       scheduledFrame = 0;
       if (sizeObserver) sizeObserver.disconnect();
@@ -970,6 +976,7 @@
     dom.projectRow && dom.projectRow.addEventListener('click', handleFilterControlsClick);
     if (typeof callbacks.getProjectSwitcher === 'function') windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
     soundUi.onChatsChanged(scheduleRender);
+    var stopFirstChat = windowRef.rendererStreamWaitingLine ? windowRef.rendererStreamWaitingLine.firstChat.subscribe(scheduleRender) : null;
     dom.conversationGroups && dom.conversationGroups.addEventListener('click', handlePanelClick);
     dom.conversationGroups && dom.conversationGroups.addEventListener('contextmenu', projectsCtl.handleContextMenu);
     observeListSize();

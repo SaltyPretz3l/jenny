@@ -283,11 +283,13 @@
             turnRowCache = new Map();
             cache.turnRowCache = turnRowCache;
           }
+          if (cache && !(cache.turnRowOverflow instanceof Map)) cache.turnRowOverflow = new Map();
           turnProjection = buildHydratedTurnProjection(sourceMessages, threadTree, turnEventState, {
             // Reuse the messageById map already built above instead of letting
             // the hydration pipeline rebuild a byte-identical one (finding #14).
             messageById,
             turnRowCache,
+            turnRowOverflow: cache ? cache.turnRowOverflow : null,
             messageContentFingerprintById,
             // Threads send-lifecycle liveness into the live-turn interrupted
             // guard (see guardLiveTurnRows in the hydration pipeline).

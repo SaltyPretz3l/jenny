@@ -72,7 +72,6 @@
   --playlist-scroll-accent-color: rgba(216, 156, 92, 0.62);
 
   --shadow-soft: 0 20px 44px rgba(0, 0, 0, 0.34);
-  --shadow-accent: 0 16px 32px rgba(200, 143, 82, 0.18);
   --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(184, 164, 143, 0.08);
   --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(184, 164, 143, 0.10);
   --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(200, 143, 82, 0.10);
@@ -156,7 +155,6 @@
   --widget-button-danger-border: rgba(214, 104, 88, 0.28);
   --widget-button-danger-color: #ea9d90;
   --widget-close-hover-bg: #b8463a;
-  --widget-hero-avatar-bg: linear-gradient(180deg, #d9a062, #c88f52);
 
   /* ── Sidebar & item states — brass selection ── */
   --widget-item-active-bg: linear-gradient(180deg, rgba(200, 143, 82, 0.14), rgba(200, 143, 82, 0.04));
@@ -235,11 +233,7 @@
   --widget-input-focus-glow: rgba(200, 143, 82, 0.20);
 
   /* ── Activity states — brass pending, sage success ── */
-  --widget-activity-pending-glow: rgba(200, 143, 82, 0.10);
-  --widget-activity-pending-border: rgba(200, 143, 82, 0.50);
   --widget-activity-pending-color: #e0b072;
-  --widget-activity-success-color: rgba(168, 196, 142, 0.92);
-  --widget-activity-error-color: #ea9d90;
   --widget-activity-pulse-color: rgba(200, 143, 82, 0.16);
 
   /* ── Attachments ── */

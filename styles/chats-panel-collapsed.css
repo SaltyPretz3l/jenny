@@ -201,17 +201,56 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
   font-weight: 500;
 }
 
-/* Pin notch (top-right) — pinned chips lead the strip but stay scannable. */
-.chats-strip__chip--pinned::before {
-  content: "";
-  position: absolute;
-  top: 3px;
-  inset-inline-end: 3px;
-  width: 6px;
-  height: 6px;
+/* The Needs you mark under New chat: a dot and a count, shown only while
+   something waits, opening the inbox's flyout beside the strip. */
+.chats-strip__needs {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.chats-strip__needs[hidden] {
+  display: none;
+}
+
+.chats-strip__needs:hover,
+.chats-strip__needs[aria-expanded="true"] {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.chats-strip__needs:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.chats-strip__needs-dot {
+  width: var(--session-row-dot-size);
+  height: var(--session-row-dot-size);
   border-radius: var(--radius-pill);
-  background: var(--accent);
-  pointer-events: none;
+  background: var(--sidebar-state-approval-color);
+}
+
+/* Between the waiting, pinned and recent chips: whitespace and one hairline,
+   no box. */
+.chats-strip__break {
+  flex: none;
+  width: 20px;
+  height: 1px;
+  background: var(--rail-divider);
 }
 
 /* State dot (bottom-right), colored by the same tokens as the row dots. */
@@ -283,6 +322,10 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 }
 
 @media (forced-colors: active) {
+  .chats-strip__needs-dot {
+    background: CanvasText;
+  }
+
   .chats-strip__chip--active {
     border-color: Highlight;
     background: Highlight;

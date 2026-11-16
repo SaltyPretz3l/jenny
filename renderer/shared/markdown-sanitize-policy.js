@@ -77,6 +77,23 @@
     return (host !== '' && host !== 'localhost') || /^\/(?:[\\/]|%5c|%2f)/i.test(parsed.pathname);
   }
 
+  // A link that resolves to a file: URL (any relative href, `?query`, `index.html?x`, an absolute file: URL) would
+  // navigate or reload the app window itself: the page is file://, and a new query re-runs the boot scripts with the
+  // link's language and appearance (team review R13-F01). Only an in-page `#` link stays; web and mail links resolve
+  // to their own scheme and are handed out by the main window's navigation guard.
+  function navigatesAppWindow(rawValue) {
+    let value = String(rawValue || '').replace(/[\t\n\r]/g, '');
+    let start = 0;
+    while (start < value.length && value.charCodeAt(start) <= 0x20) start += 1;
+    value = value.slice(start);
+    if (value.startsWith('#')) return false;
+    try {
+      return new URL(value, FILE_RESOLUTION_BASE).protocol === 'file:';
+    } catch (_error) {
+      return true;
+    }
+  }
+
   function hardenAttributes(node) {
     if (!node || typeof node.getAttribute !== 'function') return;
     // Installed as an afterSanitizeAttributes hook on the SHARED DOMPurify
@@ -113,10 +130,12 @@
       else node.removeAttribute('align');
     }
 
-    // A link resolves against the same page, so a click would open the share:
-    // the anchor keeps its text and loses the href, like a disallowed scheme.
-    if (tagName === 'a' && node.hasAttribute('href') && reachesFileHost(node.getAttribute('href'))) {
-      node.removeAttribute('href');
+    // A link resolves against the same page, so a click would open a share or
+    // navigate the app window: the anchor keeps its text and loses the href,
+    // like a disallowed scheme.
+    if (tagName === 'a' && node.hasAttribute('href')) {
+      const href = node.getAttribute('href');
+      if (reachesFileHost(href) || navigatesAppWindow(href)) node.removeAttribute('href');
     }
 
     if (tagName === 'img') {
@@ -139,5 +158,5 @@
     return 'Code';
   }
 
-  return { config, hardenAttributes, getLanguageLabel, reachesFileHost };
+  return { config, hardenAttributes, getLanguageLabel, reachesFileHost, navigatesAppWindow };
 });

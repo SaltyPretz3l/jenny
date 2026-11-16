@@ -8,6 +8,7 @@ const { t } = require('./i18n-main');
 const { buildModelFitEstimates } = require('./model-fit-diagnostics');
 
 const DIAGNOSTICS_CACHE_TTL_MS = 5000;
+const MANAGED_ENGINE_LABELS = { 'llama-server': 'llama-server', ninfer: 'NInfer' };
 const VISION_MODEL_PREFIXES = [
   'llava',
   'bakllava',
@@ -22,7 +23,6 @@ const VISION_MODEL_PREFIXES = [
   'phi-3-vision',
   'phi3-vision',
 ];
-
 
 function normalizeEngineFallback(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -141,12 +141,9 @@ function findModelCatalogEntry(models, modelId) {
   ) || null;
 }
 
-// A GGUF in the Model Library that the managed llama-server serves on this
-// machine: its perModel entry runs on llama-server from a model file. The
-// Ollama/vLLM catalog never lists it, yet it is installed and local. It loads
-// through the openai-compatible engine, which force-local routing does not
-// trust (services/backend/local-engine-requests.js), so it never makes forced
-// local inference ready.
+// A Model Library model a managed server serves here: installed and local, though the Ollama/vLLM catalog never
+// lists it. It loads through the openai-compatible engine, which force-local routing does not trust
+// (services/backend/local-engine-requests.js), so it never makes forced local inference ready.
 function findManagedLibraryModel(configService, modelId) {
   const id = normalizeString(modelId);
   if (!id || !configService || typeof configService.getLocalEngines !== 'function') {
@@ -162,7 +159,21 @@ function findManagedLibraryModel(configService, modelId) {
   if (!entry || entry.engine !== 'llama-server' || !normalizeString(entry.modelPath)) {
     return null;
   }
-  return { id, engineType: 'openai-compatible', capabilities: {} };
+  return { id, engineType: 'openai-compatible', capabilities: {}, managedEngine: 'llama-server' };
+}
+
+// NInfer serves its own pinned artifacts, not perModel entries: a pin the model names, present on disk.
+async function findNinferLibraryModel(backend, modelId) {
+  const id = normalizeString(modelId);
+  const artifacts = backend?.ninferRuntime?.artifacts;
+  const pin = id && Array.isArray(artifacts?.artifacts)
+    ? artifacts.artifacts.find((entry) => entry && (entry.model_id === id || entry.id === id))
+    : null;
+  if (!pin) {
+    return null;
+  }
+  const resolved = await Promise.resolve().then(() => artifacts.resolveArtifactPath(pin.id)).catch(() => null);
+  return resolved?.ok === true ? { id, engineType: 'openai-compatible', capabilities: {}, managedEngine: 'ninfer' } : null;
 }
 
 function isVisionCapableLocalModel(entry, fallbackModelId) {
@@ -172,18 +183,14 @@ function isVisionCapableLocalModel(entry, fallbackModelId) {
   return isLikelyVisionCapableLocalModel(entry?.id || fallbackModelId);
 }
 
-function buildDisabledSummary({
-  localChatReady,
-  preferredLocalModel,
-  unavailableReason,
-}) {
+function buildDisabledSummary({ localChatReady, preferredLocalModel, unavailableReason }) {
   if (localChatReady && preferredLocalModel) {
-    return `Local chat is ready with ${preferredLocalModel}.`;
+    return t('main.offlineIntelligence.localChatReady', 'Local chat is ready with {model}.', { model: preferredLocalModel });
   }
   if (preferredLocalModel) {
-    return unavailableReason || `Selected local model ${preferredLocalModel} is unavailable right now.`;
+    return unavailableReason || t('main.offlineIntelligence.modelUnavailable', 'Selected local model {model} is unavailable right now.', { model: preferredLocalModel });
   }
-  return 'Choose a local inference model in Model Library.';
+  return t('main.offlineIntelligence.pickLocalModel', 'Pick a local model as the local default.');
 }
 
 function buildUnavailableReason({
@@ -193,44 +200,41 @@ function buildUnavailableReason({
   catalogReason,
   ollamaFallback,
   forcedRouteBlocked = false,
+  managedEngine = '',
 }) {
   if (backendPhase !== 'ready') {
-    return 'Managed sidecar is not ready yet.';
+    return t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.');
   }
   if (!preferredLocalModel) {
-    return 'Select a local inference model in Model Library.';
+    return t('main.offlineIntelligence.pickLocalModel', 'Pick a local model as the local default.');
   }
   if (!selectedLocalModelInstalled) {
     return catalogReason
-      ? `${catalogReason} Select an installed local model to continue.`
-      : `Preferred local model ${preferredLocalModel} is not installed locally.`;
+      ? t('main.offlineIntelligence.selectInstalled', '{reason} Select an installed local model to continue.', { reason: catalogReason })
+      : t('main.offlineIntelligence.notInstalled', 'Preferred local model {model} is not installed locally.', { model: preferredLocalModel });
   }
   if (forcedRouteBlocked) {
     return t(
-      'main.offlineIntelligence.llamaServerNotForced',
-      'Force local inference cannot use {model} yet: it runs on llama-server or NInfer. Choose an Ollama model in Model Library.',
-      { model: preferredLocalModel }
+      'main.offlineIntelligence.managedEngineNotForced',
+      'Force local inference cannot use {model} yet: it runs on {engine}. Pick an Ollama model as the local default.',
+      { model: preferredLocalModel, engine: MANAGED_ENGINE_LABELS[managedEngine] || managedEngine }
     );
   }
   if (ollamaFallback) {
     return ollamaFallback.reason;
   }
-  return 'Forced local inference is unavailable right now.';
+  return t('main.offlineIntelligence.forcedUnavailable', 'Forced local inference is unavailable right now.');
 }
 
-function buildVisionUnavailableReason({
-  localChatReady,
-  preferredLocalModel,
-  localVisionReady,
-}) {
+function buildVisionUnavailableReason({ localChatReady, preferredLocalModel, localVisionReady }) {
   if (!localChatReady) {
-    return 'Local inference must be ready before image analysis can run locally.';
+    return t('main.offlineIntelligence.visionNeedsReady', 'Local inference must be ready before image analysis can run locally.');
   }
   if (!preferredLocalModel) {
-    return 'Select a local inference model in Model Library before using local vision.';
+    return t('main.offlineIntelligence.visionPickModel', 'Pick a local model as the local default before using local vision.');
   }
   if (!localVisionReady) {
-    return `Selected local model ${preferredLocalModel} does not appear to support vision.`;
+    return t('main.offlineIntelligence.visionUnsupported', 'Selected local model {model} does not appear to support vision.', { model: preferredLocalModel });
   }
   return '';
 }
@@ -318,9 +322,10 @@ class OfflineIntelligenceService {
       selectedLocalModelInstalled: false,
       localChatReady: false,
       localVisionReady: false,
-      unavailableReason: 'Managed sidecar is not ready yet.',
-      visionUnavailableReason: 'Local inference must be ready before image analysis can run locally.',
-      summary: t('main.offlineIntelligence.chooseLocalModel', 'Choose a local inference model in Model Library.'),
+      selectedManagedEngine: '',
+      unavailableReason: t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.'),
+      visionUnavailableReason: t('main.offlineIntelligence.visionNeedsReady', 'Local inference must be ready before image analysis can run locally.'),
+      summary: t('main.offlineIntelligence.pickLocalModel', 'Pick a local model as the local default.'),
     };
   }
 
@@ -350,7 +355,7 @@ class OfflineIntelligenceService {
     if (!backend) {
       return {
         available: false,
-      reason: t('main.offlineIntelligence.forceLocalRequiresBackend', 'Force local inference requires the managed local backend.'),
+        reason: t('main.offlineIntelligence.forceLocalRequiresBackend', 'Force local inference requires the managed local backend.'),
         models: previousModels,
       };
     }
@@ -358,7 +363,7 @@ class OfflineIntelligenceService {
     if (String(backendStatus?.phase || '') !== 'ready') {
       return {
         available: false,
-      reason: t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.'),
+        reason: t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.'),
         models: previousModels,
       };
     }
@@ -390,7 +395,7 @@ class OfflineIntelligenceService {
     } catch (error) {
       return {
         available: false,
-        reason: normalizeString(error?.message || error) || 'Could not query the local model catalog.',
+        reason: normalizeString(error?.message || error) || t('main.offlineIntelligence.catalogQueryFailed', 'Could not query the local model catalog.'),
         models: previousModels,
       };
     }
@@ -424,16 +429,16 @@ class OfflineIntelligenceService {
     const catalogInstalled = localCatalog.available === true
       && Boolean(catalogEntry)
       && (catalogEngineType === 'ollama' || catalogEngineType === 'vllm');
-    // The Ollama/vLLM catalog wins; a Model Library GGUF counts only when the
-    // catalog does not install the model.
+    // The Ollama/vLLM catalog wins; a Model Library model counts only when the catalog does not install it.
     const libraryEntry = catalogInstalled
       ? null
-      : findManagedLibraryModel(this.configService, preferredLocalModel);
+      : findManagedLibraryModel(this.configService, preferredLocalModel)
+        || await findNinferLibraryModel(backend, preferredLocalModel);
     const selectedModelEntry = libraryEntry || catalogEntry;
     const selectedLocalEngineType = libraryEntry ? libraryEntry.engineType : catalogEngineType;
     const selectedLocalModelInstalled = catalogInstalled || Boolean(libraryEntry);
     const forcedRouteBlocked = Boolean(libraryEntry) && settings.mode === 'local_only';
-    // An Ollama fallback says nothing about a model llama-server serves.
+    // An Ollama fallback says nothing about a model a managed server serves.
     const ollamaFallback = engineFallback && engineFallback.requestedEngine === 'ollama' && !libraryEntry
       ? engineFallback
       : null;
@@ -450,6 +455,7 @@ class OfflineIntelligenceService {
       catalogReason: localCatalog.reason,
       ollamaFallback,
       forcedRouteBlocked,
+      managedEngine: libraryEntry?.managedEngine || '',
     });
     const visionUnavailableReason = buildVisionUnavailableReason({
       localChatReady,
@@ -458,7 +464,7 @@ class OfflineIntelligenceService {
     });
     const summary = settings.mode === 'local_only'
       ? (localChatReady
-        ? `Force local inference is on. Jenny will use ${preferredLocalModel} for model inference.`
+        ? t('main.offlineIntelligence.forcedUsing', 'Force local inference is on. Jenny will use {model} for model inference.', { model: preferredLocalModel })
         : unavailableReason)
       : buildDisabledSummary({
         localChatReady,
@@ -474,6 +480,7 @@ class OfflineIntelligenceService {
       currentEngine,
       currentModel,
       selectedLocalEngineType,
+      selectedManagedEngine: libraryEntry?.managedEngine || '',
       engineFallback,
       selectedLocalModelInstalled,
       localChatReady,

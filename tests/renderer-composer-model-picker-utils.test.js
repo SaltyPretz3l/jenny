@@ -260,3 +260,103 @@ test('resolveDefaultChatModel names the Settings default unless a cloud engine r
   assert.deepEqual(utils.resolveDefaultChatModel({ ...state, offline: {} }), { model: 'ornith15:9b-q6-256k', engineType: 'ollama' });
   assert.deepEqual(utils.resolveDefaultChatModel(null), { model: '', engineType: '' });
 });
+
+test('row 123: a team model sits in its team group with the notice, and the pill shows the team model id', () => {
+  const notice = 'The team’s host and the person whose hardware responds can read your prompts and replies.';
+  const team = { id: 'team/team_alpha1/qwen3:8b-q4', engine_type: 'openai-compatible', team_id: 'team_alpha1',
+    team_name: 'Alpha crew' };
+  const entry = utils.normalizeCatalogEntry(team);
+  assert.deepEqual(entry.group, { key: 'team:team_alpha1', label: 'Alpha crew', order: 65 });
+  assert.equal(entry.hint, notice);
+  assert.deepEqual([entry.family, entry.tag, entry.engineHint], ['qwen3', '8b-q4', 'team']);
+  assert.equal(utils.normalizeCatalogEntry({ ...team, team_name: '' }).group.label, 'team_alpha1');
+  // A local model of the same name stays in its own group with no notice.
+  const local = utils.normalizeCatalogEntry({ id: 'qwen3:8b-q4', engine_type: 'ollama' });
+  assert.deepEqual([local.group.key, local.hint], ['ollama', '']);
+  const groups = utils.groupCatalogEntries([team, { id: 'qwen3:8b-q4', engine_type: 'ollama' },
+    { ...team, id: 'team/team_bravo2/qwen3:8b-q4', team_id: 'team_bravo2', team_name: 'Bravo crew' }]);
+  assert.deepEqual(groups.map((group) => group.key), ['ollama', 'team:team_alpha1', 'team:team_bravo2']);
+  assert.equal(utils.formatComposerModelPillLabel({ preferredModel: team.id }), 'qwen3 · 8b-q4');
+  // Only a well-formed team id is unwrapped; any other id keeps its name.
+  assert.equal(utils.splitModelId('team/alpha/x').family, 'team/alpha/x');
+});
+
+// Row 144: the size rule is ported from services/model-size-class.js (the renderer cannot load services/).
+// These are the same cases tests/model-size-class.test.js uses, so the two cannot drift silently.
+test('row 144: the size rule matches the backend rule for names, labels, MoE, cloud and unknown', () => {
+  assert.equal(utils.sizeFromText('Qwen3.8-27B-Q4_K_M'), 27);
+  assert.equal(utils.sizeFromText('qwen3.6:35b-a3b'), 35);
+  assert.equal(utils.sizeFromText('mixtral-8x7B'), 56);
+  assert.equal(utils.sizeFromText('model-latest'), null);
+  assert.equal(utils.sizeFromLabel('27.8B'), 27.8);
+  assert.equal(utils.sizeFromLabel('670M'), 0.67);
+  assert.equal(utils.sizeFromLabel('35B-A3B'), 35);
+  assert.equal(utils.sizeFromLabel('8x7B'), 56);
+  assert.equal(utils.sizeFromLabel(''), null);
+  const fit = (input) => utils.classifyCheckModel(input);
+  assert.deepEqual(fit({ model: 'qwen3:8b', engineType: 'ollama', parameterSize: '8.2B' }), { fit: true, params_b: 8.2, source: 'engine' });
+  assert.equal(fit({ model: 'lfm3:2b', engineType: 'ollama', parameterSize: '2.6B' }).fit, false);
+  assert.equal(fit({ model: 'gemma4-e4b' }).fit, false, 'no token: unknown size is too small');
+  assert.deepEqual(fit({ model: 'mystery' }), { fit: false, params_b: null, source: 'unknown' });
+  assert.equal(fit({ model: 'qwen3.6:35b-a3b' }).fit, true, 'a MoE counts by its total size');
+  assert.equal(fit({ model: 'gpt-6', engineType: 'chatgpt' }).fit, true);
+  assert.equal(fit({ model: 'x', engineType: 'codex-cli' }).fit, true);
+  assert.equal(fit({ model: 'y', engineType: 'api-provider' }).fit, true);
+  assert.equal(fit({ model: 'qwen3-7b' }).fit, true, '7B is the floor itself');
+});
+
+test('row 144: the pin applies only to the Jenny chat session while the store is ready', () => {
+  const ready = { status: 'ready', session_id: 'p', model: ' qwen3:27b ' };
+  assert.equal(utils.resolvePinnedModel(ready, 'p'), 'qwen3:27b');
+  assert.equal(utils.resolvePinnedModel(ready, 'other'), '');
+  assert.equal(utils.resolvePinnedModel(ready, ''), '');
+  assert.equal(utils.resolvePinnedModel({ ...ready, model: '' }, 'p'), '');
+  assert.equal(utils.resolvePinnedModel({ ...ready, status: 'unavailable' }, 'p'), '');
+  assert.equal(utils.resolvePinnedModel({ ...ready, model: 7 }, 'p'), '');
+  assert.equal(utils.resolvePinnedModel(null, 'p'), '');
+});
+
+test('row 144: the ported size rule answers exactly what the backend rule answers on a shared case table', () => {
+  const backend = require('../services/model-size-class');
+  const cases = [
+    { model: 'gemma3:2b', parameterSize: '2.6B' }, { model: 'qwen3.8:27b', parameterSize: '27.8B' },
+    { model: 'my-70b-merge', parameterSize: '3.2B' }, { model: 'tiny', parameterSize: '670M' },
+    { model: 'qwen3.6:35b-a3b' }, { model: 'mixtral', parameterSize: '8x7B' }, { model: 'lfm3-omni-2b' },
+    { model: 'hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M' }, { model: 'gemma4-e4b' }, { model: 'gpt-oss-120b' },
+    { model: 'qwen3.8:q4_k_m' }, { model: 'model-bf16' }, { model: 'gpt-6', engineType: 'chatgpt' },
+    { model: 'gpt-6', engineType: 'CODEX-CLI' }, { model: 'm', engineType: 'api-provider' },
+    { model: 'lfm3-omni-2b', engineType: 'openai-compatible' }, { model: '', parameterSize: '' },
+  ];
+  for (const input of cases) {
+    assert.deepEqual(utils.classifyCheckModel(input), backend.classifyModelSize(input), JSON.stringify(input));
+  }
+});
+
+test('an API-provider model shows its own name, not the namespaced id', () => {
+  const id = 'api-provider/anthropic-api/claude-haiku-5-5';
+  assert.equal(utils.displayModelId(id), 'claude-haiku-5-5');
+  assert.equal(utils.displayModelId('api-provider/openrouter/openai/gpt-6-luna'), 'openai/gpt-6-luna');
+  assert.equal(utils.displayModelId('qwen3.8:27b-ud-iq3-s'), 'qwen3.8:27b-ud-iq3-s');
+  // Only a well-formed provider id is unwrapped.
+  assert.equal(utils.displayModelId('api-provider/claude-haiku-5-5'), 'api-provider/claude-haiku-5-5');
+  assert.equal(utils.formatComposerModelPillLabel({ backendModel: id }), 'Default \u00b7 claude-haiku-5-5');
+  assert.equal(
+    utils.formatComposerModelPillLabel({ preferredModel: id, effort: 'high', effortSupported: true }),
+    'claude-haiku-5-5 \u00b7 High',
+  );
+  assert.equal(utils.buildPillTitle({ backendModel: id }), 'Model: default (claude-haiku-5-5)');
+  assert.equal(utils.buildPillTitle({ preferredModel: id }), 'Model: claude-haiku-5-5');
+});
+
+test('a model that cannot turn thinking off shows Min where others show Off', () => {
+  assert.equal(utils.effortSegmentLabel('none', 'Minimal'), 'Min');
+  assert.equal(utils.effortSegmentLabel('none', 'None'), 'Off');
+  const inputs = {
+    preferredModel: 'gemma4:12b',
+    effort: 'none',
+    effortSupported: true,
+    effortOptions: [{ value: 'default', label: 'Use default' }, { value: 'none', label: 'Minimal' }],
+  };
+  assert.equal(utils.formatComposerModelPillLabel(inputs), 'gemma4 \u00b7 12b \u00b7 Min');
+  assert.equal(utils.buildPillTitle(inputs), 'Model: gemma4:12b. Thinking: Min');
+});

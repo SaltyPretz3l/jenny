@@ -53,12 +53,12 @@ test('no root renders the chip', (t) => {
   controller.render();
   const chip = dom.window.document.getElementById('workspaceRootNudge');
   assert.ok(chip, 'chip should render when no workspace root is set');
-  assert.match(chip.textContent, /No Workspace folder set/, 'user copy says "Workspace folder", never "workspace root" (D20)');
-  assert.match(chip.textContent, /file tools are off for this chat/);
+  assert.match(chip.textContent, /File tools are off until you choose a folder to work in\./, 'plain words, never "workspace root" (D20)');
+  assert.equal(chip.querySelector('.workspace-root-nudge-icon'), null, 'one quiet line: no warning sign');
   assert.ok(chip.querySelector('[data-workspace-root-nudge-action="set-root"]'));
   const dismiss = chip.querySelector('[data-workspace-root-nudge-action="dismiss"]');
   assert.ok(dismiss);
-  assert.equal(dismiss.title, 'Dismiss Workspace folder hint');
+  assert.equal(dismiss.textContent, 'Not now', 'the dismissal is a worded link, not a glyph');
 });
 
 test('the boot seed (feature state unresolved) mounts no chip until hydration lands', (t) => {
@@ -106,13 +106,25 @@ test('a new chat still materializing on its first Send (no project yet, prefligh
 
   // A canonical record that really is General still gets the hint.
   state.sendPreflight = null;
-  state.sessions = [{ id: 'session_real_1', title: 'Fix the chart', session_type: 'chat', message_count: 1,
+  state.sessions = [{ id: 'session_real_1', title: 'Fix the chart', session_type: 'chat', message_count: 0,
     project_id: 'project_general', optimistic_local: false, local_draft: false }];
   state.currentSessionId = 'session_real_1';
   controller.render();
   const chip = dom.window.document.getElementById('workspaceRootNudge');
-  assert.ok(chip, 'a materialized General chat still offers the folder');
+  assert.ok(chip, 'a materialized General chat with no messages yet still offers the folder');
   assert.equal(chip.getAttribute('data-nudge-variant'), 'use-folder');
+
+  // Once the chat is under way the line goes: the project pill is the standing answer.
+  state.sessions[0].message_count = 1;
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'no line on a chat that has messages');
+  state.sessions[0].message_count = 0;
+  state.messagesBySession = new Map([['session_real_1', [{ role: 'user', content: 'hi' }]]]);
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'a first message still in flight counts');
+  state.messagesBySession = new Map();
+  controller.render();
+  assert.ok(dom.window.document.getElementById('workspaceRootNudge'));
 });
 
 test('dismiss hides for the session (re-render does not resurrect)', (t) => {
@@ -288,4 +300,39 @@ test('F33: in the full renderer, a folder picked through the nudge provisions a 
   } finally {
     await app.dispose();
   }
+});
+
+test('choosing a folder from the line also puts that chat in it: one step, and a cancelled picker adopts nothing', async (t) => {
+  const adopted = [];
+  const state = makeState({
+    currentSessionId: 's1',
+    sessions: [{ id: 's1', title: 'New chat', project_id: 'project_general' }],
+  });
+  let pick = '';
+  const { dom, controller } = createHarness(t, {
+    state,
+    windowExtras: { jennyShell: { projects: {
+      async adoptWorkspace(payload) {
+        adopted.push(payload);
+        return { ok: true, session: { id: payload.session_id, project_id: 'project_ws' }, project: { id: 'project_ws', name: 'jenny', root_path: pick } };
+      },
+    } } },
+    chooseWorkspaceRoot: async () => { if (pick) state.workspaceRoot = { path: pick }; },
+  });
+  controller.render();
+  const settle = async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); };
+  const clickSetRoot = () => dom.window.document.querySelector('[data-workspace-root-nudge-action="set-root"]')
+    .dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+
+  clickSetRoot();
+  await settle();
+  assert.deepEqual(adopted, [], 'cancelled: no folder, nothing adopted');
+  assert.ok(dom.window.document.querySelector('[data-workspace-root-nudge-action="set-root"]'), 'the line stays');
+
+  pick = 'C:\\dev\\jenny';
+  clickSetRoot();
+  await settle();
+  assert.deepEqual(adopted, [{ session_id: 's1' }], 'the chat the line was shown on goes in the new folder');
+  assert.equal(state.sessions[0].project_id, 'project_ws');
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'no second "Use folder" step');
 });

@@ -47,12 +47,13 @@ test('Readiness lists each area as a success row when nothing needs attention', 
   assert.equal(model.tone, 'ready');
   assert.equal(model.summaryLabel, 'Ready');
   assert.equal(model.attentionCount, 0);
-  assert.equal(model.readyCount, 7);
-  assert.deepEqual(itemIds(model), ['model-ready', 'workspace-ready', 'tools-ready', 'setup-ready', 'memory-ready', 'proactive-ready', 'skills-ready']);
+  assert.equal(model.readyCount, 6);
+  // Row 133: the Proactive page is gone, so known proactive state lists no row.
+  assert.deepEqual(itemIds(model), ['model-ready', 'workspace-ready', 'tools-ready', 'setup-ready', 'memory-ready', 'skills-ready']);
   assert.equal(READY_ITEM_ID, 'model-ready');
   assert.ok(model.items.every((item) => item.tone === 'success'));
-  assert.deepEqual(model.items.map((item) => item.sectionId), ['models', 'tools', 'tools', 'account', '__memory', 'proactive', 'skills']);
-  assert.deepEqual(model.items.map((item) => item.actionLabel), ['Review models', 'Open tools', 'Review tools', 'Open profile', 'Open memories', 'Check proactive', 'Open skills']);
+  assert.deepEqual(model.items.map((item) => item.sectionId), ['models', 'tools', 'tools', 'general', '__memory', 'skills']);
+  assert.deepEqual(model.items.map((item) => item.actionLabel), ['Review models', 'Open tools', 'Review tools', 'Open profile', 'Open memories', 'Open skills']);
   assert.equal(model.items[0].message, 'llama3 is the active model.');
   assert.equal(model.items[1].message, 'C:\\dev\\jenny');
   assert.equal(model.items[2].message, 'No enabled tool is blocked.');
@@ -63,7 +64,7 @@ test('Readiness lists each area as a success row when nothing needs attention', 
   const markup = renderSettingsControlTowerMarkup(model, { escapeHtml, statusRow, actionButton });
   const doc = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
   const rows = [...doc.querySelectorAll('.settings-control-tower-row')];
-  assert.equal(rows.length, 7);
+  assert.equal(rows.length, 6);
   rows.forEach((row, index) => {
     assert.equal(row.getAttribute('data-tone'), 'success');
     assert.ok(row.querySelector('.inv-status-row-dot'), 'rows lead with the status-row tone dot');
@@ -80,10 +81,16 @@ test('Readiness lists each area as a success row when nothing needs attention', 
 test('Readiness lists Force local as ready only while it is on', () => {
   const on = buildSettingsControlTowerModel({ state: { ...READY_STATE, offline: { localOnly: true, localReady: true } } });
   assert.equal(on.attentionCount, 0);
-  assert.deepEqual(itemIds(on).slice(4), ['local-only-ready', 'memory-ready', 'proactive-ready', 'skills-ready']);
+  assert.deepEqual(itemIds(on).slice(4), ['local-only-ready', 'memory-ready', 'skills-ready']);
   const row = on.items.find((item) => item.id === 'local-only-ready');
   assert.deepEqual([row.sectionId, row.tone, row.actionLabel], ['offline', 'success', 'Check local model']);
   assert.equal(itemIds(buildSettingsControlTowerModel({ state: READY_STATE })).includes('local-only-ready'), false);
+});
+
+test('Readiness has no Proactive row, ready or not (row 133: that page no longer exists)', () => {
+  const model = buildSettingsControlTowerModel({ state: { ...READY_STATE, proactive: { ready: false, status: 'unavailable' } } });
+  assert.equal(model.attentionCount, 0);
+  assert.equal(model.items.some((item) => /proactive/.test(item.id) || item.sectionId === 'proactive'), false);
 });
 
 test('Readiness omits the rows whose state is not known', () => {
@@ -164,7 +171,7 @@ test('Readiness explains chat and file capabilities instead of an attention summ
   assert.equal(doc.querySelector('.settings-control-tower-summary'), null);
 });
 
-test('Readiness setup action resumes setup and retains its account fallback', () => {
+test('Readiness setup action resumes setup and falls back to Readiness, where Setup lives (row 133)', () => {
   const model = buildSettingsControlTowerModel({ state: { ...READY_STATE, setup: { loaded: true, setupComplete: false } } });
   const doc = new JSDOM(renderSettingsControlTowerMarkup(model, { statusRow, actionButton, badge })).window.document;
   const row = doc.querySelector('[data-control-tower-item="setup-incomplete"]');
@@ -172,7 +179,7 @@ test('Readiness setup action resumes setup and retains its account fallback', ()
   const action = row.querySelector('[data-settings-control-action="resume-setup"]');
   assert.ok(action);
   assert.equal(action.textContent, 'Resume setup');
-  assert.equal(action.dataset.settingsControlSection, 'account');
+  assert.equal(action.dataset.settingsControlSection, 'readiness');
 });
 
 test('Readiness capabilities cover ready, unknown, and independently blocked tools', () => {
@@ -293,7 +300,7 @@ test('Readiness flags setup, local-only, and partial panes; partial panes are in
   });
 
   assert.deepEqual(itemIds(model), ['setup-incomplete', 'local-only-not-ready', 'settings-refresh-degraded']);
-  assert.equal(model.items[0].sectionId, 'account');
+  assert.equal(model.items[0].sectionId, 'readiness');
   assert.equal(model.items[1].sectionId, 'offline');
   assert.equal(model.items[2].tone, 'pending');
   assert.equal(model.items[2].sectionId, '__diagnostics');

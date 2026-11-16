@@ -31,7 +31,10 @@
       buildMessageTokenMeta,
       formatMessageTokenMeta,
       combineMessageMetaLabels,
+      buildShortAssistantMetaLabel,
+      formatMessageTokenMetaShort,
       formatMessageTerminalTimestamp,
+      formatMessageClockTime,
       buildStreamingBubbleMarkup,
       recordTurnArticleRolloutSignal,
       getPaneSessionId,
@@ -93,10 +96,10 @@
       return renderSignature || buildTokenMessagesFingerprint(messages);
     }
 
-    function resolveMessageTokenMetaLabel(message, messages, projectionContext) {
+    function resolveMessageTokenMeta(message, messages, projectionContext) {
       const messageId = String(message?.id || '').trim();
       if (!messageId || typeof buildMessageTokenMeta !== 'function') {
-        return '';
+        return null;
       }
       const fingerprint = resolveTokenMessagesFingerprint(messages, projectionContext);
       // Gate the rebuild on the content fingerprint only (finding #37): the
@@ -108,35 +111,35 @@
         cachedTokenMetaById = buildMessageTokenMeta(messages);
       }
       if (!cachedTokenMetaById || typeof cachedTokenMetaById.get !== 'function') {
-        return '';
+        return null;
       }
-      return typeof formatMessageTokenMeta === 'function'
-        ? formatMessageTokenMeta(cachedTokenMetaById.get(messageId))
-        : '';
+      return cachedTokenMetaById.get(messageId) || null;
     }
 
-    function buildMessageMetaLabel(baseLabel, message, messages, projectionContext) {
-      const tokenLabel = resolveMessageTokenMetaLabel(message, messages, projectionContext);
-      if (typeof combineMessageMetaLabels === 'function') {
-        return combineMessageMetaLabels(baseLabel, tokenLabel);
-      }
-      return [baseLabel, tokenLabel].filter(Boolean).join(' · ');
+    // The hover row's [full, short] labels: the full one is the tooltip, the short one the line.
+    function buildHoverMetaLabels(message, messages, projectionContext) {
+      const tokenMeta = resolveMessageTokenMeta(message, messages, projectionContext);
+      const isUser = message.role === 'user';
+      return [
+        combineMessageMetaLabels(isUser ? formatMessageTerminalTimestamp(message.timestamp)
+          : buildAssistantMetaLabel(message, formatMessageTerminalTimestamp), formatMessageTokenMeta(tokenMeta)),
+        combineMessageMetaLabels(isUser ? formatMessageClockTime(message.timestamp)
+          : buildShortAssistantMetaLabel(message, formatMessageClockTime), formatMessageTokenMetaShort(tokenMeta)),
+      ];
     }
 
-    // F2: inline edit affordance for the legacy article-markup path. Delegates
-    // to the inventory primitive at renderer/inventory/inline-text-editor.js
-    // so raw textarea + button markup stays inside renderer/inventory/.
-    function buildLegacyEditingUserBubbleMarkup(messageId, draftText, options) {
-      const opts = options || {};
-      const inventory = typeof globalThis !== 'undefined'
-        ? globalThis.inventoryInlineTextEditor
-        : null;
+    // F2: the inline editor (raw textarea + buttons live in renderer/inventory/).
+    function buildLegacyEditingUserBubbleMarkup(messageId, draftText, ui) {
+      const inventory = globalThis.inventoryInlineTextEditor;
       if (inventory && typeof inventory.buildInlineUserMessageEditorMarkup === 'function') {
         return inventory.buildInlineUserMessageEditorMarkup({
           messageId,
           draftText,
-          committing: opts.committing === true,
-          affectedCount: opts.affectedCount,
+          originalText: typeof ui.editingOriginalText === 'string' ? ui.editingOriginalText : draftText,
+          committing: ui.editCommitting === true,
+          affectedCount: Math.max(Number(ui.editingAffectedCount) || 0, 0),
+          textAttachmentNames: ui.editingTextAttachmentNames,
+          hasReplayImages: ui.editingHasReplayImages === true,
         });
       }
       // Fallback if inventory isn't loaded yet — keep the bubble usable.
@@ -152,20 +155,20 @@
       latestReplyAssistantMessageId,
       followUpDisabledReason,
       regenerateRequest,
-      projectionContext
+      projectionContext,
+      // omitThinking: a row-model live patch renders reasoning from its rows,
+      // so the message-level widget (every phase of the stream) is skipped.
+      // thinkingOnly: just that widget, for the patch's fallback path.
+      markupOptions = null
     ) {
+      const renderThinking = () => (message.role === 'assistant'
+        ? renderThinkingWidget(message, latestAssistantMessageId, { transcriptView: getPaneTranscriptView() })
+        : '');
+      if (markupOptions?.thinkingOnly === true) return { thinkingMarkup: renderThinking() };
       const status = String(message.status || '');
-      const metaLabel = buildMessageMetaLabel(
-        buildAssistantMetaLabel(message, formatMessageTerminalTimestamp),
-        message,
-        messages,
-        projectionContext
-      );
       const agentStatusMarkup = message.role === 'assistant' ? renderAgentStatusWidget(message) : '';
       const contextCompactedMarkup = message.role === 'assistant' ? renderContextCompactedNotice(message) : '';
-      const thinkingMarkup = message.role === 'assistant'
-        ? renderThinkingWidget(message, latestAssistantMessageId, { transcriptView: getPaneTranscriptView() })
-        : '';
+      const thinkingMarkup = markupOptions?.omitThinking === true ? '' : renderThinking();
       const failureMarkup = message.role === 'assistant' ? renderAssistantFailureNotice(message) : '';
       const editingMessageId = state.ui && typeof state.ui.editingMessageId === 'string'
         ? state.ui.editingMessageId
@@ -221,17 +224,12 @@
           ? `<div class="chat-bubble chat-bubble-markdown" dir="auto">${bodyHtml}</div>`
           : '';
       } else if (message.role === 'user') {
-        // F2: when this user message is the active edit target, swap the
-        // bubble for the inline editor. editingMessageId is hoisted above
-        // so this branch + the actionOptions share one state.ui read.
+        // F2: the active edit target swaps its bubble for the inline editor.
         const messageIdForEdit = String(message.id || '').trim();
         if (editingMessageId && editingMessageId === messageIdForEdit) {
-          const draftText = state.ui && typeof state.ui.editingDraftText === 'string'
-            ? state.ui.editingDraftText
-            : String(message.content || '');
-          const committing = state.ui && state.ui.editCommitting === true;
-          const affectedCount = Math.max(Number(state.ui?.editingAffectedCount) || 0, 0);
-          messageMarkup = buildLegacyEditingUserBubbleMarkup(messageIdForEdit, draftText, { committing, affectedCount });
+          const ui = state.ui || {};
+          const draftText = typeof ui.editingDraftText === 'string' ? ui.editingDraftText : String(message.content || '');
+          messageMarkup = buildLegacyEditingUserBubbleMarkup(messageIdForEdit, draftText, ui);
         } else {
           // EH-W6: failed-send chip from message.send_failure (mirrors the
           // V2 row builder in renderer-turn-row-render-utils.js).
@@ -268,7 +266,7 @@
         predictionHtml: predictionHtml,
         innerHtml: `
             ${predictionHtml}
-            ${message.kind === 'tool_use' || message.kind === 'memory_note' || sessionMessageMarkup ? '' : renderMessageHoverRow(message, actionOptions, metaLabel)}
+            ${message.kind === 'tool_use' || message.kind === 'memory_note' || sessionMessageMarkup ? '' : renderMessageHoverRow(message, actionOptions, ...buildHoverMetaLabels(message, messages, projectionContext))}
           `,
       };
     }

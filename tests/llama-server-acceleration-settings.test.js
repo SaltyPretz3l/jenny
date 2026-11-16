@@ -99,6 +99,7 @@ test('OpenAI-compatible normalization backfills acceleration for legacy settings
       lastUsedTag: '',
       lastPickDir: '',
       libraryRoots: [],
+      runtimeRoots: [],
       perModel: {},
     },
   });
@@ -112,6 +113,7 @@ test('OpenAI-compatible normalization backfills acceleration for legacy settings
       lastUsedTag: '',
       lastPickDir: '',
       libraryRoots: [],
+      runtimeRoots: [],
       perModel: {},
     },
   });
@@ -235,6 +237,7 @@ test('engines.updateSettings ignores managed llama-server settings while the fla
     lastUsedTag: '',
     lastPickDir: '',
     libraryRoots: [],
+    runtimeRoots: [],
     perModel: {},
   });
   assert.deepEqual(reasons, []);

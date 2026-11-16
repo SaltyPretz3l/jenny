@@ -10,8 +10,14 @@
 // basic_text, a write that throws or a stored value that does not decode is
 // CMP-TEAM-0004. There is no plaintext file, no environment variable and no key
 // held in memory that was not saved. Nothing here logs.
+//
+// Slice 5-3: the team's relay token (relay-token-store.js) lives beside the key
+// in the same store, so the join flow and every removal path, which all hold
+// this object, keep and drop it together: `remove` deletes the token first, then
+// the key, and a removed team leaves neither behind.
 
 const { PUBLIC_KEY_BYTES, decodeBase64url, encodeBase64url, isId } = require('../../server/team/ids');
+const { createRelayTokenStore, readySecureStore, relayTokenName } = require('./relay-token-store');
 const { TeamError } = require('./team-errors');
 
 const DEVICE_KEY_PREFIX = 'team_device_key:';
@@ -28,16 +34,8 @@ function unavailable(reason = 'team_device_key_unavailable') {
 function createDeviceKeyStore({ getSecureStore }) {
   if (typeof getSecureStore !== 'function') throw new TypeError('createDeviceKeyStore requires getSecureStore.');
 
-  function readyStore() {
-    let store;
-    try { store = getSecureStore(); } catch { store = null; }
-    if (!store || typeof store.get !== 'function' || typeof store.set !== 'function'
-      || typeof store.delete !== 'function' || typeof store.getStatus !== 'function') throw unavailable();
-    let status;
-    try { status = store.getStatus(); } catch { status = null; }
-    if (!status || status.ready !== true) throw unavailable();
-    return store;
-  }
+  // The relay token store's check (slice 5-3 review item 17), so a ready store on basic_text is refused here too.
+  const readyStore = () => readySecureStore(getSecureStore, () => unavailable());
 
   function save(teamId, seed) {
     const name = deviceKeyName(teamId);
@@ -72,6 +70,7 @@ function createDeviceKeyStore({ getSecureStore }) {
     const name = deviceKeyName(teamId);
     const store = readyStore();
     try {
+      store.delete(relayTokenName(teamId));
       store.delete(name);
     } catch {
       throw unavailable();
@@ -100,7 +99,12 @@ function createDeviceKeyStore({ getSecureStore }) {
     }
   }
 
-  return Object.freeze({ save, load, has, remove, available });
+  const relayTokens = createRelayTokenStore({ getSecureStore });
+
+  return Object.freeze({
+    save, load, has, remove, available,
+    saveRelayToken: relayTokens.save, loadRelayToken: relayTokens.load, removeRelayToken: relayTokens.remove,
+  });
 }
 
 module.exports = { createDeviceKeyStore, deviceKeyName };

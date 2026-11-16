@@ -362,3 +362,42 @@ def test_no_repetition_verdict_before_two_full_windows() -> None:
     assert guard.feed("a" * 127) is False
     assert guard.feed("b") is True
     assert guard.verdict_data()["trip_offset_chars"] == 128
+
+
+class _BudgetEngine:
+    """An engine that reports no headroom: the shared-pool fraction applies."""
+
+
+def test_continuation_scale_shrinks_the_budget_with_a_floor() -> None:
+    from sidecar.ai.thinking_guard import (
+        CONTINUATION_THINKING_BUDGET_CHARS_FLOOR,
+        resolve_thinking_budget_chars,
+    )
+    from sidecar.runtime.local_engine.request_context import (
+        clear_request_context,
+        install_request_context,
+        set_thinking_budget_scale,
+    )
+
+    engine = _BudgetEngine()
+    full = resolve_thinking_budget_chars(engine, 100_000)
+    install_request_context(engine, request_id="req-scale")
+    try:
+        assert resolve_thinking_budget_chars(engine, 100_000) == full
+        set_thinking_budget_scale(engine, 0.25)
+        assert resolve_thinking_budget_chars(engine, 100_000) == full // 4
+        # The floor keeps a small first-leg budget from collapsing ...
+        small = resolve_thinking_budget_chars(engine, 10_000)
+        assert small == CONTINUATION_THINKING_BUDGET_CHARS_FLOOR
+        set_thinking_budget_scale(engine, None)
+        # ... and never raises a budget that was already below it.
+        assert resolve_thinking_budget_chars(engine, 4_000) == int(4_000 * 0.65 * 3.2)
+        set_thinking_budget_scale(engine, 0.25)
+        assert resolve_thinking_budget_chars(engine, 4_000) == int(4_000 * 0.65 * 3.2)
+        set_thinking_budget_scale(engine, None)
+        assert resolve_thinking_budget_chars(engine, 100_000) == full
+    finally:
+        clear_request_context(engine, request_id="req-scale")
+    # No binding: the scale is unreachable and the budget is the full one.
+    set_thinking_budget_scale(engine, 0.25)
+    assert resolve_thinking_budget_chars(engine, 100_000) == full

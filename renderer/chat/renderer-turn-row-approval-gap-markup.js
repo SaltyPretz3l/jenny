@@ -95,6 +95,7 @@
         // What a command's Always allow covers (live only), and what a resolved one saved (row 103).
         alwaysAllowScope: cardState.alwaysAllowScope,
         rememberOffer: cardState.rememberOffer,
+        roundApproval: cardState.roundApproval,
         mode: 'inline',
         cardState: cardState.state,
         resumeKey: cardState.resumeKey,

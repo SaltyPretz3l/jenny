@@ -72,6 +72,9 @@ test('structured pull-cancellation failure keeps progress subscribed and reports
 
   controller.bind();
   await flush();
+  // The catalog model sits under "Can download".
+  dom.window.document.querySelector('[data-inv-chip="scope-get"]')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   dom.window.document.querySelector('[data-model-key="qwen2.5:3b"] [data-model-card-action="pull"]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   await flush();

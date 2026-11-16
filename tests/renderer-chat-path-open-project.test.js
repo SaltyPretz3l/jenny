@@ -276,3 +276,41 @@ test('prose paths in a project become chips with no workspace root, and a click 
   await flush();
   assert.deepEqual(h.calls.preview, [{ projectId: 'p-notes', path: 'a.md', line: 5, column: null, display: 'D:\\notes\\a.md' }]);
 });
+
+// Pin to board (row 150 slice C5): a file of this Workspace gets one item from the chat's pin entry; no other kind of target does.
+test('a Workspace file\'s path menu offers Pin to board after Open in IDE, with the file\'s path; other targets and a declining entry offer none', (t) => {
+  const asked = [];
+  const entry = { pinMenuItem: (args) => { asked.push(args); return { label: 'Pin to board', action() {} }; } };
+  const build = (body, bindings) => {
+    const dom = new JSDOM('<!doctype html><html><body><div id="chatTimeline">' + body + '</div></body></html>', { url: 'https://jenny.local/chat' });
+    dom.window.rendererChatMessageActionBindings = bindings;
+    const menus = [];
+    const state = JSON.parse(JSON.stringify(ON));
+    const controller = createChatPathOpenController({
+      windowRef: dom.window, chatTimeline: dom.window.document.getElementById('chatTimeline'), state, setActiveView() {},
+      openIdeFileAtLine: () => Promise.resolve(true), getProjectRoots: () => ROOTS, getWorkspaceFs: () => ({}),
+      showToastMessage() {}, appendClientLog() {}, contextMenu: { show: (menuOpts) => menus.push(menuOpts), hide() {} }, pathMenuFactory, citeUtils,
+    });
+    const dispose = controller.attach();
+    t.after(dispose);
+    dom.window.document.querySelector('code').dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    return { dom, menus, state, menuLabels: () => (menus[0] ? menus[0].items.filter((item) => item.label).map((item) => item.label) : []) };
+  };
+  const inRoot = build('<p><code>src/app.js</code></p>', entry);
+  const labels = inRoot.menuLabels();
+  assert.ok(labels.indexOf('Pin to board') > labels.indexOf('Open in IDE') && labels.indexOf('Open in IDE') >= 0, labels.join(' | '));
+  assert.equal(labels.filter((label) => label === 'Pin to board').length, 1);
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0].item, { kind: 'file', path: 'src/app.js' });
+  assert.equal(asked[0].state, inRoot.state);
+  assert.equal(asked[0].windowRef, inRoot.dom.window);
+  assert.equal(asked[0].anchorEl, inRoot.dom.window.document.querySelector('code'));
+  const project = build(NOTES_CODE, entry);
+  assert.equal(project.menuLabels().includes('Pin to board'), false, 'a file of another project is not pinned from here');
+  assert.equal(asked.length, 1);
+  const declined = build('<p><code>src/app.js</code></p>', { pinMenuItem: () => null });
+  assert.equal(declined.menuLabels().includes('Pin to board'), false);
+  assert.equal(declined.menus.length, 1);
+  const bare = build('<p><code>src/app.js</code></p>', undefined);
+  assert.equal(bare.menuLabels().includes('Pin to board'), false, 'no entry loaded: the menu is as it was');
+});

@@ -40,6 +40,11 @@ test('O1/O5: day-old temps of each profile store are removed and logged', async 
     'mcp-servers.json.4242.0123456789ab.tmp',
     path.join('background-memory', stamped('scheduled_tasks.json', OLD)),
     path.join('project-notes', stamped('proj_abc.json', OLD)),
+    path.join('boards', stamped('board_00000000-0000-4000-8000-000000000001.json', OLD)),
+    path.join('boards', stamped('board_00000000-0000-4000-8000-000000000001.journal.json', OLD)),
+    path.join('boards', stamped('index.json', OLD)),
+    path.join('board-assets', stamped(`${'a'.repeat(64)}.png`, OLD)),
+    path.join('board-assets', stamped('unreferenced.json', OLD)),
   ];
   for (const name of orphans) writeFile(root, name, { mtimeMs: OLD });
   const logs = [];
@@ -78,6 +83,11 @@ test('live files, other stores\' names, the MCP rollback and look-alikes are nev
     path.join('project-notes', stamped('notes.md', OLD)),
     path.join('project-notes', 'nested', stamped('proj_abc.json', OLD)),
     path.join('background-memory', stamped('other.json', OLD)),
+    path.join('boards', 'board_00000000-0000-4000-8000-000000000001.json'),
+    path.join('boards', stamped('board_123.json', OLD)),
+    path.join('boards', stamped('notes.json', OLD)),
+    path.join('board-assets', `${'a'.repeat(64)}.png`),
+    path.join('board-assets', stamped('picture.svg', OLD)),
   ];
   for (const name of kept) writeFile(root, name, { mtimeMs: OLD });
   fs.mkdirSync(path.join(root, stamped('home-ai-journal.json', OLD)));

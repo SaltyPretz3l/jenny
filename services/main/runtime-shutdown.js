@@ -10,6 +10,7 @@ const { createLlamaServerManager } = require('./llama-server-manager');
 const { createNinferManager } = require('./ninfer-manager');
 const ninferLifecycle = require('../ninfer-lifecycle');
 const { buildFeatureFlags } = require('../feature-flags');
+const { estimateLlamaServerMb, estimateNinferMb, withVramPreflight } = require('../backend/vram-load-preflight');
 
 const SHUTDOWN_STEP_COUNT = 7;
 // Startup reports phase keys and facts (see emitStartupProgress); only
@@ -148,7 +149,8 @@ function createRuntimeShutdownController({
     getShellConfigService,
     emitStartupAuditMark,
     log,
-    lifecycle: llamaServerLifecycleImpl,
+    // Every launch but an identity restore checks free VRAM first (vram-load-preflight.js).
+    lifecycle: withVramPreflight(llamaServerLifecycleImpl, { startKey: 'startLlamaServer', engine: 'llama-server', estimate: estimateLlamaServerMb, getPreflight: () => getBackendService()?.vramLoadPreflight, pidFileName: llamaServerLifecycle.PID_FILENAME, modelOf: (options) => options.modelTag || '' }),
     resolveLaunchAccelerationImpl,
     // A diffusion GGUF (image model) picked or persisted as a chat model is
     // refused at plan resolution, so boot autostart and the chat reconnect
@@ -183,7 +185,7 @@ function createRuntimeShutdownController({
     getLlamaServerManager: () => managedLlamaServer,
     emitStartupAuditMark,
     log,
-    lifecycle: ninferLifecycleImpl,
+    lifecycle: withVramPreflight(ninferLifecycleImpl, { startKey: 'startNinferServer', engine: 'ninfer', estimate: estimateNinferMb, getPreflight: () => getBackendService()?.vramLoadPreflight, pidFileName: ninferLifecycle.NINFER_PID_FILENAME, modelOf: (options) => options.modelId || '' }),
     ...(createNinferWatchdogImpl ? { createWatchdog: createNinferWatchdogImpl } : {}),
     launchGate: () => {
       try {

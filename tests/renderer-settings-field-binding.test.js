@@ -435,3 +435,29 @@ test('focus comes back to the chosen option when the save repainted the row', as
   assert.notEqual(option('b'), null);
   assert.equal(h.document.activeElement, option('b'));
 });
+
+// Settings › Tools switches stay usable while a save is in flight; the coordinator queues the
+// next write, so the last click wins (owner, 2026-11-15). Other switches keep the lock.
+test('a switch that opts out of the save lock stays usable and its last click wins', async (t) => {
+  const { descriptors } = require('./helpers/settings-field-binding-harness');
+  const live = descriptors.defineSettingDescriptor({ id: 'bindTestLiveFlag', sectionId: 'tools', kind: 'boolean', default: true, adapterId: 'bindTestLive', key: 'nested.flag', lockWhileSaving: false, copy: { label: 'Live', description: 'A switch.' } });
+  assert.equal(D.flag.lockWhileSaving, true, 'locking stays the default');
+  assert.equal(descriptors.getSettingDescriptor('settings-tool-config-fileTools').lockWhileSaving, false);
+  const h = harness({ descriptors: [live] });
+  t.after(() => h.dispose());
+  const track = h.host.querySelector('[data-inv-toggle="bindTestLiveFlag"]');
+  h.setMode('hold');
+  h.toggle('bindTestLiveFlag', false);
+  assert.equal(h.row(live).getAttribute('data-state'), 'busy', 'the row still shows the save');
+  assert.equal(track.disabled, false, 'the switch takes another click');
+  h.toggle('bindTestLiveFlag', true);
+  assert.equal(h.pendingWrites.length, 1, 'the second click queues behind the first');
+  h.pendingWrites[0].resolve(h.pendingWrites[0].payload);
+  await flush();
+  assert.equal(track.disabled, false);
+  h.pendingWrites[1].resolve(h.pendingWrites[1].payload);
+  await flush();
+  assert.equal(h.registry.read(live), true, 'the last click is what is saved');
+  assert.equal(h.calls.at(-1).nested.flag, true);
+  assert.equal(track.getAttribute('aria-checked'), 'true');
+});

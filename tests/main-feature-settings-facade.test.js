@@ -43,12 +43,6 @@ test('facade resolves the shell config service lazily instead of capturing it', 
   assert.equal(facade.buildEffectiveFeatureFlags().strict_auto_run, true);
 });
 
-test('facade no longer exposes the removed comet overlay gate', () => {
-  const facade = createFeatureSettingsFacade({ env: {} });
-  assert.equal(Object.hasOwn(facade, 'isCometOverlayEnabled'), false);
-  assert.equal(Object.hasOwn(facade, 'closeCometOverlayIfDisabled'), false);
-});
-
 test('buildFeatureStatePayload reports the always-managed runtime and platform', () => {
   const facade = createFeatureSettingsFacade({
     env: {},

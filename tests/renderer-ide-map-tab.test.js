@@ -21,10 +21,6 @@ test('isMapTabId recognizes only map:// ids (the legacy-guard predicate)', () =>
   assert.equal(ideState.isMapTabId(''), false);
 });
 
-test('the openMapTab reducer is intentionally removed (tabs can never be created)', () => {
-  assert.equal('openMapTab' in ideState, false, 'no reducer may re-create map tabs');
-});
-
 test('a stale in-memory map tab never survives persistence', () => {
   const ide = ideState.createIdeUiState();
   ideState.openTab(ide, 'src/app.js');

@@ -13,11 +13,16 @@ const playlistScroll = require('../renderer/shell/renderer-playlist-scroll-utils
 const atomicBurst = require('../renderer/shell/renderer-atomic-burst-utils.js');
 const circuitTrace = require('../renderer/shell/renderer-circuit-trace-utils.js');
 const contextWeave = require('../renderer/shell/renderer-context-weave-utils.js');
+const auroraRidge = require('../renderer/shell/renderer-aurora-ridge-utils.js');
 const { getSurfaceEffectPresets } = require('../renderer/shared/appearance-utils.js');
 
 const NATIVE_EFFECT_MODULES = Object.freeze([
   Object.freeze({
     id: 'atomic-burst', factory: atomicBurst.createAtomicBurstController,
+    rendererType: 'canvas2d', faultInjection: 'context',
+  }),
+  Object.freeze({
+    id: 'aurora-ridge', factory: auroraRidge.createAuroraRidgeController,
     rendererType: 'canvas2d', faultInjection: 'context',
   }),
   Object.freeze({
@@ -46,16 +51,17 @@ const EXPECTED_ACTIVITY_MODES = Object.freeze({
   'circuit-trace': 'none',
   'context-weave': 'none',
   'playlist-scroll': 'none',
+  'aurora-ridge': 'none',
 });
 
-test('full-roster conformance driver exactly matches the five v3 manager-input registry entries', () => {
+test('full-roster conformance driver exactly matches the six v3 manager-input registry entries', () => {
   const presets = getSurfaceEffectPresets().filter((preset) => preset.id !== 'none');
   const registryV3Ids = presets
     .filter((preset) => preset.contractVersion === 3 && preset.inputMode === 'manager')
     .map((preset) => preset.id)
     .sort();
-  assert.equal(presets.length, 5);
-  assert.equal(registryV3Ids.length, 5);
+  assert.equal(presets.length, 6);
+  assert.equal(registryV3Ids.length, 6);
   assert.deepEqual(NATIVE_EFFECT_MODULES.map((entry) => entry.id).sort(), registryV3Ids);
   presets.forEach((preset) => {
     assert.equal(preset.activityMode, EXPECTED_ACTIVITY_MODES[preset.id],

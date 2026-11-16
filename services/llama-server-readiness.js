@@ -12,6 +12,8 @@ const { requestWithTimeout } = require('./http-fetch-util');
 
 const DEFAULT_READINESS_TIMEOUT_MS = 90_000;
 const DEFAULT_READINESS_POLL_INTERVAL_MS = 300;
+const FAST_READINESS_POLL_INTERVAL_MS = 100;
+const FAST_READINESS_WINDOW_MS = 5_000;
 const DEFAULT_EXISTING_PROBE_TIMEOUT_MS = 750;
 
 function normalizeLogger(logger) {
@@ -136,6 +138,9 @@ async function waitForReadiness({
   apiKey = '',
 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  // Startup joins this wait, so the first seconds poll faster; a long model
+  // load falls back to the configured interval.
+  const fastUntil = Date.now() + FAST_READINESS_WINDOW_MS;
   while (Date.now() < deadline) {
     if (abortSignal && abortSignal.aborted) {
       throw new Error('readiness_aborted');
@@ -146,7 +151,7 @@ async function waitForReadiness({
     if (await probeHealth(baseUrl, { timeoutMs: 1500, apiKey })) {
       return true;
     }
-    await wait(pollIntervalMs);
+    await wait(Date.now() < fastUntil ? Math.min(pollIntervalMs, FAST_READINESS_POLL_INTERVAL_MS) : pollIntervalMs);
   }
   return false;
 }

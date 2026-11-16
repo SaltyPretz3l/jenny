@@ -6,133 +6,14 @@ const fs = require('fs');
 const path = require('path');
 const { fileURLToPath } = require('url');
 
-const {
-  cleanupTrackedResources,
-  createTrackedTempDir,
-} = require('./helpers/resource-cleanup');
-const {
-  VIEWPORTS,
-  WORKING_TREE_TURN_ID,
-  createChangePicturesService,
-} = require('../services/change-pictures/change-pictures-service');
-const { findAffectedPages } = require('../services/change-pictures/page-finder');
-const { createChangePictureStore } = require('../services/change-pictures/picture-store');
-const { normalizeDiffInputText, sha256Text } = require('../services/tools/structured-diff');
+const { makeHarness, pictureText } = require('./helpers/change-pictures-harness');
+const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
+const { VIEWPORTS, WORKING_TREE_TURN_ID } = require('../services/change-pictures/change-pictures-service');
+const { changeShowsThroughMotion, measureChange } = require('../services/change-pictures/picture-compare');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
-
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const hashOf = (text) => sha256Text(normalizeDiffInputText(text));
-
-// Stands in for the hidden browser: a "picture" is the page text followed by
-// the text of every file it links, read through the overrides the way the
-// protocol handler would serve them.
-function createFakeBrowser({ busy = () => false, failOpen = () => false } = {}) {
-  const sessions = new Map();
-  const browser = {
-    opened: [],
-    closed: [],
-    async open(options) {
-      if (busy(options)) throw new Error('Maximum active browser sessions reached.');
-      if (failOpen(options)) throw new Error('Strict browser sessions require a contained workspace file URL.');
-      browser.opened.push(options);
-      sessions.set(options.sessionId, { options, report: { requested: [], poisoned: false } });
-    },
-    async screenshot(sessionId) {
-      const session = sessions.get(sessionId);
-      const { options, report } = session;
-      const table = new Map((options.fileOverrides || []).map((entry) => [path.resolve(entry.filePath).toLowerCase(), entry]));
-      const load = (absolute) => {
-        const entry = table.get(path.resolve(absolute).toLowerCase());
-        if (entry) {
-          report.requested.push(entry.id);
-          if (entry.poison) {
-            report.poisoned = true;
-            return '';
-          }
-          return entry.content === null ? '' : String(entry.content);
-        }
-        try {
-          return fs.readFileSync(absolute, 'utf8');
-        } catch (_) {
-          return '';
-        }
-      };
-      const pagePath = fileURLToPath(options.url);
-      const html = load(pagePath);
-      let painted = html;
-      for (const match of html.matchAll(/href="([^"]+)"/g)) {
-        painted += `\n${load(path.join(path.dirname(pagePath), match[1]))}`;
-      }
-      return {
-        buffer: Buffer.concat([PNG_SIGNATURE, Buffer.from(painted, 'utf8')]),
-        width: options.bounds.width,
-        height: options.bounds.height,
-      };
-    },
-    fileOverrideReport(sessionId) {
-      return sessions.get(sessionId)?.report || null;
-    },
-    async close(sessionId) {
-      browser.closed.push(sessionId);
-      sessions.delete(sessionId);
-    },
-  };
-  return browser;
-}
-
-function makeHarness({ browserOptions, enabled = () => true, loadWorkingTree = null } = {}) {
-  const base = fs.realpathSync(createTrackedTempDir('jenny-change-pictures-'));
-  const root = path.join(base, 'site');
-  const storeRoot = path.join(base, 'user-data', 'change-pictures');
-  fs.mkdirSync(root);
-  const snapshots = new Map();
-  const browser = createFakeBrowser(browserOptions);
-  const write = (relPath, text) => {
-    const absolute = path.join(root, ...relPath.split('/'));
-    fs.mkdirSync(path.dirname(absolute), { recursive: true });
-    fs.writeFileSync(absolute, text);
-  };
-  // Records a turn's edit the way the file tools do: the old text is saved
-  // under its hash and the new text is on disk.
-  const edit = (relPath, beforeText, afterText) => {
-    const change = { path: relPath, status: 'modified', beforeHash: null, afterHash: null };
-    if (beforeText === null) change.status = 'created';
-    else {
-      change.beforeHash = hashOf(beforeText);
-      snapshots.set(change.beforeHash, beforeText);
-    }
-    if (afterText === null) {
-      change.status = 'deleted';
-      fs.rmSync(path.join(root, ...relPath.split('/')), { force: true });
-    } else {
-      change.afterHash = hashOf(afterText);
-      write(relPath, afterText);
-    }
-    return change;
-  };
-  const service = createChangePicturesService({
-    browserSessionService: browser,
-    snapshotStore: {
-      async read(hash) {
-        return snapshots.has(hash) ? { found: true, content: snapshots.get(hash) } : { found: false };
-      },
-    },
-    pictureStore: createChangePictureStore({ rootDir: storeRoot }),
-    findAffectedPages,
-    resolveWorkspaceRoot: async (sessionId) => (sessionId === 'no-workspace' ? '' : root),
-    loadWorkingTree,
-    isEnabled: enabled,
-    settleMs: 0,
-  });
-  return { service, browser, root, storeRoot, snapshots, write, edit };
-}
-
-function pictureText(url) {
-  return fs.readFileSync(fileURLToPath(url)).subarray(PNG_SIGNATURE.length).toString('utf8');
-}
 
 const PAGE = '<link rel="stylesheet" href="site.css"><h1>Prices</h1>';
 
@@ -284,6 +165,33 @@ test('a file created in the turn is absent from the Before picture', async () =>
   assert.match(pictureText(page.afterUrl), /extra\{\}/);
 });
 
+test('a page whose external files were blocked carries the hosts, in the record and in list', async () => {
+  const h = makeHarness({
+    browserOptions: { blockedHosts: (options) => (options.fileOverrides ? ['cdn.jsdelivr.net'] : ['cdn.jsdelivr.net', 'fonts.example']) },
+  });
+  h.write('index.html', PAGE);
+  const change = h.edit('site.css', 'h1{color:red}', 'h1{color:blue}');
+
+  const result = await h.service.capture({ sessionId: 's1', turnId: 't1', files: [change] });
+  assert.deepEqual(result.record.pages[0].blockedHosts, ['cdn.jsdelivr.net', 'fonts.example']);
+
+  const listed = await h.service.list({ sessionId: 's1' });
+  assert.deepEqual(listed.records[0].pages[0].blockedHosts, ['cdn.jsdelivr.net', 'fonts.example']);
+});
+
+test('a blocked-host list is bounded to four hostnames and a page without blocks has no field', async () => {
+  const many = ['x'.repeat(300), 'a.example', 'b.example', 'c.example', 'd.example', 'e.example'];
+  const blocked = makeHarness({ browserOptions: { blockedHosts: () => many } });
+  blocked.write('index.html', PAGE);
+  const first = await blocked.service.capture({ sessionId: 's1', turnId: 't1', files: [blocked.edit('site.css', 'a{}', 'b{}')] });
+  assert.deepEqual(first.record.pages[0].blockedHosts, ['a.example', 'b.example', 'c.example', 'd.example']);
+
+  const clean = makeHarness();
+  clean.write('index.html', PAGE);
+  const second = await clean.service.capture({ sessionId: 's1', turnId: 't1', files: [clean.edit('site.css', 'a{}', 'b{}')] });
+  assert.equal('blockedHosts' in second.record.pages[0], false);
+});
+
 test('a page that looks the same keeps one picture and says so', async () => {
   const h = makeHarness();
   h.write('index.html', PAGE);
@@ -295,6 +203,73 @@ test('a page that looks the same keeps one picture and says so', async () => {
   assert.equal(page.state, 'same');
   assert.equal(page.beforeUrl, null);
   assert.ok(page.afterUrl);
+});
+
+// A six-pixel bitmap with the listed pixels lit, as the browser session's small picture.
+const thumb = (...lit) => ({ width: 6, height: 1, bitmap: Buffer.from([0, 1, 2, 3, 4, 5].flatMap((i) => (lit.includes(i) ? [255, 255, 255, 255] : [0, 0, 0, 255]))) });
+
+test('a page that waits on a script from the internet has no pictures', async () => {
+  // The picture session is offline, so such a page is still on its loading screen.
+  const h = makeHarness({ browserOptions: { blockedHosts: () => ['unpkg.com'], waitsOnBlocked: () => true } });
+  h.write('index.html', PAGE);
+  const change = h.edit('site.css', 'a{color:red}', 'a{color:blue}');
+
+  const result = await h.service.capture({ sessionId: 's1', turnId: 't1', files: [change] });
+  assert.deepEqual(result.record.pages, []);
+  assert.equal(h.browser.opened.length, 1, 'the Before render is not attempted');
+  await h.service.capture({ sessionId: 's1', turnId: 't1', files: [change] });
+  assert.equal(h.browser.opened.length, 1, 'the answer is remembered');
+});
+
+test('a page whose only blocked file is one it does not wait on keeps its pictures and names the host', async () => {
+  const h = makeHarness({ browserOptions: { blockedHosts: () => ['stats.example'], waitsOnBlocked: () => false } });
+  h.write('index.html', PAGE);
+
+  const result = await h.service.capture({ sessionId: 's1', turnId: 't1', files: [h.edit('site.css', 'a{color:red}', 'a{color:blue}')] });
+  assert.equal(result.record.pages[0].state, 'ready');
+  assert.deepEqual(result.record.pages[0].blockedHosts, ['stats.example']);
+});
+
+test('an entrance animation is over before the picture is taken', async () => {
+  const h = makeHarness({ browserOptions: { frame: (_options, shot) => (shot === 1 ? { mark: ' (fading in)' } : null) } });
+  h.write('index.html', PAGE);
+  const change = h.edit('site.css', 'a{color:red}', 'a{color:blue}');
+
+  const page = (await h.service.capture({ sessionId: 's1', turnId: 't1', files: [change] })).record.pages[0];
+  assert.equal(page.state, 'ready');
+  assert.equal(pictureText(page.afterUrl).includes('fading in'), false);
+  assert.equal(pictureText(page.beforeUrl).includes('fading in'), false);
+});
+
+test('a page that only moves on its own has no pictures; a change that stands out from the motion keeps them', async () => {
+  // Pixel 0 or 1 is the spinner. With `restyle`, the After page also lights pixels 2 to 5.
+  const run = async (restyle) => {
+    const h = makeHarness({
+      browserOptions: {
+        frame: (options, shot) => ({
+          mark: ` frame ${shot}`,
+          thumbnail: thumb(shot % 2, ...(restyle && options.fileOverrides === null ? [2, 3, 4, 5] : [])),
+        }),
+      },
+    });
+    h.write('index.html', PAGE);
+    const change = h.edit('site.css', 'a{color:red}', 'a{color:blue}');
+    return (await h.service.capture({ sessionId: 's1', turnId: 't1', files: [change] })).record.pages;
+  };
+
+  assert.deepEqual(await run(false), []);
+  assert.deepEqual((await run(true)).map((page) => page.state), ['ready']);
+});
+
+test('motion is measured apart from change, and pictures that cannot be compared never count as a change', () => {
+  const still = (lit) => ({ thumb: thumb(...lit), earlierThumb: null });
+  // The Before spinner sits on pixel 2; the After spinner went from 0 to 1.
+  assert.deepEqual(measureChange(still([2]), { thumb: thumb(1), earlierThumb: thumb(0) }), { moving: 2, changed: 1 });
+  assert.equal(changeShowsThroughMotion(still([2]), { thumb: thumb(1), earlierThumb: thumb(0) }), false);
+  assert.equal(changeShowsThroughMotion(still([]), still([0, 1])), true);
+  assert.equal(measureChange(still([0]), { thumb: null, earlierThumb: null }), null);
+  assert.equal(changeShowsThroughMotion(still([0]), { thumb: thumb(1), earlierThumb: {} }), false);
+  assert.equal(changeShowsThroughMotion(still([0]), { thumb: { width: 2, height: 1, bitmap: Buffer.alloc(8) }, earlierThumb: null }), false);
 });
 
 test('a page whose After render fails keeps its Before picture', async () => {

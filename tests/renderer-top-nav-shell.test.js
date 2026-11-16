@@ -24,7 +24,7 @@ test('the rail shows unconditionally and drives view switching with per-view pan
   assert.equal(doc.getElementById('topRail').classList.contains('hidden'), false, 'rail visible after boot');
   assert.equal(doc.documentElement.dataset.topNavShell, 'true', 'flip data attribute set');
   const tabs = [...doc.querySelectorAll('#topRailTabs .toprail-tab')];
-  assert.deepEqual(tabs.map((tab) => tab.dataset.tabId), ['home', 'chat', 'ide', 'logs']);
+  assert.deepEqual(tabs.map((tab) => tab.dataset.tabId), ['home', 'chat', 'ide']);
   const gear = doc.getElementById('settingsTopRailTab');
   assert.ok(gear?.closest('.titlebar-status'), 'Settings is the gear in the right cluster, not a tab');
   const artifactToggle = doc.getElementById('artifactSplitViewToggle');
@@ -40,7 +40,8 @@ test('the rail shows unconditionally and drives view switching with per-view pan
   await waitForUi(window, 40);
   assert.equal(window.__rendererState.ui.activeView, 'logs');
   assert.equal(workspace.classList.contains('panel-none'), true, 'logs renders full-bleed');
-  assert.equal(doc.getElementById('logsTopRailTab').getAttribute('aria-selected'), 'true');
+  assert.equal(doc.getElementById('logsTopRailTab').getAttribute('aria-current'), 'page');
+  assert.ok(doc.getElementById('logsTopRailTab').closest('.titlebar-status'), 'Diagnostics is a glyph in the right cluster, not a tab');
   assert.equal(artifactToggle.hidden, true, 'artifact action stays hidden in Diagnostics');
   assert.equal(healthButton.hidden, false, 'runtime health remains available in Diagnostics');
 

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from sidecar.ai.error_codes import CMP_STREAM_INCOMPLETE
 from sidecar.ai.routing.thinking_checkpoint import (
     CHECKPOINT_CARRY_CHARS,
+    CHECKPOINT_CONTINUATION_BUDGET_SCALE,
     build_checkpoint_messages,
     build_reasoning_summary_messages,
     checkpoint_carry_similarity,
@@ -555,6 +556,7 @@ class _FinalResponseMixin:
                 runtime.next_reasoning_phase_summary = checkpoint_phase_summary(
                     self.thinking_budget_checkpoints
                 )
+                runtime.next_thinking_budget_scale = CHECKPOINT_CONTINUATION_BUDGET_SCALE
                 _tl_hub.log_event(
                     logger,
                     logging.INFO,

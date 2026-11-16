@@ -19,6 +19,9 @@
     || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m)) : d; };
   const noop = () => {};
 
+  // Outside-Workspace documents (row 137) are keyed outside://<id>/<name>.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+
   function resolveModule(globalName, path) {
     if (globalThis[globalName]) return globalThis[globalName];
     try { return require(path); } catch (_error) { return null; }
@@ -412,7 +415,7 @@
           activePath: groups.getGroupActive(ide, id),
           isDirty: (path) => !isReview(path) && ide.dirtyByPath?.[path] === true,
           displayName: tabsUtils?.tabDisplayName || ((tab) => String(tab.path).split('/').pop() || tab.path),
-          folderOf: (tab) => (tab.kind === 'file' ? String(tab.path).split('/').slice(0, -1).join('/') : ''),
+          folderOf: (tab) => (outsideDocs()?.isOutsideKey(tab.path) ? outsideDocs().describe(tab.path)?.dirLabel || '' : tab.kind === 'file' ? String(tab.path).split('/').slice(0, -1).join('/') : ''),
           onActivate: (path) => { activateInGroup(path); views.get(id)?.focus(); },
           onCloseSaved: () => orchestrator?.requestCloseSaved(id),
           onCloseAll: () => orchestrator?.requestCloseAll(id),
@@ -468,8 +471,10 @@
             ? [{ separator: true }, { label: tab.pinned === true ? jt('ide.tabs.unpin', 'Unpin') : jt('ide.tabs.pin', 'Pin'), action: () => togglePinInGroup(path) }]
             : []),
           ...moveMenuItems(path),
-          { separator: true },
-          { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => call('revealInExplorer', path) },
+          ...(outsideDocs()?.isOutsideKey(path) ? [] : [
+            { separator: true },
+            { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => call('revealInExplorer', path) },
+          ]),
         ],
       });
     }

@@ -439,3 +439,122 @@ test('success notes clear after 1800 ms while errors stay until the next action'
   h.click('in');
   assert.equal(status.textContent, '', 'the next action clears an error');
 });
+
+test('a source item with its own actions (the Team tab, slice 2c) shows only those file actions, keeps Close, zoom and rotate, runs them itself and shows its caption', async (t) => {
+  const h = harness();
+  t.after(() => h.viewer.dispose());
+  const ran = [];
+  const actions = { 'save-as': async () => { ran.push('save-as'); return { canceled: true }; }, copy: async () => { ran.push('copy'); return { ok: true }; } };
+  await h.viewer.open({ items: [{ kind: 'source', src: source, title: 'shot.png', caption: 'From Dot · today · 2 KB', actions }] });
+  h.load(); await tick();
+  assert.match(h.doc.querySelector('.image-viewer-meta').textContent, /^From Dot · today · 2 KB/);
+  for (const action of ['copy', 'save-as']) assert.equal(control(h, action).hidden, false, action);
+  for (const action of ['reveal', 'open', 'open-with']) assert.equal(control(h, action).hidden, true, action);
+  // Fix list M1/T1: the viewer's own controls stay; there is no local file to edit.
+  for (const action of ['close', 'in', 'out', 'rotate-right']) assert.equal(control(h, action).hidden, false, action);
+  let entry = control(h, 'edit');
+  while (entry && !entry.hidden) entry = entry.parentElement;
+  assert.ok(entry, 'edit sits in a hidden part (pngSource is never set for a source)');
+  key(h, { key: 's', ctrlKey: true }); await tick();
+  key(h, { key: 'c', ctrlKey: true }); await tick();
+  assert.deepEqual(ran, ['save-as', 'copy']);
+  assert.equal(h.calls.filter((call) => call[0] === 'action').length, 0, 'the viewer callback is not asked');
+});
+
+const reads = (h, id) => h.calls.filter((call) => call[0] === 'read' && call[2] === id).length;
+const fakeTimers = () => { const timers = []; return { timers, setTimeout: (callback, ms) => timers.push({ callback, ms, live: true }), clearTimeout: (id) => { timers[id - 1].live = false; } }; };
+
+test('a gallery step keeps the picture until the next one decodes; Loading shows only after 250 ms', async (t) => {
+  const decodes = []; const clock = fakeTimers();
+  const h = harness({ readArtifact: galleryRead, decodeImage: () => new Promise((resolve) => decodes.push(resolve)), setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  t.after(() => h.viewer.dispose());
+  const opened = h.viewer.open({ items: [art('a'), art('b')] }); await tick();
+  assert.equal(clock.timers.filter((timer) => timer.live && timer.ms === 250).length, 0, 'the first open shows the placeholder at once');
+  decodes[0](null); await opened; const image = h.load();
+  const placeholder = h.doc.querySelector('.image-viewer-placeholder');
+  h.click('next'); await tick();
+  assert.equal(image.src, png('a')); assert.equal(image.hidden, false); assert.equal(placeholder.hidden, true);
+  assert.equal(h.doc.querySelector('.image-viewer-pill').hidden, false, 'the pill stays during a step');
+  const wait = clock.timers.filter((timer) => timer.live && timer.ms === 250);
+  assert.equal(wait.length, 1); wait[0].callback();
+  assert.equal(placeholder.hidden, false); assert.equal(placeholder.querySelector('strong').textContent, 'Loading image…');
+  assert.equal(image.hidden, true); assert.equal(image.hasAttribute('src'), false);
+  decodes[1](null); await tick();
+  assert.equal(image.src, png('b')); h.load(); assert.equal(placeholder.hidden, true);
+});
+
+test('artifact reads are cached across steps and neighbours are prefetched once', async (t) => {
+  const h = harness(); t.after(() => h.viewer.dispose());
+  await h.viewer.open({ items: [art('a'), art('b'), art('c')], index: 1 }); h.load();
+  assert.deepEqual(['a', 'b', 'c'].map((id) => reads(h, id)), [1, 1, 1], 'both neighbours are read after the first image loads');
+  h.click('prev'); await tick(); h.load(); h.click('next'); await tick(); h.load(); h.click('prev'); await tick(); h.load();
+  assert.deepEqual(['a', 'b', 'c'].map((id) => reads(h, id)), [1, 1, 1], 'a, b, a reads a once');
+});
+
+test('pan stops when 96 px of the image would be left; arrow keys and zoom changes stop at the bound', async (t) => {
+  const h = harness(); t.after(() => h.viewer.dispose());
+  await h.viewer.open({ sessionId: 's', artifactId: 'a' }); const image = h.load(); h.click('actual');
+  for (let i = 0; i < 30; i++) key(h, { key: 'ArrowRight' });
+  assert.ok(image.style.transform.includes('translate(-804px, 0px)'), image.style.transform);
+  for (let i = 0; i < 20; i++) key(h, { key: 'ArrowDown' });
+  assert.ok(image.style.transform.includes('translate(-804px, -454px)'), image.style.transform);
+  const percent = h.doc.querySelector('.image-viewer-percent'); percent.value = '10'; percent.dispatchEvent(new h.dom.window.Event('change'));
+  const match = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) rotate/.exec(image.style.transform);
+  assert.ok(Math.abs(Number(match[1])) <= 354 + 1e-6 && Math.abs(Number(match[2])) <= 275 + 1e-6, 'a smaller zoom re-clamps the pan: ' + image.style.transform);
+});
+
+test('keys: 0 and f fit, 1 actual, r and Shift+R rotate, Home and End jump, + and - zoom', async (t) => {
+  const h = harness({ readArtifact: galleryRead }); t.after(() => h.viewer.dispose());
+  await h.viewer.open({ items: [art('a'), art('b'), art('c')] }); const image = h.load();
+  key(h, { key: '1' }); assert.match(image.style.transform, /scale\(1\)/); assert.equal(control(h, 'actual').hidden, true);
+  key(h, { key: '0' }); assert.match(image.style.transform, /scale\(0.656\)/); assert.equal(control(h, 'actual').hidden, false);
+  key(h, { key: '1' }); key(h, { key: 'f' }); assert.equal(control(h, 'actual').hidden, false);
+  key(h, { key: 'R', shiftKey: true }); assert.match(image.style.transform, /rotate\(270deg\)/);
+  key(h, { key: 'r' }); assert.match(image.style.transform, /rotate\(0deg\)/);
+  key(h, { key: 'r' }); assert.match(image.style.transform, /rotate\(90deg\)/);
+  key(h, { key: '=' }); assert.equal(control(h, 'fit').hidden, false); key(h, { key: '-' });
+  key(h, { key: 'End' }); await tick(); h.load(); assert.equal(image.src, png('c'));
+  key(h, { key: 'Home' }); await tick(); h.load(); assert.equal(image.src, png('a'));
+});
+
+test('tooltips name the key, accessible names stay plain, focus starts on the stage and the meta line leads with the origin', async (t) => {
+  const h = harness(); t.after(() => h.viewer.dispose());
+  await h.viewer.open({ items: [art('a', { origin: 'Generated · 2:13 PM', details: { seed: 3 } })] });
+  assert.equal(h.doc.activeElement, h.doc.querySelector('.image-viewer-stage'));
+  h.load();
+  const zoomIn = control(h, 'in');
+  assert.equal(zoomIn.title, 'Zoom in (+)'); assert.equal(zoomIn.getAttribute('aria-label'), 'Zoom in'); assert.equal(zoomIn.getAttribute('aria-keyshortcuts'), '+');
+  assert.equal(control(h, 'close').title, 'Close image viewer (Esc)'); assert.equal(control(h, 'close').getAttribute('aria-keyshortcuts'), 'Escape');
+  assert.equal(control(h, 'rotate-right').getAttribute('aria-keyshortcuts'), 'r'); assert.equal(control(h, 'copy').title, 'Copy (Ctrl+C)');
+  assert.equal(h.doc.querySelector('.image-viewer-meta').textContent, 'Generated · 2:13 PM · 1000 × 500 · seed 3');
+});
+
+test('Show in chat needs messageId and canShowInChat; a click closes the viewer, then reports the item', async (t) => {
+  const none = harness(); t.after(() => none.viewer.dispose());
+  await none.viewer.open({ items: [art('a', { messageId: 'm1' })] }); assert.equal(control(none, 'show-in-chat').hidden, true);
+  const shown = []; const h = harness({ canShowInChat: () => true, onShowInChat: (item) => shown.push(item) }); t.after(() => h.viewer.dispose());
+  await h.viewer.open({ items: [art('a', { messageId: 'm1' })] });
+  assert.equal(h.doc.querySelector('.image-viewer-actions').firstElementChild, control(h, 'show-in-chat'));
+  h.click('show-in-chat'); assert.equal(h.doc.getElementById('imageViewer'), null);
+  await tick(); assert.deepEqual(shown, [art('a', { messageId: 'm1' })]);
+  const unmarked = harness({ canShowInChat: () => true }); t.after(() => unmarked.viewer.dispose());
+  await unmarked.viewer.open({ items: [art('a')] }); assert.equal(control(unmarked, 'show-in-chat').hidden, true);
+});
+
+test('Show in folder and Open report what happened; a pan drag paints once per frame; the region menu opens at the pointer', async (t) => {
+  const frames = []; const h = harness({ getCapabilities: async () => ({ openWith: true, imageEditing: true, imageEditSizes: ['1024x1024'] }) });
+  h.dom.window.requestAnimationFrame = (callback) => frames.push(callback);
+  t.after(() => h.viewer.dispose());
+  await h.viewer.open({ sessionId: 's', artifactId: 'a' }); const image = h.load(1024, 1024); await tick();
+  const status = h.doc.querySelector('[role="status"]');
+  h.click('reveal'); await tick(); assert.equal(status.textContent, 'Shown in folder');
+  h.click('open'); await tick(); assert.equal(status.textContent, 'Opened');
+  const stage = h.doc.querySelector('.image-viewer-stage'); h.click('actual');
+  const pointer = (type, x, y) => { const event = new h.dom.window.MouseEvent(type, { button: 0, clientX: x, clientY: y, cancelable: true }); Object.defineProperty(event, 'pointerId', { value: 1 }); stage.dispatchEvent(event); };
+  stage.setPointerCapture = () => {}; const before = image.style.transform; frames.length = 0;
+  pointer('pointerdown', 10, 10); pointer('pointermove', 30, 10); pointer('pointermove', 50, 10);
+  assert.equal(image.style.transform, before, 'no paint until the frame'); assert.equal(frames.length, 1, 'one frame is scheduled');
+  frames[0](); assert.ok(image.style.transform.includes('translate(40px, 0px)')); pointer('pointerup', 50, 10);
+  h.click('edit'); stage.dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 70 }));
+  assert.equal(h.doc.querySelector('.image-viewer-menu').style.getPropertyValue('inset-inline-start'), '120px');
+});

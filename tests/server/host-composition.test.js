@@ -17,6 +17,7 @@ const { initializeManagedSidecar } = require('../../services/backend/managed-sid
 const { BackendService } = require('../../services/backend/backend-service');
 const { createHostedBackend } = require('../../services/host/service-composition');
 const { GENERAL_PROJECT_ID } = require('../../services/projects/project-schema');
+const { linkDirectory } = require('../helpers/platform-skips');
 
 class SidecarHarness extends EventEmitter {
   constructor() {
@@ -519,4 +520,78 @@ test('E19: modelOptional with a real endpoint composes exactly as before', () =>
   try {
     assert.equal(hosted.backend.sidecarManager, injected);
   } finally { void hosted.dispose(); removeTempUserDataPath(userDataPath); }
+});
+
+// A team host's projects root (slice 3-4f): the project root boundary when it is set; the tools
+// workspace root stays null; with a workspace root it is refused.
+function teamBackend(base, extra) {
+  return createHostedBackend({ hostMode: 'server', credentialService: createCredentialService(),
+    userDataPath: path.join(base, 'profile'), workspaceRoot: null, modelEndpoint: null, modelOptional: true, ...extra });
+}
+
+test('a team backend binds project roots only inside projectsRoot and keeps no tools workspace root', async (t) => {
+  const base = fs.realpathSync.native(makeTempUserDataPath());
+  t.after(() => removeTempUserDataPath(base));
+  t.mock.method(os, 'homedir', () => path.join(base, 'home'));
+  const projectsRoot = path.join(base, 'projects');
+  for (const dir of ['profile', 'projects', 'projects/project_a', 'elsewhere']) fs.mkdirSync(path.join(base, dir));
+  linkDirectory(path.join(base, 'elsewhere'), path.join(projectsRoot, 'leak'));
+  const bind = (hosted, root) => {
+    const { project } = hosted.backend.projectService.create({ name: 'Team project' });
+    return hosted.backend.projectService.bindRoot(project.id, root);
+  };
+  for (const projects of [projectsRoot, null]) {
+    const hosted = teamBackend(base, { projectsRoot: projects });
+    try {
+      assert.equal(hosted.configService.getToolsWorkspaceRoot(), null, 'the tools workspace root stays null');
+      assert.equal(bind(hosted, path.join(projectsRoot, 'project_a')).ok, projects !== null, `inside, projectsRoot ${projects}`);
+      for (const root of [path.join(base, 'elsewhere'), path.join(projectsRoot, 'leak')]) {
+        assert.equal(bind(hosted, root).reason, 'invalid_root', root);
+      }
+    } finally { await hosted.dispose(); }
+  }
+  assert.throws(() => teamBackend(base, { projectsRoot, workspaceRoot: path.join(base, 'elsewhere') }),
+    (error) => error.code === 'CMP-HOST-0001' && error.reason === 'projects_root_workspace_conflict');
+  // A workspace root kept in the profile's shell config is refused the same way.
+  const common = { hostMode: 'server', credentialService: createCredentialService(), userDataPath: path.join(base, 'profile'),
+    modelEndpoint: null, modelOptional: true };
+  await createHostedBackend({ ...common, workspaceRoot: path.join(base, 'elsewhere') }).dispose();
+  assert.throws(() => createHostedBackend({ ...common, projectsRoot }), (error) => error.reason === 'projects_root_workspace_conflict');
+  for (const bad of ['relative', 7, '']) {
+    assert.throws(() => teamBackend(base, { projectsRoot: bad }), (error) => error.reason === 'invalid_projects_root');
+  }
+  // host-core passes the team config's projects root, and null without one.
+  const { createHostCore } = require('../../server/host-core');
+  const seen = [];
+  const createBackend = (options) => { seen.push(options.projectsRoot); throw new Error('captured'); };
+  const config = { userDataPath: base, secretsDir: base, modelEndpoint: null };
+  const team = { name: 'T', keySource: 'parent_channel', directPort: null };
+  for (const each of [config, { ...config, team }, { ...config, team: { ...team, projectsRoot } }]) {
+    assert.throws(() => createHostCore({ config: each, createBackend, launch: { repoRoot: base } }), /captured/);
+  }
+  assert.deepEqual(seen, [null, null, projectsRoot]);
+});
+
+test('only a team host turns on member turn order: host-core sets memberTurns and the runtime scheduler reads it', async (t) => {
+  const base = fs.realpathSync.native(makeTempUserDataPath());
+  t.after(() => removeTempUserDataPath(base));
+  t.mock.method(os, 'homedir', () => path.join(base, 'home'));
+  fs.mkdirSync(path.join(base, 'profile'));
+  const { createHostCore } = require('../../server/host-core');
+  const seen = [];
+  const createBackend = (options) => { seen.push(options.memberTurns); throw new Error('captured'); };
+  const config = { userDataPath: base, secretsDir: base, modelEndpoint: null };
+  for (const each of [config, { ...config, team: { name: 'T', keySource: 'parent_channel', directPort: null } }]) {
+    assert.throws(() => createHostCore({ config: each, createBackend, launch: { repoRoot: base } }), /captured/);
+  }
+  assert.deepEqual(seen, [false, true]);
+  const { memberTurnOrder } = require('../../services/session-runtime/member-turn-order');
+  for (const memberTurns of [true, undefined]) {
+    const hosted = teamBackend(base, memberTurns ? { memberTurns } : {});
+    try {
+      assert.equal(hosted.backend.sessionRuntime.scheduler.passOrder === memberTurnOrder, memberTurns === true);
+    } finally {
+      await hosted.dispose();
+    }
+  }
 });

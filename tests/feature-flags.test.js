@@ -892,10 +892,30 @@ test('dynamic defaults follow the agent launcher and the canonical M3 rollout', 
   assert.equal(buildFeatureFlagDefaults({ JENNY_ENABLE_CANONICAL_M3_ROLLOUT: '0', JENNY_ENABLE_CANONICAL_BRIDGE: '1' }).canonical_bridge, true);
 });
 
-test('team is an internal default-off flag that env can turn on (row 123; owner, 2026-11-10)', () => {
-  assert.equal(buildFeatureFlags({}).team, false);
+test('team is an internal default-on flag that env can turn off (row 123; owner, 2026-11-15)', () => {
+  assert.equal(buildFeatureFlags({}).team, true);
   assert.equal(buildFeatureFlags({ JENNY_ENABLE_TEAM: '1' }).team, true);
   assert.equal(buildFeatureFlags({ JENNY_ENABLE_TEAM: '0' }).team, false);
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('team'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('team'));
+});
+
+test('sketch_blocks is an internal default-on flag with the env-only kill switch JENNY_ENABLE_SKETCH_BLOCKS', () => {
+  assert.equal(buildFeatureFlags({}).sketch_blocks, true);
+  assert.equal(buildFeatureFlagDefaults({}).sketch_blocks, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_SKETCH_BLOCKS: '0' }).sketch_blocks, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_SKETCH_BLOCKS: '1' }).sketch_blocks, true);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('sketch_blocks'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('sketch_blocks'));
+  assert.equal(buildFeatureFlags({}, { sketch_blocks: false }).sketch_blocks, true, 'no stored override');
+});
+
+test('project_boards is an internal default-on flag with the env-only kill switch JENNY_ENABLE_PROJECT_BOARDS', () => {
+  assert.equal(buildFeatureFlags({}).project_boards, true);
+  assert.equal(buildFeatureFlagDefaults({}).project_boards, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_PROJECT_BOARDS: '0' }).project_boards, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_PROJECT_BOARDS: '1' }).project_boards, true);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('project_boards'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('project_boards'));
+  assert.equal(buildFeatureFlags({}, { project_boards: false }).project_boards, true, 'no stored override');
 });

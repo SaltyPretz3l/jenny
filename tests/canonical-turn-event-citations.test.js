@@ -123,6 +123,7 @@ test("flag ON: a web_search tool_result with citations derives a source_citation
   assert.equal(citation.payload.refs.length, 1, "normalizer dropped the javascript: ref and deduped");
   assert.equal(citation.payload.refs[0].url, "https://example.com/one");
   assert.equal(citation.payload.refs[0].snippet, "s1");
+  assert.equal(citation.payload.refs[0].n, 1, "the persisted ref keeps its web:N number");
 });
 
 test("flag OFF (default): no source_citations event is derived - byte-identical", () => {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; connect-src 'self'; font-src 'self'; frame-src 'self' jenny-artifact:; object-src 'none'; base-uri 'none'; form-action 'self'"
+    content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; connect-src 'self'; font-src 'self'; frame-src 'self' jenny-artifact: jenny-sketch:; object-src 'none'; base-uri 'none'; form-action 'self'"
   >
   <title>Jenny</title>
   <script src="renderer/shared/startup-audit-renderer-probe.js" data-startup-audit-phase="start"></script>
@@ -13,8 +13,8 @@
   <script defer src="renderer/shared/i18n-backend-strings.js"></script>
   <script src="renderer/shared/i18n-bootstrap.js"></script>
   <script src="renderer/shared/appearance-utils.js"></script>
-  <script src="renderer/shared/session-open-pref-utils.js"></script>
-  <script src="renderer/chat/chat-zoom-utils.js"></script>
+  <script defer src="renderer/shared/session-open-pref-utils.js"></script>
+  <script defer src="renderer/chat/chat-zoom-utils.js"></script>
   <script src="renderer/shared/theme-bootstrap.js"></script>
   <!-- Only what the boot curtain needs blocks first paint; the app's sheets load after it. -->
   <link rel="stylesheet" href="styles/foundation.css">
@@ -40,6 +40,7 @@
   <link rel="stylesheet" href="styles/settings-knowledge-folders.css">
   <link rel="stylesheet" href="styles/settings-model-library-folders.css">
   <link rel="stylesheet" href="styles/settings-model-library-image-engine.css">
+  <link rel="stylesheet" href="styles/settings-models-page.css">
   <link rel="stylesheet" href="styles/settings-mcp-servers.css">
   <link rel="stylesheet" href="styles/settings-api-providers.css">
   <link rel="stylesheet" href="styles/settings-runs.css">
@@ -272,11 +273,9 @@
           <div class="chat-pane-kicker" id="chatPaneKicker" data-chat-node="chatPaneKicker" hidden></div>
           <div class="hero-stage" id="heroStage" data-chat-node="heroStage" data-dock-anchor="hero">
             <div class="hero-stack" id="heroStack">
-              <div class="hero-avatar" id="heroAvatar">J</div>
-              <h1 class="hero-title" id="heroTitle" data-i18n="chat.empty.newSession">New session</h1>
-              <p class="hero-subtitle" id="heroSubtitle" data-i18n="chat.empty.prompt">Ask Jenny anything to begin</p>
+              <h1 class="hero-title" id="heroTitle" data-i18n="hero.ready.title">New chat</h1>
+              <p class="hero-subtitle hidden" id="heroSubtitle"></p>
               <p class="hero-runtime-hint hidden" id="heroRuntimeHint" aria-live="polite"></p>
-
             </div>
           </div>
 
@@ -284,7 +283,6 @@
             <div class="plugin-session-fallback" id="pluginSessionFallback" role="status" hidden>
               <p data-plugin-session-fallback-copy></p>
             </div>
-            <div class="chat-search-overlay-host" id="chatSearchOverlayHost" data-chat-node="chatSearchOverlayHost" hidden></div>
             <!-- F4/F5/F6: multi-select action bar host -->
             <div class="chat-selection-overlay-host" id="chatSelectionOverlayHost" data-chat-node="chatSelectionOverlayHost" hidden></div>
             <div class="chat-thread-shell" id="chatSurface" data-chat-node="chatSurface">
@@ -361,8 +359,6 @@
           </div>
 
           <div class="composer-wrap" id="composerWrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
-            <div class="attachment-preview-pill hidden" id="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
-            <div class="attachment-tray hidden" id="attachmentTray" data-chat-node="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
             <div class="attachment-notice hidden" id="attachmentNotice" role="status" aria-live="polite"></div>
             <div class="send-outbox" id="sendOutbox" aria-live="polite" hidden></div>
             <div class="runtime-queue" id="runtimeQueue" hidden></div>
@@ -372,6 +368,8 @@
             <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
               <canvas class="composer-holo" id="composerHolo" aria-hidden="true"></canvas>
               <div class="composer-main">
+                <div class="attachment-tray hidden" id="attachmentTray" data-chat-node="attachmentTray" role="group" aria-label="Attachments" data-i18n-aria-label="sidebar.attachments.groupLabel" aria-live="polite"></div>
+                <div class="composer-drop-hint" aria-hidden="true" data-i18n="sidebar.attachments.dropHint">Drop to attach</div>
                 <div class="composer-entry-row">
                   <textarea
                     id="chatInput" data-chat-node="chatInput" dir="auto"
@@ -475,14 +473,12 @@
               <div class="chat-pane-kicker" data-chat-node="chatPaneKicker" hidden></div>
               <div class="hero-stage" data-chat-node="heroStage" data-dock-anchor="hero">
                 <div class="hero-stack">
-                  <div class="hero-avatar">J</div>
-                  <h1 class="hero-title" data-i18n="chat.empty.newSession">New session</h1>
-                  <p class="hero-subtitle" data-i18n="chat.empty.prompt">Ask Jenny anything to begin</p>
+                  <h1 class="hero-title" data-i18n="hero.ready.title">New chat</h1>
+                  <p class="hero-subtitle hidden"></p>
                   <p class="hero-runtime-hint hidden" aria-live="polite"></p>
                 </div>
               </div>
               <div class="chat-thread-stage" data-chat-node="chatThreadStage">
-                <div class="chat-search-overlay-host" data-chat-node="chatSearchOverlayHost" hidden></div>
                 <div class="chat-selection-overlay-host" data-chat-node="chatSelectionOverlayHost" hidden></div>
                 <div class="chat-thread-shell" data-chat-node="chatSurface">
                   <div class="chat-thread-scroll" data-chat-node="chatThreadScroll">
@@ -506,13 +502,13 @@
               <div class="chat-timeline-utility-cluster" data-chat-node="chatTimelineUtilityCluster" aria-label="Conversation utilities" data-i18n-aria-label="chat.utilities.label">
               </div>
               <div class="composer-wrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
-                <div class="attachment-preview-pill hidden" data-chat-node="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
-                <div class="attachment-tray hidden" data-chat-node="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
                 <div class="composer-message-strip hidden" data-chat-node="composerMessageStrip"></div>
                 <div class="composer-status-notice hidden" data-chat-node="composerStatusNotice" role="status" aria-live="polite"></div>
                 <div class="composer-failed-send-notice hidden" data-chat-node="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
                 <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
                   <div class="composer-main">
+                    <div class="attachment-tray hidden" data-chat-node="attachmentTray" role="group" aria-label="Attachments" data-i18n-aria-label="sidebar.attachments.groupLabel" aria-live="polite"></div>
+                    <div class="composer-drop-hint" aria-hidden="true" data-i18n="sidebar.attachments.dropHint">Drop to attach</div>
                     <div class="composer-entry-row">
                       <textarea class="composer-input" data-chat-node="chatInput" dir="auto" rows="1" placeholder="Message Jenny..." data-i18n-placeholder="composer.input.placeholder" aria-label="Message Jenny" data-i18n-aria-label="composer.input.label"></textarea>
                     </div>
@@ -574,7 +570,7 @@
           </div>
         </section>
 
-        <section class="main-view logs-view view-offscreen" id="logsView" role="tabpanel" aria-labelledby="logsTopRailTab" data-surface-effect-surface inert aria-hidden="true">
+        <section class="main-view logs-view view-offscreen" id="logsView" role="region" aria-label="Diagnostics" data-i18n-aria-label="shell.topNav.diagnostics" data-surface-effect-surface inert aria-hidden="true">
           <div class="page-shell logs-shell diagnostics-shell">
             <header class="diagnostics-header" id="logsMasthead">
               <div class="diagnostics-header-row">
@@ -627,7 +623,7 @@
               <div class="diagnostics-activity-layout" id="diagnosticsActivityLayout">
                 <div class="diagnostics-activity-console">
                   <div class="diagnostics-log-header" aria-hidden="true"><span data-i18n="diagnostics.activity.time">Time</span><span></span><span data-i18n="diagnostics.activity.message">Message</span><span data-i18n="diagnostics.activity.event">Event</span><span data-i18n="diagnostics.activity.source">Source</span></div>
-                  <div class="log-list" id="logList" role="listbox" aria-label="Diagnostic activity, oldest to newest" data-i18n-aria-label="diagnostics.activity.listLabel" aria-live="off"></div>
+                  <div class="log-list" id="logList" role="listbox" aria-label="Diagnostic activity, oldest to newest" data-i18n-aria-label="diagnostics.activity.listLabel" aria-live="off"></div><div class="diagnostics-activity-empty" id="logEmpty" hidden></div>
                 </div>
                 <!-- Not a view-panel-registry panel: the logs view declares `panel: null`
                      (renderer-view-panel-registry.js), so `.view-shell.panel-none .view-panel`
@@ -638,7 +634,7 @@
             <section id="diagnosticsRuns" class="diagnostics-runs" role="tabpanel" aria-labelledby="diagnosticsRunsTab" hidden><div id="diagnosticsRunsState" hidden></div><div class="diagnostics-runs-board" id="diagnosticsRunsMount"></div></section>
           </div>
         </section>
-
+        <section class="main-view board-view view-offscreen" id="boardView" role="tabpanel" aria-labelledby="boardTopRailTab" inert aria-hidden="true"></section><section class="main-view team-view view-offscreen" id="teamView" role="tabpanel" aria-labelledby="teamTopRailTab" inert aria-hidden="true"></section>
         <section class="main-view settings-view view-offscreen" id="settingsView" role="region" aria-label="Settings" data-i18n-aria-label="settings.shell.title" data-surface-effect-surface inert aria-hidden="true">
           <div class="settings-layout">
             <nav class="settings-nav" aria-label="Settings sections" data-i18n-aria-label="settings.shell.sectionsLabel">
@@ -661,111 +657,127 @@
               <section class="settings-card readiness-card" data-settings-section="readiness" id="readinessSettingsSection">
                 <div class="settings-card-header"><h3 data-i18n="settings.readiness.heading">Readiness</h3><span class="settings-badge" id="readinessBadge" data-state="pending" data-i18n="settings.readiness.checking">Checking</span></div>
                 <div class="settings-control-tower-host" id="settingsControlTowerHost"></div>
+                <div class="settings-group" role="group" aria-labelledby="setupSettingsHeading">
+                  <h4 class="settings-group-heading" id="setupSettingsHeading" data-i18n="settings.account.setup.heading">Setup</h4>
+                  <div class="settings-setup-row">
+                    <div class="settings-note" id="setupSettingsSummary" aria-live="polite" data-i18n="settings.account.setup.loadingStatus">Loading setup status…</div>
+                    <div class="settings-setup-actions" id="setupSettingsActions" data-renders="setup-run-again"></div>
+                  </div>
+                  <div id="setupProgressContainer" data-renders="setup-progress" aria-live="polite"></div>
+                </div>
               </section>
 
-              <section class="settings-card settings-section-active" data-settings-section="models">
+              <section class="settings-card settings-card--wide settings-section-active" data-settings-section="models">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.models.heading">Models</h3>
-                  <span class="settings-badge" id="modelBadge" data-i18n="settings.models.waiting">Waiting</span>
                 </div>
-                <p class="settings-copy" data-i18n="settings.models.description">Manage installed models and local-engine recovery here. Choose the model and reasoning effort for this chat from Composer.</p>
+                <p class="settings-copy" data-i18n="settings.models.lede2">The models Jenny can run, and the engines that run them. Choose the model for a chat in its message box.</p>
                 <div class="settings-note" id="modelCatalogEmpty" aria-live="polite" hidden></div>
-                <div class="settings-note" id="modelStatus" aria-live="polite" data-i18n="settings.models.noSnapshot">No model snapshot available yet.</div>
-                <div id="modelLibrarySectionToolbarHost"></div>
-                <div class="settings-note model-library-section-status" aria-live="polite"></div>
-                <div id="modelLibrarySectionHost"></div>
-                <div id="modelLibrarySectionExtrasHost"></div>
-                <div class="settings-group" role="group" aria-labelledby="modelStartupHeading">
-                  <h4 class="settings-group-heading" id="modelStartupHeading" data-i18n="settings.models.startup.heading">On startup</h4>
-                  <div class="settings-toggle-list" id="modelStartupLoadList" aria-live="polite"></div>
-                </div>
-                <div class="settings-group" role="group" aria-labelledby="cloudModelsHeading">
-                  <h4 class="settings-group-heading" id="cloudModelsHeading" data-i18n="settings.cloudModels.heading">Cloud models</h4>
-                  <p class="settings-group-copy" data-i18n="settings.cloudModels.description">Optional models that run on a provider's servers. Local models work without them, and Force local inference blocks them all.</p>
-                  <div class="settings-toggle-list" id="cloudModelsHost" aria-live="polite"></div>
-                  <div class="settings-toggle-list" id="apiProvidersHost"></div>
-                  <div class="settings-toggle-list" id="conversationTransferHost" aria-label="Conversation transfer" data-i18n-aria-label="settings.transfer.title"></div>
+                <div class="settings-group settings-group--wide mstage" role="group" aria-labelledby="modelRunningHeading"><h4 class="settings-group-heading" id="modelRunningHeading" data-i18n="settings.models.running.heading">Running now</h4><div id="modelRunningHost"></div></div>
+                <div class="settings-group settings-group--wide" role="group" aria-labelledby="modelLibraryHeading"><h4 class="settings-group-heading" id="modelLibraryHeading" data-i18n="settings.models.library.heading">Library</h4>
+                  <div id="modelLibrarySectionToolbarHost"></div><div class="settings-note model-library-section-status" aria-live="polite"></div><div id="modelLibrarySectionHost"></div></div>
+                <div class="settings-group settings-group--wide" role="group" aria-labelledby="modelServicesHeading"><h4 class="settings-group-heading" id="modelServicesHeading" data-i18n="settings.models.services.heading">Engines and providers</h4>
+                  <div id="modelServicesHost"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="offlineChatHeading" data-settings-merged-section="offline">
+                  <h4 class="settings-group-heading" id="offlineChatHeading" data-i18n="settings.models.localUse.heading">Local use</h4>
+                  <div class="settings-toggle-list" id="offlineLocalOnlyList"></div><div class="settings-toggle-list" id="modelStartupLoadList" aria-live="polite"></div>
                 </div>
               </section>
+
+              <section class="settings-card" data-settings-section="permissions">
+                <div class="settings-card-header"><h3 data-i18n="settings.sections.permissions.title">Permissions</h3></div>
+                <p class="settings-copy" data-i18n="settings.permissions.lede">What Jenny may do without asking, and when she has to ask first.</p>
+                <div class="settings-group" role="group" aria-labelledby="permissionsAsksHeading"><h4 class="settings-group-heading" id="permissionsAsksHeading" data-i18n="settings.permissions.asks.heading">How much Jenny asks</h4><div data-setting-mount="defaultRunModeSelect"></div><div data-setting-mount="safetyModeSelect"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="permissionsAutoHeading"><h4 class="settings-group-heading" id="permissionsAutoHeading" data-i18n="settings.permissions.auto.heading">While Auto runs</h4><div data-setting-mount="unattendedGuardMinutesInput"></div><div data-setting-mount="autoApproveStreakCapInput"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="permissionsRulesHeading"><h4 class="settings-group-heading" id="permissionsRulesHeading" data-i18n="settings.permissions.rules.heading">Saved rules</h4>
+                  <p class="settings-group-copy" data-i18n="settings.tools.approvalRules.description">What "Always allow" has saved so far. Remove a rule and Jenny asks again next time.</p>
+                  <div class="tools-approval-rules" id="toolsApprovalRulesList" aria-live="polite" data-i18n="settings.tools.approvalRules.loading">Loading approval rules...</div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="general">
+                <div class="settings-card-header"><h3 data-i18n="settings.general.heading">General</h3></div>
+                <p class="settings-copy" data-i18n="settings.general.lede">How Jenny behaves across the whole app.</p>
+                <div class="settings-note" id="homeStatus" aria-live="polite" hidden></div>
+                <div class="settings-group" role="group" aria-labelledby="generalLanguageTextHeading"><h4 class="settings-group-heading" id="generalLanguageTextHeading" data-i18n="settings.general.languageText.heading">Language and text</h4><div id="appearanceLanguageField"></div><div class="settings-toggle-list" id="appearanceSpellcheckList"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="generalYouHeading">
+                  <h4 class="settings-group-heading" id="generalYouHeading" data-i18n="settings.general.you.heading">You</h4>
+                  <p class="settings-group-copy" data-i18n="settings.account.description">Jenny runs locally without an account. This optional profile name is stored on this device and does not affect chat access.</p>
+                  <div id="localProfileSettingsMount" data-renders="local-profile"></div>
+                  <div class="settings-note" id="accountSummary" aria-live="polite" data-i18n="settings.account.localProfile.loading">Loading local profile…</div>
+                  <div class="settings-note" id="backendSummary" aria-live="polite" data-i18n="settings.account.backendNotReady">Backend not ready.</div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="homeScratchpadHeading" data-settings-merged-section="home">
+                  <h4 class="settings-group-heading" id="homeScratchpadHeading" data-i18n="settings.general.quickCapture.heading">Quick capture</h4>
+                  <div class="settings-editor-field-list" id="homeSettingsFieldList" aria-live="polite"></div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="generalMachineStatusHeading"><h4 class="settings-group-heading" id="generalMachineStatusHeading" data-i18n="settings.general.machineStatus.heading">Machine status</h4><div class="settings-toggle-list" id="generalTitlebarLoadList"></div><div id="appearancePerformanceGroup" hidden><div data-setting-mount="performanceShowCounterToggle"></div><div data-setting-mount="performanceGpuWarningsToggle"></div></div></div>
+              </section>
+
               <section class="settings-card" data-settings-section="appearance">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.appearance.heading">Appearance</h3>
                 </div>
-                <p class="settings-copy" data-i18n="settings.appearance.description">Choose a coordinated theme, fine-tune color, type, and text size, and keep optional effects accessible.</p>
+                <p class="settings-copy" data-i18n="settings.appearance.lede2">How Jenny looks.</p>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceThemeHeading">
-                  <h4 class="settings-group-heading" id="appearanceThemeHeading" data-i18n="settings.appearance.theme.heading">Theme &amp; palette</h4>
+                  <h4 class="settings-group-heading" id="appearanceThemeHeading" data-i18n="settings.appearance.themeGroup.heading">Theme</h4>
                   <p class="settings-group-copy" data-i18n="settings.appearance.theme.description">Start from a bundled look, then fine-tune the color palette.</p>
                   <div data-setting-mount="appearanceThemeBundleSelect"></div>
                   <div data-setting-mount="appearancePaletteSelect"></div>
                 </div>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceTypeHeading">
-                  <h4 class="settings-group-heading" id="appearanceTypeHeading" data-i18n="settings.appearance.typography.heading">Typography &amp; text</h4>
-                  <p class="settings-group-copy" data-i18n="settings.appearance.typography.description">Choose a type system, scale shell text up or down, and set whether Jenny checks your spelling.</p>
+                  <h4 class="settings-group-heading" id="appearanceTypeHeading" data-i18n="settings.appearance.text.heading">Text</h4>
                   <div data-setting-mount="appearanceTypographySelect"></div>
                   <div data-setting-mount="appearanceFontScaleSelect"></div>
-                  <div class="settings-toggle-list" id="appearanceSpellcheckList"></div>
-                </div>
-
-                <div class="settings-group" role="group" aria-labelledby="appearanceLanguageHeading">
-                  <h4 class="settings-group-heading" id="appearanceLanguageHeading" data-i18n="settings.language.heading">Language</h4>
-                  <div id="appearanceLanguageField"></div>
-                </div>
-
-                <div class="settings-group" role="group" aria-labelledby="appearanceChatLayoutHeading">
-                  <h4 class="settings-group-heading" id="appearanceChatLayoutHeading" data-i18n="settings.appearance.chatLayout.heading">Chat layout</h4>
-                  <div data-setting-mount="appearanceChatWidthSelect"></div>
-                  <div data-setting-mount="transcriptViewDefaultSelect"></div>
-                  <div data-setting-mount="appearanceArtifactAutoOpenToggle"></div>
+                  <div data-setting-mount="appearanceAppZoomSelect"></div>
                 </div>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceSurfaceHeading">
-                  <h4 class="settings-group-heading" id="appearanceSurfaceHeading" data-i18n="settings.appearance.background.heading">Background</h4>
-                  <p class="settings-group-copy" data-i18n="settings.appearance.background.description">An ambient layer behind Home and Chat. It pauses when the window is hidden and holds still if your system asks for reduced motion.</p>
+                  <h4 class="settings-group-heading" id="appearanceSurfaceHeading" data-i18n="settings.appearance.effects.heading">Effects</h4>
                   <div data-setting-mount="appearanceSurfaceEffectSelect"></div>
                   <p class="settings-field-note" id="appearanceSurfaceEffectMeta"></p>
                   <div class="surface-effect-preview" id="appearanceSurfaceEffectPreview" data-surface-input-block aria-hidden="true"></div>
-                </div>
-
-                <div class="settings-group" role="group" id="appearancePerformanceGroup" aria-labelledby="appearancePerformanceHeading" hidden>
-                  <h4 class="settings-group-heading" id="appearancePerformanceHeading" data-i18n="settings.appearance.performance.heading">Performance</h4>
-                  <div data-setting-mount="performanceShowCounterToggle"></div>
-                  <div data-setting-mount="performanceGpuWarningsToggle"></div>
-                </div>
-
-                <details class="settings-fold appearance-advanced">
-                  <summary data-i18n="settings.appearance.advanced.heading">Advanced</summary>
-                  <div data-setting-mount="appearanceAppZoomSelect"></div>
                   <div class="settings-toggle-list" id="appearanceHoloList"></div>
-                </details>
+                </div>
 
-                <details class="settings-overflow">
-                  <summary data-i18n="settings.appearance.moreActions">More actions</summary>
-                  <div class="settings-actions">
-                    <button class="settings-secondary" id="appearanceResetButton" type="button" data-i18n="settings.appearance.reset">Reset Appearance</button>
-                  </div>
-                </details>
+                <div class="settings-group" role="group" aria-labelledby="appearanceResetHeading"><h4 class="settings-group-heading" id="appearanceResetHeading" data-i18n="settings.appearance.resetGroup.heading">Reset</h4>
+                  <div class="settings-actions"><button class="settings-secondary" id="appearanceResetButton" type="button" data-i18n="settings.appearance.reset">Reset Appearance</button></div>
+                </div>
               </section>
 
-              <section class="settings-card context-card" data-settings-section="context">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.context.heading">Context</h3>
-                </div>
-                <p class="settings-copy" data-i18n="settings.context.description">What goes along with each message. Your full transcript stays saved either way.</p>
+              <section class="settings-card" data-settings-section="chat">
+                <div class="settings-card-header"><h3 data-i18n="settings.chat.heading">Chat</h3></div>
+                <p class="settings-copy" data-i18n="settings.chat.lede">How chats look and behave. Each chat can still set its own model, run mode and tools.</p>
                 <div class="settings-note" id="contextStatus" role="status" aria-live="polite" hidden></div>
-
-                <div class="settings-group" role="group" aria-labelledby="contextSourcesHeading">
-                  <h4 class="settings-group-heading" id="contextSourcesHeading" data-i18n="settings.context.sources.heading">What is sent</h4>
-                  <div data-setting-mount="contextHistoryScopeSelect"></div>
-                  <div id="contextSourcesList"></div>
-                  <div class="settings-row-links"><span id="contextPersonalityLinkHost"></span><span id="contextMemoryLinkHost"></span></div>
+                <div class="settings-group" role="group" aria-labelledby="chatLayoutHeading"><h4 class="settings-group-heading" id="chatLayoutHeading" data-i18n="settings.chat.layout.heading">Layout</h4><div data-setting-mount="appearanceChatWidthSelect"></div><div data-setting-mount="transcriptViewDefaultSelect"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="chatSidePanelHeading"><h4 class="settings-group-heading" id="chatSidePanelHeading" data-i18n="settings.chat.sidePanel.heading">Side panel</h4><div data-setting-mount="appearanceArtifactAutoOpenToggle"></div><div data-setting-mount="changePicturesToggle"></div></div>
+                <div class="settings-flow" data-settings-merged-section="context">
+                  <div class="settings-group" role="group" aria-labelledby="contextRuntimeHeading">
+                    <h4 class="settings-group-heading" id="contextRuntimeHeading" data-i18n="settings.chat.longChats.heading">Long chats</h4>
+                    <div id="contextRuntimeList"></div>
+                    <div id="contextCompactionTuning"></div>
+                  </div>
+                  <div class="settings-group" role="group" aria-labelledby="contextSourcesHeading">
+                    <h4 class="settings-group-heading" id="contextSourcesHeading" data-i18n="settings.chat.thisChat.heading">This chat</h4>
+                    <p class="settings-group-copy" id="contextScopeNote" aria-live="polite"></p>
+                    <div data-setting-mount="contextHistoryScopeSelect"></div>
+                    <div id="contextSourcesList"></div>
+                    <div class="settings-row-links"><span id="contextPersonalityLinkHost"></span><span id="contextMemoryLinkHost"></span></div>
+                  </div>
                 </div>
-
-                <div class="settings-group" role="group" aria-labelledby="contextRuntimeHeading">
-                  <h4 class="settings-group-heading" id="contextRuntimeHeading" data-i18n="settings.context.summaries.heading">Summaries</h4>
-                  <div id="contextRuntimeList"></div>
-                  <div id="contextCompactionTuning"></div>
+                <div class="settings-flow" id="dictationSettingsSection" data-settings-merged-section="dictation">
+                  <div class="settings-group" role="group" aria-labelledby="dictationGeneralHeading">
+                    <h4 class="settings-group-heading" id="dictationGeneralHeading" data-i18n="settings.chat.dictation.heading">Dictation</h4>
+                    <p class="settings-group-copy" data-i18n="settings.dictation.description">Talk instead of typing in the message box. Speech is turned into text on this PC; audio never leaves it and is not saved.</p>
+                    <div class="settings-toggle-list" id="dictationGeneralList"></div>
+                    <div class="settings-toggle-list" id="dictationModelList"></div>
+                    <p class="settings-group-copy" data-i18n="settings.dictation.credit">Model by NVIDIA, CC BY 4.0. Dictation design inspired by Handy (MIT).</p>
+                  </div>
+                </div>
+                <div class="settings-flow" id="jennyChatSettingsSection" data-settings-merged-section="jennyChat">
+                  <div class="settings-group" role="group" aria-labelledby="jennyChatModelsHeading"><h4 class="settings-group-heading" id="jennyChatModelsHeading" data-i18n="settings.sections.jennyChat.title">Jenny chat</h4><div class="settings-toggle-list" id="jennyChatModelList"></div></div><div class="settings-group" role="group" aria-labelledby="jennyChatDigestsHeading"><h4 class="settings-group-heading" id="jennyChatDigestsHeading" data-i18n="settings.chat.away.heading">While you are away</h4><div class="settings-toggle-list" id="jennyChatDigestsList"></div></div>
                 </div>
               </section>
 
@@ -773,7 +785,7 @@
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.tools.heading">Tools</h3>
                 </div>
-                <p class="settings-copy" data-i18n="settings.tools.description">What Jenny may do in your workspace, and what she has to ask first.</p>
+                <p class="settings-copy" data-i18n="settings.tools.lede">What Jenny can use. A tool that is off here is off in every chat.</p>
                 <div class="settings-page-status" id="toolsWorkspaceLine" data-state="blocked">
                   <span class="settings-page-status-dot" aria-hidden="true"></span>
                   <span class="settings-page-status-label" data-i18n="settings.tools.workspaceRoot.label">Workspace</span>
@@ -784,17 +796,6 @@
                 </div>
 
                 <div class="settings-flow" id="toolsConfigFieldList">
-                  <div class="settings-group" role="group" aria-labelledby="toolsPermissionsHeading">
-                    <h4 class="settings-group-heading" id="toolsPermissionsHeading" data-i18n="settings.tools.permissions.heading">Permissions</h4>
-                    <div id="toolsPermissionsList"></div>
-                  </div>
-
-                  <div class="settings-group" role="group" aria-labelledby="toolsApprovalRulesHeading">
-                    <h4 class="settings-group-heading" id="toolsApprovalRulesHeading" data-i18n="settings.tools.approvalRules.heading">Approval rules</h4>
-                    <p class="settings-group-copy" data-i18n="settings.tools.approvalRules.description">What "Always allow" has saved so far. Remove a rule and Jenny asks again next time.</p>
-                    <div class="tools-approval-rules" id="toolsApprovalRulesList" aria-live="polite" data-i18n="settings.tools.approvalRules.loading">Loading approval rules...</div>
-                  </div>
-
                   <div class="settings-group" role="group" aria-labelledby="toolsFilesHeading">
                     <h4 class="settings-group-heading" id="toolsFilesHeading" data-i18n="settings.tools.files.heading">Files and documents</h4>
                     <div id="toolsFilesList"></div>
@@ -820,26 +821,9 @@
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.editor.heading">Editor</h3>
                 </div>
-                <p class="settings-copy" data-i18n="settings.editor.description">Tune the code editor to how you work &mdash; font, tabs, and save behavior all persist across restarts.</p>
+                <p class="settings-copy" data-i18n="settings.editor.lede">The code editor and its terminal.</p>
                 <div class="settings-note" id="editorStatus" aria-live="polite" hidden></div>
-                <div class="settings-group" role="group" aria-labelledby="editorGeneralHeading">
-                  <h4 class="settings-group-heading" id="editorGeneralHeading" data-i18n="settings.editor.general.heading">General</h4>
-                  <div class="settings-editor-field-list" id="editorSettingsFieldList" aria-live="polite"></div>
-                </div>
-              </section>
-
-              <section class="settings-card" data-settings-section="home">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.home.heading">Home</h3>
-                </div>
-                <p class="settings-copy" data-i18n="settings.home.description">Choose how Home guidance and quick capture behave across restarts.</p>
-                <div class="settings-note" id="homeStatus" aria-live="polite" hidden></div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="homeScratchpadHeading">
-                  <h4 class="settings-group-heading" id="homeScratchpadHeading" data-i18n="settings.home.behavior.heading">Home behavior</h4>
-                  <p class="settings-group-copy" data-i18n="settings.home.behavior.description">Scratchpad presentation lives in the widget menu. These preferences apply across the app.</p>
-                  <div class="settings-editor-field-list" id="homeSettingsFieldList" aria-live="polite"></div>
-                </div>
+                <div class="settings-flow settings-editor-field-list" id="editorSettingsFieldList" aria-live="polite"></div>
               </section>
 
               <section class="settings-card" data-settings-section="notifications" id="notificationsSettingsSection">
@@ -863,52 +847,11 @@
                   <div class="settings-toggle-list" id="notificationsContentList"></div>
                   <p class="settings-group-copy" data-i18n="settings.notifications.content.note">Your system keeps its own copy of each notification in its notification center, and can silence Jenny system-wide in its notification settings.</p>
                 </div>
-              </section>
 
-              <section class="settings-card" data-settings-section="jennyChat" id="jennyChatSettingsSection">
-                <div class="settings-card-header"><h3 data-i18n="settings.jennyChat.heading">Jenny chat</h3></div>
-                <p class="settings-copy" data-i18n="settings.jennyChat.description">How the Jenny chat behaves when you are not in it.</p>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="jennyChatDigestsHeading"><h4 class="settings-group-heading" id="jennyChatDigestsHeading" data-i18n="settings.jennyChat.digests.heading">Digests</h4><div class="settings-toggle-list" id="jennyChatDigestsList"></div></div>
                 <div class="settings-group settings-group--flush" role="group" aria-labelledby="jennyChatQuietHeading"><h4 class="settings-group-heading" id="jennyChatQuietHeading" data-i18n="settings.jennyChat.quietHours.heading">Quiet hours</h4><div class="settings-toggle-list" id="jennyChatQuietList"></div></div>
               </section>
 
-              <section class="settings-card" data-settings-section="dictation" id="dictationSettingsSection">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.dictation.heading">Dictation</h3>
-                </div>
-                <p class="settings-copy" data-i18n="settings.dictation.description">Talk instead of typing in the message box. Speech is turned into text on this PC; audio never leaves it and is not saved.</p>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="dictationGeneralHeading">
-                  <h4 class="settings-group-heading" id="dictationGeneralHeading" data-i18n="settings.dictation.general.heading">General</h4>
-                  <div class="settings-toggle-list" id="dictationGeneralList"></div>
-                </div>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="dictationModelHeading">
-                  <h4 class="settings-group-heading" id="dictationModelHeading" data-i18n="settings.dictation.model.heading">Speech model</h4>
-                  <div class="settings-toggle-list" id="dictationModelList"></div>
-                  <p class="settings-group-copy" data-i18n="settings.dictation.credit">Model by NVIDIA, CC BY 4.0. Dictation design inspired by Handy (MIT).</p>
-                </div>
-              </section>
-
-              <section class="settings-card offline-card" data-settings-section="offline">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.offline.heading">Offline</h3>
-                </div>
-                <p class="settings-copy" data-i18n="settings.offline.description">Force local inference governs model inference only. Tools, extensions, authentication, updates, and other services may still use the network.</p>
-                <div class="settings-summary-row" id="offlineSummary" data-i18n="settings.offline.checkingReadiness">Checking local inference readiness...</div>
-                <div class="settings-note" id="offlineStatus" aria-live="polite"></div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="offlineChatHeading">
-                  <h4 class="settings-group-heading" id="offlineChatHeading" data-i18n="settings.offline.inferenceBoundary.heading">Inference boundary</h4>
-                  <div class="settings-toggle-list" id="offlineLocalOnlyList"></div>
-                </div>
-
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="offlineModelHeading">
-                  <h4 class="settings-group-heading" id="offlineModelHeading" data-i18n="settings.offline.localModel.heading">Local inference model</h4>
-                  <div class="settings-note" id="offlineModelStatus" aria-live="polite" data-i18n="settings.offline.localModel.noneSelected">No local model selected.</div>
-                  <div class="settings-actions" id="offlineModelActions"></div>
-                </div>
-              </section>
-
-              <section class="settings-card personality-card" data-settings-section="personality">
+              <section class="settings-card settings-card--wide personality-card" data-settings-section="personality">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.personality.heading">Personality</h3>
                   <span class="personality-status" id="personalityStatus" aria-live="polite" data-i18n="settings.personality.loading">Loading…</span>
@@ -928,36 +871,28 @@
               </section>
 
               <section class="settings-card" data-settings-section="account">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.sections.account.title">Profile, data &amp; updates</h3>
-                </div>
-                <p class="settings-copy" data-i18n="settings.account.lede">Your profile name, the data Jenny keeps on this device, and updates.</p>
-                <div class="settings-group" role="group" aria-labelledby="accountAuthHeading">
-                  <h4 class="settings-group-heading" id="accountAuthHeading" data-i18n="settings.account.localProfile.heading">Local profile</h4>
-                  <p class="settings-group-copy" data-i18n="settings.account.description">Jenny runs locally without an account. This optional profile name is stored on this device and does not affect chat access.</p>
-                  <div id="localProfileSettingsMount" data-renders="local-profile"></div>
-                  <div class="settings-note" id="accountSummary" aria-live="polite" data-i18n="settings.account.localProfile.loading">Loading local profile…</div>
-                  <div class="settings-note" id="backendSummary" aria-live="polite" data-i18n="settings.account.backendNotReady">Backend not ready.</div>
-                </div>
-                <div class="settings-group" role="group" aria-labelledby="setupSettingsHeading">
-                  <h4 class="settings-group-heading" id="setupSettingsHeading" data-i18n="settings.account.setup.heading">Setup</h4>
-                  <div class="settings-setup-row">
-                    <div class="settings-note" id="setupSettingsSummary" aria-live="polite" data-i18n="settings.account.setup.loadingStatus">Loading setup status…</div>
-                    <div class="settings-setup-actions" id="setupSettingsActions" data-renders="setup-run-again"></div>
-                  </div>
-                  <div id="setupProgressContainer" data-renders="setup-progress" aria-live="polite"></div>
-                </div>
+                <div class="settings-card-header"><h3 data-i18n="settings.sections.dataAndPrivacy.title">Data &amp; privacy</h3></div>
+                <p class="settings-copy" data-i18n="settings.dataPrivacy.lede">What Jenny keeps on this PC, and how to back it up, move it or remove it.</p>
                 <div class="settings-group" role="group" aria-labelledby="dataStorageHeading" id="dataStorageGroup" data-storage-group hidden>
                   <h4 class="settings-group-heading" id="dataStorageHeading" data-i18n="dataStorage.heading">Your data</h4>
                   <p class="settings-group-copy" data-i18n="dataStorage.description">Everything Jenny keeps on this PC, largest first. Click a folder to open it in File Explorer.</p>
                   <div id="dataStorageMount"></div>
                 </div>
                 <div class="settings-group" role="group" aria-labelledby="dataPrivacyHeading" data-settings-merged-section="dataPrivacy">
-                  <h4 class="settings-group-heading" id="dataPrivacyHeading" data-i18n="settings.dataPrivacy.heading">Data &amp; Privacy</h4>
+                  <h4 class="settings-group-heading" id="dataPrivacyHeading" data-i18n="settings.dataPrivacy.backup.heading">Backup and restore</h4>
                   <div id="dataLifecycleSettingsMount"></div>
                 </div>
+                <div class="settings-group" role="group" aria-labelledby="copyConversationHeading"><h4 class="settings-group-heading" id="copyConversationHeading" data-i18n="settings.dataPrivacy.copyConversation.heading">Copy a conversation</h4><div class="settings-toggle-list" id="conversationTransferHost" aria-label="Conversation transfer" data-i18n-aria-label="settings.transfer.title"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="removeJennyHeading">
+                  <h4 class="settings-group-heading" id="removeJennyHeading" data-i18n="settings.account.remove.heading">Remove Jenny</h4>
+                  <div id="dataLifecycleRemoveMount"></div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="aboutUpdates">
+                <div class="settings-card-header"><h3 data-i18n="settings.sections.about.title">About</h3></div>
                 <div class="settings-group" role="group" aria-labelledby="aboutUpdatesHeading" data-settings-merged-section="aboutUpdates">
-                  <h4 class="settings-group-heading" id="aboutUpdatesHeading" data-i18n="settings.about.heading">About &amp; Updates</h4>
+                  <h4 class="settings-group-heading" id="aboutUpdatesHeading" data-i18n="settings.about.thisCopy.heading">This copy of Jenny</h4>
                   <p class="settings-note" id="aboutVersionLine" data-i18n="settings.about.version">Version unavailable</p>
                   <p class="settings-group-copy" data-i18n="settings.about.disclosure">Jenny is software — a tool, not a living being. It has no feelings, awareness, or intent, even when it sounds like it does. With your permission it can read and change files in your workspace and run commands on this computer; keep an eye on it while it works and do not leave Auto mode running unattended.</p>
                   <div class="settings-setup-row">
@@ -970,14 +905,10 @@
                     </div>
                   </div>
                 </div>
-                <div class="settings-group" role="group" aria-labelledby="removeJennyHeading">
-                  <h4 class="settings-group-heading" id="removeJennyHeading" data-i18n="settings.account.remove.heading">Remove Jenny</h4>
-                  <div id="dataLifecycleRemoveMount"></div>
-                </div>
               </section>
 
               <!-- Extensions: skill folders and standalone MCP servers. -->
-              <section class="settings-card" data-settings-section="extensions">
+              <section class="settings-card settings-card--wide" data-settings-section="extensions">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.extensions.heading">Extensions</h3>
                 </div>
@@ -991,7 +922,7 @@
                 <div id="mcpServersHost"></div>
               </section>
 
-              <section class="settings-card memory-settings-card" data-settings-section="memories" data-settings-field="memoryManager" id="memorySettingsSection">
+              <section class="settings-card settings-card--wide memory-settings-card" data-settings-section="memories" data-settings-field="memoryManager" id="memorySettingsSection">
                 <div class="settings-card-header">
                   <h3 id="memoryPageHeading" tabindex="-1" data-i18n="settings.memories.heading">Memory</h3>
                   <span class="settings-badge" id="memoryBadge" data-badge-state="loading" data-i18n="settings.memories.loading">Loading</span>
@@ -1024,7 +955,7 @@
                 </div>
               </section>
 
-              <section class="settings-card usage-card" data-settings-section="usage" id="usageSettingsSection">
+              <section class="settings-card settings-card--wide usage-card" data-settings-section="usage" id="usageSettingsSection">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.usage.heading">Usage</h3>
                   <span class="settings-badge" id="usageBadge" data-i18n="settings.usage.localBadge">Local</span>
@@ -1057,8 +988,8 @@
                   <div class="settings-note" id="usageActionStatus" role="status" aria-live="polite"></div>
                 </div>
               </section>
-              <section class="settings-card" data-settings-section="runtime" id="runtimeSettingsSection"><div id="sessionRuntimeSettingsMount"></div></section>
-              <section class="settings-card team-set" data-settings-section="team" data-feature-flag="team" id="teamSettingsSection" hidden><div class="settings-card-header"><h3 data-i18n="settings.team.heading">Team</h3></div><p class="settings-copy" data-i18n="settings.team.lede">Work with people you trust: host a team on this PC or join someone else’s. Your own chats stay on this PC either way.</p><div id="teamSettingsBody"></div></section>
+              <section class="settings-card settings-card--wide" data-settings-section="runtime" id="runtimeSettingsSection"><div id="sessionRuntimeSettingsMount"></div></section>
+              <section class="settings-card settings-card--wide team-set" data-settings-section="team" data-feature-flag="team" id="teamSettingsSection" hidden><div class="settings-card-header"><h3 data-i18n="settings.team.heading">Team</h3></div><p class="settings-copy" data-i18n="settings.team.lede">Work with people you trust: host a team on this PC or join someone else’s. Your own chats stay on this PC either way.</p><div id="teamSettingsBody"></div></section>
               <section class="settings-card" data-settings-section="advanced" id="advancedSettingsSection">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.advanced.heading">Limits &amp; budgets</h3>
@@ -1208,7 +1139,6 @@
   <script defer src="renderer/inventory/empty-note.js"></script>
   <script defer src="renderer/inventory/collapsible.js"></script>
   <script defer src="renderer/inventory/codeblock.js"></script>
-  <script defer src="renderer/inventory/favicon-badge.js"></script>
   <script defer src="renderer/inventory/progress-bar.js"></script>
   <script defer src="renderer/inventory/status-row.js"></script>
   <script defer src="renderer/inventory/number-input.js"></script>
@@ -1265,7 +1195,6 @@
   <script defer src="renderer/chat/renderer-reasoning-live-box-follow.js"></script>
   <script defer src="renderer/chat/renderer-stream-reasoning-patch-utils.js"></script>
   <script defer src="renderer/chat/renderer-stream-reveal-utils.js"></script>
-  <script defer src="renderer/chat/renderer-source-utils.js"></script>
   <script defer src="renderer/chat/renderer-error-recovery-utils.js"></script>
   <script defer src="renderer/shared/error-intake.js"></script>
   <script defer src="renderer/features/renderer-artifact-presentation.js"></script>
@@ -1500,7 +1429,6 @@
 <script defer src="renderer/shell/renderer-settings-chrome.js"></script>
 <script defer src="renderer/shell/renderer-settings-script-manifest.js"></script>
 <script defer src="renderer/shell/model-library/model-library-runtime-actions.js"></script>
-<script defer src="renderer/shell/model-library/model-library-recovery-actions.js"></script>
 <script defer src="renderer/shell/renderer-model-library-folders.js"></script>
 <script defer src="renderer/shell/model-library/model-library-image-engine.js"></script>
 <script defer src="renderer/shell/model-library/model-library-ninfer.js"></script>
@@ -1550,6 +1478,7 @@
   <script defer src="renderer/shell/renderer-chats-strip.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox-model.js"></script>
   <script defer src="renderer/shell/renderer-desktop-notifications.js"></script>
+  <script defer src="renderer/shell/renderer-attention-inbox-flyout.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox.js"></script>
   <script defer src="renderer/shell/renderer-away-digest-model.js"></script>
   <script defer src="renderer/shell/renderer-top-nav-shell.js"></script>
@@ -1636,6 +1565,7 @@
   <script defer src="renderer/chat/renderer-turn-article-coalesce-utils.js"></script>
   <!-- Citation chips (source_citations); must precede renderer-turn-row-render-utils.js, which resolves it. -->
   <script defer src="renderer/chat/renderer-citation-chips-utils.js"></script>
+  <script defer src="renderer/chat/renderer-source-card.js"></script>
   <!-- Same-turn error-card dedupe; must precede renderer-turn-row-render-utils.js, which resolves it. -->
   <script defer src="renderer/chat/renderer-turn-row-error-dedupe-utils.js"></script>
   <!-- Resume-turn affordance; must precede renderer-turn-row-render-utils.js, which resolves it. -->
@@ -1852,6 +1782,8 @@
   <script defer src="renderer/shell/renderer-circuit-trace-utils.js"></script>
   <script defer src="renderer/shell/renderer-context-weave-core.js"></script>
   <script defer src="renderer/shell/renderer-context-weave-utils.js"></script>
+  <script defer src="renderer/shell/renderer-aurora-ridge-core.js"></script>
+  <script defer src="renderer/shell/renderer-aurora-ridge-utils.js"></script>
   <script defer src="renderer/shell/renderer-surface-effect-preview.js"></script>
   <script defer src="renderer/shell/renderer-overlay-manager.js"></script>
   <script defer src="renderer/shell/renderer-quick-settings-modal.js"></script>

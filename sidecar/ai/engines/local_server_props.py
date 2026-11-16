@@ -10,9 +10,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.engines.provider_http import ProviderHttpService
+from sidecar.ai.thinking_guard import THINKING_BUDGET_NUM_PREDICT_FRACTION
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
+
+# The budget stays under Jenny's own char-counted guard (65% of max_tokens at
+# 3.2 chars per token), with room for denser text, so the server's clean close
+# comes first and the guard stays the backstop. Below a useful think the
+# request runs with thinking off (llama-server would read 0 as no budget).
+_THINKING_BUDGET_GUARD_SHARE = 0.75
+_MIN_THINKING_BUDGET_TOKENS = 128
 
 _AUTH_FAILURE_STATUS_CODES = frozenset({401, 403})
 # One warning per server per process: the probe runs on every catalog refresh,
@@ -211,7 +219,30 @@ def thinking_ladder(control: ThinkingControl) -> dict[str, Any] | None:
     }
 
 
+def cap_thinking_budget(payload: dict[str, Any], output_tokens: int) -> None:
+    """Keep a level's thinking budget under the guard share of ``output_tokens``.
+
+    When that leaves less than a useful think, thinking turns off for the
+    request instead of a budget larger than the guard or the output itself.
+    """
+    budget = payload.get("thinking_budget_tokens")
+    if not isinstance(budget, int) or isinstance(budget, bool):
+        return
+    ceiling = int(
+        max(int(output_tokens), 0)
+        * THINKING_BUDGET_NUM_PREDICT_FRACTION
+        * _THINKING_BUDGET_GUARD_SHARE
+    )
+    capped = min(budget, ceiling)
+    if capped >= _MIN_THINKING_BUDGET_TOKENS:
+        payload["thinking_budget_tokens"] = capped
+        return
+    payload.pop("thinking_budget_tokens", None)
+    payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+
 __all__ = [
+    "cap_thinking_budget",
     "ThinkingControl",
     "context_length_from_props",
     "probe_server_modalities",

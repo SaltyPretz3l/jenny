@@ -85,7 +85,11 @@ test('a context that does not fit is capped where every layer stays on the GPU',
   assert.equal(result.contextSize, 194_048);
   assert.equal(result.marginMb, 1024 + 2048 + 885);
   // The server counts the MTP draft itself: its margin leaves the headroom out.
-  assert.deepEqual(result.extraArgs, ['-np', '1', '-ctk', 'q8_0', '-ctv', 'q8_0', '--fit-target', '1909']);
+  // Every layer fits, so placement is pinned and the server's fit cannot move
+  // layers to the CPU (2026-11-12: it dropped 4 of 66 without the pin).
+  assert.deepEqual(result.extraArgs, [
+    '-np', '1', '-ctk', 'q8_0', '-ctv', 'q8_0', '-ngl', 'all', '--fit-target', '1909',
+  ]);
   assert.equal(exec.calls[0].file, TOOL);
   assert.deepEqual(exec.calls[0].args, [
     '-m', MODEL, '-np', '1', '-ctk', 'q8_0', '-ctv', 'q8_0', '--flash-attn', 'on', '-ub', '1024',
@@ -101,6 +105,7 @@ test('a requested context inside the fit is kept', async () => {
   assert.equal(result.reason, 'fits');
   assert.equal(result.contextSize, 65_536);
   assert.equal(result.fittedContext, 194_048);
+  assert.deepEqual(result.extraArgs, ['-np', '1', '-ctk', 'q8_0', '-ctv', 'q8_0', '-ngl', 'all', '--fit-target', '1024']);
 });
 
 test('the cap never drops below the floor context', async () => {
@@ -117,6 +122,11 @@ test('a model whose layers still spill reports spill at the fitted context', asy
   assert.equal(result.reason, 'spill');
   assert.equal(result.contextSize, 32_768);
   assert.equal(result.gpuLayers, 40);
+  // A spill leaves placement to the server's fit: no pin.
+  assert.deepEqual(result.extraArgs, ['-np', '1', '-ctk', 'q8_0', '-ctv', 'q8_0', '--fit-target', '1024']);
+  const overrides = await plan({ execFileImpl: makeExec('-c 32768 -ngl -1 -ot blk.40=CPU\n').execFileImpl });
+  assert.equal(overrides.reason, 'spill');
+  assert.equal(overrides.extraArgs.includes('-ngl'), false, 'tensor overrides are a spill too');
 });
 
 test('a profile that places layers or turns fit off owns placement', async () => {

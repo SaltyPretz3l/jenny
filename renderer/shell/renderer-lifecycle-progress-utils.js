@@ -93,6 +93,7 @@
     chat: jt('shell.topNav.chat', 'Chat'),
     home: jt('shell.topNav.home', 'Home'),
     ide: jt('shell.topNav.workspace', 'Workspace'),
+    board: jt('board.tab.label', 'Board'),
     logs: jt('shell.topNav.diagnostics', 'Diagnostics'),
     settings: jt('shell.topNav.settings', 'Settings'),
   };

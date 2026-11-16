@@ -9,7 +9,7 @@ const { normalizeGeneratedArtifactMetadata } = require('./artifact-metadata-util
 const { ensureJennyDirGitignore } = require('./jenny-project-dir');
 const workspaceLocks = new Map();
 const MAX_WORKSPACE_CAPTURES = 32;
-const MAX_SESSION_CAPTURES = 4;
+const MAX_SESSION_CAPTURES = 12;
 const INDEX_NAME = '.preview-captures.json';
 const MARKER_NAME = '.preview-captures.initialized';
 const FILE_PATTERN = /^preview-capture-[a-f0-9-]{36}\.png$/;
@@ -90,7 +90,7 @@ async function savePreviewScreenshot({ fs, workspace, session, content, writeInd
   assertCurrent();
   if (entries.length >= MAX_WORKSPACE_CAPTURES
       || entries.filter((entry) => entry.session === session).length >= MAX_SESSION_CAPTURES) {
-    throw new Error('Preview screenshot storage is full (4 per session, 32 per workspace). '
+    throw new Error(`Preview screenshot storage is full (${MAX_SESSION_CAPTURES} per session, ${MAX_WORKSPACE_CAPTURES} per workspace). `
       + 'Remove unwanted saved screenshots to free space; model image delivery can continue.');
   }
   const parent = await directory(fs, root, session);

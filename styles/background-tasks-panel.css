@@ -1,0 +1,206 @@
+/* Background tasks panel (row 138, renderer-background-tasks-panel.js): the `background_tasks` mode of the
+   artifact review panel. Rows, dots, the fold, the filter and the output block are the session rail's and the
+   inventory's own classes; this file holds the owner-approved mockup's new rules and the panel hosting the
+   Tasks and Notes rails also carry (the shared 36px header keeps its title and Close). */
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-panel-controls,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-panel-status,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] > .artifact-review-header {
+  display: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-panel-v2-content-host,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-preview-shell,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-preview-content {
+  min-height: 0;
+  height: 100%;
+}
+
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-preview-content {
+  overflow: hidden;
+}
+
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-review-detail-panel {
+  gap: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] .artifact-preview-content {
+  padding: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="background_tasks"] {
+  background: var(--bg-base);
+  border-inline-start: 1px solid var(--line);
+}
+
+/* The panel body: the mockup's panel padding, a column the list or the open task fills. */
+.background-tasks-panel {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.55;
+}
+
+.background-tasks-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: 0 var(--space-4);
+}
+
+.background-tasks-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.background-tasks-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.background-tasks-fold .session-rail-divider {
+  flex: 1;
+}
+
+.background-tasks-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.background-tasks-link:hover {
+  color: var(--text-primary);
+}
+
+.background-tasks-link:focus-visible,
+.background-tasks-back:focus-visible,
+.background-tasks-output pre:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.background-tasks-command-name {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+.background-tasks-empty {
+  margin: var(--space-6) 0 0;
+  color: var(--text-muted);
+}
+
+/* The open task: what it is, where it stands, then its output using the room that is left. */
+.background-tasks-detail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.background-tasks-command {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.background-tasks-command--plain {
+  font-family: inherit;
+  font-size: var(--font-size-footnote);
+}
+
+.background-tasks-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.background-tasks-status .background-tasks-actions {
+  margin-inline-start: auto;
+  display: inline-flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.background-tasks-status .session-rail-job-stop {
+  opacity: 1;
+  position: static;
+  transform: none;
+}
+
+.background-tasks-output {
+  flex: 1;
+  min-height: calc(var(--space-12) * 5);
+  margin: 0;
+  display: flex;
+}
+
+.background-tasks-output pre {
+  flex: 1;
+  max-block-size: none;
+}
+
+.background-tasks-foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  row-gap: var(--space-1);
+  align-items: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.background-tasks-foot .background-tasks-live {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.background-tasks-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.background-tasks-back:hover {
+  color: var(--text-primary);
+}
+
+.background-tasks-back svg {
+  width: var(--space-6);
+  height: var(--space-6);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

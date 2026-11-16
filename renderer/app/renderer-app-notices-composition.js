@@ -30,7 +30,11 @@
   /* Hover/focus hold the auto-dismiss countdowns, and Escape inside the stack
    * dismisses the focused toast. */
   if (typeof installToastViewportListeners === 'function') {
-    registerRendererCleanup(installToastViewportListeners());
+    /* A failed toast action goes through the error-intake wrapper defined below
+     * (read at click time, after it exists). */
+    registerRendererCleanup(installToastViewportListeners({
+      reportActionError: (message, options) => showShellErrorToast(message, options),
+    }));
   }
   /* errorIntakeController — EH-W8 flag-gated unified error intake. The three
    * error toast wrappers become reportError adapters when error_intake_routing

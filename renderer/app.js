@@ -97,21 +97,19 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     composerStatusNotice, chatInput,
     newChatButton, stopStreamButton, sendButton,
     composerAttachShortcut, searchInput,
-    sidebarResizer, heroAvatar, heroTitle, heroSubtitle,
+    sidebarResizer, heroTitle, heroSubtitle,
     heroRuntimeHint,
     composerOfflineLabel, composerContextUsageSlot, composerPlanUsageSlot, composerToolToggleSlot,
     toastViewport, sessionActionButton, logLevelFilter, logList,
     logResultsLabel, logSearchInput, logSourceFilter, copyLogsReportButton, logAutoScrollToggle,
     observabilityRefreshButton, toolLatencyTable, slowOperationsList, recentTracesList,
-    modelBadge, composerModelSelect, composerEffortSelect,
+    composerModelSelect, composerEffortSelect,
     jumpToTopButton, jumpToBottomButton, composerAttachMenu,
     commandPaletteOverlay, commandPaletteInput, commandPaletteList, titlebarPalettePill,
     commandPaletteScope, commandPaletteCount, commandPaletteLegend, commandPaletteStatus, commandPaletteFieldIcon,
     attachFilesButton, captureScreenButton,
     settingsModelCard, composerModelSelectShell,
     composerEffortSelectShell, appearanceHoloList, appearanceResetButton,
-    modelStatus,
-    offlineSummary, offlineStatus,
     contextStatus, contextSourcesList, contextRuntimeList,
     toolsWorkspacePath, toolsWorkspaceStatus, toolsWorkspaceChooseButton,
     contextPreview,
@@ -221,6 +219,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   let composerFeatureStateLoaded = false;
   async function _ensureComposerFeatureStateLoaded() {
     if (composerFeatureStateLoaded) return;
+    // The boot prefetch already applied a real payload, and features.onChanged keeps it current.
+    if (state.features?.availabilityResolved === true) { composerFeatureStateLoaded = true; return; }
     try {
       await refreshFeatureState();
       composerFeatureStateLoaded = true;
@@ -293,6 +293,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       'atomic-burst': window.rendererAtomicBurstUtils?.createAtomicBurstController,
       'circuit-trace': window.rendererCircuitTraceUtils?.createCircuitTraceController,
       'context-weave': window.rendererContextWeaveUtils?.createContextWeaveController,
+      'aurora-ridge': window.rendererAuroraRidgeUtils?.createAuroraRidgeController,
     },
     options: { reducedMotionQuery },
     // Both gutters + homeView are first-class input surfaces (Rev 2 §3.3).
@@ -358,6 +359,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     renderLayout: (...a) => renderLayout(...a), renderHeader: (...a) => renderHeader(...a),
     renderLogs: (...a) => renderLogs(...a),
     renderComposerState: (...a) => renderComposerState(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
+    mergePreparedAttachments: (...a) => mergePreparedAttachments(...a), // row 137: the IDE's Attach File to Chat
     renderMessages: (...a) => renderMessages(...a), renderIdeSafe: (...a) => renderIdeSafe(...a),
     activateIdeSafe: (...a) => activateIdeSafe(...a), layoutIdeEditorSafe: (...a) => layoutIdeEditorSafe(...a),
     renderHomePanelSafe: (...a) => renderHomePanelSafe(...a),
@@ -430,7 +432,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe,
     renderApprovedMemoryManagerSafe,
     renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe,
-    openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
+    openIdeTerminalSafe, runIdeTaskTerminalSafe, openIdeOutsideFilesSafe, closeIdeBottomPanelSafe,
     refreshCompanionStateSafe, shouldRenderHomePanelSafe,
     renderHomePanelSafe, applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe,
     applySetupBackendStatusSafe, openSetupTileSafe,
@@ -513,7 +515,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     rekeyProjectionContextCache, updateAssistantSpritePositionRef, renderLiveThinkingChip,
     settingsRendererUtils, appearanceUtils, renderPipelineUtils, sendUtils, streamHandlerUtils, shellModules,
     lifecycleController, contextPanelController,
-    chatScrollCoordinator, thinkingController, thinkingIndicator, toastActionHandlers, multiStreamController,
+    chatScrollCoordinator, thinkingController, thinkingIndicator, multiStreamController,
     onSurfaceLifecycleSync, publishFirstTokenImpulse, publishToolStartImpulse, publishCompleteImpulse, publishCancelImpulse,
     uiRuntime, spriteRuntime, healthPillController: null,
     retryBackendStart,
@@ -521,7 +523,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton,
     metricList, sessionActionButton, newChatButton,
     chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite,
-    heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack,
+    heroTitle, heroSubtitle, heroRuntimeHint, heroStack,
     logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList,
     stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
     jumpToTopButton, jumpToBottomButton, composerModelSelectShell, composerEffortSelectShell,
@@ -677,14 +679,14 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     handleWorkspaceShortcut, hydrateCachedLazyShellState, initSetupControllerSafe, isSendPreflightPending,
     lifecycleController, loadSessions, localProfileSettingsMount, logAutoScrollToggle, logLevelFilter, logList,
     logSearchInput, logSourceFilter, mergePreparedAttachments, multiStreamController, navigateToDiagnosticsTrace,
-    newChatButton, openComposerPopover, openIdeHelpOverlaySafe, openIdeTerminalSafe, openSettingsSection,
+    newChatButton, openComposerPopover, openIdeHelpOverlaySafe, openIdeOutsideFilesSafe, openIdeTerminalSafe, openSettingsSection,
     openSetupTileSafe, paneLayoutController, persistRuntimePreferences,
     prepareDroppedAttachments, queueDeferredStartupTask, queueInlineImageAttachment, queueStartupLazyHydration,
     refreshApprovedMemoriesSafe, refreshComposerToolToggles, refreshDefaultChatTimelineBatch4Preference,
     refreshPendingMemoriesSafe, refreshPhasePercentiles, refreshSessionSummariesWithWorkspace, refreshSnapshots, refreshWorkspaceRootState,
     registerRendererCleanup, removeQueuedAttachment, renderAll, renderAttachmentTray, renderComposerState, renderHeader,
-    renderLogs, renderOfflineManagerSafe, renderSessions, renderSettings, resetAttachmentQueue, resetLogsViewState,
-    resetPhasePercentiles, resetSidebarWidth, runIdeTaskTerminalSafe, runStartupAuditAutoSend, scrollLogsToBottom,
+    renderLogs, renderOfflineManagerSafe, refreshOfflineStateSafe, renderSessions, renderSettings, resetAttachmentQueue, resetLogsViewState,
+    resetPhasePercentiles, resetSidebarWidth, runIdeTaskTerminalSafe, runStartupAuditAutoSend, scrollLogsToBottom, scrollMessageIntoView,
     searchInput, sendButton, sessionActionButton, setActiveView, setDropActive, setRovingChatSession,
     setSessionMessages, setSidebarCollapsed, settingsShellController, shellArtifactBridge, shellStatusController,
     showComposerActionError, showSessionActionError, showShellErrorToast, showToastMessage, sidebarResizer,

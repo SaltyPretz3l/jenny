@@ -30,18 +30,19 @@ function probe(config, route, { requestImpl = http.request, timeoutMs = 2_000 } 
 }
 
 // A team host answers no network health check: it is healthy while the
-// readiness marker in its profile names a live process. No request is made.
-async function checkTeam(config, { isProcessAlive } = {}) {
-  if (!isReadyMarkerLive({ userDataPath: config.userDataPath, isProcessAlive })) {
+// readiness marker in its profile names a live process (on Linux, the same start of
+// it: ready-marker.js). No request is made.
+async function checkTeam(config, { isProcessAlive, readStartTime } = {}) {
+  if (!isReadyMarkerLive({ userDataPath: config.userDataPath, isProcessAlive, readStartTime })) {
     throw new Error('host_unhealthy');
   }
 }
 
-async function main(argv = process.argv.slice(2), { requestImpl, isProcessAlive } = {}) {
+async function main(argv = process.argv.slice(2), { requestImpl, isProcessAlive, readStartTime } = {}) {
   const { configPath, route } = parseArgs(argv);
   const config = loadHostConfig(configPath);
   if (config.team) {
-    await checkTeam(config, { isProcessAlive });
+    await checkTeam(config, { isProcessAlive, readStartTime });
     return;
   }
   await probe(config, route, requestImpl ? { requestImpl } : {});

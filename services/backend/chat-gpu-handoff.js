@@ -19,7 +19,7 @@
 // resets the engine's bound-model state and the turn's next call would fail).
 
 const { t } = require('../i18n-main');
-const { probeNvidiaSmiVram } = require('../gpu-vram-probe');
+const { largestGpuDevice: largestDevice, probeNvidiaSmiVram } = require('../gpu-vram-probe');
 const { pendingRuntimeInferenceCount } = require('./backend-runtime-inference');
 const { verifyGpuEvictedForEngine, verifyOllamaGpuEvicted } = require('./exclusive-gpu-preflight');
 const { isProcessAlive, wait } = require('./process-utils');
@@ -56,20 +56,6 @@ class ChatGpuHandoffError extends Error {
     this.reason = String(reason || code);
     this.details = details;
   }
-}
-
-function largestDevice(sample) {
-  if (!sample || sample.available === false) {
-    return null;
-  }
-  const devices = Array.isArray(sample.devices) ? sample.devices : [];
-  const candidates = devices.filter((device) => Number(device?.totalMb) > 0);
-  if (candidates.length === 0) {
-    return Number(sample.totalMb) > 0
-      ? { usedMb: Number(sample.usedMb) || 0, totalMb: Number(sample.totalMb) }
-      : null;
-  }
-  return candidates.reduce((best, device) => (device.totalMb > best.totalMb ? device : best));
 }
 
 function createChatGpuHandoff({

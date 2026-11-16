@@ -20,6 +20,7 @@ from filelock import FileLock, Timeout
 
 from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_OUTSIDE_WORKSPACE
 from sidecar.ai.tools import workspace_mutation_checkpoint as checkpoints
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled
 from sidecar.ai.tools.jenny_state_dir import ensure_jenny_dir_gitignore
 from sidecar.ai.tools.workspace_mutation_journal_contract import (
     MAX_JOURNAL_BYTES,
@@ -284,7 +285,7 @@ class WorkspaceMutationJournalStore:
                 callback()
         if transfer_commit_pin and sealed["state"] == "committed":
             self._transfer_newest_committed_pin(workspace_id, change_set_id)
-        if workspace_root is not None:
+        if workspace_root is not None and not hosted_file_io_enabled():  # E78: none on a host
             self._refresh_receipt_best_effort(Path(workspace_root), sealed)
         return StoreResult(
             ok=True,

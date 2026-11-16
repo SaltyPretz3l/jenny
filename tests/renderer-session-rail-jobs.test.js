@@ -2,7 +2,8 @@
 
 /* Background jobs in the session rail (owner pick 2026-11-01; renderer-session-rail-jobs.js with the model
    and render rows): live job rows with Stop, finished jobs under a folding "N finished" divider whose state
-   persists as the background_tasks_finished disclosure, inline output, and the Session toggle's readout. */
+   persists as the background_tasks_finished disclosure, job rows that open the Background tasks panel (row 138),
+   and the Session toggle's readout. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,7 +40,9 @@ const ITEMS = [
 
 test('model: live jobs first, then a finished divider over the finished ones, with their words', () => {
   const vm = model.buildRailViewModel({ summary: summaryFor('s1', { background_tasks: tasks(ITEMS) }), sessionId: 's1', jt });
-  const rows = vm.sections.find((section) => section.key === 'background_tasks').rows.filter((row) => row.kind !== 'note');
+  const all = vm.sections.find((section) => section.key === 'background_tasks').rows;
+  assert.deepEqual([all.at(-1).kind, all.at(-1).surface, all.at(-1).text], ['action', 'background_tasks', 'All background tasks'], 'the section always ends on All background tasks');
+  const rows = all.filter((row) => row.kind !== 'note' && row.key !== 'all');
   assert.deepEqual(rows.map((row) => row.kind), ['job', 'divider', 'job_done', 'job_done', 'job_done']);
   assert.equal(rows[0].dot.tone, 'active');
   assert.match(rows[0].meta, /^01:1[23]$/);
@@ -58,7 +61,7 @@ test('model: the finished disclosure folds the group (persisted or optimistic) a
   const summary = summaryFor('s1', { background_tasks: tasks(ITEMS) });
   const closed = model.buildRailViewModel({ summary, sessionId: 's1', jt, workspaceView: { disclosures: { background_tasks_finished: false } } });
   const rows = closed.sections.find((section) => section.key === 'background_tasks').rows.filter((row) => row.kind !== 'note');
-  assert.deepEqual(rows.map((row) => row.kind), ['job', 'divider']);
+  assert.deepEqual(rows.map((row) => row.kind), ['job', 'divider', 'action']);
   assert.equal(model.isDisclosureOpen(closed, model.FINISHED_DISCLOSURE), false);
   const reopened = model.buildRailViewModel({ summary, sessionId: 's1', jt, workspaceView: { disclosures: { background_tasks_finished: false } },
     overrides: { background_tasks_finished: true } });
@@ -68,9 +71,9 @@ test('model: the finished disclosure folds the group (persisted or optimistic) a
 
 test('render: job markup carries the controls and never turns a command into markup', () => {
   const html = render.bodyHtml({ rows: [
-    { kind: 'job', key: 'job:aaaaaaaaaaaa', jobId: 'aaaaaaaaaaaa', dot: { tone: 'active', pulse: true }, text: '<img src=x>', title: '<b>', meta: '00:01', startedAtMs: 5, stopLabel: 'Stop', stopAria: 'Stop it', stopTitle: 'Stop' },
+    { kind: 'job', key: 'job:aaaaaaaaaaaa', jobId: 'aaaaaaaaaaaa', dot: { tone: 'active', pulse: true }, text: '<img src=x>', title: '<b>', meta: '00:01', startedAtMs: 5, stopLabel: 'Stop', stopAria: 'Stop it', stopTitle: 'Stop', surface: 'background_tasks', resourceRef: 'job:aaaaaaaaaaaa' },
     { kind: 'divider', key: 'finished', text: '1 finished', open: false },
-    { kind: 'job_done', key: 'job:bbbbbbbbbbbb', jobId: 'bbbbbbbbbbbb', dot: null, text: 'npm test', meta: '00:09', title: 'npm test (Finished)' },
+    { kind: 'job_done', key: 'job:bbbbbbbbbbbb', jobId: 'bbbbbbbbbbbb', dot: null, text: 'npm test', meta: '00:09', title: 'npm test (Finished)', surface: 'background_tasks', resourceRef: 'job:bbbbbbbbbbbb' },
   ] });
   const doc = new JSDOM(`<body>${html}</body>`).window.document;
   assert.equal(doc.querySelector('img'), null);
@@ -79,10 +82,15 @@ test('render: job markup carries the controls and never turns a command into mar
   assert.equal(doc.querySelector('[data-rail-started-at]').textContent, '', 'elapsed text stays out of the markup, so a repaint keeps the row');
   assert.equal(doc.querySelector('.session-rail-divider').getAttribute('data-rail-section'), 'background_tasks_finished');
   assert.equal(doc.querySelector('.session-rail-divider').getAttribute('aria-expanded'), 'false');
-  assert.equal(doc.querySelector('[data-rail-job-output]').getAttribute('data-rail-job-output'), 'bbbbbbbbbbbb');
+  const [live, done] = doc.querySelectorAll('button.session-rail-fact');
+  assert.equal(live.getAttribute('data-rail-surface'), 'background_tasks', 'a live job row is a button into the panel');
+  assert.equal(live.getAttribute('data-rail-resource'), 'job:aaaaaaaaaaaa');
+  assert.equal(done.getAttribute('data-rail-resource'), 'job:bbbbbbbbbbbb');
+  assert.equal(done.getAttribute('data-rail-job-path'), 'bbbbbbbbbbbb');
+  assert.equal(done.hasAttribute('aria-expanded'), false, 'a finished row no longer unfolds');
 });
 
-test('rail: Stop kills, a finished row opens and closes its output, the divider persists its fold', async (t) => {
+test('rail: Stop kills, a job row opens the panel on that job, no inline output, the divider persists its fold', async (t) => {
   const bridge = createBridge({ respond: ({ session_id }, b) => ({ ok: true,
     summary: summaryFor(session_id, { background_tasks: tasks(ITEMS), revision: b.revision }), workspace_view: b.view, coordination_revision: b.revision }) });
   const f = await docked({ bridge });
@@ -99,27 +107,25 @@ test('rail: Stop kills, a finished row opens and closes its output, the divider 
   await flush();
   assert.deepEqual(calls.kill, ['aaaaaaaaaaaa']);
   assert.equal(stop.disabled, true);
+  assert.equal(f.detail.calls.length, 0, 'Stop never opens a detail surface');
 
-  const row = f.section('background_tasks').querySelector('[data-rail-job-output="bbbbbbbbbbbb"]');
+  const live = f.section('background_tasks').querySelector('[data-rail-resource="job:aaaaaaaaaaaa"]');
+  live.click();
+  assert.equal(f.detail.calls.at(-1).surface, 'background_tasks');
+  assert.equal(f.detail.calls.at(-1).opener, live);
+  assert.equal(f.detail.calls.at(-1).resourceRef, 'job:aaaaaaaaaaaa');
+  const row = f.section('background_tasks').querySelector('[data-rail-resource="job:bbbbbbbbbbbb"]');
   row.click();
   await flush();
-  assert.equal(row.getAttribute('aria-expanded'), 'true');
-  assert.equal(f.section('background_tasks').querySelector('.session-rail-job-output pre').textContent, '15947 passed');
-  const opened = [];
-  f.window.addEventListener('ide:open-file-at-line', (event) => opened.push(event.detail.path));
-  f.section('background_tasks').querySelector('[data-rail-job-open]').click();
-  assert.deepEqual(opened, ['G:/w/.jenny/tool-results/x/output.txt']);
-  assert.equal(f.detail.calls.length, 0, 'job controls never open a detail surface');
-  row.click();
-  assert.equal(f.section('background_tasks').querySelector('.session-rail-job-output'), null);
-  row.click();
-  await flush();
-  assert.deepEqual(calls.read, ['bbbbbbbbbbbb'], 'a finished output is read once');
+  assert.equal(f.detail.calls.at(-1).resourceRef, 'job:bbbbbbbbbbbb');
+  assert.equal(f.detail.calls.at(-1).opener, row);
+  assert.equal(f.section('background_tasks').querySelector('.session-rail-job-output'), null, 'the rail never unfolds output');
+  assert.deepEqual(calls.read, [], 'a click reads no output in the rail');
 
   f.head('background_tasks_finished').click();
   await flush();
   assert.deepEqual(bridge.setViewCalls.at(-1).patch, { disclosures: { background_tasks_finished: false } });
-  assert.equal(f.section('background_tasks').querySelectorAll('[data-rail-job-output]').length, 0);
+  assert.equal(f.section('background_tasks').querySelectorAll('[data-rail-job-path]').length, 0);
   assert.equal(f.head('background_tasks_finished').getAttribute('aria-expanded'), 'false');
 });
 
@@ -182,6 +188,7 @@ test('rail: a finished job row offers Reveal and Copy for its workspace-relative
   const menus = [];
   const revealed = [];
   const opened = [];
+  const reads = [];
   f.window.inventoryContextMenu = { show: (options) => menus.push(options) };
   f.window.rendererIdePathMenu = require('../renderer/features/renderer-ide-path-menu.js');
   f.window.jennyWorkspacePathResolve = { getWorkspaceRoot: () => 'g:/W/' }; // same root as the job's, case and slashes aside
@@ -189,11 +196,11 @@ test('rail: a finished job row offers Reveal and Copy for its workspace-relative
     workspaceFs: { revealInFolder: async (payload) => { revealed.push(payload.path); }, openInDefaultApp: async (payload) => { opened.push(payload.path); } },
     backgroundJobs: {
       kill: async () => ({ ok: true }),
-      readOutput: async () => ({ ok: true, text: 'done', fullOutputPath: 'G:\\w\\.jenny\\tool-results\\bbbbbbbbbbbb\\output.txt' }),
+      readOutput: async (jobId) => { reads.push(jobId); return { ok: true, text: 'done', fullOutputPath: 'G:\\w\\.jenny\\tool-results\\bbbbbbbbbbbb\\output.txt' }; },
     },
   };
   if (f.head('background_tasks').getAttribute('aria-expanded') !== 'true') f.head('background_tasks').click();
-  const row = f.section('background_tasks').querySelector('[data-rail-job-output="bbbbbbbbbbbb"]');
+  const row = f.section('background_tasks').querySelector('[data-rail-job-path="bbbbbbbbbbbb"]');
   const fire = (target) => {
     const event = new f.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 34 });
     target.dispatchEvent(event);
@@ -203,8 +210,10 @@ test('rail: a finished job row offers Reveal and Copy for its workspace-relative
   assert.equal(fire(row).defaultPrevented, false, 'before the output is known there is no path to offer');
   assert.equal(menus.length, 0);
 
-  row.click();
+  row.dispatchEvent(new f.window.MouseEvent('mouseover', { bubbles: true }));
+  row.dispatchEvent(new f.window.MouseEvent('mouseover', { bubbles: true }));
   await flush();
+  assert.deepEqual(reads, ['bbbbbbbbbbbb'], 'a hover reads the path once');
   const event = fire(row);
   assert.equal(event.defaultPrevented, true);
   assert.equal(menus.length, 1);
@@ -215,15 +224,11 @@ test('rail: a finished job row offers Reveal and Copy for its workspace-relative
   await menus[0].items.find((item) => item.label === 'Open in Default App').action();
   assert.deepEqual(revealed, ['.jenny/tool-results/bbbbbbbbbbbb/output.txt']);
   assert.deepEqual(opened, ['.jenny/tool-results/bbbbbbbbbbbb/output.txt']);
-
-  fire(f.section('background_tasks').querySelector('[data-rail-job-open]'));
-  assert.equal(menus.length, 2, 'the Open full output button carries the same menu');
   assert.equal(fire(f.section('background_tasks').querySelector('[data-rail-job-stop]')).defaultPrevented, false, 'Stop keeps the default behavior');
 });
 
 test('jobs helper: the path menu only opens for a job captured under the current workspace root and a real job id', async () => {
   const { window } = new JSDOM('<body><div id="tray"></div></body>', { pretendToBeVisual: true });
-  window.inventoryActionButton = actionButton;
   const tray = window.document.getElementById('tray');
   const job = 'abcdef012345';
   const shown = [];
@@ -234,9 +239,9 @@ test('jobs helper: the path menu only opens for a job captured under the current
     pathMenu: { showPathMenu: (options) => { shown.push(options.path); return true; } },
     getBackgroundJobs: () => ({ readOutput: async () => ({ ok: true, ...output }), getState: async () => ({ jobs: [] }) }),
   });
-  tray.innerHTML = `<button data-rail-job-output="${job}" aria-expanded="false">row</button>`;
+  tray.innerHTML = `<button data-rail-job-path="${job}">row</button>`;
   const row = tray.querySelector('button');
-  jobs.handleClick({ target: row, preventDefault() {} });
+  row.focus();
   await flush();
   const fire = () => {
     const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
@@ -258,7 +263,6 @@ test('jobs helper: the path menu only opens for a job captured under the current
 
 test('jobs helper: a job id that is not the tracker\'s 12 hex digits never gets a path menu', async () => {
   const { window } = new JSDOM('<body><div id="tray"></div></body>', { pretendToBeVisual: true });
-  window.inventoryActionButton = actionButton;
   const tray = window.document.getElementById('tray');
   const odd = 'job_-12345678';
   const shown = [];
@@ -267,9 +271,9 @@ test('jobs helper: a job id that is not the tracker\'s 12 hex digits never gets 
     pathMenu: { showPathMenu: (options) => { shown.push(options.path); return true; } },
     getBackgroundJobs: () => ({ readOutput: async () => ({ ok: true, text: 'x', fullOutputPath: `G:\\w\\.jenny\\tool-results\\${odd}\\output.txt` }), getState: async () => ({ jobs: [] }) }),
   });
-  tray.innerHTML = `<button data-rail-job-output="${odd}" aria-expanded="false">row</button>`;
+  tray.innerHTML = `<button data-rail-job-path="${odd}">row</button>`;
   const row = tray.querySelector('button');
-  jobs.handleClick({ target: row, preventDefault() {} });
+  row.focus();
   await flush();
   const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
   row.dispatchEvent(event);

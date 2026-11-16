@@ -60,6 +60,8 @@
     return resolveTerminalPresentationIfTerminal(value)?.phase || '';
   }
 
+  const TERMINAL_IDENTITY_FIELDS = Object.freeze(['terminal_status', 'terminal_subcode', 'error_code', 'retryable', 'category']);
+
   function createTerminalStateUtils(options = {}) {
     const { MESSAGE_STATUS, normalizeId, appendClientLog } = options;
     const normalizeStatus = (value) => String(value || '').trim().toLowerCase();
@@ -136,6 +138,12 @@
             ? { agent_progress_snapshot: terminalMessage.agent_progress_snapshot }
             : {}),
         };
+        // The fields that make a stop or a denial a calm card, not a red one.
+        for (const key of TERMINAL_IDENTITY_FIELDS) {
+          if (terminalMessage[key] !== undefined && terminalMessage[key] !== null && terminalMessage[key] !== '') {
+            guardedMessages[index][key] = terminalMessage[key];
+          }
+        }
       });
       if (staleCount > 0) {
         appendClientLog('WARN', 'stream.terminal_hydration_stale', {

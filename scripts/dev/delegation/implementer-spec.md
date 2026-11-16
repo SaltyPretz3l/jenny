@@ -17,7 +17,7 @@ Fields:
 
 Rules to pick from for `{{SLICE_RULES}}`:
 
-- Renderer: build inventory primitives before views; new raw HTML primitives belong in `renderer/inventory/`. A new renderer script is counted by `tests/renderer-startup-script-budget.test.js`. User-visible strings go through the i18n catalogs and the string ledger.
+- Renderer: build inventory primitives before views; new raw HTML primitives belong in `renderer/inventory/`. A new renderer script is counted by `tests/renderer-startup-script-budget.test.js`. User-visible strings go through the i18n catalogs and the string ledger: add the key with its English default, run `node scripts/i18n/ledger.js scan` and `node scripts/i18n/build-catalogs.js`, and do not edit any other language's `locales/<tag>.json` (translations are one pass before a public release).
 - CSS: use the tokens in `styles/foundation.css`; no new hard-coded colours or durations.
 - Sidecar: nothing under `sidecar/ai/` imports Electron code; wire constants and allowed methods live in `sidecar/protocol.py`; error codes are `CMP-<DOMAIN>-<NNNN>`.
 - Filesystem and tools: validate real paths for workspace containment, symlinks and junctions included; treat external metadata and tool output as untrusted.
@@ -66,7 +66,7 @@ Run the red test before you change production code and keep its failing output f
 - Processes: stop a process only by the PID of one you started. Never kill by image name (`taskkill /IM`, `Stop-Process -Name`, `pkill`). Leave no background process running when you finish.
 - Do not launch the app, a GUI smoke or anything that opens a window. Do not run the full gates (`scripts/run_ci.py`, `make check-all`, `npm run check:all`, `npm run smoke:gui`).
 - Node tests run through the safe wrapper, `node scripts/run-node-tests-safe.js <test files>`, never raw `node --test`. Run one pytest at a time and give it its own `--basetemp` directory with `-p no:cacheprovider`.
-- Tests exercise behaviour. Do not write a test that reads production source and matches it with a regular expression. A new source file gets a test that the runner discovers.
+- Tests exercise behaviour. Do not write a test that reads production source and matches it with a regular expression. A new source file gets a test that the runner discovers. New cases for a surface that already has a test file go into that file; create a new test file only for a new surface, a different lane, or when the existing file would pass 600 lines, and then state the reason in a `// new-test-file: <reason>` comment near its top.
 - Ratchets and size ceilings only go down. Never raise a baseline or add an exception to make a check pass: split the file, or stop and report.
 - Scripted edits (python, sed, perl) assert that the old text matched exactly once before writing, and keep the file's line endings (LF in this repository). Write a script as a file; a shell heredoc collapses backslashes. Pass non-ASCII text through a file, not a command line.
 - Secrets: never read another tool's credentials, and never put an API key in an environment variable or a plaintext file.

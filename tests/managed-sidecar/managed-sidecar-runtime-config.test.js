@@ -325,10 +325,10 @@ test('buildManagedSidecarConfig forwards Phase 10 resource discipline caps', () 
   assert.equal(config.max_cloud_sub_agent_concurrency, 2);
   assert.equal(config.max_web_tool_calls_per_turn, 3);
   assert.equal(config.max_tool_calls_per_session, 80);
-  assert.equal(config.max_loop_wall_seconds, 3_600);
+  assert.equal(config.max_loop_wall_seconds, 7_200);
 });
 
-test('buildManagedSidecarConfig forwards a 7200s working-time limit and rejects above it', () => {
+test('buildManagedSidecarConfig forwards a 28800s working-time limit and rejects above it', () => {
   const build = (maxLoopWallSeconds) => buildManagedSidecarConfig(makeFakeService({
     engineType: 'ollama',
     model: 'qwen3.5:9b',
@@ -337,9 +337,9 @@ test('buildManagedSidecarConfig forwards a 7200s working-time limit and rejects 
 
   // Out-of-range values fall back to the schema default (not clamped),
   // matching the sidecar parser.
-  assert.equal(build(7_200), 7_200);
-  assert.equal(build(1_800), 1_800, 'a stored value equal to the old default is preserved');
-  assert.equal(build(7_230), 3_600);
+  assert.equal(build(28_800), 28_800);
+  assert.equal(build(3_600), 3_600, 'a stored value equal to the old default is preserved');
+  assert.equal(build(28_830), 7_200);
 });
 
 test('buildManagedSidecarConfig defaults active sub-agent capacity to one', () => {

@@ -53,6 +53,8 @@
    * @param {{ appearance?: function }} [deps.resetActions] - the section-reset
    *   callbacks (each returns a value or a Promise). Confirm invokes
    *   `resetActions[key]()` verbatim.
+   * @param {object} [deps.confirmLabels] - the armed question per section key
+   *   (defaults to "Reset all?").
    * @param {function} [deps.onAfterReset] - called after a settled
    *   section-reset action.
    * @param {function} [deps.log]
@@ -68,6 +70,7 @@
     var onAfterReset = typeof d.onAfterReset === 'function' ? d.onAfterReset : function noop() {};
     var log = typeof d.log === 'function' ? d.log : noopLog;
     var resetActions = d.resetActions && typeof d.resetActions === 'object' ? d.resetActions : {};
+    var confirmLabels = d.confirmLabels && typeof d.confirmLabels === 'object' ? d.confirmLabels : {};
     var armTimeoutMs = typeof d.armTimeoutMs === 'number' && d.armTimeoutMs >= 0 ? d.armTimeoutMs : DEFAULT_ARM_TIMEOUT_MS;
     var setTimeoutFn = typeof d.setTimeoutFn === 'function' ? d.setTimeoutFn : setTimeout;
     var clearTimeoutFn = typeof d.clearTimeoutFn === 'function' ? d.clearTimeoutFn : clearTimeout;
@@ -89,6 +92,9 @@
       if (!entry.armed) return;
       entry.armed = false;
       clearArmTimer(entry);
+      // Focus inside the pair would fall to the page when the pair is removed; it goes back to the trigger.
+      var active = documentRef && documentRef.activeElement;
+      var hadFocus = !!active && entry.confirmNodes.some(function (node) { return node === active || node.contains(active); });
       if (entry._disposeConfirmButtons) {
         entry._disposeConfirmButtons();
         entry._disposeConfirmButtons = null;
@@ -102,6 +108,13 @@
       entry.container.classList.remove('settings-reset-confirm');
       entry.container.removeAttribute('data-armed');
       entry.trigger.hidden = false;
+      if (!hadFocus) return;
+      // A confirmed reset leaves the trigger disabled (nothing left to reset): the page heading takes focus.
+      var card = typeof entry.trigger.closest === 'function' ? entry.trigger.closest('.settings-card') : null;
+      var back = entry.trigger.disabled ? card && card.querySelector('h3') : entry.trigger;
+      if (!back || typeof back.focus !== 'function') return;
+      if (back !== entry.trigger && !back.hasAttribute('tabindex')) back.setAttribute('tabindex', '-1');
+      back.focus();
     }
 
     function clearFailure(entry) {
@@ -159,11 +172,12 @@
         confirmReset(entry);
         return;
       }
+      var triggerHadFocus = !!documentRef && documentRef.activeElement === entry.trigger;
       entry.armed = true;
       entry.container.classList.add('settings-reset-confirm');
       entry.container.setAttribute('data-armed', 'true');
       entry.trigger.hidden = true;
-      var html = '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
+      var html = '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(confirmLabels[entry.key] || jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
         + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
         + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' });
       entry.confirmNodes = childElementsFromHtml(documentRef, html);
@@ -172,12 +186,21 @@
       var cancelBtn = entry.container.querySelector('[data-action="cancel"]');
       var onConfirm = function () { confirmReset(entry); };
       var onCancel = function () { if (!entry.inFlight) disarm(entry); };
+      var onKeydown = function (event) {
+        if (!event || event.key !== 'Escape' || entry.inFlight) return;
+        event.stopPropagation();
+        disarm(entry);
+      };
       if (confirmBtn) confirmBtn.addEventListener('click', onConfirm);
       if (cancelBtn) cancelBtn.addEventListener('click', onCancel);
+      entry.container.addEventListener('keydown', onKeydown);
       entry._disposeConfirmButtons = function () {
         if (confirmBtn) confirmBtn.removeEventListener('click', onConfirm);
         if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
+        entry.container.removeEventListener('keydown', onKeydown);
       };
+      // The trigger is hidden while armed. Its focus moves to Cancel, the safe answer.
+      if (triggerHadFocus && cancelBtn && typeof cancelBtn.focus === 'function') cancelBtn.focus();
       entry.timer = setTimeoutFn(function () { disarm(entry); }, armTimeoutMs);
     }
 

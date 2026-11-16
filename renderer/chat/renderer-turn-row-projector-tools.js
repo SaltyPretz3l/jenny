@@ -145,6 +145,9 @@
             };
           });
         }
+        if (typeof resultMetadata.reply === 'string' && resultMetadata.reply.trim()) {
+          payload.user_questions_reply = resultMetadata.reply.trim().slice(0, 2000);
+        }
       }
       const resolutionStatus = payload.approval_resolutions.length
         ? payload.approval_resolutions[payload.approval_resolutions.length - 1].status

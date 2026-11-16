@@ -88,8 +88,8 @@ _MIN_OUTPUT_RESERVATION = 1_024
 # Most of a window that budgeting holds back for the answer. A model's advertised
 # answer + thinking allowance (Qwen3.8: 32k + 32k) is generation headroom, not
 # prompt headroom: engines shrink the request's ``max_tokens`` to the room left,
-# so reserving all of it made a 262k window compact at ~122k. This floor matches
-# Claude Code's ~20k summary-sized buffer.
+# so reserving all of it made a 262k window compact at ~122k. This floor is a
+# ~20k summary-sized buffer.
 _ANSWER_RESERVATION_FLOOR = 20_480
 
 # Chat templates wrap each schema in framing text the JSON size does not show.

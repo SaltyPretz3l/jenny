@@ -48,7 +48,9 @@
     // Pins the target on the Preview stage, which owns reading/rendering
     // (incl. its bounded missing/binary/too-large states).
     function openPreview(sourcePath) {
-      const normalized = ideStateUtils.normalizeIdeRelativePath?.(sourcePath) || '';
+      // An outside-Workspace key (row 137) is not a relative path: it passes through unchanged.
+      const outside = typeof sourcePath === 'string' && sourcePath.startsWith('outside://');
+      const normalized = outside ? sourcePath : ideStateUtils.normalizeIdeRelativePath?.(sourcePath) || '';
       if (!normalized || !isPreviewablePath(normalized)) {
         return false;
       }

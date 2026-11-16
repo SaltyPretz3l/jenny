@@ -190,7 +190,6 @@ test('visible-row plan groups, sorts, counts reminders, and marks only ended tim
   assert.equal(plan.days[3].rows[0].all_day, true);
   assert.equal(plan.days[0].rows[0].isPast, true);
   assert.equal(plan.days[1].rows[0].isPast, false);
-  assert.equal(plan.remaining, 0);
   assert.equal(plan.tail, 'Sat · nothing scheduled');
   assert.equal(plan.empty, false);
   assert.equal(plan.firstDayKey, '2026-09-07');
@@ -206,11 +205,13 @@ test('row cap stops at twelve, includes omitted results, and suppresses the quie
   }));
   const calendar = demoCalendar({ instances, instance_count: 16, omitted_count: 2 });
   const plan = calendarBlock.planVisibleRows(calendar, NOW);
-  assert.equal(plan.days.reduce((count, day) => count + day.rows.length, 0), 12);
-  assert.equal(plan.remaining, 4);
+  assert.equal(plan.days.reduce((count, day) => count + day.rows.filter((row) => !row.hidden).length, 0), 12);
+  assert.equal(plan.hiddenCount, 2);
   assert.equal(plan.tail, '');
   const html = renderCalendar(calendar);
-  assert.match(html, /<span class="cal-chat__more">4 more<\/span>/);
+  assert.match(html, /class="cal-chat__more-toggle"[^>]*>Show 2 more<\/button>/);
+  assert.match(html, /<span class="cal-chat__omitted" data-cal-more-row hidden>2 more in Home<\/span>/);
+  assert.doesNotMatch(html, /cal-chat__more"/);
   assert.doesNotMatch(html, /nothing scheduled/);
 });
 
@@ -231,7 +232,7 @@ test('tail and empty-range planning covers one day, multiple days, and no rows',
   });
   const empty = calendarBlock.planVisibleRows(emptyCalendar, NOW);
   assert.equal(empty.empty, true);
-  assert.equal(empty.tail, 'Tue · nothing scheduled');
+  assert.equal(empty.tail, 'Mon–Tue · nothing scheduled', 'today is inside the empty span');
   const html = renderCalendar(emptyCalendar);
   assert.match(html, /No events Sep 7–8\./);
   assert.match(html, /data-cal-open-day="2026-09-07"/);
@@ -246,14 +247,14 @@ test('calendar markup renders day grammar, statuses, overlap detail, and safe si
   assert.match(html, /cal-chat__row--past/);
   assert.match(html, /cal-chat__row--all-day/);
   assert.match(html, /cal-chat__row--feed/);
-  assert.match(html, /title="Subscribed feed event">feed/);
-  assert.match(html, /title="Approximate time \(unrecognized feed time zone\)">~tz/);
-  assert.match(html, /title="Recurrence only partially supported">↻/);
+  assert.match(html, /title="Subscribed feed event">subscribed/);
+  assert.match(html, /title="Approximate time \(unrecognized feed time zone\)">approx\. time/);
+  assert.match(html, /title="Recurrence only partially supported">repeats/);
   assert.match(html, /cal-chat__row--reminder/);
   assert.match(html, /title="Reminder fires automatically while Jenny is running.">reminder/);
-  assert.match(html, /title="Added by jenny">jenny/);
-  assert.match(html, /<span class="cal-chat__new">new<\/span>/);
-  assert.match(html, /<span class="cal-chat__new">updated<\/span>/);
+  assert.match(html, /<span class="cal-chat__new">new<\/span><span class="cal-chat__by">by Jenny<\/span>/);
+  assert.match(html, /<span class="cal-chat__new">updated<\/span><span class="cal-chat__by">by Jenny<\/span>/);
+  assert.doesNotMatch(html, /cal-chat__jenny/);
   assert.match(html, /overlaps Roadmap \(9 AM\) \+1/);
   assert.match(html, /data-cal-undo-journal="journal-budget"/);
   assert.match(html, /Undo jenny&#39;s change to Budget review/);
@@ -289,8 +290,7 @@ test('event receipts cover timed, all-day, delete, category, jenny, and undo sta
   const created = renderReceipt(receipt());
   assert.match(created, /data-cal-receipt-op="create"/);
   assert.match(created, /Wed, Sep 9 · 3 PM–4 PM/);
-  assert.match(created, />meeting<\/span>/);
-  assert.match(created, /title="Added by jenny">jenny/);
+  assert.doesNotMatch(created, /cal-chat__badge|cal-chat__jenny|cal-chat__meta/);
   assert.match(created, /data-cal-undo-journal="journal-new"/);
 
   const allDay = renderReceipt(receipt({ start: '2026-09-10T00:00', end: '2026-09-11T00:00', all_day: true }));
@@ -298,7 +298,7 @@ test('event receipts cover timed, all-day, delete, category, jenny, and undo sta
 
   const deleted = renderReceipt(receipt({ op: 'delete' }));
   assert.match(deleted, /cal-chat__row--deleted/);
-  assert.match(deleted, />deleted<\/span>/);
+  assert.doesNotMatch(deleted, /cal-chat__badge/);
 
   const notJournaled = renderReceipt(receipt({ journaled: false }));
   assert.doesNotMatch(notJournaled, /data-cal-undo-journal/);
@@ -328,8 +328,7 @@ test('reminder receipts format once and daily schedules without event duration g
     kind: 'reminder', id: 'reminder-once', title: 'Send notes', schedule_type: 'once_at', when: '2026-09-08T09:00', category: '',
   }));
   assert.match(once, /Tue, Sep 8 · 9 AM/);
-  assert.match(once, /title="Reminder fires automatically while Jenny is running.">reminder/);
-  assert.match(once, /aria-label="Added reminder: Send notes, Tue, Sep 8 · 9 AM"/);
+  assert.match(once, /aria-label="Reminder set: Send notes, Tue, Sep 8 · 9 AM"/);
 
   const daily = renderReceipt(receipt({
     kind: 'reminder', id: 'reminder-daily', title: 'Stretch', schedule_type: 'daily_at', when: '09:30', category: '',
@@ -382,4 +381,178 @@ test('every rendered calendar and receipt control carries a title attribute', ()
     assert.ok(controls.length > 0);
     assert.ok(controls.every((control) => control.hasAttribute('title')));
   }
+});
+
+const NOW_LATE = new Date(2026, 10, 14, 13, 5);
+
+function lateInstance(title, day, hour, overrides = {}) {
+  const dd = String(day).padStart(2, '0');
+  const hh = String(hour).padStart(2, '0');
+  return instance({
+    instance_id: `${title}-${day}-${hour}`, event_id: `${title}-${day}-${hour}`, title,
+    start: `2026-11-${dd}T${hh}:00`, end: `2026-11-${dd}T${hh}:30`, ...overrides,
+  });
+}
+
+function lateCalendar(instances, overrides = {}) {
+  return demoCalendar({
+    range_start: '2026-11-14T00:00', range_end: '2026-11-21T00:00', generated_at: '2026-11-14T13:00',
+    instance_count: instances.length, omitted_count: 0, instances, ...overrides,
+  });
+}
+
+function renderLate(calendar, overrides = {}) {
+  return JSDOM.fragment(renderCalendar(calendar, { now: NOW_LATE, ...overrides }));
+}
+
+function visibleWraps(fragment) {
+  return [...fragment.querySelectorAll('.cal-chat__row-wrap')].filter((wrap) => !wrap.hidden);
+}
+
+test('a range that is over renders as a snapshot with an as-of line and no live claims', () => {
+  const calendar = lateCalendar([
+    lateInstance('Dentist', 3, 9), lateInstance('Planning', 5, 10), lateInstance('Dinner', 7, 19), lateInstance('Recital', 8, 10),
+  ], { range_start: '2026-11-02T00:00', range_end: '2026-11-09T00:00', generated_at: '2026-11-02T08:10' });
+  const html = renderCalendar(calendar, { now: NOW_LATE });
+  for (const title of ['Dentist', 'Planning', 'Dinner', 'Recital']) assert.match(html, new RegExp(title));
+  assert.doesNotMatch(html, /Earlier|nothing scheduled|cal-chat__row--past|Today ·|Tomorrow ·/);
+  const fragment = JSDOM.fragment(html);
+  assert.equal(fragment.querySelector('.cal-chat__asof').textContent, 'Nov 2–8 · as of Mon, Nov 2');
+  assert.equal(visibleWraps(fragment).length, 4);
+  assert.equal(fragment.querySelector('[data-cal-more-toggle]'), null);
+  const plan = calendarBlock.planVisibleRows(calendar, NOW_LATE);
+  assert.equal(plan.earlierCount, 0);
+  assert.equal(plan.tail, '');
+
+  const noStamp = JSDOM.fragment(renderCalendar({ ...calendar, generated_at: '' }, { now: NOW_LATE }));
+  assert.equal(noStamp.querySelector('.cal-chat__asof').textContent, 'Nov 2–8');
+  assert.equal(renderLate(lateCalendar([lateInstance('Standup', 14, 14)])).querySelector('.cal-chat__asof'), null);
+});
+
+test('the empty-tail claim starts at today in a live range with no rendered day', () => {
+  const plan = calendarBlock.planVisibleRows(lateCalendar([lateInstance('Old', 12, 10)], {
+    range_start: '2026-11-12T00:00', range_end: '2026-11-17T00:00',
+  }), NOW_LATE);
+  assert.equal(plan.earlierCount, 1);
+  assert.equal(plan.tail, 'Sat–Mon · nothing scheduled');
+});
+
+test('day counts come from every held row and the twelve-row cap hides the rest in place', () => {
+  const layout = [[14, 3], [15, 3], [16, 3], [17, 2], [18, 2], [19, 3]];
+  const instances = layout.flatMap(([day, count]) => Array.from({ length: count }, (_, i) => lateInstance(`E${day}-${i}`, day, 14 + i)));
+  const calendar = lateCalendar(instances);
+  const collapsed = renderLate(calendar);
+  assert.equal(visibleWraps(collapsed).length, 12);
+  const headings = [...collapsed.querySelectorAll('.cal-chat__day')];
+  const cutDay = headings.find((day) => day.querySelector('.cal-chat__day-label').textContent === 'Wed, Nov 18');
+  assert.equal(cutDay.querySelector('.cal-chat__day-count').textContent, '2 events');
+  assert.equal(cutDay.hidden, false);
+  const lastDay = headings.find((day) => day.querySelector('.cal-chat__day-label').textContent === 'Thu, Nov 19');
+  assert.equal(lastDay.hidden, true);
+  assert.equal(lastDay.hasAttribute('data-cal-more-row'), true);
+  const toggle = collapsed.querySelector('[data-cal-more-toggle]');
+  assert.equal(toggle.textContent, 'Show 4 more');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.dataset.labelMore, 'Show 4 more');
+  assert.equal(toggle.dataset.labelLess, 'Show less');
+  const block = collapsed.querySelector('.cal-chat');
+  assert.equal(toggle.getAttribute('aria-controls'), block.id);
+  assert.match(block.id, /^[A-Za-z0-9_-]+$/);
+  assert.equal(block.dataset.calBlockKey, '2026-11-14T00:00|2026-11-21T00:00|2026-11-14T13:00');
+
+  const keys = [];
+  const expanded = renderLate(calendar, { isExpanded: (key) => { keys.push(key); return true; } });
+  assert.deepEqual(keys, ['2026-11-14T00:00|2026-11-21T00:00|2026-11-14T13:00']);
+  assert.equal([...expanded.querySelectorAll('.cal-chat__row-wrap, .cal-chat__day')].some((node) => node.hidden), false);
+  const openToggle = expanded.querySelector('[data-cal-more-toggle]');
+  assert.equal(openToggle.textContent, 'Show less');
+  assert.equal(openToggle.getAttribute('aria-expanded'), 'true');
+
+  const tailOf = (root) => [...root.querySelectorAll('.cal-chat__quiet')].find((node) => /nothing scheduled/.test(node.textContent));
+  assert.equal(tailOf(collapsed).hidden, true, 'the empty-days tail waits behind the hidden Thursday');
+  assert.equal(tailOf(expanded).hidden, false);
+
+  const throwing = renderLate(calendar, { isExpanded: () => { throw new Error('boom'); } });
+  assert.equal(visibleWraps(throwing).length, 12);
+});
+
+test('earlier rows of a live range sit hidden above today and swap with the Earlier line', () => {
+  const calendar = lateCalendar([lateInstance('Old A', 12, 10), lateInstance('Old B', 13, 10), lateInstance('Today', 14, 15)], {
+    range_start: '2026-11-12T00:00', range_end: '2026-11-16T00:00',
+  });
+  const collapsed = renderLate(calendar);
+  const line = collapsed.querySelector('[data-cal-earlier-line]');
+  assert.equal(line.textContent, 'Earlier · 2 events');
+  assert.equal(line.hidden, false);
+  assert.equal(collapsed.querySelectorAll('.cal-chat__row-wrap[hidden][data-cal-more-row]').length, 2);
+  assert.equal(collapsed.querySelectorAll('.cal-chat__day[hidden][data-cal-more-row]').length, 2);
+  assert.equal(collapsed.querySelector('[data-cal-more-toggle]').textContent, 'Show 2 more');
+  assert.equal(collapsed.querySelectorAll('.cal-chat__row--past').length, 2);
+  assert.ok(collapsed.querySelector('.cal-chat__day-label').textContent.startsWith('Thu, Nov 12'), 'earlier days come first');
+
+  const expanded = renderLate(calendar, { isExpanded: () => true });
+  assert.equal(expanded.querySelector('[data-cal-earlier-line]').hidden, true);
+  assert.equal(visibleWraps(expanded).length, 3);
+  assert.equal(expanded.querySelector('[data-cal-more-toggle]').textContent, 'Show less');
+});
+
+test('omitted results read as a quiet Home count that opens with the rest', () => {
+  const held = [lateInstance('Old A', 12, 10), lateInstance('Today', 14, 15)];
+  const base = { range_start: '2026-11-12T00:00', range_end: '2026-11-16T00:00', omitted_count: 3 };
+  const omitted = renderLate(lateCalendar(held, base)).querySelector('.cal-chat__omitted');
+  assert.equal(omitted.textContent, '3 more in Home');
+  assert.equal(omitted.hidden, true);
+  assert.equal(omitted.hasAttribute('data-cal-more-row'), true);
+  assert.equal(renderLate(lateCalendar(held, base), { isExpanded: () => true }).querySelector('.cal-chat__omitted').hidden, false);
+  assert.equal(renderLate(lateCalendar(held, { ...base, omitted_count: 1 })).querySelector('.cal-chat__omitted').textContent, '1 more in Home');
+
+  const nothingHidden = renderLate(lateCalendar([lateInstance('Today', 14, 15)], { omitted_count: 3 }));
+  assert.equal(nothingHidden.querySelector('[data-cal-more-toggle]'), null);
+  assert.equal(nothingHidden.querySelector('.cal-chat__omitted').hidden, false, 'no toggle can reveal it, so it stays visible');
+});
+
+test('assistant rows read as plain by-Jenny text next to the new or updated word', () => {
+  const fragment = renderLate(lateCalendar([
+    lateInstance('Fresh', 14, 15, { source_kind: 'assistant', recent: 'created' }),
+    lateInstance('Quiet', 14, 16, { source_kind: 'assistant' }),
+    lateInstance('Mine', 14, 17),
+  ]));
+  const metas = [...fragment.querySelectorAll('.cal-chat__meta')];
+  assert.deepEqual([...metas[0].children].map((node) => `${node.className}:${node.textContent}`).slice(-2), ['cal-chat__new:new', 'cal-chat__by:by Jenny']);
+  assert.equal(metas[1].querySelector('.cal-chat__new'), null);
+  assert.equal(metas[1].querySelector('.cal-chat__by').textContent, 'by Jenny');
+  assert.equal(metas[2].querySelector('.cal-chat__by'), null);
+  assert.equal(fragment.querySelector('.cal-chat__jenny'), null);
+  assert.match(fragment.querySelectorAll('.cal-chat__row')[0].getAttribute('aria-label'), /, new$/);
+});
+
+test('receipts read verb first on one line with no pill, category word, or deleted badge', () => {
+  const created = JSDOM.fragment(renderReceipt(receipt())).querySelector('.cal-chat__row');
+  assert.deepEqual([...created.children].map((node) => node.className), [
+    'cal-chat__dot', 'cal-chat__verb', 'cal-chat__title', 'cal-chat__when',
+  ]);
+  assert.equal(created.querySelector('.cal-chat__verb').textContent, 'Added');
+  assert.equal(created.getAttribute('aria-label'), 'Added: Design review, Wed, Sep 9 · 3 PM–4 PM');
+  assert.equal(created.getAttribute('title'), 'Design review · meeting · added by Jenny');
+  assert.equal(JSDOM.fragment(renderReceipt(receipt({ op: 'update' }))).querySelector('.cal-chat__verb').textContent, 'Updated');
+
+  const reminder = (extra) => JSDOM.fragment(renderReceipt(receipt({
+    kind: 'reminder', id: 'r1', title: 'Stretch', schedule_type: 'daily_at', when: '09:30', category: '', ...extra,
+  }))).querySelector('.cal-chat__row');
+  const daily = reminder({});
+  assert.equal(daily.querySelector('.cal-chat__verb').textContent, 'Reminder set');
+  assert.equal(daily.getAttribute('aria-label'), 'Reminder set: Stretch, Daily · 9:30 AM');
+  assert.equal(daily.getAttribute('title'), 'Stretch · added by Jenny');
+  assert.equal(reminder({ op: 'update' }).querySelector('.cal-chat__verb').textContent, 'Reminder updated');
+  assert.equal(reminder({ op: 'delete' }).querySelector('.cal-chat__verb').textContent, 'Reminder deleted');
+
+  const deleted = JSDOM.fragment(renderReceipt(receipt({ op: 'delete' }))).querySelector('.cal-chat__row');
+  assert.ok(deleted.classList.contains('cal-chat__row--deleted'));
+  assert.equal(deleted.querySelector('.cal-chat__verb').textContent, 'Deleted');
+  assert.equal(deleted.querySelector('.cal-chat__badge'), null);
+
+  const whenless = reminder({ schedule_type: 'once_at', when: 'junk' });
+  assert.equal(whenless.querySelector('.cal-chat__when'), null);
+  assert.match(whenless.getAttribute('aria-label'), /^Reminder set: /);
+  assert.equal(JSDOM.fragment(renderReceipt(receipt())).querySelectorAll('[data-cal-undo-journal]').length, 1);
 });

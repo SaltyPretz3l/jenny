@@ -22,6 +22,7 @@ const SESSION_INPUT_KEYS = Object.freeze({
   session_status: 'session_id',
   session_transcript: 'session_id',
   session_stop: 'session_id',
+  session_prioritize: 'session_id',
   session_message: 'destination_session_id',
 });
 

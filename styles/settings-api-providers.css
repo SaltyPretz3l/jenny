@@ -6,11 +6,10 @@
  * enable list and the pin row live here. Tokens only, no literal colors.
  */
 
-/* The editor opens in place under its provider row. */
+/* The custom-endpoint form inside the Add provider drawer. */
 .api-providers-editor {
   margin: 0 0 var(--space-3);
-  padding: var(--space-2) 0 var(--space-4) var(--space-6);
-  border-inline-start: 2px solid var(--border-subtle);
+  padding: var(--space-2) 0 var(--space-4);
 }
 
 .api-providers-editor .settings-field {
@@ -78,8 +77,23 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* In the drawer the count and the add field do not fit on one line: the count
+   takes its own line and the field fills the next, rather than squeezing. */
 .api-providers-models-foot {
+  flex-wrap: wrap;
   border-top: 1px solid var(--border-subtle);
+}
+
+.api-providers-models-foot > .api-providers-grow {
+  flex: 1 1 14em;
+}
+
+.api-providers-models-foot > .api-providers-field {
+  flex: 1 1 160px;
+}
+
+.api-providers-models-foot .api-providers-field--short .inv-text-field-control {
+  width: 100%;
 }
 
 .api-providers-models-head .api-providers-field {
@@ -100,9 +114,11 @@
   overflow: auto;
 }
 
+/* Two lines per model: checkbox and ID, then what it can do under the ID. One
+   unwrapped line was ~550px and pushed the drawer wider than its panel. */
 .api-providers-model {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-1) var(--space-4);
   align-items: center;
   padding: var(--space-2) var(--space-4);
@@ -128,9 +144,11 @@
 }
 
 .api-providers-model-meta {
+  grid-column: 2;
+  min-width: 0;
   font-size: var(--font-size-caption);
   color: var(--text-muted);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .api-providers-source {

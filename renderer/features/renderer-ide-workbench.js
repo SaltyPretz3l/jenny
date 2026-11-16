@@ -77,6 +77,8 @@
       d.commitLayout(next);
       return true;
     }
+    // A second workbench in the same document (the Board's) prefixes its element ids.
+    const idPrefix = typeof d.idPrefix === 'string' ? d.idPrefix : '';
     function rootDoc() {
       const rootEl = typeof d.getRoot === 'function' ? d.getRoot() : null;
       return (rootEl && rootEl.ownerDocument) || globalRef.document || null;
@@ -92,10 +94,10 @@
       if (!doc) return null;
       host = doc.createElement('div');
       host.className = 'wb-view-host';
-      host.id = 'wbView-' + key;
+      host.id = idPrefix + 'wbView-' + key;
       host.setAttribute('data-wb-view', key);
       host.setAttribute('role', 'tabpanel');
-      host.setAttribute('aria-labelledby', 'wbTab-' + key);
+      host.setAttribute('aria-labelledby', idPrefix + 'wbTab-' + key);
       host.setAttribute('tabindex', '-1');
       host.hidden = true;
       hosts.set(key, host);
@@ -187,6 +189,7 @@
         html = chrome.headerMarkup({
           actionButton: actionButton,
           jt: jt,
+          idPrefix: idPrefix,
           // Each tablist is named for its stack's first view ("Files views").
           tablistLabel: jt('ide.workbench.stripLabel', '{name} views', { name: viewLabel(node.views[0]) }),
           tabs: node.views.map(function (id) {

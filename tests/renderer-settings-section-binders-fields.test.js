@@ -35,7 +35,7 @@ function harness(sectionId, switches, { state, callbacks }) {
     },
     getLazySectionDom: (id) => {
       if (id === 'skills') return { skillsSettingsSection: host };
-      if (id === 'offline') return { offlineLocalOnlyList: host, offlineModelActions: null };
+      if (id === 'offline') return { offlineLocalOnlyList: host };
       return {};
     },
   });

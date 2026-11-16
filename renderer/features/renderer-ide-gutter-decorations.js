@@ -34,6 +34,8 @@
   // Bound HEAD-cache growth over a long session (FIFO eviction); entries are
   // also dropped wholesale on every git refresh (refreshActive).
   const MAX_HEAD_CACHE = 64;
+  // Outside-Workspace documents (row 137) are not in any repo: no HEAD read, no gutter.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
 
   // Gutter decoration classes (styles/ide-gutter.css). The palette state vars are
   // shared with the tree git decorations so the strip re-themes automatically.
@@ -329,7 +331,7 @@
       if (fence.isDisposed() || !editorHost || !norm || !gitClient || editorHost.getActivePath() !== norm) {
         return;
       }
-      if (typeof editorHost.getDocumentKind === 'function' && editorHost.getDocumentKind(norm) !== 'file') {
+      if (isOutsideKey(norm) || (typeof editorHost.getDocumentKind === 'function' && editorHost.getDocumentKind(norm) !== 'file')) {
         clearGutter(norm);
         return;
       }

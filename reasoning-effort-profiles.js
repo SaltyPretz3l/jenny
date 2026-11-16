@@ -134,9 +134,11 @@
   function buildReasoningEffortOptions(modelId, capabilities) {
     const profile = getReasoningEffortProfile(modelId, capabilities);
     const values = [AUTOMATIC_REASONING_EFFORT, ...(profile?.efforts || [])];
+    // A model that cannot turn thinking off runs "none" at its lowest effort.
+    const offLabel = capabilities?.reasoning_always_on === true ? REASONING_EFFORT_LABELS.minimal : '';
     return values.map((value) => ({
       value,
-      label: REASONING_EFFORT_LABELS[value] || value,
+      label: (value === 'none' && offLabel) || REASONING_EFFORT_LABELS[value] || value,
     }));
   }
 

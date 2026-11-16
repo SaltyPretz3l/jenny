@@ -49,6 +49,9 @@
     return (definition && definition.label) || sectionId;
   }
 
+  // Rows that exist only while a feature flag is on: the index offers them only then.
+  var FLAGGED_FIELDS = { appearanceTeamDensitySelect: 'team' };
+
   // The lowercase text a query is matched against, built once per entry.
   function withHaystack(entry) {
     var keywords = Array.isArray(entry.keywords) ? entry.keywords.join(' ') : '';
@@ -77,6 +80,7 @@
         rawSectionId: section.id,
         sectionLabel: sectionLabel(hostId),
         keywords: Array.isArray(section.keywords) ? section.keywords : [],
+        featureFlag: section.featureFlag || '',
       }));
     }
     var fields = typeof copy.listSettingsSearchEntries === 'function' ? copy.listSettingsSearchEntries()
@@ -93,6 +97,7 @@
         rawSectionId: field.sectionId,
         sectionLabel: sectionLabel(fieldHostId),
         keywords: field.keywords || [],
+        featureFlag: Object.hasOwn(FLAGGED_FIELDS, field.id) ? FLAGGED_FIELDS[field.id] : '',
       }));
     }
     return entries;
@@ -106,11 +111,13 @@
    * Match a query against a prebuilt index. Field hits are ordered before
    * section hits (fields are the more specific, more actionable result),
    * each group preserving index order; empty/whitespace query returns [].
+   * An entry behind a feature flag is offered only while flagOn(flag) is true.
    * @param {Array} index
    * @param {string} query
+   * @param {function(string):boolean} [flagOn]
    * @returns {Array} ordered hit entries
    */
-  function searchSettingsIndex(index, query) {
+  function searchSettingsIndex(index, query, flagOn) {
     var needle = normalizeQuery(query);
     if (!needle || !Array.isArray(index)) {
       return [];
@@ -119,7 +126,7 @@
     var sectionHits = [];
     for (var i = 0; i < index.length; i++) {
       var entry = index[i];
-      if (entry.haystack.indexOf(needle) === -1) {
+      if (entry.haystack.indexOf(needle) === -1 || (entry.featureFlag && !(typeof flagOn === 'function' && flagOn(entry.featureFlag) === true))) {
         continue;
       }
       if (entry.kind === 'field') {
@@ -149,6 +156,17 @@
   /** Distinct section ids (nav-reachable, already host-resolved) hit by a query. */
   function searchSettingsSectionIds(index, query) {
     return sectionIdsOfHits(searchSettingsIndex(index, query));
+  }
+
+  // The nav items (and cards) under `root`, a document or the nav.
+  function listNavItems(root) {
+    return root ? [].slice.call(root.querySelectorAll('[data-settings-section]')) : [];
+  }
+
+  // A feature flag is on while its nav item is shown (syncFeatureFlaggedSettings toggles it). The one test the search
+  // box and the command palette share; with no nav item to read, the flag is off.
+  function isFlagOn(flag, navItems) {
+    return (navItems || []).some(function (item) { return item.dataset.featureFlag === flag && !item.hidden; });
   }
 
   // ── DOM wiring ─────────────────────────────────────────────────────────
@@ -215,9 +233,7 @@
       : null;
     var getNavItems = typeof options.getNavItems === 'function'
       ? options.getNavItems
-      : function () {
-        return settingsNav ? [].slice.call(settingsNav.querySelectorAll('[data-settings-section]')) : [];
-      };
+      : function () { return listNavItems(settingsNav); };
 
     var index = buildSettingsSearchIndex();
     var inputEl = null;
@@ -258,6 +274,8 @@
     function clearNavFilter() {
       applyNavFilter(null, false);
     }
+
+    function flagOn(flag) { return isFlagOn(flag, getNavItems()); }
 
     // Ends the running flash: its timer and its target's hit mark.
     function stopFlash() {
@@ -368,28 +386,22 @@
     }
 
     function paintResultRow(row, isActive) {
-      if (!row) {
-        return;
-      }
+      if (!row) return;
       row.classList.toggle('active', isActive);
       row.setAttribute('aria-selected', String(isActive));
     }
 
     // Repaints only the row leaving and the row taking the active state.
     function highlightActiveResult() {
-      if (!resultsEl) {
-        return;
-      }
+      if (!resultsEl) return;
       var rows = resultsEl.children;
       paintResultRow(rows[highlightedIndex], false);
       paintResultRow(rows[activeIndex], true);
       highlightedIndex = activeIndex;
+      if (rows[activeIndex] && typeof rows[activeIndex].scrollIntoView === 'function') rows[activeIndex].scrollIntoView({ block: 'nearest' });
       if (inputEl) {
-        if (activeIndex >= 0 && rows[activeIndex]) {
-          inputEl.setAttribute('aria-activedescendant', rows[activeIndex].id);
-        } else {
-          inputEl.removeAttribute('aria-activedescendant');
-        }
+        if (rows[activeIndex]) inputEl.setAttribute('aria-activedescendant', rows[activeIndex].id);
+        else inputEl.removeAttribute('aria-activedescendant');
       }
     }
 
@@ -455,7 +467,7 @@
         renderResults([], '');
         return;
       }
-      var hits = searchSettingsIndex(index, query);
+      var hits = searchSettingsIndex(index, query, flagOn);
       // queryActive=true even with no hits: a real miss filters the nav to nothing (UIUX-038).
       applyNavFilter(sectionIdsOfHits(hits), true);
       renderResults(hits, query);
@@ -477,27 +489,17 @@
 
     function handleKeydown(event) {
       var key = event.key;
-      if (key === 'ArrowDown') {
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
         event.preventDefault();
         if (activeHits.length) {
-          activeIndex = (activeIndex + 1) % activeHits.length;
-          highlightActiveResult();
-        }
-        return;
-      }
-      if (key === 'ArrowUp') {
-        event.preventDefault();
-        if (activeHits.length) {
-          activeIndex = (activeIndex - 1 + activeHits.length) % activeHits.length;
+          activeIndex = (activeIndex + (key === 'ArrowDown' ? 1 : activeHits.length - 1)) % activeHits.length;
           highlightActiveResult();
         }
         return;
       }
       if (key === 'Enter') {
         event.preventDefault();
-        if (activeHits.length && activeIndex >= 0) {
-          activateHit(activeHits[activeIndex]);
-        }
+        activateHit(activeHits[activeIndex]); // no hit (a blank list, index -1) does nothing
         return;
       }
       if (key === 'Escape') {
@@ -517,11 +519,7 @@
       if (!item) {
         return;
       }
-      var idx = Number(item.getAttribute('data-search-result-index'));
-      var hit = activeHits[idx];
-      if (hit) {
-        activateHit(hit);
-      }
+      activateHit(activeHits[Number(item.getAttribute('data-search-result-index'))]);
     }
 
     function bind() {
@@ -591,6 +589,8 @@
     buildSettingsSearchIndex: buildSettingsSearchIndex,
     searchSettingsIndex: searchSettingsIndex,
     searchSettingsSectionIds: searchSettingsSectionIds,
+    listNavItems: listNavItems,
+    isFlagOn: isFlagOn,
     buildSettingsSearchBoxMarkup: buildSettingsSearchBoxMarkup,
     createSettingsSearchController: createSettingsSearchController,
   };

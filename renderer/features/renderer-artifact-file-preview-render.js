@@ -17,11 +17,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../inventory/action-button'));
+    module.exports = factory(require('../inventory/action-button'), require('../inventory/segmented-control'));
     return;
   }
-  root.rendererArtifactFilePreviewRender = factory(root.inventoryActionButton);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton) {
+  root.rendererArtifactFilePreviewRender = factory(root.inventoryActionButton, root.inventorySegmentedControl);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton, inventorySegmentedControl) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -30,6 +30,10 @@
   // When the cited line falls outside the head window, re-centre the window so
   // the cited row lands roughly this far from the top (context above it).
   const CITED_LINE_HEADROOM = 100;
+  // Wrapped continuation lines hang under their line's own indent (CSS reads
+  // data-wrap-indent); capped so a deeply nested line keeps room to wrap.
+  const MAX_WRAP_INDENT = 40;
+  const TAB_COLUMNS = 2; // matches tab-size on .artifact-file-preview-code
 
   const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mmd', 'mermaid']);
   // Mirrored BY CONVENTION from renderer-ide-preview-stage.js HTML_EXTENSIONS
@@ -140,27 +144,40 @@
     };
   }
 
-  function kindLabel(kind) {
+  // "Sandboxed HTML" names the rendered frame; the source view is plain HTML.
+  function kindLabel(kind, view) {
     if (kind === 'markdown') return 'Markdown';
-    if (kind === 'html') return jt('artifacts.filePreview.sandboxedHtml', 'Sandboxed HTML');
+    if (kind === 'html') return view === 'code' ? 'HTML' : jt('artifacts.filePreview.sandboxedHtml', 'Sandboxed HTML');
     if (kind === 'image') return 'Image';
     return 'Code';
   }
 
+  // The same compact Preview / Code segmented control the artifact header uses
+  // (renderer-artifact-panel-chrome-render.js buildViewControlHtml). The
+  // controller listens for its inv-segmented-change (id file-preview-view).
   function viewToggleHtml(view) {
-    const current = view === 'code' ? 'code' : 'read';
-    return '<span class="artifact-file-preview-views" role="group" aria-label="' + defaultEscapeHtml(jt('artifacts.filePreview.previewViewLabel', 'Preview view')) + '">'
-      + actionButton({
-        plain: true, className: 'artifact-file-preview-view-btn', label: jt('artifacts.filePreview.read', 'Read'),
-        title: jt('artifacts.filePreview.viewRendered', 'View rendered'),
-        ariaPressed: current === 'read', dataset: { 'file-preview-view': 'read' },
-      })
-      + actionButton({
-        plain: true, className: 'artifact-file-preview-view-btn', label: jt('artifacts.filePreview.source', 'Source'),
-        title: jt('artifacts.filePreview.viewRawSource', 'View raw source'),
-        ariaPressed: current === 'code', dataset: { 'file-preview-view': 'code' },
-      })
-      + '</span>';
+    if (typeof inventorySegmentedControl !== 'function') return '';
+    return inventorySegmentedControl({
+      id: 'file-preview-view',
+      className: 'inv-segmented--compact artifact-file-preview-views',
+      ariaLabel: jt('artifacts.filePreview.previewViewLabel', 'Preview view'),
+      value: view === 'code' ? 'code' : 'read',
+      options: [
+        { value: 'read', label: jt('artifacts.review.preview', 'Preview'), tooltip: jt('artifacts.filePreview.viewRendered', 'View rendered') },
+        { value: 'code', label: jt('artifacts.review.code', 'Code'), tooltip: jt('artifacts.filePreview.viewRawSource', 'View raw source') },
+      ],
+    });
+  }
+
+  function wrapIndentColumns(line) {
+    let columns = 0;
+    for (const ch of line) {
+      if (ch === ' ') columns += 1;
+      else if (ch === '\t') columns += TAB_COLUMNS - (columns % TAB_COLUMNS); // to the next tab stop
+      else break;
+      if (columns >= MAX_WRAP_INDENT) return MAX_WRAP_INDENT;
+    }
+    return columns;
   }
 
   function openInIdeButtonHtml() {
@@ -187,7 +204,7 @@
       + '<span class="artifact-file-preview-name" title="' + esc(path) + '">' + esc(fileNameOf(path)) + '</span>'
       + (dir ? '<span class="artifact-file-preview-path">' + esc(dir) + '</span>' : '')
       + (line ? '<span class="artifact-file-preview-line">Line ' + esc(String(line)) + '</span>' : '')
-      + '<span class="artifact-file-preview-kind">' + esc(kindLabel(kind)) + '</span>'
+      + '<span class="artifact-file-preview-kind">' + esc(kindLabel(kind, source.view)) + '</span>'
       + (typeof source.note === 'string' && source.note.length > 0
         ? '<span class="artifact-file-preview-bar-note" data-file-preview-note>' + esc(source.note) + '</span>'
         : '')
@@ -208,15 +225,19 @@
     const languageId = String(source.languageId || '');
     const cited = positiveInt(source.citedLine);
     const languageAttr = languageId ? ' data-language-id="' + esc(languageId) + '"' : '';
-    let html = '<ol class="artifact-file-preview-code" start="' + esc(String(startLine)) + '">';
+    // data-code-highlight-block: the rows tokenize as one document, so an HTML
+    // file's <script> lines color as script (renderer-code-highlight.js).
+    let html = '<ol class="artifact-file-preview-code" data-code-highlight-block' + languageAttr + ' start="' + esc(String(startLine)) + '">';
     for (let index = 0; index < lines.length; index += 1) {
       const lineNumber = startLine + index;
       const isCited = cited === lineNumber;
+      const text = String(lines[index] == null ? '' : lines[index]);
+      const indent = wrapIndentColumns(text);
       html += '<li class="artifact-file-preview-row' + (isCited ? ' is-cited' : '') + '"'
         + ' data-preview-line="' + esc(String(lineNumber)) + '"'
         + (isCited ? ' aria-current="true"' : '') + '>'
         + '<span class="artifact-file-preview-gutter" aria-hidden="true">' + esc(String(lineNumber)) + '</span>'
-        + '<code data-code-highlight-line' + languageAttr + '>' + esc(String(lines[index] == null ? '' : lines[index])) + '</code>'
+        + '<code data-code-highlight-line' + languageAttr + (indent ? ' data-wrap-indent="' + indent + '"' : '') + '>' + esc(text) + '</code>'
         + '</li>';
     }
     return html + '</ol>';

@@ -192,6 +192,7 @@ function createCacheCountingHarness(initialMessages, options = {}) {
   const uiRuntime = {};
   const renderer = createRenderPipelineMessageRenderer({
     state,
+    streamClientMetrics: options.streamClientMetrics,
     dom: {
       chatTimeline: dom.window.document.getElementById('timeline'),
       chatThreadScroll: dom.window.document.getElementById('scroll'),
@@ -202,6 +203,7 @@ function createCacheCountingHarness(initialMessages, options = {}) {
     },
     runtime: { uiRuntime },
     callbacks: {
+      ...options.callbacks,
       pruneToolRowProjectionSessionCaches() {},
       getCurrentVisibleMessages() { return sourceMessages; },
       buildCanonicalTranscriptMessages(messages) { counts.canonical += 1; return messages.slice(); },
@@ -863,4 +865,23 @@ test('an approval card state change repaints a settled transcript once', () => {
   } finally {
     global.rendererApprovalBlock = previous;
   }
+});
+
+// cost-growth: a declined active-turn-root fast path names its reason on the
+// full render it hands over to, instead of a benign no_live_stream:tail_settled.
+test('a declined active-turn-root fast path charges its own reason to the full render', () => {
+  const reasons = [];
+  const harness = createCacheCountingHarness([
+    { id: 'a1', role: 'assistant', kind: '', status: 'complete', content: 'settled' },
+  ], {
+    streamClientMetrics: { noteRenderForSession(_sessionId, kind, reason) { if (kind === 'full') reasons.push(reason); } },
+    callbacks: {
+      buildProjectionContext() { return { available: true, activeTurnRootMessageId: 'a1' }; },
+      tryPatchActiveTurnRoot() { harness.uiRuntime.activeTurnRootDecline = 'root_order_mismatch'; return false; },
+    },
+  });
+  harness.renderOnce();
+  harness.setMessages([{ id: 'a1', role: 'assistant', kind: '', status: 'complete', content: 'settled and more' }]);
+  harness.renderOnce();
+  assert.equal(reasons.at(-1), 'active_turn_root:root_order_mismatch');
 });

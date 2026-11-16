@@ -313,13 +313,9 @@
       if (!entryEl || disposed || !entryStore.has(entryEl)) {
         return { ok: false, reason: 'not_virtualized' };
       }
-      var result = entryStore.mount(entryEl, getLayout());
-      if (result.ok && result.layoutInvalidated) {
-        // Force the restored row to settle at its real height before anchor
-        // compensation; no retained stale min-height survives this mount.
-        measureHeight(entryEl);
-      }
-      return result;
+      // No layout read here: a read after each write forced one layout per row
+      // of a batch; the batch's single anchor restore measures once (2026-11-12).
+      return entryStore.mount(entryEl, getLayout());
     }
 
     function mountEntry(entryEl) {
@@ -906,6 +902,7 @@
       return [
         rootEl.getAttribute?.('data-font-scale') || '',
         rootEl.getAttribute?.('data-chat-width') || '',
+        rootEl.getAttribute?.('data-typography') || '', // font families: wrapping and heading heights
         inlineStyle?.getPropertyValue?.('--font-scale') || '',
       ].join('\x1f');
     }
@@ -936,7 +933,7 @@
           layoutAxisObserver = new MutationObserverCtor(handleLayoutMutation);
           layoutAxisObserver.observe(doc.documentElement, {
             attributes: true,
-            attributeFilter: ['data-font-scale', 'data-chat-width', 'style'],
+            attributeFilter: ['data-font-scale', 'data-chat-width', 'data-typography', 'style'],
           });
         } catch (_error3) { layoutAxisObserver = null; }
       }

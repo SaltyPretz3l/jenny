@@ -1,0 +1,83 @@
+/* One family for the controls in a Settings row (owner pick 2026-11-11, row 133;
+ * docs/ui/SETTINGS_DESIGN.md section 6). A dropdown, a number field and a
+ * segmented control share one height, one corner radius, one resting surface
+ * and one hover; every control shows the same keyboard-only focus ring; a switch
+ * has a 28 px target and an off edge that reads. Loaded after settings-rows.css. */
+
+/* The Models services drawer mounts on <body>: same scope note as settings-rows.css. */
+.settings-view,
+#modelServicesDrawer {
+  /* Follows the text-size setting, like the control widths in settings-rows.css. */
+  --settings-control-height: calc(34px * var(--font-scale, 1.2) / 1.2);
+  --settings-control-radius: var(--radius-base);
+  --settings-control-border: var(--widget-button-secondary-border);
+  --settings-control-border-hover: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  --settings-control-bg: color-mix(in srgb, var(--surface-input-background) 92%, transparent);
+}
+
+/* ── Dropdown ─────────────────────────────────────────────────────────── */
+.settings-field--row .inv-select-field-control {
+  height: var(--settings-control-height);
+  padding-block: 0;
+  border-color: var(--settings-control-border);
+  border-radius: var(--settings-control-radius);
+  background-color: var(--settings-control-bg);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The number field draws its box in settings-rows.css with the same tokens. An
+   error border outranks the hover. */
+.settings-field--row:not([data-state="error"]) .inv-select-field-control:hover:not(:disabled),
+.settings-field:not([data-state="error"]) .settings-field-number .inv-number-input-control:hover:not(:has(:disabled)) {
+  border-color: var(--settings-control-border-hover);
+}
+
+/* The ring is for the keyboard: a mouse click on a dropdown shows none. */
+.settings-field--row .inv-select-field-control:focus {
+  outline: none;
+}
+
+.settings-field--row .inv-select-field-control:focus-visible,
+.settings-field--row .inv-segmented-option:focus-visible,
+.settings-field--row .inv-toggle-track:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* ── Segmented control ────────────────────────────────────────────────── */
+.settings-field--row .inv-segmented {
+  box-sizing: border-box;
+  height: var(--settings-control-height);
+  border-color: var(--settings-control-border);
+  border-radius: var(--settings-control-radius);
+  background-color: var(--settings-control-bg);
+}
+
+.settings-field--row .inv-segmented-option {
+  height: 100%;
+  border-radius: calc(var(--settings-control-radius) - 3px);
+}
+
+/* ── Switch ───────────────────────────────────────────────────────────── */
+.settings-field--row .inv-toggle-track {
+  border-color: color-mix(in srgb, var(--text-primary) 34%, transparent);
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* 34 by 20 drawn, 46 by 30 to hit. */
+.settings-field--row .inv-toggle-track::after {
+  position: absolute;
+  inset: -5px -6px;
+  content: "";
+}
+
+.settings-field--row .inv-toggle:not(.inv-toggle--disabled) .inv-toggle-track:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 55%, transparent);
+}
+
+.settings-field--row .inv-toggle--on .inv-toggle-track,
+.settings-field--row .inv-toggle--on:not(.inv-toggle--disabled) .inv-toggle-track:hover {
+  border-color: var(--accent);
+}

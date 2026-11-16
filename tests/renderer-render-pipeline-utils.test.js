@@ -923,3 +923,67 @@ test('view catch-up final full render fallback is informational', () => {
   assert.equal(fallbackLogs[0].level, 'INFO');
   assert.equal(fallbackLogs[0].data.reason, 'final_full_render');
 });
+
+// Split panes (scroll-away-nav 4): the cleanup clears before paint for THIS
+// pane's following reader, whatever pane 0's flag says.
+test('the predicted-height cleanup timing reads the pane’s own follow state', () => {
+  const dom = createRenderDom();
+  const state = { currentSessionId: 'session', ui: { followLatest: false } };
+  const beforePaint = [];
+  let paneFollows = true;
+  const pipeline = createRenderEffectsPipeline({
+    state,
+    dom: { chatTimeline: dom.window.document.getElementById('timeline') },
+    callbacks: { isFollowingLatest: () => paneFollows, schedulePredictedHeightCleanup: (options) => beforePaint.push(options?.beforePaint) },
+  });
+  pipeline.runPostTimelineRenderEffects([], { cleanupPredictedHeights: true, liveThinking: false });
+  paneFollows = false;
+  state.ui.followLatest = true;
+  pipeline.runPostTimelineRenderEffects([], { cleanupPredictedHeights: true, liveThinking: false });
+  assert.deepEqual(beforePaint, [true, false]);
+});
+
+// stale-dup-decor 2: a reader's toggle inside a settled root changes DOM state
+// its memoized markup does not carry; that root's memo entry goes, the others stay.
+test('a click inside a settled root drops only that root’s memoized markup', () => {
+  const dom = createRenderDom();
+  const timeline = dom.window.document.getElementById('timeline');
+  timeline.innerHTML = '<div class="chat-thread-root" data-thread-message-id="root-a"><div class="tool-call-row"><button id="toggle-a">t</button></div></div>'
+    + '<div class="chat-thread-root" data-thread-message-id="root-b"><button id="toggle-b">t</button></div>';
+  const uiRuntime = { threadRootMarkupCache: new Map([['root-a', { key: 'k', html: 'a' }], ['root-b', { key: 'k', html: 'b' }]]) };
+  const pipeline = createRenderEffectsPipeline({ state: { ui: {} }, dom: { chatTimeline: timeline }, runtime: { uiRuntime } });
+  dom.window.document.getElementById('toggle-a').click();
+  assert.deepEqual([...uiRuntime.threadRootMarkupCache.keys()], ['root-b']);
+  pipeline.dispose();
+  dom.window.document.getElementById('toggle-b').click();
+  assert.deepEqual([...uiRuntime.threadRootMarkupCache.keys()], ['root-b'], 'disposed: no listener left');
+});
+
+// cost-growth: every decline of the active-turn-root fast path leaves a distinct reason.
+test('the active-turn-root fast path records why it declined', () => {
+  const dom = createRenderDom();
+  const timeline = dom.window.document.getElementById('timeline');
+  timeline.innerHTML = '<section class="chat-thread-root" data-thread-message-id="active"></section>';
+  const uiRuntime = {};
+  const ui = { chatTimelineBatch4FastPathEnabled: false };
+  const pipeline = createRenderEffectsPipeline({
+    state: { currentSessionId: 'session-1', ui },
+    dom: { chatTimeline: timeline },
+    runtime: { uiRuntime },
+    callbacks: {
+      renderThreadNode: () => '<section></section>',
+      patchStreamRevealActiveTurnRoot({ diagnostics }) { diagnostics.reason = 'root_order_mismatch'; return false; },
+    },
+  });
+  const tree = { nodeById: new Map([['active', { id: 'active' }]]), roots: [{ id: 'active' }] };
+  const attempt = (context, threadTree = tree) => pipeline.tryPatchActiveTurnRoot([], threadTree, new Set(), '', '', '', null, 'sig', context);
+  assert.equal(attempt({ available: true, activeTurnRootMessageId: '' }), false);
+  assert.equal(uiRuntime.activeTurnRootDecline, '', 'no live turn root is not a decline');
+  attempt({ available: true, activeTurnRootMessageId: 'active' });
+  assert.equal(uiRuntime.activeTurnRootDecline, 'fast_path_off');
+  ui.chatTimelineBatch4FastPathEnabled = true;
+  attempt({ available: true, activeTurnRootMessageId: 'active' }, { nodeById: new Map(), roots: [] });
+  assert.equal(uiRuntime.activeTurnRootDecline, 'root_not_in_tree');
+  attempt({ available: true, activeTurnRootMessageId: 'active' });
+  assert.equal(uiRuntime.activeTurnRootDecline, 'root_order_mismatch', 'the stream-reveal decline is carried through');
+});

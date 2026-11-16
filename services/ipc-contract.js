@@ -31,6 +31,7 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = composeBridgeDescriptors([
   ['addons', require('./ipc-contract/descriptors-addons')],
   ['tools-data', require('./ipc-contract/descriptors-tools-data')],
   ['team', require('./ipc-contract/descriptors-team')],
+  ['outside-files', require('./ipc-contract/descriptors-outside-files')],
 ]);
 
 // Channels only the preload itself invokes: main registers handlers for them

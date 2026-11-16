@@ -14,10 +14,14 @@ every provider's ``search`` returns exactly::
         "answer": str,            # short answer/snippet if available, else ""
         "error": str,             # non-empty only on failure
         "sources": [{"url", "title", "snippet", "source_type"}],
-        "citations": [{"id": "web:N", "url", "title"}],   # N is 1-based
+        "citations": [{"id": "web:N", "url", "title"}],   # N is 1-based per payload
         "missing_source_metadata": bool,
         "source_url": str,        # first citation URL or ""
     }
+
+Numbering is per provider payload: a provider always numbers from 1. The tool loop
+shifts each later web result of one turn (adding ``citation_offset`` to the payload,
+see ``web_citation_numbering``), so a marker is unique within the turn.
 
 Providers never raise across the ``search`` boundary: unsupported config,
 upstream failures, malformed JSON, and timeouts all come back as this same

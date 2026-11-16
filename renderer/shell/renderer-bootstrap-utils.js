@@ -1,11 +1,11 @@
 /* renderer/shell/renderer-bootstrap-utils.js - Renderer bootstrap constants, state, and DOM lookup helpers. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-settings-support'));
+    module.exports = factory();
     return;
   }
-  root.rendererBootstrapUtils = factory(root.rendererSettingsSupport);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (settingsSupport) {
+  root.rendererBootstrapUtils = factory();
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRoot = typeof globalThis !== 'undefined' ? globalThis : null;
   const bootstrapDom = globalRoot?.rendererBootstrapDom
@@ -27,13 +27,6 @@
   const inventoryStateIcon = globalRoot?.inventoryStateIcon
     || (typeof require === 'function' ? require('../inventory/state-icon') : null);
   const escapeHtml = (globalRoot?.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-
-  const normalizeRunMode = settingsSupport.normalizeRunMode;
-  const normalizeUiLanguageTag = settingsSupport.normalizeUiLanguageTag;
-  const normalizeSafetyMode = settingsSupport.normalizeSafetyMode;
-  const normalizeUnattendedGuardMinutes = settingsSupport.normalizeUnattendedGuardMinutes;
-  const normalizeAutoApproveStreakCap = settingsSupport.normalizeAutoApproveStreakCap;
-  const { normalizeDigestQuietStart, normalizeDigestQuietEnd } = settingsSupport;
 
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
@@ -98,9 +91,10 @@
       uiLanguage: 'en',
       use24HourTime: false,
       transcriptViewDefault: 'thinking',
+      drawingInstructions: 'short',
       safetyMode: 'normal',
       unattendedGuardMinutes: 0,
-      autoApproveStreakCap: 50,
+      autoApproveStreakCap: 250,
       digestQuietStart: '22:00',
       digestQuietEnd: '07:00',
       backend: { phase: 'starting', detail: jt('shell.bootstrap.connectingToBackend', 'Connecting to backend...') },
@@ -448,20 +442,8 @@
       },
     };
 
-    Promise.resolve(globalRoot?.jennyShell?.chatUi?.getState?.()).then((config) => {
-      const defaultRunMode = normalizeRunMode(config?.defaultRunMode);
-      state.defaultRunMode = defaultRunMode;
-      state.uiLanguage = normalizeUiLanguageTag(config?.uiLanguage);
-      state.use24HourTime = config?.use24HourTime === true;
-      globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
-      state.transcriptViewDefault = globalThis.rendererTranscriptViewUtils?.normalizeTranscriptView?.(config?.transcriptViewDefault) || 'thinking';
-      state.safetyMode = normalizeSafetyMode(config?.safetyMode);
-      state.unattendedGuardMinutes = normalizeUnattendedGuardMinutes(config?.unattendedGuardMinutes);
-      state.autoApproveStreakCap = normalizeAutoApproveStreakCap(config?.autoApproveStreakCap);
-      state.digestQuietStart = normalizeDigestQuietStart(config?.digestQuietStart);
-      state.digestQuietEnd = normalizeDigestQuietEnd(config?.digestQuietEnd);
-      if (!state.currentSessionId) state.runtimeDraft.runMode = defaultRunMode;
-    }).catch(() => {});
+    // The persisted chatUi preferences are read once, by the boot preferences
+    // composition (renderer/app/renderer-app-boot-preferences-composition.js).
 
     // Generate the Settings nav rail from the section registry before resolving DOM ids.
     if (settingsNavUtils && typeof settingsNavUtils.renderSettingsNav === 'function') {
@@ -479,11 +461,7 @@
         advancedTuningActions: 'advancedTuningActions',
       },
       offline: {
-        offlineSummary: 'offlineSummary',
-        offlineStatus: 'offlineStatus',
         offlineLocalOnlyList: 'offlineLocalOnlyList',
-        offlineModelStatus: 'offlineModelStatus',
-        offlineModelActions: 'offlineModelActions',
       },
       personality: {
         personalityFormHost: 'personalityFormHost',

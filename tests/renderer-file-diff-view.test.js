@@ -52,7 +52,7 @@ test('counts omit when unknown, truncation replaces counts, and malformed ids re
     additions: 9, deletions: 2, hunks, actionButton,
   }));
   assert.equal(truncated.querySelector('.file-diff-counts'), null);
-  assert.equal(truncated.querySelector('.file-diff-truncated').textContent, 'too large to show inline');
+  assert.equal(truncated.querySelector('.file-diff-truncated').textContent, 'not shown', 'no reason given: the plain fallback');
   assert.equal(truncated.querySelector('.file-diff-chevron'), null);
   assert.equal(truncated.querySelector('.file-diff-basename').textContent, 'x<y.py');
 });
@@ -160,4 +160,145 @@ test('both diff renderers stamp each row with the line numbers of the sides it h
   const expected = [['47', '47'], ['48', '48'], ['49', null], [null, '49'], [null, null]];
   assert.deepEqual(lines(parse(buildFileDiffBodyMarkup({ hunks: meta, languageId: 'javascript' }))), expected);
   assert.deepEqual(lines(parse(renderDiffHunks(meta))), expected);
+});
+
+// Chat tool diff block: gap labels, word marks, created files, real reasons, text open, bare single file.
+const markedText = (row) => [...row.querySelectorAll('mark.diff-word')].map((mark) => mark.textContent);
+
+test('a gap between hunks says how many lines it hides; adjacent hunks keep the bare gap', () => {
+  const doc = parse(buildFileDiffBodyMarkup({ hunks: [
+    { oldStart: 41, oldLines: 7, newStart: 41, newLines: 7, lines: [' a'] },
+    { oldStart: 72, oldLines: 3, newStart: 72, newLines: 3, lines: [' b'] },
+  ] }));
+  const gap = doc.querySelector('.diff-gap');
+  assert.equal(gap.querySelector('.diff-gap-label').textContent, '24 unchanged lines');
+  assert.equal(gap.querySelector('.diff-gutter').textContent, '⋯');
+  assert.equal(gap.hasAttribute('aria-hidden'), false, 'a labelled gap is read');
+  const one = parse(buildFileDiffBodyMarkup({ hunks: [
+    { oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: [' a'] },
+    { oldStart: 4, oldLines: 1, newStart: 4, newLines: 1, lines: [' b'] },
+  ] }));
+  assert.equal(one.querySelector('.diff-gap-label').textContent, '1 unchanged line');
+  const adjacent = parse(buildFileDiffBodyMarkup({ hunks: [
+    { oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: [' a'] },
+    { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: [' b'] },
+  ] }));
+  assert.equal(adjacent.querySelector('.diff-gap-label'), null);
+  assert.equal(adjacent.querySelector('.diff-gap').getAttribute('aria-hidden'), 'true');
+});
+
+test('an isolated removed/added pair marks the changed span on both lines and keeps token classes', () => {
+  const lines = ['-    const label = session.title || \'Untitled\';', '+    const label = session.title || jt(\'x\', \'New chat\');'];
+  const doc = parse(buildFileDiffBodyMarkup({ hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines }] }));
+  const [removed, added] = [...doc.querySelectorAll('.diff-line')];
+  assert.deepEqual(markedText(removed), ['\'Untitled\'']);
+  assert.deepEqual(markedText(added), ['jt(\'x\', \'New chat\')']);
+  assert.equal(removed.getAttribute('aria-label').startsWith('Removed line 1:'), true);
+  // With a highlighter the mark splits a token and both halves keep its class.
+  const highlight = (text) => [{ text, cls: 'tok-string' }];
+  const hl = parse(buildFileDiffBodyMarkup({ hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-hello world', '+hello there'] }], highlight }));
+  const first = hl.querySelector('.diff-line-remove .diff-content');
+  assert.equal(first.textContent, 'hello world');
+  assert.deepEqual(markedText(hl.querySelector('.diff-line-remove')), ['world']);
+  assert.equal(first.querySelector('mark.diff-word .tok-string').textContent, 'world');
+  assert.equal(first.querySelector('.tok-string').textContent, 'hello ');
+});
+
+test('runs, rewrites, long lines and empty spans get no word marks', () => {
+  const marks = (lines) => parse(buildFileDiffBodyMarkup({ hunks: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines }] })).querySelectorAll('mark.diff-word').length;
+  assert.equal(marks(['-a one', '-b two', '+a won', '+b too']), 0, 'two minus two plus is a run');
+  assert.equal(marks(['-abc', '+xyz']), 0, 'a full rewrite');
+  const long = 'x'.repeat(501);
+  assert.equal(marks([`-${long}a`, `+${long}b`]), 0, 'over 500 characters');
+  assert.equal(marks(['-same line', '+same line']), 0, 'no changed span');
+  assert.equal(marks(['-keep this prefix A', '+keep this prefix']), 1, 'a pure deletion marks only the side with a span');
+});
+
+test('a created file whose lines are all additions renders as plain code', () => {
+  const created = [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, lines: ['+one', '+two'] }];
+  const body = (extra) => buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks: created, expanded: true, actionButton, ...extra });
+  assert.ok(parse(body({ status: 'created' })).querySelector('.file-diff-body').classList.contains('file-diff-body--new-file'));
+  assert.equal(parse(body({ status: 'modified' })).querySelector('.file-diff-body--new-file'), null);
+  const mixed = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-x', '+y'] }];
+  assert.equal(parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks: mixed, expanded: true, status: 'created', actionButton })).querySelector('.file-diff-body--new-file'), null);
+});
+
+test('a summary-only row gives the real reason', () => {
+  const reason = (truncationReason) => parse(buildFileDiffMarkup({ path: 'a.bin', diffId: 'd1', truncated: true, truncationReason, actionButton })).querySelector('.file-diff-truncated').textContent;
+  assert.equal(reason('binary'), 'binary file');
+  assert.equal(reason('line_limit'), 'too long to show here');
+  assert.equal(reason('hunk_limit'), 'too long to show here');
+  assert.equal(reason('byte_limit'), 'too long to show here');
+  assert.equal(reason('decode_error'), 'not text');
+  assert.equal(reason('diff_generation_failed'), 'diff unavailable');
+  assert.equal(reason('preimage_unavailable'), 'earlier version unavailable');
+  assert.equal(reason('time_limit'), 'took too long to compare');
+  assert.equal(reason('whatever'), 'not shown');
+  assert.equal(reason(undefined), 'not shown');
+  const noted = parse(buildFileDiffMarkup({ path: 'a.env', diffId: 'd1', truncated: true, truncationReason: 'binary', note: 'contents not shown', actionButton }));
+  assert.equal(noted.querySelector('.file-diff-truncated').textContent, 'contents not shown');
+});
+
+test('openStyle text renders the open control as the word Open; the default keeps the glyph', () => {
+  const text = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', changeId: 'c1', hunks, openStyle: 'text', actionButton })).querySelector('.file-diff-open');
+  assert.equal(text.textContent, 'Open');
+  assert.ok(text.classList.contains('file-diff-open--text'));
+  assert.equal(text.getAttribute('aria-label'), 'Open in editor');
+  assert.equal(text.getAttribute('title'), 'Open in editor');
+  assert.equal(text.dataset.changeId, 'c1');
+  const custom = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks, openStyle: 'text', openDataset: { 'changes-wt-open': 'a.txt' }, openLabel: 'Open a.txt', actionButton })).querySelector('.file-diff-open');
+  assert.equal(custom.textContent, 'Open');
+  assert.equal(custom.getAttribute('aria-label'), 'Open a.txt');
+  const glyph = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', changeId: 'c1', hunks, actionButton })).querySelector('.file-diff-open');
+  assert.ok(glyph.querySelector('svg'));
+  assert.equal(glyph.classList.contains('file-diff-open--text'), false);
+});
+
+test('a bare single-file diff is the body plus one open link, with no head', () => {
+  const bare = parse(buildFileDiffMarkup({ path: 'src/a.js', diffId: 'd1', changeId: 'change:1', hunks, bare: true, status: 'modified', actionButton }));
+  assert.equal(bare.querySelector('.file-diff-head'), null);
+  const row = bare.querySelector('.file-diff');
+  assert.ok(row.classList.contains('file-diff--bare'));
+  assert.equal(row.dataset.expanded, 'true');
+  assert.equal(row.dataset.diffId, 'd1');
+  assert.ok(row.querySelector('.file-diff-body[data-file-diff-materialized] .diff-line'));
+  const link = row.querySelector('.file-diff-foot .file-diff-open--text');
+  assert.equal(link.textContent, 'Open diff in editor');
+  assert.equal(link.dataset.changeId, 'change:1');
+  assert.ok(link.hasAttribute('data-jenny-open-change-diff'));
+  const noId = parse(buildFileDiffMarkup({ path: 'src/a.js', diffId: 'd1', hunks, bare: true, actionButton }));
+  assert.equal(noId.querySelector('.file-diff-foot'), null, 'no change id: no link');
+  const created = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+x'] }], bare: true, status: 'created', actionButton }));
+  assert.ok(created.querySelector('.file-diff-body').classList.contains('file-diff-body--new-file'));
+  const truncated = parse(buildFileDiffMarkup({ path: 'a.bin', diffId: 'd1', changeId: 'c1', bare: true, truncated: true, truncationReason: 'binary', hunks, actionButton }));
+  assert.ok(truncated.querySelector('.file-diff-head'), 'a summary-only row keeps its head');
+  assert.equal(truncated.querySelector('.file-diff--bare'), null);
+  assert.equal(truncated.querySelector('.file-diff-truncated').textContent, 'binary file');
+});
+
+test('the expandable toggle carries both labels so the bindings can follow state', () => {
+  const toggle = parse(buildFileDiffMarkup({ path: 'a/b.js', diffId: 'd1', hunks, actionButton })).querySelector('.file-diff-toggle');
+  assert.equal(toggle.getAttribute('aria-label'), 'Show diff for a/b.js');
+  assert.equal(toggle.dataset.labelShow, 'Show diff for a/b.js');
+  assert.equal(toggle.dataset.labelHide, 'Hide diff for a/b.js');
+  assert.equal(toggle.dataset.titleShow, 'Show diff');
+  assert.equal(toggle.dataset.titleHide, 'Hide diff');
+});
+
+test('review edge cases: no-newline created files, whole emoji at mark edges, and gaps after a zero-length hunk', () => {
+  const noNewline = [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+only line', '\\ No newline at end of file'] }];
+  const created = buildFileDiffBodyMarkup({ hunks: noNewline, status: 'created' });
+  const createdRow = buildFileDiffMarkup({ path: 'a.txt', diffId: 'd-nl', status: 'created', expanded: true, actionButton, hunks: noNewline });
+  assert.ok(created.includes('only line'));
+  assert.match(createdRow, /file-diff-body--new-file/);
+
+  const emoji = parse(buildFileDiffBodyMarkup({ hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-say \u{1F600} now', '+say \u{1F601} now'] }] }));
+  const marked = [...emoji.querySelectorAll('mark.diff-word')].map((node) => node.textContent);
+  assert.deepEqual(marked, ['\u{1F600}', '\u{1F601}'], 'each mark holds a whole emoji');
+
+  const gap = buildFileDiffBodyMarkup({ hunks: [
+    { oldStart: 10, oldLines: 0, newStart: 10, newLines: 1, lines: ['+a'] },
+    { oldStart: 30, oldLines: 1, newStart: 31, newLines: 1, lines: [' b'] },
+  ] });
+  assert.doesNotMatch(gap, /diff-gap-label/, 'no count without the earlier hunk\'s old-side length');
 });

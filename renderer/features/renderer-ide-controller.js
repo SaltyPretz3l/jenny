@@ -11,6 +11,7 @@
   function noop() {}
   // The sibling-module table and the extracted wiring + lifecycle (the manifest loads them before this file).
   const { resolveControllerModules } = globalRef.rendererIdeControllerModules || require('./renderer-ide-controller-modules');
+  const outsideFilesUtils = globalRef.rendererIdeOutsideFiles || require('./renderer-ide-outside-files'); // row 137
 
   function createIdeController(deps) {
     const { state } = deps || {};
@@ -192,7 +193,7 @@
     // Editor toolbar at the end of the tab row: Preview / File map, Split, More (qol is built later; thunks).
     const stageSwitch = stageSwitchUtils.createIdeStageSwitch?.({
       getMountEl: () => getDom().ideStageSwitch, actionButton, onSplit: () => editorGroups?.splitActive('right'), onMore: (el) => tabsController?.showAllTabsMenu(el),
-      onToggle: (surface) => qol?.stageSurface?.toggle(surface),
+      onToggle: (surface) => (surface === 'preview' && qol?.previewStage ? qol.previewStage.openActiveFile({ toggle: true }) : qol?.stageSurface?.toggle(surface)),
       getActiveSurface: () => qol?.stageSurface?.getEffectiveSurface() || 'editor',
     }) || null;
     // The panel owns its find-AND-replace controller internally (keeps this
@@ -317,7 +318,7 @@
       isDiffTabId: isDiffTab, isPreviewTabId: isPreviewTab,
       forceClose: (path) => closeTab(path),
       saveFile: (path) => saveFile(path),
-      getDocumentRevision: (path) => { const snapshot = fileLifecycle?.fileOperations?.captureReload?.(path, { allowDirty: true }); return snapshot ? `${snapshot.documentId}:${snapshot.editVersion}` : null; },
+      getDocumentRevision: (path) => { if (outsideFilesUtils.isOutsideKey(path)) return outsideFiles?.getRevision(path) ?? null; const snapshot = fileLifecycle?.fileOperations?.captureReload?.(path, { allowDirty: true }); return snapshot ? `${snapshot.documentId}:${snapshot.editVersion}` : null; },
       confirmClose: (payload) => (confirmDialog
         ? confirmDialog.confirmClose(payload)
         : Promise.resolve('cancel')),
@@ -340,7 +341,7 @@
         // Keyboard move (W4): the menu for the panel focus was last in, anchored on its tab.
         moveView: () => { const wb = workbenchWiring.workbench; const viewId = wb?.getFocusedView?.(); return viewId ? wb.openMoveMenu(viewId) : false; },
       } : null,
-      openFileMap: () => qol?.mapController?.openFileMap(), revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'),
+      openFileMap: () => qol?.mapController?.openFileMap(), revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.previewStage?.openActiveFile?.() ?? qol?.stageSurface?.activate('preview'),
       helpOverlayFactory: helpOverlayUtils.createHelpOverlay,
       buildShortcutsHtml: (registry) => ideShortcutsUtils.buildIdeShortcutsHtml?.(registry) || '',
     }) || null;
@@ -540,7 +541,7 @@
     // built pre-fileLifecycle/keydown so saveHygiene + mruSwitcher thread into them.
     const qol = qolWiringUtils.createIdeQolWiring?.({
       getDom, getIde, editorHost, windowRef, escapeHtml, appendClientLog, getWorkspaceFsApi, getRecentFiles,
-      getActiveView: () => state.ui.activeView,
+      getActiveView: () => state.ui.activeView, setActiveView: callbacks.setActiveView,
       onOpenFile: (p) => openFile(p), activateTab: (p) => activateTab(p),
       onCloseTab: (p) => closeTab(p), renderTabs: () => renderTabs(), onOpenWritten: (p) => openFile(p, { preview: true }), // Follow Jenny
       onRevealInExplorer: (p) => revealInExplorer(p, { expandSelf: true }), onOpenSymbolPicker: () => editorHost?.runAction('editor.action.quickOutline'),
@@ -549,6 +550,14 @@
       schedulePersist: () => schedulePersist(), getFileOperations: () => fileLifecycle?.fileOperations, showToastMessage, getWorkbenchWiring: () => workbenchWiring, getSymbolNav: () => symbolNav, // the Outline view's host and TS/JS tree
       isWatchActive: () => watchController?.isWatching?.() === true, // Preview's Live cue; read lazily (built later)
     }) || null;
+
+    // Files opened from outside the Workspace (row 137): read, saved and reconciled by grant id, never through file operations.
+    const outsideFiles = outsideFilesUtils.createIdeOutsideFiles?.({
+      getIde: () => getIde(), ideStateUtils, editorHost, windowRef, renderTabs: () => renderTabs(),
+      onActivated: () => qol?.stageSurface?.noteEditorActivation(),
+      showToastMessage, showShellErrorToast, appendClientLog, mergePreparedAttachments: callbacks.mergePreparedAttachments,
+    }) || null;
+    registerCleanup(() => outsideFiles?.dispose());
 
     // The open-tab document lifecycle (open / activate / save / close / reopen +
     // tree delete/rename fan-out) plus the `saving` and `bypassReopenPush` flags
@@ -580,7 +589,7 @@
         schedulePersist: () => schedulePersist(), requestRender: () => renderIde(),
         showShellErrorToast,
         showToastMessage,
-        toErrorMessage, appendClientLog,
+        toErrorMessage, appendClientLog, outsideFiles,
       }) || null;
 
     // Thin facade: the rest of the controller keeps calling these by name; each
@@ -589,7 +598,7 @@
       // A file already in a secondary group shows there (W5); a background open never activates.
       if (options?.background === true) return fileLifecycle ? fileLifecycle.openFile(path, options) : Promise.resolve(false);
       workbenchWiring?.workbench?.showEditor?.();
-      const rel = ideStateUtils.normalizeIdeRelativePath?.(path) || '';
+      const rel = ideStateUtils.isOutsideTabId?.(path) ? path : ideStateUtils.normalizeIdeRelativePath?.(path) || '';
       const open = () => (fileLifecycle ? fileLifecycle.openFile(path, options) : Promise.resolve(false));
       // A preview open (tree arrow keys) stays in the primary group.
       return editorGroups?.openInGroup(rel) || (editorGroups && options?.preview !== true ? editorGroups.openFollowingFocus(rel, open, options?.group) : open());
@@ -664,6 +673,19 @@
       // Chat-dock surface for the render pipeline's renderLayout reconcile.
       chatDock: ideChatDock,
       openFile,
+      // Row 137: outside items (and Workspace items from the same request) open in order, the last one active; a
+      // restore passes { activate: false } so it never takes over the tab the user already has.
+      openOutsideFiles: async (items, options) => {
+        await lifecycle.whenActivated().catch(() => {});
+        workbenchWiring?.workbench?.showEditor?.();
+        let opened = 0;
+        for (const item of Array.isArray(items) ? items : []) {
+          const ok = item?.kind === 'workspace' && item.relPath ? await openFile(item.relPath)
+            : item?.kind === 'outside' && outsideFiles ? await outsideFiles.open(item, { activate: options?.activate !== false }) : false;
+          if (ok) opened += 1;
+        }
+        return opened > 0;
+      },
       revealInExplorer: (path, options) => { revealInExplorer(path, options); return true; }, // Chat folder chips (row 95): the explorer tree reveal; true once requested.
       showActivityOutput: output => activityView?.showOutput(output),
       openFileAtLine: (path, line, column, origin) => handleSearchResultOpen(path, line, column, origin), // Chat timeline path chips and cite links use the same open-then-revealPosition seam as search; resolves true only when the file actually opened.

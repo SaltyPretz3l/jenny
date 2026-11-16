@@ -58,6 +58,7 @@ test('capture closes the microphone and the audio context when setup fails late'
 
 function composer() {
   const dom = new JSDOM(`<!doctype html><body><div class="composer"><div class="composer-main">
+    <div class="attachment-tray hidden"></div>
     <div class="composer-entry-row"><textarea class="composer-input"></textarea></div>
     <div class="composer-toolbar"><button class="composer-dictate-button" aria-expanded="false"></button></div>
   </div></div><div id="outside"></div></body>`, { pretendToBeVisual: true });

@@ -57,9 +57,14 @@
       buildMessageTokenMeta = () => new Map(),
       formatMessageTokenMeta = () => '',
       combineMessageMetaLabels = (primary, secondary) => [primary, secondary].filter(Boolean).join(' · '),
+      buildShortAssistantMetaLabel = (...args) => globalThis.chatMessageUtils?.buildShortAssistantMetaLabel?.(...args) || '',
+      formatMessageTokenMetaShort = (meta) => globalThis.rendererContextUsageUtils?.formatMessageTokenMetaShort?.(meta) || '',
       renderMessageHoverRow = () => '',
       formatMessageTerminalTimestamp = () => '',
+      formatMessageClockTime = formatMessageTerminalTimestamp,
       isArtifactReviewVisible = () => false,
+      // This pane's follow state (one pane: state.ui.followLatest).
+      isFollowingLatest = () => state?.ui?.followLatest === true,
       // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
       getPaneSessionId = () => String(state.currentSessionId || '').trim(),
       // Row 69: the primary Jenny chat offers no Branch (its transcript spans every project).
@@ -122,6 +127,7 @@
       resolveArticlePredictionCacheKey,
       resolveVisibleTurnArticleTarget,
       buildTurnRowListMarkup,
+      isFollowingLatest,
     });
 
     // The per-message path: message bubbles, application-turn notes and the
@@ -142,7 +148,10 @@
       buildMessageTokenMeta,
       formatMessageTokenMeta,
       combineMessageMetaLabels,
+      buildShortAssistantMetaLabel,
+      formatMessageTokenMetaShort,
       formatMessageTerminalTimestamp,
+      formatMessageClockTime,
       buildStreamingBubbleMarkup,
       recordTurnArticleRolloutSignal,
       getPaneSessionId,
@@ -266,9 +275,14 @@
       const turnMessageIds = [...new Set(Array.isArray(turn?.source_message_ids) ? turn.source_message_ids : [actionTargetMessageId])];
       const turnMessages = turnMessageIds.map((id) => getMessageFromCollection(id, messages, projectionContext)).filter((item) => item?.role === 'assistant');
       const tokenMeta = buildMessageTokenMeta(turnMessages, turnMessageIds).get(actionTargetMessageId);
+      const footerMessage = terminalErrorMessage || actionTargetMessage;
       const metaLabel = combineMessageMetaLabels(
-        buildAssistantMetaLabel(terminalErrorMessage || actionTargetMessage, formatMessageTerminalTimestamp, turnMessages, turn),
+        buildAssistantMetaLabel(footerMessage, formatMessageTerminalTimestamp, turnMessages, turn),
         formatMessageTokenMeta(tokenMeta)
+      );
+      const shortMetaLabel = combineMessageMetaLabels(
+        buildShortAssistantMetaLabel(footerMessage, formatMessageClockTime, turnMessages, turn),
+        formatMessageTokenMetaShort(tokenMeta)
       );
       const hasActiveStreamingMessage = String(projectionContext?.activeStreamingMessageId || '').trim() !== '';
       const isStreaming = hasActiveStreamingMessage && (
@@ -344,7 +358,7 @@
         return rowKind === 'assistant_text' || rowKind === 'assistant_error';
       });
       const hoverRowHtml = hasActionableAssistantRow
-        ? renderMessageHoverRow(actionTargetMessage, actionOptions, metaLabel)
+        ? renderMessageHoverRow(actionTargetMessage, actionOptions, metaLabel, shortMetaLabel)
         : '';
       const finalizedAt = String(actionTargetMessage?.finalizedAt || primaryMessage?.finalizedAt || '').trim();
       // skipHeightPrediction: the stream-reveal row-list builder keeps only the
@@ -355,7 +369,7 @@
       // that build must not feed the caller's segment sink a second time.
       // No reservation for the live turn under a reader following it (row 131, D5: an overshoot is
       // blank room the follow scrolls into, and the reply jumps back when the room goes).
-      const predictedHeight = renderOptions.skipHeightPrediction === true || (turnLive && state?.ui?.followLatest === true)
+      const predictedHeight = renderOptions.skipHeightPrediction === true || (turnLive && isFollowingLatest() === true)
         ? null
         : maybePredictTurnHeight(turn, sourceRows, messages, {
           ...renderOptions, transcriptView, turnPhase: turnPhaseForMarkup, turnLive, rowListSegmentSink: null,
@@ -398,24 +412,17 @@
 
     // @legacy-fallback (compat scaffolding, NOT dead code; see
     // docs/archive/RENDER_PIPELINE_SPLIT_PLAN.md §4): the projected dispatch
-    // renders a non-primary sibling inside a coalesced turn-article here, so
-    // updateThreadRailExtents() finds a per-row node-dot for nested compat
-    // nodes. The orphan-dot guard (isBodyMarkupVisuallyEmpty) does NOT apply:
-    // the always-empty anchor's dot IS the rail landmark. Envelope siblings
-    // (options.envelopeSibling) render dotless, since their article's rows
-    // paint the dots, and carry data-thread-compat-enveloped so the thread-DOM
-    // layer can drop the matching collapse toggle for compat-only subtrees.
+    // renders a non-primary sibling inside a coalesced turn-article here as an
+    // empty anchor row, so message-id lookups still resolve. Envelope siblings
+    // (options.envelopeSibling) carry data-thread-compat-enveloped so the
+    // thread-DOM layer can drop the matching collapse toggle for compat-only
+    // subtrees.
     function buildThreadCompatAnchor(message, options) {
       const messageId = String(message?.id || '').trim();
       const envelopeSibling = !!(options && options.envelopeSibling);
       const anchorSpan = `<span class="thread-compat-anchor" data-message-id="${escapeHtml(messageId)}" data-thread-compat-anchor="true" aria-hidden="true"></span>`;
-      // Wrap in a chat-row so updateThreadRailExtents() can pick up a per-row
-      // node dot for nested compat anchors. Without this, tool-parent compat
-      // nodes (which never carry a thread-toggle when they have a single
-      // child) leave a gap in the vertical rail.
-      const dotSpan = envelopeSibling ? '' : '<span class="chat-row-node-dot" aria-hidden="true"></span>';
       const envelopeAttr = envelopeSibling ? ' data-thread-compat-enveloped="true"' : '';
-      return `<div class="chat-row chat-row-thread-compat" data-row-kind="thread_compat"${envelopeAttr} data-source-message-id="${escapeHtml(messageId)}" data-source-message-ids="${escapeHtml(messageId)}">${dotSpan}${anchorSpan}</div>`;
+      return `<div class="chat-row chat-row-thread-compat" data-row-kind="thread_compat"${envelopeAttr} data-source-message-id="${escapeHtml(messageId)}" data-source-message-ids="${escapeHtml(messageId)}">${anchorSpan}</div>`;
     }
 
     // True when this turn renders as ONE coalesced envelope article (the

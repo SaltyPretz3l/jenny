@@ -1,17 +1,19 @@
 /*
- * Quick-settings modal (Tier D) — compact overlay over the settings catalog.
+ * Quick-settings modal (Ctrl/Cmd+,) — compact overlay over the settings catalog.
  *
  * Markup contract (JS-built by renderer-quick-settings-modal.js; no static
  * markup in index.html):
+ *   overlay > scrim + dialog > header (h2 + close) + body + footer
+ *   body > section.quick-settings-slot (h3 title + rows) x3
+ *   row = .quick-settings-row (label + control); --stacked puts the control
+ *   under the label; .quick-settings-row-note is a status line under a row.
  *
- * Rules honored here (JENNY_UIUX_OVERHAUL_PLAN.md — layout/responsive):
- *  - never exceeds viewport height: dialog max-height + internal body scroll,
- *    sticky header/footer;
+ * Rules honored here:
+ *  - never exceeds viewport height: dialog max-height + internal body scroll;
  *  - long model names truncate without layout shift (min-width:0 + ellipsis);
- *  - control geometry in px where exactness across font-scale matters;
- *  - z-index from the foundation ladder: above the command palette (+5),
- *    never hardcoded.
- * Uses Jenny's shared modal structure and tokens; no glow.
+ *  - z-index from the foundation ladder: above the command palette (+5);
+ *  - hierarchy from whitespace and type: no dividers, no nested cards.
+ * Same frame as the keyboard shortcuts overlay.
  */
 
 .quick-settings-overlay {
@@ -39,11 +41,11 @@
 
 .quick-settings-dialog {
   position: relative;
-  animation: palette-in var(--motion-duration-regular) var(--motion-ease-emphasis);
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
   display: flex;
   flex-direction: column;
   width: min(460px, 100%);
-  max-height: min(72vh, 640px);
+  max-height: min(78vh, 680px);
   border: 1px solid var(--settings-shell-panel-border);
   border-radius: var(--radius-lg);
   background: var(--settings-shell-panel-bg, var(--surface-raised, var(--bg-primary)));
@@ -56,8 +58,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-6);
-  padding: var(--space-6) var(--space-7);
-  border-bottom: 1px solid var(--settings-shell-muted-border);
+  padding: var(--space-6) var(--space-7) var(--space-4);
   flex-shrink: 0;
 }
 
@@ -75,7 +76,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
@@ -84,7 +85,6 @@
   cursor: pointer;
   transition:
     color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
@@ -94,12 +94,11 @@
 
 .quick-settings-close:hover {
   color: var(--text-primary);
-  border-color: var(--settings-shell-muted-border);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .quick-settings-close:focus-visible {
-  outline: 2px solid var(--settings-shell-accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -107,7 +106,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-3) var(--space-7) var(--space-7);
   display: flex;
   flex-direction: column;
   gap: var(--space-7);
@@ -120,25 +119,32 @@
   min-width: 0;
 }
 
-.quick-settings-slot + .quick-settings-slot {
-  padding-top: var(--space-6);
-  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
-}
-
 .quick-settings-slot-title {
-  margin: 0;
+  margin: 0 0 var(--space-3);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   font-weight: 500;
 }
 
-/* Rows inside a slot: label left, control right; stacks under pressure. */
+/* Rows inside a slot: label left, control right. */
 .quick-settings-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-4) var(--space-6);
   min-width: 0;
+  min-height: 34px;
+}
+
+/* The control spans the row under its label (the theme swatches). */
+.quick-settings-row--stacked {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 0;
+}
+
+.quick-settings-row--stacked .quick-settings-row-control {
+  margin-block-start: var(--space-3);
 }
 
 .quick-settings-row-label {
@@ -151,6 +157,21 @@
   white-space: nowrap;
 }
 
+.quick-settings-row-value {
+  margin-inline-start: 6px;
+  color: var(--text-muted);
+}
+
+/* The current model: a quiet, truncating identifier, not a label. */
+.quick-settings-model-name {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.quick-settings-model-name[data-empty] {
+  color: var(--text-muted);
+}
+
 .quick-settings-row-control {
   display: flex;
   align-items: center;
@@ -158,67 +179,71 @@
   min-width: 0;
 }
 
-/* Long model names: the select truncates inside a fixed-max control area
-   instead of pushing the row wider. */
-.quick-settings-row-control select {
-  max-width: 220px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Readiness/status feedback line under a control (local-only engine state).
-   Reuses the chip contract from settings-affordances.css. */
+/* Status line under a row (local engine state, team note); reuses the chip contract. */
 .quick-settings-row-note {
-  grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
+  font-size: var(--font-size-footnote);
+}
+
+/* Text button: Tune, Open Models, All settings. */
+.quick-settings-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.quick-settings-row-note .quick-settings-link {
+  font-size: inherit;
+}
+
+.quick-settings-link:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.quick-settings-link:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.quick-settings-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .quick-settings-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--space-5);
-  padding: var(--space-5) var(--space-7);
-  border-top: 1px solid var(--settings-shell-muted-border);
+  padding: var(--space-4) var(--space-7) var(--space-6);
   flex-shrink: 0;
 }
 
-.quick-settings-all {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 32px;
-  padding: var(--space-3) var(--space-6);
-  border: 1px solid var(--settings-shell-muted-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--font-size-body);
-  cursor: pointer;
-  transition:
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+.quick-settings-chord {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
 }
 
-.quick-settings-all:hover {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--settings-shell-accent) 32%, var(--settings-shell-muted-border));
-  background: color-mix(in srgb, var(--settings-shell-accent) 8%, transparent);
+.quick-settings-chord kbd {
+  padding: 0 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: inherit;
 }
 
-.quick-settings-all:focus-visible {
-  outline: 2px solid var(--settings-shell-accent);
-  outline-offset: 2px;
-}
-
-/* Narrow viewport: full-width sheet, controls stack under labels. */
+/* Narrow viewport: full-width sheet. */
 @media (max-width: 560px) {
   .quick-settings-overlay {
     padding: var(--space-5);
@@ -233,16 +258,13 @@
   .quick-settings-row {
     grid-template-columns: 1fr;
   }
-
-  .quick-settings-row-control select {
-    max-width: 100%;
-    width: 100%;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .quick-settings-dialog,
+  .quick-settings-scrim,
   .quick-settings-close,
-  .quick-settings-all {
+  .quick-settings-link {
     transition: none !important;
     transform: none !important;
     animation: none !important;

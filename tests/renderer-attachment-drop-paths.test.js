@@ -227,3 +227,110 @@ test('inline image routing warns when the operation becomes stale', async () => 
   const routed = logs.find((entry) => entry.event === 'composer.attachment.routed');
   assert.deepEqual([routed.level, routed.fields.routeReason], ['WARN', 'stale_operation']);
 });
+
+// Row 153: the drop-state guard and the preparing placeholders.
+function pendingRig(attachments = {}) {
+  const renders = [];
+  const state = { currentSessionId: 'session-a', attachments: { queued: [], dragDepth: 0 } };
+  const controller = createAttachmentQueueController({
+    state,
+    windowRef: { jennyShell: { attachments } },
+    constants: { TOAST_SOURCE: {} },
+    callbacks: { renderAttachmentTray: () => renders.push((state.attachmentPending || []).map((entry) => entry.name)) },
+  });
+  return { state, controller, renders };
+}
+
+test('setDropActive renders only when the drop state changes', () => {
+  const { controller, renders } = pendingRig();
+  for (let index = 0; index < 10; index += 1) controller.setDropActive(true);
+  assert.equal(renders.length, 1);
+  controller.setDropActive(false);
+  controller.setDropActive(false);
+  assert.equal(renders.length, 2);
+});
+
+test('a drop lists placeholders until its result merges, then the items replace them', async () => {
+  let resolvePrepare;
+  const { state, controller, renders } = pendingRig({
+    prepareDroppedFiles: () => new Promise((resolve) => { resolvePrepare = resolve; }),
+  });
+  const token = controller.beginAttachmentToken();
+  const run = controller.prepareDroppedAttachments([{ name: 'shot.png', type: 'image/png' }, { name: 'notes.md', type: 'text/markdown' }], token);
+  assert.deepEqual(state.attachmentPending.map((entry) => [entry.kind, entry.name, entry.sessionId]), [['image', 'shot.png', 'session-a'], ['file', 'notes.md', 'session-a']]);
+  assert.deepEqual(renders.at(-1), ['shot.png', 'notes.md'], 'the placeholders rendered at once');
+  resolvePrepare({ accepted: [{ id: 'a1', path: 'C:/w/shot.png', kind: 'image' }], rejected: [] });
+  await run;
+  assert.deepEqual(state.attachmentPending, []);
+  assert.deepEqual(renders.at(-1), [], 'the merge render shows no placeholder');
+  assert.deepEqual(state.attachments.queued.map((entry) => entry.id), ['a1']);
+});
+
+test('a failed paste clears its placeholder', async () => {
+  const { state, controller, renders } = pendingRig({ saveImageAsset: () => Promise.reject(new Error('disk full')) });
+  const token = controller.beginAttachmentToken();
+  await assert.rejects(controller.queueInlineImageAttachment({ bytes: new Uint8Array(1), mimeType: 'image/png', displayName: 'Pasted Image.png' }, token), /disk full/);
+  assert.deepEqual(state.attachmentPending, []);
+  assert.deepEqual(renders, [['Pasted Image.png'], []]);
+});
+
+test('dispose drops the placeholders of its own ops only', () => {
+  const { state, controller } = pendingRig({ prepareDroppedFiles: () => new Promise(() => {}) });
+  state.attachmentPending = [{ operationId: 'other_op', sessionId: 'session-a', kind: 'file', name: 'kept.md' }];
+  controller.prepareDroppedAttachments([{ name: 'gone.md', type: '' }], controller.beginAttachmentToken());
+  assert.equal(state.attachmentPending.length, 2);
+  controller.dispose();
+  assert.deepEqual(state.attachmentPending.map((entry) => entry.name), ['kept.md']);
+});
+
+test('a dropped path string names its placeholder by the file name, Windows separators included', () => {
+  const { state, controller } = pendingRig({ prepare: () => new Promise(() => {}) });
+  controller.prepareDroppedAttachments(['C:\\workspace\\shots\\screen.PNG', '/home/me/notes.md'], controller.beginAttachmentToken());
+  assert.deepEqual(state.attachmentPending.map((entry) => [entry.kind, entry.name]), [['image', 'screen.PNG'], ['file', 'notes.md']]);
+});
+
+function pictureController(overrides = {}) {
+  const saved = [];
+  const state = { attachments: { queued: [], dragDepth: 0 }, sessions: [], currentSessionId: '', runtimeDraft: {}, ...overrides.state };
+  const windowRef = { jennyShell: { attachments: { saveImageAsset: overrides.save || (async (payload) => { saved.push(payload); return { id: `img_${saved.length}`, assetPath: `C:/x/img_${saved.length}.png`, kind: 'image', sizeBytes: 8 }; }) } } };
+  const controller = createAttachmentQueueController({ state, windowRef, constants: { TOAST_SOURCE: {} }, callbacks: {} });
+  return { controller, state, windowRef, saved };
+}
+
+test('attachPicture queues an app-made picture through the inline image path and is reachable as a window object', async () => {
+  const { controller, state, windowRef, saved } = pictureController();
+  assert.equal(typeof windowRef.rendererComposerPictures.attachPicture, 'function');
+  const result = await windowRef.rendererComposerPictures.attachPicture({ bytes: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png', displayName: 'marked-up-drawing.png' });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(saved[0].displayName, 'marked-up-drawing.png');
+  assert.equal(saved[0].sourceKind, 'capture');
+  assert.deepEqual(state.attachments.queued.map((entry) => entry.id), ['img_1']);
+  controller.dispose();
+  assert.equal(windowRef.rendererComposerPictures, null, 'dispose takes the object away');
+});
+
+test('attachPicture refuses a fifth picture and a ninth attachment, and names a too-large or failed save', async () => {
+  const images = (count) => Array.from({ length: count }, (_, index) => ({ id: `i${index}`, kind: 'image' }));
+  assert.deepEqual(await pictureController({ state: { attachments: { queued: images(4), dragDepth: 0 } } }).controller.attachPicture({ bytes: new Uint8Array([1]) }), { ok: false, reason: 'too_many' });
+  const files = Array.from({ length: 8 }, (_, index) => ({ id: `f${index}`, kind: 'file' }));
+  assert.deepEqual(await pictureController({ state: { attachments: { queued: files, dragDepth: 0 } } }).controller.attachPicture({ bytes: new Uint8Array([1]) }), { ok: false, reason: 'too_many' });
+  const large = pictureController({ save: async () => { throw new Error('Image buffer exceeds the 10000000 byte limit (received 10000001 bytes).'); } });
+  assert.deepEqual(await large.controller.attachPicture({ bytes: new Uint8Array([1]) }), { ok: false, reason: 'too_large' });
+  const broken = pictureController({ save: async () => { throw new Error('disk full'); } });
+  assert.deepEqual(await broken.controller.attachPicture({ bytes: new Uint8Array([1]) }), { ok: false, reason: 'failed' });
+});
+
+test('resolveActiveVision reads the vision gate for the active session\'s model', () => {
+  const previous = globalThis.rendererComposerVisionGate;
+  globalThis.rendererComposerVisionGate = require('../renderer/chat/renderer-composer-vision-gate');
+  try {
+    const modelList = { data: [{ id: 'text-only', capabilities: { vision: false } }, { id: 'seer', capabilities: { vision: true } }] };
+    const { controller } = pictureController({ state: { sessions: [{ id: 's1', preferred_model: 'text-only' }], currentSessionId: 's1', modelList, status: { model: 'other' } } });
+    assert.deepEqual(controller.resolveActiveVision(), { supported: false, source: 'catalog', modelLabel: 'text-only' });
+    const draft = pictureController({ state: { runtimeDraft: { preferredModel: 'seer' }, modelList, status: { model: 'other' } } });
+    assert.equal(draft.controller.resolveActiveVision().supported, true);
+    assert.equal(pictureController().controller.resolveActiveVision().supported, null);
+  } finally {
+    globalThis.rendererComposerVisionGate = previous;
+  }
+});

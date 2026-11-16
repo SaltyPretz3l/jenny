@@ -32,7 +32,7 @@ function fakeWindow({ fail = false } = {}) {
         if (fail) return false;
         const pair = rail.CHANGE_PICTURES_SCRIPTS.find(([path]) => path === src);
         windowRef[pair[1]] = pair[1] === 'rendererChangePictures'
-          ? { decorateChat: (options) => decorated.push(options) }
+          ? { captureForChat: (options) => decorated.push(options) }
           : {};
         return true;
       },
@@ -46,12 +46,12 @@ test('a loaded pictures module is handed the root, the session and that session\
   const decorated = [];
   const asked = [];
   let sessionId = ' s1 ';
-  rail.decorateChatPictures({
+  rail.captureChatPictures({
     root: timeline.firstElementChild,
     timeline,
     getSessionId: () => sessionId,
     getTurns: (id) => { asked.push(id); return [{ turnId: 't1' }]; },
-    windowRef: { rendererChangePictures: { decorateChat: (options) => decorated.push(options) } },
+    windowRef: { rendererChangePictures: { captureForChat: (options) => decorated.push(options) } },
   });
   assert.equal(decorated.length, 1);
   assert.equal(decorated[0].root, timeline.firstElementChild);
@@ -66,13 +66,13 @@ test('the modules load once, the first time a chat shows a change, and then deco
   const { windowRef, loaded, decorated } = fakeWindow();
   const plain = timelineOf('<article class="chat-entry assistant" data-turn-id="t0"></article>');
   const deps = { getSessionId: () => 's1', getTurns: () => [], windowRef };
-  rail.decorateChatPictures({ ...deps, root: plain, timeline: plain });
+  rail.captureChatPictures({ ...deps, root: plain, timeline: plain });
   await flush();
   assert.deepEqual(loaded, [], 'a chat with no change loads nothing');
 
   const timeline = timelineOf(ARTICLE);
-  rail.decorateChatPictures({ ...deps, root: timeline.firstElementChild, timeline });
-  rail.decorateChatPictures({ ...deps, root: timeline.firstElementChild, timeline });
+  rail.captureChatPictures({ ...deps, root: timeline.firstElementChild, timeline });
+  rail.captureChatPictures({ ...deps, root: timeline.firstElementChild, timeline });
   await flush();
   assert.deepEqual(loaded, rail.CHANGE_PICTURES_SCRIPTS.map(([src]) => src));
   assert.equal(decorated.length, 1);
@@ -83,9 +83,9 @@ test('a failed load is not retried on later renders', async () => {
   const { windowRef, loaded, decorated } = fakeWindow({ fail: true });
   const timeline = timelineOf(ARTICLE);
   const deps = { root: timeline, timeline, getSessionId: () => 's1', getTurns: () => [], windowRef };
-  rail.decorateChatPictures(deps);
+  rail.captureChatPictures(deps);
   await flush();
-  rail.decorateChatPictures(deps);
+  rail.captureChatPictures(deps);
   await flush();
   assert.equal(loaded.length, 1);
   assert.equal(decorated.length, 0);
@@ -95,11 +95,11 @@ test('with the feature off nothing loads, and a loaded module is told so', async
   const { windowRef, loaded } = fakeWindow();
   const timeline = timelineOf(ARTICLE);
   const deps = { root: timeline, timeline, getSessionId: () => 's1', getTurns: () => [], isEnabled: () => false };
-  rail.decorateChatPictures({ ...deps, windowRef });
+  rail.captureChatPictures({ ...deps, windowRef });
   await flush();
   assert.deepEqual(loaded, []);
   const decorated = [];
-  rail.decorateChatPictures({ ...deps, windowRef: { rendererChangePictures: { decorateChat: (options) => decorated.push(options) } } });
+  rail.captureChatPictures({ ...deps, windowRef: { rendererChangePictures: { captureForChat: (options) => decorated.push(options) } } });
   assert.equal(decorated[0].enabled, false);
 });
 
@@ -108,7 +108,7 @@ test('every timeline write and every remounted entry reaches the pictures hook, 
   const calls = [];
   const previous = globalThis.rendererCodeReviewRail;
   t.after(() => { globalThis.rendererCodeReviewRail = previous; });
-  globalThis.rendererCodeReviewRail = { decorateChatPictures: (options) => calls.push(options) };
+  globalThis.rendererCodeReviewRail = { captureChatPictures: (options) => calls.push(options) };
   const state = { currentSessionId: 's1', features: { featureFlags: {} } };
   const turns = new Map([['t1', { turnId: 't1' }]]);
   const uiRuntime = { projectionContextBySession: new Map([['s1', { currentContext: { viewModelByTurnId: turns } }]]) };
@@ -128,7 +128,7 @@ test('every timeline write and every remounted entry reaches the pictures hook, 
   effects.redecorateVirtualizedEntry(timeline.firstElementChild);
   assert.equal(calls[1].root, timeline.firstElementChild);
 
-  globalThis.rendererCodeReviewRail = { decorateChatPictures: () => { throw new Error('boom'); } };
+  globalThis.rendererCodeReviewRail = { captureChatPictures: () => { throw new Error('boom'); } };
   assert.doesNotThrow(() => effects.runPostTimelineRenderEffects([], { liveThinking: false }));
   assert.doesNotThrow(() => effects.redecorateVirtualizedEntry(timeline.firstElementChild));
 });

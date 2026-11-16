@@ -300,11 +300,20 @@
       if (target && target.getAttribute('data-virtualized') === 'true' && timelineVirtualizer && typeof timelineVirtualizer.ensureMounted === 'function') {
         try { timelineVirtualizer.ensureMounted(target); } catch (_error) { /* best-effort */ }
       }
+      // A reply taller than the view is read from its start; centring it hid the start above the fold.
+      // Measure the node the reveal scrolls to: a segment merged into its turn article resolves to
+      // that whole article (renderer-turn-shell.js), not to an entry of its own.
+      var turnShell = (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell) || null;
+      var revealed = (turnShell && typeof turnShell.resolveVisibleMessageDomTarget === 'function' && chatTimeline
+        ? turnShell.resolveVisibleMessageDomTarget(chatTimeline, messageId) : null) || target;
+      var height = revealed && typeof revealed.getBoundingClientRect === 'function' ? Number(revealed.getBoundingClientRect().height || 0) : 0;
+      var viewHeight = Number(getScrollMetrics().clientHeight || 0);
+      var block = viewHeight > 0 && height > viewHeight * 0.9 ? 'start' : 'center';
       var didScroll = false;
       if (scrollMessageIntoView) {
         try {
           didScroll = Boolean(scrollMessageIntoView(messageId, {
-            block: 'center',
+            block: block,
             followLatest: false,
             reason: 'unread_jump',
           }));
@@ -317,7 +326,7 @@
       if (!didScroll) {
         target = resolveEntry(messageId);
         didScroll = Boolean(viewportReveal?.revealElement?.(target, {
-          block: 'center',
+          block: block,
           followLatest: false,
           reason: 'unread_jump',
         }));

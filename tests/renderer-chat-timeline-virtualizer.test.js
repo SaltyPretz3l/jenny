@@ -620,3 +620,45 @@ test('an unchanged chat width value is a no-op rather than a layout churn', (t) 
   axis.mutationObservers[0]._fire();
   assert.equal(reasons.includes('layout_invalidated'), false, 'rewriting the same value invalidates nothing');
 });
+
+// Review 2026-11-12 (scroll-away-nav 6): Settings typography remaps the font
+// families (wrapping and heading heights change) with no container resize.
+test('a typography change invalidates the cached layout like Text size and chat width', (t) => {
+  const { axis, reasons } = buildLayoutAxisVirtualizer(t);
+  assert.ok(axis.mutationObservers[0].options.attributeFilter.includes('data-typography'));
+  axis.documentElement.setAttribute('data-typography', 'editorial');
+  axis.mutationObservers[0]._fire();
+  assert.ok(reasons.includes('layout_invalidated'), 'a font-family change rebuilds the height cache');
+});
+
+// Review 2026-11-12 (scroll-away-nav 2): every stale-epoch placeholder mount
+// read layout right after writing its markup, one forced layout per row.
+test('re-entering placeholders from an older layout epoch mount without a per-row layout read', (t) => {
+  const env = buildEnvironment();
+  t.after(() => env.restore());
+  const timers = [];
+  const listeners = new Map();
+  const win = {
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener() {},
+    setTimeout(callback) { timers.push(callback); return timers.length; },
+    clearTimeout() {},
+  };
+  const entries = bulkEntries(200);
+  const v = createTimelineVirtualizer({ chatTimeline: makeChatTimeline(entries), document: makeFakeDocument(), window: win });
+  t.after(() => v.dispose());
+  v.rebuild();
+  const batch = entries.slice(9, 15);
+  env.observers[0]._fire(batch.map((target) => ({ target, isIntersecting: false })));
+  batch.forEach((entry) => assert.equal(entry.getAttribute('data-virtualized'), 'true'));
+
+  listeners.get('resize')(); // the layout epoch moves on
+  timers.shift()();
+  batch.forEach((entry) => { entry._measureCount = 0; });
+  env.observers[env.observers.length - 1]._fire(batch.map((target) => ({ target, isIntersecting: true })));
+
+  batch.forEach((entry) => {
+    assert.equal(entry.getAttribute('data-virtualized'), null, `${entry.getAttribute('data-message-id')} mounted`);
+    assert.equal(entry._measureCount, 0, 'the mount batch must not read layout per row');
+  });
+});

@@ -281,10 +281,10 @@ class RuntimeConfig:
     chatgpt_base_url: str | None = None
     tools_execution_timeout_seconds: float = 120.0
     # Lockstep with config.py and renderer/shared/engine-tuning-schema.js.
-    max_loop_wall_seconds: float = 3600.0
+    max_loop_wall_seconds: float = 7200.0
     max_loop_iterations: int = 8
-    max_chat_loop_iterations: int = 8
-    max_task_loop_iterations: int = 30
+    max_chat_loop_iterations: int = 40
+    max_task_loop_iterations: int = 300
     max_sub_agent_loop_iterations: int = 10
     max_sub_agent_concurrency: int = 1
     max_cloud_sub_agent_concurrency: int = 3
@@ -323,9 +323,11 @@ class RuntimeConfig:
     reasoning_effort: str = ""
     session_start_date: str = ""
     safety_mode: str = "normal"
-    auto_approve_streak_cap: int = 50
+    auto_approve_streak_cap: int = 250
     ui_language: str = "en"
     use_24_hour_time: bool = False
+    # Which diagram language the system prompt teaches: short, full or mermaid.
+    drawing_instructions: str = "short"
     tools_enabled: bool = True
     tools_glob_enabled: bool = True
     tools_grep_enabled: bool = True
@@ -406,8 +408,8 @@ class RuntimeConfig:
     tools_web_allow_loopback: bool = False
     tools_max_search_file_bytes: int = 2_097_152
     tools_max_edit_file_bytes: int = 2_097_152
-    max_tools_per_turn: int = 20
-    max_web_tool_calls_per_turn: int = 10
+    max_tools_per_turn: int = 200
+    max_web_tool_calls_per_turn: int = 30
     max_code_intelligence_tool_calls_per_turn: int = 16
     max_tool_calls_per_session: int = 2_000
     # Cloud-engine loop profile (see sidecar/ai/routing/iteration_limits.py).

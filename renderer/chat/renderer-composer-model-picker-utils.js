@@ -8,16 +8,28 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // api-provider/<instance>/<modelId> shows the provider's own model id.
+  function displayModelId(value) {
+    var id = String(value || '').trim();
+    var match = /^api-provider\/[a-z][a-z0-9-]{1,31}\/(.+)$/.exec(id);
+    return match ? match[1] : id;
+  }
+
   function splitModelId(value) {
     if (typeof value !== 'string' || !value.trim()) {
       return { id: '', family: '', tag: '', tagHead: '', org: '', engineHint: '' };
     }
 
     var id = value.trim();
-    var remainder = id;
+    var remainder = displayModelId(id);
     var org = '';
     var engineHint = '';
-    if (/^codex-cli\//i.test(remainder)) {
+    // A team model (team/<teamId>/<modelId>) shows the team's own model id.
+    var teamMatch = /^team\/team_[A-Za-z0-9_-]{1,64}\/(.+)$/.exec(remainder);
+    if (teamMatch) {
+      engineHint = 'team';
+      remainder = teamMatch[1];
+    } else if (/^codex-cli\//i.test(remainder)) {
       engineHint = 'codex-cli';
       remainder = remainder.replace(/^codex-cli\//i, '');
     } else if (/^(?:hf\.co|huggingface\.co)\//i.test(remainder)) {
@@ -49,6 +61,11 @@
     }
     if (engineType === 'chatgpt') {
       return { key: 'chatgpt', label: 'ChatGPT', order: 40 };
+    }
+    // Row 123: each team is its own group, named by the team.
+    var teamId = String(source.teamId || '').trim();
+    if (teamId && engineType === 'openai-compatible') {
+      return { key: 'team:' + teamId, label: String(source.teamName || '').trim() || teamId, order: 65 };
     }
     // Row 78: each API-key provider is its own group, named by the user's label.
     if (engineType === 'api-provider') {
@@ -131,9 +148,17 @@
         managed: source.managed,
         apiProviderInstanceId: source.apiProviderInstanceId,
         provider: source.provider,
+        teamId: source.team_id,
+        teamName: source.team_name,
       }),
-      hint: apiProviderHint(engineType, source),
+      hint: apiProviderHint(engineType, source) || teamEngineHint(source),
     };
+  }
+
+  // The notice (D7) under every team row: who can read what a team model is sent.
+  function teamEngineHint(source) {
+    if (!source.team_id) return '';
+    return jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.');
   }
 
   // One line under an API-key provider row that cannot run as listed.
@@ -204,8 +229,10 @@
       });
   }
 
-  function effortSegmentLabel(value) {
+  // The effort select names "none" Minimal for a model that cannot turn thinking off.
+  function effortSegmentLabel(value, fullLabel) {
     var input = String(value || '').trim();
+    if (input === 'none' && fullLabel === 'Minimal') input = 'minimal';
     var labels = {
       default: 'Default',
       none: 'Off',
@@ -219,12 +246,17 @@
     return labels[input.toLowerCase()] || input || 'Default';
   }
 
-  function getEffortSuffix(effort, effortSupported) {
-    var normalizedEffort = String(effort || '').trim().toLowerCase();
-    if (effortSupported !== true || !normalizedEffort || normalizedEffort === 'default') {
+  function selectedEffortLabel(source) {
+    var selected = (source.effortOptions || []).find(function (option) { return option.value === source.effort; });
+    return effortSegmentLabel(source.effort, selected && selected.label);
+  }
+
+  function getEffortSuffix(source) {
+    var normalizedEffort = String(source.effort || '').trim().toLowerCase();
+    if (source.effortSupported !== true || !normalizedEffort || normalizedEffort === 'default') {
       return '';
     }
-    return ' · ' + effortSegmentLabel(effort);
+    return ' · ' + selectedEffortLabel(source);
   }
 
   // The model a "Default" chat (preferred_model '') runs on: the Settings
@@ -250,7 +282,7 @@
     var source = input || {};
     var preferredModel = String(source.preferredModel || '').trim();
     var backendModel = String(source.backendModel || '').trim();
-    var effortSuffix = getEffortSuffix(source.effort, source.effortSupported);
+    var effortSuffix = getEffortSuffix(source);
     if (preferredModel) {
       var preferred = splitModelId(preferredModel);
       return preferred.family + (preferred.tagHead ? ' · ' + preferred.tagHead : '') + effortSuffix;
@@ -266,15 +298,54 @@
     var preferredModel = String(source.preferredModel || '').trim();
     var backendModel = String(source.backendModel || '').trim();
     var title = preferredModel
-      ? 'Model: ' + preferredModel
-      : (backendModel ? 'Model: default (' + backendModel + ')' : 'Model: default');
+      ? 'Model: ' + displayModelId(preferredModel)
+      : (backendModel ? 'Model: default (' + displayModelId(backendModel) + ')' : 'Model: default');
     if (source.effortSupported === true) {
-      title += '. Thinking: ' + effortSegmentLabel(source.effort);
+      title += '. Thinking: ' + selectedEffortLabel(source);
     }
     return title;
   }
 
+  // Row 144: port of services/model-size-class.js (a test compares the two).
+  var CLOUD_ENGINES = { chatgpt: 1, 'codex-cli': 1, 'api-provider': 1 };
+  function positive(value) { return value > 0 && Number.isFinite(value) ? value : null; }
+  function sizeFromText(text) {
+    var best = null;
+    String(text || '').replace(/(?:(\d+)x)?(\d+(?:\.\d+)?)b(?![a-z0-9])/gi, function (all, experts, size) {
+      var value = positive(parseFloat(size) * (experts ? Number(experts) : 1));
+      if (value !== null && (best === null || value > best)) best = value;
+      return all;
+    });
+    return best;
+  }
+  function sizeFromLabel(label) {
+    var text = typeof label === 'string' ? label.trim() : '';
+    var match = /^(\d+(?:\.\d+)?)\s*([BM])/i.exec(text);
+    if (/^\d+x/i.test(text)) return sizeFromText(text);
+    return match ? positive(parseFloat(match[1]) / (/m/i.test(match[2]) ? 1000 : 1)) : null;
+  }
+  function classifyCheckModel(input) {
+    var source = input || {};
+    if (CLOUD_ENGINES[String(source.engineType || '').trim().toLowerCase()] === 1) return { fit: true, params_b: null, source: 'cloud' };
+    var engine = sizeFromLabel(source.parameterSize);
+    var size = engine !== null ? engine : sizeFromText(source.model);
+    if (size === null) return { fit: false, params_b: null, source: 'unknown' };
+    return { fit: size >= 7, params_b: Math.round(size * 10) / 10, source: engine !== null ? 'engine' : 'name' };
+  }
+
+  // Jenny's pinned model, for the Jenny chat's session only.
+  function resolvePinnedModel(snapshot, sessionId) {
+    var snap = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    if (snap.status !== 'ready' || !sessionId || snap.session_id !== sessionId) return '';
+    return typeof snap.model === 'string' ? snap.model.trim() : '';
+  }
+
   return {
+    sizeFromText: sizeFromText,
+    sizeFromLabel: sizeFromLabel,
+    classifyCheckModel: classifyCheckModel,
+    resolvePinnedModel: resolvePinnedModel,
+    displayModelId: displayModelId,
     splitModelId: splitModelId,
     resolveModelGroup: resolveModelGroup,
     normalizeCatalogEntry: normalizeCatalogEntry,

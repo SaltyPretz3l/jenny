@@ -85,16 +85,63 @@ test('historical assistant audio renders as a standard audio attachment', () => 
   assert.doesNotMatch(html, /data-assistant-tts|assistant-reply-audio/);
 });
 
-test('skill invocation metadata renders as a compact user-row pill without an attachment card', () => {
+test('a skill is a quiet caption mark: the slash command, the skill named in its tooltip, no card and no control', () => {
   const renderer = createTranscriptAttachmentsRenderer({ escapeHtml });
   const html = renderer.renderMessageAttachments({
     id: 'm5',
     role: 'user',
-    skill_invocation: { id: 'bundled/verify', name: 'Verifier <safe>', scope: 'bundled', command: 'verify' },
+    skill_invocation: { id: 'bundled/verify', name: 'Verifier <safe>', scope: 'bundled', command: 'verify <x>' },
     attachments: [],
   });
-  assert.match(html, /class="message-skill-pill">Verifier &lt;safe&gt;<\/span>/);
-  assert.doesNotMatch(html, /message-attachment-card/);
+  const doc = new JSDOM(html).window.document;
+  const mark = doc.querySelector('.message-attachments > .message-marks > .message-mark[data-message-mark="skill"]');
+  assert.ok(mark);
+  assert.equal(mark.getAttribute('title'), 'Sent with the Verifier <safe> skill');
+  assert.equal(mark.querySelector('.message-mark-label').textContent, 'Skill: /verify <x>');
+  assert.equal(mark.querySelector('.sr-only').textContent.trim(), 'Skill:', 'the screen reader hears what the mark is');
+  assert.equal(mark.querySelector('svg').getAttribute('aria-hidden'), 'true');
+  assert.doesNotMatch(html, /<script|<x>|<safe>/, 'every value is escaped');
+  assert.doesNotMatch(html, /message-attachment-card|message-files|<button/);
+  const byName = renderer.renderMessageAttachments({ role: 'user', skill_invocation: { id: 'a', name: 'tidy', scope: 'user', command: '' } });
+  assert.match(byName, /<\/span>tidy<\/span>/, 'a skill with no command shows its plain name, no slash');
+});
+
+test('marks run skill, image, board on one line, above the files; nothing at all renders an empty string', () => {
+  const renderer = createTranscriptAttachmentsRenderer({ escapeHtml });
+  const html = renderer.renderMessageAttachments({
+    role: 'user',
+    board_id: 'board_not_named',
+    image_prompt_pin: { seed: 1 },
+    skill_invocation: { id: 'b/one', name: 'one-shot', scope: 'bundled', command: 'one-shot' },
+    attachments: [{ id: 't1', kind: 'text', displayName: 'ci.log', extension: '.log', sizeBytes: 18 * 1024 }],
+  });
+  const root = new JSDOM(html).window.document.querySelector('.message-attachments');
+  assert.deepEqual([...root.children].map((el) => el.className), ['message-marks', 'message-files']);
+  assert.deepEqual([...root.querySelectorAll('.message-mark')].map((el) => el.dataset.messageMark), ['skill', 'image', 'board']);
+  assert.equal(root.querySelector('[data-message-mark="image"] .message-mark-label').textContent, 'Drawn as written');
+  assert.equal(root.querySelector('[data-message-mark="board"] .message-mark-label').textContent, 'From a board');
+  assert.equal(renderer.renderMessageAttachments({ role: 'user', attachments: [] }), '');
+  assert.equal(renderer.renderMessageAttachments({ role: 'assistant', image_prompt_pin: {}, board_id: 'board_x' }), '', 'only a user turn is marked');
+});
+
+test('a sent text file is a tile: name, type and size, "first part only" when cut; no remove and no open control', () => {
+  const renderer = createTranscriptAttachmentsRenderer({ escapeHtml });
+  const html = renderer.renderMessageAttachments({
+    attachments: [
+      { id: 't1', kind: 'text', displayName: 'ci-run-4182.log', extension: '.log', sizeBytes: 18 * 1024 },
+      { id: 't2', kind: 'text', displayName: 'notes "<b>".markdown', extension: '.markdown', sizeBytes: 4300, truncated: true },
+      { id: 't3', kind: 'text', displayName: 'README', sizeBytes: 0 },
+    ],
+  });
+  const doc = new JSDOM(html).window.document;
+  const tiles = [...doc.querySelectorAll('.message-files > .message-file')];
+  assert.deepEqual(tiles.map((tile) => tile.querySelector('.message-file-meta').textContent),
+    ['LOG · 18 KB', 'MARK · 4.2 KB · first part only', 'text attachment']);
+  assert.equal(tiles[1].getAttribute('title'), 'notes "<b>".markdown', 'the full name is the tooltip');
+  assert.equal(tiles[1].querySelector('.message-file-name').textContent, 'notes "<b>".markdown');
+  assert.equal(tiles[0].querySelector('svg text').textContent, 'LOG');
+  assert.equal(tiles[2].querySelector('svg text'), null, 'no type, no word on the icon');
+  assert.equal(doc.querySelector('button, .message-attachment-card'), null);
 });
 
 test('attached and tool-output image buttons open the chat gallery at that image; a failed open is reported', async () => {

@@ -170,6 +170,7 @@
       renderTasksSurface = null,
       renderSubagentsSurface = null,
       renderNotesSurface = null,
+      renderBackgroundTasksSurface = null,
       renderBrowserSurface = null,
       panelV2 = null,
       sidePanel = null, // split view W3-2 panel owner (shell artifact bridge); absent: the focused session
@@ -392,7 +393,8 @@
         }
         if (attempt >= MAX_JUMP_ATTEMPTS) {
           appendClientLog('WARN', 'artifacts.jump_to_chat_failed', { messageId: targetId, attempts: attempt + 1 });
-          const sessionId = String(state.currentSessionId || '').trim();
+          // The chat the jump was for: the panel's (pane 1 in split view), else the focused one.
+          const sessionId = String(sidePanel?.getSessionId?.() || state.currentSessionId || '').trim();
           if (sessionId && getChatTimelineRowModelEnabled(sessionId) === true) {
             recordChatTimelineRolloutSignal(sessionId, 'artifact_anchor_miss', {
               messageId: targetId,
@@ -546,6 +548,11 @@
       if (mode === 'notes') {
         // Pull: the lazily loaded Notes rail paints the surface; with its module absent the mode resets (like subagents).
         if (renderNotesSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
+        getArtifactReviewState().mode = 'artifact';
+        syncArtifactReviewLayout();
+      }
+      if (mode === 'background_tasks') { // row 138: the lazily loaded Background tasks panel, pulled like Notes
+        if (renderBackgroundTasksSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
         getArtifactReviewState().mode = 'artifact';
         syncArtifactReviewLayout();
       }

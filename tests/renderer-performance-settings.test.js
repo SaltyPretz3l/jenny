@@ -26,23 +26,23 @@ function storeWith(bridge) {
   return { win, store: settingsModule.createStore(win) };
 }
 
-test('descriptors: two Appearance rows on the performance adapter with the wire names as keys', () => {
+test('descriptors: two General rows on the performance adapter with the wire names as keys', () => {
   const counter = descriptors.getSettingDescriptor('performanceShowCounterToggle');
   const warnings = descriptors.getSettingDescriptor('performanceGpuWarningsToggle');
-  assert.deepEqual([counter.sectionId, counter.adapterId, counter.key, counter.kind, counter.default], ['appearance', 'performance', 'show_counter', 'boolean', false]);
-  assert.deepEqual([warnings.sectionId, warnings.adapterId, warnings.key, warnings.kind, warnings.default], ['appearance', 'performance', 'gpu_warnings_enabled', 'boolean', true]);
+  assert.deepEqual([counter.sectionId, counter.adapterId, counter.key, counter.kind, counter.default], ['general', 'performance', 'show_counter', 'boolean', false]);
+  assert.deepEqual([warnings.sectionId, warnings.adapterId, warnings.key, warnings.kind, warnings.default], ['general', 'performance', 'gpu_warnings_enabled', 'boolean', true]);
   assert.equal(counter.control, 'toggle');
   assert.deepEqual(descriptors.listSettingDescriptors({ adapterId: 'performance' }).map((entry) => entry.id), ['performanceShowCounterToggle', 'performanceGpuWarningsToggle']);
 });
 
-test('copy: the PO labels, in the settings search index with the Appearance section', () => {
+test('copy: the PO labels, in the settings search index with the General section', () => {
   assert.equal(fieldCopy.getSettingsFieldCopy('performanceShowCounterToggle').label, 'Show performance in the session rail');
   assert.equal(fieldCopy.getSettingsFieldCopy('performanceGpuWarningsToggle').label, 'GPU memory warnings');
   const entries = fieldCopy.listSettingsSearchEntries();
   ['performanceShowCounterToggle', 'performanceGpuWarningsToggle'].forEach((id) => {
     const entry = entries.find((candidate) => candidate.id === id);
     assert.ok(entry, `${id} is searchable`);
-    assert.equal(entry.sectionId, 'appearance');
+    assert.equal(entry.sectionId, 'general');
   });
   assert.match(fieldCopy.getSettingsFieldCopy('performanceGpuWarningsToggle').description, /only observes/i);
 });
@@ -185,7 +185,11 @@ test('index.html: the group, its two mounts and the script order', () => {
   const doc = new JSDOM(html).window.document;
   const group = doc.getElementById('appearancePerformanceGroup');
   assert.ok(group && group.hidden, 'hidden until the bridge exists');
-  assert.ok(doc.querySelector('[data-settings-section="appearance"] #appearancePerformanceGroup'));
+  // Row 133: the rows sit in General › Machine status, under the title-bar load switch.
+  assert.ok(doc.querySelector('[data-settings-section="general"] #appearancePerformanceGroup'));
+  assert.equal(doc.querySelector('[data-settings-section="appearance"] #appearancePerformanceGroup'), null);
+  assert.equal(group.matches('.settings-group'), false, 'a wrapper inside the Machine status group, never a nested group');
+  assert.equal(group.closest('.settings-group').querySelector('.settings-group-heading').textContent, 'Machine status');
   assert.deepEqual([...group.querySelectorAll('[data-setting-mount]')].map((node) => node.dataset.settingMount), ['performanceShowCounterToggle', 'performanceGpuWarningsToggle']);
   const scripts = [...doc.querySelectorAll('script[src]')].map((node) => node.getAttribute('src'));
   const at = (name) => scripts.indexOf(name);
@@ -215,9 +219,11 @@ test('in the real Settings page: toggling "Show performance in the session rail"
   const bridge = fx.createPerformanceBridge({ settings: fx.settings({ show_counter: false, gpu_warnings_enabled: true }) });
   const { window } = await loadSettings(t, bridge);
   const doc = window.document;
-  assert.equal(doc.getElementById('appearancePerformanceGroup').hidden, false);
-  const counter = () => doc.querySelector('[data-inv-toggle="performanceShowCounterToggle"]');
-  const warnings = () => doc.querySelector('[data-inv-toggle="performanceGpuWarningsToggle"]');
+  // mountRows is handed the General card: the group it reveals and the rows it mounts must be in that card.
+  const general = doc.querySelector('.settings-card[data-settings-section="general"]');
+  assert.equal(general.querySelector('#appearancePerformanceGroup').hidden, false);
+  const counter = () => general.querySelector('[data-inv-toggle="performanceShowCounterToggle"]');
+  const warnings = () => general.querySelector('[data-inv-toggle="performanceGpuWarningsToggle"]');
   assert.ok(counter() && warnings(), 'both rows are mounted');
   assert.equal(counter().getAttribute('aria-checked'), 'false');
   assert.equal(warnings().getAttribute('aria-checked'), 'true');

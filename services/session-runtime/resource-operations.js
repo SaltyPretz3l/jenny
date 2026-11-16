@@ -71,7 +71,7 @@ function getHeldToolResourceLease(binding, operationId) {
 
 class ToolResourceOperations {
   constructor({ broker, pathResolver, executionAuthority, binding, sandboxCommands = false,
-    maxOperations = 256, onSettled = null, continuationEnabled = false } = {}) {
+    maxOperations = 256, onSettled = null, continuationEnabled = false, log = null } = {}) {
     const trusted = getTrustedExecutionBinding(binding);
     if (!broker || typeof broker.tryAcquire !== 'function' || typeof broker.release !== 'function'
       || typeof broker.confirmCleanup !== 'function' || !pathResolver
@@ -80,11 +80,11 @@ class ToolResourceOperations {
       || typeof executionAuthority.requireCurrent !== 'function' || !trusted
       || !Number.isSafeInteger(maxOperations) || maxOperations < 1 || maxOperations > 4096
       || (onSettled !== null && typeof onSettled !== 'function')
-      || typeof continuationEnabled !== 'boolean'
+      || typeof continuationEnabled !== 'boolean' || (log !== null && typeof log !== 'function')
       || gateways.has(binding)) {
       throw new TypeError('tool_resource_operations_binding_invalid');
     }
-    Object.assign(this, { broker, pathResolver, executionAuthority, binding, maxOperations, onSettled });
+    Object.assign(this, { broker, pathResolver, executionAuthority, binding, maxOperations, onSettled, log });
     this.sandboxCommands = sandboxCommands === true;
     this.continuationEnabled = continuationEnabled;
     this.identity = Object.freeze({ requestId: trusted.requestId, sessionId: trusted.sessionId,
@@ -276,6 +276,7 @@ class ToolResourceOperations {
       } });
     if (admission.status !== 'granted') {
       record.state = admission.status;
+      if (admission.status === 'waiting') this._logWait(params.tool_name, resources);
       if (admission.status === 'waiting' && this.continuationEnabled && admission.resource_class) {
         // A pause checkpoint settles only while this request has nothing
         // quarantined (settlePause). Waiting behind its own unconfirmed
@@ -307,6 +308,24 @@ class ToolResourceOperations {
     record.resources = resources;
     record.state = 'active';
     return response(id, 'granted');
+  }
+
+  // Session review F6 (2026-11-11): a busy edit named no holder. One bounded
+  // line per waiting admission: owner ids and lease states only, never paths,
+  // arguments or command labels.
+  _logWait(toolName, resources) {
+    if (!this.log) return;
+    try {
+      const wait = this.broker.describeWait?.(resources);
+      const holders = Array.isArray(wait?.holders) ? wait.holders : [];
+      this.log('INFO', 'tool_resource.admission_waiting', {
+        tool: String(toolName || '').slice(0, 64),
+        resource_class: wait?.resource_class || 'lease_records',
+        holder_count: holders.length,
+        holders: holders.slice(0, 4).map(holder => ({ owner: holder.owner_id || null,
+          status: holder.status || null, session_id: holder.session_id || null })),
+      });
+    } catch (_error) { /* diagnostics never change admission */ }
   }
 
   getResourceWait(operationId) {

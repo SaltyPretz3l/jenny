@@ -9,6 +9,9 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const { createHostSupervisor } = require('../services/team/host/host-supervisor');
@@ -19,8 +22,8 @@ const BOUNDS = Object.freeze({ stopMs: 150, killWaitMs: 150, startMs: 2_000, pin
 const ARGS = ['--config', 'C:\\data\\team-host\\host-config.json', '--team-init'];
 const tick = (ms = 10) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-function setup(t, { script, bounds = BOUNDS, env = { SystemRoot: 'C:\\Windows' } } = {}) {
-  const fake = createFakeFork({ script });
+function setup(t, { script, bounds = BOUNDS, env = { SystemRoot: 'C:\\Windows' }, stdout = false } = {}) {
+  const fake = createFakeFork({ script, stdout });
   const logs = [];
   const states = [];
   const supervisor = createHostSupervisor({ fork: fake.fork, entryPath: 'C:\\app\\host-entry.js', env, bounds,
@@ -338,4 +341,213 @@ test('a fork that throws is failed before anything is posted', async (t) => {
   assert.equal(started.error.reason, 'team_host_spawn_failed');
   assert.equal(hostKey.every((byte) => byte === 0), true);
   assert.deepEqual(supervisor.resources(), { child: false, timers: 0, childListeners: 0 });
+});
+
+test('a relay token travels only in start, after the key; the child spawn options, logs and states never carry it', async (t) => {
+  const token = 'owner-relay-token-5a';
+  const { fake, logs, states, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }) });
+  const started = await supervisor.start({ args: ARGS, hostKey: key(), relayToken: token });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const call = fake.calls[0];
+  assert.deepEqual(Object.keys(call.child.posted[0]), ['type', 'host_key', 'relay_token']);
+  assert.equal(call.child.posted[0].relay_token, token);
+  const elsewhere = JSON.stringify([call.args, call.options, logs, states, call.child.posted.slice(1), supervisor.snapshot()]);
+  assert.equal(elsewhere.includes(token), false);
+  // What the child was spawned with, as the fork received it.
+  assert.equal(JSON.stringify(call.options.env ?? {}).includes(token), false, 'no token in the child environment');
+  assert.equal(JSON.stringify(call.args).includes(token), false, 'no token in the child arguments');
+  assert.equal(JSON.stringify(call.options.execArgv ?? []).includes(token), false, 'no token in the child execArgv');
+  assert.ok(Object.keys(call.options.env).length > 0, 'the env the fork received is the one checked');
+  await supervisor.stop();
+  const plain = setup(t, { script: healthyHostScript({ teamId: 'team_x' }) });
+  await plain.supervisor.start({ args: ARGS, hostKey: key() });
+  assert.deepEqual(Object.keys(plain.fake.calls[0].child.posted[0]), ['type', 'host_key'], 'no token, no field');
+  await plain.supervisor.stop();
+  const badKey = key();
+  const refused = await plain.supervisor.start({ args: ARGS, hostKey: badKey, relayToken: 'has a space' });
+  assert.deepEqual(refused, { ok: false, error: { code: 'invalid_request', reason: 'team_relay_token_invalid' } });
+  assert.equal(plain.fake.calls.length, 1, 'a bad token forks nothing');
+  assert.equal(badKey.every((byte) => byte === 0), true, 'and the key is zeroed');
+});
+
+test('`reach` sets the snapshot while running, tells listeners once per change, and clears on leaving running', async (t) => {
+  // No push interval here: tests/team-host-supervisor-reach.test.js holds that rule.
+  const { fake, logs, states, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }),
+    bounds: { ...BOUNDS, reachPushMs: 0 } });
+  assert.equal(supervisor.snapshot().reach, null, 'null before any host');
+  await supervisor.start({ args: ARGS, hostKey: key() });
+  const child = fake.last();
+  assert.equal(supervisor.snapshot().reach, null, 'null until the host judges');
+  const before = states.length;
+  await tick(15); // so a `since` taken now would differ from the running state's
+  child.reply({ type: 'reach', result: 'probably_reachable', reason: 'mapped' });
+  await tick();
+  assert.deepEqual(supervisor.snapshot().reach, { result: 'probably_reachable', reason: 'mapped' });
+  assert.equal(states.length, before + 1, 'one notice');
+  assert.deepEqual(states.at(-1).reach, { result: 'probably_reachable', reason: 'mapped' });
+  assert.equal(states.at(-1).since, states.at(-2).since, 'a verdict keeps the since of the running state');
+  child.reply({ type: 'reach', result: 'probably_reachable', reason: 'mapped' });
+  await tick();
+  assert.equal(states.length, before + 1, 'the same verdict again tells nobody');
+  for (const bad of [{ type: 'reach', result: 'maybe', reason: 'mapped' }, { type: 'reach', result: 'relay', reason: 'wifi' },
+    { type: 'reach', result: 'relay' }, { type: 'reach', result: 'relay', reason: 'relay_connected', extra: 1 }]) {
+    child.reply(bad);
+  }
+  await tick();
+  assert.equal(supervisor.snapshot().state, 'running', 'a bad reach never fails the host');
+  assert.deepEqual(supervisor.snapshot().reach, { result: 'probably_reachable', reason: 'mapped' });
+  assert.equal(logs.filter((entry) => entry.event === 'team.host.message_dropped').length, 4, 'each dropped and counted');
+  child.reply({ type: 'reach', result: 'relay', reason: 'relay_connected' });
+  await tick();
+  assert.deepEqual(states.at(-1).reach, { result: 'relay', reason: 'relay_connected' });
+  await supervisor.stop();
+  assert.equal(supervisor.snapshot().reach, null, 'cleared after stop');
+  assert.equal(states.filter((s) => s.state !== 'running').every((s) => s.reach === null), true, 'only running carries reach');
+
+  await supervisor.start({ args: ARGS, hostKey: key() });
+  const second = fake.last();
+  second.reply({ type: 'reach', result: 'not_reachable', reason: 'internet_off' });
+  await tick();
+  assert.deepEqual(supervisor.snapshot().reach, { result: 'not_reachable', reason: 'internet_off' });
+  second.reply({ type: 'error', reason: 'team_store_failed' });
+  await tick();
+  assert.equal(supervisor.snapshot().state, 'failed');
+  assert.equal(supervisor.snapshot().reach, null, 'cleared after a failure');
+});
+
+test('a relay token is never sent when the fork throws, or a stop or a failure comes before the spawn', async (t) => {
+  const token = 'relay-token-drop';
+  const throwing = createHostSupervisor({ fork: () => { throw new Error('spawn failed'); }, entryPath: 'e.js', env: {}, bounds: BOUNDS });
+  const failed = await throwing.start({ args: ARGS, hostKey: key(), relayToken: token });
+  assert.equal(failed.error.reason, 'team_host_spawn_failed');
+  assert.equal(JSON.stringify(throwing.snapshot()).includes(token), false);
+
+  for (const before of ['stop', 'error']) {
+    const fake = createFakeFork({ spawnDelay: 'manual', script: healthyHostScript({ teamId: 'team_x' }) });
+    const supervisor = createHostSupervisor({ fork: fake.fork, entryPath: 'e.js', env: {}, bounds: BOUNDS });
+    t.after(() => supervisor.stop());
+    const started = supervisor.start({ args: ARGS, hostKey: key(), relayToken: token });
+    const child = fake.last();
+    if (before === 'stop') void supervisor.stop(); else child.reply({ type: 'error', reason: 'team_store_failed' });
+    child.spawnNow();
+    await started;
+    await tick(20);
+    assert.equal(child.posted.some((message) => message.type === 'start'), false, `${before}: no start message`);
+    assert.equal(JSON.stringify(child.posted).includes(token), false, `${before}: the token was not sent`);
+  }
+});
+
+test('a change that is only the verdict logs team.host.reach with its words, and no team.host.state line', async (t) => {
+  const { fake, logs, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }) });
+  await supervisor.start({ args: ARGS, hostKey: key() });
+  const stateLines = () => logs.filter((entry) => entry.event === 'team.host.state').length;
+  const before = stateLines();
+  fake.last().reply({ type: 'reach', result: 'relay', reason: 'relay_connected' });
+  await tick();
+  assert.equal(stateLines(), before, 'no second running line');
+  assert.deepEqual(logs.filter((entry) => entry.event === 'team.host.reach'),
+    [{ level: 'INFO', event: 'team.host.reach', fields: { result: 'relay', reason: 'relay_connected' } }]);
+});
+
+test('the child is forked with stdout piped and stdin and stderr ignored', async (t) => {
+  const { fake, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }) });
+  assert.equal((await supervisor.start({ args: ARGS, hostKey: key() })).ok, true);
+  assert.deepEqual(fake.calls[0].options.stdio, ['ignore', 'pipe', 'ignore']);
+});
+
+// A temp `<base>/team-host/logs/` and the `--config` arguments that point the sink at it.
+function logFolder(t) {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-host-sup-log-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(base, 'team-host', 'logs'), { recursive: true });
+  const file = path.join(base, 'team-host', 'logs', 'host.log');
+  const lines = () => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((text) => JSON.parse(text));
+  return {
+    args: ['--config', path.join(base, 'team-host', 'host-config.json')], file, lines,
+    events: () => lines().map((entry) => entry.event),
+    write: (stream, event) => stream.write(`${JSON.stringify({ timestamp: new Date().toISOString(), level: 'INFO', event })}\n`),
+  };
+}
+
+test('a piped child writes <config dir>/logs/host.log for its run; every way out ends the sink; a new start appends', async (t) => {
+  const { args, file, events, write } = logFolder(t);
+  const { fake, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }), stdout: true });
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true);
+  const first = fake.last().stdout;
+  write(first, 'team.first.line');
+  await tick();
+  await supervisor.stop();
+  assert.equal(first.listenerCount('data'), 0, 'no listener outlives the run');
+  // A run that fails after ready is ended through the handle; its sink ends with it.
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true);
+  const second = fake.last().stdout;
+  write(second, 'team.second.line');
+  await tick();
+  const failing = fake.last();
+  failing.reply({ type: 'error', reason: 'team_store_failed' });
+  for (let waited = 0; !failing.exited && waited < 2_000; waited += 10) await tick();
+  assert.equal(failing.exited, true, 'the failed child is ended through the handle');
+  await supervisor.stop(); // with no run, it waits for the released sink's last read
+  assert.equal(second.listenerCount('data'), 0);
+  assert.deepEqual(events(), ['team.first.line', 'team.host_log.closed', 'team.second.line', 'team.host_log.closed']);
+  // A fork that throws makes no sink and writes nothing.
+  const before = fs.readFileSync(file, 'utf8');
+  const throwing = createHostSupervisor({ fork: () => { throw new Error('spawn failed'); }, entryPath: 'e.js', bounds: BOUNDS });
+  assert.equal((await throwing.start({ args, hostKey: key() })).ok, false);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+});
+
+test('the sink keeps the lines written after an unrequested exit, and ends on the late exit of a held child', async (t) => {
+  const { args, lines, events, write } = logFolder(t);
+  const { fake, supervisor } = setup(t, { stdout: true, script: (child, message) => {
+    if (message.type === 'start') { child.exitOnKill = false; setImmediate(() => child.reply({ ...READY })); }
+  } });
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true);
+  const exiting = fake.last();
+  const first = exiting.stdout;
+  write(first, 'team.before.exit');
+  // Runs after the supervisor's own exit listener and before the pipe ends, as a real pipe can.
+  exiting.once('exit', () => write(first, 'team.after.exit'));
+  exiting.exit(1);
+  assert.equal(supervisor.snapshot().reason, 'team_host_exited');
+  await supervisor.stop();
+  assert.deepEqual(events(), ['team.before.exit', 'team.after.exit', 'team.host_log.closed']);
+  assert.equal(lines().at(-1).kept, 2);
+  assert.equal(first.listenerCount('data'), 0);
+  // A child that survives the kill is held, and its sink reads on until that late exit.
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true);
+  const held = fake.last();
+  const second = held.stdout;
+  assert.equal((await supervisor.stop()).reason, 'team_host_exit_unconfirmed');
+  write(second, 'team.while.held');
+  await tick();
+  assert.equal(second.listenerCount('data'), 1, 'still read while held');
+  held.exit(0);
+  await supervisor.stop();
+  assert.equal(second.listenerCount('data'), 0);
+  assert.deepEqual(events().slice(3), ['team.while.held', 'team.host_log.closed']);
+});
+
+test('a sink that throws when the run is released never keeps the run held', async (t) => {
+  const { args } = logFolder(t);
+  const { fake, supervisor } = setup(t, { script: healthyHostScript({ teamId: 'team_x' }), stdout: true });
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true);
+  const stdout = fake.last().stdout;
+  const { once, removeListener } = stdout;
+  // One throw from whichever the release reaches first: subscribing for the drain, or removing the reader.
+  stdout.once = () => { stdout.once = once; throw new Error('sink failed'); };
+  stdout.removeListener = (type, listener) => {
+    if (type !== 'data') return removeListener.call(stdout, type, listener);
+    stdout.removeListener = removeListener;
+    throw new Error('sink failed');
+  };
+  await supervisor.stop();
+  stdout.once = once;
+  stdout.removeListener = removeListener;
+  assert.deepEqual(supervisor.resources(), { child: false, timers: 0, childListeners: 0 });
+  assert.equal(supervisor.snapshot().state, 'stopped');
+  // The sink's own one-second timer still closes the file before the folder is removed.
+  for (let waited = 0; stdout.listenerCount('data') > 0 && waited < 2_000; waited += 20) await tick(20);
+  assert.equal(stdout.listenerCount('data'), 0);
+  assert.equal((await supervisor.start({ args, hostKey: key() })).ok, true, 'a new start is not refused');
 });

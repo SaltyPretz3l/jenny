@@ -544,7 +544,22 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
   return block;
 }
 
+// A chat turn grounds only on a query that reads like a code question: two or
+// more search terms, or one identifier-shaped token (camelCase, snake_case, a
+// file name, a path, a call). "hello" and "whats this?" searched the whole
+// project, and a small model then cited the unrelated `path:line` matches in a
+// picture description (LFM3 image chat findings F3, 2026-11-13).
+// getCodebaseContext itself still searches any non-empty keyword set.
+const MIN_CHAT_QUERY_KEYWORDS = 2;
+const IDENTIFIER_SHAPED = /[a-z][A-Z]|[A-Za-z0-9]_[A-Za-z0-9]|\w\.[A-Za-z]{1,5}\b|\w[\\/]\w|\w\(\)/;
+
+function isGroundableChatQuery(query) {
+  const count = extractKeywords(query).length;
+  return count >= MIN_CHAT_QUERY_KEYWORDS || (count === 1 && IDENTIFIER_SHAPED.test(query));
+}
+
 module.exports = {
   getCodebaseContext,
   extractKeywords,
+  isGroundableChatQuery,
 };

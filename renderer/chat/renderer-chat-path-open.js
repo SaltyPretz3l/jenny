@@ -469,6 +469,9 @@
           },
         });
       }
+      var pinItem = resolved.mode === 'open' && windowRef.rendererChatMessageActionBindings // row 150 slice C5: Pin to board
+        && windowRef.rendererChatMessageActionBindings.pinMenuItem({ state: state, windowRef: windowRef, anchorEl: target, rootEl: chatTimeline, item: { kind: 'file', path: resolved.path } });
+      if (pinItem) items.push(pinItem);
       if (resolved.mode === 'open' && pathMenu && typeof pathMenu.buildPathUtilityMenuItems === 'function') {
         items = items.concat(pathMenu.buildPathUtilityMenuItems(resolved.path, 'file'));
       }

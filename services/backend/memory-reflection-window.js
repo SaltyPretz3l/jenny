@@ -6,6 +6,7 @@
 // regeneration or branch of the canonical messages.
 
 const { createHash } = require('node:crypto');
+const { stubBoardBlocks } = require('../boards/board-fence');
 
 const MAX_WINDOW_ENTRIES = 24;
 const MAX_NEW_USER_MESSAGES = 8;
@@ -56,7 +57,7 @@ function userWindowText(content) {
 }
 
 function assistantWindowText(content) {
-  return capChars(typeof content === 'string' ? content : '', MAX_ASSISTANT_CHARS);
+  return capChars(typeof content === 'string' ? stubBoardBlocks(content) : '', MAX_ASSISTANT_CHARS);
 }
 
 // The verified cursor index, or -1 when the cursor is absent, its message is

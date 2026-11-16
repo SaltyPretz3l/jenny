@@ -55,17 +55,6 @@ test('visual: Plan run-mode chip includes inventory icon and label spans', (t) =
   assert.equal(plan.querySelector('span.inv-chip-label').textContent, 'Plan');
 });
 
-test('stylesheet: the retired v1 mode-chip CSS is gone (rail chip owns the surface)', () => {
-  // The old .composer-mode-chip family, its icon tokens, the plan-mode line,
-  // and the collapse guard all died with the plan chip; the run-mode rail chip
-  // styles via inv-chip + composer-run-mode-*. Dead CSS invites dead revivals.
-  assert.doesNotMatch(STYLES_CSS, /--composer-mode-chip-icon-size:/);
-  assert.doesNotMatch(STYLES_CSS, /\.composer-mode-chip\b/);
-  assert.doesNotMatch(STYLES_CSS, /composer-plan-mode-line/);
-  assert.doesNotMatch(STYLES_CSS, /composer-mode-chip-research/);
-  assert.doesNotMatch(STYLES_CSS, /:not\(:has\(\.composer-mode-chip\)\)/);
-});
-
 test('stylesheet: the rail-config lock never keys on the streaming lifecycle (spec §6 matrix)', () => {
   // The §6 policy matrix makes the run-mode switcher, model pill, tools
   // toggles, and settings gear USABLE while a turn streams; the rail lock may

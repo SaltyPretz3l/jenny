@@ -31,6 +31,28 @@
   background: var(--side-panel-bg);
 }
 
+/* Rows sliding under the stuck bar fade out instead of showing a hard-cut half line. The fade sits in the bar's
+   bottom margin, which is empty while the body is at the top. */
+#artifactReviewPanel[data-artifact-review-mode="file_preview"] .artifact-file-preview-bar::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 1px);
+  height: var(--space-3);
+  background: linear-gradient(var(--side-panel-bg), transparent);
+  pointer-events: none;
+}
+
+/* The V3 header is titled by the file, so the bar does not repeat its name. */
+.artifact-panel-v3 .artifact-file-preview-bar .artifact-file-preview-name { display: none; }
+
+/* Wrapped continuation lines hang under their own line's indent plus 2ch (data-wrap-indent, set per row by
+   renderer-artifact-file-preview-render.js), not at the code's left edge. */
+.artifact-review-panel:not(.artifact-panel-nowrap) .artifact-file-preview-row > code {
+  padding-inline-start: calc((attr(data-wrap-indent type(<number>), 0) + 2) * 1ch);
+  text-indent: calc((attr(data-wrap-indent type(<number>), 0) + 2) * -1ch);
+}
+
 /* Wrap off: the scroller scrolls sideways (its bar is always at the panel bottom), not the list,
    whose own bar sat after the last row. The gutter stays pinned. */
 #artifactReviewPanel[data-artifact-review-mode="file_preview"].artifact-panel-nowrap .artifact-review-scroll { overflow-x: auto; }

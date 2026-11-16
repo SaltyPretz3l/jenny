@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { JSDOM } = require('jsdom');
+const { withoutLocalInstall } = require('./helpers/local-node-modules');
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -10,7 +11,7 @@ function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('the chat panel does not match the PDF viewer sidebar selector', (t) => {
+test('the chat panel does not match the PDF viewer sidebar selector', { skip: withoutLocalInstall(['pdfjs-dist']) }, (t) => {
   const dom = new JSDOM(readRepoFile('index.html'));
   t.after(() => dom.window.close());
   const panel = dom.window.document.getElementById('viewPanel');

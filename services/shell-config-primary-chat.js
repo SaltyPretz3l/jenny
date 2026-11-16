@@ -4,7 +4,8 @@
  * (row 76): `{schemaVersion:1, pausedAt, launchPermissions, actionRules, history, digest}`. It holds
  * the profile's one primary Jenny chat's pause flag, its standing launch permissions
  * (D4 record, snake_case on the wire like the message grants), the user's per-action
- * rules (row 87) and a short control history. Invalid entries are dropped, never repaired. A block written by a NEWER
+ * rules (row 87), a short control history and two model pins (`model`: Jenny's own model; `checkModel`: the model
+ * scheduled checks run on; '' means not set). Invalid entries are dropped, never repaired. A block written by a NEWER
  * build (schemaVersion > 1) is preserved verbatim and treated read-only here, so an
  * older build never rewrites it. Additive: no CONFIG_VERSION bump; excluded from the
  * portable-preferences export (permissions belong to this machine). It owns shape
@@ -23,6 +24,7 @@ const PRIMARY_CHAT_HISTORY_KINDS = Object.freeze([
   // occurrence that was skipped or missed
   'schedule_created', 'schedule_updated', 'schedule_enabled', 'schedule_disabled', 'schedule_cancelled', 'schedule_skipped',
   'schedule_missed',
+  'schedule_held', 'schedule_run_anyway', // row 144: a check waiting for a big enough model, and the user's Run anyway
   'digest_skipped', // row 86: a "While you were away" digest that was due but held back (reason token)
   'rule_added', 'rule_revoked', 'rule_denied', // row 87: a user rule created or revoked, and a deny rule that refused an action
 ]);
@@ -50,6 +52,7 @@ const CHAT_CHANGE_FIELDS = Object.freeze([
 ]);
 const CHAT_CHANGE_TEXT_MAX = 200;
 const CHAT_SESSION_ID_MAX = 128;
+const MODEL_PIN_MAX_CHARS = 200; // `model` / `checkModel`, the bound of a chat's model name
 const PRIMARY_CHAT_LIMITS = Object.freeze({
   permissions_max: 32,
   history_max: 200, // row 88 Q6 (shared with rows 85-87): undo lives as long as the entry
@@ -65,10 +68,11 @@ const PRIMARY_CHAT_LIMITS = Object.freeze({
 const DEFAULT_DIGEST = Object.freeze({ lastPresentAt: null, lastDigestAt: null, lastDigestUntil: null });
 const DEFAULT_PRIMARY_CHAT = Object.freeze({
   schemaVersion: SCHEMA_VERSION, pausedAt: null, launchPermissions: Object.freeze([]), actionRules: Object.freeze([]),
-  history: Object.freeze([]), digest: DEFAULT_DIGEST,
+  history: Object.freeze([]), digest: DEFAULT_DIGEST, model: '', checkModel: '',
 });
 
 const PERMISSION_ID = /^lp_[0-9a-f]{32}$/;
+const INVISIBLE_CHARS = /[\p{Cc}\p{Cf}]/u; // control and format characters, as primary-chat-manage-service.js
 const RULE_ID = /^ar_[0-9a-f]{32}$/;
 
 function isRecord(value) {
@@ -101,6 +105,13 @@ function hasControlChars(text) {
     if (code < 0x20 || code === 0x7f) return true;
   }
   return false;
+}
+
+// A model pin: a trimmed id of at most MODEL_PIN_MAX_CHARS, no control or invisible characters; anything else is '' (not set).
+function normalizeModelPin(value) {
+  if (typeof value !== 'string') return '';
+  const id = value.trim();
+  return id.length > MODEL_PIN_MAX_CHARS || INVISIBLE_CHARS.test(id) ? '' : id;
 }
 
 function normalizeProjectId(value) {
@@ -314,10 +325,12 @@ function normalizePrimaryChat(value) {
     actionRules: normalizeActionRules(source.actionRules),
     history: normalizeHistory(source.history),
     digest: normalizeDigest(source.digest),
+    model: normalizeModelPin(source.model),
+    checkModel: normalizeModelPin(source.checkModel),
   };
 }
 
-// Merge a `{pausedAt?, launchPermissions?, actionRules?, history?, digest?}` patch (shallow, then normalized). A read-only
+// Merge a `{pausedAt?, launchPermissions?, actionRules?, history?, digest?, model?, checkModel?}` patch (shallow, then normalized). A read-only
 // (future-version) block is returned untouched, so the write becomes a no-op. A patch cannot set the version.
 function applyPrimaryChatPatch(current, patch) {
   if (isReadOnlyPrimaryChat(current)) return current;
@@ -330,6 +343,7 @@ module.exports = {
   CHAT_CHANGE_FIELDS,
   DEFAULT_DIGEST,
   DEFAULT_PRIMARY_CHAT,
+  MODEL_PIN_MAX_CHARS,
   PRIMARY_CHAT_HISTORY_KINDS,
   PRIMARY_CHAT_LIMITS,
   PRIMARY_ACTION_RULE_SHAPES,

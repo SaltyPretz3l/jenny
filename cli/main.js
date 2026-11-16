@@ -130,7 +130,7 @@ function createControl({ stdin, watchStdinClose, onHardExit }) {
 }
 
 async function main(argv = process.argv.slice(2), { env = process.env, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
-  runtime: injectedRuntime = null } = {}) {
+  runtime: injectedRuntime = null, doctorTeamDeps = undefined } = {}) {
   let parsed;
   try {
     parsed = parseArguments(argv);
@@ -164,7 +164,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdin = p
   const runtime = injectedRuntime || resolveCliRuntime({ root: ROOT, env });
 
   if (parsed.command === 'doctor') {
-    const report = await runDoctor({ settings, env, appVersion: appVersion(), runtime });
+    const report = await runDoctor({ settings, env, appVersion: appVersion(), runtime, team: parsed.flags.team === true, teamDeps: doctorTeamDeps });
     stdout.write(`${formatDoctor(report, { json: parsed.json })}\n`);
     return report.ok ? EXIT_CODES.OK : EXIT_CODES.RUNTIME_ERROR;
   }

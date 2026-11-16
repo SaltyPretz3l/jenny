@@ -287,7 +287,7 @@ describe('cleanupJennyData', () => {
     }
   });
 
-  it('removes the per-project notes directory and its atomic-write leftovers', async () => {
+  it('removes the per-project notes and project board directories and their atomic-write leftovers', async () => {
     const root = makeTempRoot();
     try {
       const userDataPath = path.join(root, 'profile');
@@ -295,12 +295,21 @@ describe('cleanupJennyData', () => {
       fs.mkdirSync(notesDir, { recursive: true });
       fs.writeFileSync(path.join(notesDir, 'project_alpha.json'), '{"version":1}');
       fs.writeFileSync(path.join(notesDir, 'project_alpha.json.1760000000000.0123456789ab.tmp'), '{}');
+      const boardsDir = path.join(userDataPath, 'boards');
+      fs.mkdirSync(boardsDir);
+      fs.writeFileSync(path.join(boardsDir, 'index.json'), '{}');
+      fs.writeFileSync(path.join(boardsDir, 'board_00000000-0000-4000-8000-000000000001.json.1760000000000.0123456789ab.tmp'), '{}');
+      const assetsDir = path.join(userDataPath, 'board-assets');
+      fs.mkdirSync(assetsDir);
+      fs.writeFileSync(path.join(assetsDir, `${'a'.repeat(64)}.png`), 'png');
 
       const result = await cleanupJennyData({ userDataPath });
 
       assert.equal(result.status, 'complete');
       assert.deepEqual(result.unknownUserDataChildren, []);
       assert.equal(fs.existsSync(notesDir), false);
+      assert.equal(fs.existsSync(boardsDir), false);
+      assert.equal(fs.existsSync(assetsDir), false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

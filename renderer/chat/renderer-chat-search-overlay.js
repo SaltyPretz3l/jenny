@@ -7,10 +7,13 @@
  *
  * Owns:
  *   - the open/close state machine
- *   - the Ctrl+F global handler (opens overlay, focuses input)
+ *   - the Ctrl+F, F3 / Shift+F3 and Esc document handlers, for this pane only
+ *     (the focused pane; never a pane hosted in the IDE dock or the Workspace)
  *   - debounced query rescan + highlight refresh
  *   - prev/next nav + roving-tabindex sync via the E3 keyboardController
- *   - the host element that anchors the search bar above #chatTimeline
+ *   - row 156: the find field and its toggle in the pane's session bar
+ *     (`data-find-open` on the cluster while open); a close keeps the query,
+ *     a reopen paints it in place and the first Enter / F3 reveals it
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -39,7 +42,9 @@
   var toolCallUtils = root.toolCallUtils || require('./tool-call-utils');
 
   var DEBOUNCE_MS = 120;
-  var HOST_ID = 'chatSearchOverlayHost';
+  var SEED_MAX_CHARS = 200;
+  var CLUSTER_SELECTOR = '[data-chat-node="chatTimelineUtilityCluster"]';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d) { return d; };
 
   function createChatSearchOverlay(deps) {
     var options = deps || {};
@@ -48,8 +53,11 @@
 
     var chatTimeline = options.chatTimeline
       || (doc ? doc.getElementById('chatTimeline') : null);
-    var chatView = options.chatView
-      || (doc ? doc.getElementById('chatView') : null);
+    var paneRoot = options.paneRoot || (chatTimeline && chatTimeline.closest ? chatTimeline.closest('.chat-pane') : null);
+    var cluster = options.cluster || (paneRoot && paneRoot.querySelector ? paneRoot.querySelector(CLUSTER_SELECTOR) : null);
+    // Pane 1 gets its own element ids and highlight names (pane 0 keeps the plain ones).
+    var paneId = paneRoot ? String(paneRoot.dataset.paneId || '0') : '0';
+    var paneSuffix = paneId === '0' ? '' : '-' + paneId;
     var keyboardController = options.keyboardController || null;
     var virtualizer = options.virtualizer || null;
     var viewportReveal = options.viewportReveal || null;
@@ -84,7 +92,11 @@
     var bar = null;
     var highlight = null;
     var hostEl = null;
+    var toggleEl = null;
     var isOpen = false;
+    // A reopen restored the last query without moving: the first next/prev
+    // reveals the current match instead of stepping past it.
+    var revealPending = false;
     var debounceTimer = null;
     var mutationRescanTimer = null;
     var timelineMutationObserver = null;
@@ -95,31 +107,59 @@
     var transientDetails = new Set();
     var canonicalFallbackLogged = false;
 
+    // The IDE dock or a Workspace-hosted pane: Monaco owns Ctrl+F there.
+    function isHostedElsewhere() {
+      return Boolean(paneRoot && (paneRoot.classList.contains('ide-chat-dock-body') || paneRoot.hasAttribute('data-pane-hosted')));
+    }
+
+    // Not yet synced (no attribute): focused only while the view has one pane.
+    function isPaneFocused() {
+      var focused = paneRoot && paneRoot.dataset.paneFocused;
+      if (focused) return focused === 'true';
+      return !paneRoot || !paneRoot.closest('.chat-view[data-pane-count="2"]');
+    }
+
+    function ownsKeys() {
+      if (getActiveView && getActiveView() !== 'chat') return false;
+      return isPaneFocused() && !isHostedElsewhere();
+    }
+
     function ensureHost() {
-      if (!doc) return null;
-      hostEl = doc.getElementById(HOST_ID);
-      if (hostEl) {
-        if (!hostEl.classList.contains('chat-search-overlay-host')) {
-          hostEl.classList.add('chat-search-overlay-host');
-        }
-        return hostEl;
-      }
-      if (!chatView || !chatTimeline) return null;
+      if (!doc || !cluster) return null;
+      if (hostEl && hostEl.isConnected) return hostEl;
       hostEl = doc.createElement('div');
-      hostEl.id = HOST_ID;
-      hostEl.className = 'chat-search-overlay-host';
+      hostEl.className = 'chat-find';
       hostEl.hidden = true;
-      chatView.insertBefore(hostEl, chatTimeline);
+      cluster.appendChild(hostEl);
       return hostEl;
+    }
+
+    function ensureToggle() {
+      if (toggleEl || !doc || !cluster || !searchBarModule) return toggleEl;
+      toggleEl = searchBarModule.createFindToggle(doc, jt('chat.find.toggleLabel', 'Find in this chat'),
+        jt('chat.find.toggleTitle', 'Find in this chat (Ctrl+F)'));
+      toggleEl.addEventListener('click', handleToggleClick);
+      cluster.appendChild(toggleEl);
+      return toggleEl;
+    }
+
+    function handleToggleClick() {
+      if (isOpen) close();
+      else open();
+    }
+
+    function syncOpenState() {
+      if (toggleEl) toggleEl.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+      if (cluster && typeof cluster.toggleAttribute === 'function') cluster.toggleAttribute('data-find-open', isOpen);
     }
 
     function ensureBar() {
       if (bar) return bar;
-      bar = searchBarFactory({ document: doc, hostId: 'chat-search' });
+      bar = searchBarFactory({ document: doc, hostId: 'chat-search' + paneSuffix, extraKeys: ['F3', 'Shift+F3'] });
       bar.on('input', handleQueryInput);
       bar.on('next', handleNext);
       bar.on('prev', handlePrev);
-      bar.on('close', handleClose);
+      bar.on('close', close);
       bar.on('toggle-case', function () { rescan(true); });
       bar.on('toggle-word', function () { rescan(true); });
       return bar;
@@ -127,7 +167,7 @@
 
     function ensureHighlight() {
       if (highlight) return highlight;
-      highlight = highlightFactory({ document: doc, chatTimeline: chatTimeline, window: win });
+      highlight = highlightFactory({ document: doc, chatTimeline: chatTimeline, window: win, nameSuffix: paneSuffix });
       return highlight;
     }
 
@@ -153,7 +193,7 @@
       var setTimeoutFn = (win && win.setTimeout) || setTimeout;
       mutationRescanTimer = setTimeoutFn(function runMutationRescan() {
         mutationRescanTimer = null;
-        rescan(false);
+        rescan(false, true);
       }, DEBOUNCE_MS);
     }
 
@@ -214,11 +254,15 @@
         && left.end === right.end;
     }
 
-    function rescan(focusFirst) {
+    // passive: a timeline mutation (a stream patch, the elapsed clock) refreshes
+    // the matches and the highlight only; scrolling to the match and releasing
+    // follow belong to a reader action (next, previous, a new query).
+    function rescan(focusFirst, passive) {
       if (!isOpen) return;
       ensureBar();
       ensureHighlight();
-      var query = bar.getQuery();
+      if (passive !== true) revealPending = false;
+      var query = String(bar.getQuery() || '').trim() ? bar.getQuery() : '';
       var previousIndex = highlight.getCurrentIndex();
       var previousMatch = highlight.getMatches()[previousIndex] || null;
       syncTimelineMutationObserver();
@@ -244,6 +288,7 @@
         bar.setMatchInfo(0, 0);
         return;
       }
+      if (documents.length && typeof highlight.paintMounted === 'function') highlight.paintMounted(query, scanOptions);
       var idx = 0;
       if (!focusFirst) {
         var restoredIndex = previousMatch && previousMatch.messageId
@@ -255,7 +300,7 @@
           ? restoredIndex
           : Math.max(0, Math.min(matches.length - 1, previousIndex));
       }
-      applyCurrent(idx);
+      applyCurrent(idx, passive === true);
     }
 
     function findEntryByMessageId(messageId) {
@@ -424,12 +469,14 @@
       if (summary) transientDetails.delete(summary.parentElement);
     }
 
-    function bindMountedCurrent(match) {
+    // fieldFocused: the step started in the find field, which keeps focus
+    // (Enter keeps stepping); F3 from the timeline leaves focus on the entry.
+    function bindMountedCurrent(match, passive, fieldFocused) {
       if (!match) return;
-      virtualizer?.ensureMountedForMessageId?.(match.messageId);
+      if (!passive) virtualizer?.ensureMountedForMessageId?.(match.messageId);
       var entryEl = findEntryForMatch(match);
       if (!entryEl) return;
-      if (expandToolRowForSearch(match, entryEl)) {
+      if (!passive && expandToolRowForSearch(match, entryEl)) {
         virtualizer?.ensureMountedForMessageId?.(match.messageId);
         entryEl = findEntryForMatch(match) || entryEl;
       }
@@ -438,12 +485,13 @@
       var bound = typeof highlight.bindCurrentToEntry === 'function'
         ? highlight.bindCurrentToEntry(entryEl, bar.getQuery(), scanOptions, { scopeEl })
         : match;
+      if (passive) return;
       openDetailsForSearch(bound);
       if (keyboardController && typeof keyboardController.focusEntryAtIndex === 'function') {
         var entries = Array.from(chatTimeline.querySelectorAll('.chat-entry'));
         keyboardController.focusEntryAtIndex(Math.max(0, entries.indexOf(entryEl)));
       }
-      if (bar) bar.focusInput(false);
+      if (bar && fieldFocused) bar.focusInput(false);
       viewportReveal?.revealElement?.(bound?.entryEl || entryEl, {
         block: 'center',
         range: bound?.range || null,
@@ -456,8 +504,9 @@
       });
     }
 
-    function applyCurrent(index) {
+    function applyCurrent(index, passive) {
       ensureHighlight();
+      var fieldFocused = focusInBar();
       var match = highlight.setCurrentIndex(index);
       var matches = highlight.getMatches();
       bar.setMatchInfo(
@@ -465,9 +514,9 @@
         matches.length,
         { truncated: highlight.wasTruncated?.() === true }
       );
-      if (!match) return;
+      if (!match || passive && !match.messageId) return;
       if (match.messageId) {
-        bindMountedCurrent(match);
+        bindMountedCurrent(match, passive, fieldFocused);
         return;
       }
       // Refocus the input first so Enter/Shift+Enter keep firing for sequential
@@ -476,7 +525,7 @@
       if (keyboardController && typeof keyboardController.focusEntryAtIndex === 'function') {
         keyboardController.focusEntryAtIndex(match.entryIndex);
       }
-      if (bar) bar.focusInput(false);
+      if (bar && fieldFocused) bar.focusInput(false);
       viewportReveal?.revealElement?.(match.entryEl, {
         block: 'center',
         range: match.range || null,
@@ -486,10 +535,19 @@
       });
     }
 
+    // After a reopen, the first step reveals the restored current match.
+    function revealRestored() {
+      if (!revealPending) return false;
+      revealPending = false;
+      applyCurrent(Math.max(0, highlight.getCurrentIndex()));
+      return true;
+    }
+
     function handleNext() {
       ensureHighlight();
       var matches = highlight.getMatches();
       if (!matches.length) return;
+      if (revealRestored()) return;
       var idx = highlight.getCurrentIndex();
       var next = idx < 0 ? 0 : (idx + 1) % matches.length;
       applyCurrent(next);
@@ -499,26 +557,49 @@
       ensureHighlight();
       var matches = highlight.getMatches();
       if (!matches.length) return;
+      if (revealRestored()) return;
       var idx = highlight.getCurrentIndex();
       var next = idx <= 0 ? matches.length - 1 : idx - 1;
       applyCurrent(next);
     }
 
-    function handleClose() {
-      close();
+    // Selected text inside this timeline seeds the query: one line, at most
+    // SEED_MAX_CHARS characters.
+    function selectionSeed() {
+      var selection = win && typeof win.getSelection === 'function' ? win.getSelection() : null;
+      if (!selection || selection.isCollapsed || !selection.rangeCount || !chatTimeline) return '';
+      var container = selection.getRangeAt(0).commonAncestorContainer;
+      if (!container || !chatTimeline.contains(container)) return '';
+      var text = String(selection.toString() || '').trim();
+      if (!text || text.length > SEED_MAX_CHARS || /[\r\n]/.test(text)) return '';
+      return text;
     }
 
-    function open() {
+    // open({ seed }) — seed replaces the query (Ctrl+F over a selection).
+    function open(openOptions) {
+      if (isHostedElsewhere()) return;
       ensureBar();
       ensureHighlight();
       var host = ensureHost();
       if (!host) return;
+      var seed = openOptions && typeof openOptions.seed === 'string' ? openOptions.seed : '';
+      var seeded = Boolean(seed) && seed !== bar.getQuery();
+      if (seeded) bar.setQuery(seed);
       if (!isOpen) {
         savedFocusEl = doc ? doc.activeElement : null;
         host.hidden = false;
         bar.mount(host);
         isOpen = true;
+        syncOpenState();
+        if (!seeded && hasActiveQuery()) {
+          // Reopen: the last query paints in place; the first step reveals it.
+          rescan(true, true);
+          revealPending = true;
+        } else if (!seeded) {
+          bar.setMatchInfo(0, 0);
+        }
       }
+      if (seeded) rescan(true);
       bar.focusInput(true);
     }
 
@@ -544,31 +625,37 @@
       if (rowKey) transientToolExpansions.delete(rowKey);
     }
 
+    function focusInBar() {
+      var active = doc ? doc.activeElement : null;
+      return Boolean(hostEl && active && hostEl.contains(active));
+    }
+
     function close() {
       if (!isOpen) return;
+      // Focus elsewhere (Esc from the timeline) stays where it is.
+      var active = doc ? doc.activeElement : null;
+      var restoreFocus = focusInBar() || !active || active === doc.body || active === toggleEl;
       clearDebounce();
       if (highlight) highlight.clear();
       if (visibleText) visibleText.clear();
-      if (bar) {
-        bar.unmount();
-        bar.setQuery('');
-        bar.setCaseSensitive(false);
-        bar.setWholeWord(false);
-        bar.setMatchInfo(0, 0);
-      }
+      // The query and options stay for the next open.
+      if (bar) bar.unmount();
       if (hostEl) hostEl.hidden = true;
       isOpen = false;
+      revealPending = false;
+      syncOpenState();
       stopTimelineMutationObserver();
       restoreTransientDetails(null);
       restoreTransientToolExpansions(true);
       var restore = savedFocusEl;
       savedFocusEl = null;
+      if (!restoreFocus) restore = null;
       // Skip restore if the saved element was detached between open and close
       // (rerender, virtualization, etc.) — calling .focus() on a detached node
       // is a no-op but pins it in memory.
       if (restore && typeof restore.focus === 'function' && doc && doc.contains(restore)) {
         restore.focus();
-      } else if (chatTimeline && typeof chatTimeline.focus === 'function') {
+      } else if (restoreFocus && chatTimeline && typeof chatTimeline.focus === 'function') {
         if (!chatTimeline.getAttribute || chatTimeline.getAttribute('tabindex') == null) {
           try { chatTimeline.setAttribute('tabindex', '-1'); } catch (_e) { /* best-effort */ }
         }
@@ -581,21 +668,41 @@
 
     function isOverlayOpen() { return isOpen; }
 
+    // Esc closes from this pane's timeline (or with nothing focused) when no
+    // earlier handler took it; the field handles its own Esc, and a text input
+    // elsewhere (the composer, a message editor) keeps it.
+    function handleEscape(event) {
+      if (!isOpen || event.defaultPrevented || !ownsKeys()) return;
+      var active = doc ? doc.activeElement : null;
+      if (focusInBar()) return;
+      var inPane = !active || active === doc.body || active === toggleEl || Boolean(chatTimeline && chatTimeline.contains(active));
+      if (!inPane || isTextInputFocused()) return;
+      event.preventDefault();
+      close();
+    }
+
     function handleGlobalKeydown(event) {
-      // Cheap early-out: most keystrokes have no Ctrl/Meta — skip the string
-      // coercion for them.
-      if (!event.ctrlKey && !event.metaKey) return;
-      if (event.altKey) return;
       var key = event.key;
-      if (key !== 'f' && key !== 'F') return;
-      // A1: Ctrl+F belongs to chat search only while Chat is active. Other
-      // surfaces keep their native/local find behavior; defaultPrevented also
-      // protects any earlier consumer on the active surface.
-      if (getActiveView && getActiveView() !== 'chat') return;
+      if (key === 'F3') {
+        if (!isOpen || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || !ownsKeys()) return;
+        event.preventDefault();
+        if (event.shiftKey) handlePrev();
+        else handleNext();
+        return;
+      }
+      if (key === 'Escape') {
+        handleEscape(event);
+        return;
+      }
+      if ((!event.ctrlKey && !event.metaKey) || event.altKey || (key !== 'f' && key !== 'F')) return;
+      // A1: Ctrl+F belongs to chat search only while Chat is active, and to the
+      // focused pane only. Other surfaces keep their native/local find
+      // behavior; defaultPrevented also protects any earlier consumer.
+      if (!ownsKeys()) return;
       if (event.defaultPrevented) return;
       event.preventDefault();
       event.stopPropagation();
-      open();
+      open({ seed: selectionSeed() });
     }
 
     // A transcript view switch already dropped the session's row overrides:
@@ -613,6 +720,7 @@
 
     function attach(registerListener, listenerOptions) {
       if (!doc) return;
+      ensureToggle();
       if (typeof registerListener === 'function') {
         registerListener(doc, 'keydown', handleGlobalKeydown, listenerOptions);
         registerListener(chatTimeline, 'tool-row-user-expansion', handleUserToolExpansion, listenerOptions);
@@ -648,10 +756,18 @@
         fallbackExpansionTarget.removeEventListener('click', handleUserDetailsToggle);
         fallbackExpansionTarget = null;
       }
-      if (hostEl) hostEl.hidden = true;
+      if (toggleEl) {
+        toggleEl.removeEventListener('click', handleToggleClick);
+        toggleEl.remove();
+        toggleEl = null;
+      }
+      if (hostEl) hostEl.remove();
+      hostEl = null;
+      if (cluster && typeof cluster.removeAttribute === 'function') cluster.removeAttribute('data-find-open');
       bar = null;
       highlight = null;
       isOpen = false;
+      revealPending = false;
     }
 
     return {

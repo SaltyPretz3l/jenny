@@ -61,10 +61,10 @@ def test_runtime_section_publishes_the_local_loop_profile(tmp_path: Path) -> Non
 
     assert loop_profile == {
         "profile": "local",
-        "max_iterations_chat": 8,
-        "max_iterations_task": 30,
-        "max_loop_wall_seconds": 3_600.0,
-        "max_tools_per_turn": 20,
+        "max_iterations_chat": 40,
+        "max_iterations_task": 300,
+        "max_loop_wall_seconds": 7_200.0,
+        "max_tools_per_turn": 200,
         "tools_execution_timeout_seconds": 120.0,
         "chunk_inactivity_seconds": 120.0,
     }

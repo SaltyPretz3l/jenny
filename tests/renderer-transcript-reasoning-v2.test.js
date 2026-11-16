@@ -631,14 +631,38 @@ test('renderThinkingWidget renders reasoning markdown with mermaid:plain on both
   );
 
   assert.equal(markdownCalls.length, 1, 'settled path uses renderMarkdown');
-  assert.deepEqual(markdownCalls[0], { mermaid: 'plain' }, 'settled reasoning must render fences plain');
+  assert.deepEqual(markdownCalls[0], { mermaid: 'plain', codeBlocks: 'plain' }, 'settled reasoning must render fences plain');
   assert.equal(streamingCalls.length, 1, 'streaming tail uses renderStreamingMarkdownUnits');
   assert.deepEqual(streamingCalls[0], {
     mermaid: 'plain',
+    codeBlocks: 'plain',
     allowTailRewrite: true,
     previousUnits: [],
     previousStreamState: null,
   }, 'streaming reasoning must render fences plain with an empty initial stream state');
+});
+
+test('renderThinkingWidget renders thinking code as a plain block with Copy while streaming and settled', () => {
+  const markdownUtils = require('../renderer/shared/markdown-utils');
+  const renderer = createReasoningV2Renderer({
+    escapeHtml,
+    groupReasoningByPhase,
+    getReasoningEntries: (message) => (message?.reasoning?.entries || []),
+    renderMarkdown: markdownUtils.renderMarkdown,
+    renderStreamingMarkdownUnits: markdownUtils.renderStreamingMarkdownUnits,
+    shouldShowThinkingToggle,
+    thinkingController: new ThinkingPanelController(),
+  });
+  const text = `Checking the loop.\n\n\`\`\`js\n${'const value = 1;\n'.repeat(30)}\`\`\`\n\nThat is it.`;
+  const entries = [{ id: 'entry_1', text, thinkingId: 'tid_1' }];
+  for (const status of ['streaming', 'complete']) {
+    const html = renderer.renderThinkingWidget(buildMessage({ status, reasoningStatus: status, entries }), 'msg_1');
+    const body = new JSDOM(html).window.document.querySelector('.reasoning-row-panel-body');
+    const host = body.querySelector('.thinking-code-host');
+    assert.ok(host?.querySelector(':scope > pre.thinking-code > code'), `${status}: plain block`);
+    assert.equal(host.querySelectorAll(':scope > button.inv-codeblock-copy.thinking-code-copy').length, 1, `${status}: one Copy`);
+    assert.equal(body.querySelector('.markdown-code-block, .collapsed, .markdown-code-expand-overlay, .tok'), null, status);
+  }
 });
 
 test('renderThinkingWidget preserves cached units and streamState object identity across frames', () => {

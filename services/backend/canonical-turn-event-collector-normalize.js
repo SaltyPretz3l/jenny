@@ -332,8 +332,11 @@ function normalizeCanonicalTurnEventForCapture(source, logger, prevalidatedResul
     tool_call_id: event.tool_call_id,
     segment_group_index: payload.segment_group_index ?? null,
     phase_id: normalizeId(payload.phase_id),
-    started_at: event.type.endsWith('_started') ? event.ts : '',
+    // An approval wait is a span of its own: the request opens it and the answer closes it, so
+    // each persisted event carries its own time instead of the tool message's fallback time.
+    started_at: event.type.endsWith('_started') || event.type === 'tool_approval_requested' ? event.ts : '',
     completed_at: event.type.endsWith('_completed') || event.type.endsWith('_failed')
+      || event.type === 'tool_approval_resolved'
       ? event.ts
       : '',
     payload,

@@ -106,6 +106,10 @@ jobs:
       - name: Build sandboxed preload bundle
         run: npm run build:preload
 
+      # The sketch-block drawing bundle ships beside preload.bundle.js; also gitignored.
+      - name: Build sketch bundles
+        run: npm run build:sketch
+
       - name: Install Python dependencies
         shell: bash
         run: |
@@ -142,6 +146,12 @@ jobs:
       # The Rust team bridge ships as resources/sidecar/jenny-team-bridge on every OS.
       - name: Build team bridge
         run: python scripts/packaging/build_team_bridge.py
+
+      # The Windows file-access library ships as resources/sidecar/jenny_file_access.dll;
+      # it needs cargo (no --allow-missing-toolchain: a release without it is an error).
+      - name: Build file-access library (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/packaging/build_file_access.py
 
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
@@ -309,6 +319,10 @@ jobs:
       # Build the gitignored preload explicitly before either electron-builder invocation.
       - name: Build sandboxed preload bundle
         run: npm run build:preload
+
+      # The sketch-block drawing bundle ships beside preload.bundle.js; also gitignored.
+      - name: Build sketch bundles
+        run: npm run build:sketch
 
       - name: Install Python dependencies
         shell: bash

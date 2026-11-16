@@ -17,7 +17,9 @@ const {
   classifyAllowedUrl,
   clearWebContentsSecurity,
   configureWebContentsSecurity,
+  PAGE_SCRIPT_TAGS_SCRIPT,
   resolvedFileRoots,
+  waitsOnBlockedAsset,
 } = require('./browser-session-security');
 const { installFileOverrides } = require('./browser-session-file-overrides');
 const {
@@ -671,6 +673,22 @@ class BrowserSessionService {
   // Which overridden files a render asked for, by the ids given to open().
   fileOverrideReport(sessionId) {
     return this._sessions.get(_normalizeSessionId(sessionId))?.fileOverrides?.report() || null;
+  }
+
+  // External hosts the request filter blocked in this session (a copy).
+  blockedExternalHosts(sessionId) {
+    const hosts = this._sessions.get(_normalizeSessionId(sessionId))?.blockedExternalHosts;
+    return Array.isArray(hosts) ? hosts.slice() : [];
+  }
+
+  // Whether the page waits on an external script this session refused to load. Asks the page for its script tags; ask before close().
+  async pageWaitsOnBlockedAsset(sessionId) {
+    const session = this._sessions.get(_normalizeSessionId(sessionId));
+    const blocked = session?.blockedPageAssets;
+    if (!Array.isArray(blocked) || blocked.length === 0) return false;
+    const tags = await this._executePageScript(session, PAGE_SCRIPT_TAGS_SCRIPT, 2000, 'Timed out reading the page script tags.')
+      .catch(() => null);
+    return waitsOnBlockedAsset(blocked, tags);
   }
 
   _attachWebContentsObservers(session) {

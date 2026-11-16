@@ -124,22 +124,6 @@
       return 'default';
     }
 
-    function resolveActivityBadge(snapshot) {
-      if (!snapshot || !snapshot.state) {
-        return '';
-      }
-      if (snapshot.state === 'pending') {
-        return 'Saving';
-      }
-      if (snapshot.state === 'success') {
-        return 'Saved';
-      }
-      if (snapshot.state === 'error') {
-        return 'Error';
-      }
-      return '';
-    }
-
     function getActivityOwner(scope) {
       const resolvedScope = String(scope || '').trim();
       return resolvedScope ? `activity:${resolvedScope}` : '';
@@ -281,15 +265,14 @@
         const fromActivity = Boolean(snapshot);
         const tone = fromActivity ? resolveActivityTone(snapshot)
           : String(state.ui.composerStatusNoticeTone || 'default');
-        const badgeText = fromActivity ? resolveActivityBadge(snapshot)
-          : String(state.ui.composerStatusNoticeBadgeText || '');
+        const badgeText = fromActivity ? '' : String(state.ui.composerStatusNoticeBadgeText || '');
         const spinner = fromActivity
           ? snapshot?.state === 'pending'
           : state.ui.composerStatusNoticeSpinner === true;
         composerStatusNotice.innerHTML = statusRow
           ? statusRow({
             tone,
-            label: fromActivity ? jt('shell.activity.composer', 'Composer') : '',
+            label: '',
             message,
             badgeText,
             spinner,
@@ -349,7 +332,8 @@
         return;
       }
       if (scope.startsWith('composer.')) {
-        syncComposerActivityNotice();
+        // Another control's save must not re-show a failure.
+        if (COMPOSER_NOTICE_ACTIVITY_SCOPES.includes(scope)) syncComposerActivityNotice();
         renderComposerState();
         const [baseScope, scopeSessionId] = splitSessionScope(scope);
         if (

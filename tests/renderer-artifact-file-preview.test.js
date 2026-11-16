@@ -15,6 +15,7 @@ const { JSDOM } = require('jsdom');
 
 const { createArtifactFilePreview } = require('../renderer/features/renderer-artifact-file-preview');
 const pathOpenUtils = require('../renderer/chat/renderer-chat-path-open');
+const { chooseSegmented, segmentedGroup, segmentedValue } = require('./helpers/segmented-control');
 
 const PANEL_HTML = '<aside id="artifactReviewPanel" data-artifact-review-mode="file_preview">'
   + '<div class="artifact-review-scroll">'
@@ -216,7 +217,7 @@ describe('kind routing', () => {
     assert.equal(h.host.querySelectorAll('.artifact-file-preview-row').length, 0);
     assert.equal(h.calls.mermaid, 1, 'the shared lazy mermaid pass runs on the doc');
     assert.equal(h.calls.mermaidHosts[0], h.host.querySelector('.artifact-file-preview-doc'));
-    assert.ok(h.host.querySelector('[data-file-preview-view="read"]'), 'Read/Source toggle is offered');
+    assert.ok(segmentedGroup(h.doc, 'file-preview-view'), 'Preview / Code toggle is offered');
   });
 
   test('markdown WITH a cited line opens in the code view and can toggle back to Read', async (t) => {
@@ -226,8 +227,7 @@ describe('kind routing', () => {
     assert.equal(h.host.querySelectorAll('.artifact-file-preview-row').length, 3, 'code view for a cited line');
     assert.equal(h.host.querySelector('.artifact-file-preview-row.is-cited').getAttribute('data-preview-line'), '2');
 
-    h.host.querySelector('[data-file-preview-view="read"]')
-      .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    chooseSegmented(h.doc, 'file-preview-view', 'read');
     assert.ok(h.host.querySelector('.artifact-file-preview-doc'), 'toggling to Read swaps in the document view');
   });
 
@@ -257,9 +257,7 @@ describe('sandboxed HTML routing', () => {
     assert.equal(h.calls.frames[0].options.requestKey, 'site/page.html');
     assert.equal(h.host.querySelectorAll('.artifact-file-preview-row').length, 0);
     assert.equal(h.calls.decorate, 0, 'the code highlighter never runs over a frame host');
-    const read = h.host.querySelector('[data-file-preview-view="read"]');
-    assert.ok(read, 'Read/Source toggle is offered');
-    assert.equal(read.getAttribute('aria-pressed'), 'true');
+    assert.equal(segmentedValue(h.doc, 'file-preview-view'), 'read', 'Preview / Code toggle is offered on Preview');
   });
 
   test('html file previews mount the frame in fill sizing', async (t) => {
@@ -280,8 +278,7 @@ describe('sandboxed HTML routing', () => {
     assert.equal(h.host.querySelector('.artifact-file-preview-row.is-cited').getAttribute('data-preview-line'), '2');
     assert.equal(h.calls.frames.length, 0);
 
-    h.host.querySelector('[data-file-preview-view="read"]')
-      .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    chooseSegmented(h.doc, 'file-preview-view', 'read');
     assert.equal(h.calls.frames.length, 1);
     assert.ok(h.host.querySelector('[data-file-preview-frame-host]'));
   });
@@ -296,8 +293,7 @@ describe('sandboxed HTML routing', () => {
     assert.ok(note);
     assert.match(note.textContent, /Self-contained preview/);
 
-    h.host.querySelector('[data-file-preview-view="code"]')
-      .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    chooseSegmented(h.doc, 'file-preview-view', 'code');
     assert.equal(h.host.querySelector('[data-file-preview-note]'), null);
   });
 
@@ -310,7 +306,7 @@ describe('sandboxed HTML routing', () => {
     h.calls.frames[0].options.onFailure({ ok: false, error: 'boom' });
 
     assert.ok(h.host.querySelector('.artifact-file-preview-row'), 'source listing replaces the failed frame');
-    assert.equal(h.host.querySelector('[data-file-preview-view="read"]'), null, 'the toggle is disabled after failure');
+    assert.equal(segmentedGroup(h.doc, 'file-preview-view'), null, 'the toggle is disabled after failure');
     const warn = h.calls.logs.find((entry) => entry.event === 'artifact_file_preview.frame_failed');
     assert.ok(warn);
     assert.equal(warn.level, 'WARN');
@@ -382,9 +378,11 @@ describe('sandboxed HTML routing', () => {
     });
     await h.controller.openFilePreviewTarget({ path: 'site/page.html' });
 
-    h.host.querySelector('[data-file-preview-view="code"]')
-      .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    segmentedGroup(h.doc, 'file-preview-view').querySelector('[data-value="code"]').focus();
+    chooseSegmented(h.doc, 'file-preview-view', 'code');
     assert.equal(h.calls.frameDisposes, 1);
+    assert.equal(h.doc.activeElement, segmentedGroup(h.doc, 'file-preview-view').querySelector('[aria-checked="true"]'),
+      'the rebuilt bar keeps keyboard focus on the toggle');
     assert.ok(h.host.querySelector('.artifact-file-preview-row'));
   });
 
@@ -397,7 +395,7 @@ describe('sandboxed HTML routing', () => {
     assert.equal(h.calls.frames.length, 0);
     assert.ok(h.host.querySelector('.artifact-file-preview-row'));
     assert.ok(h.host.querySelector('.artifact-file-preview-note'), 'existing truncation handling remains visible');
-    assert.equal(h.host.querySelector('[data-file-preview-view="read"]'), null);
+    assert.equal(segmentedGroup(h.doc, 'file-preview-view'), null);
   });
 
   test('a .htm file renders in the sandboxed frame by default', async (t) => {

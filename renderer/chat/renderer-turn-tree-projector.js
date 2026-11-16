@@ -1008,8 +1008,5 @@
     };
   }
 
-  return {
-    projectTurnTree,
-    EVENT_KIND_PRIORITY,
-  };
+  return { projectTurnTree, EVENT_KIND_PRIORITY, SUPPORTED_TURN_EVENT_LOG_VERSION };
 });

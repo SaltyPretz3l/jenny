@@ -501,6 +501,22 @@
       }
       const activeProjectionContext = projectionContext || getCurrentProjectionContext(getPaneSessionId());
       const articleMessageId = resolveTurnArticleMessageId(messageId, activeProjectionContext);
+      // The live turn resolves its article several times per delta; the last
+      // answer stays valid while that node is still this message's connected
+      // article (a rewrite replaces the node and falls through to the scan).
+      const cachedArticle = lastResolvedTurnArticle?.messageId === articleMessageId ? lastResolvedTurnArticle.node : null;
+      if (cachedArticle && cachedArticle.isConnected && chatTimeline.contains(cachedArticle)
+        && cachedArticle.getAttribute('data-message-id') === articleMessageId
+        && !cachedArticle.classList?.contains('thread-compat-anchor')) {
+        return cachedArticle;
+      }
+      const article = resolveVisibleTurnArticleNode(articleMessageId);
+      lastResolvedTurnArticle = article ? { messageId: articleMessageId, node: article } : null;
+      return article;
+    }
+
+    let lastResolvedTurnArticle = null;
+    function resolveVisibleTurnArticleNode(articleMessageId) {
       const target = resolveVisibleMessageDomTarget(chatTimeline, articleMessageId);
       if (!target) {
         return null;

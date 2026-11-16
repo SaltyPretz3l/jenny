@@ -12,6 +12,7 @@
 // shell-config-service.js plus the nested-block reason); tests pin this list to the source.
 const CHAT_UI_REASONS = new Set([
   'time_format_updated',
+  'drawing_instructions_updated',
   'default_run_mode_updated',
   'ui_language_updated',
   'safety_mode_updated',

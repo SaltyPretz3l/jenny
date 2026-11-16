@@ -565,9 +565,15 @@
       };
     }
 
+    // Input the structured diff already shows; anything else (replace_all) stays as Args.
+    const DIFF_COVERED_INPUT_KEYS = ['path', 'file_path', 'old_string', 'new_string', 'content', 'patch', 'edits', 'diff'];
+
     function diffBody(model) {
-      const rows = toolShellUtils.buildFileDiffRowsMarkup?.(model, diffDeps(model)) || '';
-      return rows ? `${inputSections(model)}<div class="file-diff-list">${rows}</div>` : '';
+      const rows = toolShellUtils.buildFileDiffRowsMarkup?.(model, { ...diffDeps(model), bareSingle: true }) || '';
+      const metadata = model.metadata || {};
+      const diffs = Array.isArray(metadata.diffs) && metadata.diffs.length ? metadata.diffs : [metadata.diff];
+      const covered = diffs.every((diff) => diff && diff.truncated !== true && Array.isArray(diff.hunks) && diff.hunks.length > 0);
+      return rows ? `${inputSections(model, covered ? DIFF_COVERED_INPUT_KEYS : undefined)}<div class="file-diff-list">${rows}</div>` : '';
     }
 
     // Script tool card (row 34 S5): Changed files follow the output and any error.

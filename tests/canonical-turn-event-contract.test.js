@@ -507,3 +507,37 @@ test('validateTurnEvent never injects the marker into concatenating delta fields
     'tool-argument deltas stay marker-free'
   );
 });
+
+test('persisted approval events carry the time requested and the time answered', async (t) => {
+  const { waitForToolApproval } = require('../services/backend/chat-stream-tool-handling');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-11T01:08:30.528Z') });
+  const collector = new CanonicalTurnEventCollector({ turnId: 'stream-approval-time', sessionId: 'session-approval-time' });
+  const appended = [];
+  const service = {
+    sessionStore: { appendMessage(_sessionId, message) { appended.push(message); }, updateMessage() {} },
+    emit() {},
+    pendingToolApprovals: new Map(),
+    currentModel: 'test-model',
+  };
+  const resultPromise = waitForToolApproval(service, 'stream-approval-time', 'session-approval-time', 'req-time', {
+    tool_name: 'Write', tool_call_id: 'call-time', tool_input: { path: 'notes.md' },
+  }, new AbortController(), collector);
+  const pending = [...service.pendingToolApprovals.values()].find((entry) => entry.callId === 'call-time');
+  assert.ok(pending);
+  t.mock.timers.tick(5000);
+  pending.resolve(true, 'approved');
+  assert.equal(await resultPromise, true);
+
+  // The tool message was written when the call was requested; finalize reads it as the fallback time.
+  const toolMessage = { id: collector.capturedEvents.find((event) => event.kind === 'approval_requested').primary_message_id, timestamp: '2026-11-11T01:08:30.528Z' };
+  const messageById = new Map([[toolMessage.id, toolMessage]]);
+  const persisted = collector.capturedEvents
+    .filter((event) => event.kind === 'approval_requested' || event.kind === 'approval_resolved')
+    .map((event) => buildPersistedTurnEvent(event, messageById));
+  const [requested, resolved] = persisted;
+  assert.equal(requested.kind, 'approval_requested');
+  assert.equal(resolved.kind, 'approval_resolved');
+  assert.equal(requested.started_at, '2026-11-11T01:08:30.528Z');
+  assert.equal(resolved.completed_at, '2026-11-11T01:08:35.528Z');
+  assert.equal(Date.parse(resolved.completed_at) - Date.parse(requested.started_at), 5000);
+});

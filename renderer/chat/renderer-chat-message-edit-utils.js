@@ -13,17 +13,16 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/async-fence'));
+    module.exports = factory(require('../shared/async-fence'), require('../inventory/inline-text-editor'));
     return;
   }
-  root.rendererChatMessageEditUtils = factory(root.rendererAsyncFence);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  root.rendererChatMessageEditUtils = factory(root.rendererAsyncFence, root.inventoryInlineTextEditor);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence, inlineTextEditor) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var EDIT_STREAM_BUSY_REASON = jt('chat.edit.waitForCurrentResponse', 'Wait for the current response to finish before editing.');
   var EDIT_EMPTY_CONTENT_REASON = jt('chat.edit.emptyMessage', 'Edited message cannot be empty.');
-  var EDIT_TEXT_ATTACHMENT_NOTICE = jt('chat.edit.textAttachmentsNotReplayed', 'Text attachments will not be replayed for this edit.');
 
   function noopFn() { /* no-op */ }
   function noopAsync() { return Promise.resolve(null); }
@@ -87,6 +86,7 @@
     if (!Number.isFinite(Number(state.ui.editingAffectedCount))) state.ui.editingAffectedCount = 0;
   }
 
+
   function createMessageEditController(deps) {
     var settings = deps || {};
     if (!settings.state || typeof settings.state !== 'object') {
@@ -136,9 +136,6 @@
       typeof settings.hasTextAttachmentMetadata === 'function'
         ? settings.hasTextAttachmentMetadata
         : function () { return false; };
-    var showToastMessage = typeof settings.showToastMessage === 'function'
-      ? settings.showToastMessage
-      : noopFn;
     var timelineVirtualizer = settings.timelineVirtualizer || null;
 
     var CANCEL_HIGHLIGHT_CLASS = 'chat-citation-target-highlight';
@@ -299,7 +296,16 @@
       var original = typeof message.content === 'string' ? message.content : '';
       var messages = getCurrentSessionMessages() || [];
       var messageIndex = messages.findIndex(function (entry) { return String(entry?.id || '') === id; });
+      var textFileName = jt('chat.edit.textFileFallbackName', 'Text file');
+      var textAttachmentNames = (Array.isArray(message.attachments) ? message.attachments : [])
+        .filter(function (attachment) { return String(attachment && attachment.kind || '').trim() === 'text'; })
+        .map(function (attachment) { return String(attachment.displayName || attachment.name || '').trim() || textFileName; });
+      if (textAttachmentNames.length === 0 && hasTextAttachmentMetadata(message) === true) {
+        textAttachmentNames = [textFileName];
+      }
       editGeneration.bump();
+      state.ui.editingHasReplayImages = buildReplayableImageAttachments(message).length > 0;
+      state.ui.editingTextAttachmentNames = textAttachmentNames;
       state.ui.editingMessageId = id;
       state.ui.editingOriginalText = original;
       state.ui.editingDraftText = original;
@@ -394,14 +400,6 @@
         showComposerActionError(new Error(EDIT_EMPTY_CONTENT_REASON), jt('chat.edit.unavailableTitle', 'Edit Unavailable'));
         return Promise.resolve(null);
       }
-      var hadTextAttachments = message ? hasTextAttachmentMetadata(message) === true : false;
-      if (hadTextAttachments) {
-        try {
-          showToastMessage({ message: EDIT_TEXT_ATTACHMENT_NOTICE, kind: 'warning' });
-        } catch (error) {
-          logIgnoredError('toast', error);
-        }
-      }
       state.ui.editCommitting = true;
       try {
         renderAll();
@@ -490,7 +488,7 @@
           } catch (error) {
             logIgnoredError('render', error);
           }
-          syncFromState();
+          syncFromState({ focus: true });
           return null;
         }
         return result;
@@ -507,7 +505,7 @@
         } catch (error) {
           logIgnoredError('render', error);
         }
-        syncFromState();
+        syncFromState({ focus: true });
         showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed'));
         return null;
       });
@@ -539,7 +537,12 @@
                 return kind === 'image' || mimeType.indexOf('image/') === 0;
               })
             : [];
-          nextMessages = messages.slice(0, anchorIndex).concat([{
+          // A row that belongs to no turn moves above the edited prompt, as the
+          // store re-anchors it (session-turn-events.js resolveReanchoredHistory).
+          var liftedNotes = messages.slice(anchorIndex + 1).filter(function (entry) {
+            return String(entry && entry.kind || '') === 'memory_note';
+          });
+          nextMessages = messages.slice(0, anchorIndex).concat(liftedNotes, [{
             ...anchor,
             content: String(content || ''),
             attachments: imageAttachments,
@@ -566,6 +569,25 @@
       wiredTextareaListeners = null;
     }
 
+
+    function resolveSaveState() {
+      return inlineTextEditor.resolveInlineEditorSaveState({
+        draftText: state.ui.editingDraftText,
+        originalText: state.ui.editingOriginalText,
+        hasReplayImages: state.ui.editingHasReplayImages === true,
+        committing: state.ui.editCommitting === true,
+      });
+    }
+
+    function syncSaveButton() {
+      var msgId = state.ui.editingMessageId;
+      var save = msgId && findElementByAttrValue('[data-edit-action="save"]', 'data-message-id', msgId);
+      if (!save) return;
+      var saveState = resolveSaveState();
+      save.disabled = saveState.disabled;
+      save.title = saveState.title;
+    }
+
     function wireTextareaListeners(textarea) {
       if (!textarea) {
         cleanupTextareaListeners();
@@ -578,6 +600,7 @@
         if (!state.ui.editingMessageId) return;
         var nextValue = String(textarea.value || '');
         state.ui.editingDraftText = nextValue;
+        syncSaveButton();
       };
       var onKeydown = function (event) {
         if (!event) return;
@@ -608,7 +631,7 @@
           }
           event.preventDefault();
           event.stopPropagation();
-          commitEdit();
+          if (!resolveSaveState().disabled) commitEdit();
         }
       };
       textarea.addEventListener('input', onInput);
@@ -660,10 +683,12 @@
       }
       if (shouldFocus && typeof textarea.focus === 'function') {
         textarea.focus();
-        if (typeof textarea.select === 'function') {
-          textarea.select();
+        if (typeof textarea.setSelectionRange === 'function') {
+          var endOffset = String(textarea.value || '').length;
+          textarea.setSelectionRange(endOffset, endOffset);
         }
       }
+      syncSaveButton();
     }
 
     function getDraft() {
@@ -715,6 +740,5 @@
     purgeChatSessionCaches: purgeChatSessionCaches,
     EDIT_STREAM_BUSY_REASON: EDIT_STREAM_BUSY_REASON,
     EDIT_EMPTY_CONTENT_REASON: EDIT_EMPTY_CONTENT_REASON,
-    EDIT_TEXT_ATTACHMENT_NOTICE: EDIT_TEXT_ATTACHMENT_NOTICE,
   };
 });

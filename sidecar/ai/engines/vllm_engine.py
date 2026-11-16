@@ -170,8 +170,12 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
     @property
     def capabilities(self) -> dict[str, bool]:
         caps = super().capabilities
-        caps["thinking"] = self._thinking
+        caps["thinking"] = self._native_thinking()
         return caps
+
+    def _native_thinking(self) -> bool:
+        """Thinking support for the current request (a subclass may detect it per request)."""
+        return self._thinking
 
     def set_turn_diagnostics_store(self, store: Any | None) -> None:
         self._turn_diagnostics_store = store
@@ -344,7 +348,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
 
     def _reasoning_output_enabled(self) -> bool:
         return _shared_reasoning_output_enabled(
-            native_thinking=self._thinking,
+            native_thinking=self._native_thinking(),
             app_profile_behavior=self._current_app_profile_behavior(),
         )
 

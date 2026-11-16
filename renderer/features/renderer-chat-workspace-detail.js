@@ -7,7 +7,8 @@
  * surface: 'outputs' | 'changes' | 'background_tasks' | 'context' | 'environment'.
  *   outputs          -> the artifact review panel (resourceRef: an artifact id opens that artifact)
  *   changes          -> the read-only working-tree Changes page (renderer-code-review-rail.js)
- *   background_tasks -> the context panel's Activity
+ *   background_tasks -> the Background tasks panel when openBackgroundTasks is wired (resourceRef: job:<id> or
+ *                       chat:<id> opens that task), else the context panel's Activity
  *   context          -> the composer context ring popover of the opener's pane
  *   environment      -> the project pill popover of the opener's pane
  *
@@ -74,7 +75,14 @@
       return call('openChanges', context) === true;
     }
 
-    function openBackgroundTasks(ownerSessionId, opener) {
+    function openBackgroundTasks(ownerSessionId, opener, resourceRef) {
+      // Row 138: the Background tasks panel, opened on the row's task (job:<id> or chat:<id>) when it names one.
+      if (typeof deps.openBackgroundTasks === 'function') {
+        const result = deps.openBackgroundTasks({ ownerSessionId, opener, taskId: normalizeId(resourceRef) });
+        // The panel loads on first open, so the answer may arrive later: a refusal then forgets the open.
+        Promise.resolve(result).then((ok) => { if (ok === false && current?.surface === 'background_tasks') current = null; }, () => {});
+        return result !== false;
+      }
       call('claimOwner', ownerSessionId);
       if (typeof deps.openActivity === 'function') return deps.openActivity({ ownerSessionId, opener }) !== false;
       const button = findInPane(opener, ACTIVITY_BUTTON_SELECTOR);
@@ -104,7 +112,7 @@
       try {
         if (surface === 'outputs') opened = openOutputs(ownerSessionId, opener, options.resourceRef);
         else if (surface === 'changes') opened = openChanges(ownerSessionId, opener, options.reviewFindings);
-        else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener);
+        else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener, options.resourceRef);
         else if (surface === 'context') opened = openComposerPopover(opener, CONTEXT_RING_SELECTOR);
         else opened = openComposerPopover(opener, PROJECT_PILL_SELECTOR);
       } catch (error) {

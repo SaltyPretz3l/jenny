@@ -43,6 +43,7 @@ const {
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,
   normalizeDigestQuietStart, normalizeDigestQuietEnd,
+  normalizeDrawingInstructions,
   normalizeValidWorkspaceSessionIds,
   normalizeWebSearchSettings,
   normalizeWatcherGlobs,
@@ -75,6 +76,7 @@ const getAvailableFollowUpDeferPresets = (now = new Date(), scheduleOptions = {}
 // Top-level chat UI scalars updateChatUiSettings owns: [key, normalize, changed reason].
 const CHAT_UI_TOP_LEVEL_FIELDS = [
   ['use24HourTime', (value) => value === true, 'time_format_updated'],
+  ['drawingInstructions', normalizeDrawingInstructions, 'drawing_instructions_updated'],
   ['defaultRunMode', normalizeRunMode, 'default_run_mode_updated'],
   ['uiLanguage', normalizeUiLanguage, 'ui_language_updated'],
   ['safetyMode', normalizeSafetyMode, 'safety_mode_updated'],

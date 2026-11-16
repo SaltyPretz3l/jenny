@@ -1,0 +1,61 @@
+{
+  "nodes": [
+    {
+      "id": "a",
+      "label": "Alpha"
+    },
+    {
+      "id": "b",
+      "label": "Beta"
+    },
+    {
+      "id": "c",
+      "label": "Gamma"
+    },
+    {
+      "id": "d",
+      "label": "Delta"
+    }
+  ],
+  "edges": [
+    {
+      "id": "a->b",
+      "from": "a",
+      "to": "b",
+      "label": "plain"
+    },
+    {
+      "id": "b->c",
+      "from": "b",
+      "to": "c",
+      "label": "dashed",
+      "style": "dashed"
+    },
+    {
+      "id": "c->d",
+      "from": "c",
+      "to": "d",
+      "label": "both ways",
+      "bidirectional": true
+    },
+    {
+      "id": "a->d",
+      "from": "a",
+      "to": "d",
+      "tone": "accent"
+    },
+    {
+      "id": "d->b",
+      "from": "d",
+      "to": "b",
+      "tone": "muted"
+    }
+  ],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": []
+}

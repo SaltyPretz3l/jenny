@@ -220,7 +220,9 @@ function createArtifactRetentionService({
     }
   }
 
-  async function sweepRoot(scope, { activeSessionIds = [], orphanOnly = false } = {}, scanOnce = null) {
+  // `report` receives each root result that got far enough to be worth a log
+  // line; sweep() sums them and logs once.
+  async function sweepRoot(scope, { activeSessionIds = [], orphanOnly = false } = {}, scanOnce = null, report = null) {
     const nowMs = nowFn();
     const result = {
       ok: true,
@@ -335,7 +337,7 @@ function createArtifactRetentionService({
 
     // Fail closed: never quarantine on an incomplete reference reconciliation.
     if (!references.complete) {
-      logSweep(result);
+      report?.(result);
       return result;
     }
 
@@ -407,7 +409,7 @@ function createArtifactRetentionService({
       result.quarantinedNames.push(candidate.dirName);
     }
 
-    logSweep(result);
+    report?.(result);
     return result;
   }
 
@@ -415,25 +417,37 @@ function createArtifactRetentionService({
     const scopes = typeof getWorkspaceScopes === 'function'
       ? await getWorkspaceScopes() : [{ rootPath: readRoot() }];
     if (!Array.isArray(scopes)) throw new Error('Artifact workspace index is unreadable.');
-    if (!scopes.length) return sweepRoot({ rootPath: '' }, options);
     let result;
     let scan = null;
+    // One sweep, one line. Seeded with a copy at report time: the first root's
+    // result is also the returned merge target, which later roots mutate.
+    let logged = null;
+    const report = (current) => {
+      logged = logged ? addInto(logged, current)
+        : { ...current, quarantinedNames: [...current.quarantinedNames], brokenReferences: [...current.brokenReferences] };
+    };
     const scanOnce = () => {
       const sessionStore = readStore();
       scan = scan || (sessionStore ? scanSessionArtifacts(sessionStore) : Promise.resolve({ references: [], complete: false }));
       return scan;
     };
-    for (const scope of scopes) {
-      const current = await sweepRoot(scope, options, scanOnce);
-      if (!result) { result = current; continue; }
-      for (const key of Object.keys(current)) {
-        if (typeof current[key] === 'number') result[key] += current[key];
-        else if (Array.isArray(current[key])) result[key].push(...current[key]);
-      }
-      result.ok = result.ok && current.ok;
-      result.referencesComplete = result.referencesComplete && current.referencesComplete;
+    // No scope: the empty root is skipped (no_root) before it reads anything.
+    for (const scope of scopes.length ? scopes : [{ rootPath: '' }]) {
+      const current = await sweepRoot(scope, options, scanOnce, report);
+      result = result ? addInto(result, current) : current;
     }
+    if (logged) logSweep(logged);
     return result;
+  }
+
+  function addInto(target, current) {
+    for (const key of Object.keys(current)) {
+      if (typeof current[key] === 'number') target[key] += current[key];
+      else if (Array.isArray(current[key])) target[key].push(...current[key]);
+    }
+    target.ok = target.ok && current.ok;
+    target.referencesComplete = target.referencesComplete && current.referencesComplete;
+    return target;
   }
 
   function logSweep(result) {

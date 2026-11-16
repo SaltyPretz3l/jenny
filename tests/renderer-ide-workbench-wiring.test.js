@@ -50,6 +50,7 @@ function setup(t, opts = {}) {
     counts: opts.counts,
     unread: opts.unread,
     onShow: opts.onShow,
+    canAdoptChatDock: opts.canAdoptChatDock,
   });
   wiring.render();
   t.after(() => {
@@ -282,6 +283,18 @@ test('setChatOpen opens or collapses the chat stack, and render adopts the chat 
   h.wiring.setChatOpen(false);
   assert.equal(h.wiring.isVisible('chat'), false);
   assert.equal(h.stackState('chat'), 'collapsed');
+});
+
+test('render leaves the chat dock where it is while another page holds it (the Board), and takes it back after', (t) => {
+  let boardShows = true;
+  const h = setup(t, { canAdoptChatDock: () => !boardShows });
+  const dock = h.doc.getElementById('ideChatDock');
+  assert.equal(dock.parentNode, h.doc.body, 'not adopted while the Board is the view on screen');
+  h.wiring.render();
+  assert.equal(dock.parentNode, h.doc.body);
+  boardShows = false;
+  h.wiring.render();
+  assert.equal(dock.parentNode, h.wiring.workbench.hostFor('chat'));
 });
 
 test('getActive returns the live instance; dispose clears it and stops listening', (t) => {

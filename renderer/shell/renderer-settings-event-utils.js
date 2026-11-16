@@ -43,7 +43,7 @@
 
     const {
       settingsView,
-      appearanceSettingsSection,
+      appearanceSettingsSection, generalSettingsSection, chatSettingsSection, permissionsSettingsSection,
       toolsWorkspaceChooseButton,
       contextSettingsSection,
       contextSourcesList,
@@ -265,7 +265,7 @@
           patch,
           scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
           previousValue: getRuntimePreferenceSnapshot(),
-          failureMessage: () => jt('settings.context.preferencesSaveFailed', 'Could not save context preferences.'),
+          failureMessage: () => jt('settings.context.preferencesSaveFailedRestored', 'Could not save context preferences. Your previous setting was restored.'),
           successMessage: '',
         })).then(() => getCurrentRuntimePreferences()),
         ack: (preferences, patch) => {
@@ -454,7 +454,7 @@
         listenerOptions,
       });
 
-      // Tools > Approval rules: Remove clears a per-tool policy or deletes a
+      // Permissions > Saved rules: Remove clears a per-tool policy or deletes a
       // path-scoped rule through tools.*, then refetches the list.
       const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
         || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
@@ -468,7 +468,6 @@
         listenerOptions,
         onError: showSessionActionError,
       });
-
 
       async function applyFeatureSettings(patch, errorTitle) {
         try {
@@ -524,7 +523,6 @@
           toErrorMessage,
           appendClientLog,
           showSessionActionError,
-          openSettingsSection,
           updateSkillsSettings,
           openSkillsScopeFolder,
           handleOfflineModeChange,
@@ -610,9 +608,9 @@
         showSessionActionError,
       });
 
-      // Tools: the chatUi scalars, the tool switches and the web-search fields.
+      // Tools: the tool switches and the web-search fields.
       const toolsFields = bindDescriptorFields(toolsConfigFieldList, (fieldDescriptors?.listSettingDescriptors({ sectionId: 'tools' }) || [])
-        .filter((descriptor) => descriptor.adapterId === 'chatUi' || descriptor.adapterId === 'features').map((descriptor) => descriptor.id),
+        .filter((descriptor) => descriptor.adapterId === 'features').map((descriptor) => descriptor.id),
       (descriptor) => { if (descriptor.key === 'webSearch.provider') ensureWebSearchSecretStatus(); });
       // Manifest tool fields without a descriptor bind through one derived from
       // a described tool switch (queued descriptor amendment).
@@ -622,7 +620,7 @@
         if (!tool || !toolsFields || fieldDescriptors.getSettingDescriptorByControlId(id)) return;
         void toolsFields.commit({ ...fieldDescriptors.getSettingDescriptor('settings-tool-config-web'), id: toolConfigRowId(id), controlId: id, key: `toolConfig.${tool.key}`, copy: { label: tool.label, description: '' } }, tool.checked);
       }, listenerOptions);
-      bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect']);
+      bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect', 'drawingInstructionsSelect']);
 
       // Dictation (row 84): the switch is a feature flag (features adapter, like
       // spell check); the microphone and the model row bind in the section module.
@@ -634,9 +632,10 @@
         });
       }
 
-      // Jenny chat (row 86): the digests switch (features adapter) and the quiet-hours selects (chatUi).
+      // Jenny chat (row 86): the digests switch (features) on Chat; the quiet-hours selects (chatUi) on Notifications.
       const jennyChatSettingsSection = typeof document !== 'undefined' ? document.getElementById('jennyChatSettingsSection') : null;
-      if (jennyChatSettingsSection) bindDescriptorFields(jennyChatSettingsSection, ['primaryDigestsToggle', 'digestQuietStartSelect', 'digestQuietEndSelect']);
+      if (jennyChatSettingsSection) bindDescriptorFields(jennyChatSettingsSection, ['primaryDigestsToggle']);
+      bindDescriptorFields(notificationsSettingsSection, ['digestQuietStartSelect', 'digestQuietEndSelect']);
 
       // Web search provider section: renders inside the same toolsConfigFieldList
       // container, in toolsWebList. Provider/URL fields
@@ -866,15 +865,15 @@
         }
       }, listenerOptions);
 
-      // Appearance: the mounted selects, the Advanced switches and spellcheck
-      // delegate from the card (the language row binds with settingsView above).
-      const appearanceFields = bindDescriptorFields(appearanceSettingsSection, (fieldDescriptors?.listSettingDescriptors({ sectionId: 'appearance' }) || [])
-        .filter((descriptor) => descriptor.adapterId !== 'chatUi').map((descriptor) => descriptor.id));
-      // The health popover's "Show load in title bar" action writes the same switch.
+      // Each page card delegates the rows its sectionId names; General's and Chat's chatUi rows bind with settingsView above.
+      const pageFields = Object.fromEntries([['appearance', appearanceSettingsSection], ['general', generalSettingsSection],
+        ['chat', chatSettingsSection], ['permissions', permissionsSettingsSection]].map(([id, card]) => [id, bindDescriptorFields(card,
+        (fieldDescriptors?.listSettingDescriptors({ sectionId: id }) || []).filter((d) => id === 'permissions' || d.adapterId !== 'chatUi').map((d) => d.id))]));
+      // The health popover's "Show load in title bar" action writes the same switch, through its page's binding.
       if (typeof document !== 'undefined') {
         registerListener(document, 'jenny:titlebar-load-toggle', (event) => {
           const descriptor = fieldDescriptors?.getSettingDescriptor('appearanceTitlebarLoadToggle');
-          if (appearanceFields && descriptor) void appearanceFields.commit(descriptor, event?.detail?.enabled === true);
+          if (descriptor && pageFields[descriptor.sectionId]) void pageFields[descriptor.sectionId].commit(descriptor, event?.detail?.enabled === true);
         }, listenerOptions);
       }
 

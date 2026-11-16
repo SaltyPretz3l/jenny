@@ -50,7 +50,7 @@ function article(ownerId, role, rowsHtml) {
 function buildEnv(t, timelineHtml, extraOptions) {
   installMarkdown(t);
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView"><div id="chatTimeline" role="feed">' + (timelineHtml || '') + '</div></div>'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div><div id="chatTimeline" role="feed">' + (timelineHtml || '') + '</div></div>'
     + '</body></html>');
   shimCssHighlights(dom.window);
   dom.window.HTMLElement.prototype.scrollIntoView = function () {};

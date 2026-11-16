@@ -161,7 +161,10 @@ test('the sprite layer and its glyph keep their contracts without the disc', () 
   const sprite = declsFor(thread.rules, '.chat-assistant-sprite');
   assert.equal(sprite.get('width'), 'var(--chat-sprite-size)');
   assert.equal(sprite.get('height'), 'var(--chat-sprite-size)');
-  assert.equal(sprite.get('inset-inline-start'), '2px');
+  assert.equal(sprite.get('inset-inline-start'),
+    'calc(var(--chat-sprite-rail-offset) - var(--_dot-offset) - var(--chat-sprite-size) / 2)');
+  assert.equal(declsFor(baseRules, '.chat-assistant-sprite[data-sprite-glide]').get('transition'),
+    'transform var(--transition-regular)');
   for (const prop of ['border', 'background', 'box-shadow', 'border-radius', 'opacity']) {
     assert.equal(sprite.has(prop), false, `.chat-assistant-sprite no longer paints a disc (${prop})`);
   }
@@ -277,11 +280,15 @@ test('the dot root is a fixed 30px centered coordinate space that alone takes th
   assert.equal(root.get('transform'), 'scale(var(--sprite-dot-scale))');
   assert.equal(declsFor(baseRules, ':root').get('--sprite-dot-scale'), 'var(--tl-throbber-scale)');
   const media = baseRules.filter((rule) => rule.context === '@media (max-width: 700px)');
-  assert.equal(declsFor(media, '.chat-view').get('--sprite-dot-scale'), 'calc(0.8 * var(--tl-throbber-scale))');
-  // The ratio mirrors chat-media-queries.css: --chat-sprite-size clamp(22px, 5vw, 24px) is 24px
-  // at every width where the rail still shows (phones hide it at <= 480px), and 24 / 30 = 0.8.
+  assert.equal(declsFor(media, '.chat-view').get('--sprite-dot-scale'), undefined,
+    'the rail dot takes its breakpoint scale from --chat-sprite-scale, not a second rule');
+  // The rail sprite is a 40px slot over this 30px drawing (4 / 3), 28px at <= 700px (28 / 30), and
+  // only the sprite's own dot root takes that ratio on top of the throbber scale.
+  assert.equal(declsFor(baseRules, '.chat-assistant-sprite .chat-sprite-dot').get('--sprite-dot-scale'),
+    'calc(var(--chat-sprite-scale,1) * var(--tl-throbber-scale))');
+  assert.match(read('styles/foundation.css'), /--chat-sprite-size:\s*40px;\s*(?:\/\*[^*]*\*\/\s*)?--chat-sprite-scale:\s*calc\(4 \/ 3\);/);
   assert.match(read('styles/chat-media-queries.css'),
-    /@media \(max-width:\s*700px\)\s*\{[^@]*?--chat-sprite-size:\s*clamp\(22px,\s*5vw,\s*24px\);/);
+    /@media \(max-width:\s*700px\)\s*\{[^@]*?--chat-sprite-size:\s*28px;\s*--chat-sprite-scale:\s*calc\(28 \/ 30\);/);
   for (const rule of baseRules) {
     if (rule.selectors.some((s) => s.startsWith(D) && s !== D)) {
       assert.equal(rule.decls.get('transform')?.includes('var(--sprite-dot-scale)') || false, false,

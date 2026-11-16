@@ -5,7 +5,9 @@ use std::net::SocketAddr;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
+use crate::admission::{MAX_HANDSHAKES_PER_SOURCE, MAX_WAITING, REFUSED_COOLDOWN_MS};
 use crate::control::{field, parse_message, Message, Reason};
+pub use crate::relay::RelayStart;
 
 /// The most addresses a member `start` may carry.
 pub const MAX_ADDRESSES: usize = 16;
@@ -17,6 +19,12 @@ pub struct HostLimits {
     pub max_handshakes: u32,
     pub admit_timeout_ms: u32,
     pub drop_grace_ms: u32,
+    /// Connections waiting for an admit answer (I7).
+    pub max_waiting: u32,
+    /// Handshakes per source in each rate window (I7).
+    pub max_handshakes_per_source: u32,
+    /// How long a refused key is refused without asking the parent (I7).
+    pub refused_cooldown_ms: u32,
 }
 
 /// `start` in host mode. No `Debug`: it carries secrets.
@@ -30,6 +38,11 @@ pub struct HostStart {
     /// Optional `loopback_only` (default false): bind loopback sockets only. Used by
     /// the real-binary tests so no socket listens on a real interface.
     pub loopback_only: bool,
+    /// The required `internet` field: `null` (false) or `{ "map_port": true }` (true), which
+    /// asks the router to forward `direct_port` (TEAM_INTERNET_SPEC I5).
+    pub map_port: bool,
+    /// The optional `relay` field: `None` for absent or `null`.
+    pub relay: Option<RelayStart>,
 }
 
 pub struct MemberLimits {
@@ -49,6 +62,8 @@ pub struct MemberStart {
     pub limits: MemberLimits,
     /// Optional `loopback_only` (default false), as for the host.
     pub loopback_only: bool,
+    /// The optional `relay` field, as for the host.
+    pub relay: Option<RelayStart>,
 }
 
 /// What an `admit_answer` says.
@@ -97,6 +112,32 @@ fn start_message(line: &[u8]) -> Result<Message, Reason> {
     Ok(message)
 }
 
+/// A positive limit no larger than `ceiling`, its default: a `start` line may lower it only.
+fn capped(fields: &serde_json::Map<String, Value>, name: &str, ceiling: u32) -> Result<u32, ()> {
+    let value = field::limit(fields, name)?;
+    if value <= ceiling {
+        Ok(value)
+    } else {
+        Err(())
+    }
+}
+
+/// The required `internet` field: `null`, or an object holding exactly `"map_port": true`.
+/// Port mapping needs the direct port it forwards. Any other shape is invalid.
+fn map_port(fields: &serde_json::Map<String, Value>, direct_port: Option<u16>) -> Result<bool, ()> {
+    match fields.get("internet") {
+        Some(Value::Null) => Ok(false),
+        Some(Value::Object(internet))
+            if internet.len() == 1
+                && internet.get("map_port") == Some(&Value::Bool(true))
+                && direct_port.is_some() =>
+        {
+            Ok(true)
+        }
+        _ => Err(()),
+    }
+}
+
 /// An optional boolean field: absent is false, anything but a boolean is invalid.
 fn optional_bool(fields: &serde_json::Map<String, Value>, name: &str) -> Result<bool, ()> {
     match fields.get(name) {
@@ -118,6 +159,8 @@ fn host_start_fields(message: &mut Message) -> Result<HostStart, ()> {
     let loopback_port = field::port(fields, "loopback_port")?;
     let direct_port = field::optional_port(fields, "direct_port")?;
     let loopback_only = optional_bool(fields, "loopback_only")?;
+    let map_port = map_port(fields, direct_port)?;
+    let relay = crate::relay::parse(fields)?;
     let limits = field::object(fields, "limits")?;
     let limits = HostLimits {
         max_connections: field::limit(&limits, "max_connections")?,
@@ -126,6 +169,13 @@ fn host_start_fields(message: &mut Message) -> Result<HostStart, ()> {
         max_handshakes: field::limit(&limits, "max_handshakes")?,
         admit_timeout_ms: field::limit(&limits, "admit_timeout_ms")?,
         drop_grace_ms: field::limit(&limits, "drop_grace_ms")?,
+        max_waiting: capped(&limits, "max_waiting", MAX_WAITING)?,
+        max_handshakes_per_source: capped(
+            &limits,
+            "max_handshakes_per_source",
+            MAX_HANDSHAKES_PER_SOURCE,
+        )?,
+        refused_cooldown_ms: capped(&limits, "refused_cooldown_ms", REFUSED_COOLDOWN_MS)?,
     };
     let secret_key = field::take_b64_32(fields, "secret_key")?;
     let boot_secret = field::take_b64_32(fields, "boot_secret")?;
@@ -137,6 +187,8 @@ fn host_start_fields(message: &mut Message) -> Result<HostStart, ()> {
         direct_port,
         limits,
         loopback_only,
+        map_port,
+        relay,
     })
 }
 
@@ -150,6 +202,7 @@ fn member_start_fields(message: &mut Message) -> Result<MemberStart, ()> {
     field::mode(fields, "member")?;
     let alpn = field::alpn(fields)?;
     let loopback_only = optional_bool(fields, "loopback_only")?;
+    let relay = crate::relay::parse(fields)?;
     let addresses = match fields.get("addresses") {
         Some(Value::Array(items)) if items.len() <= MAX_ADDRESSES => items
             .iter()
@@ -181,6 +234,7 @@ fn member_start_fields(message: &mut Message) -> Result<MemberStart, ()> {
         launch_secret,
         limits,
         loopback_only,
+        relay,
     })
 }
 

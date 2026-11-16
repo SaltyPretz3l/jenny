@@ -1,0 +1,48 @@
+[package]
+name = "jenny-file-access"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Confined file access for a Jenny team host on Windows, behind a small C interface"
+license = "MIT"
+publish = false
+
+[lib]
+name = "jenny_file_access"
+path = "src/lib.rs"
+# The cdylib is the shipped library; the rlib is what the crate's own tests link.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Test-only build: exports jfa_test_set_token_state and sets bit 0 of jfa_build_flags().
+# The production loader and the packaging step both refuse a library built with it.
+test-seams = []
+
+# Nothing else is linked into the shipped library.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }
+
+# Tests only: reads abi.json and the name vectors. Never under [dependencies].
+[dev-dependencies]
+serde_json = "1"
+
+# Tests only: tests/win_spike.rs calls NtCreateFile, which this feature declares.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_Foundation"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+# The boundary catches panics (ffi.rs), so the library must unwind, not abort.
+panic = "unwind"
+strip = true
+opt-level = 3

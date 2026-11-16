@@ -63,12 +63,31 @@
     let query = '';
     let signature = '';
     let bound = false;
+    let watchedStore = null;
+    let unwatchStore = null;
+
+    // Row 144: a pinned Jenny model locks the Jenny chat's list.
+    const primaryStore = () => options.primaryChatStore || root.rendererPrimaryChatStore?.peekDefaultPrimaryChatStore?.() || null;
+    function pinnedModel() {
+      const sessionId = typeof options.getSessionId === 'function' ? options.getSessionId() : domOverrides ? '' : state.currentSessionId;
+      return utils.resolvePinnedModel?.(primaryStore()?.getSnapshot?.(), String(sessionId || '').trim()) || '';
+    }
+    // The store may be built after the picker.
+    function watchStore() {
+      const store = primaryStore();
+      if (store === watchedStore) return;
+      unwatchStore?.();
+      watchedStore = store;
+      unwatchStore = store?.subscribe?.(() => renderIfOpen()) || null;
+    }
 
     function readCarrierInputs() {
-      const preferredModel = String(modelSelect?.value || '').trim();
+      const pinned = pinnedModel();
+      const preferredModel = pinned || String(modelSelect?.value || '').trim();
       const effort = String(effortSelect?.value || '');
       return {
         preferredModel,
+        pinned,
         effort,
         effortOptions: effortSelect
           ? [...effortSelect.options].map((option) => ({
@@ -124,7 +143,7 @@
         + '</span>';
     }
 
-    function modelOptionHtml(entry, preferredModel, locked) {
+    function modelOptionHtml(entry, preferredModel, locked, pinned) {
       const selected = entry.id === preferredModel;
       const tagText = entry.tag
         ? `${entry.engineHint === 'huggingface' ? ' · ' : ':'}${entry.tag}`
@@ -141,7 +160,7 @@
           + (selected ? ' is-active' : '')
           + (!entry.available ? ' is-unavailable' : ''),
         ariaSelected: selected,
-        disabled: locked || !entry.available,
+        disabled: locked || !entry.available || Boolean(pinned && !selected),
         dataset: { 'picker-model': entry.id },
         title,
         trustedHtml: nameHtml(entry.family, tagText, entry.hint) + metaHtml({ ...entry, selected }),
@@ -164,7 +183,7 @@
           disabled: inputs.effortLocked,
           dataset: { 'picker-effort': option.value },
           title,
-          trustedHtml: escapeHtml(utils.effortSegmentLabel(option.value)),
+          trustedHtml: escapeHtml(utils.effortSegmentLabel(option.value, option.label)),
         });
       }).join('');
       return '<div class="composer-model-picker-thinking">'
@@ -218,6 +237,7 @@
         String(locked),
         String(inputs.effortLocked),
         String(inputs.effortSupported),
+        inputs.pinned,
         inputs.effort,
         defaultEffortHint,
         inputs.effortOptions.map((option) => `${option.value}=${option.label}`).join('|'),
@@ -242,7 +262,7 @@
         ? jt('composer.modelPicker.useBackendDefaultWithModel', 'Use the backend default model ({model})', { model: inputs.backendModel })
         : jt('composer.modelPicker.useBackendDefault', 'Use the backend default model');
       const defaultSelected = inputs.preferredModel === '';
-      const defaultOption = actionButton({
+      const defaultOption = inputs.pinned ? '' : actionButton({
         plain: true,
         role: 'option',
         className: `composer-model-picker-option${defaultSelected ? ' is-active' : ''}`,
@@ -250,7 +270,7 @@
         disabled: locked,
         dataset: { 'picker-model': '' },
         title: defaultTitle,
-        trustedHtml: nameHtml(jt('composer.modelPicker.defaultModel', 'Default'), inputs.backendModel ? ` · ${inputs.backendModel}` : '')
+        trustedHtml: nameHtml(jt('composer.modelPicker.defaultModel', 'Default'), inputs.backendModel ? ` · ${utils.displayModelId(inputs.backendModel)}` : '')
           + metaHtml({ loaded: backendLoaded, selected: defaultSelected }),
       });
       const search = totalCount > 8
@@ -271,22 +291,27 @@
           ? `<div class="composer-model-picker-group" role="presentation">${escapeHtml(group.label)}</div>`
           : '')
         + group.entries.map((entry) => (
-          modelOptionHtml(entry, inputs.preferredModel, locked)
+          modelOptionHtml(entry, inputs.preferredModel, locked, inputs.pinned)
         )).join('')
       )).join('');
       const empty = query && visibleEntries.length === 0
         ? '<div class="composer-model-picker-empty" role="note">' + escapeHtml(jt('composer.modelPicker.noMatches', 'No models match')) + '</div>'
         : '';
       const retainedOption = retainedEntry
-        ? modelOptionHtml(retainedEntry, inputs.preferredModel, locked)
+        ? modelOptionHtml(retainedEntry, inputs.preferredModel, locked, inputs.pinned)
         : '';
 
+      const pinnedLink = jt('composer.modelPicker.pinnedLink', 'Change in Settings');
+      const footer = inputs.pinned
+        ? '<div class="inv-popover-footer composer-model-picker-pinned"><span>' + escapeHtml(jt('composer.modelPicker.pinnedNote', "Jenny's model is pinned in Settings.")) + '</span>'
+          + actionButton({ plain: true, dataset: { 'picker-open-settings': '1' }, title: pinnedLink, trustedHtml: escapeHtml(pinnedLink) }) + '</div>'
+        : '<div class="inv-popover-footer">' + escapeHtml(jt('composer.modelPicker.chatDefaultsHint', 'Applies to this chat. Defaults live in Settings.')) + '</div>';
       host.innerHTML = search
-        + `<div class="composer-model-picker-list" role="listbox" id="${listId}">`
+        + `<div class="composer-model-picker-list${inputs.pinned ? ' is-pinned' : ''}"${inputs.pinned ? ' aria-disabled="true"' : ''} role="listbox" id="${listId}">`
         + defaultOption + retainedOption + catalogOptions + empty
         + '</div>'
         + thinkingHtml(inputs, defaultEffortHint)
-        + '<div class="inv-popover-footer">' + escapeHtml(jt('composer.modelPicker.chatDefaultsHint', 'Applies to this chat. Defaults live in Settings.')) + '</div>';
+        + footer;
       host.querySelector(`#${listId}`)?.setAttribute('aria-label', jt('composer.modelPicker.modelLabel', 'Model'));
       signature = nextSignature;
 
@@ -295,7 +320,7 @@
         searchInput.setAttribute('aria-controls', listId);
         searchInput.setAttribute('autocomplete', 'off');
       }
-      host.querySelectorAll('.composer-model-picker-option.is-unavailable').forEach((button) => {
+      host.querySelectorAll('.composer-model-picker-option.is-unavailable, .composer-model-picker-option[disabled]').forEach((button) => {
         button.setAttribute('aria-disabled', 'true');
       });
       host.querySelectorAll('[data-picker-effort]').forEach((button) => {
@@ -346,10 +371,14 @@
           || typeof formatUtils.canonicalOllamaTag !== 'function') {
         return;
       }
+      watchStore();
       const inputs = readCarrierInputs();
       const label = utils.formatComposerModelPillLabel(inputs);
       const labelEl = pill.querySelector('.inv-chip-label');
       if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
+      const pin = pill.querySelector('.composer-model-pill-pin');
+      if (inputs.pinned && !pin) pill.appendChild(Object.assign(documentRef.createElement('span'), { className: 'composer-model-pill-pin', textContent: jt('composer.modelPicker.pinned', 'Pinned') }));
+      else if (!inputs.pinned && pin) pin.remove();
       const title = utils.buildPillTitle(inputs);
       const ariaLabel = jt('composer.modelPicker.pillAriaLabel', 'Model and reasoning effort. {title}', { title });
       if (pill.getAttribute('title') !== title) pill.setAttribute('title', title);
@@ -396,9 +425,15 @@
     function handleClick(event) {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
+      if (target.closest('[data-picker-open-settings]')) {
+        primaryStore()?.openSettings?.('model');
+        popover.close(popoverEl);
+        return;
+      }
       const modelButton = target.closest('[data-picker-model]');
       if (modelButton) {
         if (modelButton.disabled || modelSelect.getAttribute('aria-disabled') === 'true') return;
+        if (pinnedModel()) { popover.close(popoverEl, { restoreFocus: true }); return; }
         const id = modelButton.dataset.pickerModel;
         const preferredModel = String(modelSelect.value || '').trim();
         if (id === preferredModel) {
@@ -532,10 +567,13 @@
       host.addEventListener('keydown', handleKeydown);
       host.addEventListener('input', handleInput);
       popoverEl.addEventListener('inv-popover-toggle', handlePopoverToggle);
+      watchStore();
       bound = true;
     }
 
     function dispose() {
+      unwatchStore?.();
+      unwatchStore = watchedStore = null;
       if (bound) {
         host.removeEventListener('click', handleClick);
         host.removeEventListener('keydown', handleKeydown);

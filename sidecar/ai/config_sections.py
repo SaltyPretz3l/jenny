@@ -47,6 +47,13 @@ from sidecar.ai.personality import normalize_assistant_name
 # not rejected, so a pasted prompt never silently disables compaction tuning.
 _COMPACTION_CUSTOM_PROMPT_MAX_CHARS = 20_000
 
+_DRAWING_INSTRUCTIONS = ("short", "full", "mermaid")
+
+
+def _normalize_drawing_instructions(value: Any) -> str:
+    """The "Drawing instructions" setting; any other stored value means ``short``."""
+    return value if isinstance(value, str) and value in _DRAWING_INSTRUCTIONS else "short"
+
 
 def parse_engine_fields(raw_config: dict[str, Any], engine_type: str) -> dict[str, Any]:
     """The model/provider/generation ``RuntimeConfig`` keyword arguments."""
@@ -193,6 +200,7 @@ def parse_engine_fields(raw_config: dict[str, Any], engine_type: str) -> dict[st
         session_start_date=session_start_date,
         safety_mode=safety_mode,
         use_24_hour_time=raw_config.get("use_24_hour_time") is True,
+        drawing_instructions=_normalize_drawing_instructions(raw_config.get("drawing_instructions")),
         tool_search_mode=tool_search_mode,
         tool_search_auto_threshold_pct=tool_search_auto_threshold_pct,
     )

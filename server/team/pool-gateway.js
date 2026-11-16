@@ -18,9 +18,11 @@ const POOL_MODEL_ALIAS = 'team-pool';
 // `X-Jenny-Route-Token`, which HTTP treats as the same name.
 const ROUTE_TOKEN_HEADER = 'x-jenny-route-token';
 
+// The SSE comment interval (spec "Limits and timeouts"), shared with the team engine routes.
+const COMMENT_INTERVAL_MS = 15_000;
 // The body cap is the scheduler's maxRequestBytes, so there is one definition.
 const DEFAULT_LIMITS = Object.freeze({
-  commentIntervalMs: 15_000,
+  commentIntervalMs: COMMENT_INTERVAL_MS,
   maxSockets: 64,
   stopTimeoutMs: 2_000,
   headersTimeoutMs: 10_000,
@@ -152,7 +154,9 @@ function createPoolGateway({ scheduler, bootKey, clock = Date.now, logger, limit
 
   function serveProps(context) {
     const summary = scheduler.poolSummary();
-    const lengths = [summary.context_length, limits.contextCap].filter((n) => Number.isSafeInteger(n));
+    // The largest model's length, capped by the owner's configured value: each turn
+    // carries its own leased model's length as a per-request bound (slice 4f).
+    const lengths = [summary.largest_context_length, limits.contextCap].filter((n) => Number.isSafeInteger(n));
     const props = { modalities: { vision: summary.vision === true } };
     if (lengths.length) props.default_generation_settings = { n_ctx: Math.min(...lengths) };
     if (summary.thinking) {
@@ -330,4 +334,8 @@ function createPoolGateway({ scheduler, bootKey, clock = Date.now, logger, limit
   return Object.freeze({ start, stop, resources, port: () => port });
 }
 
-module.exports = { POOL_MODEL_ALIAS, ROUTE_TOKEN_HEADER, createPoolGateway };
+// The body reader and the body rules are shared with the team engine routes (slice 4b).
+module.exports = {
+  COMMENT_INTERVAL_MS, JSON_HEADERS, POOL_MODEL_ALIAS, ROUTE_TOKEN_HEADER, SSE_HEADERS, TIMEOUT_REASONS,
+  createPoolGateway, dropThinking, hasImagePart, isPlainObject, readBody,
+};

@@ -37,23 +37,6 @@
     normalizeDigestQuietEnd,
     createExternalSettingsSync,
   } = loadSiblingModule('rendererSettingsExternalSync', './renderer-settings-external-sync.js');
-  // Derives the Models card badge { state, text } from runtime signals, ready to
-  // pass to the design-system applyBadgeState (renderer-settings-foundation.js).
-  // Lives here next to the other Models/session resolvers rather than in the
-  // generic foundation module, which holds only section-agnostic primitives.
-  function resolveModelBadge(signals) {
-    const s = signals && typeof signals === 'object' ? signals : {};
-    const state = s.busy ? 'busy'
-      : s.errored ? 'error'
-      : (s.catalogUnavailable && !s.activeModel) ? 'warn'
-      : s.activeModel ? 'live' : 'info';
-    const text = s.busy ? (s.loadingModel ? jt('settings.modelLibrary.badgeSwitching', 'Switching') : jt('settings.modelLibrary.badgeUnloading', 'Unloading'))
-      : state === 'error' ? jt('healthPill.error', 'Error')
-      : state === 'warn' ? jt('diagnostics.common.unavailable', 'Unavailable')
-      : (s.activeModel || jt('settings.modelLibrary.defaultBackend', 'Default backend'));
-    return { state, text };
-  }
-
   const TOOL_CONFIG_TOGGLE_ID_PREFIX = 'settings-tool-config-';
   // Dependent row (or row set) -> the tool switch it follows. While the parent is
   // off the dependent row is marked parent-off and locked, and its stored value is kept.
@@ -314,6 +297,8 @@
       // applyFeatureStatePayload set. Never influences tools/featureFlags
       // below, only status-chip rendering.
       availabilityResolved: source.availabilityResolved === true,
+      // Main's E50 answer for Settings > Team and the top rail: a boolean, or absent when main said nothing.
+      ...(typeof source.teamData === 'boolean' ? { teamData: source.teamData } : {}),
       tools: isPlainObject(source.tools) ? { ...source.tools } : {},
       subagentRouting: Object.fromEntries(['chatgpt', 'codex-cli'].map((provider) => {
         const row = source.subagentRouting?.[provider] || {};
@@ -428,7 +413,6 @@
   }
 
   return {
-    resolveModelBadge,
     TOOL_DEPENDENTS,
     DEFAULT_TOOL_CONFIG_FIELDS,
     toolConfigRowId,

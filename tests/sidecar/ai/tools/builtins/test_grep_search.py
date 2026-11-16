@@ -14,7 +14,8 @@ from sidecar.ai.tools.builtins import grep_search as grep_module
 from sidecar.ai.tools.builtins import grep_search_client, grep_search_file
 from sidecar.ai.tools.builtins.grep_search_worker import ScanOutcome
 from sidecar.ai.tools.builtins.regex_safety import looks_like_catastrophic_regex
-from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.catalog import manifest_descriptors
+from sidecar.ai.tools.contracts import ToolExecutionFailure, validate_tool_arguments
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from tests.sidecar._platform_skips import make_dir_link
 
@@ -163,6 +164,54 @@ def test_grep_search_includes_context_lines(tmp_path: Path) -> None:
     assert "app.txt:2:one" in result.output
     assert "app.txt:3:needle" in result.output
     assert "app.txt:4:two" in result.output
+
+
+def _grep_schema() -> dict[str, object]:
+    return next(d for d in manifest_descriptors() if d.name == "grep_search").input_schema
+
+
+def test_grep_search_clamps_over_limit_context_lines_and_says_so(tmp_path: Path) -> None:
+    lines = [f"filler{i}" for i in range(1, 26)] + ["needle"] + [f"after{i}" for i in range(1, 26)]
+    (tmp_path / "app.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # The model-facing schema check runs first, exactly as in a live tool call.
+    arguments = validate_tool_arguments(
+        tool_name="grep_search",
+        arguments={"pattern": "needle", "context_lines": 30},
+        input_schema=_grep_schema(),
+    )
+    result = grep_module.grep_search_tool(arguments, _guard(tmp_path))
+
+    assert result.success is True
+    assert "app.txt:26:needle" in result.output
+    assert "app.txt:16:filler16" in result.output
+    assert "app.txt:15:filler15" not in result.output
+    assert "app.txt:36:after10" in result.output
+    assert "app.txt:37:after11" not in result.output
+    assert "context_lines clamped to 10 (maximum)." in result.output
+    assert result.output.count("clamped") == 1
+
+
+def test_grep_search_context_lines_within_limit_adds_no_clamp_note(tmp_path: Path) -> None:
+    (tmp_path / "app.txt").write_text("one\nneedle\ntwo\n", encoding="utf-8")
+
+    result = grep_module.grep_search_tool(
+        {"pattern": "needle", "context_lines": 10}, _guard(tmp_path)
+    )
+
+    assert "clamped" not in result.output
+
+
+@pytest.mark.parametrize("bad", [-1, 1.5, "many"])
+def test_grep_search_schema_still_rejects_negative_and_non_integer_context_lines(
+    bad: object,
+) -> None:
+    with pytest.raises(ToolExecutionFailure):
+        validate_tool_arguments(
+            tool_name="grep_search",
+            arguments={"pattern": "needle", "context_lines": bad},
+            input_schema=_grep_schema(),
+        )
 
 
 def test_grep_search_skips_binary_files(tmp_path: Path) -> None:

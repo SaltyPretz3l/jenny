@@ -41,6 +41,27 @@
       return changed;
     }
 
+    // The retry appends its own bubble, so the failed one leaves while it starts
+    // (the store never saved it). It comes back only when the retry did not
+    // start and no new bubble took over its failure marker.
+    const failureId = (message) => String(message?.send_failure?.payload_id || '').trim();
+    function takeFailedBubble(sessionId, payloadId) {
+      const messages = Array.isArray(getSessionMessages(sessionId)) ? getSessionMessages(sessionId) : [];
+      const index = messages.findIndex((message) => failureId(message) === payloadId && message.send_failure.dismissed !== true);
+      if (index < 0) return null;
+      setSessionMessages(sessionId, messages.filter((_message, position) => position !== index), `session_${sessionId}`);
+      return { message: messages[index], afterId: String(messages[index - 1]?.id || '') };
+    }
+    function returnFailedBubble(sessionId, payloadId, taken) {
+      const messages = Array.isArray(getSessionMessages(sessionId)) ? getSessionMessages(sessionId) : [];
+      if (!taken || messages.some((message) => failureId(message) === payloadId && message.send_failure.dismissed !== true)) return;
+      const anchor = taken.afterId ? messages.findIndex((message) => String(message?.id || '') === taken.afterId) : -1;
+      const next = messages.slice();
+      next.splice(!taken.afterId ? 0 : (anchor >= 0 ? anchor + 1 : next.length), 0, taken.message);
+      setSessionMessages(sessionId, next, `session_${sessionId}`);
+      renderMessages();
+    }
+
     async function retryFailedPayload(payloadId) {
       const availability = getFailedPayloadRetryAvailability(payloadId);
       if (!availability.available) return null;
@@ -49,7 +70,11 @@
         showComposerActionError(new Error(busyReason), jt('chat.send.retryUnavailableTitle', 'Retry Unavailable'));
         return null;
       }
-      const result = await startPromptSend(payload.prompt, {
+      const payloadKey = String(payload.id || '').trim();
+      const taken = takeFailedBubble(payload.sessionId, payloadKey);
+      let result;
+      try {
+        result = await startPromptSend(payload.prompt, {
         visiblePrompt: payload.visiblePrompt,
         sessionIdOverride: payload.sessionId,
         runtimePreferencesSnapshot: payload.runtimePreferences,
@@ -61,11 +86,17 @@
         activeFileContextSnapshot: payload.activeFileContext || null,
         interactiveResponse: payload.interactiveResponse || null,
         skillInvocation: payload.skillInvocation || null,
-        imagePromptPin: payload.imagePromptPin || null,
+        imagePromptPin: payload.imagePromptPin || null, boardId: payload.boardId || null,
         failedPayloadId: payload.id,
       });
+      } catch (error) {
+        // A send that throws never started: the failed bubble and its Retry return.
+        returnFailedBubble(payload.sessionId, payloadKey, taken);
+        throw error;
+      }
       const retryDidNotStart = !result || result.rejected === true
         || result.queued === true || result.failed === true;
+      if (retryDidNotStart && result?.queued !== true) returnFailedBubble(payload.sessionId, payloadKey, taken);
       if (!retryDidNotStart && String(result.streamId || '').trim()
         && dismissFailureMarkerForPayload(payload.sessionId, payload.id)) {
         renderMessages();

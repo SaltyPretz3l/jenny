@@ -17,7 +17,7 @@ function shimCssHighlights(win) {
 
 function buildEnv(timelineHtml, extraOptions) {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed">' + (timelineHtml || '') + '</div>'
     + '</div>'
     + '<textarea id="composer"></textarea>'
@@ -223,16 +223,13 @@ test('streaming bubble matches are skipped (F1)', async () => {
   assert.equal(dom.window.CSS.highlights.get('chat-search-match').ranges.length, 1);
 });
 
-test('open() lazily creates the host inside chatView before chatTimeline (E6)', () => {
+test('open() lazily creates the host inside the pane cluster (row 156)', () => {
   const { dom, overlay } = buildEnv(FIXTURE);
-  assert.equal(dom.window.document.getElementById('chatSearchOverlayHost'), null);
+  assert.equal(dom.window.document.querySelector('.chat-find'), null);
   overlay.attach();
   overlay.open();
-  const host = dom.window.document.getElementById('chatSearchOverlayHost');
-  assert.ok(host);
-  const timeline = dom.window.document.getElementById('chatTimeline');
-  assert.equal(host.nextElementSibling, timeline, 'host should sit immediately before #chatTimeline');
-  assert.equal(host.parentElement.id, 'chatView');
+  const host = dom.window.document.querySelector('.chat-find');
+  assert.equal(host.parentElement.getAttribute('data-chat-node'), 'chatTimelineUtilityCluster');
 });
 
 test('reopening Ctrl+F while already open just refocuses the input (E6)', () => {
@@ -250,7 +247,7 @@ test('reopening Ctrl+F while already open just refocuses the input (E6)', () => 
 
 test('Ctrl+F is scoped to Chat and does not intercept Settings or other surfaces', () => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView"><div id="chatTimeline" role="feed">' + FIXTURE + '</div></div>'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div><div id="chatTimeline" role="feed">' + FIXTURE + '</div></div>'
     + '</body></html>');
   shimCssHighlights(dom.window);
   let activeView = 'settings';
@@ -279,7 +276,7 @@ test('Ctrl+F is scoped to Chat and does not intercept Settings or other surfaces
 
 test('search keeps virtualization active across open, close, and dispose', () => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed">' + FIXTURE + '</div>'
     + '</div></body></html>');
   shimCssHighlights(dom.window);
@@ -323,7 +320,7 @@ test('B5: search overlay tolerates a missing virtualizer (no plumbing required)'
 
 test('canonical search mounts only the selected virtualized message', async () => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed"><article class="chat-entry" data-message-id="m2" data-virtualized="true"><div class="chat-entry-virtualized"></div></article></div>'
     + '</div></body></html>');
   shimCssHighlights(dom.window);
@@ -520,7 +517,7 @@ test('open search overlay rescans after timeline DOM changes while visible', asy
 
 test('open search overlay does not rescan timeline mutations until a query is active', async () => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed">' + FIXTURE + '</div>'
     + '</div></body></html>');
   let scanCount = 0;
@@ -570,6 +567,6 @@ test('an over-cap query surfaces the omitted-matches state in the search bar', a
   const count = dom.window.document.querySelector('.chat-search-bar-count');
   await waitForUiState(dom.window, () => /of/.test(count.textContent));
 
-  assert.equal(count.textContent, '1 of first 500', 'the bar says the list is capped, not a fabricated exact total');
+  assert.equal(count.textContent, '1 of 500+', 'the bar says the list is capped, not a fabricated exact total');
   overlay.dispose();
 });

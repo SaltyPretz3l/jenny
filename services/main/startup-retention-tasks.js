@@ -226,6 +226,14 @@ function scheduleStartupRetentionTasks({
   log = () => {},
 } = {}) {
   if (artifactService && backendService) {
+    // The orphan prune and the retention sweep each walk every workspace root. Their two 30-minute
+    // timers fire on the same tick, so run them one at a time instead of in lockstep.
+    let artifactPass = Promise.resolve();
+    const runArtifactPass = (task) => {
+      const run = artifactPass.then(() => task());
+      artifactPass = run.catch(() => {});
+      return run;
+    };
     const pruneArtifacts = () => {
       // A provider, not a snapshot: the prune re-resolves it right before
       // each deletion so a branch session persisted mid-pass (fork artifact
@@ -236,8 +244,9 @@ function scheduleStartupRetentionTasks({
         log('WARN', 'artifacts.orphan_prune_failed', { error: String(err?.message || err) });
       });
     };
-    runInitialRetentionTaskWhenReady(backendService, pruneArtifacts, { setTimeoutRef, staggerMs: 1000 });
-    unrefInterval(setIntervalRef(pruneArtifacts, 30 * 60 * 1000));
+    const pruneArtifactsSerially = () => runArtifactPass(pruneArtifacts);
+    runInitialRetentionTaskWhenReady(backendService, pruneArtifactsSerially, { setTimeoutRef, staggerMs: 1000 });
+    unrefInterval(setIntervalRef(pruneArtifactsSerially, 30 * 60 * 1000));
 
     // WIDE-010: reference-aware artifact-session retention (Electron is the
     // authority — it owns the persisted generated_artifacts references; the
@@ -255,8 +264,9 @@ function scheduleStartupRetentionTasks({
         log('WARN', 'artifacts.retention_sweep_failed', { error: String(err?.message || err) });
       });
     };
-    runInitialRetentionTaskWhenReady(backendService, sweepArtifactRetention, { setTimeoutRef, staggerMs: 4000 });
-    unrefInterval(setIntervalRef(sweepArtifactRetention, 30 * 60 * 1000));
+    const sweepArtifactRetentionSerially = () => runArtifactPass(sweepArtifactRetention);
+    runInitialRetentionTaskWhenReady(backendService, sweepArtifactRetentionSerially, { setTimeoutRef, staggerMs: 4000 });
+    unrefInterval(setIntervalRef(sweepArtifactRetentionSerially, 30 * 60 * 1000));
   }
   const ipcPayloadStore = backendService?.ipcPayloadStore || null;
   if ((attachmentAssetStore || ipcPayloadStore) && backendService) {

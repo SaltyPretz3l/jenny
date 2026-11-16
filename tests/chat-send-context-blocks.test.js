@@ -20,9 +20,10 @@ const {
   normalizeContextBlocksForSend,
 } = require('../services/backend/chat-send-context-blocks');
 
-test('the kind allowlist matches the seven assembled overlays', () => {
+test('the kind allowlist matches the eight assembled overlays', () => {
   assert.deepEqual([...CONTEXT_BLOCK_KINDS].sort(), [
     'active_file',
+    'board',
     'codebase',
     'git',
     'linked_session',
@@ -31,7 +32,7 @@ test('the kind allowlist matches the seven assembled overlays', () => {
     'workspace_presentation',
   ]);
   assert.equal(MAX_CONTEXT_BLOCKS, CONTEXT_BLOCK_KINDS.length);
-  assert.equal(MAX_CONTEXT_BLOCKS, 7);
+  assert.equal(MAX_CONTEXT_BLOCKS, 8);
 });
 
 test('keeps every allowlisted kind, in order, with content trimmed', () => {

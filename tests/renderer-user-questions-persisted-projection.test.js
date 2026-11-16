@@ -126,6 +126,50 @@ test('settled receipt renders when questions survive only on the persisted tool_
   assert.match(html, /Pick one/);
 });
 
+// Gate sitting 2026-11-14 (G2): the live user_questions_requested event is never saved, and the
+// saved tool_call carries no user_questions, so after the turn settled (and on every reload) the
+// receipt fell back to a generic "Ask User · Success" row. The saved tool_use input still holds the
+// questions the model asked; the receipt reads them from there.
+test('settled receipt renders from the saved tool_use input when no questions event was kept', () => {
+  const asked = [
+    { id: 'roast', prompt: 'Which roast should the menu lead with?', options: ['Light', 'Medium', 'Dark'], allow_other: true },
+    { id: 'tone', prompt: 'What tone should the about page take?', options: ['Warm', 'Plain'], allow_other: true },
+  ];
+  const rows = projectTurnRows([
+    {
+      event_id: 't:tool_use:0', turn_id: 't', kind: 'tool_use',
+      primary_message_id: 'tool_use_c1', source_message_ids: ['tool_use_c1'],
+      sort_key: [0, 0, 40], tool_call_id: 'c1', status: 'running',
+      payload: { tool_name: 'ask_user', input: { questions: asked }, summary: 'Ask user' },
+    },
+    {
+      event_id: 't:tool_result:0', turn_id: 't', kind: 'tool_result',
+      primary_message_id: 'tool_use_c1', tool_result_message_id: 'tool_result_c1',
+      source_message_ids: ['tool_use_c1', 'tool_result_c1'],
+      sort_key: [1, 0, 50], tool_call_id: 'c1', status: 'completed',
+      payload: {
+        tool_name: 'ask_user', output_text: 'Q: ...', is_error: false,
+        metadata: normalizePersistedToolResultMetadata({ result_kind: 'user_questions_answered', answers: [{ id: 'roast', value: 'Medium' }] }),
+      },
+    },
+  ]);
+  const row = rows.find((candidate) => candidate.kind === 'tool_call');
+  const message = {
+    id: 'tool_use_c1', role: 'assistant', kind: 'tool_use', status: 'complete',
+    tool_call: { call_id: 'c1', tool_name: 'ask_user', status: 'running', input_json: JSON.stringify({ questions: asked }) },
+  };
+  const html = makeRenderUtils().buildToolCallRowMarkup(row, [message], { messageById: new Map([[message.id, message]]) });
+  assert.match(html, /user-questions-receipt/);
+  assert.match(html, /Which roast should the menu lead with\?/);
+  assert.match(html, /Medium/);
+
+  const skipped = { ...row, payload: { ...row.payload, user_questions_result_kind: 'user_questions_declined', user_questions_answers: undefined } };
+  const bare = { ...message, tool_call: { call_id: 'c1', tool_name: 'ask_user', status: 'running', input_json: JSON.stringify({ questions: asked }) } };
+  const skippedPayload = { ...skipped.payload, input: {} };
+  const html2 = makeRenderUtils().buildToolCallRowMarkup({ ...skipped, payload: skippedPayload }, [bare], { messageById: new Map([[bare.id, bare]]) });
+  assert.match(html2, /You skipped Jenny/, 'input_json on the saved tool_call is the last fallback');
+});
+
 test('late persisted ask_user call owns its earlier execution before the answer', () => {
   // Actual canonical-primary order when a provider emits execution without a
   // call announcement: finalization backfills tool_use from the saved message.
@@ -182,7 +226,7 @@ test('a persisted stale demotion outranks the projector pending state on full re
   };
   const html = makeRenderUtils().buildToolCallRowMarkup(row, [message], { messageById: new Map([[message.id, message]]) });
   assert.match(html, /user-questions-receipt/);
-  assert.match(html, /Questions no longer active/);
+  assert.match(html, /These questions are no longer active/);
   assert.doesNotMatch(html, /user-questions-submit-btn|user-questions-block"/);
 });
 

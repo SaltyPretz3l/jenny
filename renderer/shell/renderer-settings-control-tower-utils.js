@@ -167,11 +167,6 @@
       || normalizeStatusToken(memories.status) === 'unavailable';
   }
 
-  function hasProactiveIssue(state) {
-    const proactive = normalizeRecord(state.proactive || state.proactiveState);
-    return proactive.ready === false || proactive.available === false || normalizeStatusToken(proactive.status) === 'unavailable';
-  }
-
   function hasSkillsIssue(state) {
     const skills = normalizeRecord(state.skills || state.skillsState);
     return skills.ready === false || skills.available === false || normalizeStatusToken(skills.status) === 'unavailable';
@@ -262,7 +257,7 @@
         label: jt('settings.controlTower.setupNotFinished', 'Setup not finished'),
         message: jt('settings.controlTower.finishSetup', 'Finish the first-run setup so Jenny is ready across sessions.'),
         tone: 'warning',
-        sectionId: 'account',
+        sectionId: 'readiness',
         actionLabel: jt('settings.controlTower.resumeSetupAction', 'Resume setup'),
         action: 'resume-setup',
         priority: 50,
@@ -290,18 +285,6 @@
         sectionId: '__memory',
         actionLabel: jt('settings.controlTower.openMemories', 'Open memories'),
         priority: 70,
-      });
-    }
-
-    if (hasProactiveIssue(state)) {
-      addItem(items, {
-        id: 'proactive-not-ready',
-        label: jt('settings.controlTower.proactiveUnavailable', 'Proactive features are unavailable'),
-        message: jt('settings.controlTower.proactiveReadiness', 'Morning briefings, reminders, or resource alerts need a readiness check.'),
-        tone: 'warning',
-        sectionId: 'proactive',
-        actionLabel: jt('settings.controlTower.checkProactive', 'Check proactive'),
-        priority: 80,
       });
     }
 
@@ -346,7 +329,7 @@
       }
       ready('tools-ready', jt('settings.controlTower.ready.tools', 'Tools'), jt('settings.controlTower.ready.toolsMessage', 'No enabled tool is blocked.'), 'tools', jt('settings.controlTower.reviewTools', 'Review tools'));
       if (hasLoadedSetup(state)) {
-        ready('setup-ready', jt('settings.controlTower.ready.setup', 'Setup'), jt('settings.controlTower.ready.setupMessage', 'First-run setup is complete.'), 'account', jt('settings.controlTower.openProfile', 'Open profile'));
+        ready('setup-ready', jt('settings.controlTower.ready.setup', 'Setup'), jt('settings.controlTower.ready.setupMessage', 'First-run setup is complete.'), 'general', jt('settings.controlTower.openProfile', 'Open profile'));
       }
       const known = (record) => Object.keys(normalizeRecord(record)).length > 0;
       if (isLocalOnly(state)) {
@@ -354,9 +337,6 @@
       }
       if (known(state.memories || state.memory || state.memoryManager)) {
         ready('memory-ready', jt('settings.controlTower.ready.memory', 'Memory'), jt('settings.controlTower.ready.memoryMessage', 'The memory manager is ready.'), '__memory', jt('settings.controlTower.openMemories', 'Open memories'));
-      }
-      if (known(state.proactive || state.proactiveState)) {
-        ready('proactive-ready', jt('settings.controlTower.ready.proactive', 'Proactive features'), jt('settings.controlTower.ready.proactiveMessage', 'Briefings, reminders and resource alerts are available.'), 'proactive', jt('settings.controlTower.checkProactive', 'Check proactive'));
       }
       if (known(state.skills || state.skillsState)) {
         ready('skills-ready', jt('settings.controlTower.ready.skills', 'Skills'), jt('settings.controlTower.ready.skillsMessage', 'Skill discovery and activation are available.'), 'skills', jt('settings.controlTower.openSkills', 'Open skills'));

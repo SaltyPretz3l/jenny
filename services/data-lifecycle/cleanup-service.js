@@ -29,6 +29,10 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'backend-sidecar',
   'background-memory',
   'blob_storage',
+  // Pictures on project boards and their unreferenced index (boards/board-assets.js).
+  'board-assets',
+  // Project boards, their journals and proposals, and the board index (boards/board-store.js).
+  'boards',
   'Cache',
   // Before and after pictures of changed pages (change-pictures/picture-store.js).
   'change-pictures',
@@ -75,6 +79,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'ninfer-serve.pid', // ninfer-lifecycle.js
   // Builtin MCP server operation ledger under the Electron state root (sidecar/ai/config.py).
   'operation-ledger',
+  // Outside files open in the IDE at exit, restored at launch (row 137, main/outside-files/outside-file-service.js).
+  'outside-files.json',
   'ollama-catalog.json',
   'ollama-process.json',
   'personality',

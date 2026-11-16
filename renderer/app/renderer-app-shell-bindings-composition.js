@@ -28,15 +28,15 @@
       handleWorkspaceShortcut, hydrateCachedLazyShellState, initSetupControllerSafe, isRendererDisposed,
       isSendPreflightPending, lifecycleController, loadSessions, localProfileSettingsMount, logAutoScrollToggle,
       logLevelFilter, logList, logSearchInput, logSourceFilter, mergePreparedAttachments, multiStreamController,
-      navigateToDiagnosticsTrace, newChatButton, openComposerPopover, openIdeHelpOverlaySafe, openIdeTerminalSafe,
+      navigateToDiagnosticsTrace, newChatButton, openComposerPopover, openIdeHelpOverlaySafe, openIdeOutsideFilesSafe, openIdeTerminalSafe,
       openSettingsSection, openSetupTileSafe, paneLayoutController, persistRuntimePreferences,
       prepareDroppedAttachments, queueDeferredStartupTask, queueInlineImageAttachment, queueStartupLazyHydration,
       refreshApprovedMemoriesSafe, refreshComposerToolToggles, refreshDefaultChatTimelineBatch4Preference,
       refreshPendingMemoriesSafe, refreshPhasePercentiles, refreshSessionSummariesWithWorkspace, refreshSnapshots,
       refreshWorkspaceRootState, registerRendererCleanup, removeQueuedAttachment, renderAll, renderAttachmentTray,
       renderComposerState, renderHeader,
-      renderLogs, renderOfflineManagerSafe, renderSessions, renderSettings, resetAttachmentQueue, resetLogsViewState,
-      resetPhasePercentiles, resetSidebarWidth, runIdeTaskTerminalSafe, runStartupAuditAutoSend, scrollLogsToBottom,
+      renderLogs, renderOfflineManagerSafe, refreshOfflineStateSafe, renderSessions, renderSettings, resetAttachmentQueue, resetLogsViewState,
+      resetPhasePercentiles, resetSidebarWidth, runIdeTaskTerminalSafe, runStartupAuditAutoSend, scrollLogsToBottom, scrollMessageIntoView,
       searchInput, sendButton, sessionActionButton, setActiveView, setDropActive, setRovingChatSession,
       setSessionMessages, setSidebarCollapsed, settingsShellController, shellArtifactBridge, shellStatusController,
       showComposerActionError, showSessionActionError, showShellErrorToast, showToastMessage, sidebarResizer,
@@ -171,6 +171,7 @@
       renderComposerState: (...a) => renderComposerState(...a),
       renderLogs: (...a) => renderLogs(...a),
       renderOfflineManager: (...a) => renderOfflineManagerSafe(...a),
+      refreshOfflineState: (...a) => refreshOfflineStateSafe(...a),
       renderSessions: (...a) => renderSessions(...a),
       renderSettings: (...a) => renderSettings(...a),
       setRovingChatSession: (...a) => setRovingChatSession(...a),
@@ -180,6 +181,8 @@
       resetSidebarWidth,
       runStartupAuditAutoSend: (...a) => runStartupAuditAutoSend(...a),
       scrollLogsToBottom,
+      // The image viewer's Show in chat in pane 0 (renderer-app-image-viewer-binding.js jumpTarget).
+      scrollMessageIntoView: (...a) => scrollMessageIntoView(...a),
       setActiveView,
       setDropActive,
       setSessionMessages: (...a) => setSessionMessages(...a),
@@ -189,6 +192,7 @@
         openFile: (path, line) => { const event = new CustomEvent('ide:open-file-at-line', { cancelable: true, detail: { path, line: line || 1, column: 1, preferIde: true } }); window.dispatchEvent(event); return event.defaultPrevented; },
         openTerminal: async () => { setActiveView('ide'); return await openIdeTerminalSafe() === true; },
         runInTerminal: async (command) => { setActiveView('ide'); return await runIdeTaskTerminalSafe(command); }, // row 94 P4 terminal_run
+        openOutsideFiles: (items, options) => (typeof openIdeOutsideFilesSafe === 'function' ? openIdeOutsideFilesSafe(items, options) : false), // row 137 Open with Jenny
         split: async (sessionId) => {
           if (paneLayoutController?.isSessionInPane?.(sessionId)) return (paneLayoutController.getPaneCount?.() || 1) > 1;
           if ((state.workspace?.openSessionIds || []).includes(sessionId)) return paneLayoutController?.openBeside?.(sessionId) === true;

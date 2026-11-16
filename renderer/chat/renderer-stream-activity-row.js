@@ -229,10 +229,13 @@
       retireTimer?.unref?.();
     }
 
-    function untrack(streamId) {
+    // retire: the terminal's own render replaces the row, so it leaves through
+    // the same hand-off as a tool start instead of shrinking the tail first.
+    function untrack(streamId, retire) {
       const entry = tracked.get(streamId);
       if (entry) {
-        removeNode(entry);
+        if (retire === true) retireNode(entry);
+        else removeNode(entry);
         tracked.delete(streamId);
         typedActivity.release(streamId, entry);
       }
@@ -415,8 +418,10 @@
       if (!type || IGNORED_TYPES.has(type)) return;
       const streamId = normalizeId(payload && payload.streamId);
       if (!streamId) return;
+      // A reply starting or ending, or a wait for the model, is when the chat that goes first may have changed (row 136).
+      if (TERMINAL_TYPES.has(type) || type === 'started' || type === 'model_waiting') waitingLine?.firstChat.refresh();
       if (TERMINAL_TYPES.has(type)) {
-        untrack(streamId);
+        untrack(streamId, true);
         return;
       }
       if (type === 'started') waitingLine?.releaseSessionWaits(tracked, normalizeId(payload && payload.sessionId), streamId, untrack);
@@ -454,7 +459,7 @@
         return;
       }
       if (entry.prefill) entry.prefill.closed = true;
-      if (type === 'runtime_waiting' && waitingLine) {
+      if ((type === 'runtime_waiting' || type === 'model_waiting') && waitingLine) {
         if (!waitingLine.applyNotice(entry, payload)) {
           removeNode(entry);
           return;
@@ -508,6 +513,8 @@
         tick();
         return;
       }
+      // A wait for the model ends when main says so, not when a helper's event passes by (row 136).
+      if (waitingLine?.isModelWait(entry)) return;
       entry.typed = null;
       if (ARMING_TYPES.has(type)) entry.armed = true;
       // Any real event both resets the silence clock and dismisses a visible

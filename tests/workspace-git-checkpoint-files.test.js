@@ -4,7 +4,7 @@
 // only, index untouched) with a pinned rollback ref that doubles as Redo.
 // Real temp repos behind the real WorkspaceGitService and the IPC handlers.
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
@@ -14,13 +14,28 @@ const { checkpointRefIsSafe } = require('../services/workspace-git-checkpoint');
 const { normalizeDiffInputText, sha256Text } = require('../services/tools/structured-diff');
 const { sha256Bytes } = require('../services/workspace-recovery-safety-copies');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
-const { createGitRepo, createRecoveryHarness, createTrash, git } = require('./helpers/workspace-recovery-harness');
+const { createRecoveryHarness, createTrash, git } = require('./helpers/workspace-recovery-harness');
+const { createGitTemplates, initStandardRepo } = require('./helpers/git-template-repo');
 
 const SCRIPT_TEXT = 'script\r\nwrote this\r\n';
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
+
+// The seeded repository (below) is built once per file and copied per case; the
+// checkpoint ref is the same in every copy (see helpers/git-template-repo.js).
+const templates = createGitTemplates();
+after(() => templates.dispose());
+let seededRef = null;
+
+async function seededRig(options) {
+  const repo = await templates.copy('seeded', async (dir) => {
+    await initStandardRepo(dir);
+    seededRef = await seedRepoWithCheckpoint(createRecoveryHarness(dir), dir);
+  }, 'jenny-recovery-repo-');
+  return { repo, rig: createRecoveryHarness(repo, options), ref: seededRef };
+}
 
 // Committed: README.md, tracked.txt, same.txt. Untracked: notes.txt, and a
 // staged edit to staged.txt so an index change is visible if anything touches it.
@@ -50,9 +65,7 @@ async function indexSnapshot(repo) {
 
 describe('preflightCheckpointFiles (real repo)', () => {
   test('classifies tracked/untracked/absent and compares blob ids and after-hashes', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     await fs.writeFile(path.join(repo, 'binary.bin'), Buffer.from([0x41, 0x00, 0x42]));
     await fs.writeFile(path.join(repo, 'large.txt'), Buffer.alloc(2 * 1024 * 1024 + 1, 0x61));
     const textHash = sha256Text(normalizeDiffInputText(SCRIPT_TEXT));
@@ -88,9 +101,7 @@ describe('preflightCheckpointFiles (real repo)', () => {
   });
 
   test('an unknown checkpoint is reported, not thrown', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig } = await seededRig();
     const result = await rig.invoke('workspaceRecovery.preflightCheckpointFiles', {
       ref: 'refs/jenny/checkpoints/sess_files/99', files: [{ path: 'tracked.txt' }],
     });
@@ -101,9 +112,7 @@ describe('preflightCheckpointFiles (real repo)', () => {
 
 describe('restoreCheckpointFiles (real repo)', () => {
   test('restores only the named files, leaves the index alone, trashes removePaths, and Redo comes back', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     const indexBefore = await indexSnapshot(repo);
 
     const undone = await rig.invoke('workspaceRecovery.restoreCheckpointFiles', {
@@ -136,9 +145,7 @@ describe('restoreCheckpointFiles (real repo)', () => {
   });
 
   test('removePaths present in the checkpoint or absent on disk are refused per path', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     const result = await rig.invoke('workspaceRecovery.restoreCheckpointFiles', {
       ref, paths: [], removePaths: ['same.txt', 'nothing-here.txt'],
     });
@@ -152,9 +159,7 @@ describe('restoreCheckpointFiles (real repo)', () => {
   });
 
   test('removePaths without a recycle bin refuse the whole request before anything changes', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo, { trash: createTrash({ available: false }) });
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig({ trash: createTrash({ available: false }) });
     const refsBefore = (await git(repo, ['for-each-ref', 'refs/jenny'])).stdout;
     const result = await rig.invoke('workspaceRecovery.restoreCheckpointFiles', {
       ref, paths: ['tracked.txt'], removePaths: ['made.txt'],
@@ -166,9 +171,7 @@ describe('restoreCheckpointFiles (real repo)', () => {
   });
 
   test('a directory now sitting at a checkpoint path is skipped as a conflict, never replaced', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     await fs.rm(path.join(repo, 'notes.txt'));
     await fs.mkdir(path.join(repo, 'notes.txt'));
     await fs.writeFile(path.join(repo, 'notes.txt', 'keep.txt'), 'keep\n');
@@ -181,9 +184,7 @@ describe('restoreCheckpointFiles (real repo)', () => {
 
 describe('restoreCheckpointFiles rollback coverage (real repo)', () => {
   test('a file the rollback could not capture (over the untracked cap) is refused, never overwritten', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     const grown = Buffer.alloc(10 * 1024 * 1024 + 1, 0x62);
     await fs.writeFile(path.join(repo, 'notes.txt'), grown);
     const result = await rig.invoke('workspaceRecovery.restoreCheckpointFiles', { ref, paths: ['notes.txt', 'tracked.txt'] });
@@ -195,9 +196,7 @@ describe('restoreCheckpointFiles rollback coverage (real repo)', () => {
 
 describe('checkpoint file path containment', () => {
   test('a symlink or junction escape is refused before any restore', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     const outside = createTrackedTempDir('jenny-recovery-outside-');
     await fs.writeFile(path.join(outside, 'secret.txt'), 'secret\n');
     fsSync.symlinkSync(outside, path.join(repo, 'linkdir'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -214,9 +213,7 @@ describe('checkpoint file path containment', () => {
   });
 
   test('the git service refuses dot-dot and absolute paths with a clean result', async () => {
-    const repo = await createGitRepo();
-    const rig = createRecoveryHarness(repo);
-    const ref = await seedRepoWithCheckpoint(rig, repo);
+    const { repo, rig, ref } = await seededRig();
     for (const bad of ['../escape.txt', path.join(repo, 'tracked.txt'), 'C:/x.txt']) {
       const result = await rig.gitService.restoreCheckpointFiles({ ref, paths: [bad] });
       assert.equal(result.ok, false, bad);

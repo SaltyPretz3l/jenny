@@ -30,6 +30,7 @@ const {
   appliedEventsText,
   boundedEventSelector,
   collectExternalResources,
+  errorTextLines,
   eventOutcomeLine,
   externalResourcesLine,
   normalizeObserveInput,
@@ -484,6 +485,7 @@ function createPreviewTestTool({
         const contentLines = [
           `Preview-tested "${relPath}": loaded with ${consoleErrorCount} console error(s), applied ${appliedEventsText(eventResults)} event(s), viewport ${viewport}.`,
         ];
+        contentLines.push(...errorTextLines(consoleErrors, pageErrors, consoleErrorCount, MAX_ERROR_TEXTS));
         if (eventResults.length) contentLines.push(eventOutcomeLine(eventResults));
         contentLines.push(formatRenderSummary(renderSummary));
         contentLines.push(...observationLines(observe, observed));

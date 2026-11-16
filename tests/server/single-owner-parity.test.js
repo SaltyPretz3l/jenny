@@ -21,7 +21,7 @@ const {
   SINGLE_OWNER_MEMBER_ID, createAuthorizer, createSingleOwnerDirectory, singleOwnerActor,
 } = require('../../server/team/authorize');
 const { createSingleOwnerGuard } = require('../../server/team/route-guard');
-const { actionForOperation } = require('../../server/team/operation-registry');
+const { ACTIONS, TEAM_HOST_REFUSED_OPERATIONS, actionForOperation } = require('../../server/team/operation-registry');
 const { createFixture, command, createSession, acquire, BOOT } = require('../helpers/command-router-fixture');
 
 test('the single-owner directory yields the constant owner actor for any session id', () => {
@@ -41,10 +41,18 @@ test('the single-owner directory yields the constant owner actor for any session
 // A chat operation names its channel (slice 2a-3a).
 const paramsFor = (operation) => {
   if (operation === 'team.device.revoke') return { device_id: 'device_1' };
+  // Slice 3-4a: a shared project command names its project (the single owner sees every one).
+  if (operation.startsWith('team.project.') && operation !== 'team.project.create'
+    && operation !== 'team.project.unjoined') return { project_id: 'project_1' };
   return operation.startsWith('team.chat.') && operation !== 'team.chat.overview' ? { channel_id: 'chan_team' } : {};
 };
 
-test('the constant owner is allowed every operation in the closed vocabulary', () => {
+// Row 151: a board row exists only in an active project of a team (the registry's team-project rows). The single
+// owner has no team project and no single-owner host serves boards, so a board operation is not found for the
+// constant owner too, as it is for a team's owner outside an active project.
+const teamProjectOnly = (operation) => ACTIONS[actionForOperation(operation, paramsFor(operation))].teamProject === true;
+
+test('the constant owner is allowed every operation in the closed vocabulary but a team project\'s boards', () => {
   const clients = { authorize: () => true };
   const identity = createIdentityCheck({ clients, bootEpoch: 'boot_1', disposed: { value: false } });
   const context = { deviceId: 'device_1', clientToken: 't', isAuthenticated: () => true };
@@ -53,17 +61,26 @@ test('the constant owner is allowed every operation in the closed vocabulary', (
     for (const takeover of [false, true]) {
       const params = operation === 'control.acquire' ? { takeover } : paramsFor(operation);
       assert.equal(typeof actionForOperation(operation, params), 'string', operation);
-      assert.equal(identity({ ...base, operation, params }, context), null, `${operation} takeover=${takeover}`);
+      const verdict = identity({ ...base, operation, params }, context);
+      if (teamProjectOnly(operation)) assert.equal(verdict.error.reason, 'team_not_found', operation);
+      else assert.equal(verdict, null, `${operation} takeover=${takeover}`);
     }
   }
+  const boardOnly = Object.keys(PARAM_SCHEMAS).filter(teamProjectOnly);
+  assert.deepEqual([boardOnly.length, boardOnly.every((operation) => operation.startsWith('team.board.'))], [18, true],
+    'the team-project rows are the board operations and nothing else');
   // An explicit authorizer makes the check a team check: the same directory
   // allows the same operations once the context carries its actor, and a
   // context without one is refused instead of becoming the owner.
   const explicit = createIdentityCheck({ clients, bootEpoch: 'boot_1', disposed: { value: false },
     authorize: createAuthorizer({ directory: createSingleOwnerDirectory() }).authorize });
   const withActor = { ...context, actor: singleOwnerActor('device_1') };
+  // A team check (slice 3-4a) refuses the generic project create, rename and bind for everyone.
   for (const operation of Object.keys(PARAM_SCHEMAS)) {
-    assert.deepEqual(explicit({ ...base, operation, params: paramsFor(operation) }, withActor), null, operation);
+    const verdict = explicit({ ...base, operation, params: paramsFor(operation) }, withActor);
+    if (TEAM_HOST_REFUSED_OPERATIONS.includes(operation)) assert.equal(verdict.error.reason, 'unsupported_operation', operation);
+    else if (teamProjectOnly(operation)) assert.equal(verdict.error.reason, 'team_not_found', operation);
+    else assert.deepEqual(verdict, null, operation);
   }
   assert.equal(explicit({ ...base, operation: 'sessions.list', params: {} }, context).error.reason, 'role_forbidden');
 });

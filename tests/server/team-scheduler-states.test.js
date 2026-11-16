@@ -282,6 +282,18 @@ test('a chunk from another node, for an unknown job or for a terminal job answer
   assert.equal(scheduler.getJob(job.job_id).state, 'cancelled');
 });
 
+// The scheduler is a node's only authority, so these two checks are its only lock.
+test('another node can neither claim a job leased to a node nor fail it once claimed; nothing changes', () => {
+  const { scheduler, nodeId, lease, job } = setupJob();
+  const other = registerNode(scheduler, { deviceId: 'device_2', memberId: 'member_o' });
+  assert.equal(scheduler.claim(other, 1).job, null, 'another node claimed the job');
+  assert.equal(scheduler.getJob(job.job_id).state, 'queued');
+  assert.equal(scheduler.claim(nodeId, 1).job.job_id, job.job_id);
+  const answer = scheduler.failJob(job.job_id, other, 'engine_unreachable');
+  assert.deepEqual([answer.ok, answer.error?.reason], [false, 'job_not_found'], 'another node failed the job');
+  assert.deepEqual([scheduler.getJob(job.job_id).state, scheduler.getLease(lease.lease_id).state], ['claimed', 'active']);
+});
+
 test('a node fail fails the claimed job and its lease; a bad reason is refused unchanged', () => {
   const { scheduler, nodeId, lease, job } = setupJob();
   scheduler.claim(nodeId, 1);
@@ -391,7 +403,7 @@ test('first byte: a claimed job with no data fails at 120 s and fails its lease'
     [['job', 'failed', 'first_byte_timeout'], ['lease', 'failed', 'first_byte_timeout']]);
 });
 
-test('stall: a streaming job with no data for 60 s fails with stall_timeout', () => {
+test('stall: a streaming job with only empty heartbeat chunks for 60 s fails with stall_timeout; each is contact', () => {
   const fx = setupJob();
   const start = fx.clock();
   fx.scheduler.claim(fx.nodeId, 1);
@@ -402,6 +414,7 @@ test('stall: a streaming job with no data for 60 s fails with stall_timeout', ()
   assert.deepEqual(sweepAt(fx, start + 60 * SECOND - 1), []);
   assert.deepEqual(sweepAt(fx, start + 60 * SECOND).map((t) => [t.table, t.to, t.reason]),
     [['job', 'failed', 'stall_timeout'], ['lease', 'failed', 'stall_timeout']]);
+  assert.equal(fx.scheduler.listNodes()[0].online, true, 'an empty chunk is contact (the node is not lost at 30 s), not data');
 });
 
 test('job total: a streaming job fails with job_timeout at 30 minutes after its claim', () => {

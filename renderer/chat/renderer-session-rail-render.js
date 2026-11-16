@@ -62,8 +62,8 @@
   }
 
   /* Background tasks: the finished divider (its own disclosure, toggled like a section head), a live job
-     (a fact with its ticking elapsed time and a Stop button beside it) and a finished job (a row that opens
-     its output below itself, inside the same wrapper). */
+     (a row with its ticking elapsed time and a Stop button beside it) and a finished job. A job's row opens
+     it in the Background tasks panel (row 138); a finished one also carries its job id for the path menu. */
   function jobHtml(row) {
     const key = escapeHtml(row.key);
     if (row.kind === 'divider') {
@@ -86,7 +86,11 @@
       const bar = percent == null ? ''
         : `<div class="inv-progress session-rail-job-progress" aria-hidden="true"><div class="inv-progress-track"><div class="inv-progress-fill" style="--progress:${percent.toFixed(2)}%"></div>${ticks}</div></div>`;
       return `<div class="session-rail-job" data-row-key="${key}" data-job-state="running"${bar ? ' data-job-progress=""' : ''}>`
-        + `<div class="session-rail-fact" title="${escapeHtml(row.title)}">${leadHtml(row)}<span class="session-rail-ellip">${escapeHtml(row.text)}</span>${meta}</div>`
+        + button({
+          plain: true, className: 'session-rail-fact session-rail-row', title: row.title,
+          dataset: { 'rail-surface': row.surface, 'rail-resource': row.resourceRef },
+          trustedHtml: `${leadHtml(row)}<span class="session-rail-ellip">${escapeHtml(row.text)}</span>${meta}`,
+        })
         + button({
           plain: true, className: 'session-rail-job-stop', label: row.stopLabel, ariaLabel: row.stopAria, title: row.stopTitle,
           disabled: row.stopping === true, dataset: { 'rail-job-stop': row.jobId },
@@ -95,7 +99,7 @@
     }
     return `<div class="session-rail-job" data-row-key="${key}" data-job-state="done">${button({
       plain: true, className: 'session-rail-fact session-rail-row', ariaLabel: `${row.text}, ${row.meta}`, title: row.title,
-      ariaExpanded: false, dataset: { 'rail-job-output': row.jobId }, trustedHtml: rowInner(row),
+      dataset: { 'rail-surface': row.surface, 'rail-resource': row.resourceRef, 'rail-job-path': row.jobId }, trustedHtml: rowInner(row),
     })}</div>`;
   }
 

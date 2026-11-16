@@ -29,6 +29,11 @@ describe('collectDataInventory', () => {
     fs.writeFileSync(path.join(userDataPath, 'home-calendar.json'), '{}');
     fs.mkdirSync(path.join(userDataPath, 'project-notes'), { recursive: true });
     fs.writeFileSync(path.join(userDataPath, 'project-notes', 'project_alpha.json'), '{"version":1}');
+    fs.mkdirSync(path.join(userDataPath, 'boards'), { recursive: true });
+    fs.writeFileSync(path.join(userDataPath, 'boards', 'board_00000000-0000-4000-8000-000000000001.json'), '{"schema_version":1}');
+    fs.writeFileSync(path.join(userDataPath, 'boards', 'index.json'), '{"schema_version":1,"boards":{}}');
+    fs.mkdirSync(path.join(userDataPath, 'board-assets'), { recursive: true });
+    fs.writeFileSync(path.join(userDataPath, 'board-assets', `${'a'.repeat(64)}.png`), 'png');
     fs.writeFileSync(path.join(userDataPath, 'secure-state.json'), 'secret');
     fs.mkdirSync(path.join(workspaceRoot, '.jenny', 'artifacts'), { recursive: true });
     fs.writeFileSync(path.join(workspaceRoot, '.jenny', 'artifacts', 'chart.json'), '{}');
@@ -55,6 +60,10 @@ describe('collectDataInventory', () => {
     assert.equal(paths.includes('calendar/home-calendar.json'), true);
     assert.equal(paths.includes('notes/project_alpha.json'), true);
     assert.equal(result.entries.find((entry) => entry.logicalPath === 'notes/project_alpha.json').category, 'memory');
+    assert.equal(paths.includes('boards/board_00000000-0000-4000-8000-000000000001.json'), true);
+    assert.equal(paths.includes('boards/index.json'), true);
+    assert.equal(result.entries.find((entry) => entry.logicalPath === 'boards/index.json').category, 'boards');
+    assert.equal(result.entries.find((entry) => entry.logicalPath === `board-assets/${'a'.repeat(64)}.png`).category, 'boards');
     assert.equal(paths.includes('workspace/artifacts/chart.json'), true);
     assert.equal(paths.includes('preferences/shell-config.json'), true);
     assert.equal(paths.some((value) => value.includes('secure-state')), false);

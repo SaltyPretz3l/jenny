@@ -5,12 +5,13 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('../shared/string-utils'),
-      require('./renderer-chat-keyboard-utils')
+      require('./renderer-chat-keyboard-utils'),
+      require('../inventory/text-field')
     );
     return;
   }
-  root.rendererChatHelpOverlay = factory(root.stringUtils, root.rendererChatKeyboardUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, keyboardUtils) {
+  root.rendererChatHelpOverlay = factory(root.stringUtils, root.rendererChatKeyboardUtils, root.inventoryTextField);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, keyboardUtils, textFieldModule) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var escapeHtml = stringUtils && stringUtils.escapeHtml;
   if (typeof escapeHtml !== 'function') {
@@ -21,105 +22,178 @@
     throw new Error('rendererChatHelpOverlay: renderer-chat-keyboard-utils must load before this module');
   }
 
+  const SEARCH_ID = 'chatHelpOverlaySearch';
+
+  // A chord is an array of key names; an entry lists one or more chords.
+  // Headings and descriptions are translated once, at load, like every other
+  // catalog in the renderer.
+  // Every key is a literal so the string ledger can scan it.
+  function group(id, heading, column, entries) {
+    return {
+      id,
+      heading,
+      column,
+      entries: entries.map(function (entry) {
+        return { id: entry[0], description: entry[1], keys: entry[2] };
+      }),
+    };
+  }
+
   const SHORTCUT_CATALOG = [
-    {
-      heading: 'Navigation',
-      entries: [
-        { keys: ['Alt', '↓'], description: jt('help.chat.nextMessage', 'Move focus to the next message') },
-        { keys: ['Alt', '↑'], description: jt('help.chat.previousMessage', 'Move focus to the previous message') },
-        { keys: ['Home'], description: jt('help.chat.firstMessage', 'Jump to the first message') },
-        { keys: ['End'], description: jt('help.chat.lastMessage', 'Jump to the last message') },
-      ],
-    },
-    {
-      heading: 'Search',
-      entries: [
-        { keys: ['Ctrl', 'F'], description: jt('help.chat.searchMessages', 'Search messages in this conversation') },
-        { keys: ['Enter'], description: jt('help.chat.nextSearchMatch', 'Jump to next match') },
-        { keys: ['Shift', 'Enter'], description: jt('help.chat.previousSearchMatch', 'Jump to previous match') },
-      ],
-    },
-    {
-      heading: 'Editing',
-      entries: [
-        { keys: ['Enter'], description: jt('help.chat.editFocusedMessage', 'Edit the focused user message') },
-        { keys: ['Esc'], description: jt('help.chat.cancelEditing', 'Cancel editing') },
-        { keys: ['Ctrl', 'Enter'], description: jt('help.chat.saveEditAndResend', 'Save edit and resend') },
-        { keys: ['Shift', 'Enter'], description: jt('help.chat.newLineInEditor', 'Insert a new line (in editor)') },
-      ],
-    },
-    {
-      heading: 'Selection',
-      entries: [
-        { keys: ['Shift', 'Click'], description: jt('help.chat.enterSelectionMode', 'Enter selection mode (or extend the range)') },
-        { keys: ['Ctrl', 'A'], description: jt('help.chat.selectAllMessages', 'Select all messages (while in selection mode)') },
-        { keys: ['Esc'], description: jt('help.chat.cancelSelection', 'Cancel selection') },
-        { keys: ['Delete'], description: jt('help.chat.deleteSelectedAndAfter', 'Delete selected and everything after') },
-      ],
-    },
-    {
-      heading: 'Branching',
-      entries: [
-        { keys: ['Ctrl', 'Shift', 'B'], description: jt('help.chat.branchFocusedMessage', 'Branch from the focused message') },
-        { keys: ['Hover'], description: jt('help.chat.branchHoverAction', 'Branch from any message hover action') },
-      ],
-    },
-    {
-      heading: 'Orientation',
-      entries: [
-        { keys: ['Ctrl', 'Shift', 'U'], description: jt('help.chat.firstUnreadMessage', 'Jump to the first unread message') },
-        { keys: ['Ctrl', 'Alt', 'W'], description: jt('help.chat.toggleWideTranscript', 'Turn the wide transcript on or off') },
-      ],
-    },
-    {
-      heading: 'Composer',
-      entries: [
-        { keys: ['Enter'], description: jt('help.chat.sendMessage', 'Send the message') },
-        { keys: ['Shift', 'Enter'], description: jt('help.chat.newLine', 'Insert a new line') },
-        { keys: ['Shift', 'Tab'], description: jt('help.chat.cycleRunModeFour', 'Cycle run mode (Ask → Auto → Plan → Propose)') },
-        { keys: ['Alt', 'P'], description: jt('help.chat.togglePlanMode', 'Toggle Plan mode') },
-        { keys: ['Ctrl', 'Space'], description: jt('help.chat.dictate', 'Hold to dictate; a quick press starts hands-free') },
-        { keys: ['Ctrl', '+'], description: jt('help.chat.zoomIn', 'Zoom chat in') },
-        { keys: ['Ctrl', '-'], description: jt('help.chat.zoomOut', 'Zoom chat out') },
-        { keys: ['Ctrl', '0'], description: jt('help.chat.resetZoom', 'Reset chat zoom') },
-      ],
-    },
-    {
-      heading: 'Help',
-      entries: [
-        { keys: ['?'], description: jt('help.chat.openShortcuts', 'Open this shortcuts overlay') },
-        { keys: ['Esc'], description: jt('help.chat.closeOverlay', 'Close the overlay') },
-      ],
-    },
+    group('everywhere', jt('help.group.everywhere', 'Everywhere'), 1, [
+      ['commandPalette', jt('help.shortcut.commandPalette', 'Command palette'), [['Ctrl', 'K']]],
+      ['quickSettings', jt('help.shortcut.quickSettings', 'Quick settings'), [['Ctrl', ',']]],
+      ['switchView', jt('help.shortcut.switchView', 'Go to Home, Chat, Workspace, Diagnostics, Settings'), [['Ctrl', '1–5']]],
+      ['teamView', jt('help.shortcut.teamView', 'Go to Team'), [['Ctrl', '6']]],
+      ['newChat', jt('help.shortcut.newChat', 'New chat'), [['Ctrl', 'N']]],
+      ['togglePanel', jt('help.shortcut.togglePanel', 'Show or hide the side panel'), [['Ctrl', 'B']]],
+      ['closePanel', jt('help.shortcut.closePanel', 'Close the open side panel'), [['Ctrl', '\\']]],
+      ['splitView', jt('help.shortcut.splitView', 'Split view: open beside, or close the other pane'), [['Ctrl', 'Shift', '\\']]],
+      ['quickCapture', jt('help.shortcut.quickCapture', 'Quick capture to scratchpad'), [['Ctrl', 'Shift', 'Space']]],
+      ['reload', jt('help.shortcut.reload', 'Reload the window'), [['Ctrl', 'Shift', 'R']]],
+      ['shortcuts', jt('help.shortcut.shortcuts', 'Keyboard shortcuts'), [['?']]],
+    ]),
+    group('composer', jt('help.group.composer', 'Composer'), 2, [
+      ['send', jt('help.shortcut.send', 'Send'), [['Enter']]],
+      ['newLine', jt('help.shortcut.newLine', 'New line'), [['Shift', 'Enter']]],
+      ['cycleRunMode', jt('help.shortcut.cycleRunMode', 'Cycle run mode: Ask, Auto, Plan, Propose'), [['Shift', 'Tab']]],
+      ['planMode', jt('help.shortcut.planMode', 'Plan mode on or off'), [['Alt', 'P']]],
+      ['dictate', jt('help.shortcut.dictate', 'Dictate (hold), or tap for hands-free'), [['Ctrl', 'Space']]],
+      ['zoom', jt('help.shortcut.zoom', 'Zoom chat in / out / reset'), [['Ctrl', '+'], ['Ctrl', '−'], ['Ctrl', '0']]],
+    ]),
+    group('messages', jt('help.group.messages', 'Messages'), 2, [
+      ['nextPrevious', jt('help.shortcut.nextPrevious', 'Next / previous message'), [['Alt', '↓'], ['Alt', '↑']]],
+      ['firstLast', jt('help.shortcut.firstLast', 'First / last message'), [['Home'], ['End']]],
+      ['firstUnread', jt('help.shortcut.firstUnread', 'First unread message'), [['Ctrl', 'Shift', 'U']]],
+      ['wideTranscript', jt('help.shortcut.wideTranscript', 'Wide transcript on or off'), [['Ctrl', 'Alt', 'W']]],
+      ['branch', jt('help.shortcut.branch', 'Branch from the focused message'), [['Ctrl', 'Shift', 'B']]],
+    ]),
+    group('find', jt('help.group.find', 'Find in chat'), 1, [
+      ['search', jt('help.shortcut.search', 'Search this conversation'), [['Ctrl', 'F']]],
+      ['nextPreviousMatch', jt('help.shortcut.nextPreviousMatch', 'Next / previous match'), [['Enter'], ['Shift', 'Enter']]],
+      ['nextMatchAnywhere', jt('help.chat.nextSearchMatchAnywhere', 'Next match, from anywhere in the chat'), [['F3']]],
+      ['previousMatchAnywhere', jt('help.chat.previousSearchMatchAnywhere', 'Previous match, from anywhere in the chat'), [['Shift', 'F3']]],
+      ['matchCase', jt('help.chat.searchMatchCase', 'Match case (in the find field)'), [['Alt', 'C']]],
+      ['wholeWord', jt('help.chat.searchWholeWord', 'Whole word (in the find field)'), [['Alt', 'W']]],
+    ]),
+    group('editing', jt('help.group.editing', 'Editing a message'), 1, [
+      ['edit', jt('help.shortcut.edit', 'Edit the focused message'), [['Enter']]],
+      ['saveResend', jt('help.shortcut.saveResend', 'Save and resend'), [['Ctrl', 'Enter']]],
+      ['cancelEdit', jt('help.shortcut.cancelEdit', 'Cancel'), [['Esc']]],
+    ]),
+    group('selecting', jt('help.group.selecting', 'Selecting messages'), 2, [
+      ['select', jt('help.shortcut.select', 'Start or extend a selection'), [['Shift', 'Click']]],
+      ['selectAll', jt('help.shortcut.selectAll', 'Select all'), [['Ctrl', 'A']]],
+      ['deleteAfter', jt('help.shortcut.deleteAfter', 'Delete selected and everything after'), [['Delete']]],
+      ['cancelSelect', jt('help.shortcut.cancelSelect', 'Cancel'), [['Esc']]],
+    ]),
   ];
 
-  function renderKeyChiclets(keys) {
+  const PLUS_HTML = '<span class="chat-help-overlay-plus" aria-hidden="true">+</span>';
+  const ALT_HTML = '<span class="chat-help-overlay-alt" aria-hidden="true">/</span>';
+
+  function renderChord(keys) {
     return keys
       .map(function (key) {
         return '<kbd class="chat-help-overlay-kbd">' + escapeHtml(String(key)) + '</kbd>';
       })
-      .join('<span class="chat-help-overlay-plus" aria-hidden="true">+</span>');
+      .join(PLUS_HTML);
   }
 
-  function buildCatalogBodyHtml() {
-    return SHORTCUT_CATALOG
-      .map(function (section) {
-        var rows = section.entries
+  // Chords that differ only in their last key (Alt+↓ / Alt+↑) print the shared
+  // modifiers once: Alt + ↓ / ↑.
+  function sharesLeadingKeys(chords) {
+    if (chords.length < 2) return false;
+    const length = chords[0].length;
+    if (length < 2) return false;
+    return chords.every(function (chord) {
+      return chord.length === length && chord.slice(0, -1).every(function (key, i) { return key === chords[0][i]; });
+    });
+  }
+
+  function renderChords(chords) {
+    if (sharesLeadingKeys(chords)) {
+      const lead = chords[0].slice(0, -1);
+      const tails = chords.map(function (chord) { return renderChord(chord.slice(-1)); });
+      return renderChord(lead) + PLUS_HTML + tails.join(ALT_HTML);
+    }
+    return chords.map(renderChord).join(ALT_HTML);
+  }
+
+  function chordsLabel(chords) {
+    return chords
+      .map(function (chord) { return chord.join('+'); })
+      .join(' ' + jt('help.chord.or', 'or') + ' ');
+  }
+
+  // Wraps the first case-insensitive match of the query in a <mark>; the
+  // surrounding text and the match are escaped separately.
+  function highlight(text, needle) {
+    const source = String(text);
+    if (!needle) return escapeHtml(source);
+    const lower = source.toLowerCase();
+    const at = lower.length === source.length ? lower.indexOf(needle) : -1;
+    if (at < 0) return escapeHtml(source);
+    return escapeHtml(source.slice(0, at))
+      + '<mark class="chat-help-overlay-mark">' + escapeHtml(source.slice(at, at + needle.length)) + '</mark>'
+      + escapeHtml(source.slice(at + needle.length));
+  }
+
+  function renderGroup(entry, needle, headingHit) {
+    const rows = entry.entries
+      .filter(function (row) {
+        return !needle || headingHit || row.description.toLowerCase().indexOf(needle) >= 0;
+      })
+      .map(function (row) {
+        return ''
+          + '<div class="chat-help-overlay-row" data-shortcut="' + escapeHtml(row.id) + '">'
+          + '<dt class="chat-help-overlay-description">' + highlight(row.description, needle) + '</dt>'
+          + '<dd class="chat-help-overlay-keys" aria-label="' + escapeHtml(chordsLabel(row.keys)) + '">'
+          + renderChords(row.keys)
+          + '</dd>'
+          + '</div>';
+      });
+    if (!rows.length) return '';
+    return ''
+      + '<section class="chat-help-overlay-section" data-group="' + escapeHtml(entry.id) + '">'
+      + '<h3 class="chat-help-overlay-section-heading">' + escapeHtml(entry.heading) + '</h3>'
+      + '<dl class="chat-help-overlay-list">' + rows.join('') + '</dl>'
+      + '</section>';
+  }
+
+  function buildCatalogBodyHtml(query) {
+    const trimmed = String(query == null ? '' : query).trim();
+    const needle = trimmed.toLowerCase();
+    const columns = [1, 2]
+      .map(function (column) {
+        return SHORTCUT_CATALOG
+          .filter(function (entry) { return entry.column === column; })
           .map(function (entry) {
-            return ''
-              + '<div class="chat-help-overlay-row">'
-              + '<dt class="chat-help-overlay-keys">' + renderKeyChiclets(entry.keys) + '</dt>'
-              + '<dd class="chat-help-overlay-description">' + escapeHtml(entry.description) + '</dd>'
-              + '</div>';
+            return renderGroup(entry, needle, !!needle && entry.heading.toLowerCase().indexOf(needle) >= 0);
           })
           .join('');
-        return ''
-          + '<section class="chat-help-overlay-section">'
-          + '<h3 class="chat-help-overlay-section-heading">' + escapeHtml(section.heading) + '</h3>'
-          + '<dl class="chat-help-overlay-list">' + rows + '</dl>'
-          + '</section>';
       })
-      .join('');
+      .filter(Boolean);
+    if (!columns.length) {
+      return '<p class="chat-help-overlay-empty">'
+        + escapeHtml(jt('help.search.empty', 'No shortcut matches “{query}”.', { query: trimmed }))
+        + '</p>';
+    }
+    return '<div class="chat-help-overlay-columns">'
+      + columns.map(function (html) { return '<div class="chat-help-overlay-column">' + html + '</div>'; }).join('')
+      + '</div>';
+  }
+
+  function buildSearchFieldHtml() {
+    const textField = typeof textFieldModule === 'function' ? textFieldModule : globalThis.inventoryTextField;
+    if (typeof textField !== 'function') return '';
+    return textField({
+      id: SEARCH_ID,
+      placeholder: jt('help.search.placeholder', 'Search shortcuts'),
+      ariaLabel: jt('help.search.label', 'Search keyboard shortcuts'),
+      className: 'chat-help-overlay-search',
+      spellcheck: false,
+    });
   }
 
   function createChatHelpOverlay(deps) {
@@ -148,8 +222,21 @@
       inst.open({
         title: jt('help.chat.title', 'Keyboard shortcuts'),
         titleId: 'chatHelpOverlayTitle',
-        bodyHtml: buildCatalogBodyHtml(),
+        headerHtml: buildSearchFieldHtml(),
+        size: 'wide',
+        initialFocusSelector: '#' + SEARCH_ID,
+        bodyHtml: buildCatalogBodyHtml(''),
         closeLabel: jt('help.chat.closeShortcuts', 'Close keyboard shortcuts'),
+        onRender: bindSearch,
+      });
+    }
+
+    function bindSearch(dialogEl) {
+      const input = dialogEl && dialogEl.querySelector('#' + SEARCH_ID);
+      const body = dialogEl && dialogEl.querySelector('.inv-help-overlay-body');
+      if (!input || !body) return;
+      input.addEventListener('input', function () {
+        body.innerHTML = buildCatalogBodyHtml(String(input.value || ''));
       });
     }
 

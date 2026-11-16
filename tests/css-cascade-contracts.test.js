@@ -73,31 +73,93 @@ test('the checked radio row check mark beats the empty radio column', () => {
   assert.ok(beats(checked[0], column), `${checked[0].selector} must beat ${column.selector}`);
 });
 
-// F8: the search bar ran to the stage's right edge, so its Close sat under the
-// conversation utility cluster's Artifacts toggle. The find pill floats at the
-// stage's top inline-end and must end inside the cluster's footprint; the
-// offset is logical so the pill mirrors with the cluster in RTL.
-test('the chat find pill ends inside the conversation utility cluster', () => {
-  const tokens = {};
-  for (const rule of parseRules('styles/foundation.css')) {
-    if (rule.selector !== ':root') continue;
-    for (const name of ['--space-2', '--space-4']) {
-      const value = rule.style.getPropertyValue(name).trim();
-      if (value && !tokens[name]) tokens[name] = value;
-    }
-  }
-  // Resolves the px tokens and the calc() arithmetic these two rules use.
-  const px = (value) => {
-    const expression = value.replace(/var\((--[\w-]+)\)/g, (_match, name) => tokens[name])
-      .replace(/^calc\((.*)\)$/, '$1').replace(/px/g, '');
-    assert.match(expression, /^[\d\s.+*()-]+$/, `resolvable length: ${value}`);
-    return Function(`return (${expression});`)();
+// Row 156 (replaces the F8 floating-pill offset contract): the find field lives
+// in the session bar. chat-search-v2.css loads before chat-session-bar.css, so
+// its placement rules must outrank the bar's `> *` order rule and its title
+// rule by specificity, not by source order.
+test('the find field outranks the session bar rules it overrides', () => {
+  const PREFIX = '.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster';
+  const bar = parseRules('styles/chat-session-bar.css');
+  const find = parseRules('styles/chat-search-v2.css');
+  const pick = (rules, selector) => {
+    const rule = rules.find((entry) => entry.selector === selector);
+    assert.ok(rule, `${selector} exists`);
+    return rule;
   };
-  const host = parseRules('styles/chat-search-v2.css').find((rule) => rule.selector === '.chat-search-overlay-host');
-  assert.equal(host.style.getPropertyValue('position'), 'absolute', 'the pill floats instead of spanning the stage');
-  const orientation = parseRules('styles/chat-timeline-orientation-v2.css');
-  const cluster = parseRules('styles/chat-session-bar.css').find((rule) => rule.selector === '.chat-timeline-utility-cluster');
-  const button = orientation.find((rule) => rule.selector === '.chat-timeline-utility-button');
-  const footprint = px(button.style.getPropertyValue('width')) + px(cluster.style.getPropertyValue('margin-inline-end'));
-  assert.ok(px(host.style.getPropertyValue('inset-inline-end')) > footprint, 'Close clears the utility cluster');
+  const anyChild = pick(bar, `${PREFIX} > *`);
+  const title = pick(bar, `${PREFIX} > .session-bar-title`);
+  const field = pick(find, `${PREFIX} > .chat-find`);
+  const toggle = pick(find, `${PREFIX} > .chat-find-toggle`);
+  const hideTitle = pick(find, `${PREFIX}[data-find-open] > .session-bar-title`);
+  assert.equal(field.style.getPropertyValue('order'), '1', 'the field sits right after the title slot');
+  assert.equal(toggle.style.getPropertyValue('order'), '50', 'the toggle sits before the Session button (60)');
+  assert.equal(hideTitle.style.getPropertyValue('display'), 'none');
+  const strictlyBeats = (winner, loser) => {
+    const a = specificity(winner.selector);
+    const b = specificity(loser.selector);
+    for (let index = 0; index < 3; index += 1) {
+      if (a[index] !== b[index]) return a[index] > b[index];
+    }
+    return false;
+  };
+  assert.ok(strictlyBeats(field, anyChild), 'the field order beats the bar\u2019s order 80');
+  assert.ok(strictlyBeats(toggle, anyChild), 'the toggle order beats the bar\u2019s order 80');
+  assert.ok(strictlyBeats(hideTitle, title), 'open, the title hides despite its display: block');
+  assert.equal(find.some((rule) => /chat-search-overlay-host/.test(rule.selector)), false, 'no floating host remains');
+});
+
+// Gate sitting 2026-11-14 (G9): at a 700 px window the open find field was 4 px wide (one letter of the query
+// showed): the counter and buttons took the find group's room while the branch control kept its own. Open, the
+// group keeps a floor, so the field holds about ten characters, and in a compact bar the diff control steps aside.
+test('open, the find group keeps a floor for the field', () => {
+  const PREFIX = '.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster';
+  const find = parseRules('styles/chat-search-v2.css');
+  const open = find.find((entry) => entry.selector === `${PREFIX}[data-find-open] > .chat-find`);
+  assert.ok(open, 'an open-state rule for the find group exists');
+  assert.equal(open.style.getPropertyValue('min-inline-size'), 'min(18rem, 70%)');
+  // Its numbers never truncate, so a squeezed diff control spilled over the find toggle: compact, it steps aside.
+  const bar = parseRules('styles/chat-session-bar.css');
+  const diffPlace = bar.find((entry) => entry.selector === `${PREFIX} > .session-bar-diff`);
+  const aside = find.find((entry) => entry.selector === `${PREFIX}[data-find-open][data-session-bar-compact] > .session-bar-diff`);
+  assert.ok(diffPlace && aside, 'both diff rules exist');
+  assert.equal(aside.style.getPropertyValue('display'), 'none');
+});
+
+// Gate sitting 2026-11-14 (M1): at a 1024 px window the explorer column is about 220 px wide and the Files filter's
+// text field was about 30 px (two letters of "menu"). The shared search bar hides its glyph and case/word toggles
+// under `@container (max-width: 300px)`, but the explorer filter was no container, so nothing stepped aside.
+test('the explorer filter is a container so the shared bar sheds its toggles, and its field keeps a floor', () => {
+  const explorer = parseRules('styles/ide-explorer.css');
+  const host = explorer.find((entry) => entry.selector === '.ide-tree-filter');
+  assert.ok(host, 'the filter host rule exists');
+  assert.equal(host.style.getPropertyValue('container-type'), 'inline-size');
+  const input = explorer.find((entry) => entry.selector === '.ide-tree-filter .chat-search-bar-input');
+  assert.ok(input, 'the filter field rule exists');
+  assert.equal(input.style.getPropertyValue('min-inline-size'), '5rem');
+  const css = fs.readFileSync(path.join(ROOT, 'styles/chat-search-v2.css'), 'utf8');
+  const sheet = new JSDOM(`<!doctype html><style>${css}</style>`).window.document.styleSheets[0];
+  const narrow = [...sheet.cssRules].find((rule) => /^@container \(max-width: 300px\)/.test(rule.cssText));
+  assert.ok(narrow, 'the shared bar has a narrow-container rule');
+  const hidden = [...narrow.cssRules].filter((rule) => rule.style.getPropertyValue('display') === 'none')
+    .flatMap((rule) => rule.selectorText.split(',').map((selector) => selector.trim()));
+  assert.ok(hidden.includes('.chat-search-bar-toggles'), 'the case and word toggles step aside in a narrow container');
+  // Live re-check: the narrow rule sat above the base `display: inline-flex` rule with the same specificity, so it never won.
+  const rules = [...sheet.cssRules];
+  const lastBase = Math.max(...rules.map((rule, index) => (rule.selectorText && rule.style.getPropertyValue('display')
+    && rule.selectorText.split(',').some((selector) => hidden.includes(selector.trim())) ? index : -1)));
+  assert.ok(rules.indexOf(narrow) > lastBase, 'the narrow rule comes after the base display rules it overrides');
+});
+
+// Gate sitting 2026-11-14 (M3): the empty-board hint stayed drawn through a proposal's ghost cards. The proposals
+// view marks the canvas column while a ghost is drawn (tested in renderer-board-proposals-view.test.js); this is
+// the rule that reads the mark, and it must outrank the hint's own `display: grid`.
+test('the empty-board hint hides while the canvas column is marked as ghosting', () => {
+  const hint = parseRules('styles/board.css').find((entry) => entry.selector === '.board-empty-hint');
+  const hide = parseRules('styles/board-proposals.css').find((entry) => entry.selector === '.board-centre[data-board-ghosting] > .board-empty-hint');
+  assert.ok(hint && hide, 'both rules exist');
+  assert.equal(hint.style.getPropertyValue('display'), 'grid');
+  assert.equal(hide.style.getPropertyValue('display'), 'none');
+  const [, hideClasses] = specificity(hide.selector);
+  const [, hintClasses] = specificity(hint.selector);
+  assert.ok(hideClasses > hintClasses, 'the hide rule outranks the hint by specificity, not source order');
 });

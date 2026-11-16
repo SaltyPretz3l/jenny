@@ -38,9 +38,7 @@
     || !mergeUtils || typeof mergeUtils.fitTone !== 'function'
     || typeof mergeUtils.filterModelCards !== 'function'
     || typeof mergeUtils.isLocalEngine !== 'function'
-    || typeof mergeUtils.isLocalOrUnknownEngine !== 'function'
-    || typeof mergeUtils.groupModelCards !== 'function'
-    || typeof mergeUtils.filterCounts !== 'function') {
+    || typeof mergeUtils.isLocalOrUnknownEngine !== 'function') {
     throw new Error('model-library-view: missing required dependencies');
   }
 
@@ -104,14 +102,6 @@
     return card.fitSource === 'observed'
       ? jt('models.library.measuredFitDescription', '{label} · measured', { label: label })
       : label;
-  }
-
-  function renderFitText(card, label) {
-    var estimated = card.fitSource === 'estimated';
-    var full = fitText(card, label, true);
-    return '<span class="model-row-fit-text' + (estimated ? ' model-row-fit-text--estimated' : '') + '"'
-      + (estimated ? ' title="' + escapeHtml(full) + '" aria-label="' + escapeHtml(full) + '"' : '')
-      + '>' + escapeHtml(fitText(card, label, false)) + '</span>';
   }
 
   function formatQuant(value) {
@@ -218,19 +208,12 @@
     return inventoryActionButton(actionOptions(action, card, activation));
   }
 
-  function renderActions(card, actions, pull, compact, activation) {
+  function renderActions(card, actions, pull, activation) {
     var allowed = actionSet(actions);
-    // The cause's own recovery order leads the row (first fix first).
-    var recovery = compact !== true && cardLoadFailure(card) && loadFailureUtils
-      ? loadFailureUtils.recoveryActions(cardLoadFailure(card)) : [];
-    var order = compact === true
-      ? ['use', 'unload', 'tune', 'remove', 'pull']
-      : recovery.concat(['use', 'unload', 'tune', 'pull', 'menu']);
-    var html = order.map(function (action) {
-      return allowed.has(action) ? renderAction(action, card, pull, compact, activation) : '';
+    var html = ['use', 'unload', 'tune', 'remove', 'pull'].map(function (action) {
+      return allowed.has(action) ? renderAction(action, card, pull, true, activation) : '';
     }).join('');
-    var className = compact === true ? 'model-card-actions' : 'model-row-actions';
-    return html ? '<div class="' + className + '">' + html + '</div>' : '';
+    return html ? '<div class="model-card-actions">' + html + '</div>' : '';
   }
 
   // Pills derived from the per-model engine projection (merge engineFields),
@@ -262,7 +245,7 @@
           + (model.customBuild > 0 ? jt('models.library.buildSuffix', ' \u00b7 build {build}', { build: model.customBuild }) : ''),
       }));
     }
-    if (model.accelerationEligible === true && !mtpOn) {
+    if (model.accelerationEligible === true && model.mtpRunnable !== false && !mtpOn) {
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.mtpReady', 'MTP ready') }));
     }
     return badges;
@@ -342,71 +325,8 @@
     return pieces.length ? '<div class="model-card-pull-state">' + pieces.join('') + '</div>' : '';
   }
 
-  function buildModelRow(card, options) {
-    var model = objectOrEmpty(card);
-    var opts = objectOrEmpty(options);
-    var pull = objectOrEmpty(opts.pull);
-    var activation = Object.assign(
-      { status: 'idle', key: '', message: '' },
-      objectOrEmpty(opts.activation)
-    );
-    var tag = String(model.tag || '');
-    var name = String(model.displayName || model.tag || jt('models.library.localModel', 'Local model'));
-    var sourceInstalled = model.source === 'installed';
-    var cloud = model.installed === true && Boolean(model.engineType)
-      && !mergeUtils.isLocalEngine(model);
-    var activationMatches = activation.key === model.key;
-    var pending = activation.status === 'running' && activationMatches;
-    var badges = [];
-    var meta = [];
-    var context = formatContext(model.contextLength);
-
-    var loadFailure = pending ? null : cardLoadFailure(model);
-    if (model.active === true) {
-      badges.push(inventoryBadge({ tone: 'pending', size: 'sm', text: jt('models.library.activeBadge', 'Active') }));
-    }
-    if (loadFailure) {
-      badges.push(inventoryBadge({ tone: 'danger', size: 'sm', text: jt('models.library.didNotLoad', "Didn't load") }));
-    }
-    if (model.recommended === true) {
-      badges.push(inventoryBadge({
-        tone: 'success',
-        size: 'sm',
-        text: model.fitState === 'fits' ? jt('models.library.bestFit', 'Best fit') : jt('models.library.recommended', 'Recommended'),
-      }));
-    }
-    badges.push.apply(badges, engineBadges(model));
-    if (model.ollamaOnly === true) {
-      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.ollamaOnly', 'Ollama only') }));
-    }
-
-    if (model.libraryGguf === true) meta.push(jt('models.library.localGguf', 'Local GGUF'));
-    if (!sourceInstalled && tag) meta.push(tag);
-    if (model.params) meta.push(String(model.params));
-    var quant = formatQuant(model.quant);
-    if (quant) meta.push(quant);
-    if (context) meta.push(context + ' context');
-    if (cloud) {
-      meta.push(jt('models.library.hosted', 'Hosted'));
-      meta.push(jt('models.library.noDownload', 'no download'));
-    } else if (model.installed === true) {
-      meta.push(positiveNumber(model.sizeBytes)
-        ? formatUtils.formatHumanSize(model.sizeBytes)
-        : jt('models.library.sizeUnknown', 'Size unknown'));
-    } else {
-      meta.push(formatMbAsDownload(model.downloadSizeMb) || jt('models.library.diskSizeUnknown', 'Disk size unknown'));
-    }
-    if (model.preferredLocal === true) meta.push(jt('models.library.defaultForLocalInference', 'default for local inference'));
-
-    var nameHtml = sourceInstalled
-      ? '<code class="model-row-name model-row-name--tag" title="' + escapeHtml(tag) + '">'
-        + escapeHtml(tag) + '</code>'
-      : '<span class="model-row-name" title="' + escapeHtml(tag) + '">'
-        + escapeHtml(name) + '</span>';
-    var engineNote = model.ollamaOnly === true
-      ? '<span class="model-card-engine-note">' + escapeHtml(jt('models.library.currentEngineUnavailable', 'Not available to the current engine')) + '</span>'
-      : '';
-    // Plain words for the cause; the engine's own message rides as the title.
+  // Plain words for a classified load failure (the engine's own message rides as the title), then an activation error.
+  function renderRowNotes(loadFailure, activation, activationMatches) {
     var failureHtml = loadFailure && loadFailureUtils
       ? '<div class="model-card-note model-card-note--failed" title="' + escapeHtml(loadFailure.message || '') + '">'
         + escapeHtml(loadFailureUtils.causeSentence(loadFailure)) + '</div>'
@@ -414,42 +334,17 @@
     var noteHtml = activation.status === 'idle' && activationMatches
       && String(activation.message || '').trim()
       ? '<div class="model-card-note model-card-note--error">'
-        + escapeHtml(activation.message) + '</div>'
+        + escapeHtml(activation.message) + '</div>' + String(activation.actionsHtml || '')
       : '';
-    var fitHtml;
-    if (cloud) {
-      fitHtml = '<span class="model-row-fit-none" aria-hidden="true">—</span>';
-    } else if (model.fitState === 'unknown') {
-      var unknownLabel = String(model.fitLabel || '').trim();
-      fitHtml = renderFitText(model, model.fitSource && unknownLabel
-        ? unknownLabel
-        : jt('models.library.notInCatalogFitUnknown', 'Not in catalog · fit unknown'));
-    } else {
-      fitHtml = renderFitText(model, String(model.fitLabel || ''))
-        + renderFitBar(model);
-    }
-
-    return ''
-      + '<div class="model-row" data-model-key="' + escapeHtml(model.key || '') + '" data-active="'
-      + (model.active === true ? 'true' : 'false') + '" data-pending="'
-      + (pending ? 'true' : 'false') + '" data-load-failed="' + (loadFailure ? 'true' : 'false') + '">'
-      + '<div class="model-row-main">'
-      + '<div class="model-row-title">' + nameHtml + badges.join('') + '</div>'
-      + '<div class="model-row-meta">' + escapeHtml(meta.join(' · ')) + '</div>'
-      + engineNote
-      + renderPullState(model, pull, opts.actions)
-      + failureHtml
-      + noteHtml
-      + '</div>'
-      + '<div class="model-row-fit">' + fitHtml + '</div>'
-      + renderActions(model, opts.actions, pull, false, activation)
-      + '</div>';
+    // Row 142: "Using build N for this model · starting…" while the switched Use runs.
+    var startingHtml = activation.status === 'running' && activationMatches && activation.pendingNote
+      ? '<div class="model-card-note">' + escapeHtml(activation.pendingNote) + '</div>' : '';
+    return failureHtml + noteHtml + startingHtml;
   }
 
   function buildModelCard(card, options) {
     var model = objectOrEmpty(card);
     var opts = objectOrEmpty(options);
-    if (opts.compact !== true) return buildModelRow(model, opts);
     var pull = objectOrEmpty(opts.pull);
     var activation = Object.assign(
       { status: 'idle', key: '', message: '' },
@@ -463,18 +358,12 @@
       formatContext(model.contextLength) ? formatContext(model.contextLength) + ' context' : '',
       formatDisk(model),
     ].filter(Boolean);
-    var compact = true;
     var tierHtml = '';
     var reasonHtml = model.reason
       ? '<div class="model-card-reason">' + escapeHtml(model.reason) + '</div>'
       : '';
     var activationMatches = activation.key === model.key;
     var pending = activation.status === 'running' && activationMatches;
-    var noteHtml = activation.status === 'idle' && activationMatches
-      && String(activation.message || '').trim()
-      ? '<div class="model-card-note model-card-note--error">'
-        + escapeHtml(activation.message) + '</div>'
-      : '';
 
     return ''
       + '<div class="model-card" data-model-key="' + escapeHtml(model.key || '') + '" data-active="'
@@ -492,8 +381,8 @@
       + renderFitBar(model)
       + reasonHtml
       + renderPullState(model, pull, opts.actions)
-      + noteHtml
-      + renderActions(model, opts.actions, pull, compact, activation)
+      + renderRowNotes(null, activation, activationMatches)
+      + renderActions(model, opts.actions, pull, activation)
       + '</div>';
   }
 
@@ -564,27 +453,6 @@
     return Object.prototype.hasOwnProperty.call(source, key) ? objectOrEmpty(source[key]) : {};
   }
 
-  function buildModelGroups(groups, options) {
-    var source = Array.isArray(groups) ? groups : [];
-    var opts = objectOrEmpty(options);
-    return source.map(function (group) {
-      var current = objectOrEmpty(group);
-      var cards = Array.isArray(current.cards) ? current.cards : [];
-      if (!cards.length) return '';
-      var rows = cards.map(function (card) {
-        return buildModelRow(card, {
-          actions: opts.actions,
-          pull: pullForCard(opts.pulls, card && card.key),
-          activation: opts.activation,
-        });
-      }).join('');
-      return '<section class="model-row-group" data-model-group="'
-        + escapeHtml(current.id || '') + '"><h4 class="model-row-group-title">'
-        + escapeHtml(current.label || '') + ' <span class="model-row-group-count">'
-        + cards.length + '</span></h4>' + rows + '</section>';
-    }).join('');
-  }
-
   function buildModelGrid(mergedViewModel, options) {
     var merged = objectOrEmpty(mergedViewModel);
     var opts = objectOrEmpty(options);
@@ -592,53 +460,283 @@
     var filter = ['all', 'installed', 'recommended'].includes(opts.filter) ? opts.filter : 'all';
     var filtered = mergeUtils.filterModelCards(cards, filter);
     var hardware = objectOrEmpty(merged.hardware);
-    if (opts.compact === true) {
-      var cardHtml = filtered.map(function (card) {
-        var model = Object.assign({}, card, { budgetMb: positiveNumber(hardware.budgetMb) });
-        return buildModelCard(model, {
-          actions: opts.actions,
-          pull: pullForCard(opts.pulls, model.key),
-          compact: true,
-          activation: opts.activation,
-        });
-      }).join('');
-      var compactCounts = {
-        installed: cards.filter(function (card) { return card && card.installed === true; }).length,
-      };
-      return ''
-        + '<div class="model-library-view">'
-        + buildHardwareSummaryLine(hardware)
-        + buildFilterChips(filter, compactCounts)
-        + '<div class="model-card-grid">'
-        + (cardHtml || '<div class="model-library-empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</div>')
-        + '</div>'
-        + '</div>';
-    }
-    var grouped = mergeUtils.groupModelCards(mergeUtils.orderModelCards(filtered).map(function (card) {
-      return Object.assign({}, card, { budgetMb: positiveNumber(hardware.budgetMb) });
-    }));
-    var groupHtml = buildModelGroups(grouped, {
-      actions: opts.actions,
-      pulls: opts.pulls,
-      activation: opts.activation,
-    });
-    var counts = mergeUtils.filterCounts(cards);
+    var cardHtml = filtered.map(function (card) {
+      var model = Object.assign({}, card, { budgetMb: positiveNumber(hardware.budgetMb) });
+      return buildModelCard(model, {
+        actions: opts.actions,
+        pull: pullForCard(opts.pulls, model.key),
+        activation: opts.activation,
+      });
+    }).join('');
+    var counts = {
+      installed: cards.filter(function (card) { return card && card.installed === true; }).length,
+    };
     return ''
       + '<div class="model-library-view">'
       + buildHardwareSummaryLine(hardware)
       + buildFilterChips(filter, counts)
-      + '<div class="model-row-list">'
-      + (groupHtml || '<div class="model-library-empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</div>')
+      + '<div class="model-card-grid">'
+      + (cardHtml || '<div class="model-library-empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</div>')
       + '</div>'
       + '</div>';
   }
 
+  // ---- Settings > Models > Library: scope, one search, sort and keyed rows ----
+  var ENGINE_NAMES = { ollama: 'Ollama', 'llama-server': 'llama-server', ninfer: 'NInfer' };
+  var LIBRARY_SCOPES = ['all', 'mine', 'get'];
+
+  function isHostedCard(card) { return card.installed === true && Boolean(card.engineType) && !mergeUtils.isLocalEngine(card); }
+
+  // A model on its own llama-server build names it; the bundled build is implied.
+  function libraryEngineName(card) {
+    if (isHostedCard(card)) return String(card.engineType);
+    return (ENGINE_NAMES[card.selectedEngine] || ENGINE_NAMES.ollama)
+      + (card.selectedEngine === 'llama-server' && card.customBuild > 0
+        ? jt('models.library.buildSuffix', ' · build {build}', { build: card.customBuild }) : '');
+  }
+
+  function libraryName(card) { return String(card.displayName || card.tag || ''); }
+
+  // A pasted Ollama tag or Hugging Face address: a : or /, no whitespace, over three characters.
+  function libraryTagQuery(query) {
+    var text = String(query == null ? '' : query).trim();
+    return text.length > 3 && /[:/]/.test(text) && !/\s/.test(text) ? text : '';
+  }
+
+  function compareByName(a, b) {
+    var left = libraryName(a).toLowerCase();
+    var right = libraryName(b).toLowerCase();
+    if (left !== right) return left < right ? -1 : 1;
+    return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
+  }
+
+  function compareBySize(a, b) {
+    var left = positiveNumber(a.vramRequiredMb);
+    var right = positiveNumber(b.vramRequiredMb);
+    if (!left !== !right) return left ? -1 : 1;
+    return left - right || compareByName(a, b);
+  }
+
+  // What the Library lists for a query, scope and sort. The running model is never listed (Running now shows it).
+  function libraryRowsModel(merged, options) {
+    var opts = objectOrEmpty(options);
+    var cards = (Array.isArray(objectOrEmpty(merged).cards) ? merged.cards : []).filter(function (card) { return card && typeof card === 'object' && !Array.isArray(card); });
+    var scope = LIBRARY_SCOPES.indexOf(opts.scope) >= 0 ? opts.scope : 'all';
+    var query = String(opts.query == null ? '' : opts.query).trim().toLowerCase();
+    var bySize = opts.sort === 'size';
+    var matched = cards.filter(function (card) { return card.active !== true && (!query || [libraryName(card), card.tag, card.quant, libraryEngineName(card)].join(' ').toLowerCase().indexOf(query) >= 0); });
+    var mine = matched.filter(function (card) { return card.installed === true; })
+      .sort(bySize ? compareBySize : compareByName);
+    var catalog = matched.filter(function (card) { return card.installed !== true; }).sort(bySize ? compareBySize : function (a, b) {
+      return (b.recommended === true) - (a.recommended === true) || compareByName(a, b);
+    });
+    var tag = scope === 'mine' ? '' : libraryTagQuery(opts.query);
+    if (tag && cards.some(function (card) { return card.installed === true && [card.tag, card.key].some(function (id) { return String(id || '').toLowerCase() === tag.toLowerCase(); }); })) tag = '';
+    var collapsed = scope === 'all' && !query && opts.showAllCatalog !== true;
+    // A catalog model that is downloading stays listed so its progress is never hidden.
+    var pulling = collapsed ? catalog.filter(function (card) { return pullForCard(opts.pulls, card.key).status === 'running'; }) : [];
+    var rest = collapsed ? catalog.filter(function (card) { return pulling.indexOf(card) < 0; }) : catalog;
+    var fitting = rest.filter(function (card) { return card.fitState === 'fits'; }).length;
+    return {
+      scope: scope, query: query, pullRow: tag, mine: mine, catalog: catalog, pulling: pulling, collapsed: collapsed,
+      counts: { all: mine.length + catalog.length, mine: mine.length, get: catalog.length },
+      collapsedCatalogCount: fitting || rest.length, collapsedFits: fitting > 0,
+    };
+  }
+
+  function buildScopeChips(scope, counts) {
+    var active = LIBRARY_SCOPES.indexOf(scope) >= 0 ? scope : 'all';
+    var totals = objectOrEmpty(counts);
+    var labels = {
+      all: jt('settings.models.library.scope.all', 'All'),
+      mine: jt('settings.models.library.scope.mine', 'On this PC'),
+      get: jt('settings.models.library.scope.get', 'Can download'),
+    };
+    return '<div class="model-library-filter-chips" role="group" aria-label="' + escapeHtml(jt('settings.models.library.scopeAria', 'Show')) + '">'
+      + LIBRARY_SCOPES.map(function (id) {
+        var chip = { id: 'scope-' + id, label: labels[id], pressed: active === id };
+        if (Number.isInteger(totals[id]) && totals[id] >= 0) chip.count = totals[id];
+        return inventoryChip(chip);
+      }).join('') + '</div>';
+  }
+
+  function libraryLink(label, action) {
+    return inventoryActionButton({ plain: true, className: 'settings-row-link', label: label, dataset: { 'model-library-section-action': action } });
+  }
+  function libraryFlag(text, title, danger) {
+    return '<span class="mrow-flag' + (danger ? ' mrow-flag--danger' : '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + escapeHtml(text) + '</span>';
+  }
+
+  function libraryFlags(model, loadFailure) {
+    var flags = [];
+    if (model.mtp && model.mtp.enabled === true) {
+      flags.push(libraryFlag(jt('settings.models.library.flag.mtp', 'MTP'), jt('settings.models.library.flag.mtpTip', 'Multi-token prediction is on')));
+    } else if (model.accelerationEligible === true && model.mtpRunnable !== false) {
+      flags.push(libraryFlag(jt('models.library.mtpReady', 'MTP ready'), jt('settings.models.library.flag.mtpReadyTip', 'Can use multi-token prediction on llama-server')));
+    }
+    if (model.serving === true) flags.push(libraryFlag(jt('settings.models.library.flag.serving', 'Serving on :{port}', { port: model.servingPort }), jt('settings.models.library.flag.servingTip', 'Loaded on llama-server and holding GPU memory')));
+    else if (model.servingPaused === true) flags.push(libraryFlag(jt('models.library.pausedForImageRender', 'Paused for an image render')));
+    if (model.preferredLocal === true) flags.push(libraryFlag(jt('settings.models.library.flag.localDefault', 'Local default')));
+    if (loadFailure) flags.push(libraryFlag(jt('models.library.didNotLoad', "Didn't load"), '', true));
+    if (model.installed !== true && model.recommended === true && model.fitState === 'fits') flags.push(libraryFlag(jt('models.library.bestFit', 'Best fit')));
+    if (model.ollamaOnly === true) {
+      flags.push(libraryFlag(jt('models.library.ollamaOnly', 'Ollama only'), jt('models.library.currentEngineUnavailable', 'Not available to the current engine')));
+    }
+    return flags.join('');
+  }
+
+  function libraryMeta(model, hosted) {
+    var meta = [libraryEngineName(model)];
+    if (model.libraryGguf === true) meta.push(jt('models.library.localGguf', 'Local GGUF'));
+    if (model.params) meta.push(String(model.params));
+    var quant = formatQuant(model.quant);
+    if (quant) meta.push(quant);
+    var context = formatContext(model.contextLength);
+    if (context) meta.push(jt('settings.models.library.context', '{size} context', { size: context }));
+    if (hosted) {
+      meta.push(jt('models.library.hosted', 'Hosted'), jt('models.library.noDownload', 'no download'));
+    } else if (model.installed === true) {
+      meta.push(positiveNumber(model.sizeBytes)
+        ? jt('settings.models.library.onDisk', '{size} on disk', { size: formatUtils.formatHumanSize(model.sizeBytes) })
+        : jt('models.library.sizeUnknown', 'Size unknown'));
+    } else {
+      meta.push(formatMbAsDownload(model.downloadSizeMb) || jt('models.library.diskSizeUnknown', 'Disk size unknown'));
+    }
+    return meta.join(' · ');
+  }
+
+  function libraryFitCell(model, budgetMb, hosted) {
+    var text = function (words, title, none) {
+      return '<div class="mrow-fit"><span class="mrow-fit-num mrow-fit-num--text' + (none ? ' mrow-fit-num--none' : '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + escapeHtml(words) + '</span></div>';
+    };
+    var need = positiveNumber(model.vramRequiredMb);
+    if (hosted) return text('—', '', true);
+    if (model.fitState === 'cpu') return text(jt('settings.models.library.runsOnCpu', 'Runs on CPU'));
+    if (model.fitState === 'unknown' || !need) return text('—', jt('settings.models.library.fitUnknownTip', 'Jenny has not measured this file yet'), true);
+    var width = budgetMb > 0 ? Math.min(100, Math.max(0, Math.round((need / budgetMb) * 1000) / 10)) : 0;
+    var label = String(model.fitLabel || '');
+    return '<div class="mrow-fit"' + (label ? ' title="' + escapeHtml(fitText(model, label, true)) + '"' : '') + '>'
+      + '<span class="mrow-fit-bar' + (model.fitState === 'over' ? ' mrow-fit-bar--over' : '') + '"><i style="width:' + width + '%"></i></span>'
+      + '<span class="mrow-fit-num">' + (model.fitSource === 'estimated' ? '~' : '') + escapeHtml(formatGb(need).replace(' GB', '')) + '<small> GB</small></span></div>';
+  }
+
+  // The library's own look on the shared action options: Use quiet (CSS lifts it on the hovered row), Tune ghost, Download secondary.
+  function libraryActionOptions(action, card, activation) {
+    var options = actionOptions(action, card, activation);
+    if (action === 'use' || action === 'retry' || action === 'loadSmaller' || action === 'pull') options.variant = 'secondary';
+    if (action === 'tune') options.variant = 'ghost';
+    if (action === 'pull') {
+      options.label = jt('models.library.download', 'Download');
+      options.ariaLabel = jt('models.library.downloadModel', 'Download {model}', { model: libraryName(card) });
+    }
+    if (action === 'use') options.className += ' mrow-use';
+    if (action === 'menu') options.className += ' mrow-menu';
+    return options;
+  }
+
+  function renderLibraryActions(model, opts, pull, activation) {
+    var allowed = actionSet(opts.actions);
+    var failure = cardLoadFailure(model);
+    var order = (failure && loadFailureUtils ? loadFailureUtils.recoveryActions(failure) : []).concat(['use', 'unload', 'tune', 'pull', 'menu']);
+    return '<div class="mrow-actions">' + order.map(function (action) {
+      return allowed.has(action) && actionApplicable(action, model, pull, false)
+        ? inventoryActionButton(libraryActionOptions(action, model, activation)) : '';
+    }).join('') + '</div>';
+  }
+
+  // One Library row. options: { actions, pull, activation, budgetMb, share, flag }.
+  function buildLibraryRow(card, options) {
+    var model = objectOrEmpty(card);
+    var opts = objectOrEmpty(options);
+    var pull = objectOrEmpty(opts.pull);
+    var activation = Object.assign({ status: 'idle', key: '', message: '' }, objectOrEmpty(opts.activation));
+    var activationMatches = activation.key === model.key;
+    var pending = activation.status === 'running' && activationMatches;
+    var loadFailure = pending ? null : cardLoadFailure(model);
+    var hosted = isHostedCard(model);
+    var key = escapeHtml(model.key || '');
+    return '<div class="mrow" data-model-key="' + key + '" data-active="' + (model.active === true ? 'true' : 'false')
+      + '" data-pending="' + (pending ? 'true' : 'false') + '" data-load-failed="' + (loadFailure ? 'true' : 'false') + '">'
+      + '<div class="mrow-main"><div class="mrow-title"><span class="mrow-name" title="' + escapeHtml(model.tag || '') + '">'
+      + escapeHtml(model.displayName || model.tag || jt('models.library.localModel', 'Local model')) + '</span>' + libraryFlags(model, loadFailure) + (opts.flag || '') + '</div>'
+      + '<div class="mrow-meta">' + escapeHtml(libraryMeta(model, hosted)) + '</div>'
+      + renderPullState(model, pull, opts.actions) + (opts.share || '') // slice 6-7: model sharing's state (model-library-share-rows.js)
+      + renderRowNotes(loadFailure, activation, activationMatches)
+      + '</div>'
+      + libraryFitCell(model, positiveNumber(opts.budgetMb), hosted)
+      + renderLibraryActions(model, opts, pull, activation)
+      + '</div>';
+  }
+
+  function buildLibraryPullRow(text) {
+    var address = text.indexOf('/') >= 0;
+    return '<div class="mrow mrow--pull" data-item="pull"><div class="mrow-main"><div class="mrow-title"><span class="mrow-name" title="' + escapeHtml(text) + '">'
+      + escapeHtml(jt('settings.models.library.pullRow', 'Pull “{tag}”', { tag: text })) + '</span></div>'
+      + '<div class="mrow-meta">' + escapeHtml(address
+        ? jt('settings.models.library.pullRowAddress', 'A Hugging Face GGUF address, pulled through Ollama. Jenny shows the size before anything downloads.')
+        : jt('settings.models.library.pullRowTag', 'An Ollama tag from ollama.com. Jenny shows the size before anything downloads.')) + '</div></div>'
+      + '<div class="mrow-fit"><span class="mrow-fit-num mrow-fit-num--text">' + escapeHtml(jt('settings.models.library.sizeCheckedFirst', 'Size checked first')) + '</span></div>'
+      + '<div class="mrow-actions">' + inventoryActionButton({
+        id: 'pull-tag', label: jt('settings.models.library.pull', 'Pull'), variant: 'primary', size: 'sm',
+        dataset: { 'model-library-section-action': 'pull-tag' },
+      }) + '</div></div>';
+  }
+
+  // The Library list as one HTML string per element, keyed, so a caller can patch only what changed.
+  // options: { query, scope, sort, showAllCatalog, actions, pulls, activation, shareOf(card), before }.
+  function buildLibraryItems(merged, options) {
+    var opts = objectOrEmpty(options);
+    var hardware = objectOrEmpty(objectOrEmpty(merged).hardware);
+    // The bar is a share of the whole card, the same scale as Running now and its preview.
+    var budgetMb = positiveNumber(hardware.vramMb) || positiveNumber(hardware.budgetMb);
+    var model = libraryRowsModel(merged, opts);
+    var items = [];
+    var addRow = function (card) {
+      items.push({ key: String(card.key || ''), html: buildLibraryRow(card, Object.assign({
+        actions: opts.actions, pull: pullForCard(opts.pulls, card.key), activation: opts.activation, budgetMb: budgetMb,
+      }, opts.shareOf ? opts.shareOf(card) : null)) });
+    };
+    if (model.pullRow) items.push({ key: ':pull', html: buildLibraryPullRow(model.pullRow) });
+    if (model.scope !== 'get') { items.push.apply(items, opts.before || []); model.mine.forEach(addRow); } // before: incoming models (6-7)
+    if (model.scope === 'all' && model.collapsed) {
+      model.pulling.forEach(addRow);
+      if (model.collapsedCatalogCount > 0) {
+        var more = model.collapsedFits
+          ? jt('settings.models.library.moreFit', '{n} more models fit this PC', { n: model.collapsedCatalogCount })
+          : jt('settings.models.library.moreDownload', '{n} models you can download', { n: model.collapsedCatalogCount });
+        items.push({ key: ':more', html: '<p class="mp-more mp-more--inlist" data-item="more">' + libraryLink(more, 'show-catalog')
+          + '<span class="mp-quiet">' + escapeHtml(jt('settings.models.library.notDownloaded', ' · not downloaded yet')) + '</span></p>' });
+      }
+    } else if (model.scope !== 'mine' && model.catalog.length) {
+      if (model.scope === 'all') {
+        items.push({ key: ':sep', html: '<div class="mrow-sep" data-item="sep">' + escapeHtml(jt('settings.models.library.notOnPc', 'Not on this PC yet'))
+          + (model.query ? '' : ' · ' + libraryLink(jt('settings.models.library.hide', 'Hide'), 'hide-catalog')) + '</div>' });
+      }
+      model.catalog.forEach(addRow);
+    }
+    if (!items.length) {
+      var raw = String(opts.query == null ? '' : opts.query).trim();
+      items.push({ key: ':empty', html: raw
+        ? '<p class="model-library-empty mp-empty" data-item="empty">' + escapeHtml(jt('settings.models.library.nothingMatches', 'Nothing matches “{query}”. To pull a model Jenny does not list, paste its full tag, such as qwen3:8b.', { query: raw }))
+          + ' ' + libraryLink(jt('settings.models.library.clear', 'Clear'), 'clear-search') + '</p>'
+        : '<p class="model-library-empty mp-empty" data-item="empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</p>' });
+    }
+    return { items: items, model: model };
+  }
+
+  function buildLibraryList(merged, options) { return buildLibraryItems(merged, options).items.map(function (item) { return item.html; }).join(''); }
+
   return {
+    buildLibraryRow: buildLibraryRow,
+    buildLibraryItems: buildLibraryItems,
+    buildLibraryList: buildLibraryList,
+    libraryRowsModel: libraryRowsModel,
+    buildScopeChips: buildScopeChips,
     buildModelCard: buildModelCard,
-    buildModelRow: buildModelRow,
-    buildModelGroups: buildModelGroups,
     buildModelGrid: buildModelGrid,
     buildHardwareSummaryLine: buildHardwareSummaryLine,
     buildFilterChips: buildFilterChips,
+    libraryEngineName: libraryEngineName,
+    isHostedCard: isHostedCard,
   };
 });

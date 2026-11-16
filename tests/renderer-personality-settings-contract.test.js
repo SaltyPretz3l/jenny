@@ -25,7 +25,7 @@ test('Personality Settings removes only the retired overlay playground controls'
 
   assert.doesNotMatch(html, /settingsOverlayToggle|settingsOverlayList|settingsPlayground/);
   assert.doesNotMatch(fieldCopy, /settingsOverlayToggle/);
-  assert.match(html, /data-settings-section="home"/);
+  assert.match(html, /data-settings-merged-section="home"/);
   assert.match(html, /appearanceSurfaceEffectSelect/);
   assert.equal(fs.existsSync(path.join(root, 'services', 'companion-service.js')), true);
   // The comet companion was removed outright (sweep S9, 2026-09-25).

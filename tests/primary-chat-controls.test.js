@@ -404,3 +404,102 @@ test('row 86 digest record: getDigest, updateDigest merges known fields, recordD
   assert.equal(controls.updateDigest({ lastPresentAt: '2026-10-25T09:00:00.000Z' }), false);
   assert.equal(controls.recordDigestSkipped('cap'), false);
 });
+
+test('setModels: a Jenny model pin writes config and the primary session; the check model never touches the session', async () => {
+  const calls = [];
+  const { controls, config, events } = harness({ setSessionPreferences: async (id, prefs) => { calls.push([id, prefs]); return { id }; } });
+  const first = await controls.setModels({ model: '  qwen3.8:27b ' });
+  assert.equal(first.ok, true);
+  assert.equal(first.changed, true);
+  assert.equal(first.model, 'qwen3.8:27b');
+  assert.equal(first.check_model, '');
+  assert.equal(config.block.model, 'qwen3.8:27b');
+  assert.deepEqual(calls, [[PRIMARY, { preferred_model: 'qwen3.8:27b' }]]);
+  assert.equal(events.length, 1, 'one change event for the write');
+  const check = await controls.setModels({ check_model: 'x' });
+  assert.equal(check.ok, true);
+  assert.equal(check.check_model, 'x');
+  assert.equal(check.model, 'qwen3.8:27b');
+  assert.equal(calls.length, 1, 'check_model alone does not call the port');
+  const both = await controls.setModels({ model: 'other:1b', check_model: 'x2' });
+  assert.deepEqual([both.model, both.check_model], ['other:1b', 'x2']);
+  assert.deepEqual(calls.at(-1), [PRIMARY, { preferred_model: 'other:1b' }]);
+  assert.equal(calls.length, 2);
+});
+
+test('setModels: clearing the pin writes config only; the same value twice is unchanged but repairs the session', async () => {
+  const calls = [];
+  const { controls, config } = harness({ setSessionPreferences: async (id, prefs) => { calls.push([id, prefs]); } });
+  await controls.setModels({ model: 'm1' });
+  assert.equal(calls.length, 1);
+  const cleared = await controls.setModels({ model: '' });
+  assert.equal(cleared.ok, true);
+  assert.equal(cleared.changed, true);
+  assert.equal(cleared.model, '');
+  assert.equal(config.block.model, '');
+  assert.equal(calls.length, 1, 'clearing keeps the session model');
+  await controls.setModels({ model: 'm1', check_model: 'c1' });
+  const writes = config.writes;
+  const callsBefore = calls.length;
+  const again = await controls.setModels({ model: 'm1', check_model: 'c1' });
+  assert.equal(again.ok, true);
+  assert.equal(again.changed, false);
+  assert.equal(again.model, 'm1');
+  assert.equal(config.writes, writes);
+  assert.equal(calls.length, callsBefore + 1, 'an unchanged pin writes the session again, so a failed write is repaired');
+  assert.deepEqual(calls.at(-1), [PRIMARY, { preferred_model: 'm1' }]);
+});
+
+test('setModels: a throwing or refusing port keeps the config write and logs a reason token only', async () => {
+  for (const port of [async () => { throw new Error('secret-model-name exploded'); }, () => { throw new Error('boom'); }, async () => null]) {
+    const { controls, config, logs } = harness({ setSessionPreferences: port });
+    const answer = await controls.setModels({ model: 'secret-model-name' });
+    assert.equal(answer.ok, true);
+    assert.equal(answer.model, 'secret-model-name');
+    assert.equal(config.block.model, 'secret-model-name');
+    const failed = logs.filter((row) => row.event === 'primary_chat.model_pin_writethrough_failed');
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].level, 'WARN');
+    assert.equal(JSON.stringify(logs).includes('secret-model-name'), false, 'no model id in any log');
+    assert.match(failed[0].details.reason, /^[a-z0-9_]{1,64}$/);
+  }
+});
+
+test('setModels: refusals for a disabled gate, bad input, a read-only block and an absent port or session', async () => {
+  const calls = [];
+  const { controls, state, config, summaries } = harness({ setSessionPreferences: async (...args) => { calls.push(args); } });
+  for (const bad of [undefined, null, [], {}, { model: 7 }, { check_model: null }, { model: 'bad\u0000id' }, { model: 'zero\u200bwidth' }]) {
+    assert.deepEqual(await controls.setModels(bad), { ok: false, reason: 'invalid_request' }, JSON.stringify(bad));
+  }
+  state.flags = { primary_chat_controls: false };
+  assert.deepEqual(await controls.setModels({ model: 'm' }), { ok: false, reason: 'disabled' });
+  state.flags = { primary_chat: false };
+  assert.deepEqual(await controls.setModels({ model: 'm' }), { ok: false, reason: 'disabled' });
+  state.flags = {};
+  assert.equal(config.block.model, '');
+  assert.equal(calls.length, 0);
+  // No session yet: the pin still persists (the reconcile after ensurePrimarySession applies it later).
+  summaries.splice(0, summaries.length);
+  const noSession = await controls.setModels({ model: 'm' });
+  assert.equal(noSession.ok, true);
+  assert.equal(config.block.model, 'm');
+  assert.equal(calls.length, 0);
+  // No port wired: still persists.
+  const bare = harness();
+  assert.equal((await bare.controls.setModels({ model: 'm' })).model, 'm');
+  // A newer build's block is read-only.
+  const future = harness();
+  future.config.block = { schemaVersion: 2, model: 'keep' };
+  assert.deepEqual(await future.controls.setModels({ model: 'other' }), { ok: false, reason: 'unavailable' });
+  assert.deepEqual(future.config.block, { schemaVersion: 2, model: 'keep' });
+});
+
+test('getState exposes the model pins', async () => {
+  const { controls } = harness();
+  assert.equal(controls.getState().model, '');
+  assert.equal(controls.getState().check_model, '');
+  await controls.setModels({ model: 'm1', check_model: 'c1' });
+  const shown = controls.getState();
+  assert.equal(shown.model, 'm1');
+  assert.equal(shown.check_model, 'c1');
+});

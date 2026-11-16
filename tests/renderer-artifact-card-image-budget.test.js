@@ -175,3 +175,21 @@ test('release discards stale reads without clearing a new pending read for the s
   h.render('pending'); await settle();
   assert.equal(h.reads.length, 2);
 });
+
+test('peekArtifactImage returns a retained image without a read and without touching the eviction order', async (t) => {
+  const capacity = 24;
+  const h = loader(t, () => ({ asset_data_url: SMALL_IMAGE }));
+  for (let i = 0; i < capacity; i++) { h.render(`peek-${i}`); await settle(); }
+  assert.equal(cards.peekArtifactImage('session', 'peek-0'), SMALL_IMAGE);
+  assert.equal(cards.peekArtifactImage('session', 'unknown'), '');
+  assert.equal(cards.peekArtifactImage('other-session', 'peek-0'), '');
+  assert.equal(cards.peekArtifactImage('', ''), '');
+  assert.equal(h.reads.length, capacity, 'a peek never reads');
+  h.render('newest'); await settle();
+  h.probe();
+  h.render('peek-0');
+  assert.equal(h.reads.length, capacity + 2, 'the peeked image is still the oldest, so it is the one evicted');
+  h.render('peek-1');
+  assert.equal(h.reads.length, capacity + 2, 'the next oldest image stayed cached');
+  await settle();
+});

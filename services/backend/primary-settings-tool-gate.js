@@ -2,7 +2,7 @@
 
 /* services/backend/primary-settings-tool-gate.js - which chats are offered `settings_get` and
  * `settings_change` (row 88 D2/D7), `chat_organize` and `chat_configure` (row 94 P1), `schedule_list` and
- * `schedule_change` (row 85 D8), `project_create` and `projects_list` (row 94 P2), `app_view` (row 94 P3), `session_export` and `terminal_run` (row 94 P4) and `away_digest` (row 86 D3): only the
+ * `schedule_change` (row 85 D8), `project_create` and `projects_list` (row 94 P2), `app_view` (row 94 P3), `session_export` and `terminal_run` (row 94 P4), `away_digest` (row 86 D3) and `session_prioritize` (row 136): only the
  * primary Jenny chat. Every other chat gets
  * those names on its per-request `disabled_tools`. Fail closed: a chat whose role cannot be read is not offered
  * them. A separate module from session-directory-tool-gate.js because the rule differs (the directory tools also
@@ -12,7 +12,8 @@
  * `primary_chat_manage` off the chat tools are not, with `primary_chat_placement` off the project tools are not, with `primary_app_view` off `app_view` is not,
  * with `primary_chat_export` off `session_export` is not, with `terminal_tools` off `terminal_run` is not,
  * with `primary_scheduled_checks` off the schedule tools are
- * not, and with `primary_digests` not on (default off) `away_digest` is not, so the request is left as it was for
+ * not, with `primary_digests` not on (default off) `away_digest` is not, and with
+ * `tools_session_directory_enabled` off `session_prioritize` is not, so the request is left as it was for
  * that group.
  */
 
@@ -27,6 +28,8 @@ const PRIMARY_EXPORT_TOOL_NAMES = Object.freeze(['session_export']);
 const PRIMARY_TERMINAL_TOOL_NAMES = Object.freeze(['terminal_run']);
 const PRIMARY_SCHEDULE_TOOL_NAMES = Object.freeze(['schedule_list', 'schedule_change']);
 const PRIMARY_DIGEST_TOOL_NAMES = Object.freeze(['away_digest']);
+// Row 136: registered with the session directory tools, but only the primary chat may put a chat first.
+const PRIMARY_PRIORITY_TOOL_NAMES = Object.freeze(['session_prioritize']);
 
 function primaryOnly(service, session) {
   try {
@@ -77,6 +80,11 @@ function primaryDigestToolsOffered(service, { session } = {}) {
   return primaryOnly(service, session);
 }
 
+function primaryPriorityToolsOffered(service, { session } = {}) {
+  if (service?.featureFlags?.tools_session_directory_enabled === false) return true;
+  return primaryOnly(service, session);
+}
+
 // The turn's tool preferences with the primary-only tools denied when this chat is not offered them.
 function withPrimarySettingsToolGate(service, target, toolPreferences) {
   const names = [
@@ -88,6 +96,7 @@ function withPrimarySettingsToolGate(service, target, toolPreferences) {
     ...(primaryTerminalToolsOffered(service, target) ? [] : PRIMARY_TERMINAL_TOOL_NAMES),
     ...(primaryScheduleToolsOffered(service, target) ? [] : PRIMARY_SCHEDULE_TOOL_NAMES),
     ...(primaryDigestToolsOffered(service, target) ? [] : PRIMARY_DIGEST_TOOL_NAMES),
+    ...(primaryPriorityToolsOffered(service, target) ? [] : PRIMARY_PRIORITY_TOOL_NAMES),
   ];
   if (!names.length) return toolPreferences;
   const base = toolPreferences && typeof toolPreferences === 'object' && !Array.isArray(toolPreferences)
@@ -98,7 +107,7 @@ function withPrimarySettingsToolGate(service, target, toolPreferences) {
 
 module.exports = {
   PRIMARY_APP_VIEW_TOOL_NAMES, PRIMARY_CHAT_MANAGE_TOOL_NAMES, PRIMARY_CHAT_PLACEMENT_TOOL_NAMES, PRIMARY_DIGEST_TOOL_NAMES, PRIMARY_SCHEDULE_TOOL_NAMES,
-  PRIMARY_EXPORT_TOOL_NAMES, PRIMARY_TERMINAL_TOOL_NAMES,
+  PRIMARY_EXPORT_TOOL_NAMES, PRIMARY_PRIORITY_TOOL_NAMES, PRIMARY_TERMINAL_TOOL_NAMES,
   primaryAppViewToolsOffered, primaryChatManageToolsOffered, primaryChatPlacementToolsOffered, primaryExportToolsOffered, primaryTerminalToolsOffered,
-  primaryDigestToolsOffered, primaryScheduleToolsOffered, primarySettingsToolsOffered, withPrimarySettingsToolGate,
+  primaryDigestToolsOffered, primaryPriorityToolsOffered, primaryScheduleToolsOffered, primarySettingsToolsOffered, withPrimarySettingsToolGate,
 };

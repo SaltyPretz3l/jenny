@@ -62,7 +62,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-1);
   flex: 0 0 auto;
 }
 
@@ -117,42 +117,35 @@
   height: 28px;
   padding: 0;
   border-radius: var(--tl-radius-control);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
-  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  transition:
-    border-color var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
+  transition: color var(--transition-fast);
 }
 
 .chat-hover-action:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-color: transparent;
   color: var(--text-primary);
-  transform: translateY(-1px);
 }
 
 .chat-hover-action:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   color: var(--text-primary);
 }
 
 .chat-hover-action:active {
-  transform: translateY(1px) scale(0.98);
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg-surface));
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 .chat-hover-action:disabled,
 .chat-hover-action[aria-disabled="true"] {
-  opacity: 0.5;
+  background: transparent;
+  border-color: transparent;
+  opacity: 0.4;
   cursor: not-allowed;
-  transform: none;
-  background: color-mix(in srgb, var(--text-muted) 4%, transparent);
-  border-color: var(--line);
   color: var(--text-muted);
 }
 
@@ -198,13 +191,6 @@
   .chat-hover-row {
     transition: none;
     transform: none !important;
-  }
-  .chat-hover-action:hover,
-  .chat-hover-action:active {
-    transform: none !important;
-  }
-  .chat-hover-action:focus-visible {
-    transform: none;
   }
   /* At 0ms the forwards fade ends at opacity 0; keep "Copied!" visible
      throughout the chip's 1200 ms JS lifetime. */

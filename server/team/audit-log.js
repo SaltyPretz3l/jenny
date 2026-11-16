@@ -1,32 +1,43 @@
 'use strict';
 
 // Bounded, append-only audit log of membership changes: team-audit.json,
-// schema 2, read with a 2 MiB cap. Entries carry ids and a display-name
+// schema 3, read with a 2 MiB cap. Entries carry ids and a display-name
 // snapshot, never a key, an address or an invite string. Project entries
 // (schema 2, TEAM_PROJECTS_SPEC slice 3-1) carry a `project_id` and ids only:
-// no display name, project name or path. A schema 1 file is upgraded
-// explicitly on load (every entry gains `project_id: null`) and written as
-// schema 2 by the next append or reconcile.
+// no display name, project name or path. Schema 3 adds the kind
+// `audit_log_reset`. Schema 1 and 2 files are upgraded explicitly on load
+// (schema 1 entries gain `project_id: null`) and written as schema 3 by the
+// next append or reconcile.
+//
+// At host start the member store reads `startState()`. A file refused for its
+// content is set aside (`setAsideAndReset`) and the fresh log's first entry,
+// `audit_log_reset` (actor null: the host itself), carries the member store's
+// revision and names the kept file; a log missing beside a committed member
+// store starts the same way (`resetMissing`).
 //
 // Audit first: the member store appends the entry before its mutation commits
 // and stamps it with `store_rev`, the revision the store will hold once the
-// commit lands. `reconcile(storeRev)` runs once on open and marks tail entries
+// commit lands. `reconcile(storeRev)` runs on open and marks tail entries
 // above the store's revision `applied: false` (a crash left an entry for a
-// change that did not happen, never a change with no entry).
+// change that did not happen, never a change with no entry); when its write
+// fails, the store runs it again before its next audited append.
 //
 // `floor_seq` is the lowest sequence number that may still be present: every
 // entry with a smaller seq was dropped to stay inside the bounds. It starts at
-// 1 and only moves forward.
+// 1 and only moves forward. The strict load, the bounds and the durable write
+// are the shared mechanics in `bounded-log.js`.
 
-const { readJson: durableReadJson, writeJson: durableWriteJson } = require('../../services/host/durable-json');
 const { hostFailure } = require('../api-contract');
+const {
+  BoundedLogFile, LOG_DOCUMENT_KEYS, boundLogDocument, emptyLogDocument, validLogDocument,
+} = require('./bounded-log');
 const { isId } = require('./ids');
 const {
   hasExactKeys, isCleanText, isCount, isPlainObject, isProjectId,
 } = require('./member-schema');
 const { safeLogger } = require('./safe-logger');
 
-const AUDIT_SCHEMA_VERSION = 2;
+const AUDIT_SCHEMA_VERSION = 3;
 const AUDIT_LIMITS = Object.freeze({
   MAX_ENTRIES: 5000,
   MAX_BYTES: 2 * 1024 * 1024,
@@ -36,10 +47,12 @@ const AUDIT_LIMITS = Object.freeze({
   MAX_DETAIL_CHARS: 160,
 });
 
+// `invite_name_taken` (owner decision E79): a join refused for a taken name, its detail the invite id and the
+// count, never the name tried.
 const AUDIT_KINDS = Object.freeze([
   'invite_created', 'invite_redeemed', 'invite_revoked', 'member_admitted', 'role_changed',
   'member_revoked', 'member_left', 'device_added', 'device_revoked', 'owner_transferred', 'recovery_used',
-  'team_renamed',
+  'team_renamed', 'audit_log_reset', 'invite_name_taken',
 ]);
 
 // Kinds about one shared project: `project_id` set, `name` always null.
@@ -52,7 +65,6 @@ const PROJECT_AUDIT_KINDS = Object.freeze([
 const ALL_KINDS = Object.freeze([...AUDIT_KINDS, ...PROJECT_AUDIT_KINDS]);
 const READ_ORDERS = Object.freeze(['oldest', 'newest']);
 
-const DOCUMENT_KEYS = ['schema_version', 'floor_seq', 'next_seq', 'entries'];
 const ENTRY_KEYS_V1 = ['seq', 'at', 'kind', 'actor_member_id', 'subject_member_id', 'subject_device_id', 'name',
   'detail', 'store_rev', 'applied'];
 const ENTRY_KEYS = [...ENTRY_KEYS_V1, 'project_id'];
@@ -88,37 +100,28 @@ function validEntry(entry) {
 }
 
 function validDocument(doc) {
-  if (!isPlainObject(doc) || doc.schema_version !== AUDIT_SCHEMA_VERSION || !hasExactKeys(doc, DOCUMENT_KEYS)) return false;
-  if (!Number.isSafeInteger(doc.floor_seq) || doc.floor_seq < 1 || !Number.isSafeInteger(doc.next_seq)
-    || doc.next_seq < doc.floor_seq || !Array.isArray(doc.entries) || doc.entries.length > AUDIT_LIMITS.MAX_ENTRIES) {
-    return false;
-  }
-  let previous = doc.floor_seq - 1;
-  for (const entry of doc.entries) {
-    if (!validEntry(entry) || entry.seq <= previous) return false;
-    previous = entry.seq;
-  }
-  return previous < doc.next_seq;
+  return validLogDocument(doc, { schemaVersion: AUDIT_SCHEMA_VERSION, maxEntries: AUDIT_LIMITS.MAX_ENTRIES, validEntry });
 }
 
-// The explicit migration: a schema 1 document whose entries all have exactly
-// the schema 1 keys becomes a fresh schema 2 document, every entry gaining
-// `project_id: null`, and is then held to every schema 2 rule. Returns null for
-// anything else.
+// The explicit migration to schema 3: a schema 1 document whose entries all
+// have exactly the schema 1 keys gains `project_id: null` on every entry; a
+// schema 2 document holds no `audit_log_reset` entry. Either becomes a fresh
+// schema 3 document held to every schema 3 rule. Returns null for anything else.
 function upgradeDocument(doc) {
-  if (!isPlainObject(doc) || doc.schema_version !== 1 || !hasExactKeys(doc, DOCUMENT_KEYS)) return null;
+  if (!isPlainObject(doc) || !hasExactKeys(doc, LOG_DOCUMENT_KEYS)) return null;
   if (!Array.isArray(doc.entries) || doc.entries.length > AUDIT_LIMITS.MAX_ENTRIES) return null;
-  if (!doc.entries.every((entry) => isPlainObject(entry) && hasExactKeys(entry, ENTRY_KEYS_V1))) return null;
-  const upgraded = {
-    ...doc,
-    schema_version: AUDIT_SCHEMA_VERSION,
-    entries: doc.entries.map((entry) => ({ ...entry, project_id: null })),
-  };
+  let entries;
+  if (doc.schema_version === 1) {
+    if (!doc.entries.every((entry) => isPlainObject(entry) && hasExactKeys(entry, ENTRY_KEYS_V1))) return null;
+    entries = doc.entries.map((entry) => ({ ...entry, project_id: null }));
+  } else if (doc.schema_version === 2) {
+    if (doc.entries.some((entry) => entry?.kind === 'audit_log_reset')) return null;
+    entries = doc.entries;
+  } else {
+    return null;
+  }
+  const upgraded = { ...doc, schema_version: AUDIT_SCHEMA_VERSION, entries };
   return validDocument(upgraded) ? upgraded : null;
-}
-
-function emptyDocument() {
-  return { schema_version: AUDIT_SCHEMA_VERSION, floor_seq: 1, next_seq: 1, entries: [] };
 }
 
 function unavailable() {
@@ -128,48 +131,86 @@ function unavailable() {
 class AuditLog {
   constructor({
     filePath, clock = Date.now, logger = null, assertSafePath = null,
-    readJson = durableReadJson, writeJson = durableWriteJson,
+    readJson, writeJson, renameFile,
     maxEntries = AUDIT_LIMITS.MAX_ENTRIES, maxBytes = AUDIT_LIMITS.MAX_BYTES,
   } = {}) {
     if (typeof filePath !== 'string' || filePath.length === 0) throw new TypeError('AuditLog requires a filePath.');
     this.filePath = filePath;
     this._clock = clock;
     this._log = safeLogger(logger);
-    this._assertSafePath = typeof assertSafePath === 'function' ? assertSafePath : null;
-    this._readJson = readJson;
-    this._writeJson = writeJson;
     this._maxEntries = Math.min(maxEntries, AUDIT_LIMITS.MAX_ENTRIES);
     this._maxBytes = Math.min(maxBytes, AUDIT_LIMITS.MAX_BYTES);
-    this._doc = null;
-    this._broken = false;
+    // A failed write is logged once per failing stretch: the member store
+    // retries an owed reconcile on request traffic.
+    this._writeFailing = false;
+    const fileLog = safeLogger(logger);
+    this._file = new BoundedLogFile({
+      filePath,
+      readCapBytes: AUDIT_LIMITS.MAX_BYTES,
+      parse: (stored) => (validDocument(stored) ? stored : upgradeDocument(stored)),
+      emptyDocument: () => emptyLogDocument(AUDIT_SCHEMA_VERSION),
+      events: { rejected: 'team_audit.rejected', writeFailed: 'team_audit.write_failed' },
+      logger: (level, event, fields) => {
+        if (event === 'team_audit.write_failed') {
+          if (this._writeFailing) return;
+          this._writeFailing = true;
+        }
+        fileLog(level, event, fields);
+      },
+      assertSafePath,
+      readJson,
+      writeJson,
+      renameFile,
+    });
   }
 
   // Strict load. An unreadable or invalid file marks the log broken and is
   // never rewritten.
   _load() {
-    if (this._broken) return null;
-    if (this._doc) return this._doc;
-    try {
-      if (this._assertSafePath) this._assertSafePath(this.filePath);
-      const stored = this._readJson(this.filePath, { maxBytes: AUDIT_LIMITS.MAX_BYTES });
-      if (stored === null) {
-        this._doc = emptyDocument();
-        return this._doc;
-      }
-      const doc = validDocument(stored) ? stored : upgradeDocument(stored);
-      if (!doc) throw new Error('audit_invalid');
-      this._doc = doc;
-      return this._doc;
-    } catch (error) {
-      this._broken = true;
-      this._log('ERROR', 'team_audit.rejected', { code: error?.code || null });
-      return null;
-    }
+    return this._file.load();
   }
 
   floorSeq() {
     const doc = this._load();
     return doc ? doc.floor_seq : null;
+  }
+
+  // The highest `store_rev` any entry carries (0 for an empty or absent log),
+  // or null when the log cannot be read, busy or refused (`startState()` says
+  // which).
+  highestStoreRev() {
+    const doc = this._load();
+    if (!doc) return null;
+    return doc.entries.reduce((high, entry) => Math.max(high, entry.store_rev), 0);
+  }
+
+  // The log at host start: 'ok', 'absent' (no file yet), 'busy' (a passing read
+  // failure), or why it is refused: 'content', 'newer_schema', 'unsafe_path', 'os'.
+  startState() {
+    if (this._load()) return this._file.wasAbsent() ? 'absent' : 'ok';
+    return this._file.readFailing() ? 'busy' : this._file.refusal();
+  }
+
+  // Sets a file refused for its content aside and writes the fresh log's first
+  // entry. Answers { ok: true }, or { ok: false } with `stage` 'busy' when the
+  // rename was refused for a moment (the file is where it was) or 'write' when
+  // the entry could not be written; no stage when the rename is refused for good.
+  setAsideAndReset(storeRev) {
+    const moved = this._file.setAside({ now: this._clock() });
+    if (!moved.ok) return moved.passing ? { ok: false, stage: 'busy' } : { ok: false };
+    const detail = `kept=${moved.keptName}`;
+    return this._writeReset(storeRev, isDetail(detail) ? detail : null);
+  }
+
+  // A log missing beside a member store that has committed (audit first means
+  // it had entries): the fresh log says so instead of reading as healthy.
+  resetMissing(storeRev) {
+    return this._writeReset(storeRev, 'log=missing');
+  }
+
+  _writeReset(storeRev, detail) {
+    const written = this.append([{ kind: 'audit_log_reset', store_rev: storeRev, detail }]);
+    return written.ok ? { ok: true } : { ok: false, stage: 'write' };
   }
 
   // Marks tail entries whose store_rev is above the member store's revision as
@@ -198,14 +239,8 @@ class AuditLog {
   }
 
   _persist(candidate) {
-    try {
-      if (this._assertSafePath) this._assertSafePath(this.filePath);
-      this._writeJson(this.filePath, candidate);
-    } catch (error) {
-      this._log('ERROR', 'team_audit.write_failed', { code: error?.code || null });
-      return hostFailure('persistence', 'team_store_failed');
-    }
-    this._doc = candidate;
+    if (!this._file.persist(candidate)) return hostFailure('persistence', 'team_store_failed');
+    this._writeFailing = false;
     return { ok: true };
   }
 
@@ -247,18 +282,7 @@ class AuditLog {
   // Drops the oldest entries until the document fits both bounds, and records
   // the new floor.
   _bounded(candidate) {
-    const sizes = candidate.entries.map((entry) => Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1);
-    let size = Buffer.byteLength(JSON.stringify({ ...candidate, entries: [] }), 'utf8')
-      + sizes.reduce((sum, value) => sum + value, 0);
-    let drop = 0;
-    while (drop < candidate.entries.length - 1
-      && (candidate.entries.length - drop > this._maxEntries || size > this._maxBytes)) {
-      size -= sizes[drop];
-      drop += 1;
-    }
-    if (drop === 0) return candidate;
-    const entries = candidate.entries.slice(drop);
-    return { ...candidate, entries, floor_seq: entries[0].seq };
+    return boundLogDocument(candidate, { maxEntries: this._maxEntries, maxBytes: this._maxBytes });
   }
 
   // Pages at most 100 entries. Oldest first (the default): entries with seq

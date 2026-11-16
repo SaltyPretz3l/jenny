@@ -27,6 +27,20 @@ function parentOf(summary) {
   return typeof id === 'string' && id ? id : null;
 }
 
+// True when `sessionId` was spawned, directly or through other spawned chats, by `ancestorId`.
+// `peek` reads one session summary. The walk is bounded, so a damaged link chain ends it.
+function descendsFrom(peek, sessionId, ancestorId, maxDepth = 8) {
+  let current = sessionId;
+  try {
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+      current = parentOf(peek(current));
+      if (!current) return false;
+      if (current === ancestorId) return true;
+    }
+  } catch (_error) { /* an unreadable summary is not a relative */ }
+  return false;
+}
+
 function safePredicate(visible) {
   if (typeof visible !== 'function') return () => false;
   return (summary) => {
@@ -90,6 +104,7 @@ function lastOutcome(work) {
 module.exports = {
   WAITING_ON_USER,
   computeScope,
+  descendsFrom,
   lastOutcome,
   parentOf,
   projectOf,

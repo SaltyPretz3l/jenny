@@ -81,7 +81,6 @@
 
   /* ── Shadows ── */
   --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.38);
-  --shadow-accent: 0 12px 26px rgba(232, 100, 26, 0.2);
   --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(232, 100, 26, 0.06);
   --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(232, 100, 26, 0.08);
   --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(232, 100, 26, 0.08);
@@ -176,7 +175,6 @@
   --widget-button-danger-border: rgba(255, 110, 90, 0.28);
   --widget-button-danger-color: #ff9a8c;
   --widget-close-hover-bg: #c2432f;
-  --widget-hero-avatar-bg: linear-gradient(180deg, #f07228, #e8641a);
 
   /* Sidebar & item states */
   --widget-badge-bg: rgba(240, 228, 204, 0.04);
@@ -269,11 +267,7 @@
   --settings-shell-field-bg: var(--surface-input-background);
 
   /* Activity states */
-  --widget-activity-pending-glow: rgba(232, 100, 26, 0.08);
-  --widget-activity-pending-border: rgba(232, 100, 26, 0.48);
   --widget-activity-pending-color: #f07228;
-  --widget-activity-success-color: rgba(61, 191, 171, 0.9);
-  --widget-activity-error-color: #ff9a8c;
   --widget-activity-pulse-color: rgba(232, 100, 26, 0.14);
 
   /* Attachments */

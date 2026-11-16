@@ -151,3 +151,47 @@ test('a late terminal from an older attempt leaves the newer live attempt alone'
   assert.deepEqual([...harness.state.pendingStreams.keys()], ['stream-attempt-2']);
   assert.deepEqual(harness.clearedStreams, ['stream-attempt-1']);
 });
+
+// Stop ends turn A without a terminal; B streams with a queued follow-up; A's
+// genuine terminal arrives late. Nothing of B's live state may change.
+test('a late terminal for an older stream leaves the newer turn\'s lifecycle, notice, queue and indicator alone', (t) => {
+  const calls = [];
+  const liveBySession = new Map([['session-s', 'stream-b']]);
+  const finalized = new Set(['stream-a']);
+  const runtime = createStreamHandlerRuntime({
+    state: { pendingStreams: new Map([['stream-b', 'message-b']]), pendingToolApprovals: new Map(),
+      toolCallsByStream: new Map(), messagesBySession: new Map([['session-s', []]]), streamThinkingStatusByStream: new Map() },
+    multiStreamController: {
+      clearStream(streamId) { finalized.add(streamId); if (liveBySession.get('session-s') === streamId) liveBySession.delete('session-s'); },
+      getStreamIdForSession: (sessionId) => liveBySession.get(sessionId) || null,
+      // stream-a was stopped earlier: finalized with no terminal of its own.
+      isStreamFinalized: (streamId) => finalized.has(streamId),
+    },
+    thinkingIndicator: { resetIndicator: () => calls.push('resetIndicator'), completeIndicator: () => calls.push('completeIndicator') },
+    isVisibleChatSession: () => true,
+    isCurrentSession: () => true,
+    getQueuedSend: () => ({ content: 'follow-up' }),
+    restoreQueuedSendDraft: () => calls.push('restoreQueuedSendDraft'),
+    clearSessionComposerNotice: () => calls.push('clearSessionComposerNotice'),
+    setChatSendLifecycle: (_sessionId, value) => calls.push(`lifecycle:${value}`),
+  });
+  t.after(() => runtime.disposeRenderQueue());
+
+  runtime.resetThinkingIndicator('session-s', 'stream-a');
+  runtime.completeThinkingIndicator('session-s', 'stream-a');
+  runtime.finalizeTerminalStream(new Set(), new Map(), new Map(),
+    { sessionId: 'session-s', streamId: 'stream-a' }, { restoreQueuedDraft: true });
+  assert.deepEqual(calls, []);
+
+  // An id this renderer never registered is not stale: it must settle the turn.
+  runtime.finalizeTerminalStream(new Set(), new Map(), new Map(),
+    { sessionId: 'session-s', streamId: 'stream-unknown' }, { restoreQueuedDraft: true });
+  assert.deepEqual(calls, ['lifecycle:settling', 'clearSessionComposerNotice', 'restoreQueuedSendDraft']);
+  calls.length = 0;
+
+  // The newer stream's own terminal still settles everything.
+  runtime.resetThinkingIndicator('session-s', 'stream-b');
+  runtime.finalizeTerminalStream(new Set(), new Map(), new Map(),
+    { sessionId: 'session-s', streamId: 'stream-b' }, { restoreQueuedDraft: true });
+  assert.deepEqual(calls, ['resetIndicator', 'lifecycle:settling', 'clearSessionComposerNotice', 'restoreQueuedSendDraft']);
+});

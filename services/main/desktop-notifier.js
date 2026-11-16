@@ -9,6 +9,8 @@
 // window on emit; only a click restores + focuses it (reminder-notifier path).
 // Row 89: wake updates share one counting toast per chat until the user looks,
 // and the Jenny chat stays silent inside its quiet hours (Settings > Jenny chat).
+// Slice 2a-6c: team messages (`team`) count the same way per team and channel,
+// and a click hands the message's routing ids back to the renderer.
 
 const { getBridgeChannel } = require('../ipc-contract');
 const { t } = require('../i18n-main');
@@ -16,13 +18,19 @@ const { quietRemainingMs } = require('../primary-digest');
 const { normalizeNotificationSettings } = require('../shell-config-notifications-schema');
 const { createTrustedSenderAuthorizer } = require('./ipc-sender-authorization');
 
-const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'jenny']);
-const FIELD_LIMITS = Object.freeze({ key: 120, sessionId: 80, title: 120, body: 240, preview: 240 });
+const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'jenny', 'team']);
+const FIELD_LIMITS = Object.freeze({ key: 120, sessionId: 80, title: 120, body: 240, preview: 240, conversation: 120, sender: 80 });
+// A team toast's way back to its message (slice 2a-6c): ids the host made, never a key or a token.
+const ROUTE_ID = /^[A-Za-z0-9_-]{1,160}$/;
+const ROUTE_FIELDS = Object.freeze(['teamId', 'channelId', 'messageId', 'threadRootId']);
+const MAX_GROUP_SENDERS = 8;
 const MAX_LIVE_NOTIFICATIONS = 5;
 const MAX_FAILURE_MESSAGES = 32;
 const MAX_SUPPRESSION_LOG_KEYS = 64;
+// Control characters, and the bidi embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069) that would
+// let a name reorder the rest of a toast's line.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -46,13 +54,35 @@ function normalizeNotificationCandidate(raw) {
   const body = raw.body == null ? '' : clipField(raw.body, FIELD_LIMITS.body);
   if (sessionId == null || body == null) return null;
   const candidate = { category, key, sessionId, title, body };
-  if (category === 'replies' || category === 'jenny') {
+  if (category === 'replies' || category === 'jenny' || category === 'team') {
     const preview = clipField(raw.preview, FIELD_LIMITS.preview);
     if (preview) candidate.preview = preview;
   }
   // A wake update groups with the chat's other updates; nothing else groups.
   if (category === 'jenny' && raw.group === 'updates' && sessionId) candidate.group = 'updates';
+  if (category === 'team') return teamCandidate(raw, candidate);
   return candidate;
+}
+
+// A team toast names its team and channel (both required), may name its message, its thread's root and the
+// message's seq, and groups with the conversation's other messages until the user looks. Each field is rebuilt
+// on its own; a malformed one is dropped, and without team and channel the candidate is refused.
+function teamCandidate(raw, candidate) {
+  for (const field of ROUTE_FIELDS) {
+    if (typeof raw[field] === 'string' && ROUTE_ID.test(raw[field])) candidate[field] = raw[field];
+  }
+  if (!candidate.teamId || !candidate.channelId || candidate.sessionId) return null;
+  if (Number.isSafeInteger(raw.seq) && raw.seq > 0) candidate.seq = raw.seq;
+  candidate.conversation = clipField(raw.conversation, FIELD_LIMITS.conversation) || '';
+  candidate.sender = clipField(raw.sender, FIELD_LIMITS.sender) || '';
+  candidate.group = 'conversation';
+  return candidate;
+}
+
+// The counted toast's second line: the senders in the order they wrote, three named, then how many more.
+function sendersLine(senders) {
+  if (senders.length <= 3) return senders.join(', ');
+  return t('desktopNotifier.toast.teamSenders', '{names} and {count} others', { names: senders.slice(0, 3).join(', '), count: senders.length - 3 });
 }
 
 // A runtime child (a read-only task a parent turn spawned into its own
@@ -191,11 +221,13 @@ function createDesktopNotifier({
       if (!mainWindow || mainWindow.isDestroyed?.()) return;
       if (mainWindow.isMinimized?.()) mainWindow.restore?.();
       mainWindow.focus?.();
-      sendBridgeEvent('notifications.onOpen', {
-        sessionId: candidate.sessionId,
-        category: candidate.category,
-        key: candidate.key,
-      });
+      const payload = { sessionId: candidate.sessionId, category: candidate.category, key: candidate.key };
+      // A team toast goes back to its message: the routing fields only, never its title or text.
+      if (candidate.category === 'team') {
+        for (const field of ROUTE_FIELDS) if (candidate[field]) payload[field] = candidate[field];
+        if (candidate.seq) payload.seq = candidate.seq;
+      }
+      sendBridgeEvent('notifications.onOpen', payload);
     } catch (error) {
       logFailure('desktop_notifier.open_failed', error);
     }
@@ -278,15 +310,22 @@ function createDesktopNotifier({
     }
     if (!mainWindow) return suppress('no_window', candidate);
     if (!supported()) return false;
+    const team = candidate.category === 'team';
+    const groupId = team ? `${candidate.teamId}:${candidate.channelId}` : candidate.sessionId;
     const liveKey = candidate.group
-      ? `${candidate.category}:group:${candidate.group}:${candidate.sessionId}`
+      ? `${candidate.category}:group:${candidate.group}:${groupId}`
       : `${candidate.category}:${candidate.key}`;
     const group = candidate.group ? groupCounts.get(liveKey) : null;
     const duplicate = candidate.group ? group?.lastKey === candidate.key : liveNotifications.has(liveKey);
     if (duplicate) return suppress('duplicate', candidate);
     // An update shown while the window is focused is being looked at: it starts a fresh count.
-    const count = candidate.group ? (focused ? 0 : group?.count || 0) + 1 : 0;
-    const title = count > 1 ? t('desktopNotifier.toast.updates', 'Jenny has {count} updates', { count }) : candidate.title;
+    const fresh = focused || !group;
+    const count = candidate.group ? (fresh ? 0 : group.count) + 1 : 0;
+    const senders = team ? (fresh ? [] : group.senders.slice()) : null;
+    if (team && candidate.sender && !senders.includes(candidate.sender) && senders.length < MAX_GROUP_SENDERS) senders.push(candidate.sender);
+    let title = candidate.title;
+    if (count > 1 && team) title = t('desktopNotifier.toast.teamCount', '{count} new messages in {conversation}', { count, conversation: candidate.conversation }).slice(0, FIELD_LIMITS.title);
+    else if (count > 1) title = t('desktopNotifier.toast.updates', 'Jenny has {count} updates', { count });
     if (candidate.group) {
       const previous = liveNotifications.get(liveKey);
       liveNotifications.delete(liveKey);
@@ -297,9 +336,10 @@ function createDesktopNotifier({
       liveNotifications.delete(oldestKey);
       closeNotification(oldest);
     }
-    const body = settings.replyPreview === true && candidate.preview
+    let body = settings.replyPreview === true && candidate.preview
       ? candidate.preview
       : candidate.body;
+    if (team && count > 1) body = sendersLine(senders).slice(0, FIELD_LIMITS.body);
     try {
       const notification = notificationFactory({
         title,
@@ -317,7 +357,7 @@ function createDesktopNotifier({
       notification?.on?.('close', forget);
       liveNotifications.set(liveKey, notification);
       notification?.show?.();
-      if (candidate.group) groupCounts.set(liveKey, { count, lastKey: candidate.key });
+      if (candidate.group) groupCounts.set(liveKey, { count, lastKey: candidate.key, senders: senders || [] });
       safeLog('INFO', 'desktop_notifier.shown', { category: candidate.category });
       return true;
     } catch (error) {

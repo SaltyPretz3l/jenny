@@ -50,6 +50,9 @@
                 return { ...deepCloneJsonValue(source), ...(Array.isArray(source.value) ? { value: source.value.slice() } : {}) };
               });
             }
+            if (typeof body.metadata.reply === 'string' && body.metadata.reply.trim()) {
+              payload.user_questions_reply = body.metadata.reply.trim().slice(0, 2000);
+            }
           }
         }
         payload.result_is_error = body.is_error === true;
@@ -62,7 +65,22 @@
     // provisional rows share identity keys (kind|turn|tool_call_id) with the
     // hydrated trace projection. The matching result is a SEPARATE tool_result
     // row (createToolResultRow), mirroring the trace projector's two-row split.
+    // Reopen labels text by position (assignAssistantPhases): before the first
+    // tool call commentary, between calls intermediate. Live text is stamped
+    // final until a tool call follows it; relabel it then, so the settle and
+    // the reopen keep its emphasis.
+    function relabelTextBeforeToolCall(turn) {
+      let priorToolCall = false;
+      for (const candidate of turn.rows) {
+        if (candidate && candidate.kind === 'tool_call') priorToolCall = true;
+        if (!candidate || candidate.kind !== 'assistant_text' || candidate.assistant_phase !== 'final_answer') continue;
+        candidate.assistant_phase = priorToolCall ? 'intermediate' : 'commentary';
+        if (candidate.payload) candidate.payload.assistant_phase = candidate.assistant_phase;
+      }
+    }
+
     function createToolCallRow(turn, event) {
+      relabelTextBeforeToolCall(turn);
       const row = buildBaseRow('tool_call', turn.turn_id, event);
       const toolCallId = normalizeId(event && event.tool_call_id);
       row.tool_call_id = toolCallId;

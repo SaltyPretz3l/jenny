@@ -41,6 +41,8 @@
 
   // CMP-WORKSPACEFS-0004: the versioned read's "file is gone" refusal.
   const NOT_FOUND_CODE = 'CMP-WORKSPACEFS-0004';
+  // CMP-WORKSPACEFS-0017: an outside file's grant is gone (row 137).
+  const OUTSIDE_GRANT_UNKNOWN_CODE = 'CMP-WORKSPACEFS-0017';
 
   function resolveFileOperations() {
     if (globalRef.rendererIdeFileOperations) return globalRef.rendererIdeFileOperations;
@@ -87,7 +89,10 @@
       showToastMessage = noop,
       toErrorMessage = (error, fallback) => String(error?.message || error || fallback || ''),
       appendClientLog = noop,
+      // Row 137: the instance for files opened from outside the Workspace (outside:// keys).
+      outsideFiles = null,
     } = deps || {};
+    const isOutsideKey = (path) => ideStateUtils.isOutsideTabId?.(path) === true;
 
     // Lifecycle state that moved out of the controller with these functions.
     let savingToken = null;
@@ -110,7 +115,8 @@
     function resolveDocumentPath(path) {
       if (ideStateUtils.isMapTabId?.(path)
         || ideStateUtils.isDiffTabId?.(path)
-        || ideStateUtils.isPreviewTabId?.(path)) return path;
+        || ideStateUtils.isPreviewTabId?.(path)
+        || isOutsideKey(path)) return path;
       return fileOperations?.resolvePath(path) || path;
     }
 
@@ -218,6 +224,7 @@
     // Disposes a path's editor document and its file-operations token together.
     function disposeDocument(path) {
       editorHost?.closeDocument(path);
+      if (isOutsideKey(path)) outsideFiles?.closed(path);
       editorconfig?.forget(path);
       fileOperations?.close(path);
     }
@@ -235,7 +242,44 @@
       closedTabs?.dropPath(tab.path);
     }
 
+    // An outside key opens through its registered item; a dead grant drops the reopen entry.
+    async function openOutside(key, options) {
+      const item = outsideFiles?.itemFor(key);
+      if (!item) return false;
+      const opened = await outsideFiles.open(item, { background: options?.background === true });
+      if (!opened) {
+        const gone = outsideFiles.getLastFailureCode() === OUTSIDE_GRANT_UNKNOWN_CODE;
+        lastOpenFailure = { path: key, code: gone ? NOT_FOUND_CODE : outsideFiles.getLastFailureCode() };
+        if (gone) { closedTabs?.dropPath(key); outsideFiles.forget(key); }
+      }
+      return opened;
+    }
+
+    // Saves an outside file: the same re-entrancy guard and save hygiene as a Workspace
+    // save, then the instance writes by grant id (no file-operations token exists for it).
+    async function saveOutside(path, unattended) {
+      if (outsideFiles?.isReadOnly(path)) return outsideFiles.save(path, { unattended }); // refuses with the notice; no hygiene edits
+      const operationEpoch = lifecycleEpoch;
+      const operationToken = {};
+      savingToken = operationToken;
+      let releaseSaving = () => {};
+      savingSettled = new Promise((resolve) => { releaseSaving = resolve; });
+      const superseded = () => operationEpoch !== lifecycleEpoch || savingToken !== operationToken || !editorHost.hasDocument(path);
+      try {
+        const hygiene = saveHygiene?.applySaveHygiene(path);
+        if (hygiene && typeof hygiene.then === 'function') await hygiene;
+        if (superseded()) return false;
+        const content = editorHost.getValue(path);
+        const savedVersionId = editorHost.getAltVersionId?.(path);
+        return await outsideFiles?.save(path, { content, savedVersionId, unattended }) === true;
+      } finally {
+        if (savingToken === operationToken) savingToken = null;
+        releaseSaving();
+      }
+    }
+
     async function openFile(path, options = {}) {
+      if (isOutsideKey(path)) return openOutside(path, options);
       const ide = getIde();
       const restore = getTabRestore();
       const savedTab = ideStateUtils.getTab?.(ide, ideStateUtils.normalizeIdeRelativePath?.(path) || path);
@@ -485,6 +529,7 @@
       if (editorHost.getDocumentKind(path) === 'image') {
         return false; // image previews have no editable buffer
       }
+      if (isOutsideKey(path)) return saveOutside(path, unattended);
       if (!fileOperations) {
         if (unattended) {
           appendClientLog('WARN', 'ide.auto_save_skipped', { reason: 'no_bridge' });
@@ -717,6 +762,7 @@
       savingToken = null;
       gitDiscardPath = '';
       editorconfig?.reset();
+      outsideFiles?.reset();
       for (const tab of [...(getIde().openTabs || [])]) editorHost?.closeDocument(tab.path);
       editorHost?.showEmpty();
       closedTabs?.clear?.();

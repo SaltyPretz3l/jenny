@@ -436,6 +436,30 @@
     };
   }
 
+  // The row the sprite sits beside: the newest row with a box in a live
+  // turn, else the anchor itself. Hidden rows and jsdom report no box.
+  function resolveSpriteRow(targetNode) {
+    const list = targetNode?.closest?.('.turn-row-list') || targetNode?.querySelector?.('.turn-row-list');
+    if (!list || list.getAttribute?.('data-turn-live') !== 'true') return targetNode;
+    const rows = list.children || [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (!row.classList?.contains('chat-row') || row.hasAttribute?.('data-row-visually-empty')) continue;
+      if (row.getClientRects?.().length) return row;
+    }
+    return targetNode;
+  }
+
+  // The sprite's top inside its layer: centred on the row's first text line,
+  // top-aligned where no line can be measured. The thread-dom script loads
+  // after this one, so its line helper resolves per call.
+  function resolveSpriteTop(row, rowRect, layerTop, spriteHeight) {
+    const threadDomUtils = globalThis.rendererRenderPipelineThreadDomUtils
+      || (typeof require === 'function' ? require('./renderer-render-pipeline-thread-dom') : null);
+    const lineCenter = threadDomUtils?.firstTextLineCenter?.(row) ?? null;
+    return Math.max((lineCenter === null ? rowRect.top : lineCenter - spriteHeight / 2) - layerTop, 0);
+  }
+
   function createSpriteViewApplier({
     chatSpriteLayer,
     chatAssistantSprite,
@@ -506,6 +530,7 @@
         // The layer overflows visibly inside the scroller, so an invisible
         // sprite still parked at its last row would keep that scroll height.
         chatAssistantSprite.style.transform = '';
+        delete chatAssistantSprite.dataset.spriteGlide;
         morph?.suspend();
         // A new session never inherits the old one's done or live form.
         if (nextState.suppressionReason === 'session_changed') morph?.reset();
@@ -513,6 +538,12 @@
         return true;
       }
 
+      // Glide between rows of the same turn; a first show or a new target lands in place.
+      if (previousState?.visible === true && previousState.targetMessageId === nextState.targetMessageId) {
+        chatAssistantSprite.dataset.spriteGlide = 'true';
+      } else {
+        delete chatAssistantSprite.dataset.spriteGlide;
+      }
       chatAssistantSprite.style.transform = `translate3d(0, ${nextState.targetY}px, 0)`;
       chatAssistantSprite.classList.toggle('is-streaming', nextState.phase === 'live');
       chatAssistantSprite.dataset.status = nextState.status;
@@ -538,6 +569,8 @@
     deriveDetachedSpriteActivity,
     hasRenderableAssistantContent,
     resolveAssistantSpriteAnchor,
+    resolveSpriteRow,
+    resolveSpriteTop,
     SPRITE_ACTIVITIES,
     SPRITE_NON_CONTENT_KINDS,
     JUST_RAN_MS,

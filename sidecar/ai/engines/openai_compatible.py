@@ -16,22 +16,23 @@ from __future__ import annotations
 
 import json
 import math
+from functools import lru_cache
 from typing import Any
 
 from sidecar.ai.engines.base import EngineMessage
-from sidecar.ai.engines.local_server_props import ThinkingControl
+from sidecar.ai.engines.local_server_props import ThinkingControl, cap_thinking_budget
 from sidecar.ai.engines.model_name import (
     is_bonsai2_model,
     is_ornith15_model,
     uses_qwen38_chat_contract,
 )
+from sidecar.ai.engines.request_model_profile import bounded_context_length, named_model
 from sidecar.ai.engines.server_token_count import (
     ServerTokenCounter,
     build_count_payload,
     payload_has_image,
 )
 from sidecar.ai.engines.vllm_engine import VLLMEngine
-from sidecar.ai.thinking_guard import THINKING_BUDGET_NUM_PREDICT_FRACTION
 
 _OPENAI_COMPAT_DEFAULT_BASE_URL = "http://127.0.0.1:8033/v1"
 
@@ -93,12 +94,6 @@ _THINKING_LEVEL_ALIASES = {
     "max": "high",
 }
 _THINKING_LEVEL_BUDGET_TOKENS = {"low": 1_024, "medium": 4_096, "high": 8_192}
-# The budget stays under Jenny's own char-counted guard (65% of max_tokens at
-# 3.2 chars per token), with room for denser text, so the server's clean close
-# comes first and the guard stays the backstop. Below a useful think the
-# request runs with thinking off (llama-server would read 0 as no budget).
-_THINKING_BUDGET_GUARD_SHARE = 0.75
-_MIN_THINKING_BUDGET_TOKENS = 128
 # When /props did not answer: Ornith 1.5's template reads only enable_thinking.
 _ORNITH15_THINKING_CONTROL = ThinkingControl(native_effort=False, toggle=True)
 
@@ -179,7 +174,24 @@ class OpenAICompatibleEngine(VLLMEngine):
         # value is the fallback when the probe fails. Keep this getter subclass-only:
         # resolve_context_window_hint treats its presence as stamping a real request
         # window, which holds for llama-server but not a generic vLLM endpoint.
-        return _positive_int(self._served_context_length) or self._configured_context_length
+        # A request's model profile may lower it (request_model_profile), never raise it.
+        loaded = _positive_int(self._served_context_length) or self._configured_context_length
+        return bounded_context_length(loaded)
+
+    def get_model_context_length(self) -> int | None:
+        return bounded_context_length(super().get_model_context_length())
+
+    def _contract_model_name(self) -> str | None:
+        """The name the chat contract and thinking support are detected from.
+
+        The request's named model when the caller named one, else the loaded
+        model. Never sent upstream: the request's ``model`` stays the loaded name.
+        """
+        return named_model() or self.model_name
+
+    def _native_thinking(self) -> bool:
+        named = named_model()
+        return self._thinking or (named is not None and _name_detects_thinking(named))
 
     @staticmethod
     def _detect_thinking(model_name: str) -> bool:
@@ -204,8 +216,9 @@ class OpenAICompatibleEngine(VLLMEngine):
         if final_tokens is None:
             return None
         requested = str(reasoning_effort or "default").strip().lower() or "default"
-        if not uses_qwen38_chat_contract(self.model_name) or _thinking_disabled(
-            self.model_name, requested
+        contract_name = self._contract_model_name()
+        if not uses_qwen38_chat_contract(contract_name) or _thinking_disabled(
+            contract_name, requested
         ):
             return final_tokens
         return final_tokens + self._profile_thinking_headroom
@@ -233,17 +246,18 @@ class OpenAICompatibleEngine(VLLMEngine):
             response_format=response_format,
         )
         requested = str(reasoning_effort or "default").strip().lower() or "default"
-        if not uses_qwen38_chat_contract(self.model_name):
+        contract_name = self._contract_model_name()
+        if not uses_qwen38_chat_contract(contract_name):
             self._apply_thinking_control(payload, requested, max_tokens)
             return payload
 
         template_kwargs: dict[str, Any] = {}
-        if _thinking_disabled(self.model_name, requested):
+        if _thinking_disabled(contract_name, requested):
             template_kwargs["enable_thinking"] = False
             payload["reasoning_effort"] = "none"
             thinking = False
         else:
-            resolved = _resolve_llama_effort(self.model_name, requested)
+            resolved = _resolve_llama_effort(contract_name, requested)
             template_kwargs.update(
                 {
                     "enable_thinking": True,
@@ -272,7 +286,7 @@ class OpenAICompatibleEngine(VLLMEngine):
 
     def _thinking_control(self) -> ThinkingControl | None:
         control = self._served_thinking_control
-        if control is None and is_ornith15_model(self.model_name):
+        if control is None and is_ornith15_model(self._contract_model_name()):
             return _ORNITH15_THINKING_CONTROL
         return control
 
@@ -307,7 +321,7 @@ class OpenAICompatibleEngine(VLLMEngine):
         if control.toggle:
             payload["chat_template_kwargs"] = {"enable_thinking": True}
             payload["thinking_budget_tokens"] = _THINKING_LEVEL_BUDGET_TOKENS[level]
-            _cap_thinking_budget(payload, max_tokens)
+            cap_thinking_budget(payload, max_tokens)
 
     def _fit_output_to_window(self, payload: dict[str, Any]) -> int:
         """Clamp the wire ``max_tokens`` to the room the prompt leaves.
@@ -329,7 +343,7 @@ class OpenAICompatibleEngine(VLLMEngine):
         fitted = min(requested, max(room, _MIN_OUTPUT_ROOM_TOKENS), window)
         payload["max_tokens"] = fitted
         # The budget follows the fitted output, not the requested one.
-        _cap_thinking_budget(payload, fitted)
+        cap_thinking_budget(payload, fitted)
         return fitted
 
     def _prompt_tokens_for_fit(
@@ -422,6 +436,12 @@ class OpenAICompatibleEngine(VLLMEngine):
         )
 
 
+@lru_cache(maxsize=64)
+def _name_detects_thinking(model_name: str) -> bool:
+    """A named model's thinking support, worked out once per name (bounded)."""
+    return OpenAICompatibleEngine._detect_thinking(model_name)
+
+
 def _thinking_disabled(model_name: str | None, requested: str) -> bool:
     """Return whether ``requested`` turns the Qwen3.8-contract template's thinking off."""
     if is_bonsai2_model(model_name):
@@ -458,28 +478,6 @@ def _estimate_prompt_tokens(payload: dict[str, Any]) -> int:
                 else:
                     chars += len(json.dumps(block, ensure_ascii=False, default=str))
     return chars // 4 + images * _IMAGE_PROMPT_TOKENS_ESTIMATE
-
-
-def _cap_thinking_budget(payload: dict[str, Any], output_tokens: int) -> None:
-    """Keep a level's thinking budget under the guard share of ``output_tokens``.
-
-    When that leaves less than a useful think, thinking turns off for the
-    request instead of a budget larger than the guard or the output itself.
-    """
-    budget = payload.get("thinking_budget_tokens")
-    if not isinstance(budget, int) or isinstance(budget, bool):
-        return
-    ceiling = int(
-        max(int(output_tokens), 0)
-        * THINKING_BUDGET_NUM_PREDICT_FRACTION
-        * _THINKING_BUDGET_GUARD_SHARE
-    )
-    capped = min(budget, ceiling)
-    if capped >= _MIN_THINKING_BUDGET_TOKENS:
-        payload["thinking_budget_tokens"] = capped
-        return
-    payload.pop("thinking_budget_tokens", None)
-    payload["chat_template_kwargs"] = {"enable_thinking": False}
 
 
 def _positive_int(value: int | None) -> int | None:

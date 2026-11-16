@@ -91,6 +91,19 @@ test('a NInfer launch failure surfaces its typed reason and persists nothing', a
   assert.equal(fallback.calls.some(([name]) => name === 'updateNinferSettings'), false);
 });
 
+test('a launch the free-VRAM check refused shows its plain-language message, not the reason code', async () => {
+  const service = makeService({ ninferEnsureState: 'stopped' });
+  service.options.getNinferManager().ensureRunning = async () => ({ state: 'stopped', lastError: 'vram_in_use' });
+  service.vramLoadPreflight = { getLastRefusal: () => ({ reason: 'vram_in_use', message: 'Close llama-server.exe (22.9 GB).' }) };
+  await assert.rejects(loadModel(service, { model: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }), (error) => {
+    assert.equal(error.message, 'Close llama-server.exe (22.9 GB).');
+    assert.equal(error.code, 'vram_in_use');
+    assert.equal(error.ninfer_status.lastError, 'vram_in_use');
+    return true;
+  });
+  assert.equal(service.calls.some(([name]) => name === 'initialize'), false);
+});
+
 test('a llama-server load stops a live NInfer with proof first and clears its boot target', async () => {
   const service = makeService({ ninferState: 'ready', lastUsedArtifactId: 'qwen3.8-27b-nvfp4' });
   await loadModel(service, { model: 'ornith:9b', engine_type: 'openai-compatible' });

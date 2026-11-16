@@ -103,6 +103,7 @@ function resolveLaunchAcceleration({
       capabilities,
       profileExtraArgs: profile ? profile.extraArgs : [],
       modelDir,
+      modelFile: resolvedModel && resolvedModel.path ? path.basename(resolvedModel.path) : '',
       embeddedMtpLayers: readEmbeddedMtpLayersImpl(resolvedModel && resolvedModel.path),
       fsImpl,
     }));
@@ -122,7 +123,8 @@ function shouldRetryWithoutAcceleration({ error, accelExtraArgs, aborted } = {})
   // accel args ARE a plausible cause of those. So does model_unsupported: the
   // file the build cannot read may be the MTP drafter, which the retry leaves out.
   const deterministic = message.startsWith('llama_server_binary_not_found')
-    || message.startsWith('llama_server_model_not_found:');
+    || message.startsWith('llama_server_model_not_found:')
+    || message === 'vram_in_use'; // the free-VRAM check refused before any spawn
   return Array.isArray(accelExtraArgs)
     && accelExtraArgs.length > 0
     && aborted !== true

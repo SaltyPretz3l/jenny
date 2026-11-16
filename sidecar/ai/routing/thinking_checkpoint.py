@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = (
     "CHECKPOINT_CARRY_CHARS",
+    "CHECKPOINT_CONTINUATION_BUDGET_SCALE",
     "CHECKPOINT_ELISION_NOTE",
     "MAX_THINKING_BUDGET_CHECKPOINTS",
     "build_checkpoint_messages",
@@ -44,6 +45,9 @@ __all__ = (
 
 MAX_THINKING_BUDGET_CHECKPOINTS = 3
 CHECKPOINT_CARRY_CHARS = 12_000
+# Session review F1 (2026-11-11): each continuation leg used to get the full
+# first-leg budget and spent it redesigning; a leg resumes with a quarter.
+CHECKPOINT_CONTINUATION_BUDGET_SCALE = 0.25
 CHECKPOINT_ELISION_NOTE = "[... earlier reasoning elided at a thinking-budget checkpoint ...]"
 _CONTEXT_WINDOW_MARGIN_TOKENS = 64
 
@@ -78,7 +82,13 @@ _CHECKPOINT_DRAFT_HINT = (
 _CODE_FENCE = "```"
 _MIN_DRAFT_DEF_LINES = 2
 _DEF_OR_CLASS_LINE_RE = re.compile(
-    r"^\s*(?:def|class|(?:pub(?:\(\w+\))?\s+)?fn|function|func)\s+\w+", re.MULTILINE
+    # `[ \t]*`, not `\s*`: under MULTILINE `\s*` crosses newlines, which made a
+    # whitespace-only carry (a degenerate think) quadratic, ~4 s at 12,000 chars.
+    r"^[ \t]*(?:def|class|(?:pub(?:\(\w+\))?\s+)?fn|function|func)\s+\w+"
+    # JavaScript function expressions: `const f = (a) => {`, `let g = async function`.
+    r"|^[ \t]*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?"
+    r"(?:function\b|\([^)\n]*\)\s*=>|\w+\s*=>)",
+    re.MULTILINE,
 )
 _TRUNCATED_TOOL_CALL_NOTE = (
     "Your last tool call was cut off at the output-token limit before its arguments "
@@ -116,6 +126,10 @@ _DROPPED_TOOL_CALL_ERROR = (
 # Clean terminals under which a dropped tool call leaves only a preamble.
 _DROPPED_CALL_CONTINUABLE_FINISHES = frozenset({"stop", "tool_calls"})
 _CHECKPOINT_NO_PROGRESS_SIMILARITY = 0.7
+# The progress note sees the start of the elided reasoning (the design
+# decisions) as well as its end, within one bound.
+_SUMMARY_HEAD_CHARS = 6_000
+_SUMMARY_TAIL_CHARS = 18_000
 _REASONING_SUMMARY_PROMPT = (
     "Summarise reasoning-in-progress into a compact progress note: decisions made, "
     "facts established, dead ends, remaining steps. Plain prose, at most 300 words, "
@@ -286,9 +300,16 @@ def dropped_tool_call_error(result: Any) -> str | None:
 def build_reasoning_summary_messages(elided_text: str) -> list[dict[str, object]]:
     """Build the bounded prompt used to summarize elided reasoning."""
 
+    text = str(elided_text or "")
+    omitted = len(text) - _SUMMARY_HEAD_CHARS - _SUMMARY_TAIL_CHARS
+    if omitted > 0:
+        text = (
+            f"{text[:_SUMMARY_HEAD_CHARS]} [... {omitted:,} chars of reasoning omitted ...] "
+            f"{text[-_SUMMARY_TAIL_CHARS:]}"
+        )
     return [
         {"role": "system", "content": _REASONING_SUMMARY_PROMPT},
-        {"role": "user", "content": str(elided_text or "")[-24_000:]},
+        {"role": "user", "content": text},
     ]
 
 

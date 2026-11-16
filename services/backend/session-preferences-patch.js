@@ -21,6 +21,7 @@ const {
   normalizeToolCategoryOverrides,
   normalizeToolConnectionOverrides,
 } = require('./session-normalizers');
+const { allowedNodesPatch } = require('./session-allowed-nodes');
 
 const PASSTHROUGH_PREFERENCE_KEYS = [
   'preferred_model',
@@ -106,7 +107,8 @@ function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
     }
     patch.tool_connection_overrides = overrides;
   }
-  return patch;
+  // The allowed-node list (session-allowed-nodes.js).
+  return Object.assign(patch, allowedNodesPatch(source));
 }
 
 module.exports = {

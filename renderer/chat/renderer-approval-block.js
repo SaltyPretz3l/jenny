@@ -63,6 +63,7 @@
     browserApprovalCopy,
     normalizeBrowserApproval,
     normalizeExactApproval,
+    normalizeRoundApproval,
     normalizeScheduleChangeApproval,
     normalizeSessionMessageApproval,
     normalizeSessionStopApproval,
@@ -70,6 +71,7 @@
     renderBrowserApproval,
     renderExactApproval,
     renderExactUnavailable,
+    renderRoundApproval,
     renderScheduleChangeApproval,
     renderSessionMessageApproval,
     renderSessionStopApproval,
@@ -255,6 +257,10 @@
     // quiet receipt line.
     const cardState = source.cardState === 'paused' || source.cardState === 'inactive'
       ? source.cardState : 'live';
+    // Row 166 D10: the same step's later edits, offered on a live card that can itself be allowed.
+    const oneOffOnly = source.oneOffOnly === true || source.one_off_only === true;
+    const round = cardState === 'live' && exactApproval && !exactUnavailable && !oneOffOnly
+      ? normalizeRoundApproval(source.roundApproval, toolName) : null;
     const rowIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"${approvalAttrMarkup}`;
     if (source.cardState === 'resolved') {
       const stopTarget = toolName === SESSION_STOP_TOOL ? normalizeSessionStopApproval(source.sessionStopApproval) : null;
@@ -361,7 +367,8 @@
     } else if (exactUnavailable) {
       commandMarkup = renderExactUnavailable(exactUnavailable, escapeHtml);
     } else if (exactApproval) {
-      commandMarkup = renderExactApproval(exactApproval, escapeHtml);
+      commandMarkup = renderExactApproval(exactApproval, escapeHtml)
+        + (round ? renderRoundApproval(round, toolName, escapeHtml) : '');
     } else if (commandText && commandText !== headline) {
       const clipped = commandText.length > COMMAND_PREVIEW_MAX_CHARS
         ? jt('approval.block.clippedCommand', '{command}… (+{count} more chars)', { command: commandText.slice(0, COMMAND_PREVIEW_MAX_CHARS), count: commandText.length - COMMAND_PREVIEW_MAX_CHARS })
@@ -386,7 +393,7 @@
     // A command offers Always allow only with a known, persistable scope (row 103).
     const commandScope = toolName === RUN_COMMAND_TOOL ? normalizeCommandScope(source.alwaysAllowScope) : null;
     const commandCopy = commandScope && commandScope.kind !== 'none' ? commandAlwaysAllowCopy(commandScope, escapeHtml) : null;
-    const alwaysWithheld = sendsMessage || ownCardOnly || withholdsAllow || source.oneOffOnly === true || source.one_off_only === true
+    const alwaysWithheld = sendsMessage || ownCardOnly || withholdsAllow || oneOffOnly
       || (toolName === RUN_COMMAND_TOOL && !commandCopy);
     const alwaysAllowMarkup = alwaysWithheld ? ''
       : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
@@ -405,6 +412,18 @@
       dataset: { 'approval-scope': 'once', 'approval-remember': 'linked_children', 'tool-call-id': toolCallId, 'call-id': toolCallId,
         ...(approvalId ? { 'approval-id': approvalId } : {}) },
     }) : '';
+    // One answer for this edit and every one listed under it. It is the first button when offered, and
+    // "Allow once" turns quiet and says which one it means.
+    const roundTotal = round ? round.length + 1 : 0;
+    const roundButton = round ? resolveActionButton() : null;
+    const roundMarkup = roundButton ? roundButton({
+      id: 'approve', plain: true, className: 'tool-approve-btn',
+      label: jt('approval.block.allowRound', 'Allow all {count}', { count: roundTotal }),
+      title: jt('approval.block.allowRoundTitle', 'Allow this one and every one listed above'),
+      ariaLabel: jt('approval.block.allowRoundAriaLabel', 'Allow all {count} {tool} calls', { count: roundTotal, tool: displayToolName }),
+      dataset: { 'approval-scope': 'once', 'approval-round': 'true', 'tool-call-id': toolCallId, 'call-id': toolCallId,
+        ...(approvalId ? { 'approval-id': approvalId } : {}) },
+    }) : '';
     const actionButton = cardState === 'paused' ? resolveActionButton() : null;
     const resumeKey = normalizeText(source.resumeKey);
     const pausedActionsMarkup = `<div class="tool-approval-actions tool-approval-actions--paused">`
@@ -421,9 +440,10 @@
       + `<span class="tool-approval-paused-note">${escapeHtml(jt('approval.block.pausedNote', 'Resume to answer.'))}</span>`
       + `</div>`;
     const actionsMarkup = cardState === 'paused' ? pausedActionsMarkup : `<div class="tool-approval-actions">`
-      + (withholdsAllow ? '' : `<button class="tool-approve-btn" type="button" data-action="approve"`
+      + roundMarkup
+      + (withholdsAllow ? '' : `<button class="tool-approve-btn${roundMarkup ? ' tool-approve-btn--quiet' : ''}" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
-      + ` title="${escapeHtml(browserCopy?.allow || jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(browserCopy?.allow || jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(browserCopy?.allow || jt('approval.block.allowOnce', 'Allow once'))}</button>`)
+      + ` title="${escapeHtml(browserCopy?.allow || jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(browserCopy?.allow || jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(browserCopy?.allow || (roundMarkup ? jt('approval.block.allowThisOne', 'Allow this one') : jt('approval.block.allowOnce', 'Allow once')))}</button>`)
       + alwaysAllowMarkup + rememberMarkup
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`

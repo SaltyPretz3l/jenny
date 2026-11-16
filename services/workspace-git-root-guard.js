@@ -23,6 +23,7 @@
 'use strict';
 
 const fsPromises = require('fs/promises');
+const nodePath = require('path');
 const { WORKSPACE_GIT_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
 
@@ -131,7 +132,39 @@ async function detectRepoScope(exec, root, { signal = null, fs: fsImpl = fsPromi
   return { isRepo: true, isToplevel, toplevel };
 }
 
+// A root with no `.git` entry of its own cannot be a repository toplevel, so a
+// clean miss stays true until one appears. Remembering it lets a read answer
+// without the whole-root lease and the spawn: an IDE refresh in a plain folder
+// used to refuse a model write under that root (2026-11-11 session review, F6).
+// A failed or stale probe is never remembered.
+const NON_REPO_MEMO_LIMIT = 16;
+
+function createNonRepoMemo({ fs: fsImpl = fsPromises, path: pathImpl = nodePath } = {}) {
+  const misses = new Map();
+  return {
+    remember(root, detect) {
+      if (detect?.failure || detect?.stale || (detect?.isRepo && detect.isToplevel)) return;
+      misses.delete(root);
+      if (misses.size >= NON_REPO_MEMO_LIMIT) misses.delete(misses.keys().next().value);
+      misses.set(root, detect?.isRepo ? 'not_toplevel' : 'not_repo');
+    },
+    // 'not_repo' | 'not_toplevel' | null (unknown: run the real probe).
+    async recall(root) {
+      const kind = misses.get(root);
+      if (!kind) return null;
+      try {
+        await fsImpl.lstat(pathImpl.join(root, '.git'));
+      } catch (error) {
+        if (error?.code === 'ENOENT') return kind;
+      }
+      misses.delete(root);
+      return null;
+    },
+  };
+}
+
 module.exports = {
+  createNonRepoMemo,
   normalizePathForComparison,
   pathsEqual,
   resolveAndCompare,

@@ -100,7 +100,9 @@
 
     // Primary Jenny chat controls (row 76): the shared paused-state store behind the row tag, the row menu
     // and the composer notice. The Activity / Reset / Forget dialogs arrive as late globals, so a missing one is a no-op.
-    const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => { callbacks.renderSessions?.(); root.rendererRunModeControl?.syncFullAutoChips?.(); }, appendClientLog }) || null;
+    const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => { callbacks.renderSessions?.(); root.rendererRunModeControl?.syncFullAutoChips?.(); }, appendClientLog,
+      // Row 144: held-check toast.
+      showToast: showToastMessage, dismissToast, openSettings: openSettingsSection }) || null;
     if (windowRef.jennyShell?.primaryChat) primaryChatStore?.start();
     if (primaryChatStore) registerCleanup(() => primaryChatStore.dispose());
     const primaryDialogDeps = () => ({ documentRef: windowRef.document, stepModal: root.inventoryStepModal, overlayManager: controllers.overlayManager || null, appendClientLog, state, getBridge: () => windowRef.jennyShell?.primaryChat || null });
@@ -145,6 +147,12 @@
       const terminalRun = root.rendererAppViewController.createTerminalRunHandler({ appendClientLog,
         getBridge: () => windowRef.jennyShell?.terminalTools || null, runInTerminal: callbacks.appViewOpeners?.runInTerminal });
       registerCleanup(() => terminalRun.dispose());
+    }
+    // Row 137: files opened from outside the Workspace (Open with, second launch, the picker, the restored set).
+    if (windowRef.jennyShell?.outsideFiles && root.rendererAppViewController?.createOutsideFileRequestHandler) {
+      const outsideRequests = root.rendererAppViewController.createOutsideFileRequestHandler({ appendClientLog, showShellErrorToast: callbacks.showShellErrorToast, documentRef: windowRef.document,
+        getBridge: () => windowRef.jennyShell?.outsideFiles || null, setActiveView, getActiveView: () => state.ui?.activeView || '', openers: callbacks.appViewOpeners || {} });
+      registerCleanup(() => outsideRequests.dispose());
     }
     // After a Reset: drop the pane's cached transcript, re-read the sessions list and repaint the (now empty) chat.
     const afterPrimaryReset = (result) => {
@@ -334,6 +342,7 @@
         // the IDE controller is never force-created off-IDE (it already exists
         // once you're on the IDE view); empty elsewhere keeps the palette scoped.
         getIdeCommandItems: () => (state.ui?.activeView === 'ide' ? getIdeCommandItemsCb() : []),
+        getProjectSwitcher: (...a) => callbacks.getProjectSwitcher?.(...a), // the palette's board rows (row 150)
         // Settings rows ride the same navigate-to-section seam the Settings
         // page's own search box uses, so the palette never re-implements the
         // jump (or drifts from it).
@@ -393,6 +402,14 @@
       }
     }
 
+    // Row 154: the source card and "Also searched" toggle bind on the body: chat panes can move into the Workspace.
+    const sourceCardController = root.rendererSourceCard?.createSourceCardController?.({
+      root: ctx.documentRef?.body || dom.chatView,
+      chipsUtils: root.rendererCitationChipsUtils,
+      appendClientLog: (...a) => appendClientLog(...a),
+    });
+    if (sourceCardController) registerCleanup(() => sourceCardController.dispose());
+
     // Row 92: the one Wide transcript toggle (every pane's button and Ctrl+Alt+W), through the
     // same appearance apply as Settings; Settings repaints its Chat width row when it is open.
     const chatWidthToggle = (root.rendererTranscriptViewUtils || {}).createChatWidthToggle?.({
@@ -402,7 +419,14 @@
       onApplied: () => { if (state?.ui?.activeView === 'settings') callbacks.renderSettings?.(); },
       appendClientLog: (...a) => appendClientLog(...a),
     }) || null;
-    if (chatWidthToggle) registerCleanup(() => chatWidthToggle.dispose());
+    if (chatWidthToggle) {
+      // Quick settings reads the one Wide toggle through here at click time (it binds first).
+      controllers.chatWidthToggle = chatWidthToggle;
+      registerCleanup(() => {
+        chatWidthToggle.dispose();
+        if (controllers.chatWidthToggle === chatWidthToggle) controllers.chatWidthToggle = null;
+      });
+    }
 
     // App-level shortcuts (nav overhaul W10): Ctrl+1-6 views, Ctrl+N new chat,
     // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle,
@@ -444,6 +468,8 @@
         },
       },
     }) || null;
+    // The Team tab's buttons that manage a team open Settings > Team (row 123, slice 1g-2).
+    root.rendererTopNavShellController?.setTeamTabActions?.({ openSettings: (...a) => openSettingsSection?.(...a) });
     if (globalShortcutsController) {
       globalShortcutsController.bind();
       registerCleanup(() => globalShortcutsController.dispose?.());

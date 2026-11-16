@@ -3,6 +3,7 @@
 const { installDefaultSessionPermissionGuard } = require('./default-session-permission-guard');
 const { createDisplayMediaSourceHandler } = require('./display-media-source-handler');
 const { createArtifactFrameProtocol } = require('../artifact-frame-protocol');
+const { createSketchFrameProtocol } = require('../sketch-frame-protocol');
 const { buildFeatureFlags } = require('../feature-flags');
 
 // Chromium on Windows serves file://host/... (and file:////host/...) over SMB,
@@ -57,11 +58,12 @@ function installRemoteFileRequestFilter({ session, log = () => {} }) {
  * the deny-by-default web-permission guard (before the main window loads any
  * model/user-authored content — Electron's out-of-the-box behavior grants
  * camera/mic/geolocation/etc.), the remote file:// request filter, the
- * display-media source picker, and the
- * jenny-artifact:// one-shot document protocol for the sandboxed HTML preview
- * frame. The artifact scheme's privileges are registered separately at module
- * load in main.js (registerArtifactFramePrivilegedScheme) because Electron
- * rejects privileged-scheme registration once the app is ready.
+ * display-media source picker, the jenny-artifact:// one-shot document
+ * protocol for the sandboxed HTML preview frame, and the jenny-sketch:// scheme
+ * that serves the sandboxed sketch frame's three files. Both schemes'
+ * privileges are registered separately at module load in main.js
+ * (registerFramePrivilegedSchemes) because Electron rejects privileged-scheme
+ * registration once the app is ready.
  *
  * Returns the display-media handler so main.js can thread it into IPC
  * registration and the awaited shutdown disposal path.
@@ -83,6 +85,7 @@ function installDefaultSessionWiring({
   });
   displayMediaSourceHandler.installHandler(session);
   createArtifactFrameProtocol({ log }).install({ sessionRef: session, ipcMainLike: ipcMain, authorization });
+  createSketchFrameProtocol({ log }).install({ sessionRef: session });
   return { displayMediaSourceHandler };
 }
 

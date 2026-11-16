@@ -76,12 +76,12 @@
       return getMessages(readSessionId().trim()) || [];
     }
 
-    function ownTriggers() {
-      return [...(documentRef?.querySelectorAll?.('[data-subagent-open]') || [])].filter(ownsTrigger);
+    function ownTriggers() { // a chat with no delegation data skips the document scan
+      const scan = openKey || transcriptKeys.size || !modelUtils.hasDelegationData || currentMessages().some(modelUtils.hasDelegationData);
+      return scan ? [...(documentRef?.querySelectorAll?.('[data-subagent-open]') || [])].filter(ownsTrigger) : [];
     }
 
-    // The IDE dock moves the whole thread stage (and this aside) into
-    // #ideChatDock, where no artifact panel exists.
+    // The IDE dock moves the thread stage (and this aside) into #ideChatDock: no artifact panel there.
     function isDockStage() {
       return Boolean(inspector?.closest?.('#ideChatDock'));
     }

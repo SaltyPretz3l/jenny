@@ -1,6 +1,6 @@
 'use strict';
 
-// Owner option C (2026-10-20, Claude Code parity): a session_message send shows its receipt on its
+// Owner option C (2026-10-20): a session_message send shows its receipt on its
 // own row in the conversation, painted live from the outbox; the composer strip keeps only the
 // sends with no row there (Send to chat dialog sends, linked-chat reports).
 

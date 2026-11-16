@@ -95,6 +95,7 @@ test('a failed action shows one error line and re-reads the state', async () => 
   assert.equal(status.hidden, false);
   assert.equal(status.textContent, 'Your PATH changed while Jenny was updating it. Try again.');
   assert.equal(status.getAttribute('aria-live'), 'polite');
+  assert.equal(status.hasAttribute('data-activity-state'), false, 'the error line borrows no save-feedback styling');
   assert.equal(reads, 2, 'the state is read again after the failure');
   assert.equal(query('button').disabled, false);
 

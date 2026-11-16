@@ -1,0 +1,63 @@
+{
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [
+    {
+      "id": "m",
+      "title": "Trains",
+      "spec": {
+        "kind": "map",
+        "region": "europe",
+        "countries": [
+          {
+            "name": "Germany",
+            "fill": "accent",
+            "label": "Start"
+          },
+          {
+            "name": "France",
+            "fill": "s1",
+            "hatch": true
+          }
+        ],
+        "places": [
+          {
+            "name": "berlin",
+            "lat": 52.52,
+            "lon": 13.4,
+            "label": "Berlin",
+            "tone": "accent"
+          },
+          {
+            "name": "paris",
+            "lat": 48.86,
+            "lon": 2.35,
+            "label": "Paris"
+          }
+        ],
+        "routes": [
+          {
+            "from": [
+              52.52,
+              13.4
+            ],
+            "to": [
+              48.86,
+              2.35
+            ],
+            "name": "r",
+            "label": "8 h",
+            "dashed": true
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [],
+  "title": "Trains"
+}

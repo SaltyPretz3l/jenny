@@ -42,14 +42,14 @@ test('constants and defaults', () => {
   assert.deepEqual([...PRIMARY_CHAT_HISTORY_KINDS],
     ['paused', 'resumed', 'reset', 'forgot', 'permission_granted', 'permission_revoked', 'setting_changed', 'setting_undone',
       'chat_changed', 'chat_change_undone', 'schedule_created', 'schedule_updated', 'schedule_enabled', 'schedule_disabled',
-      'schedule_cancelled', 'schedule_skipped', 'schedule_missed', 'digest_skipped', 'rule_added', 'rule_revoked', 'rule_denied']);
+      'schedule_cancelled', 'schedule_skipped', 'schedule_missed', 'schedule_held', 'schedule_run_anyway', 'digest_skipped', 'rule_added', 'rule_revoked', 'rule_denied']);
   assert.deepEqual({ ...PRIMARY_CHAT_LIMITS }, {
     permissions_max: 32, history_max: 200, revoked_retention_ms: 30 * 24 * 60 * 60 * 1000,
     project_id_chars: 128, max_children_per_turn_max: 3, action_rules_max: 64, rule_message_sends_per_day: 60,
   });
   assert.deepEqual(DEFAULT_PRIMARY_CHAT, {
     schemaVersion: 1, pausedAt: null, launchPermissions: [], actionRules: [], history: [],
-    digest: { lastPresentAt: null, lastDigestAt: null, lastDigestUntil: null },
+    digest: { lastPresentAt: null, lastDigestAt: null, lastDigestUntil: null }, model: '', checkModel: '',
   });
   for (const value of [undefined, null, 7, 'x', [], {}, { schemaVersion: 1 }]) {
     assert.deepEqual(normalizePrimaryChat(value), DEFAULT_PRIMARY_CHAT, JSON.stringify(value));
@@ -301,4 +301,35 @@ test('primaryChat is excluded from the portable-preferences projection', () => {
   const projected = projectPortableShellConfig(state);
   assert.equal(Object.hasOwn(projected, 'primaryChat'), false);
   assert.equal(JSON.stringify(projected).includes(PID(1)), false);
+});
+
+test('model pins: an older block normalizes both to empty, a valid id is trimmed, bad ids drop to empty', () => {
+  const old = normalizePrimaryChat({ schemaVersion: 1, pausedAt: null, launchPermissions: [], history: [] });
+  assert.equal(old.model, '');
+  assert.equal(old.checkModel, '');
+  const kept = normalizePrimaryChat({ model: '  qwen3.8:27b  ', checkModel: 'llama3.2:3b' });
+  assert.equal(kept.model, 'qwen3.8:27b');
+  assert.equal(kept.checkModel, 'llama3.2:3b');
+  assert.equal(normalizePrimaryChat({ model: 'a'.repeat(200) }).model, 'a'.repeat(200));
+  for (const bad of ['a'.repeat(201), 'bad\u0000id', 'bad\nid', 'zero\u200bwidth', 'bidi\u202eid', 7, null, {}, ['x'], '   ']) {
+    const block = normalizePrimaryChat({ model: bad, checkModel: bad });
+    assert.equal(block.model, '', JSON.stringify(bad));
+    assert.equal(block.checkModel, '', JSON.stringify(bad));
+  }
+});
+
+test('model pins: a patch carries them, a read-only block stays untouched, and they persist through the service', () => {
+  const next = applyPrimaryChatPatch(normalizePrimaryChat({}), { model: 'm1', checkModel: 'm2' });
+  assert.equal(next.model, 'm1');
+  assert.equal(next.checkModel, 'm2');
+  assert.equal(applyPrimaryChatPatch(next, { pausedAt: AT(1) }).model, 'm1', 'an unrelated patch keeps the pins');
+  assert.equal(applyPrimaryChatPatch(next, { model: '' }).model, '');
+  assert.equal(applyPrimaryChatPatch(next, { model: 'x'.repeat(201) }).model, '', 'an oversized patch value drops to empty');
+  const future = { schemaVersion: 2, model: 'keep-me', extra: { a: 1 } };
+  assert.deepEqual(applyPrimaryChatPatch(future, { model: 'other' }), future);
+  assert.deepEqual(normalizePrimaryChat(future), future);
+  const { userDataPath, service } = tempService();
+  service.updatePrimaryChat({ model: 'qwen3.8:27b', checkModel: 'small:2b' });
+  assert.equal(readDisk(userDataPath).primaryChat.model, 'qwen3.8:27b');
+  assert.equal(readDisk(userDataPath).primaryChat.checkModel, 'small:2b');
 });

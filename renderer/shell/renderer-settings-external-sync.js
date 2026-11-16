@@ -47,7 +47,7 @@
     return parsed <= 0 ? 0 : Math.min(max, Math.max(fallback === 0 ? 1 : 0, Math.trunc(parsed)));
   }
   const normalizeUnattendedGuardMinutes = (value) => normalizeBoundedCount(value, 120, 0);
-  const normalizeAutoApproveStreakCap = (value) => normalizeBoundedCount(value, 500, 50);
+  const normalizeAutoApproveStreakCap = (value) => normalizeBoundedCount(value, 500, 250);
   // Row 86 digest quiet hours: the one normalizer main uses too (renderer/shared/string-utils.js).
   const { normalizeDigestQuietStart, normalizeDigestQuietEnd } = globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
 
@@ -71,6 +71,7 @@
       ['defaultRunMode', (value) => normalizeRunMode(value)],
       ['uiLanguage', normalizeUiLanguageTag],
       ['use24HourTime', (value) => value === true],
+      ['drawingInstructions', (value) => (value === 'full' || value === 'mermaid' ? value : 'short')],
       ['safetyMode', normalizeSafetyMode],
       ['unattendedGuardMinutes', normalizeUnattendedGuardMinutes],
       ['autoApproveStreakCap', normalizeAutoApproveStreakCap],

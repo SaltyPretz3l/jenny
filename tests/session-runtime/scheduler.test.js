@@ -526,3 +526,73 @@ test('explicit resume still refuses work whose admission failure is not retryabl
     { message: 'session_runtime_context_unavailable' });
   assert.equal(h.store.get(a.work_id).status, 'paused');
 });
+
+// On a team host (`memberTurns`) turns alternate between members (member-turn-order.js).
+const memberOrder = require('../../services/session-runtime/member-turn-order');
+
+function submitAs(h, sessionId, memberId) {
+  return h.store.submit({ idempotencyKey: `submit-${sessionId}`, sessionId, projectId: 'project_general', purpose: 'chat',
+    input: { cloud: false, prompt: 'hello', request: memberId ? { author: { kind: 'member', member_id: memberId } } : {} },
+    authority: { project_id: 'project_general', root_path: null, root_id: null, root_revision: 0, device_id: null, inode: null },
+  }).record;
+}
+
+// Every dispatch in order: pump, then settle each started turn so the next one is admitted.
+async function dispatchOrder(h, count) {
+  const started = [];
+  h.scheduler.pump();
+  for (let i = 0; i < count; i += 1) {
+    await Promise.resolve();
+    const call = h.producerCalls[i];
+    started.push(call.work.session_id);
+    call.waiting.resolve({ status: 'completed', producerSettled: true, canonicalSettled: true });
+    await call.completion?.catch?.(() => {});
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+  }
+  return started;
+}
+
+test('single-user pin: with the option off no author read is made; authorless work dispatches the same either way', async t => {
+  const runs = [];
+  for (const memberTurns of [true, false]) {
+    const original = memberOrder.memberTurnOrder;
+    if (!memberTurns) memberOrder.memberTurnOrder = () => { throw new Error('the author pass ran with the option off'); };
+    try {
+      const h = harness(t, { memberTurns });
+      for (const session of ['a', 'b', 'c', 'd']) submitAs(h, session, null);
+      const cloud = h.submit('e', true);
+      let reads = 0;
+      const get = h.store.get.bind(h.store);
+      h.store.get = (...args) => { reads += 1; return get(...args); };
+      const first = h.scheduler.pump().map(result => [result.status, result.work_id ?? null, result.reason ?? null]);
+      h.store.get = get;
+      runs.push({ first, preparations: [...h.preparations], cloud: h.store.get(cloud.work_id).status,
+        rest: await dispatchOrder(h, 4), reads });
+    } finally {
+      memberOrder.memberTurnOrder = original;
+    }
+  }
+  const [on, off] = runs.map(({ reads, ...run }) => run);
+  assert.deepEqual(on, off);
+  assert.equal(runs[0].reads - runs[1].reads, 5, 'the author pass reads each of the five new pending items once; off reads none');
+  assert.deepEqual(runs[0].first.map(([status]) => status), ['started', 'waiting', 'waiting', 'waiting', 'started']);
+  assert.deepEqual(runs[0].rest, ['a', 'e', 'b', 'c'], 'submission order, lanes as before');
+  const list = [{ work_id: 'w1' }, { work_id: 'w2' }];
+  assert.equal(memberOrder.orderByMember(list, () => null, () => 0), list, 'the store\'s own list, the same object');
+});
+
+test('two members: five waiting turns and one; the one is served second, then the five in order', async t => {
+  const h = harness(t, { memberTurns: true });
+  for (const session of ['m1_1', 'm1_2', 'm1_3', 'm1_4', 'm1_5']) submitAs(h, session, 'member_one');
+  submitAs(h, 'm2_1', 'member_two');
+  assert.deepEqual(await dispatchOrder(h, 6), ['m1_1', 'm2_1', 'm1_2', 'm1_3', 'm1_4', 'm1_5']);
+});
+
+test('member order: least recently served first, each member\'s turns in submission order, authorless keeps its slot', () => {
+  const items = ['a1', 'x', 'a2', 'b1', 'a3', 'b2'].map(id => ({ work_id: id }));
+  const member = item => ({ a: 'member_a', b: 'member_b' })[item.work_id[0]] ?? null;
+  const ids = order => order.map(item => item.work_id);
+  assert.deepEqual(ids(memberOrder.orderByMember(items, member, () => 0)), ['a1', 'x', 'b1', 'a2', 'b2', 'a3']);
+  const servedA = id => (id === 'member_a' ? 5 : 0);
+  assert.deepEqual(ids(memberOrder.orderByMember(items, member, servedA)), ['b1', 'x', 'a1', 'b2', 'a2', 'a3']);
+});

@@ -402,8 +402,8 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   assert.match(sessionBarMenuCss, /\.chat-timeline-utility-button\.activity-open-button\s*\{\s*display:\s*none;/, 'Activity keeps its node but leaves the bar');
   assert.match(
     sessionBarMenuCss,
-    /\.chat-timeline-utility-cluster\[data-session-bar-compact\] > :is\(#chatTimelineTasksToggle, #chatTimelineNotesToggle\)\s*\{\s*display:\s*none;/,
-    'a compact bar hands Tasks and Notes to the More menu'
+    /\.chat-timeline-utility-cluster\[data-session-bar-compact\] > :is\(\[data-chat-node="artifactSplitViewToggle"\], #chatTimelineTasksToggle, #chatTimelineNotesToggle\)\s*\{\s*display:\s*none;/,
+    'a compact bar hands Artifacts, Tasks and Notes to the More menu'
   );
   assert.doesNotMatch(
     timelineOrientationCss,
@@ -576,10 +576,10 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /:root\[data-thread-style="subtle"\][\s\S]*?--thread-dot-hit-size:\s*24px;/,
     'subtle thread hit targets should never shrink below 24px'
   );
-  assert.match(
+  assert.doesNotMatch(
     chatThreadCss,
-    /\.chat-thread-node-nested \.chat-thread-node-article \.chat-row \.chat-row-node-dot\s*\{[\s\S]*?opacity:\s*0\.9;/,
-    'row dots should be strong enough to read against the warm timeline background'
+    /\.chat-row-node-dot/,
+    'rows no longer draw a gutter dot; the sprite is the gutter mark'
   );
   assert.match(
     reasoningV2Css,

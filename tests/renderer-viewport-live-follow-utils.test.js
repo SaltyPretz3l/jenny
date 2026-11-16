@@ -263,11 +263,11 @@ test('live reasoning tail alpha widens with long frames up to the 0.25 ceiling',
   assert.ok(Math.abs(reasoning.scrollContainer.scrollTop - 117.25) < 1e-9);
 });
 
-test('live reasoning tail falls back to the default profile when the reader lags more than 96 px', () => {
-  // remaining 120 px: default 120 * 0.1333 = 16 px; damped would be 6 px.
-  const reasoning = createReasoningFollowHarness({ scrollHeight: 520, isLiveReasoningTail: () => true });
+test('live reasoning tail reaches the default profile once the reader lags two lag spans (192 px)', () => {
+  // remaining 200 px: default 200 * 0.1333 = 26.67 px; damped would be 10 px.
+  const reasoning = createReasoningFollowHarness({ scrollHeight: 600, isLiveReasoningTail: () => true });
   reasoning.liveFollow.startLiveStreamingFollow();
-  assert.ok(Math.abs(reasoning.scrollContainer.scrollTop - 116) < 1e-9);
+  assert.ok(Math.abs(reasoning.scrollContainer.scrollTop - (100 + 200 * (16 / 120))) < 1e-9);
 
   // exactly 96 px stays damped: 96 * 0.05 = 4.8 px.
   const edge = createReasoningFollowHarness({ scrollHeight: 496, isLiveReasoningTail: () => true });
@@ -304,4 +304,39 @@ test('isLiveReasoningTailIn is true only for an expanded, unsettled reasoning pa
   assert.equal(probe(panel('expanded') + '<div class="chat-row" data-row-kind="tool_call"></div>'), false, 'a tool row ends the turn');
   assert.equal(probe(panel('expanded'), 'false'), false, 'not the live turn');
   assert.equal(isLiveReasoningTailIn(null), false);
+});
+
+// Review 2026-11-12 (scroll-follow 7): the outer glide switched rate hard at 96 px
+// (about 2.7x); the live box blends over one more lag span, and so does this one.
+test('live reasoning tail step is continuous across the 96 px lag threshold', () => {
+  const stepAt = (lag) => {
+    const harness = createReasoningFollowHarness({ scrollHeight: 400 + lag, isLiveReasoningTail: () => true });
+    harness.liveFollow.startLiveStreamingFollow();
+    return harness.scrollContainer.scrollTop - 100;
+  };
+  assert.ok(Math.abs(stepAt(96) - 4.8) < 1e-9, 'exactly 96 px stays damped');
+  assert.ok(Math.abs(stepAt(97) - stepAt(96)) < 0.5, `step jumped from ${stepAt(96)} to ${stepAt(97)} px`);
+  // 120 px: a quarter of the way from damped (0.05) to default (0.1333).
+  assert.ok(Math.abs(stepAt(120) - 120 * (0.05 + (16 / 120 - 0.05) * 0.25)) < 1e-9);
+});
+
+// Review 2026-11-12 (scroll-follow 9): a settle write at an unchanged position
+// armed the programmatic marker; no scroll event consumed it, so it stayed live
+// and excused the next genuine unattributed jump.
+test('live follow arms the programmatic marker only for a write that moves the viewport', () => {
+  const reasons = [];
+  const scrollContainer = { scrollTop: 400, scrollHeight: 800, clientHeight: 400, querySelector() { return null; } };
+  const liveFollow = createViewportLiveFollowUtils({
+    state: { ui: { followLatest: true } },
+    chatThreadScroll: scrollContainer,
+    requestViewportFrame() { return 1; },
+    cancelViewportFrame() {},
+    noteProgrammaticWrite: (reason) => reasons.push(reason),
+  });
+  liveFollow.startLiveStreamingFollow();
+  liveFollow.startLiveStreamingFollow();
+  assert.deepEqual(reasons, [], 'a caught-up follow writes nothing');
+  scrollContainer.scrollHeight = 900;
+  liveFollow.startLiveStreamingFollow();
+  assert.deepEqual(reasons, ['live_follow'], 'a moving write is still attributed');
 });

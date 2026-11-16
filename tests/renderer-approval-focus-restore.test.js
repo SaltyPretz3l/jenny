@@ -35,6 +35,17 @@ test('the fallback is the next pending row\'s first action, skipping actionless 
   assert.equal(restore.resolveApprovalFocusFallback(first), third.querySelector('.tool-approve-btn'));
 });
 
+test('the fallback is never the "Allow all" of a card: a reflex Enter must not answer a whole round', (t) => {
+  const round = '<div class="approval-gap-row" data-tool-call-id="c2">'
+    + '<button class="tool-approve-btn" type="button" data-approval-round="true">Allow all 3</button>'
+    + '<button class="tool-approve-btn tool-approve-btn--quiet" type="button">Allow this one</button>'
+    + '<button class="tool-deny-btn" type="button">Deny</button></div>';
+  const { restore, rows } = setup(t, row('c1') + round);
+  const [first, second] = rows();
+  assert.equal(restore.resolveApprovalFocusFallback(first).textContent, 'Allow this one');
+  assert.equal(restore.resolveApprovalFocusFallback(first), second.querySelector('.tool-approve-btn--quiet'));
+});
+
 test('with no other pending row the fallback is the composer input', (t) => {
   const { doc, restore, rows } = setup(t, row('c1'));
   assert.equal(restore.resolveApprovalFocusFallback(rows()[0]), doc.getElementById('chatInput'));

@@ -1,6 +1,9 @@
 'use strict';
 
-// The piece the host supervisor and the member supervisor share.
+// The pieces the host supervisor, the member supervisor and the member's HTTP client share.
+
+/** True for a TCP port number, 1..65535. */
+const isPort = (value) => Number.isInteger(value) && value >= 1 && value <= 65535;
 
 /** `defaults` overlaid with `overrides`; every limit must be a positive integer. */
 function resolveLimits(defaults, overrides) {
@@ -11,4 +14,4 @@ function resolveLimits(defaults, overrides) {
   return limits;
 }
 
-module.exports = { resolveLimits };
+module.exports = { isPort, resolveLimits };

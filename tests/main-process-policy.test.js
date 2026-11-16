@@ -15,6 +15,10 @@ test('managed config refresh policy recognizes only canonical refresh reasons', 
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('workspace_root_updated'), true);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('feature_settings_updated'), true);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('time_format_updated'), true);
+  // The sidecar prompt reads drawing_instructions from the managed config.
+  assert.equal(shouldRefreshManagedConfigForShellConfigReason('drawing_instructions_updated'), true);
+  assert.equal(shouldRefreshManagedConfigForShellConfigReason('chat_ui_settings_updated', ['drawing_instructions_updated']), true);
+  assert.equal(shouldBroadcastFeatureState('drawing_instructions_updated'), false);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason(' model_tuning_updated '), false);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('model_tuning_legacy_claimed'), false);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('chunk_inactivity_seconds_updated'), false);
@@ -112,4 +116,13 @@ test('a boot-time backend failure keeps a live window for the curtain Retry inst
     'headless runs can opt back into exiting');
   assert.equal(resolveBootFailureAction({ hasPackagedSmoke: true, hasLiveWindow: true, env: {} }), 'packaged-smoke',
     'packaged smoke keeps its own failure reporter');
+});
+
+test('a windowless boot failure shows an error box only when someone can dismiss it', () => {
+  const { shouldShowBootFailureDialog } = require('../services/main/main-process-policy');
+  assert.equal(shouldShowBootFailureDialog({ env: {} }), true);
+  assert.equal(shouldShowBootFailureDialog({ quitting: true, env: {} }), false, 'a quit is already under way');
+  assert.equal(shouldShowBootFailureDialog({ env: { JENNY_EXIT_ON_BOOT_FAILURE: '1' } }), false, 'headless opt-in');
+  assert.equal(shouldShowBootFailureDialog({ env: { JENNY_AGENT_DEV: '1' } }), false, 'agent launches never block on a modal');
+  assert.equal(shouldShowBootFailureDialog({ childrenStarted: true, env: {} }), false, 'children are stopped first, without a modal');
 });

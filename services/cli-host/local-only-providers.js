@@ -57,9 +57,15 @@ function assertLocalOnlyEngine(engineType, { apiUrl = '' } = {}) {
 // with the same local API, so the engine type alone cannot vouch for it.
 const OLLAMA_CLOUD_MODEL_RE = /(?:-|:)cloud$/iu;
 
+// True for a model name Ollama would send to its hosted service. Shared with the GPU a member shares
+// with a team (services/team/node/engine-forward.js), which applies it on every engine kind.
+function isCloudModelName(model) {
+  return OLLAMA_CLOUD_MODEL_RE.test(String(model || '').trim());
+}
+
 function assertLocalOnlyModel(engineType, model) {
   const name = String(model || '').trim();
-  if (String(engineType || '').toLowerCase() === 'ollama' && OLLAMA_CLOUD_MODEL_RE.test(name)) {
+  if (String(engineType || '').toLowerCase() === 'ollama' && isCloudModelName(name)) {
     throw cliError(TypeError, CLI_ERROR_CODES.ENGINE_NOT_LOCAL, 'model_not_local',
       'The Jenny CLI runs local models only; Ollama cloud models are refused.');
   }
@@ -73,4 +79,5 @@ module.exports = {
   cliError,
   createInertCodexHooks,
   createRefusingSafeStorage,
+  isCloudModelName,
 };

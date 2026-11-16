@@ -8,6 +8,7 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TOKEN_CLASSES = new Set([
     'tok-default', 'tok-comment', 'tok-string', 'tok-number', 'tok-keyword',
     'tok-type', 'tok-function', 'tok-delimiter', 'tok-invalid',
@@ -43,7 +44,9 @@
     return { additions: derivedAdds, deletions: derivedRemoves };
   }
 
-  function renderTokens(text, languageId, highlight, escape, allowHighlight) {
+  // `mark` is an optional [start, end) span of `text`: the changed words of an isolated -/+ pair.
+  // A syntax token the span edge cuts keeps its class on both sides.
+  function renderTokens(text, languageId, highlight, escape, allowHighlight, mark) {
     let tokens = [{ text, cls: 'tok-default' }];
     if (allowHighlight && typeof highlight === 'function') {
       try {
@@ -51,10 +54,75 @@
         if (Array.isArray(highlighted) && highlighted.length) tokens = highlighted;
       } catch (_error) { /* Default coloring is the fail-safe rendering contract. */ }
     }
-    return tokens.map((token) => {
+    if (!mark) {
+      return tokens.map((token) => {
+        const cls = TOKEN_CLASSES.has(String(token?.cls || '')) ? token.cls : 'tok-default';
+        return `<span class="tok ${cls}">${escape(token?.text)}</span>`;
+      }).join('');
+    }
+    const out = [];
+    let marking = false;
+    let position = 0;
+    for (const token of tokens) {
       const cls = TOKEN_CLASSES.has(String(token?.cls || '')) ? token.cls : 'tok-default';
-      return `<span class="tok ${cls}">${escape(token?.text)}</span>`;
-    }).join('');
+      const value = String(token?.text == null ? '' : token.text);
+      const start = position;
+      position += value.length;
+      const pieces = [];
+      if (mark && mark[1] > start && mark[0] < position) {
+        const from = Math.max(mark[0], start) - start;
+        const to = Math.min(mark[1], position) - start;
+        if (from > 0) pieces.push([value.slice(0, from), false]);
+        pieces.push([value.slice(from, to), true]);
+        if (to < value.length) pieces.push([value.slice(to), false]);
+      } else {
+        pieces.push([value, false]);
+      }
+      for (const [piece, marked] of pieces) {
+        if (marked && !marking) out.push('<mark class="diff-word">');
+        if (!marked && marking) out.push('</mark>');
+        marking = marked;
+        out.push(`<span class="tok ${cls}">${escape(piece)}</span>`);
+      }
+    }
+    if (marking) out.push('</mark>');
+    return out.join('');
+  }
+
+  // The changed span of one isolated -/+ pair: between the common prefix and suffix, when the two
+  // lines are alike enough to read as an edit and short enough to stay cheap.
+  function pairMarks(lines) {
+    const marks = new Map();
+    const markerAt = (index) => String(lines[index] == null ? '' : lines[index]).charAt(0);
+    for (let index = 0; index + 1 < lines.length; index += 1) {
+      if (markerAt(index) !== '-' || markerAt(index + 1) !== '+') continue;
+      if (index > 0 && markerAt(index - 1) === '-') continue;
+      if (index + 2 < lines.length && markerAt(index + 2) === '+') continue;
+      const before = String(lines[index]).slice(1);
+      const after = String(lines[index + 1]).slice(1);
+      if (before.length > 500 || after.length > 500) continue;
+      const shortest = Math.min(before.length, after.length);
+      let prefix = 0;
+      while (prefix < shortest && before[prefix] === after[prefix]) prefix += 1;
+      let suffix = 0;
+      while (suffix < shortest - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+      // Keep astral characters (emoji) whole at both edges.
+      if (prefix > 0 && /[\uD800-\uDBFF]/.test(before[prefix - 1])) prefix -= 1;
+      if (suffix > 0 && /[\uDC00-\uDFFF]/.test(before[before.length - suffix])) suffix -= 1;
+      if (prefix + suffix < 0.2 * shortest) continue;
+      if (before.length - suffix > prefix) marks.set(index, [prefix, before.length - suffix]);
+      if (after.length - suffix > prefix) marks.set(index + 1, [prefix, after.length - suffix]);
+    }
+    return marks;
+  }
+
+  // A created file whose every line is an addition reads as plain code, not as a change.
+  function isNewFileBody(settings) {
+    if (settings.status !== 'created' || !Array.isArray(settings.hunks) || !settings.hunks.length) return false;
+    // A '\\ No newline at end of file' meta line does not make it a change.
+    return settings.hunks.every((hunk) => Array.isArray(hunk?.lines) && hunk.lines.length > 0
+      && hunk.lines.every((line) => /^[+\\]/.test(String(line == null ? '' : line)))
+      && hunk.lines.some((line) => String(line == null ? '' : line).charAt(0) === '+'));
   }
 
   function buildFileDiffBodyMarkup(options) {
@@ -77,12 +145,18 @@
     const groups = [];
     hunks.forEach((hunk, hunkIndex) => {
       if (hunkIndex > 0) {
-        groups.push('<div class="diff-gap" role="listitem" aria-hidden="true"><span class="diff-gutter">⋯</span></div>');
+        const previous = hunks[hunkIndex - 1];
+        const hidden = Number(hunk?.oldStart) - (Number(previous?.oldStart) + Number(previous?.oldLines));
+        groups.push(Number.isInteger(hidden) && hidden > 0 && Number(previous?.oldLines) > 0
+          ? `<div class="diff-gap" role="listitem"><span class="diff-gutter" aria-hidden="true">⋯</span><span class="diff-gap-label">${escape(jtn('chat.fileDiff.unchangedLines', hidden, { count: hidden }, '{count} unchanged line', '{count} unchanged lines'))}</span></div>`
+          : '<div class="diff-gap" role="listitem" aria-hidden="true"><span class="diff-gutter">⋯</span></div>');
       }
       let oldLine = Number(hunk?.oldStart) || 0;
       let newLine = Number(hunk?.newStart) || 0;
       const rows = [];
-      for (const rawLine of Array.isArray(hunk?.lines) ? hunk.lines : []) {
+      const hunkLines = Array.isArray(hunk?.lines) ? hunk.lines : [];
+      const wordMarks = pairMarks(hunkLines);
+      for (const [lineIndex, rawLine] of hunkLines.entries()) {
         const text = String(rawLine == null ? '' : rawLine);
         const first = text.charAt(0);
         const marker = text === '' ? ' ' : first;
@@ -112,7 +186,7 @@
         const lineAnnotations = atLine ? atLine.filter((item) => !placed.has(item)) : NO_ANNOTATIONS;
         const severity = lineAnnotations.length && /^(high|medium|low)$/.test(lineAnnotations[0].severity) ? lineAnnotations[0].severity : 'medium';
         const severityAttr = lineAnnotations.length ? ` data-review-severity="${severity}"` : '';
-        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${lineAttrs}${aria}${severityAttr}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight)}</span></div>`);
+        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${lineAttrs}${aria}${severityAttr}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight, wordMarks.get(lineIndex))}</span></div>`);
         for (const item of lineAnnotations) {
           placed.add(item);
           rows.push(`<div class="diff-annotation" role="listitem">${item.html}</div>`);
@@ -153,13 +227,26 @@
     return `file-diff-${prefix}-${stableIdHash(diffId)}-body`;
   }
 
+  // Why a summary-only row has no diff, from the sidecar's truncation_reason.
+  function truncationReasonLabel(reason) {
+    switch (String(reason || '')) {
+      case 'hunk_limit': case 'line_limit': case 'byte_limit': return jt('chat.fileDiff.reason.tooLong', 'too long to show here');
+      case 'binary': return jt('chat.fileDiff.reason.binary', 'binary file');
+      case 'decode_error': return jt('chat.fileDiff.reason.notText', 'not text');
+      case 'diff_generation_failed': return jt('chat.fileDiff.reason.unavailable', 'diff unavailable');
+      case 'preimage_unavailable': return jt('chat.fileDiff.reason.earlierUnavailable', 'earlier version unavailable');
+      case 'time_limit': return jt('chat.fileDiff.reason.timeLimit', 'took too long to compare');
+      default: return jt('chat.fileDiff.reason.notShown', 'not shown');
+    }
+  }
+
   function buildCountsMarkup(settings, escape) {
     // An optional caller note explains a summary-only row (a sensitive path).
     if (settings.truncated === true && settings.note) {
       return '<span class="file-diff-truncated">' + escape(settings.note) + '</span>';
     }
     if (settings.truncated === true) {
-      return '<span class="file-diff-truncated">' + escape(jt('chat.fileDiff.tooLargeInline', 'too large to show inline')) + '</span>';
+      return '<span class="file-diff-truncated">' + escape(truncationReasonLabel(settings.truncationReason)) + '</span>';
     }
     const counts = resolveCounts(settings);
     if (!counts) return '';
@@ -200,31 +287,56 @@
       + buildNotesMarkup(settings, escape)
       + buildCountsMarkup(settings, escape);
     const actionButton = typeof settings.actionButton === 'function' ? settings.actionButton : null;
+    const labelShow = jt('chat.fileDiff.showForPath', 'Show diff for {path}', { path: path.slice(0, 240) });
+    const labelHide = jt('chat.fileDiff.hideForPath', 'Hide diff for {path}', { path: path.slice(0, 240) });
+    const titleShow = jt('chat.fileDiff.show', 'Show diff');
+    const titleHide = jt('chat.fileDiff.hide', 'Hide diff');
     const toggle = expandable && actionButton
       ? actionButton({
-          plain: true, className: 'file-diff-toggle', ariaLabel: expanded ? jt('chat.fileDiff.hideForPath', 'Hide diff for {path}', { path: path.slice(0, 240) }) : jt('chat.fileDiff.showForPath', 'Show diff for {path}', { path: path.slice(0, 240) }),
-          title: expanded ? jt('chat.fileDiff.hide', 'Hide diff') : jt('chat.fileDiff.show', 'Show diff'), ariaExpanded: expanded, ariaControls: bodyId,
-          dataset: { 'file-diff-toggle': '', 'diff-id': diffId }, trustedHtml: headContent,
+          plain: true, className: 'file-diff-toggle', ariaLabel: expanded ? labelHide : labelShow,
+          title: expanded ? titleHide : titleShow, ariaExpanded: expanded, ariaControls: bodyId,
+          dataset: {
+            'file-diff-toggle': '', 'diff-id': diffId,
+            'label-show': labelShow, 'label-hide': labelHide, 'title-show': titleShow, 'title-hide': titleHide,
+          },
+          trustedHtml: headContent,
         })
       : `<span class="file-diff-toggle file-diff-toggle--static">${headContent}</span>`;
     const changeId = String(settings.changeId || '').trim();
     const customOpen = settings.openDataset && typeof settings.openDataset === 'object' && actionButton;
     const openLabel = String(settings.openLabel || jt('chat.fileDiff.openInEditor', 'Open in editor'));
+    // Chat rows say "Open"; the Changes page keeps the glyph.
+    const openText = settings.openStyle === 'text';
+    const openClass = `file-diff-open${openText ? ' file-diff-open--text' : ''}`;
+    const openContent = openText ? escape(jt('chat.fileDiff.open', 'Open')) : EXTERNAL_LINK_GLYPH;
     const open = customOpen
       ? actionButton({
-          plain: true, className: 'file-diff-open', ariaLabel: openLabel, title: openLabel,
-          dataset: settings.openDataset, trustedHtml: EXTERNAL_LINK_GLYPH,
+          plain: true, className: openClass, ariaLabel: openLabel, title: openLabel,
+          dataset: settings.openDataset, trustedHtml: openContent,
         })
       : (changeId && actionButton
         ? actionButton({
-            plain: true, className: 'file-diff-open', ariaLabel: jt('chat.fileDiff.openInEditor', 'Open in editor'), title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
-            dataset: { 'jenny-open-change-diff': '', 'change-id': changeId }, trustedHtml: EXTERNAL_LINK_GLYPH,
+            plain: true, className: openClass, ariaLabel: jt('chat.fileDiff.openInEditor', 'Open in editor'), title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
+            dataset: { 'jenny-open-change-diff': '', 'change-id': changeId }, trustedHtml: openContent,
           })
         : '');
+    const bodyClass = `file-diff-body${isNewFileBody(settings) ? ' file-diff-body--new-file' : ''}`;
+    if (settings.bare === true && settings.truncated !== true && Array.isArray(settings.hunks) && settings.hunks.length > 0) {
+      // One file: the diff itself, no head, and one quiet link to the editor.
+      const link = changeId && actionButton
+        ? actionButton({
+            plain: true, className: 'file-diff-open file-diff-open--text',
+            title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
+            dataset: { 'jenny-open-change-diff': '', 'change-id': changeId },
+            trustedHtml: escape(jt('chat.fileDiff.openDiffInEditor', 'Open diff in editor')),
+          })
+        : '';
+      return `<div class="file-diff file-diff--bare" data-diff-id="${escape(diffId)}" data-expanded="true"><div class="${bodyClass}" role="list" data-file-diff-materialized>${buildFileDiffBodyMarkup(settings)}</div>${link ? `<div class="file-diff-foot">${link}</div>` : ''}</div>`;
+    }
     const suppliedBody = typeof settings.bodyHtml === 'string' ? settings.bodyHtml : null;
     const body = expanded
-      ? `<div class="file-diff-body" id="${escape(bodyId)}" role="list" data-file-diff-materialized>${suppliedBody !== null ? suppliedBody : buildFileDiffBodyMarkup(settings)}</div>`
-      : (expandable ? `<div class="file-diff-body" id="${escape(bodyId)}" role="list" data-file-diff-pending="1" hidden></div>` : '');
+      ? `<div class="${bodyClass}" id="${escape(bodyId)}" role="list" data-file-diff-materialized>${suppliedBody !== null ? suppliedBody : buildFileDiffBodyMarkup(settings)}</div>`
+      : (expandable ? `<div class="${bodyClass}" id="${escape(bodyId)}" role="list" data-file-diff-pending="1" hidden></div>` : '');
     return `<div class="file-diff${stacked ? ' file-diff--stacked' : ''}" data-diff-id="${escape(diffId)}" data-expanded="${expanded ? 'true' : 'false'}"><div class="file-diff-head">${toggle}${open}</div>${body}</div>`;
   }
 

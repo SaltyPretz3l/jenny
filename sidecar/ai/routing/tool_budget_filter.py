@@ -9,6 +9,7 @@ from typing import Any
 
 from sidecar.ai.config_models import uses_minimal_system_prompt
 from sidecar.ai.context.builder import (
+    diagram_guidance_kwargs,
     looks_like_current_info_request,
     looks_like_source_architecture_request,
     request_workspace_root_kwargs,
@@ -148,6 +149,8 @@ def build_system_prompt_for_statuses(
     kwargs.update(request_workspace_root_kwargs(
         kernel._config, getattr(context.request_context, "execution_context", None),
     ))
+    # One diagram language, chosen the same way here and on an approval resume.
+    kwargs.update(diagram_guidance_kwargs(kernel._config))
     if context.prompt_cache_enabled:
         return kernel._context_builder.build_system_prompt(
             kernel._config.system_prompt,

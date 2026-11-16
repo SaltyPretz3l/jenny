@@ -177,3 +177,35 @@ test('hosted test progress drops carried labels when a multi-stage command chang
   assert.deepEqual([published[1].stage, published[1].labels_from, published[1].labels], [1, 0, ['n']], 'the old stage labels are not prepended');
   events.dispose();
 });
+
+test('a full active table evicts its oldest entry, so abandoned streams never silence a new conversation', () => {
+  const backend = new EventEmitter();
+  const events = new BackendEvents({ backend, bootEpoch: 'boot' });
+  for (let i = 0; i < 64; i += 1) {
+    backend.emit('chat-stream', { type: 'started', sessionId: `s_${i}`, streamId: `st_${i}` });
+    // A turn that ends on a question batch: terminal for the runtime, not for BackendEvents.
+    backend.emit('chat-stream', { type: 'user_questions_requested', sessionId: `s_${i}`, streamId: `st_${i}` });
+  }
+  let before = events.cursor;
+  backend.emit('chat-stream', { type: 'started', sessionId: 's_new', streamId: 'st_new' });
+  assert.equal(events.cursor, before + 1, 'the new conversation is admitted');
+  before = events.cursor;
+  backend.emit('chat-stream', { type: 'delta', sessionId: 's_new', streamId: 'st_new', content: 'hello' });
+  assert.equal(events.cursor, before + 1);
+  assert.equal(events.active.size, 64);
+  assert.equal(events.active.has('s_0'), false, 'the oldest entry went');
+  events.dispose();
+});
+
+test('the test-progress throttle stays bounded when every call sends a single frame', () => {
+  const backend = new EventEmitter();
+  const events = new BackendEvents({ backend, bootEpoch: 'boot', now: () => 1_000_000 });
+  backend.emit('chat-stream', { type: 'started', sessionId: 's1', streamId: 'st1' });
+  const progress = (callId) => backend.emit('chat-stream', {
+    type: 'tool_test_progress', sessionId: 's1', streamId: 'st1', callId, total: 10, done: 1, labels: [] });
+  for (let i = 0; i < 200; i += 1) progress(`call_${i}`);
+  const after = events.cursor;
+  progress('call_0');
+  assert.equal(events.cursor, after + 1, 'call_0 was evicted by the newer calls, so its repeat publishes');
+  events.dispose();
+});

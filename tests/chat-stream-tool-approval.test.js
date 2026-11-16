@@ -948,7 +948,7 @@ test('inactivity cause survives the real approval timer into persisted and emitt
   assert.equal(result.duration_ms, 0, 'unexecuted approval has no execution duration');
   assert.match(result.output_text, /Auto paused because of inactivity/);
   assert.match(result.output_text, /tool never executed/);
-  assert.match(result.output_text, /Settings > Tools/);
+  assert.match(result.output_text, /Settings > Permissions > Pause Auto when you are away/);
   assert.equal(emitted.find((event) => event.type === 'tool_result').content, result.output_text);
   assert.equal(service.pendingToolApprovals.size, 0);
 });

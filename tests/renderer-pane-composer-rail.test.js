@@ -19,8 +19,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { waitForState } = require('./helpers/shell-shared-wait');
 const { createSettingsEventBindings } = require('../renderer/chat/renderer-chat-event-settings-bindings.js');
 const { resolvePaneRuntimePreferences } = require('../renderer/chat/renderer-render-pipeline-chrome.js');
 
@@ -75,7 +75,7 @@ async function bootApp(t, { openSessionIds = ['session-a', 'session-b'], extraSh
   } });
   t.after(() => app.dispose());
   const { window } = app;
-  await waitForUi(window, 150);
+  await waitForState(window, () => window.document.getElementById('composerModelSelect')?.value === 'qwen3.5:9b');
   // The harness store keeps run_mode out of setPreferences; record every write
   // and echo the full mapped preferences back as the persisted summary.
   const writes = [];
@@ -93,7 +93,7 @@ async function openTwoPanes(t, options = {}) {
   if (typeof options.beforeOpen === 'function') options.beforeOpen(window);
   const composition = window.rendererAppPaneComposition.getPaneComposition();
   assert.equal(composition.toggleSplit(), true, 'precondition: the chord opens session-b beside');
-  await waitForUi(window, 150);
+  await waitForState(window, () => composition.getPane(1)?.rail?.dom.composerModelSelect.value === 'llava:7b' && composition.getPane(1).rail.dom.composerEffortSelect.value === 'low');
   const pane1 = composition.getPane(1);
   assert.ok(pane1 && pane1.rail, 'pane 1 is mounted with a rail');
   assert.equal(window.__rendererState.currentSessionId, 'session-a', 'pane 0 keeps focus');
@@ -138,8 +138,8 @@ test('pane 0 keeps today\'s settings listener order with the rail listeners insi
   const order = [];
   bindings.bindSettingsEvents((target, type) => { order.push(`${target.id}:${type}`); }, {});
   t.after(() => bindings.dispose());
+  // Toast clicks moved to the toast controller (row 162), so the rail listeners lead.
   assert.deepEqual(order, [
-    'toastViewport:click',
     'composerModelSelect:change',
     'composerEffortSelect:change',
     'composerRunModeSlot:click',

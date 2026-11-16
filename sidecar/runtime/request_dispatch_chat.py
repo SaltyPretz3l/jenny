@@ -249,21 +249,21 @@ def _with_stack_generation_lease(func: Callable[..., ProcessOutcome]) -> Callabl
     return wrapped
 
 
-def _with_route_token(func: Callable[..., ProcessOutcome]) -> Callable[..., ProcessOutcome]:
-    """``request_route.with_route_token``, loaded on the first request: off the startup import graph."""
+def _with_request_bindings(func: Callable[..., ProcessOutcome]) -> Callable[..., ProcessOutcome]:
+    """Route token and model profile binders, loaded on the first request: off the startup graph."""
 
     @wraps(func)
     def wrapped(*args: Any, **kwargs: Any) -> ProcessOutcome:
+        from sidecar.ai.engines.request_model_profile import with_model_profile as bind_profile
         from sidecar.ai.engines.request_route import with_route_token
-
-        return with_route_token(func)(*args, **kwargs)
+        return with_route_token(bind_profile(func))(*args, **kwargs)
 
     return wrapped
 
 
 @_with_stack_generation_lease
 @with_request_safety  # per-request safety_mode / auto_approve_streak_cap (owner D3)
-@_with_route_token  # optional opaque routing token for a loopback gateway
+@_with_request_bindings  # optional route_token (loopback gateway) and model_profile
 def process_chat_send_request(
     *,
     message_id: Any,

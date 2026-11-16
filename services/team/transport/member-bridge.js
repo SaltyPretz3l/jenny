@@ -8,13 +8,14 @@
 // hands it the secrets in the `start` line on its stdin, and turns its `state`
 // lines into the states and reasons the application sees. No retries: a refused
 // or lost connection reports `offline` and the caller decides what to do. Logs
-// carry event names, states and counts only.
+// carry event names, states and counts only. The owner's relay URL and token
+// travel in the `start` line only and never reach a log or a state event.
 
 const { safeLogger } = require('../../../server/team/safe-logger');
 const { defaultSpawnChild } = require('../../../server/team/transport/bridge-binary');
-const { resolveLimits } = require('../../../server/team/transport/bridge-util');
+const { isPort, resolveLimits } = require('../../../server/team/transport/bridge-util');
 const {
-  ALPN, MAX_ADDRESSES, attachControl, encodeKey, filterLog, isSocketAddress, stopChild,
+  ALPN, MAX_ADDRESSES, attachControl, encodeKey, filterLog, isSocketAddress, parsePath, relayField, stopChild,
 } = require('../../../server/team/transport/control-channel');
 const {
   KEY_BYTES,
@@ -25,7 +26,16 @@ const {
 } = require('../../../server/team/transport/preamble');
 
 const STATES = Object.freeze({ CONNECTING: 'connecting', ONLINE: 'online', OFFLINE: 'offline' });
-const REASONS = Object.freeze(['host_unreachable', 'host_refused', 'closed']);
+// The two relay reasons come only with a relay configured, when no direct address worked and the
+// relay is why: it refused the token, or it could not be reached. Only `host_refused` is the host
+// application saying no; `host_cooldown` is the host bridge remembering an earlier refusal of this
+// key (the host was not asked again) and `host_admit_timeout` is a host that never answered.
+// `team_bridge_unavailable` is this PC's own fault: the bridge program is missing or could not be started,
+// so nothing was dialled and the host was never asked.
+const REASONS = Object.freeze([
+  'host_unreachable', 'host_refused', 'closed', 'relay_unreachable', 'relay_denied', 'host_cooldown', 'host_admit_timeout',
+  'team_bridge_unavailable',
+]);
 const DEFAULT_LIMITS = Object.freeze({
   maxPreambleSockets: MAX_PREAMBLE_SOCKETS,
   maxStreams: 16,
@@ -38,7 +48,7 @@ const DEFAULT_LIMITS = Object.freeze({
 const GUARD_SLACK_MS = 5000;
 
 function createMemberBridge({
-  secretKey, hostPublicKey, addresses, alpn = ALPN, launchSecret, log, limits,
+  secretKey, hostPublicKey, addresses, alpn = ALPN, launchSecret, log, limits, relay,
   spawnChild = defaultSpawnChild,
 }) {
   requireBytes(secretKey, KEY_BYTES, 'secretKey');
@@ -50,6 +60,8 @@ function createMemberBridge({
   if (addresses.length > MAX_ADDRESSES || !addresses.every(isSocketAddress)) {
     throw new TypeError(`addresses must be at most ${MAX_ADDRESSES} ip:port strings`);
   }
+  // Held only until the `start` line is built.
+  let relayLine = relayField(relay);
   const caps = resolveLimits(DEFAULT_LIMITS, limits);
   const emit = safeLogger(log);
   // Own copies, wiped as soon as the `start` line is built.
@@ -66,6 +78,10 @@ function createMemberBridge({
   let markExited = () => {};
   let hasExited = false;
   let localPort = null;
+  // The child's port for bulk sockets (model parts), or null: an older binary has none.
+  let localBulkPort = null;
+  // `direct` or `relay` while online with a relay configured, else null.
+  let localPath = null;
   let workingAddresses = [];
   let started = false;
   let stopped = false;
@@ -79,7 +95,11 @@ function createMemberBridge({
     const next = { state, reason: state === STATES.OFFLINE ? reason : null };
     if (next.state === current.state && next.reason === current.reason) return;
     current = next;
-    if (state !== STATES.ONLINE) localPort = null;
+    if (state !== STATES.ONLINE) {
+      localPort = null;
+      localBulkPort = null;
+      localPath = null;
+    }
     emit('team.member_bridge.state', { state: next.state, reason: next.reason || 'none' });
     for (const listener of [...stateListeners]) {
       try {
@@ -111,11 +131,18 @@ function createMemberBridge({
     if (stopped) return;
     if (message.state === STATES.ONLINE) {
       const port = message.port;
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      const bulkPort = message.bulk_port;
+      // No `bulk_port` is a binary with no bulk port; a wrong one is a wrong line, like a wrong `port`.
+      if (!isPort(port) || (bulkPort !== undefined && !isPort(bulkPort))) {
         killChild();
         return;
       }
       localPort = port;
+      // A bulk port that is the ordinary port is no bulk port: a part sent there would not be a bulk stream.
+      localBulkPort = bulkPort === undefined || bulkPort === port ? null : bulkPort;
+      // A later `online` line is a change of path only, and only a known word changes it.
+      const path = parsePath(message.path);
+      if (path) localPath = path;
       workingAddresses = [...dialAddresses];
       setState(STATES.ONLINE, null);
       settleStart();
@@ -145,7 +172,7 @@ function createMemberBridge({
     if (control) control.close();
     // An exit after `offline` changes nothing; one before it is a lost host.
     if (!stopped && current.state !== STATES.OFFLINE) {
-      setState(STATES.OFFLINE, info && info.spawnFailed ? 'host_unreachable' : 'closed');
+      setState(STATES.OFFLINE, info && info.spawnFailed ? 'team_bridge_unavailable' : 'closed');
     }
     settleStart();
   }
@@ -159,6 +186,7 @@ function createMemberBridge({
       addresses: [...dialAddresses],
       alpn,
       launch_secret: encodeKey(launchCopy),
+      ...(relayLine ? { relay: relayLine } : {}),
       limits: {
         max_preamble_sockets: caps.maxPreambleSockets,
         max_streams: caps.maxStreams,
@@ -172,6 +200,7 @@ function createMemberBridge({
     secretCopy.fill(0);
     hostCopy.fill(0);
     launchCopy.fill(0);
+    relayLine = null;
   }
 
   async function doStop() {
@@ -194,7 +223,7 @@ function createMemberBridge({
       try {
         child = spawnChild('member');
       } catch {
-        setState(STATES.OFFLINE, 'host_unreachable');
+        setState(STATES.OFFLINE, 'team_bridge_unavailable');
         return snapshot();
       }
       exited = new Promise((resolve) => { markExited = resolve; });
@@ -212,6 +241,16 @@ function createMemberBridge({
 
     port() {
       return current.state === STATES.ONLINE ? localPort : null;
+    },
+
+    /** The loopback port for bulk sockets while online, when the child has one; else null. */
+    bulkPort() {
+      return current.state === STATES.ONLINE ? localBulkPort : null;
+    },
+
+    /** `direct` or `relay` while online with a relay configured, else null. */
+    path() {
+      return current.state === STATES.ONLINE ? localPath : null;
     },
 
     state: snapshot,

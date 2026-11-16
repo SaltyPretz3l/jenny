@@ -59,7 +59,7 @@ function setup(t, options = {}) {
   const previous = globalThis.rendererTurnRowToolRenderUtils;
   globalThis.rendererTurnRowToolRenderUtils = toolRowUtils;
   const renderer = toolRowUtils.createTurnRowToolRenderUtils({ escapeHtml, normalizeId: (value) => String(value || '').trim() });
-  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView"><div id="chatTimeline" role="feed"></div></div></body></html>');
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div><div id="chatTimeline" role="feed"></div></div></body></html>');
   const win = dom.window;
   win.CSS = win.CSS || {};
   win.CSS.highlights = new Map();

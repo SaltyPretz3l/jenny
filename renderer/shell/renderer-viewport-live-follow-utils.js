@@ -15,6 +15,9 @@
   const LIVE_FOLLOW_REASONING_MAX_LAG_PX = 96;
   const LIVE_FOLLOW_USER_OVERRIDE_PX = 24;
   const LIVE_FOLLOW_USER_INTENT_WINDOW_MS = 300;
+  // A pending gesture older than this is spent: it never counts as a fresh
+  // scroll-away (review 2026-11-12). Long enough for two 230 ms long tasks.
+  const LIVE_FOLLOW_READER_INTENT_MAX_AGE_MS = 1500;
 
   // True while the live turn's last row is an expanded, still-growing
   // reasoning panel (Thinking view); follow then uses the damped glide.
@@ -137,17 +140,26 @@
     // more than the tolerance above where the animator placed (or left) it
     // once the baseline is clamped to the current maximum (shrink is not a
     // scroll-away).
+    function hasPendingReaderIntent() {
+      return liveFollowRuntime.readerIntentPending
+        && Date.now() - liveFollowRuntime.lastUserIntentAt <= LIVE_FOLLOW_READER_INTENT_MAX_AGE_MS;
+    }
+
     function isReaderAwayFromFollow(currentScrollTop, maximumScrollTop) {
       if (!hasFollowBaseline()) return false;
       clampProgrammaticScrollTop(maximumScrollTop);
-      return liveFollowRuntime.readerIntentPending
+      return hasPendingReaderIntent()
         && (Number(currentScrollTop) || 0)
           < (liveFollowRuntime.lastProgrammaticScrollTop || 0) - LIVE_FOLLOW_USER_OVERRIDE_PX;
     }
 
     function writeFollowScrollTop(nextScrollTop) {
-      noteProgrammaticWrite?.('live_follow');
-      chatThreadScroll.scrollTop = nextScrollTop;
+      // An unchanged position fires no scroll event to consume the marker, and
+      // a live marker would excuse the next genuine unattributed jump.
+      if (Number(chatThreadScroll.scrollTop) !== nextScrollTop) {
+        noteProgrammaticWrite?.('live_follow');
+        chatThreadScroll.scrollTop = nextScrollTop;
+      }
       liveFollowRuntime.readerIntentPending = false;
       advanceProgrammaticScrollTop(chatThreadScroll.scrollTop);
       onFollowWrite?.(chatThreadScroll.scrollTop);
@@ -177,11 +189,17 @@
       liveFollowRuntime.releasedSessionId = '';
     }
 
-    // Reader re-latched: spend the gesture, re-baseline (2026-11-03).
-    function relatchFollowAtBottom(currentScrollTop) {
+    // An explicit latch (Send, open, jump to latest) spends the reader's
+    // gesture and any held release: neither belongs to the new follow.
+    function spendReaderIntent() {
       clearReaderRelease();
       liveFollowRuntime.readerIntentPending = false;
       liveFollowRuntime.lastUserIntentAt = 0;
+    }
+
+    // Reader re-latched: spend the gesture, re-baseline (2026-11-03).
+    function relatchFollowAtBottom(currentScrollTop) {
+      spendReaderIntent();
       if (liveFollowRuntime.active) return;
       liveFollowRuntime.lastProgrammaticScrollTop = Math.max(0, Number(currentScrollTop) || 0);
       liveFollowRuntime.baselineRetained = true;
@@ -246,7 +264,7 @@
       // A reader gesture still inside the tolerance (the first frames of a
       // smooth wheel scroll): hold briefly instead of writing over it.
       if (
-        liveFollowRuntime.readerIntentPending
+        hasPendingReaderIntent()
         && hasRecentUserScrollIntent()
         && currentScrollTop < (liveFollowRuntime.lastProgrammaticScrollTop || 0) - LIVE_FOLLOW_MIN_STEP_PX
       ) {
@@ -256,7 +274,7 @@
       // Clamped a screen up with no reader input (HB-006): snap back.
       const clientHeight = Number(chatThreadScroll.clientHeight) || 0;
       if (
-        !liveFollowRuntime.readerIntentPending
+        !hasPendingReaderIntent()
         && clientHeight > 0
         && currentScrollTop < (liveFollowRuntime.lastProgrammaticScrollTop || 0) - clientHeight
       ) {
@@ -277,16 +295,31 @@
         ? Math.max(nextTimestamp - lastTimestamp, 0)
         : 16;
       liveFollowRuntime.lastTimestamp = nextTimestamp || (lastTimestamp + elapsedMs);
-      const dampedReasoning = liveFollowRuntime.reasoningTail
-        && Math.abs(remaining) <= LIVE_FOLLOW_REASONING_MAX_LAG_PX;
-      const alpha = dampedReasoning
-        ? Math.min(Math.max(elapsedMs / LIVE_FOLLOW_REASONING_RESPONSE_MS, 0.04), 0.25)
-        : Math.min(Math.max(elapsedMs / LIVE_FOLLOW_RESPONSE_MS, 0.12), 0.45);
+      const fastAlpha = Math.min(Math.max(elapsedMs / LIVE_FOLLOW_RESPONSE_MS, 0.12), 0.45);
+      // Blend from the damped to the default rate over one more lag span, as
+      // the live box does: a hard switch at 96 px lurched, then stalled.
+      const blend = Math.min(Math.max(
+        (Math.abs(remaining) - LIVE_FOLLOW_REASONING_MAX_LAG_PX) / LIVE_FOLLOW_REASONING_MAX_LAG_PX, 0), 1);
+      const alpha = liveFollowRuntime.reasoningTail
+        ? fastAlpha * blend
+          + Math.min(Math.max(elapsedMs / LIVE_FOLLOW_REASONING_RESPONSE_MS, 0.04), 0.25) * (1 - blend)
+        : fastAlpha;
       const stepPx = Math.max(Math.abs(remaining) * alpha, LIVE_FOLLOW_MIN_STEP_PX);
       writeFollowScrollTop(remaining > 0
         ? Math.min(currentScrollTop + stepPx, targetScrollTop)
         : Math.max(currentScrollTop - stepPx, targetScrollTop));
       scheduleLiveStreamingFollowFrame();
+    }
+
+    // No baseline to compare against (after a release, a snap or the approval
+    // brake): a fresh gesture that left the viewport above the bottom past the
+    // tolerance is a scroll-away. Returns true when it released follow.
+    function releaseIfReaderScrolledAway() {
+      if (!chatThreadScroll || !hasPendingReaderIntent()) return false;
+      if ((Number(chatThreadScroll.scrollTop) || 0)
+        >= getLiveFollowTargetScrollTop() - LIVE_FOLLOW_USER_OVERRIDE_PX) return false;
+      releaseFollowForUserScrollAway();
+      return true;
     }
 
     function startLiveStreamingFollow() {
@@ -312,13 +345,7 @@
         // current position - only allow it to advance downward.
         advanceProgrammaticScrollTop(currentScrollTop);
       } else {
-        if (
-          liveFollowRuntime.readerIntentPending
-          && currentScrollTop < targetScrollTop - LIVE_FOLLOW_USER_OVERRIDE_PX
-        ) {
-          releaseFollowForUserScrollAway();
-          return;
-        }
+        if (releaseIfReaderScrolledAway()) return;
         liveFollowRuntime.lastProgrammaticScrollTop = currentScrollTop;
       }
       liveFollowRuntime.active = true;
@@ -358,6 +385,8 @@
     return {
       liveFollowRuntime,
       noteUserScrollIntent,
+      spendReaderIntent,
+      releaseIfReaderScrolledAway,
       isReaderAwayFromFollow,
       isReaderReleaseHeld,
       clearReaderRelease,

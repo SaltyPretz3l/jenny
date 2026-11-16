@@ -55,6 +55,7 @@ CHECKS = [
     "check_chat_lifecycle_contract_parity.py",
     "check_provider_descriptor_fixtures.py",
     "check_test_coverage_map.py",
+    "check_test_file_growth.py",
     "check_vacuous_oracle.py",
     "check_renderer_app_dispose.py",
     "check_release_compat_registered.py",

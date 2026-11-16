@@ -20,8 +20,10 @@ test('W2-2 contract 1 fills the frozen Tools hosts with standard rows in order',
   await waitForUi(window, 20);
   doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
   await waitForUi(window, 20);
+  // Row 133: the run-mode and approval rows moved to the Permissions page; Tools keeps only the tools.
+  assert.equal(doc.querySelector('[data-settings-section="tools"] [data-setting-mount]'), null);
+  assert.equal(doc.getElementById('toolsPermissionsList'), null);
   const expected = {
-    toolsPermissionsList: ['safetyModeSelect', 'defaultRunModeSelect', 'unattendedGuardMinutesInput', 'autoApproveStreakCapInput'],
     toolsFilesList: ['fileTools', 'richFiles', 'imageRead'],
     toolsWebList: ['web'],
     toolsTerminalList: ['bash'],
@@ -29,10 +31,8 @@ test('W2-2 contract 1 fills the frozen Tools hosts with standard rows in order',
   };
   for (const [host, ids] of Object.entries(expected)) {
     assert.ok(doc.getElementById(host), host);
-    // The Permissions rows sit in mount hosts (rendered once, patched in place); the tool rows are direct children.
-    const rows = host === 'toolsPermissionsList' ? ':scope > [data-setting-mount] > .settings-field--row' : ':scope > .settings-field--row';
-    assert.deepEqual(Array.from(doc.getElementById(host).querySelectorAll(rows), (row) => row.dataset.settingsField),
-      ids.map((id) => host === 'toolsPermissionsList' ? id : `settings-tool-config-${id}`));
+    assert.deepEqual(Array.from(doc.getElementById(host).querySelectorAll(':scope > .settings-field--row'), (row) => row.dataset.settingsField),
+      ids.map((id) => `settings-tool-config-${id}`));
   }
   assert.equal(doc.querySelector('.tools-config-field-row'), null);
   assert.equal(doc.getElementById('toolsSummary'), null);

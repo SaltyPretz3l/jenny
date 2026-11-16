@@ -1,6 +1,7 @@
 const { HOST_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const { SidecarClient } = require('./sidecar-client');
 const { REQUESTED_CHAT_WORKSPACE_CAPABILITIES } = require('./chat-workspace-capabilities');
+const { liveTeamSelection } = require('./team-engine-models');
 const {
   handleMonitorNotification,
 } = require('./monitor-event-service');
@@ -200,7 +201,11 @@ function applyManagedInitializePayload(service, payload = {}) {
   const requestedModel = String(service._managedPendingModel || service.currentModel || '').trim();
   const defaultModel = String(service.defaultModel || '').trim();
   const payloadEngine = String(payload.active_engine || '').trim() || requestedEngineType || 'mock';
+  // A team model runs as the team's own id: the backend keeps the listed `team/...` id, so the next turn does not reload.
+  const teamSelection = liveTeamSelection(service);
+  const asListed = (model) => (teamSelection && model === teamSelection.modelId ? teamSelection.id : model);
   const payloadModel = String(payload.active_model || '').trim();
+  const listedModel = asListed(payloadModel);
   const startupVllmFallbackToOllama =
     (!requestedModel || requestedModel === defaultModel)
     && payloadEngine === 'mock'
@@ -253,7 +258,7 @@ function applyManagedInitializePayload(service, payload = {}) {
       };
   const localRuntime = normalizeLocalRuntime(payload.local_runtime, {
     engine: effectiveEngine,
-    model: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? '' : payloadModel,
+    model: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? '' : listedModel,
     modelLoaded: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? false : Boolean(payloadModel),
     activeModelCapabilities,
     activeModelReasoningSupport,
@@ -272,11 +277,11 @@ function applyManagedInitializePayload(service, payload = {}) {
   service.currentEngineType = String(localRuntime.engine?.type || effectiveEngine).trim().toLowerCase() || effectiveEngine;
   service.currentModel = (ignoreStartupMockFallback || startupVllmFallbackToOllama)
     ? ''
-    : String(localRuntime.model?.id || payloadModel || '').trim();
+    : asListed(String(localRuntime.model?.id || listedModel || '').trim());
 
   service.currentStatus = buildManagedStatusSnapshot(service, {
     engine: effectiveEngine,
-    model: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? '' : payloadModel,
+    model: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? '' : listedModel,
     model_loaded: (ignoreStartupMockFallback || startupVllmFallbackToOllama) ? false : Boolean(payloadModel),
     provider_capabilities: providerCapabilities,
     provider_capability_profiles: providerCapabilityProfiles,

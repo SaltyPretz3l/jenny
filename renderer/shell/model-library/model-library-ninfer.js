@@ -207,6 +207,7 @@
         return { tone: 'warning', message: jt('models.library.ninfer.hostMemory', 'NInfer couldn\'t reserve {gb} GB of system memory. Close other apps or wait a minute, then press Use again.', { gb: Number(server.hostMemoryGb) || 0 }) };
       }
       if (lastError === 'stop_unconfirmed') return { tone: 'warning', message: jt('models.library.ninfer.stopUnconfirmed', 'The last stop could not be confirmed. Restart Jenny if NInfer stays stuck.') };
+      if (lastError === 'vram_in_use') return { tone: 'warning', message: jt('models.library.ninfer.vramInUse', 'Other programs are using the GPU memory NInfer needs. Close them, then press Use again.') };
       if (lastError) return { tone: 'warning', message: jt('models.library.ninfer.couldNotStart', 'NInfer could not start · {reason}', { reason: lastError.slice(0, 80) }) };
       if (settings().suggestionDismissed !== true) {
         // C6, shown once: Not now persists the dismissal.
@@ -474,7 +475,7 @@
       target.addEventListener('inv-toggle-change', onToggle);
       if (initToggleHandlers && documentRef) initToggleHandlers(documentRef);
       var api = bridge();
-      if (api && typeof api.onChanged === 'function') {
+      if (!opts.externalWatch && api && typeof api.onChanged === 'function') {
         try {
           // A change event says only what moved; getState is the one truth.
           var maybe = api.onChanged(function () { void refresh(); });
@@ -524,7 +525,25 @@
       };
     }
 
-    return { bind: bind, render: render, refresh: refresh, dispose: dispose, setup: setup, libraryInput: libraryInput };
+    // The row in Engines and providers: null while ineligible or unanswered
+    // (the row is not drawn), else one short status from the same state.
+    function summary() {
+      if (!isEnabled() || !eligible()) return null;
+      if (settingUp()) return { text: jt('models.library.ninfer.summary.settingUp', 'Setting up…'), tone: 'busy', set: false };
+      if (setupFailure()) return { text: jt('models.library.ninfer.summary.setupFailed', 'Set-up failed'), tone: 'warn', set: false };
+      if (!ready()) return { text: jt('models.library.ninfer.summary.notSetUp', 'Not set up'), tone: 'off', set: false };
+      var server = manager();
+      var version = String(server.runtimeLabel || installState().version || '');
+      if (server.state === 'ready') return { text: jt('models.library.ninfer.summary.serving', 'Serving on :{port}', { port: server.port || 8034 }), tone: 'ready', set: true };
+      if (server.state === 'starting') return { text: jt('models.library.ninfer.summary.starting', 'Starting…'), tone: 'busy', set: true };
+      if (server.state === 'stopping') return { text: jt('models.library.ninfer.summary.stopping', 'Stopping…'), tone: 'busy', set: true };
+      if (server.state === 'crashed' && server.stoppedBy === 'watchdog') return { text: jt('models.library.ninfer.summary.watchdog', 'Stopped by the power watchdog'), tone: 'warn', set: true };
+      if (server.state === 'crashed') return { text: jt('models.library.ninfer.summary.crashed', 'Stopped unexpectedly'), tone: 'warn', set: true };
+      if (server.lastError && server.lastError !== 'stop_unconfirmed') return { text: jt('models.library.ninfer.summary.couldNotStart', 'Could not start'), tone: 'warn', set: true };
+      return { text: version ? jt('models.library.ninfer.readyVersion', 'Ready · {version}', { version: version }) : jt('models.library.ninfer.summary.ready', 'Ready'), tone: 'ready', set: true };
+    }
+
+    return { bind: bind, render: render, refresh: refresh, dispose: dispose, setup: setup, libraryInput: libraryInput, summary: summary };
   }
 
   return { createModelLibraryNinferController: createModelLibraryNinferController, setupFailureMessage: setupFailureMessage };

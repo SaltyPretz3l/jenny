@@ -142,6 +142,7 @@ test('appearance controls update shell appearance without persisting session run
     composerHoloId: 'off',
     fontScaleId: 'default',
     chatWidthId: 'standard',
+    teamDensityId: 'comfortable',
     startupAnimation: true,
     titlebarLoad: false,
     artifactAutoOpen: false,
@@ -162,7 +163,7 @@ test('appearance spellcheck toggle reflects the resolved feature flag', async (t
   assert.equal(getSpellcheckToggle()?.getAttribute('aria-checked'), 'true');
 });
 
-test('appearance spellcheck copy remains searchable and assigned to Appearance', async (t) => {
+test('spellcheck copy remains searchable and assigned to General (row 133)', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const entry = window.rendererSettingsFieldCopy
     ?.SETTINGS_FIELD_COPY?.appearanceSpellcheckToggle;
@@ -172,7 +173,7 @@ test('appearance spellcheck copy remains searchable and assigned to Appearance',
     entry?.description,
     'Misspelled words are underlined in message and note fields, and right-clicking one offers corrections.'
   );
-  assert.equal(entry?.sectionId, 'appearance');
+  assert.equal(entry?.sectionId, 'general');
   for (const term of ['spell check', 'spelling', 'dictionary']) {
     assert.equal(entry?.keywords?.includes(term), true, `spellcheck Settings copy must index "${term}"`);
   }
@@ -311,6 +312,7 @@ test('appearance bundle selector applies Lexicon and falls back to Custom after 
     // bundle apply (owner review 2026-08-19).
     fontScaleId: 'default',
     chatWidthId: 'standard',
+    teamDensityId: 'comfortable',
     startupAnimation: true,
     titlebarLoad: false,
     artifactAutoOpen: false,
@@ -348,6 +350,7 @@ test('Slate theme bundle keeps the flat background while restoring the composer 
     composerHoloId: 'on',
     fontScaleId: 'default',
     chatWidthId: 'standard',
+    teamDensityId: 'comfortable',
     startupAnimation: true,
     titlebarLoad: false,
     artifactAutoOpen: false,
@@ -700,18 +703,17 @@ test('appearance card groups its controls into labelled scopes with accessible s
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="appearance"]');
 
-  // Six primary field groups are labelled regions (Theme, Typography,
-  // Language, Chat layout, Background, Performance - the last hidden until
-  // the performance bridge exists); Advanced is a collapsed fold that
-  // also holds the app zoom, rather than another form region.
+  // Row 133: Appearance holds only looks, in four groups (Theme, Text, Effects, Reset) with no fold.
   const groups = card.querySelectorAll('.settings-group[role="group"]');
-  assert.equal(groups.length, 6);
-  assert.ok(doc.getElementById('appearanceLanguageField').closest('.settings-group').contains(doc.getElementById('appearanceLanguageHeading')), 'the Language heading sits in the group it names');
-  assert.ok(card.querySelector('details.appearance-advanced #appearanceAppZoomSelect'), 'app zoom sits in the Advanced fold');
-  const chatLayout = doc.getElementById('appearanceChatLayoutHeading').closest('.settings-group');
-  assert.ok(segmentedGroup(chatLayout, 'transcriptViewDefaultSelect'), 'the transcript view is a Chat layout row');
-  assert.ok(chatLayout.querySelector('[data-inv-toggle="appearanceArtifactAutoOpenToggle"]'), 'artifact auto-open is a Chat layout row');
-  assert.equal(doc.getElementById('appearanceHoloList').querySelector('[data-inv-toggle="appearanceArtifactAutoOpenToggle"]'), null);
+  assert.deepEqual([...groups].map((group) => group.querySelector('.settings-group-heading').textContent), ['Theme', 'Text', 'Effects', 'Reset']);
+  assert.equal(card.querySelector('details'), null, 'no fold and no overflow');
+  assert.ok(doc.getElementById('appearanceTypeHeading').closest('.settings-group').querySelector('#appearanceAppZoomSelect'), 'app zoom is a Text row');
+  const effects = doc.getElementById('appearanceSurfaceHeading').closest('.settings-group');
+  for (const id of ['appearanceComposerHoloToggle', 'appearanceStartupAnimationToggle']) assert.ok(effects.querySelector(`[data-inv-toggle="${id}"]`), `${id} is an Effects row`);
+  for (const id of ['appearanceLanguageField', 'appearanceSpellcheckList']) assert.equal(card.querySelector(`#${id}`), null, `${id} left Appearance`);
+  for (const id of ['transcriptViewDefaultSelect', 'appearanceChatWidthSelect', 'appearanceArtifactAutoOpenToggle', 'changePicturesToggle', 'appearanceTitlebarLoadToggle', 'performanceShowCounterToggle']) {
+    assert.equal(card.querySelector(`[data-settings-field="${id}"], [data-inv-toggle="${id}"]`), null, `${id} left Appearance`);
+  }
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
     const headingId = group.getAttribute('aria-labelledby');
@@ -733,8 +735,9 @@ test('appearance card groups its controls into labelled scopes with accessible s
     assert.ok(card.querySelector(`#${id}`).getAttribute('aria-label'), `${id} carries an accessible name`);
     assert.ok(card.querySelector(`[data-settings-field="${id}"] .settings-field-title`)?.textContent, `${id} row has a title`);
   }
-  // Text size and Chat width (two to four choices) are named radio groups.
+  // Text size and Chat width (two to four choices) are named radio groups; Chat width is on Chat now.
   for (const id of ['appearanceFontScaleSelect', 'appearanceChatWidthSelect']) {
+    const card = doc.querySelector(`.settings-card[data-settings-section="${id === 'appearanceChatWidthSelect' ? 'chat' : 'appearance'}"]`);
     const group = segmentedGroup(card, id);
     assert.equal(group?.getAttribute('role'), 'radiogroup', `${id} is a radio group`);
     assert.ok(group.getAttribute('aria-label'), `${id} carries an accessible name`);
@@ -747,9 +750,7 @@ test('appearance card groups its controls into labelled scopes with accessible s
   assert.equal(doc.getElementById('chatZoomResetButton'), null);
   assert.equal(doc.getElementById('appearanceJsonSlice'), null);
   assert.equal(doc.getElementById('sessionSummary'), null);
-  assert.equal(card.querySelector('details.appearance-advanced')?.open, false);
-  assert.ok(doc.getElementById('appearanceResetButton').closest('details.settings-overflow'));
-  assert.equal(doc.getElementById('appearanceResetButton').closest('.settings-group'), null);
+  assert.equal(doc.getElementById('appearanceResetButton').closest('.settings-group'), groups[3], 'the reset is its own last group');
 
   // The appearance status note announces politely (T9).
   assert.equal(doc.getElementById('appearanceStatus'), null);
@@ -794,7 +795,7 @@ test('chat width persists as a root data attribute and survives a theme-bundle s
   assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'narrow');
 });
 
-test('choosing Narrow re-enables Reset Appearance rather than leaving it stranded as disabled', async (t) => {
+test('Reset Appearance covers the Appearance page: Chat width (on Chat since row 133) neither enables it nor is reset by it', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const resetButton = doc.getElementById('appearanceResetButton');
@@ -803,10 +804,20 @@ test('choosing Narrow re-enables Reset Appearance rather than leaving it strande
 
   segmentedGroup(doc, 'appearanceChatWidthSelect').querySelector('[data-value="narrow"]').click();
   await waitForUi(window, 30);
+  assert.equal(resetButton.disabled, true, 'a Chat page row is not an Appearance change');
 
-  // isDefaultAppearancePreferences enumerates axes explicitly; omitting
-  // chatWidthId would leave Reset Appearance disabled with the setting changed.
-  assert.equal(resetButton.disabled, false, 'Chat width counts as a non-default appearance');
+  // isDefaultAppearancePreferences enumerates the page's axes explicitly; a missing
+  // one would leave Reset Appearance disabled with that setting changed.
+  segmentedGroup(doc, 'appearanceFontScaleSelect').querySelector('[data-value="large"]').click();
+  await waitForUi(window, 30);
+  assert.equal(resetButton.disabled, false, 'Text size counts as a non-default appearance');
+
+  resetButton.click();
+  (resetButton.closest('.settings-actions') || resetButton.parentElement).querySelector('[data-action="confirm"]').click();
+  await waitForUi(window, 30);
+  assert.equal(doc.documentElement.dataset.fontScale, 'default', 'the reset restores the Appearance rows');
+  assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'narrow', 'and leaves the Chat page row alone');
+  assert.equal(doc.documentElement.dataset.chatWidth, 'narrow');
 });
 
 test('the JS-mounted Chat width control keeps a stable node and carries the shared Revert', async (t) => {
@@ -831,4 +842,28 @@ test('the JS-mounted Chat width control keeps a stable node and carries the shar
   assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'standard');
   assert.equal(doc.documentElement.dataset.chatWidth, 'standard');
   assert.equal(segmentedGroup(doc, 'appearanceChatWidthSelect'), widthGroup);
+});
+
+// Team chat density (row 123, slice 2a-5b): an Appearance row only while the Team feature is on.
+test('Team chat density: absent with the Team flag off; with it on, the last Text row, applied at once and restored by Reset', async (t) => {
+  const off = await loadRendererTestApp(t);
+  assert.equal(off.window.document.querySelector('[data-settings-field="appearanceTeamDensitySelect"]'), null, 'no row with the flag off');
+  const { window } = await loadRendererTestApp(t, { shell: { features: { state: { featureFlags: { team: true } } } } });
+  const doc = window.document;
+  const text = doc.getElementById('appearanceTypeHeading').closest('.settings-group');
+  const rowsInText = [...text.querySelectorAll('[data-settings-field]')].map((el) => el.dataset.settingsField);
+  assert.equal(rowsInText.at(-1), 'appearanceTeamDensitySelect', 'last, after app zoom');
+  assert.equal(rowsInText.at(-2), 'appearanceAppZoomSelect');
+  assert.deepEqual(segmentedOptions(doc, 'appearanceTeamDensitySelect').map((o) => o.value), ['comfortable', 'compact']);
+  assert.equal(doc.documentElement.dataset.teamDensity, 'comfortable');
+  segmentedGroup(doc, 'appearanceTeamDensitySelect').querySelector('[data-value="compact"]').click();
+  await waitForUi(window, 30);
+  assert.equal(doc.documentElement.dataset.teamDensity, 'compact', 'the root attribute follows at once');
+  const resetButton = doc.getElementById('appearanceResetButton');
+  assert.equal(resetButton.disabled, false, 'a changed density enables Reset Appearance');
+  resetButton.click();
+  (resetButton.closest('.settings-actions') || resetButton.parentElement).querySelector('[data-action="confirm"]').click();
+  await waitForUi(window, 30);
+  assert.equal(doc.documentElement.dataset.teamDensity, 'comfortable');
+  assert.equal(segmentedValue(doc, 'appearanceTeamDensitySelect'), 'comfortable');
 });

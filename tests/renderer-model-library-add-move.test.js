@@ -30,6 +30,10 @@ function outsidePlan(extra = {}) {
 function harness(options = {}) {
   const dom = new JSDOM('<!doctype html><body><div id="folders"></div></body>', { url: 'http://localhost/' });
   const calls = [];
+  // Timers are driven by hand: every poll the flow asks for is one entry here.
+  const timers = [];
+  dom.window.setInterval = (fn) => { timers.push(fn); return timers.length; };
+  dom.window.clearInterval = (id) => { timers[id - 1] = null; };
   const library = { managed: { enabled: true, lastPickDir: '', libraryRoots: ['G:\\llmmodels\\gguf'], perModel: {} }, ollamaTags: [], installed: [] };
   dom.window.jennyShell = {
     llamaServer: {
@@ -42,6 +46,13 @@ function harness(options = {}) {
       async ggufImportStatus() { return { ok: true, active: false }; },
       async cancelGgufImport() { calls.push(['cancel']); return { ok: true, cancelled: true }; },
       async chooseLibraryFolder() { calls.push(['chooseFolder']); return { ok: true, picked: true, path: 'E:\\models' }; },
+      ...(options.runtime ? {
+        async runtimeOptions(payload) { calls.push(['runtimeOptions', payload]); return options.runtime.options(); },
+        async chooseRuntimeFolder() { calls.push(['chooseRuntimeFolder']); return { ok: true, picked: true, path: 'D:\\builds' }; },
+        async runtimeDownloadStart(payload) { calls.push(['downloadStart', payload]); return options.runtime.start ? options.runtime.start() : { ok: true, build: 12098 }; },
+        async runtimeDownloadStatus() { return options.runtime.status(); },
+        async runtimeDownloadCancel() { calls.push(['downloadCancel']); return { ok: true }; },
+      } : {}),
     },
     engines: {
       async updateSettings(payload) {
@@ -67,6 +78,8 @@ function harness(options = {}) {
     calls,
     document,
     controller,
+    liveTimers: () => timers.filter(Boolean).length,
+    tick: () => timers.filter(Boolean).forEach((fn) => fn()),
     click(selector) {
       document.querySelector(selector).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     },
@@ -265,4 +278,221 @@ test('without the import bridge the file is added where it is, as before', async
   await flush();
   assert.deepEqual(h.saved(), [PICKED]);
   h.controller.dispose();
+});
+
+// ---- Row 142: what runs the model after an add ----
+
+const NONE_READS = { ok: true, current: { source: 'bundled', build: 11513, label: 'bundled' }, candidates: [], download: { build: 12098, sizeBytes: 140e6 } };
+const AUTO_RUNS = { ok: true, current: { source: 'auto', build: 12098, label: 'llama-b12098-cuda13.4' }, candidates: [], download: null };
+
+async function addAndMove(h) {
+  h.click(ADD);
+  await flush();
+  h.click(action('move'));
+  await flush();
+}
+
+test('a build Jenny picks on its own is named, and Change in Tune opens Tune for that model', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no', autoBuild: { build: 12098, label: 'llama-b12098-cuda13.4' } }) });
+  h.document.body.insertAdjacentHTML('beforeend', `<button data-model-card-action="tune" data-model-tag="${TAG}">Tune</button>`);
+  let tuned = 0;
+  h.document.querySelector('[data-model-card-action="tune"]').addEventListener('click', () => { tuned += 1; });
+  await addAndMove(h);
+  assert.match(h.note(), /Added\. It runs on llama\.cpp build 12098\./);
+  assert.match(h.note(), /The bundled build can't read lfm3 models, so Jenny picks build 12098 each time it starts this model\./);
+  assert.equal(h.document.querySelector('.model-library-add').getAttribute('role'), 'status');
+  assert.equal(h.calls.some((call) => call[0] === 'runtimeOptions'), false, 'the plan already said it');
+  h.click(action('open-tune'));
+  assert.equal(tuned, 1);
+  assert.equal(h.note(), '');
+  h.controller.dispose();
+});
+
+test('Dismiss clears the build line', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no', autoBuild: { build: 12098, label: 'x' } }) });
+  await addAndMove(h);
+  h.click(action('dismiss'));
+  assert.equal(h.note(), '');
+  h.controller.dispose();
+});
+
+test('when no build reads it, the way out is Add runtime folder or Get build', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS } });
+  await addAndMove(h);
+  assert.deepEqual(h.calls.find((call) => call[0] === 'runtimeOptions'), ['runtimeOptions', { modelTag: TAG }]);
+  assert.match(h.note(), /Added, but no llama-server build Jenny knows can read lfm3 models\./);
+  assert.match(h.note(), /Add a folder of newer llama\.cpp builds, or get build 12098\./);
+  assert.deepEqual([...h.document.querySelectorAll('.model-library-add-actions .btn')].map((node) => node.textContent), ['Add runtime folder…', 'Get build 12098', 'Dismiss']);
+  h.controller.dispose();
+});
+
+test('with nothing to download, the line sends the user to Tune', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => ({ ...NONE_READS, download: null }) } });
+  await addAndMove(h);
+  assert.match(h.note(), /Add a folder of newer llama\.cpp builds, or choose a build in Tune\./);
+  assert.deepEqual([...h.document.querySelectorAll('.model-library-add-actions .btn')].map((node) => node.textContent), ['Add runtime folder…', 'Dismiss']);
+  h.controller.dispose();
+});
+
+test('Add runtime folder saves the picked folder, then asks again and shows the build that now reads it', async () => {
+  let answer = NONE_READS;
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => answer } });
+  h.document.defaultView.jennyShell.engines.getSettings = async () => ({ localEngines: { openaiCompatible: { managed: { runtimeRoots: [] } } } });
+  await addAndMove(h);
+  answer = AUTO_RUNS;
+  h.click(action('add-runtime-folder'));
+  await flush();
+  const saved = h.calls.filter((call) => call[0] === 'update').map((call) => call[1].managed.runtimeRoots).filter(Boolean);
+  assert.deepEqual(saved, [['D:\\builds']]);
+  assert.equal(h.calls.filter((call) => call[0] === 'runtimeOptions').length, 2);
+  assert.match(h.note(), /Added\. It runs on llama\.cpp build 12098\./);
+  h.controller.dispose();
+});
+
+test('a folder that still leaves no reader keeps the no-reader line', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS } });
+  await addAndMove(h);
+  h.click(action('add-runtime-folder'));
+  await flush();
+  assert.match(h.note(), /no llama-server build Jenny knows can read lfm3 models/);
+  h.controller.dispose();
+});
+
+test('when main will not say (flag off, no answer), today\'s warning shows unchanged', async () => {
+  for (const answer of [{ ok: false, reason: 'flag_off' }, null]) {
+    const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => answer } });
+    await addAndMove(h);
+    assert.match(h.note(), /The bundled llama-server can't run lfm3 models\./);
+    assert.match(h.note(), new RegExp(`Choose a newer llama-server build for ${TAG} in Tune, or update Jenny when a newer bundled build ships\\.`));
+    assert.deepEqual([...h.document.querySelectorAll('.model-library-add-actions .btn')].map((node) => node.textContent), ['Open Tune', 'Dismiss']);
+    h.controller.dispose();
+  }
+});
+
+test('Get build shows its progress, then the build that runs the model', async () => {
+  const statuses = [
+    { state: 'downloading', build: 12098, receivedBytes: 50 * 1024 * 1024, totalBytes: 100 * 1024 * 1024 },
+    { state: 'verifying', build: 12098, receivedBytes: 100 * 1024 * 1024, totalBytes: 100 * 1024 * 1024 },
+    { state: 'ready', build: 12098 },
+  ];
+  let answer = NONE_READS;
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => answer, status: () => statuses.shift() } });
+  await addAndMove(h);
+  h.click(action('get-build'));
+  await flush();
+  assert.deepEqual(h.calls.find((call) => call[0] === 'downloadStart'), ['downloadStart', { architecture: 'lfm3' }]);
+  assert.match(h.note(), /Getting build 12098/);
+  assert.deepEqual([...h.document.querySelectorAll('.model-library-add-actions .btn')].map((node) => node.textContent), ['Cancel']);
+  assert.equal(h.liveTimers(), 1);
+  h.tick();
+  await flush();
+  assert.equal(h.document.querySelector('[data-model-library-add-progress-text]').textContent, '50 MB of 100 MB');
+  assert.equal(h.document.querySelector('[data-model-library-add-bar]').style.width, '50%');
+  h.tick();
+  await flush();
+  assert.equal(h.document.querySelector('[data-model-library-add-progress-text]').textContent, 'Checking build 12098…');
+  answer = AUTO_RUNS;
+  h.tick();
+  await flush();
+  assert.match(h.note(), /Added\. It runs on llama\.cpp build 12098\./);
+  assert.equal(h.liveTimers(), 0, 'the poll stops once the build is ready');
+  h.controller.dispose();
+});
+
+test('a ready build that main still does not pick says it is ready', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, status: () => ({ state: 'ready', build: 12098 }) } });
+  await addAndMove(h);
+  h.click(action('get-build'));
+  await flush();
+  h.tick();
+  await flush();
+  assert.match(h.note(), /Build 12098 is ready\./);
+  h.click(action('dismiss'));
+  assert.equal(h.note(), '');
+  h.controller.dispose();
+});
+
+test('a download that failed its checksum says so and offers Try again', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, status: () => ({ state: 'failed', build: 12098, reason: 'sha_mismatch' }) } });
+  await addAndMove(h);
+  h.click(action('get-build'));
+  await flush();
+  h.tick();
+  await flush();
+  assert.match(h.note(), /Couldn't get build 12098\./);
+  assert.match(h.note(), /The download didn't match its checksum, so Jenny deleted it\./);
+  assert.deepEqual([...h.document.querySelectorAll('.model-library-add-actions .btn')].map((node) => node.textContent), ['Try again', 'Dismiss']);
+  assert.equal(h.liveTimers(), 0);
+  h.click(action('get-build'));
+  await flush();
+  assert.equal(h.calls.filter((call) => call[0] === 'downloadStart').length, 2);
+  h.controller.dispose();
+});
+
+test('every failure reason has its own sentence', async () => {
+  const wanted = {
+    network: /The download stopped\. Try again\./,
+    size_mismatch: /didn't match its checksum/,
+    unsafe_entry: /The archive looked wrong, so Jenny deleted it\./,
+    too_large: /The archive looked wrong/,
+    probe_failed: /The downloaded build didn't start\./,
+    local_only: /Local only is on, so Jenny downloads nothing\./,
+  };
+  for (const [reason, pattern] of Object.entries(wanted)) {
+    const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, status: () => ({ state: 'failed', build: 12098, reason }) } });
+    await addAndMove(h);
+    h.click(action('get-build'));
+    await flush();
+    h.tick();
+    await flush();
+    assert.match(h.note(), pattern, reason);
+    h.controller.dispose();
+  }
+});
+
+test('a download main refuses to start says why, and the choices stay', async () => {
+  const refusals = [
+    [{ ok: false, reason: 'local_only' }, /Local only is on, so Jenny downloads nothing\./],
+    [{ ok: false, reason: 'no_space', needBytes: 2254857830, freeBytes: 1181116006 }, /Needs 2\.1 GB free\. 1\.1 GB is free\./],
+    [{ ok: false, reason: 'busy' }, /Another build is downloading\./],
+    [{ ok: false, reason: 'flag_off' }, /Couldn't start the download\./],
+  ];
+  for (const [refusal, pattern] of refusals) {
+    const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, start: () => refusal } });
+    await addAndMove(h);
+    h.click(action('get-build'));
+    await flush();
+    assert.match(h.note(), pattern);
+    assert.equal(h.liveTimers(), 0, 'nothing to poll');
+    assert.ok(h.document.querySelector(action('get-build')), 'Get build is still there');
+    h.controller.dispose();
+  }
+});
+
+test('Cancel asks main to stop, and a cancelled download goes back to the no-reader line', async () => {
+  const statuses = [{ state: 'downloading', build: 12098, receivedBytes: 1, totalBytes: 100 }, { state: 'cancelled', build: 12098 }];
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, status: () => statuses.shift() } });
+  await addAndMove(h);
+  h.click(action('get-build'));
+  await flush();
+  h.click(action('download-cancel'));
+  await flush();
+  assert.ok(h.calls.some((call) => call[0] === 'downloadCancel'));
+  h.tick();
+  await flush();
+  h.tick();
+  await flush();
+  assert.match(h.note(), /no llama-server build Jenny knows can read lfm3 models/);
+  assert.equal(h.liveTimers(), 0);
+  h.controller.dispose();
+});
+
+test('closing Settings during a download leaves no timer running', async () => {
+  const h = harness({ plan: outsidePlan({ archSupport: 'no' }), runtime: { options: () => NONE_READS, status: () => ({ state: 'downloading', build: 12098, receivedBytes: 1, totalBytes: 100 }) } });
+  await addAndMove(h);
+  h.click(action('get-build'));
+  await flush();
+  assert.equal(h.liveTimers(), 1);
+  h.controller.dispose();
+  assert.equal(h.liveTimers(), 0);
 });

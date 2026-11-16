@@ -27,6 +27,12 @@ FEATURE_LOOP_RESULT_AWARE_SIGNATURE = "loop_result_aware_signature"
 FEATURE_EDIT_MATCH_FALLBACKS = "edit_match_fallbacks"
 # Row 96: live test-run progress for run_command; JENNY_ENABLE_TEST_PROGRESS=0 turns it off.
 FEATURE_TEST_PROGRESS = "test_progress"
+# Row 138: live output tail for a running background command;
+# JENNY_ENABLE_BACKGROUND_LIVE_OUTPUT=0 turns it off.
+FEATURE_BACKGROUND_LIVE_OUTPUT = "background_live_output"
+# Sketch blocks: the prompt teaches the sketch grammar instead of Mermaid;
+# JENNY_ENABLE_SKETCH_BLOCKS=0 puts the Mermaid line back.
+FEATURE_SKETCH_BLOCKS = "sketch_blocks"
 FEATURE_COMPACTION_REJECT_TRUNCATED_SUMMARY = "compaction_reject_truncated_summary"
 FEATURE_COMPACTION_MICRO_FIRST = "compaction_micro_first"
 FEATURE_COMPACTION_RECALL_TOOL = "compaction_recall_tool"
@@ -40,6 +46,7 @@ BUILTIN_DEFAULT_ON_FLAGS = (
     FEATURE_SHELL_HEAD_TAIL_OUTPUT,
     FEATURE_EDIT_MATCH_FALLBACKS,
     FEATURE_TEST_PROGRESS,
+    FEATURE_BACKGROUND_LIVE_OUTPUT,
 )
 
 

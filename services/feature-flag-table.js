@@ -205,6 +205,8 @@ const FEATURE_FLAG_ROWS = [
   { key: 'session_model_titles', env: 'SESSION_MODEL_TITLES', default: true, internal: true },
   { key: 'terminal_tools', env: 'TERMINAL_TOOLS', default: true, internal: true },
   { key: 'primary_scheduled_checks', env: 'PRIMARY_SCHEDULED_CHECKS', default: true, internal: true },
+  // Row 144: =0 lets a scheduled check run on any model again (the model pins still apply).
+  { key: 'scheduled_check_model_floor', env: 'SCHEDULED_CHECK_MODEL_FLOOR', default: true, internal: true },
   { key: 'primary_action_rules', env: 'PRIMARY_ACTION_RULES', default: true, internal: true },
   { key: 'absolute_path_links', env: 'ABSOLUTE_PATH_LINKS', default: true, internal: true },
   { key: 'data_usage_page', env: 'DATA_USAGE_PAGE', default: true, internal: true },
@@ -221,12 +223,16 @@ const FEATURE_FLAG_ROWS = [
   { key: 'api_providers', env: 'API_PROVIDERS', default: true, internal: true },
   // Row 123 slice 1f-1: off registers no team IPC, loads no services/team module,
   // reads nothing under <userData>/team/, opens no team connection and hides the
-  // Settings > Team section. DEFAULT-OFF (owner, 2026-11-10): team hosting stays
-  // out of public releases while the program is in progress; JENNY_ENABLE_TEAM=1
-  // turns it on for development.
-  { key: 'team', env: 'TEAM', default: false, internal: true },
+  // Settings > Team section. DEFAULT-ON (owner, 2026-11-15; it was off from the
+  // 1.7.0 cut of 2026-11-10 until then); JENNY_ENABLE_TEAM=0 is the kill switch.
+  { key: 'team', env: 'TEAM', default: true, internal: true },
+  // Row 123 slice 6-5: kill switch for model sharing on the member side; =0 answers every model method
+  // team_model_sharing_off and builds, reads and sends nothing. The host's own switch is a separate setting.
+  { key: 'team_model_sharing', env: 'TEAM_MODEL_SHARING', default: true, internal: true },
   { key: 'ide_hot_exit', env: 'IDE_HOT_EXIT', default: true, internal: true },
   { key: 'model_catalog_guard', env: 'MODEL_CATALOG_GUARD', default: true, internal: true },
+  // Startup and "Default" chats load only an installed default and never pull one (owner, 2026-11-13).
+  { key: 'no_silent_model_pull', env: 'NO_SILENT_MODEL_PULL', default: true, internal: true },
   // Row 60 harness fixes (sidecar-only), DEFAULT-ON and A/B-measured; =0 restores the old behaviour.
   { key: 'shell_noninteractive_env', env: 'SHELL_NONINTERACTIVE_ENV', default: true, internal: true },
   { key: 'shell_head_tail_output', env: 'SHELL_HEAD_TAIL_OUTPUT', default: true, internal: true },
@@ -373,10 +379,18 @@ const FEATURE_FLAG_ROWS = [
   // managed}` keys. DEFAULT-ON since 2026-09-01; =0 rolls back byte-identical
   // (no probe, no args, no DOM).
   { key: 'llama_server_acceleration', env: 'LLAMA_SERVER_ACCELERATION', default: true, internal: true },
+  // Row 142: a model the bundled llama-server cannot read launches on the newest
+  // trusted build that can (services/main/llama-server-runtime-choice.js); =0
+  // keeps every launch on the saved or bundled build and refuses runtime folders.
+  { key: 'auto_runtime_pick', env: 'AUTO_RUNTIME_PICK', default: true, internal: true },
   // Row 54: the managed NInfer runtime for an eligible RTX 5090. With the flag
   // off there is no nvidia-smi probe for NInfer, no NInfer IPC data and no
   // NInfer DOM. Not user-overridable.
   { key: 'ninfer', env: 'NINFER', default: true, internal: true },
+  // The free-VRAM check before a model loads (services/backend/vram-load-preflight.js):
+  // a load other programs' GPU memory would push into system RAM is refused
+  // and the programs are named. =0 loads without checking.
+  { key: 'vram_load_check', env: 'VRAM_LOAD_CHECK', default: true, internal: true },
   // Row 98: the Home "Usage" widget; =0 hides it.
   { key: 'home_usage_stats', env: 'HOME_USAGE_STATS', default: true, internal: true },
   // Row 102: allowlisted read-only shell commands run without an approval card,
@@ -386,11 +400,22 @@ const FEATURE_FLAG_ROWS = [
   // read-only draft tab, the chat row's four-line tail); =0 restores the 4 KB
   // argument preview and removes the draft, the tail and the status-bar switch.
   { key: 'follow_jenny', env: 'FOLLOW_JENNY', default: true, internal: true },
+  // Sketch blocks: the system prompt teaches the sketch grammar (Settings > Chat >
+  // Drawing instructions picks which text); =0 puts back the one Mermaid line.
+  { key: 'sketch_blocks', env: 'SKETCH_BLOCKS', default: true, internal: true },
+  // Row 150: project boards (the Board tab, the board store and its IPC). On by default
+  // since the owner's decision D27 (2026-11-14); =0 leaves no Board tab, no board IPC and
+  // no startup read.
+  { key: 'project_boards', env: 'PROJECT_BOARDS', default: true, internal: true },
 
   // ---- Defaults only: in neither exported key list ----
   // Rows 96-97 (2026-11-01): live test-run progress, cross-process work leases on run_command.
   { key: 'test_progress', env: 'TEST_PROGRESS', default: true },
   { key: 'work_leases', env: 'WORK_LEASES', default: true },
+  // Row 138: live output tail for a running background command (live-output.json beside status.json).
+  { key: 'background_live_output', env: 'BACKGROUND_LIVE_OUTPUT', default: true },
+  // Row 140: Get drafter / Get vision in the Tune drawer (main-process downloads beside the model).
+  { key: 'gguf_companions', env: 'GGUF_COMPANIONS', default: true },
 ];
 
 const FEATURE_FLAG_TABLE = Object.freeze(FEATURE_FLAG_ROWS.map((row) => Object.freeze(row)));

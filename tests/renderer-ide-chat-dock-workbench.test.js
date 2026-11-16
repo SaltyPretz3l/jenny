@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const { createIdeChatDock } = require('../renderer/features/renderer-ide-chat-dock');
+const { createIdeChatDock, getSharedChatDock } = require('../renderer/features/renderer-ide-chat-dock');
 const changesViewModule = require('../renderer/features/renderer-changes-view');
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -354,4 +354,111 @@ test('without a changes view hasUnread stays false and never repaints', (t) => {
   f.dock.reconcile();
   assert.equal(f.dock.hasUnread(), false);
   assert.equal(f.wb.countChanges, 0);
+});
+
+/* ---------- Hosts (row 150): a second page docks the same chat ---------- */
+
+function boardHost(f, board, reconcile) {
+  return {
+    id: 'board',
+    isActive: () => f.state.ui.activeView === 'board',
+    isOpen: () => board.open,
+    mirrorOpen: (open) => { board.mirror = open; },
+    workbench: {
+      setOpen: (open) => { board.open = open; reconcile(); },
+      isVisible: (id) => id === 'chat' && board.open,
+      reveal: () => true,
+      getChangesHost: () => null,
+      onCountChange() {},
+    },
+    layout: () => { board.layouts += 1; },
+  };
+}
+
+test('a second page docks the same transcript while it is the page on screen', (t) => {
+  const f = setup(t, { open: false });
+  const board = { open: true, mirror: null, layouts: 0 };
+  const page = f.dock.registerHost(boardHost(f, board, () => f.dock.reconcile()));
+  const body = f.byId('ideChatDockBody');
+  const docked = () => f.byId('composerWrap').parentNode === body && f.byId('chatThreadStage').parentNode === body;
+
+  f.dock.reconcile();
+  assert.equal(docked(), false, 'the Workspace is on screen and its chat is closed');
+  assert.equal(board.mirror, true, 'each page is told its own open state');
+  assert.equal(f.state.ui.ideChatDockOpen, false, 'the Workspace mirror follows the Workspace alone');
+
+  f.state.ui.activeView = 'board';
+  assert.equal(f.dock.reconcile(), true);
+  assert.equal(docked(), true);
+  assert.equal(board.layouts, 1, 'the page that gains the transcript lays out');
+  assert.equal(f.byId('ideChatDock').classList.contains('hidden'), false);
+  assert.equal(f.state.ui.ideChatDockOpen, false);
+
+  // Both pages open: the aside goes with the page, the transcript stays inside it.
+  f.mirror.open = true;
+  f.wb.visible.chat = true;
+  f.state.ui.activeView = 'ide';
+  assert.equal(f.dock.reconcile(), true, 'a change of page is reported');
+  assert.equal(docked(), true);
+  assert.equal(f.dock.reconcile(), false, 'and only once');
+  assert.equal(board.layouts, 1);
+
+  // The Board's own controls act on the Board's chat stack.
+  f.state.ui.activeView = 'board';
+  f.dock.reconcile();
+  page.close();
+  assert.equal(board.open, false);
+  assert.equal(f.byId('composerWrap').parentNode, f.byId('chatView'), 'closing the Board chat sends the transcript home');
+  assert.deepEqual(f.wb.setOpenCalls, [], 'the Workspace chat stack is not touched');
+  page.toggle();
+  assert.equal(docked(), true);
+
+  f.state.ui.activeView = 'chat';
+  f.dock.reconcile();
+  assert.equal(f.byId('chatThreadStage').parentNode, f.byId('chatView'));
+
+  page.unregister();
+  f.state.ui.activeView = 'board';
+  f.dock.reconcile();
+  assert.equal(docked(), false, 'a page that left no longer docks the chat');
+});
+
+test('shared: one controller per app state, alive until its last page leaves', (t) => {
+  const f = setup(t, { open: false });
+  assert.equal(getSharedChatDock(f.state), null, 'a controller of its own is not shared');
+  f.dock.dispose();
+  const common = {
+    state: f.state,
+    shared: true,
+    windowRef: f.dom.window,
+    getDom: () => ({
+      ideShell: f.byId('ideShell'),
+      ideChatDock: f.byId('ideChatDock'),
+      ideChatDockHeader: f.byId('ideChatDockHeader'),
+      ideChatDockBody: f.byId('ideChatDockBody'),
+    }),
+  };
+  const workspace = createIdeChatDock({ ...common, getIde: () => f.ide, workbench: f.wb });
+  const core = getSharedChatDock(f.state);
+  assert.ok(core, 'the first page creates the shared controller');
+  const board = { open: true, mirror: null, layouts: 0 };
+  const boardDock = createIdeChatDock({ ...common, host: boardHost(f, board, () => core.reconcile()) });
+  t.after(() => { workspace.dispose(); boardDock.dispose(); });
+  assert.equal(getSharedChatDock(f.state), core, 'the second page joins it');
+  assert.equal(core.hostCount(), 2);
+  assert.equal(getSharedChatDock({}), null);
+
+  f.state.ui.activeView = 'board';
+  assert.equal(core.reconcile(), true, 'the shell drives one reconcile for every page');
+  assert.equal(f.byId('composerWrap').parentNode, f.byId('ideChatDockBody'));
+
+  workspace.dispose();
+  assert.equal(getSharedChatDock(f.state), core, 'the controller outlives the Workspace page');
+  assert.equal(core.hostCount(), 1);
+  boardDock.close();
+  assert.equal(f.byId('composerWrap').parentNode, f.byId('chatView'));
+
+  boardDock.dispose();
+  assert.equal(getSharedChatDock(f.state), null);
+  assert.equal(core.reconcile(), false, 'a disposed controller does nothing');
 });

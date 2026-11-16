@@ -78,3 +78,41 @@ describe('Ask Jenny chip placement', () => {
     assert.equal(chip.style.top, '24px', 'above the first selected row (100 - 20 - 6 - 50)');
   });
 });
+
+// Pin to board (row 150 slice C5): the selection menu offers the selected text to the chat's pin entry, only for a selection.
+describe('Pin selection to board', () => {
+  const adapter = { kind: 'file', getPath: () => 'src/app.js', getLanguageId: () => 'js' };
+
+  function menuFor(h, { entry, selected }) {
+    h.win.rendererChatMessageActionBindings = entry;
+    const menus = [];
+    const actions = require('../renderer/features/renderer-panel-code-actions').createPanelCodeActions({
+      documentRef: h.doc, jt: (_key, fallback) => fallback, log: () => {}, contextMenu: { show: (opts) => menus.push(opts) }, actionButton,
+      writeClipboard: () => Promise.resolve(), insertIntoComposer: () => true, showToast: () => {},
+    });
+    actions.attach(h.body, adapter);
+    if (selected) select(h.win, textOf(rowCode(h.body, 0)), 0, textOf(rowCode(h.body, 0)), 5);
+    else h.win.getSelection().removeAllRanges();
+    h.body.dispatchEvent(new h.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    return { menus, labels: () => menus[0].items.map((item) => item.label) };
+  }
+
+  test('a selection adds one item that pins its text as a note under its own heading', () => {
+    const h = makeHarness();
+    const asked = [];
+    const menu = menuFor(h, { selected: true, entry: { pinMenuItem: (args) => { asked.push(args); return { label: args.label, action() {} }; } } });
+    const labels = menu.labels();
+    assert.ok(labels.indexOf('Pin selection to board') > labels.indexOf('Ask Jenny'), labels.join(' | '));
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0].item, { kind: 'note', text: 'alpha' });
+    assert.equal(asked[0].heading, 'Pin selection to board');
+    assert.equal(asked[0].windowRef, h.win);
+  });
+
+  test('with no selection, a declining entry or no entry the menu is as it was', () => {
+    const entry = { pinMenuItem: () => ({ label: 'Pin selection to board', action() {} }) };
+    assert.equal(menuFor(makeHarness(), { selected: false, entry }).labels().includes('Pin selection to board'), false);
+    assert.equal(menuFor(makeHarness(), { selected: true, entry: { pinMenuItem: () => null } }).labels().includes('Pin selection to board'), false);
+    assert.equal(menuFor(makeHarness(), { selected: true, entry: undefined }).labels().includes('Pin selection to board'), false);
+  });
+});

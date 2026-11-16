@@ -36,6 +36,10 @@ const {
   writeLastRun,
   writeJunitReport,
 } = require('./run-node-tests-safe-support');
+const {
+  loadSlowLane, selectFastLane, formatFastLaneNote, formatFastLaneDrift,
+} = require('./run-node-tests-safe-slow-lane');
+const { applyPythonGate, describePythonGate } = require('./run-node-tests-safe-python-gate');
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_PER_FILE_TIMEOUT_MS = 120_000;
@@ -72,6 +76,9 @@ const SKIPPED_DIRECTORIES = new Set([
   '__pycache__',
   'build',
   'dist',
+  // Fixture trees hold sample projects whose *.test.js files are data, not
+  // tests of this repo. A fixture file named on the command line still runs.
+  'fixtures',
   'node_modules',
 ]);
 // SEQUENTIAL_BASENAME_PATTERNS, the stable-lane exclusion list, and
@@ -179,6 +186,8 @@ function parseArgs(argv, options = {}) {
   let useDefaultTestFlags = true;
   let sequentialOnly = false;
   let parallelOnly = false;
+  let fastOnly = false;
+  const explicit = new Set(); // files named on the command line, as repo paths
   let failFast = false;
   // Lane overlap default-ON; JENNY_TEST_LANE_OVERLAP=0 is the env rollback and
   // --no-lane-overlap the per-run rollback to strict parallel-then-sequential.
@@ -211,6 +220,10 @@ function parseArgs(argv, options = {}) {
     }
     if (arg === '--parallel-only') {
       parallelOnly = true;
+      continue;
+    }
+    if (arg === '--fast-only') {
+      fastOnly = true;
       continue;
     }
     if (arg === '--fail-fast') {
@@ -273,9 +286,10 @@ function parseArgs(argv, options = {}) {
     }
     // Expand directory arguments to *.test.js files so `tests/` works
     // alongside explicit file paths. Non-directory args pass through.
-    for (const expanded of expandDirectoryArg(arg, { includeLoad, excluded: excludedLoadFiles })) {
-      childArgs.push(expanded);
-    }
+    const expanded = expandDirectoryArg(arg, { includeLoad, excluded: excludedLoadFiles });
+    // A directory never expands to itself, so this is a file named on the command line.
+    if (expanded.length === 1 && expanded[0] === arg) explicit.add(normalizeChildArgPath(arg, cwd));
+    for (const file of expanded) childArgs.push(file);
   }
 
   // --last-failed / --changed narrow the matched set post-expansion. Injectable
@@ -288,7 +302,19 @@ function parseArgs(argv, options = {}) {
     lastFailedSet: options.lastFailedSet,
     changedSet: options.changedSet,
   });
-  const effectiveChildArgs = filterResult.childArgs;
+  // --fast-only narrows what discovery found to the stable lane minus the slow
+  // list. Named files stay, and so does a --last-failed/--changed selection,
+  // which is as targeted as a named file (see run-node-tests-safe-slow-lane.js).
+  let fastLane = null;
+  let laneChildArgs = filterResult.childArgs;
+  if (fastOnly && !filterResult.filtered) {
+    ({ childArgs: laneChildArgs, ...fastLane } = selectFastLane(laneChildArgs, { explicit, slowLane: loadSlowLane(cwd), cwd }));
+  }
+  // Sidecar-backed suites cannot run in a tree with no .venv (see the gate module).
+  const pythonGate = applyPythonGate(laneChildArgs, {
+    explicit, cwd, env: options.env, targeted: filterResult.filtered, managed: useDefaultTestFlags,
+  });
+  const effectiveChildArgs = pythonGate.childArgs;
 
   const timeoutMs = resolveTimeoutMs(effectiveChildArgs, explicitTimeoutMs, cwd);
   const timeoutOverrides = loadTimeoutOverrides(cwd);
@@ -298,6 +324,8 @@ function parseArgs(argv, options = {}) {
     parallelWorkers,
     sequentialOnly,
     parallelOnly,
+    fastLane,
+    pythonGate,
     failFast,
     laneOverlap,
     verbose,
@@ -753,15 +781,29 @@ async function main() {
         'from directory discovery (pass --include-load to run them; they ride the heavy lane / check:all)'
     );
   }
+  if (parsed.fastLane) {
+    console.log(`[run-node-tests-safe] ${formatFastLaneNote(parsed.fastLane)}`);
+  }
   if (parsed.filterNote) {
     console.log(`[run-node-tests-safe] ${parsed.filterNote}`);
   }
   const startedAt = Date.now();
   const managed = parsed.useDefaultTestFlags;
   const monitor = createRunMonitor({ startedAt, enabled: managed });
-  const state = { activeChildren: new Set(), inFlight: new Set(), monitor, results: [], notRun: [] };
+  // Listed files the python gate refused count as not run, which fails the run.
+  const state = { activeChildren: new Set(), inFlight: new Set(), monitor, results: [], notRun: [...parsed.pythonGate.failed] };
 
   if (managed && parsed.childArgs.length === 0) {
+    const gated = describePythonGate(parsed.pythonGate);
+    if (gated.length > 0) {
+      // Every matched file needs the venv this tree lacks: nothing to start.
+      if (parsed.junitPath) writeJunitReport(parsed.junitPath, { results: [], notRun: state.notRun, elapsedMs: 0 });
+      console.log(formatRunSummary({ notRun: state.notRun }));
+      for (const line of gated) console.log(line);
+      writeLastRun(process.cwd(), collectRerunTargets(state));
+      process.exitCode = resolveOverallExitCode(state);
+      return;
+    }
     if (parsed.filterApplied) {
       // A --last-failed/--changed filter matched nothing: there is genuinely
       // nothing to re-run, which is success, not a "no files matched" error.
@@ -844,6 +886,10 @@ async function main() {
       inFlight: [...state.inFlight],
       elapsedMs,
     }));
+    for (const line of describePythonGate(parsed.pythonGate)) console.log(line);
+    if (parsed.fastLane) {
+      for (const line of formatFastLaneDrift(state.results, parsed.fastLane)) console.log(line);
+    }
   };
 
   const finish = async (code) => {

@@ -16,6 +16,7 @@ const {
   buildTurnEventFromStreamPayload,
 } = require('../renderer/chat/renderer-turn-reducer');
 const { reconcileTurnRows } = require('../renderer/chat/renderer-row-identity-utils');
+const { projectPersistedEventsWithReducer } = require('../renderer/chat/renderer-stream-rehydrate');
 
 const SESSION = 'session-hb7';
 const STREAM = 'stream-hb7';
@@ -158,6 +159,19 @@ test('reload: the persisted notice rehydrates before its own segment, not at the
     'system_notice/context_compacted',
     'assistant_text_segment',
   ]);
+});
+
+// Reopen paints projectTurnRows; the terminal fold replays turn.events through
+// the reducer. Both must draw the notice where it happened, not at the top.
+test('reload: the rendered rows keep the notice after the tool, on reopen and in the terminal fold', () => {
+  const tree = projectTurnTree({ messages: MESSAGES, turn_events: finalizeCanonicalTurn(), turn_event_log_version: 4 });
+  const turnEvents = tree.turns.find((turn) => turn.turn_id === TURN).events;
+  const expected = ['user_bubble', 'assistant_text', 'tool_call', 'tool_result', 'system_notice/context_compacted', 'assistant_text'];
+  const reopened = projectTurnRows(turnEvents, { deterministicRowId: true }).map(rowLabel);
+  assert.deepEqual(reopened, expected);
+  const folded = projectPersistedEventsWithReducer(turnEvents, { turnId: TURN, deterministicRowId: true }).rows
+    .map(rowLabel).filter((label) => label !== 'tool_result');
+  assert.deepEqual(folded, expected.filter((label) => label !== 'tool_result'));
 });
 
 test('reconcile: live provisional rows fold onto the hydrated notice without a duplicate', () => {

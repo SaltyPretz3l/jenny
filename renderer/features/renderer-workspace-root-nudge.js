@@ -1,13 +1,17 @@
 /* renderer/features/renderer-workspace-root-nudge.js
  *
- * Slim dismissible hint above the composer, in one of two states:
+ * One quiet line above the composer (no box, no icon), in one of two states.
+ * It shows only while the chat has no messages yet: once a chat is under way
+ * the composer's project pill is the standing answer to "where is this chat".
  *
  *   set-root    no Workspace folder is configured at all.
  *   use-folder  a folder is configured, but this chat's project has none
  *               (General, or a project that was unbound by hand), so file
  *               tools are off for this chat. The action adopts the workspace
  *               project through `projects.adoptWorkspace` (idle chats only;
- *               nothing is retargeted without this explicit click).
+ *               nothing is retargeted without an explicit click). Choosing a
+ *               folder from the set-root line is that click too: the chat it
+ *               was shown on is put in the new folder in the same step.
  *
  * Projects v2 (2026-09-20) also owns the composer's project pill
  * (#composerProjectPillSlot, beside the run-mode and model pills): it names
@@ -66,34 +70,31 @@
       || null;
   }
 
-  function dismissButtonHtml(actionButton) {
+  function dismissButtonHtml(actionButton, label) {
     return actionButton({
       plain: true,
       className: 'workspace-root-nudge-dismiss',
-      label: '✕',
-      ariaLabel: jt('projects.nudge.dismiss', 'Dismiss Workspace folder hint'),
-      title: jt('projects.nudge.dismiss', 'Dismiss Workspace folder hint'),
+      label: label,
       dataset: { 'workspace-root-nudge-action': 'dismiss' },
     });
   }
 
   function chipOpen(variant, key) {
     return '<div class="workspace-root-nudge" id="' + CHIP_ID + '" role="status" data-workspace-root-nudge'
-      + ' data-nudge-variant="' + escapeHtml(variant) + '" data-nudge-key="' + escapeHtml(key) + '">'
-      + '<span class="workspace-root-nudge-icon" aria-hidden="true">⚠</span>';
+      + ' data-nudge-variant="' + escapeHtml(variant) + '" data-nudge-key="' + escapeHtml(key) + '">';
   }
 
   function buildChipHtml() {
     var actionButton = resolveActionButton();
     return chipOpen('set-root', 'set-root')
-      + '<span class="workspace-root-nudge-text">' + escapeHtml(jt('projects.nudge.noFolder', 'No Workspace folder set — file tools are off for this chat.')) + '</span>'
+      + '<span class="workspace-root-nudge-text">' + escapeHtml(jt('projects.nudge.chooseFirst', 'File tools are off until you choose a folder to work in.')) + '</span>'
       + actionButton({
         plain: true,
         className: 'workspace-root-nudge-action',
-        label: jt('projects.nudge.setFolder', 'Set Workspace folder'),
+        label: jt('projects.nudge.chooseFolder', 'Choose folder…'),
         dataset: { 'workspace-root-nudge-action': 'set-root' },
       })
-      + dismissButtonHtml(actionButton)
+      + dismissButtonHtml(actionButton, jt('projects.nudge.notNow', 'Not now'))
       + '</div>';
   }
 
@@ -134,19 +135,25 @@
   function buildUseFolderChipHtml(candidate) {
     var actionButton = resolveActionButton();
     var folder = folderName(candidate.rootPath);
+    // A failed adopt says so in plain words; the raw reason goes to the log.
+    var text = candidate.failed
+      ? jt('workspace.rootNudge.useFolderDidNotWork', 'Couldn\'t put this chat in {folder}.', { folder: folder })
+      : jt('workspace.rootNudge.noFolderYet', 'This chat has no folder, so file tools are off.');
     return chipOpen('use-folder', candidate.key)
-      + '<span class="workspace-root-nudge-text">' + escapeHtml(jt('workspace.rootNudge.unboundChat', 'This chat has no folder — file tools are off for it.')) + '</span>'
+      + '<span class="workspace-root-nudge-text">' + escapeHtml(text) + '</span>'
       + actionButton({
         plain: true,
         className: 'workspace-root-nudge-action',
-        label: jt('workspace.rootNudge.useFolder', 'Use {folder}', { folder: folder }),
+        label: candidate.failed
+          ? jt('workspace.rootNudge.tryAgain', 'Try again')
+          : jt('workspace.rootNudge.useFolder', 'Use {folder}', { folder: folder }),
         title: candidate.idle
           ? candidate.rootPath
           : jt('workspace.rootNudge.waitIdle', 'Wait for this chat to finish first.'),
         disabled: !candidate.idle,
         dataset: { 'workspace-root-nudge-action': 'use-folder' },
       })
-      + dismissButtonHtml(actionButton)
+      + dismissButtonHtml(actionButton, jt('workspace.rootNudge.notThisChat', 'Not for this chat'))
       + '</div>';
   }
 
@@ -179,6 +186,13 @@
     var switcherRequested = false;
     var unsubscribeProjects = null;
     var adoptInFlight = '';
+    // The chat and folder whose last "Use <folder>" failed (the line offers
+    // Try again); another chat or another folder starts clean.
+    var adoptFailed = '';
+
+    function adoptKey(sessionId) {
+      return sessionId + '|' + workspaceRootPath();
+    }
 
     function workspaceRootPath() {
       var workspaceRootState = state && state.workspaceRoot;
@@ -197,6 +211,16 @@
         if (String(sessions[i] && sessions[i].id || '').trim() === id) return sessions[i];
       }
       return null;
+    }
+
+    // A chat that is under way gets no line: the hint is for the moment
+    // before the first message, and the pill names the project after that.
+    function chatHasMessages(session) {
+      if (!session) return false;
+      if (Number(session.message_count) > 0) return true;
+      var map = state.messagesBySession;
+      var list = map && typeof map.get === 'function' ? map.get(String(session.id || '').trim()) : null;
+      return Array.isArray(list) && list.length > 0;
     }
 
     // Mirrors the idle rule of the Settings > Projects section (the former
@@ -360,11 +384,13 @@
       if (projectRootState(String(session.project_id || '').trim()) !== 'unbound') return null;
       var rootPath = workspaceRootPath();
       var idle = isSessionIdle(session) && adoptInFlight !== sessionId;
+      var failed = adoptFailed === adoptKey(sessionId);
       return {
         sessionId: sessionId,
         rootPath: rootPath,
         idle: idle,
-        key: ['use-folder', sessionId, idle ? 'idle' : 'busy', rootPath].join('|'),
+        failed: failed,
+        key: ['use-folder', sessionId, idle ? 'idle' : 'busy', failed ? 'failed' : '', rootPath].join('|'),
       };
     }
 
@@ -406,6 +432,10 @@
       // Boot seed: the root state is not authoritative until the feature
       // payload lands, so no chip mounts (and flashes) before hydration.
       if (state && state.features && state.features.availabilityResolved === false) {
+        removeExistingChip();
+        return;
+      }
+      if (chatHasMessages(currentSession())) {
         removeExistingChip();
         return;
       }
@@ -453,6 +483,9 @@
       Promise.resolve(chooseWorkspaceRoot())
         .then(disposalFence.guard(function () {
           render();
+          // One step, not two: the folder was chosen from this chat's line,
+          // so this chat goes in it. A cancelled picker leaves no folder set.
+          if (isWorkspaceRootConfigured()) handleUseFolderClick();
         }))
         .catch(disposalFence.guard(function (error) {
           appendClientLog('WARN', 'workspace_root_nudge.choose_failed', {
@@ -462,14 +495,9 @@
     }
 
     function showAdoptFailure(sessionId, message) {
-      var chip = existingChip();
-      var text = chip && chip.querySelector ? chip.querySelector('.workspace-root-nudge-text') : null;
-      if (text) {
-        text.textContent = jt('workspace.rootNudge.useFolderFailed', 'Could not use {folder}: {message}', {
-          folder: folderName(workspaceRootPath()), message: message,
-        });
-      }
+      adoptFailed = adoptKey(sessionId);
       appendClientLog('WARN', 'workspace_root_nudge.adopt_failed', { sessionId: sessionId, message: message });
+      render();
     }
 
     function applyAdoptedSession(session, project) {
@@ -500,6 +528,7 @@
       }
       var sessionId = candidate.sessionId;
       adoptInFlight = sessionId;
+      adoptFailed = '';
       render();
       var pending;
       try {
@@ -512,7 +541,6 @@
           adoptInFlight = '';
           if (!result || result.ok === false) {
             var error = result && result.error;
-            render();
             showAdoptFailure(sessionId, String(error && (error.message || error.reason) || 'adopt_failed'));
             return;
           }
@@ -525,7 +553,6 @@
         }))
         .catch(disposalFence.guard(function (error) {
           adoptInFlight = '';
-          render();
           showAdoptFailure(sessionId, error && error.message ? error.message : String(error));
         }));
     }

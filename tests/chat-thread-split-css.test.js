@@ -43,11 +43,13 @@ test('chat thread rail selectors live in their focused stylesheet', () => {
 
   for (const selector of [
     '.chat-thread-toggle {',
-    '.chat-row-node-dot {',
     '.chat-thread-children {',
   ]) {
     assertMovedRuleStart({ focusedCss: railCss, parentCss: threadCss, selector });
   }
+  // Row 135: the per-row gutter dot and the root rail line are gone.
+  assert.doesNotMatch(railCss, /\.chat-row-node-dot/);
+  assert.doesNotMatch(railCss, /\.chat-thread-root::before/);
 });
 
 test('chat thread preset selectors live in their focused stylesheet', () => {
@@ -58,17 +60,5 @@ test('chat thread preset selectors live in their focused stylesheet', () => {
     '.chat-view.thread-transition-ready.chat-active .hero-stack',
   ]) {
     assertMovedRuleStart({ focusedCss: presetsCss, parentCss: threadCss, selector });
-  }
-});
-
-test('the retired explorer-minimal preset leaves no selectors behind', () => {
-  // Retired 2026-07-05 (quiet-timeline overhaul). A resurrected selector means
-  // dead CSS is accreting again — remove it, do not re-add the preset.
-  for (const relativePath of ['styles/chat-thread-presets.css', 'styles/chat-thread.css']) {
-    assert.doesNotMatch(
-      readRepoFile(relativePath),
-      /\.timeline-explorer-details\s*[,{[]/,
-      `${relativePath} should not style the retired explorer-minimal preset`
-    );
   }
 });

@@ -31,6 +31,7 @@ function fixture(t, { realMarkdown = false } = {}) {
     getReasoningEntries: (message) => message.phases.flatMap((phase) => phase.entries),
     renderMarkdown: (text, options) => {
       assert.equal(options.mermaid, 'plain');
+      assert.equal(options.codeBlocks, 'plain');
       calls.push(text);
       return markdown ? markdown.renderMarkdown(text, options) : `<p>${text}</p>`;
     },
@@ -158,17 +159,20 @@ test('runtime renderer and inline-path helper replacements invalidate settled bo
   assert.equal(f.calls.length, 3);
 });
 
-test('code blocks bypass memo for private highlighting state and generated IDs', (t) => {
+test('bodies with fenced code are served from the memo: plain thinking code has no highlight state or IDs', (t) => {
   const f = fixture(t, { realMarkdown: true });
   f.message.phases[0].entries[0].text = '```js\nconst value = 1;\n```';
-  f.render();
-  f.render();
-  assert.equal(f.calls.length, 2);
+  const short = f.body(f.render());
+  assert.equal(f.body(f.render()), short);
+  assert.equal(f.calls.length, 1);
+  assert.match(short, /<pre class="thinking-code">/);
   f.message.phases[0].entries[0].text = `\`\`\`js\n${'const value = 1;\n'.repeat(30)}\`\`\``;
   const first = f.body(f.render());
-  const second = f.body(f.render());
-  assert.notEqual(first, second, 'preserve the existing per-render code ID allocation');
-  assert.equal(f.calls.length, 4);
+  assert.equal(f.body(f.render()), first, 'a long block renders the same markup twice');
+  assert.equal(f.calls.length, 2);
+  f.i18n.load({ tag: 'en', strings: { 'markdown.code.copyLabel': 'Copy this code' } });
+  assert.match(f.body(f.render()), /aria-label="Copy this code"/, 'a code Copy label change invalidates');
+  assert.equal(f.calls.length, 3);
 });
 
 test('a settled phase fingerprint ignores the rendering scope and tracks its own content', (t) => {

@@ -448,7 +448,8 @@
       if (!registry || typeof registry.register !== 'function') {
         return noop;
       }
-      const when = (ctx) => ctx.activeView === 'ide' && ctx.hasActiveFile === true;
+      // An outside-Workspace document (row 137) is an editor buffer too.
+      const when = (ctx) => ctx.activeView === 'ide' && (ctx.hasActiveFile === true || ctx.activeKind === 'outside');
       const rows = [
         ['ide:change-language-mode', jt('ide.statusCommands.changeLanguageMode', 'Change Language Mode'), () => openLanguagePicker(chipAnchor('language')), ['ctrl+k m']],
         ['ide:change-eol', jt('ide.statusCommands.changeEol', 'Change End of Line Sequence'), () => openPicker('eol', chipAnchor('eol'))],

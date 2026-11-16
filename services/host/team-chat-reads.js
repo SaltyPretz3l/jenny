@@ -10,8 +10,9 @@ const channels = require('./team-chat-channel');
 const { refuse } = require('./team-chat-files');
 
 const readMethods = {
+  // Segments and attachment blobs (slice 2c host), as retention counts the tree.
   totalBytes() {
-    let total = 0;
+    let total = this._blobs.total();
     for (const state of this._channels.values()) total += state.doc.bytes;
     return total;
   },
@@ -23,7 +24,9 @@ const readMethods = {
   _docInfo(state) {
     const doc = state.doc;
     return { channel_id: doc.channel_id, kind: doc.kind, rev: doc.rev, last_seq: doc.next_seq - 1,
-      floor_seq: doc.floor_seq, archived: doc.archived !== null, broken: state.broken !== null };
+      floor_seq: doc.floor_seq, archived: doc.archived !== null, broken: state.broken !== null, pin_count: doc.pins.length,
+      // A direct conversation's stored participants (2d); no other channel has the key.
+      ...(doc.participants ? { participants: doc.participants } : {}) };
   },
 
   // The channel document's view without loading a segment (typing's existence check).
@@ -99,16 +102,17 @@ const readMethods = {
 
   // The unread walk: messages after `afterSeq`, newest first, every timeline
   // message and the replies whose thread `follows(rootId, members)` admits;
-  // at most `limit` (1 to RECENT_LIMIT_MAX), `more` when further ones exist.
-  // Light records only: { seq, author, mentions, deleted } (deleted a boolean).
-  recentMessages(channelId, { afterSeq, limit, follows } = {}) {
+  // at most `limit` (1 to RECENT_LIMIT_MAX), `more` when further ones exist. Timeline messages count only after
+  // `timelineAfter` (default `afterSeq`; E59 walks back to the oldest thread mark).
+  // Light records only: { seq, root_id, author, mentions, deleted } (deleted a boolean).
+  recentMessages(channelId, { afterSeq, limit, follows, timelineAfter = afterSeq } = {}) {
     return this._readOp(() => {
       const state = this._channel(channelId);
       if (!schema.isCount(afterSeq) || !schema.isPositive(limit) || limit > schema.LIMITS.RECENT_LIMIT_MAX
-        || typeof follows !== 'function') {
+        || typeof follows !== 'function' || !schema.isCount(timelineAfter)) {
         refuse('invalid', 'team_chat_request_invalid');
       }
-      const page = channels.recentEntries(state, { afterSeq, limit, follows });
+      const page = channels.recentEntries(state, { afterSeq, limit, follows, timelineAfter });
       return { ok: true, messages: channels.unreadRecords(state, page.entries, this._io), more: page.more };
     });
   },

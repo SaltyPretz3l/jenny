@@ -288,7 +288,7 @@ test('following a thread twice the same way writes nothing', async (t) => {
   fx.takeWrites();
   assert.equal((await store.follow({ channelId: 'chan_team', actorId: BOB, rootId: root.message_id, on: true })).ok, true);
   assert.deepEqual(fx.takeWrites(), []);
-  assert.deepEqual(fx.openStore().readState('chan_team', BOB).followed, [{ root_id: root.message_id, on: true }]);
+  assert.deepEqual(fx.openStore().readState('chan_team', BOB).followed, [{ root_id: root.message_id, on: true, read_seq: 0 }]);
 });
 
 // ------------------------------------------------------------ paging

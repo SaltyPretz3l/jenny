@@ -25,9 +25,29 @@
 // A state snapshot never carries the key or an invite; `owner_invite` goes to
 // the start's `onOwnerInvite` once and is not kept. Logs carry event names,
 // states and reasons only.
+//
+// `start` may take the owner's relay token, sent only in `start` beside the
+// key. `reach { result, reason }` (server/team/transport/reach.js) is the
+// snapshot's `reach` while running and null in every other state; a `reach`
+// with a word outside the lists is dropped like any malformed message. A change
+// that is only the verdict logs `team.host.reach`, not another state line.
+// Listeners hear a verdict-only change at most once per `reachPushMs`, with the
+// newest verdict; a state change is told at once and never waits.
+//
+// The child's stdout goes to the run's log sink (host-log.js, E51) until the run is released.
+//
+// Slice 6-7: `setModelRelay(n)` posts the owner's relay setting to the running host; the host's
+// `model_relay { flowing, passing }` is the snapshot's `relay` while running (null otherwise), told like a
+// verdict: at most once per `reachPushMs`, and only when it moved.
 
-const { isOutbound } = require('../../../server/team/parent-channel');
+const path = require('node:path');
+
+const { MAX_RELAY_FLOWING, isOutbound } = require('../../../server/team/parent-channel');
+const { REACH_REASONS, REACH_RESULTS } = require('../../../server/team/transport/reach');
+const { isAddressHint, isRelayToken } = require('../../../server/team/invites');
 const { invalidRequest, teamFailure } = require('../team-errors');
+const { createHostLogSink } = require('./host-log');
+const { LOGS_DIR_NAME } = require('./host-layout');
 
 const DEFAULT_BOUNDS = Object.freeze({
   // The host's own stop is ~1 to 3 s (bridge stop, then the hosted sidecar's 5 s graceful
@@ -38,10 +58,18 @@ const DEFAULT_BOUNDS = Object.freeze({
   // Lock, key (the host's own 10 s), store, backend start, bridge: a generous ceiling.
   startMs: 120_000,
   pingMs: 5_000,
+  // The least time between two pushes that only carry a new verdict.
+  reachPushMs: 1_000,
 });
+const SYSTEM_CLOCK = Object.freeze({ now: () => Date.now(), setTimeout, clearTimeout });
 const REASON = /^[a-z][a-z0-9_]{0,79}$/u;
+const CHILD_STDIO = Object.freeze(['ignore', 'pipe', 'ignore']);
 const MAX_ADDRESSES = 16;
 const MAX_TEXT = 256;
+// The router's outside address for the direct port, as the bridge writes it.
+const MAPPED_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}$/u;
+// The relay's transfer records (model-manifest.js maxTransferRecords): more cannot be passing.
+const MAX_PASSING = 256;
 
 const text = (value) => typeof value === 'string' && value.length > 0 && value.length <= MAX_TEXT;
 
@@ -56,6 +84,13 @@ function parseHostMessage(value) {
     case 'owner_invite': return text(value.invite) ? Object.freeze({ ...value }) : null;
     case 'membership_changed': return REASON.test(value.kind) && text(value.member_id) ? Object.freeze({ ...value }) : null;
     case 'error': return typeof value.reason === 'string' && REASON.test(value.reason) ? Object.freeze({ ...value }) : null;
+    case 'mapped': return value.external === null || (MAPPED_ADDRESS.test(value.external) && isAddressHint(value.external))
+      ? Object.freeze({ ...value }) : null;
+    case 'reach': return REACH_RESULTS.includes(value.result) && REACH_REASONS.includes(value.reason) ? Object.freeze({ ...value }) : null;
+    case 'model_relay': {
+      const count = (n, max) => Number.isSafeInteger(n) && n >= 0 && n <= max;
+      return count(value.flowing, MAX_RELAY_FLOWING) && count(value.passing, MAX_PASSING) ? Object.freeze({ ...value }) : null;
+    }
     default: return Object.freeze({ type: value.type }); // stopped, owner_exists
   }
 }
@@ -63,27 +98,83 @@ function parseHostMessage(value) {
 const hostFailure = (reason) => teamFailure('HOST_UNAVAILABLE', reason);
 const now = () => Date.now();
 
-function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = () => {} }) {
+// The logs folder beside the config the child was started with, or null when the arguments name none.
+function logsDirOf(args) {
+  const index = args.indexOf('--config');
+  const configPath = index >= 0 ? args[index + 1] : null;
+  return typeof configPath === 'string' && path.isAbsolute(configPath) ? path.join(path.dirname(configPath), LOGS_DIR_NAME) : null;
+}
+
+function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = () => {}, clock = SYSTEM_CLOCK }) {
   if (typeof fork !== 'function') throw new TypeError('createHostSupervisor requires fork.');
   const limits = { ...DEFAULT_BOUNDS, ...bounds };
   const listeners = new Set();
   const say = (level, event, fields) => { try { log(level, event, fields); } catch { /* best effort */ } };
-  let state = { state: 'stopped', team_id: null, team_name: null, addresses: [], reason: null, since: now() };
+  let state = { state: 'stopped', team_id: null, team_name: null, addresses: [], reason: null, reach: null, relay: null, since: now() };
   let run = null;
+  // The running host's mapped address (`mapped`), for the reconnect code; null in every other state.
+  let mappedAddress = null;
+  // The last released run's sink while it reads the exited child's last lines (at most one second).
+  let logClosing = Promise.resolve();
+  // The verdict listeners were last told, when a verdict-only push last went out, and the one waiting.
+  let toldReach = null;
+  let lastReachPush = -Infinity;
+  let reachTimer = null;
 
   function snapshot() {
-    return { ...state, addresses: [...state.addresses] };
+    return { ...state, addresses: [...state.addresses], reach: state.reach ? { ...state.reach } : null, relay: state.relay ? { ...state.relay } : null };
   }
 
-  function setState(patch) {
-    const next = { ...state, ...patch, since: now() };
-    const changed = next.state !== state.state || next.reason !== state.reason || next.team_id !== state.team_id;
-    state = next;
-    if (!changed) return;
-    say('INFO', 'team.host.state', { state: state.state, ...(state.reason ? { reason: state.reason } : {}) });
+  // One word for a verdict, so two verdicts compare once; null stays null.
+  const reachWord = (reach) => (reach ? `${reach.result}/${reach.reason}` : null);
+  // The verdict and the relay's numbers together: what a quiet push tells.
+  const quietWord = (s) => `${reachWord(s.reach)}|${s.relay ? `${s.relay.flowing}/${s.relay.passing}` : ''}`;
+
+  function tell() {
+    toldReach = quietWord(state);
     for (const listener of [...listeners]) {
       try { listener(snapshot()); } catch { /* a listener's failure is its own */ }
     }
+  }
+
+  function dropReachPush() {
+    if (reachTimer !== null) clock.clearTimeout(reachTimer);
+    reachTimer = null;
+  }
+
+  // A verdict-only push: now, or at the end of the interval since the last one; nothing when the verdict
+  // listeners last heard is the newest one again.
+  function pushReach() {
+    reachTimer = null;
+    if (quietWord(state) === toldReach) return;
+    lastReachPush = clock.now();
+    const verdictMoved = String(toldReach).split('|')[0] !== String(reachWord(state.reach));
+    if (state.reach && verdictMoved) say('INFO', 'team.host.reach', { result: state.reach.result, reason: state.reach.reason });
+    tell();
+  }
+
+  function setState(patch) {
+    // `since` is when the state word last moved; a new verdict alone keeps it.
+    const next = { ...state, ...patch, since: Object.hasOwn(patch, 'state') ? now() : state.since };
+    // A verdict belongs to one running host.
+    if (next.state !== 'running') { next.reach = null; next.relay = null; mappedAddress = null; }
+    const moved = next.state !== state.state || next.reason !== state.reason || next.team_id !== state.team_id;
+    const reachMoved = quietWord(next) !== quietWord(state);
+    state = next;
+    if (moved) {
+      dropReachPush();
+      say('INFO', 'team.host.state', { state: state.state, ...(state.reason ? { reason: state.reason } : {}) });
+      tell();
+      return;
+    }
+    if (!reachMoved || reachTimer !== null) return;
+    const wait = lastReachPush + limits.reachPushMs - clock.now();
+    if (wait <= 0) {
+      pushReach();
+      return;
+    }
+    reachTimer = clock.setTimeout(pushReach, wait);
+    reachTimer?.unref?.();
   }
 
   // Everything one child holds: its handle, its timers and its listeners.
@@ -101,8 +192,8 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
     };
     current.clear = (handle) => { clearTimeout(handle); clearInterval(handle); current.timers.delete(handle); };
     current.post = (message) => {
-      if (current.exited) return;
-      try { child.postMessage(message); } catch { say('WARN', 'team.host.post_failed', { type: message.type }); }
+      if (current.exited) return false;
+      try { child.postMessage(message); return true; } catch { say('WARN', 'team.host.post_failed', { type: message.type }); return false; }
     };
     return current;
   }
@@ -119,6 +210,10 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
 
   function release(current) {
     clearTimers(current);
+    const sink = current.logSink;
+    current.logSink = null;
+    // A sink's failure never keeps the run held.
+    try { if (sink) logClosing = sink.drain(); } catch { /* the sink's own timer still closes it */ }
     for (const detach of current.detach.splice(0)) { try { detach(); } catch { /* already gone */ } }
     if (run === current) run = null;
   }
@@ -193,6 +288,19 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
         current.stoppedSeen = true;
         reapUnrequested(current);
         return;
+      case 'mapped':
+        if (current.failure || current.stopRequested || run !== current || state.state !== 'running') return;
+        mappedAddress = message.external;
+        return;
+      case 'reach':
+        // setState keeps a verdict only while running and tells listeners only when it moved.
+        if (current.failure || current.stopRequested || run !== current) return;
+        setState({ reach: { result: message.result, reason: message.reason } });
+        return;
+      case 'model_relay':
+        if (current.failure || current.stopRequested || run !== current) return;
+        setState({ relay: { flowing: message.flowing, passing: message.passing } });
+        return;
       default:
         fail(current, message.reason);
     }
@@ -220,10 +328,14 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
     fail(current, 'team_host_exited');
   }
 
-  async function start({ args, hostKey, teamName = null, onOwnerInvite, onOwnerExists, onMembershipChanged }) {
+  async function start({ args, hostKey, relayToken = null, teamName = null, onOwnerInvite, onOwnerExists, onMembershipChanged }) {
     if (run || state.state === 'starting' || state.state === 'running' || state.state === 'stopping') {
       hostKey?.fill?.(0);
       return invalidRequest(run?.unconfirmed ? 'team_host_exit_unconfirmed' : 'team_host_busy');
+    }
+    if (relayToken !== null && !isRelayToken(relayToken)) {
+      hostKey?.fill?.(0);
+      return invalidRequest('team_relay_token_invalid');
     }
     let encoded;
     try {
@@ -232,15 +344,19 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
     } finally {
       hostKey?.fill?.(0);
     }
+    // Held only until the `start` message is posted.
+    let token = relayToken;
     setState({ state: 'starting', team_id: null, team_name: teamName, addresses: [], reason: null });
     let child;
     try {
-      child = fork(entryPath, [...args], { env: { ...env }, stdio: 'ignore', serviceName: 'Jenny team host' });
+      child = fork(entryPath, [...args], { env: { ...env }, stdio: [...CHILD_STDIO], serviceName: 'Jenny team host' });
     } catch {
       setState({ state: 'failed', reason: 'team_host_spawn_failed' });
       return hostFailure('team_host_spawn_failed');
     }
     const current = createRun(child, { onOwnerInvite, onOwnerExists, onMembershipChanged });
+    const stream = child.stdout;
+    current.logSink = stream ? createHostLogSink({ stream, logsDir: logsDirOf(args), say }) : null;
     run = current;
     const answer = new Promise((resolve) => { current.settleStart = resolve; });
     const on = (event, handler) => {
@@ -251,9 +367,10 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
     on('exit', () => onExit(current));
     on('spawn', () => {
       // A stop or a failure before the spawn: the child gets no key and no ping.
-      if (current.stopRequested || current.failure) { encoded = null; return; }
-      current.post({ type: 'start', host_key: encoded });
+      if (current.stopRequested || current.failure) { encoded = null; token = null; return; }
+      current.post({ type: 'start', host_key: encoded, ...(token === null ? {} : { relay_token: token }) });
       encoded = null;
+      token = null;
       current.timer(() => current.post({ type: 'ping' }), limits.pingMs, 'interval');
     });
     current.timer(() => {
@@ -268,7 +385,7 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
   function stop({ reason = null } = {}) {
     const current = run;
     // A held child was already asked and killed: nothing more to send; its exit releases it.
-    if (!current || current.unconfirmed) return Promise.resolve(snapshot());
+    if (!current || current.unconfirmed) return logClosing.then(snapshot);
     if (stopping) return stopping;
     const promise = (async () => {
       current.stopRequested = true;
@@ -281,6 +398,7 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
         return snapshot();
       }
       release(current);
+      await logClosing;
       if (current.failure) setState({ state: 'failed', reason: current.failure, addresses: [] });
       else if (reason) setState({ state: 'failed', reason, addresses: [] });
       else setState({ state: 'stopped', reason: current.killed ? 'team_host_stop_timeout' : null, addresses: [] });
@@ -298,10 +416,26 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
   }
 
   function resources() {
-    return { child: Boolean(run), timers: run ? run.timers.size : 0, childListeners: run ? run.detach.length : 0 };
+    // The held-back reach push counts as a timer, so a leak check sees it.
+    const timers = (run ? run.timers.size : 0) + (reachTimer !== null ? 1 : 0);
+    return { child: Boolean(run), timers, childListeners: run ? run.detach.length : 0 };
   }
 
-  return { start, stop, snapshot, onState, resources };
+  // Slice 5-6: tells the running host that its team is being deleted, so it can tell connected members first.
+  function notifyDeleting() {
+    if (!run || run.exited || state.state !== 'running') return false;
+    run.post({ type: 'team_deleting' });
+    return true;
+  }
+
+  // Slice 6-7: the owner's relay setting for the running host, applied without a restart. False while not running.
+  function setModelRelay(flowing) {
+    if (!Number.isSafeInteger(flowing) || flowing < 0 || flowing > MAX_RELAY_FLOWING) return false;
+    if (!run || run.exited || state.state !== 'running') return false;
+    return run.post({ type: 'model_relay', flowing }) === true; // the log's `applied`: true only when it was sent
+  }
+
+  return { start, stop, snapshot, mapped: () => mappedAddress, onState, resources, notifyDeleting, setModelRelay };
 }
 
 module.exports = { createHostSupervisor };

@@ -3,10 +3,16 @@
 const os = require('os');
 const path = require('path');
 
+const fs = require('fs');
+
 const { PortablePreferencesStore } = require('../data-lifecycle/portable-preferences-store');
-const { attemptPendingRestore, finalizeRestoredBoot } = require('../data-lifecycle/restore-service');
-const { UNINSTALL_EXIT_CODES } = require('../data-lifecycle/uninstall-contract');
-const { isUninstallAssistantMode, runStandaloneUninstallAssistant } = require('./uninstall-assistant-main');
+const { activeRestoreMarkerPath, restorePointerPath } = require('../data-lifecycle/restore-paths');
+const { isUninstallAssistantMode } = require('./main-boot-gate');
+
+// Off the path to the window: the restore graph loads here only when a marker
+// file exists (the data-lifecycle IPC registration, after createWindow, loads
+// it on every launch), and the uninstall graph only in uninstall mode.
+const loadRestoreService = () => require('../data-lifecycle/restore-service');
 
 function runtimePath() {
   return path.join(os.homedir(), '.companion');
@@ -17,8 +23,10 @@ function readPortableAppearance(app) {
 }
 
 async function promotePendingRestore(app, nativeImage, log = () => {}) {
-  const result = await attemptPendingRestore({
-    userDataPath: app.getPath('userData'),
+  const userDataPath = app.getPath('userData');
+  if (!fs.existsSync(restorePointerPath(userDataPath))) return { ok: true, status: 'none' };
+  const result = await loadRestoreService().attemptPendingRestore({
+    userDataPath,
     runtimePath: runtimePath(),
     nativeImage,
   });
@@ -39,7 +47,9 @@ async function promotePendingRestore(app, nativeImage, log = () => {}) {
 
 async function finalizeSuccessfulRestoredBoot(app, log = () => {}) {
   try {
-    return await finalizeRestoredBoot(app.getPath('userData'), { runtimePath: runtimePath() });
+    const userDataPath = app.getPath('userData');
+    if (!fs.existsSync(activeRestoreMarkerPath(userDataPath))) return false;
+    return await loadRestoreService().finalizeRestoredBoot(userDataPath, { runtimePath: runtimePath() });
   } catch (error) {
     log('WARN', 'data_lifecycle.restore_finalize_failed', {
       reason: String(error?.reason || 'finalize_failed'),
@@ -48,11 +58,14 @@ async function finalizeSuccessfulRestoredBoot(app, log = () => {}) {
   }
 }
 
-function startUninstallAssistant(argv, rootDir, { electronLike = null, runAssistant = runStandaloneUninstallAssistant } = {}) {
+function startUninstallAssistant(argv, rootDir, { electronLike = null, runAssistant = null } = {}) {
   if (!isUninstallAssistantMode(argv)) return false;
   const { app, BrowserWindow, dialog, ipcMain, nativeImage } = electronLike || require('electron');
+  const { UNINSTALL_EXIT_CODES } = require('../data-lifecycle/uninstall-contract');
   void Promise.resolve()
-    .then(() => runAssistant({ app, BrowserWindow, ipcMain, dialog, nativeImage, rootDir }))
+    .then(() => (runAssistant || require('./uninstall-assistant-main').runStandaloneUninstallAssistant)({
+      app, BrowserWindow, ipcMain, dialog, nativeImage, rootDir,
+    }))
     .catch(() => app.exit(UNINSTALL_EXIT_CODES.HELPER_FAILURE));
   return true;
 }

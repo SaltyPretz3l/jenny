@@ -65,7 +65,8 @@
         "inbox",
         "move chat",
         "split view",
-        "sweep"
+        "sweep",
+        "finish this first"
       ],
       "path": "chats-and-projects.md",
       "summary": "How chats and projects work, the chats panel, the Needs you inbox and the session summary."
@@ -329,6 +330,54 @@
       ],
       "path": "keyboard-and-ui-tour.md",
       "summary": "Keyboard shortcuts, a tour of the interface, appearance options and notifications."
+    },
+    {
+      "id": "drawing",
+      "title": "Drawing diagrams",
+      "keywords": [
+        "drawing",
+        "diagram",
+        "sketch",
+        "sketch block",
+        "mermaid",
+        "drawing instructions",
+        "flowchart",
+        "draw",
+        "chart",
+        "kill switch",
+        "open large",
+        "export",
+        "excalidraw",
+        "mark up",
+        "copy source",
+        "fix"
+      ],
+      "path": "drawing.md",
+      "summary": "Asking Jenny for a drawing, changing it, opening it large, exporting and marking it up, fixing a drawing with problems, and the Drawing instructions setting (Short, Full or Mermaid)."
+    },
+    {
+      "id": "boards",
+      "title": "Project boards",
+      "keywords": [
+        "board",
+        "boards",
+        "project board",
+        "canvas",
+        "outline",
+        "cards",
+        "notes",
+        "groups",
+        "proposed changes",
+        "accept additions",
+        "pin to board",
+        "ask jenny",
+        "tidy",
+        "jennyboard",
+        "import board",
+        "export board"
+      ],
+      "path": "boards.md",
+      "summary": "Laying out a project's notes, links, files, pictures, chats and diagrams on a board, the Canvas and Outline views, the chat beside the board, how Jenny proposes changes and how you accept them, Pin to board, export and import."
     }
   ]
 }

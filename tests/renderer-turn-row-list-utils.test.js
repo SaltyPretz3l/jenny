@@ -179,7 +179,7 @@ test('turn row list output remains byte-identical when no divider map is supplie
 
   assert.equal(
     html,
-    '<div class="turn-row-list" data-turn-row-list="true"><div class="chat-row" data-row-id="turn:assistant_text:row" data-row-kind="assistant_text" data-source-message-id="message" data-render-message-id="message" data-source-message-ids="message"><span class="chat-row-node-dot" aria-hidden="true"></span><span>Body</span></div></div>'
+    '<div class="turn-row-list" data-turn-row-list="true"><div class="chat-row" data-row-id="turn:assistant_text:row" data-row-kind="assistant_text" data-source-message-id="message" data-render-message-id="message" data-source-message-ids="message"><span>Body</span></div></div>'
   );
 });
 
@@ -203,4 +203,23 @@ test('turn row list segment sink splits the list body per child, dividers before
   assert.match(html, /data-row-id="turn-divider:assistant_text:visible"/, 'the segment id is the rendered data-row-id');
   const body = html.slice(html.indexOf('>') + 1, html.lastIndexOf('</div>'));
   assert.equal(sink.map((segment) => segment.markup).join(''), body, 'joined segments are the list body');
+});
+
+// F3c hides the handoff preparation row only while it runs or once it worked.
+// A handoff stopped, abandoned or timed out (the projector's own words) is a
+// failure, and a failure keeps its ordinary row in every view.
+test('a stopped, abandoned or timed-out handoff preparation keeps its row', () => {
+  const rowList = createTurnRowListUtils({ buildRowBodyMarkup: () => '<div>handoff</div>' });
+  const handoffRow = (state) => ({
+    row_id: `row:handoff:${state}`, turn_id: 'turn-handoff', kind: 'tool_call', tool_call_id: `call-${state}`,
+    payload: { tool_call_id: `call-${state}`, tool_name: 'complete_session_handoff', state },
+  });
+  for (const view of ['thinking', 'answers']) {
+    for (const state of ['interrupted', 'abandoned', 'timed_out', 'errored']) {
+      const html = rowList.buildTurnRowListMarkup([handoffRow(state)], [], { transcriptView: view });
+      assert.equal((html.match(/data-row-id=/gu) || []).length, 1, `${state} handoff row is drawn in ${view}`);
+    }
+    const running = rowList.buildTurnRowListMarkup([handoffRow('running')], [], { transcriptView: view });
+    assert.equal((running.match(/data-row-id=/gu) || []).length, 0, 'a running handoff still draws no row');
+  }
 });

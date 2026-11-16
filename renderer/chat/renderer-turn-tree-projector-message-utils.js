@@ -167,6 +167,7 @@
       if (Array.isArray(value.answers)) {
         metadata.answers = deepCloneJsonValue(value.answers.slice(0, 8));
       }
+      if (typeof value.reply === 'string' && value.reply.trim()) metadata.reply = value.reply.trim().slice(0, 2000);
     }
     // Home calendar cards rebuild from these bounded persisted fields after a
     // cold reopen; without them only the generic tool result remains.

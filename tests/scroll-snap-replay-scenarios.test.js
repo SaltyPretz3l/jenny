@@ -16,6 +16,7 @@ const {
   classifySnaps,
   mergeSameFrameSamples,
   findScrollJumps,
+  gateFailures,
   landingFrameCount,
   FOLLOW_BOTTOM_PX,
   LANDING_BOTTOM_PX,
@@ -23,7 +24,7 @@ const {
 } = require('../scripts/eval/scroll-snap-replay/classifier');
 const { createRng, words, paragraph } = require('../scripts/eval/scroll-snap-replay/text');
 
-const STEP_TYPES = new Set(['send', 'emit', 'wait', 'open']);
+const STEP_TYPES = new Set(['send', 'emit', 'wait', 'open', 'wheel', 'key', 'jump_latest', 'late_height', 'expect']);
 
 function sample(overrides = {}) {
   return {
@@ -66,7 +67,10 @@ test('every scenario builder is deterministic for a seed', () => {
 });
 
 test('scenario shape: name, seed messages, turn events and typed steps', () => {
-  assert.deepEqual(SCENARIO_NAMES, ['proposal_turn_end', 'tool_heavy_short_chat', 'switch_into_long_chat', 'tool_heavy_long_chat']);
+  assert.deepEqual(SCENARIO_NAMES, [
+    'proposal_turn_end', 'tool_heavy_short_chat', 'switch_into_long_chat', 'tool_heavy_long_chat',
+    'reader_send_scrolled_up', 'reader_away_tool_run',
+  ]);
   for (const name of SCENARIO_NAMES) {
     const scenario = buildScenario(name, { seed: 1 });
     assert.equal(scenario.name, name);
@@ -299,6 +303,57 @@ test('scroll jumps list single-frame moves of 200 px or more that have no reader
   assert.deepEqual(jumps.map((jump) => jump.px), [-493, 565]);
   assert.equal(jumps[0].lastStepName, 'text_s0_1');
   assert.equal(jumps[0].kind, 'scroll_jump');
+  assert.equal(jumps[0].anchorHeld, true, 'the default sample keeps its anchor at 300 px');
+  const moved = findScrollJumps([frame(0, 4845), frame(16, 4352, { anchorPrevTop: 300, anchorTop: 304 })]);
+  assert.equal(moved[0].anchorHeld, false);
+  const unknown = findScrollJumps([frame(0, 4845), frame(16, 4352, { anchorId: null, anchorPrevTop: null, anchorTop: null })]);
+  assert.equal(unknown[0].anchorHeld, false, 'no anchor row known: the jump may be a flash');
+});
+
+// Review 2026-11-12 (test-gap: the replay had no reader input).
+test('reader scenarios: send from a scrolled-up chat, release, re-latch by End and by the jump button, late height', () => {
+  const scenario = buildScenario('reader_send_scrolled_up', { seed: 1 });
+  const order = scenario.steps.filter((step) => !['emit', 'wait'].includes(step.type)).map((step) => `${step.type}:${step.name}`);
+  assert.deepEqual(order, [
+    'wheel:wheel_up_before_send', 'send:send', 'expect:follows_after_send',
+    'wheel:wheel_up_mid_turn', 'expect:released_by_wheel', 'late_height:late_height_above_view',
+    'key:end_key', 'expect:relatched_by_end', 'expect:still_latched_after_tall_chunks',
+    'wheel:wheel_up_again', 'expect:released_again', 'jump_latest:jump_to_latest', 'expect:relatched_by_jump',
+    'expect:latched_at_the_end',
+  ]);
+  const names = scenario.steps.map((step) => step.name);
+  assert.ok(names.indexOf('wheel_up_mid_turn') > names.indexOf('reset_s1'), 'the reader leaves mid-turn');
+  assert.ok(names.indexOf('end_key') > names.indexOf('reset_s3') && names.indexOf('end_key') < names.indexOf('complete'), 'End comes back mid-turn');
+  assert.equal(scenario.steps.find((step) => step.name === 'wheel_up_before_send').deltaY, -500);
+  assert.equal(scenario.steps.find((step) => step.name === 'late_height_above_view').where, 'above_view');
+});
+
+test('reader scenarios: the long tool run holds the reading position, then a wheel back down re-latches', () => {
+  const scenario = buildScenario('reader_away_tool_run', { seed: 1 });
+  const base = buildScenario('tool_heavy_long_chat', { seed: 1 });
+  assert.deepEqual(scenario.seedMessages, base.seedMessages, 'the same long chat as tool_heavy_long_chat');
+  const names = scenario.steps.map((step) => step.name);
+  const away = names.indexOf('wheel_up_mid_run');
+  const back = names.indexOf('wheel_back_to_bottom');
+  const toolsWhileAway = scenario.steps.slice(away, back).filter((step) => step.payload?.type === 'tool_use').length;
+  assert.equal(toolsWhileAway, 4, 'four back-to-back tool calls while the reader is away');
+  assert.ok(scenario.steps[back].deltaY > 0);
+  assert.equal(buildScenario('reader_away_tool_run', { seed: 1, answers: true }).view, 'answers');
+});
+
+test('the assert gate fails on a large snap in any run, an unheld jump or a failed expect step, never on counts', () => {
+  const ok = { name: 'a', runs: [{ maxSnapPx: 40, failedExpectations: 0 }, { maxSnapPx: 47, failedExpectations: 0 }], scrollJumps: [] };
+  assert.deepEqual(gateFailures([ok], 48), []);
+  const manySmall = { ...ok, snapCount: 9, runs: [{ maxSnapPx: 30, failedExpectations: 0, snapCount: 9 }] };
+  assert.deepEqual(gateFailures([manySmall], 48), [], 'snap counts are not gated');
+  const secondRunBad = { ...ok, runs: [{ maxSnapPx: 10, failedExpectations: 0 }, { maxSnapPx: 65, failedExpectations: 0 }] };
+  assert.deepEqual(gateFailures([secondRunBad], 48), ['a: a 65 px snap (limit 48)']);
+  const held = { ...ok, scrollJumps: [{ px: -270, anchorHeld: true, lastStepName: 'after_complete' }] };
+  assert.deepEqual(gateFailures([held], 48), [], 'position compensation under a held anchor is not a jump');
+  const flash = { ...ok, scrollJumps: [{ px: -270, anchorHeld: false, lastStepName: 'after_complete' }] };
+  assert.deepEqual(gateFailures([flash], 48), ['a: a -270 px scroll jump at after_complete (limit 48)']);
+  const expect = { ...ok, runs: [{ maxSnapPx: 0, failedExpectations: 0 }, { maxSnapPx: 0, failedExpectations: 2 }] };
+  assert.deepEqual(gateFailures([expect], 48), ['a: 2 failed expect step(s)']);
 });
 
 test('a live turn persists its own plan: prompt, streamed text and tool pair match the stream steps', () => {

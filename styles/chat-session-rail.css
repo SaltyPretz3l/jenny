@@ -124,8 +124,7 @@
 .session-rail-fact:focus-visible,
 .session-rail-toggle:focus-visible,
 .session-rail-divider:focus-visible,
-.session-rail-job-stop:focus-visible,
-.session-rail-job-open:focus-visible {
+.session-rail-job-stop:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
@@ -290,8 +289,8 @@ button.session-rail-fact:hover {
 }
 
 /* ── Background jobs (owner pick 2026-11-01) ──
-   A live job's Stop takes the elapsed time's place on hover or focus; a finished job opens its output
-   below itself; finished work sits under a hairline "N finished" divider that folds. */
+   A live job's Stop takes the elapsed time's place on hover or focus; a job's row opens it in the Background
+   tasks panel (row 138); finished work sits under a hairline "N finished" divider that folds. */
 .session-rail-job {
   position: relative;
   display: grid;
@@ -406,18 +405,6 @@ button.session-rail-fact:hover {
   text-align: start;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.session-rail-job-open {
-  appearance: none;
-  margin-block-start: var(--space-2);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-link);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
 }
 
 /* The Session toggle's "N running" while the tray is out of sight. */

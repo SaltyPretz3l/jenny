@@ -8,12 +8,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isBoardAssetFileName, isBoardFileName } = require('../boards/board-ids');
 
 const ORPHANED_TEMP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 // Name contracts, checked against the writers:
 //   <name>.<Date.now()>.<12 hex>.tmp  FileJsonStore (shell config, Home journal,
-//                                     project notes) and writeScheduledTasksFile
+//                                     project notes, boards), writeScheduledTasksFile and
+//                                     board-assets.js (pictures and their index)
 //   <name>.<pid>.<12 hex>.tmp         McpConfigStore._atomicReplace; the name has
 //                                     no time, so the mtime alone is the age.
 // The MCP store's `.rollback` file is never a candidate: it holds the previous
@@ -28,6 +30,8 @@ const TARGETS = Object.freeze([
   { dir: '', form: PID_TEMP, isLiveName: (name) => name === 'mcp-servers.json' },
   { dir: 'background-memory', form: STAMPED_TEMP, isLiveName: (name) => name === 'scheduled_tasks.json' },
   { dir: 'project-notes', form: STAMPED_TEMP, isLiveName: (name) => name.endsWith('.json') },
+  { dir: 'boards', form: STAMPED_TEMP, isLiveName: isBoardFileName },
+  { dir: 'board-assets', form: STAMPED_TEMP, isLiveName: isBoardAssetFileName },
 ]);
 
 function classifyProfileTemp(name, target) {

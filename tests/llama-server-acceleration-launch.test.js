@@ -218,6 +218,34 @@ test('resolveLaunchAcceleration derives modelDir from the override, resolved GGU
   assert.equal(emptyFakes.calls.resolver[0].modelDir, '');
 });
 
+test('resolveLaunchAcceleration passes the model file name so the resolver picks its own drafter', () => {
+  const modelPath = path.join('models', 'resolved', 'Qwen3.8-27B-UD-Q6_K.gguf');
+  const resolvedFakes = createResolutionFakes({ ggufResult: { path: modelPath } });
+  resolveLaunchAcceleration({
+    featureFlags: { llama_server_acceleration: true },
+    shellAcceleration: { mode: 'mtp' },
+    ...resolvedFakes.impls,
+  });
+  assert.equal(resolvedFakes.calls.resolver[0].modelFile, 'Qwen3.8-27B-UD-Q6_K.gguf');
+
+  const overrideFakes = createResolutionFakes();
+  resolveLaunchAcceleration({
+    settings: { modelPathOverride: modelPath },
+    featureFlags: { llama_server_acceleration: true },
+    shellAcceleration: { mode: 'mtp' },
+    ...overrideFakes.impls,
+  });
+  assert.equal(overrideFakes.calls.resolver[0].modelFile, 'Qwen3.8-27B-UD-Q6_K.gguf');
+
+  const emptyFakes = createResolutionFakes({ ggufResult: { path: '' } });
+  resolveLaunchAcceleration({
+    featureFlags: { llama_server_acceleration: true },
+    shellAcceleration: { mode: 'mtp' },
+    ...emptyFakes.impls,
+  });
+  assert.equal(emptyFakes.calls.resolver[0].modelFile, '');
+});
+
 test('resolveLaunchAcceleration degrades a capability-probe exception to resolve_error', () => {
   const fakes = createResolutionFakes();
   fakes.impls.probeCapabilitiesImpl = (options) => {
@@ -290,6 +318,11 @@ test('shouldRetryWithoutAcceleration retries only eligible accelerated launch fa
   }), false);
   assert.equal(shouldRetryWithoutAcceleration({
     error: new Error('llama_server_model_not_found:model_dir_missing'),
+    accelExtraArgs: ['--spec-type', 'draft-mtp'],
+  }), false);
+  // The free-VRAM check refused before any spawn: a second attempt would only re-run it.
+  assert.equal(shouldRetryWithoutAcceleration({
+    error: new Error('vram_in_use'),
     accelExtraArgs: ['--spec-type', 'draft-mtp'],
   }), false);
   // Child-exit / readiness-timeout failures stay retryable.

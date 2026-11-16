@@ -121,6 +121,7 @@
     var multi = Array.isArray(metadata.diffs) ? metadata.diffs : [];
     var diffs = multi.length ? multi : (metadata.diff ? [metadata.diff] : []);
     var input = deps.input || {};
+    var bare = deps.bareSingle === true && diffs.length === 1;
     return diffs.map(function (diff, index) {
       var path = String(diff && diff.path || (multi.length ? '' : (input.path || input.file_path)) || '').trim();
       if (!path) return '';
@@ -135,13 +136,15 @@
         hunks: Array.isArray(diff && diff.hunks) ? diff.hunks : [],
         additions: diff && diff.additions, deletions: diff && diff.deletions,
         truncated: diff && diff.truncated === true,
+        truncationReason: diff && diff.truncation_reason, status: diff && diff.status, openStyle: 'text', bare: bare,
+        notes: diff && diff.status === 'created' ? [jt('chat.fileDiff.noteNewFile', 'new file')] : (diff && diff.status === 'deleted' ? [jt('chat.fileDiff.noteDeleted', 'deleted')] : []),
         note: sensitive ? jt('chat.toolShell.sensitiveContentsHidden', 'contents not shown: looks like a secrets file') : '',
         expanded: deps.resolveExpanded(diffId) === true,
         highlight: codeHighlight.highlightLine,
         escapeHtml: deps.escapeHtml,
         actionButton: deps.actionButton,
       };
-      if (!args.truncated && args.hunks.length && (deps.registerExpanded || !args.expanded)) {
+      if (!bare && !args.truncated && args.hunks.length && (deps.registerExpanded || !args.expanded)) {
         bindings.registerFileDiffContext?.(Object.assign({
           diffId: diffId, sessionId: model.sessionId,
           materialize: function () { return fileDiffView.buildFileDiffBodyMarkup(args); },

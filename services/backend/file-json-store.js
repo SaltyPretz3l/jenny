@@ -2,7 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { notifyWriteMeasured } = require('./session-write-meter');
-const { corruptedReadResult, readFileWithRetry, unreadableReadResult } = require('./file-read-retry');
+const {
+  corruptedReadResult, readFileWithRetry, renameWithRetrySync, unreadableReadResult,
+} = require('./file-read-retry');
 const MAX_FLUSH_PASSES = 8;
 
 function buildTempPath(filePath) {
@@ -500,7 +502,7 @@ class FileJsonStore {
     try {
       fs.writeFileSync(tempPath, payload, 'utf8');
       syncFile(tempPath);
-      fs.renameSync(tempPath, this.filePath);
+      renameWithRetrySync(tempPath, this.filePath);
       syncDirectory(dir);
       notifyWriteMeasured(this._onWriteMeasured, payload, startedAt, serializedAt, true);
     } catch (error) {

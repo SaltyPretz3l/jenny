@@ -308,3 +308,44 @@ test('B3: closing pane 1 from its kicker returns the chat view to the exact one-
   assert.equal(window.__rendererState.currentSessionId, 'session-a');
   assert.match(doc.getElementById('chatTimeline').textContent, /Answer from pane zero/);
 });
+
+// Pane 0 owns the one thinking indicator and #chatInput. A turn in pane 1's
+// chat drives neither: its terminal does not take the caret into pane 0's
+// composer and its events do not start, complete or reset pane 0's indicator.
+test('C1: a pane-1 turn leaves pane 0\'s thinking indicator and composer focus alone', async (t) => {
+  const { createHarness } = require('./helpers/renderer-stream-handler-harness');
+  const savedVisibility = globalThis.rendererPaneVisibilityUtils;
+  globalThis.rendererPaneVisibilityUtils = {
+    isSessionVisibleInAnyPane: (_state, id) => id === 'session-1' || id === 'session-2',
+    isSessionVisibleInPane: (_state, id, paneIndex) => (paneIndex === 0 ? id === 'session-1' : id === 'session-2'),
+  };
+  let focusCount = 0;
+  const harness = createHarness({ domOverrides: { chatInput: { focus() { focusCount += 1; } } } });
+  t.after(() => { harness.restore(); globalThis.rendererPaneVisibilityUtils = savedVisibility; });
+  const base = { sessionId: 'session-2', streamId: 'stream-pane-1' };
+  await harness.emit({ type: 'started', ...base });
+  await harness.emit({ type: 'delta', ...base, content: 'Side pane answer.', aggregate: 'Side pane answer.' });
+  await harness.emit({ type: 'complete', ...base, content: 'Side pane answer.' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(harness.calls.indicator, [], 'pane 0\'s indicator saw nothing of pane 1\'s turn');
+  assert.equal(focusCount, 0, 'pane 0\'s composer did not take the caret');
+});
+
+test('C2: one pane, a turn that ends while another field has the caret does not take it', async (t) => {
+  const { createHarness } = require('./helpers/renderer-stream-handler-harness');
+  let focusCount = 0;
+  const otherField = { tagName: 'INPUT' };
+  const chatInput = { focus() { focusCount += 1; }, ownerDocument: { activeElement: otherField } };
+  const harness = createHarness({ domOverrides: { chatInput } });
+  t.after(() => harness.restore());
+  const base = { sessionId: 'session-1', streamId: 'stream-one-pane' };
+  await harness.emit({ type: 'started', ...base });
+  await harness.emit({ type: 'complete', ...base, content: 'Done.' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(focusCount, 0, 'the other field keeps the caret');
+  chatInput.ownerDocument.activeElement = null;
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-one-pane-2' });
+  await harness.emit({ type: 'complete', sessionId: 'session-1', streamId: 'stream-one-pane-2', content: 'Done.' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(focusCount, 1, 'with nothing else focused the composer still takes the caret');
+});

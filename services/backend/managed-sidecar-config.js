@@ -2,6 +2,8 @@ const path = require('path');
 const { sameLocalOrigin } = require('../local-origin');
 const { resolveManagedServerOwner } = require('./managed-server-owner');
 const { buildApiProviderSidecarConfig } = require('./api-provider-sidecar-config');
+const { assertTeamEndpointServes } = require('./team-engine-models');
+const { normalizeDrawingInstructions } = require('../shell-config-state');
 
 const {
   DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH,
@@ -246,9 +248,10 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       : null,
     tools_confirm_side_effects: true,
     safety_mode: chatUiState?.safetyMode || 'normal',
-    auto_approve_streak_cap: chatUiState?.autoApproveStreakCap ?? 50,
+    auto_approve_streak_cap: chatUiState?.autoApproveStreakCap ?? 250,
     ui_language: chatUiState?.uiLanguage || 'en',
     use_24_hour_time: chatUiState?.use24HourTime === true,
+    drawing_instructions: normalizeDrawingInstructions(chatUiState?.drawingInstructions),
     tool_policy_snapshot: getConfiguredToolPolicySnapshot(service),
     max_tools_per_turn: getConfiguredMaxToolsPerTurn(service),
     max_loop_iterations: getConfiguredMaxLoopIterations(service),
@@ -387,6 +390,8 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     }
   }
   if (engineType === 'openai-compatible') {
+    // A live team selection whose port does not serve builds no config: never the default endpoint.
+    assertTeamEndpointServes(service);
     const apiUrl = resolveOpenAICompatibleApiUrl(service);
     if (apiUrl) {
       config.api_url = apiUrl;

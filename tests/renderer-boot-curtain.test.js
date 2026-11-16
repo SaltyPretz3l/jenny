@@ -73,14 +73,10 @@ test('index composes one first-child boot surface and removes the auth overlay s
   // workspace, so the workspace can never be pushed down by a transient
   // status surface.
   assert.equal(documentRef.querySelector('.titlebar')?.nextElementSibling?.id, 'workspace');
-  assert.equal(documentRef.getElementById('heroTitle')?.textContent, 'New session');
-  // Row 38 item 5: the hero's words live in renderer-hero-model-state.js (heroCopy).
-  const heroSource = fs.readFileSync(
-    path.join(__dirname, '..', 'renderer', 'chat', 'renderer-hero-model-state.js'),
-    'utf8'
-  );
-  assert.match(heroSource, /title: jt\('chat\.pipelineChrome\.newSession', 'New session'\)/);
-  assert.doesNotMatch(heroSource, /'New Session'/);
+  assert.equal(documentRef.getElementById('heroTitle')?.textContent, 'New chat');
+  // Row 38 item 5: the hero's words live in renderer-hero-model-state.js (heroCopy);
+  // the static title is the words the ready hero renders (direction A, 2026-11-15).
+  assert.equal(require('../renderer/chat/renderer-hero-model-state').heroCopy({ kind: 'ready' }).title, 'New chat');
   dom.window.close();
 });
 
@@ -512,6 +508,24 @@ test('restored IDE activation failure cannot strand the curtain', async (t) => {
   await waitForUi(app.window, 80);
 
   assert.equal(app.window.__rendererState.ui.activeView, 'ide');
+  const curtain = app.window.document.getElementById('startupOverlay');
+  assert.equal(curtain?.classList.contains('hidden') ?? true, true);
+});
+
+test('a restored Board does not hold the curtain for the backstop: its page loads behind the lifted curtain', async (t) => {
+  const shown = [];
+  const app = await loadRendererApp({
+    persistedActiveView: 'board',
+    shell: { features: { state: { featureFlags: { project_boards: true } } } },
+    beforeRendererBoot(win) { // the page's files, as if already loaded
+      win.rendererBoardScriptManifest = Object.assign([], { styles: [] });
+      win.rendererBoardPage = { showBoardPage: () => { shown.push(1); return { started: Promise.resolve() }; }, hideBoardPage() {} };
+    },
+  });
+  t.after(async () => app.dispose());
+  await waitForUi(app.window, 80);
+
+  assert.equal(app.window.__rendererState.ui.activeView, 'board');
   const curtain = app.window.document.getElementById('startupOverlay');
   assert.equal(curtain?.classList.contains('hidden') ?? true, true);
 });

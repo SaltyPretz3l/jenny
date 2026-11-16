@@ -1,0 +1,80 @@
+{
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [
+    {
+      "id": "rev",
+      "title": "Revenue",
+      "spec": {
+        "kind": "chart",
+        "type": "bar",
+        "series": [
+          "2025",
+          "2026"
+        ],
+        "rows": [
+          {
+            "label": "Q1",
+            "values": [
+              12,
+              15
+            ]
+          },
+          {
+            "label": "Q2",
+            "values": [
+              18,
+              24
+            ],
+            "tone": "accent"
+          },
+          {
+            "label": "Q3",
+            "values": [
+              9,
+              14
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "share",
+      "title": "Market share",
+      "spec": {
+        "kind": "chart",
+        "type": "pie",
+        "series": [],
+        "rows": [
+          {
+            "label": "Us",
+            "values": [
+              38
+            ],
+            "tone": "accent"
+          },
+          {
+            "label": "Rival",
+            "values": [
+              27
+            ]
+          },
+          {
+            "label": "Others",
+            "values": [
+              35
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [],
+  "title": "Quarterly results",
+  "direction": "down"
+}

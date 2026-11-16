@@ -252,7 +252,7 @@
 
     function inScope(item) {
       const scopeAllows = providers.scopeAllows;
-      return typeof scopeAllows === 'function' ? scopeAllows(currentScope(), item.group) : true;
+      return typeof scopeAllows === 'function' ? scopeAllows(currentScope(), item.group, item) : true;
     }
 
     function mruBoost(itemId) {
@@ -314,14 +314,15 @@
 
       scoped.filter((item) => item.group === 'Undo').forEach(push);
       _mru.forEach((id) => push(byId.get(id)));
-      scoped.filter((item) => item.group === 'Navigate').forEach(push);
+      scoped.filter((item) => item.group === 'Navigate' || item.landing === true).forEach(push); // `landing`: the Team group's rows
       scoped.filter((item) => item.group === 'Sessions').slice(0, 5).forEach(push);
       scoped.filter((item) => item.group === 'Actions').forEach(push);
       // In a narrow scope the buckets above may not fill the list; top it up in
-      // the canonical group order so a scope is never emptier than its contents.
+      // the canonical group order. Rows reached by typing only are left out, so a
+      // bare `#` lists no team channels until something is typed (2a-6c).
       const groupOrder = providers.groupOrder || (() => 0);
       scoped
-        .slice()
+        .filter((item) => item.queryOnly !== true) // rows reached by typing only (team channels and people)
         .sort((a, b) => groupOrder(a.group) - groupOrder(b.group))
         .forEach(push);
 

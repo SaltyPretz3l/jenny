@@ -167,6 +167,27 @@ test('menu: Tune options drop Ollama facts while its tag list is unreadable', ()
   assert.equal(menu.tuneOptions({ libraryGguf: true }).engineTypeHint, 'openai-compatible');
 });
 
+// E72 (owner, 2026-11-14; review X2b-F02): the share item is not drawn at all while the Team flag is off.
+test('menu: the share item is not drawn with the Team flag off; greyed with its reason only with it on and no team', () => {
+  const open = (features, share) => {
+    let shown = null;
+    const menu = createModelLibrarySectionMenu({
+      state: { features }, isLibraryTag: () => false, share, ninferLibraryInput: () => null, getSourceData: () => null,
+      card: () => null, contextMenu: { show: (options) => { shown = options; }, hide: () => {} }, requestRemove: () => {},
+    });
+    menu.open({ engineType: 'ollama' }, 'qwen3:8b', null);
+    return shown.items.map((item) => item.label);
+  };
+  const send = 'Send to someone in your team…';
+  for (const features of [undefined, {}, { featureFlags: {} }, { featureFlags: { team: false } }, { featureFlags: { team: 'yes' } }]) {
+    assert.deepEqual(open(features, () => null), ['Remove…', 'Copy tag'], JSON.stringify(features));
+  }
+  assert.deepEqual(open({ featureFlags: { team: false } }, () => ({ menuItems: () => [{ label: send }] })), ['Remove…', 'Copy tag'],
+    'a share section that is somehow loaded draws nothing with the flag off');
+  assert.deepEqual(open({ featureFlags: { team: true } }, () => null), [send, 'Remove…', 'Copy tag']);
+  assert.deepEqual(open({ featureFlags: { team: true } }, () => ({ menuItems: () => [{ label: send }] })), [send, 'Remove…', 'Copy tag']);
+});
+
 test('delete flow: after a removal focus moves to the row now in its place, else to the status line', async () => {
   const { JSDOM } = require('jsdom');
   const dom = new JSDOM('<section><div class="settings-note model-library-section-status"></div><div id="rows"></div></section>');

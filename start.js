@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const os = require('os');
 const path = require('path');
 
@@ -53,8 +53,16 @@ function resolveLaunch({ argv = [], env = {}, cwd }) {
   let agentMode = /^(1|true|yes|on)$/i.test(String(childEnv.JENNY_AGENT_DEV || '').trim());
   let explicitWorkspaceRoot = null;
 
+  // Everything after `--` is files for Electron to open ("Open with Jenny",
+  // row 137): never parsed as launcher flags, and kept after the switches this
+  // launcher adds, because Chromium stops reading switches at `--`.
+  let trailingArgs = null;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === '--') {
+      trailingArgs = argv.slice(i + 1);
+      break;
+    }
     if (arg === AGENT_FLAG) {
       agentMode = true;
       continue;
@@ -133,11 +141,33 @@ function resolveLaunch({ argv = [], env = {}, cwd }) {
     }
   }
 
+  if (trailingArgs) forwardedArgs.push('--', ...trailingArgs);
   return { agentMode, env: childEnv, forwardedArgs };
 }
 
 function resolveChildExitCode(code, signal) {
   return code ?? (signal ? 1 : 0);
+}
+
+// Sketch blocks draw from sketch-frame.bundle.js (vendor/sketchy, built by scripts/build/build-sketch.js).
+// A stale or missing bundle only costs the drawings: blocks then show their source, so a failed build
+// prints one line and the app still starts. The stamp check is read-only; esbuild runs in a child
+// process only when a build is due.
+function buildSketchBundlesForLaunch() {
+  try {
+    const { isSketchBundleCurrent } = require('./scripts/build/build-sketch');
+    if (isSketchBundleCurrent()) return;
+    const result = spawnSync(process.execPath, [path.join(__dirname, 'scripts', 'build', 'build-sketch.js')], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    if (result.status === 0) return;
+    const detail = String(result.error?.message || result.stderr || '').trim().split(/\r?\n/)[0] || `exit ${result.status}`;
+    console.warn(`Jenny launcher could not build the sketch bundles; sketch blocks will show their source. ${detail}`);
+  } catch (error) {
+    console.warn(`Jenny launcher could not build the sketch bundles; sketch blocks will show their source. ${String((error && error.message) || error)}`);
+  }
 }
 
 function launch() {
@@ -154,6 +184,8 @@ function launch() {
     console.error(`Jenny launcher failed to build the preload bundle: ${String((error && error.message) || error)}`);
     process.exit(1);
   }
+
+  buildSketchBundlesForLaunch();
 
   let launchOptions;
   try {

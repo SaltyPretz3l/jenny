@@ -107,8 +107,10 @@
           selectedSignature = ids.join(',');
         }
       }
+      // C: the resend started, so the editor paints its busy state.
       return 'E:' + editingId + '\u001dB:' + (ui.branchCommitting === true ? '1' : '')
-        + '\u001dS:' + (selectionActive ? '1' : '') + '\u001dSEL:' + selectedSignature;
+        + '\u001dS:' + (selectionActive ? '1' : '') + '\u001dSEL:' + selectedSignature
+        + '\u001dC:' + (ui.editCommitting === true ? '1' : '');
     }
 
     return buildAmbientUiSignature;

@@ -18,6 +18,7 @@
       getElaboratePrompt = () => '',
       resolveRegenerateRequest = () => ({ allowed: false }),
       resolveMessageCopyText = () => '',
+      getFeatureFlags = () => ({}),
       resolveFollowUpActionBlock = () => ({ blocked: false, reason: '' }),
       getCurrentSessionId = () => '',
       reconcileAcceptedRegenerate = () => false,
@@ -136,7 +137,7 @@
       if (!message) {
         return;
       }
-      const text = resolveMessageCopyText(message);
+      const text = resolveMessageCopyText(message, getFeatureFlags());
       await window.jennyShell.clipboard.writeText(text);
       showCopyFeedback(messageId);
       appendClientLog('INFO', 'chat.message_copied', { messageId });

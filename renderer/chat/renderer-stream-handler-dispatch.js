@@ -256,7 +256,8 @@
         || payload.type === 'context_usage'
         || payload.type === 'context_compacting'
         || payload.type === 'tool_input_delta'
-        || payload.type === 'runtime_waiting';
+        || payload.type === 'runtime_waiting'
+        || payload.type === 'model_waiting';
       if (callOptions.allowBuffer !== false && payloadStreamId && flushingStreamIds.has(payloadStreamId)) {
         if (isEphemeralOutputChunk) {
           return { buffered: false, terminal: false };
@@ -366,7 +367,8 @@
         }
         if (payload.type === 'stream_reset') return await handlers.handleStreamReset(payload);
         if (payload.type === 'context_compacted') return await handlers.handleContextCompacted(payload);
-        if (payload.type === 'context_compacting' || payload.type === 'tool_input_delta') {
+        // model_waiting (row 136): a running reply's model request waits behind another chat.
+        if (payload.type === 'context_compacting' || payload.type === 'tool_input_delta' || payload.type === 'model_waiting') {
           return { buffered: false, terminal: false };
         }
         if (payload.type === 'runtime_waiting') {

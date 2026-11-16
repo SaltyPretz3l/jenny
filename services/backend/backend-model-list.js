@@ -15,6 +15,9 @@ const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 const {
   apiProviderCatalogKey, apiProviderListPayload, withApiProviderEntries,
 } = require('./api-provider-runtime');
+const { teamCatalogKey, teamModelEntries } = require('./team-engine-models');
+const { resolveManagedServerOwner } = require('./managed-server-owner');
+const { resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config-model');
 
 const MODEL_LIST_CACHE_TTL_MS = 2000;
 const MODEL_LIST_METADATA_FIELDS = ['source', 'cached_at', 'expires_at', 'last_error', 'daemon_version'];
@@ -202,7 +205,8 @@ function listModels(service) {
   const catalogEpoch = service._modelCatalogEpoch || 0;
   const now = Date.now();
   const desiredEngineType = resolveManagedModelListEngineType(service);
-  const providerKey = providerCatalogKey(service, desiredEngineType) + apiProviderCatalogKey(service);
+  const teamRows = teamModelEntries(service);
+  const providerKey = providerCatalogKey(service, desiredEngineType) + apiProviderCatalogKey(service) + teamCatalogKey(teamRows);
   const lastResult = service._modelListLastResult;
   if (lastResult && lastResult.engineType === desiredEngineType && lastResult.providerKey === providerKey
       && now >= lastResult.at && now - lastResult.at < MODEL_LIST_CACHE_TTL_MS) {
@@ -218,7 +222,11 @@ function listModels(service) {
   // is the one catalog read the renderer makes per ready transition.
   const cacheable = Boolean(service.sidecarClient);
   const inFlightPromise = (async () => {
-    const payload = await service.listModelsForEngine(desiredEngineType);
+    // A team engine port as the endpoint would list the team's real ids: those come as team rows below,
+    // so the port is not asked at all (a team model never takes the hint of a same-named local model).
+    const teamEndpoint = desiredEngineType === 'openai-compatible'
+      && resolveManagedServerOwner(service, resolveOpenAICompatibleApiUrl(service))?.kind === 'team-engine';
+    const payload = teamEndpoint ? { data: [], available: true } : await service.listModelsForEngine(desiredEngineType);
     let data = tagModelListEntries(payload.data, desiredEngineType);
     const primaryHasModels = data.length > 0;
     let available = payload.available !== false;
@@ -260,11 +268,12 @@ function listModels(service) {
       includeAvailable: true,
     }) || data;
     if (providerData.slice(data.length).some((entry) => entry.available === true)) available = true;
-    // API-key provider rows come from config, after the tagger (which would drop their extra fields).
-    const taggedData = withApiProviderEntries(service, tagModelListEntries(providerData, desiredEngineType).map((entry) => {
+    // API-key provider and team rows come from config and the team engine, after the tagger (which would
+    // drop their extra fields).
+    const taggedData = [...withApiProviderEntries(service, tagModelListEntries(providerData, desiredEngineType).map((entry) => {
       const managedKind = entry.engine_type === 'openai-compatible' ? managedServerKindForModel(service, entry.id) : '';
       return managedKind ? { ...entry, managed: managedKind } : entry;
-    }));
+    })), ...teamRows];
     replaceModelEngineHints(service, taggedData);
     return {
       ...payload,
@@ -391,7 +400,18 @@ function listModelsForEngine(service, engineType, options = {}) {
     return inFlightPromise;
 }
 
+// Drops every cached model list, so the next read lists what is true now (a cloud catalog or a team change).
+function clearModelListCaches(service) {
+  if (!service) return;
+  service._modelListLastResult = null;
+  service._modelListInFlightPromise = null;
+  for (const cache of [service._modelListForEngineLastResults, service._modelListForEngineInFlightPromises]) {
+    if (typeof cache?.clear === 'function') cache.clear();
+  }
+}
+
 module.exports = {
+  clearModelListCaches,
   listModels,
   listModelsForEngine,
 };

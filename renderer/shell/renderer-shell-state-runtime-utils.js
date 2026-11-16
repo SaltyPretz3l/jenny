@@ -121,6 +121,8 @@
       }
       syncPretextLayoutDataset(state.features);
       enableMathRendering();
+      // Sketch blocks draw only while their flag is on; off, a ```sketch fence stays a code block.
+      windowRef?.rendererMermaidRuntimeLoader?.setSketchBlocksEnabled?.(state.features?.featureFlags?.sketch_blocks !== false);
       loadSurfaceGallery(state.features);
       return state.features;
     }

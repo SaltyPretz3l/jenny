@@ -1,0 +1,312 @@
+/* The Team tab (row 123, slice 1g-2; owner-approved mockup team-settings).
+ * A 288px left column (team switcher, Wants to join, People) beside the main
+ * area; the frame the chat slice (2a-5) fills later. Loaded on the tab's first
+ * activation, with team-settings.css for the shared person row. No side bars,
+ * no cards, no motion: hierarchy comes from spacing, weight and alignment, and
+ * a state is always said in words beside its dot (the inventory status row).
+ * Colours and spacing are tokens from foundation.css; the few fixed sizes
+ * (the 288px column, the 520px measure, the 720px breakpoint) are the mockup's
+ * and have no token. Directions are logical. */
+
+.team-view.active-view {
+  display: flex;
+  container-type: inline-size;
+  container-name: teamview;
+}
+
+.team-shell {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+.team-shell[data-column="none"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* An open thread is a third column, 300-380px (slice 2a-6a; team-chat.css floats it under 980px). */
+.team-shell[data-thread="side"] {
+  grid-template-columns: 288px minmax(0, 1fr) clamp(300px, 30%, 380px);
+}
+
+/* ---------------------------------------------------------------- column */
+
+.team-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+  border-inline-end: 1px solid var(--line);
+}
+
+/* The team's name keeps its room (gate run 2026-11-13, D1): the status wraps under the name before the name gives way. */
+.team-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-1) var(--space-4) var(--space-4);
+}
+
+.team-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-inline-start: calc(-1 * var(--space-3));
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.team-switch:hover,
+.team-switch[aria-expanded="true"] {
+  background: var(--rail-hover-bg);
+}
+
+.team-switch:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.team-switch svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+.team-panel__title {
+  overflow: hidden;
+  font-size: var(--font-size-heading);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The connection, as an inventory status row that keeps to its words' width. `.inv-status-row` sets width: 100% at the
+   same specificity, so a plain `.team-panel__host` lost whenever that rule came later and the name shrank to 0 px (D1):
+   the parent in the selector makes this rule win in any order, and the row may shrink. */
+.team-panel__head > .team-panel__host {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.team-panel__head > .team-switch {
+  max-width: 100%;
+}
+
+.team-panel__label {
+  display: flex;
+  justify-content: space-between;
+  margin: var(--space-6) var(--space-4) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.team-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 30px;
+  padding: var(--space-1) var(--space-4);
+  color: var(--text-secondary);
+}
+
+.team-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-row__meta {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* An empty list in the column (Projects, Direct messages): one muted line under its label. */
+.team-col-empty { margin: 0; padding-block: var(--space-2); padding-inline: var(--space-4); color: var(--text-muted); font-size: var(--font-size-footnote); line-height: 1.45; }
+
+/* The shared person row (team-settings.css) in a narrow column: name, then its buttons. */
+.team-wants .team-set-list,
+.team-wants .team-set-note,
+.team-people .team-set-note {
+  margin-inline: var(--space-4);
+}
+
+.team-wants .team-set-person {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.team-wants .team-set-person__acts {
+  justify-content: flex-start;
+}
+
+.inv-context-menu.team-switch-menu {
+  min-width: 240px;
+}
+
+/* ------------------------------------------------------------- main area */
+
+.team-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.team-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: 46px;
+  padding: var(--space-4) var(--space-9);
+  border-bottom: 1px solid var(--line);
+}
+
+.team-head__name {
+  margin: 0;
+  font-size: var(--font-size-heading);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.team-head__sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One inventory status row under the head; only its place is set here. */
+.team-banner {
+  flex: none;
+  width: auto;
+  padding: var(--space-3) var(--space-9);
+  border-bottom: 1px solid var(--line);
+}
+
+/* One heading, one paragraph, at most one button. */
+.team-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: 0 12%;
+}
+
+.team-state h2 {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: 600;
+}
+
+.team-state p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------ narrow view */
+
+/* Under 720px the column leaves; team-chat.css shows it again as the list screen (slice 2a-5a). */
+@container teamview (max-width: 720px) {
+  .team-shell {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .team-shell > .team-main {
+    order: 0;
+  }
+
+  .team-shell > .team-panel {
+    order: 1;
+    display: none;
+    flex: 1;
+    border-inline-end: 0;
+  }
+
+  .team-shell[data-column="none"] > .team-main {
+    flex: 1;
+  }
+}
+
+/* Slice 4e: the column's GPUs (renderer-team-gpus.js). A GPU row is a person row with the PC's name and
+ * a state word; its popover is the inventory popover, fixed beside the row (the column scrolls). */
+.team-gpu-row .team-row__meta {
+  white-space: nowrap;
+}
+
+.inv-popover.team-gpu-pop {
+  position: fixed;
+  z-index: 30;
+  min-width: 260px;
+  max-width: 320px;
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-soft);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.team-gpu-pop h4 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-body);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.team-gpu-pop p {
+  margin: 0 0 var(--space-3);
+}
+
+.team-gpu-pop ul {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.team-gpu-pop code {
+  font-size: var(--font-size-caption);
+  color: var(--text-primary);
+}

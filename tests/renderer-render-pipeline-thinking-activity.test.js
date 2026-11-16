@@ -464,6 +464,23 @@ test('view applier: a hidden state removes the activity, clears the transform an
   assert.equal(spriteRuntime.targetMessageId, 'a1');
 });
 
+test('view applier: the sprite glides only between rows of one target message', () => {
+  const { applier, sprite } = applierHarness();
+  const at = (id, y) => applier.createVisibleSpriteState({ id, status: 'streaming' }, y, 'think');
+  applier.applySpriteViewState(at('a1', 10));
+  assert.equal(sprite.dataset.spriteGlide, undefined, 'a first show lands in place');
+  applier.applySpriteViewState(at('a1', 60));
+  assert.equal(sprite.dataset.spriteGlide, 'true', 'a move on the same message glides');
+  applier.applySpriteViewState(at('a2', 90));
+  assert.equal(sprite.dataset.spriteGlide, undefined, 'a new target message lands in place');
+  applier.applySpriteViewState(at('a2', 120));
+  assert.equal(sprite.dataset.spriteGlide, 'true');
+  applier.applySpriteViewState(applier.createHiddenSpriteState({ reason: 'responsive_hidden' }));
+  assert.equal(sprite.dataset.spriteGlide, undefined, 'a hide clears it');
+  applier.applySpriteViewState(at('a2', 150));
+  assert.equal(sprite.dataset.spriteGlide, undefined, 'the first show after a hide lands in place');
+});
+
 test('view applier: the morph resumes only after a hidden state and suspends on hide; disposal blocks writes', () => {
   let disposed = false;
   const { applier, sprite, calls } = applierHarness({ isDisposed: () => disposed });

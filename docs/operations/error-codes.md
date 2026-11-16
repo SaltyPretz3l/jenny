@@ -63,7 +63,7 @@ to bounded public reasons; secrets and backend exceptions remain private.
 
 ---
 
-## TEAM - `CMP-TEAM-NNNN` (6 codes)
+## TEAM - `CMP-TEAM-NNNN` (11 codes)
 
 The desktop team member client (`services/team/`, row 123 slice 1f-1) and the team host it
 runs (`services/team/host/`, slice 1f-2). A failure
@@ -81,6 +81,11 @@ its row in the renderer error table, and the page gives every reason it can rece
 | `TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE` | `CMP-TEAM-0004` | The secure store is not ready, unavailable or on `basic_text`, or the device key is missing or unreadable | Conditional | denied | Jenny cannot use this PC’s secure storage right now | `services/team/device-key-store.js` |
 | `TEAM_ERROR_CODES.HOST_STOPPED` | `CMP-TEAM-0005` | The team connection was stopped (the app is quitting or the team was removed) while a call was made | No | cancelled | The connection to that team was closed | `services/team/team-service.js` |
 | `TEAM_ERROR_CODES.HOST_UNAVAILABLE` | `CMP-TEAM-0006` | The team host this Jenny runs cannot start here (platform, engine), failed (its own reason, such as `team_host_key_mismatch`), exited, or did not stop in time | Conditional | runtime_error | The team server on this PC could not be started | `services/team/host/host-supervisor.js` |
+| `TEAM_ERROR_CODES.CHAT_RETRY_LATER` | `CMP-TEAM-0007` | The team host asked for a later retry of a chat change (`team_chat_rate_limit`, `disk_pressure`); the outbox retries it with the same request id | Yes | runtime_error | The team server is busy. Jenny will send this again shortly | `services/team/team-errors.js` |
+| `TEAM_ERROR_CODES.CHAT_NOT_FOUND` | `CMP-TEAM-0008` | The chat channel or message does not exist or is not visible to this member (`team_chat_not_found`) | No | denied | That conversation is not available | `services/team/team-errors.js` |
+| `TEAM_ERROR_CODES.CHAT_CHANGE_REFUSED` | `CMP-TEAM-0009` | The team server refused a reaction or pin (`team_chat_emoji_invalid`, `team_chat_reaction_limit`, `team_chat_pin_limit`); never retryable, whatever the host says | No | denied | The team server refused this change | `services/team/team-errors.js` |
+| `TEAM_ERROR_CODES.ENGINE_UNAVAILABLE` | `CMP-TEAM-0010` | A team model was picked and cannot be loaded now, refused before any engine is switched (`team_feature_off`, `team_not_found`, `team_not_connected`, `team_member_not_active`, `team_engine_not_ready`, `team_model_unavailable`) | No | denied | One sentence per reason (`team.engine.refused.*`), for example "That team is not connected right now" | `services/backend/team-engine-models.js` |
+| `TEAM_ERROR_CODES.MODEL_FAILED` | `CMP-TEAM-0011` | A model offer, send or receive was refused or failed on this PC (sharing off, not connected, a model not listed or not sendable, a file outside its set, a manifest the receiver would refuse, a changed source, no space, a hash mismatch); the reason word is one of `services/team/model-reasons.js`. A call refused under Force local carries `CMP-TEAM-0005` (`team_force_local`), not this code | Conditional | runtime_error | The reason word's own sentence (`renderer/shell/renderer-settings-team-strings.js` has one for every word in `services/team/model-reasons.js`, for example `model_no_space`: "There is not enough free space in that folder. Free some space, then try again."), shown on the model's row, in the drawer or on the Team tab's card; "Jenny could not send or receive that model." only for a word with no sentence | `services/team/team-models.js` |
 
 ---
 
@@ -537,7 +542,7 @@ Generated artifact workspace failures from `ArtifactWorkspaceService`.
 | `ARTIFACT_ERROR_CODES.INVALID_ARTIFACT_ID` | `CMP-ARTIFACT-0015` | Artifact id argument is empty | No | `runtime_error` | "Artifact id is required." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 | `ARTIFACT_ERROR_CODES.WORKSPACE_ROOT_STATE_DIR` | `CMP-ARTIFACT-0016` | Configured workspace root is Jenny's own `.jenny` state directory | No | `denied` | "Tools workspace root cannot be Jenny's own internal state directory (.jenny)." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 
-## WORKSPACEFS - `CMP-WORKSPACEFS-NNNN` (24 Node codes, 0 dead)
+## WORKSPACEFS - `CMP-WORKSPACEFS-NNNN` (25 Node codes, 0 dead)
 
 Workspace IDE page filesystem failures from `WorkspaceIdeService`, `VersionedWorkspaceFileService`, and `workspace-ide-watcher` (renderer-initiated, root-scoped file access). 0008-0009 cover root-generation leases, 0013 strict text encoding, 0021-0023 atomic-write seams, 0030s file ops (create/rename/delete), and 0050s search/watch.
 
@@ -559,6 +564,7 @@ Workspace IDE page filesystem failures from `WorkspaceIdeService`, `VersionedWor
 | `WORKSPACE_FS_ERROR_CODES.IMAGE_UNSUPPORTED` | `CMP-WORKSPACEFS-0014` | Versioned media read requested a path whose canonical/requested extension is not on the narrow image MIME allowlist | No | `runtime_error` | "Only supported workspace image files can be opened as images." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.DOCUMENT_UNSUPPORTED` | `CMP-WORKSPACEFS-0015` | Versioned document read/write requested a path whose extension is not `.pdf`/`.docx`, whose bytes lack the format's magic (`%PDF-` / `PK`), or whose format field mismatches; the renderer also raises it when no viewer pane can load the bytes | No | `runtime_error` | "Only supported workspace documents (PDF, DOCX) can be opened as documents." | [services/versioned-workspace-file-documents.js](../../services/versioned-workspace-file-documents.js) |
 | `WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE` | `CMP-WORKSPACEFS-0016` | Versioned document read/write exceeds the 32 MiB document cap | No | `runtime_error` | "This document is larger than the document size limit." | [services/versioned-workspace-file-documents.js](../../services/versioned-workspace-file-documents.js) |
+| `WORKSPACE_FS_ERROR_CODES.OUTSIDE_GRANT_UNKNOWN` | `CMP-WORKSPACEFS-0017` | A file opened from outside the Workspace (row 137, `outsideFiles.*`) is addressed by a grant id main no longer holds (evicted, restarted, or never issued) | No | `runtime_error` | "This file is no longer open in Jenny. Open it again." | [services/main/outside-files/outside-file-service.js](../../services/main/outside-files/outside-file-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.WRITE_CONFLICT` | `CMP-WORKSPACEFS-0020` | On-disk mtime, opaque identity/hash version, or post-open file identity differs from the editor snapshot | Conditional | `runtime_error` | "File changed on disk since it was last loaded." | [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.ATOMIC_WRITE_FAILED` | `CMP-WORKSPACEFS-0021` | Exclusive temp was durable but atomic replacement failed; cleanup preserves the original target | Conditional | `runtime_error` | "The file could not be replaced atomically; the original was left intact." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.IO_FAILED` | `CMP-WORKSPACEFS-0022` | A versioned file IO seam failed and was safely bounded/redacted | Conditional | `runtime_error` | "The workspace file operation failed safely." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |

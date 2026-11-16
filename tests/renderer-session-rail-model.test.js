@@ -200,6 +200,16 @@ test('Background tasks: running count with a live dot, partial-coverage line, op
   assert.equal(tasks.rows[0].meta, 'Running');
   assert.ok(tasks.rows.some((row) => row.text === '12 finished' && row.surface === 'background_tasks'));
   assert.ok(tasks.rows.some((row) => row.kind === 'note' && row.text === "Some sources aren't connected yet."));
+  assert.equal(tasks.rows.some((row) => row.text === 'View activity'), false, 'View activity is gone');
+});
+
+test('Background tasks: the section always ends on All background tasks, empty or not', () => {
+  const jt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
+  for (const items of [[], [{ source_kind: 'workspace_test', operation_id: 'r1', state: 'running' }]]) {
+    const section = model.buildSection('background_tasks', wrapper({ counts: { active: items.length, waiting: 0, failed: 0, completed: 0 }, coverage: 'complete', unsupported_sources: [], items }), jt);
+    const last = section.rows.at(-1);
+    assert.deepEqual([last.kind, last.key, last.surface, last.resourceRef, last.text], ['action', 'all', 'background_tasks', '', 'All background tasks']);
+  }
 });
 
 test('Background tasks: empty connected sources say None yet without claiming complete counts', () => {
@@ -344,5 +354,5 @@ test('rail markup: a linked row exposes data-rail-session, the title is escaped,
   assert.equal(html.includes('<img'), false);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.equal((html.match(/data-rail-session=/g) || []).length, 1);
-  assert.equal((html.match(/data-rail-surface="background_tasks"/g) || []).length, 2, 'every task row keeps its detail surface');
+  assert.equal((html.match(/data-rail-surface="background_tasks"/g) || []).length, 3, 'every task row keeps its detail surface, and the section ends on All background tasks');
 });

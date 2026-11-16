@@ -38,11 +38,13 @@ async function teamWithProject(t, overrides = {}) {
 
 // ---------------------------------------------------------------- migration
 
-test('a schema 1 members file loads, behaves, and is written as schema 2 by its first commit', async (t) => {
+test('a schema 1 members file loads, behaves, and is written as schema 4 by its first commit', async (t) => {
   const fx = createFixture(t);
   const ids = await fx.buildTeam(fx.openStore());
   const doc = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
   delete doc.projects;
+  delete doc.team.model;
+  for (const invite of doc.invites) delete invite.name_refusals;
   doc.schema_version = 1;
   fs.writeFileSync(fx.memberFile, JSON.stringify(doc));
   const before = fs.readFileSync(fx.memberFile);
@@ -56,7 +58,7 @@ test('a schema 1 members file loads, behaves, and is written as schema 2 by its 
 
   assert.equal((await store.createProject({ actorMemberId: ids.M, projectId: P1 })).ok, true);
   const written = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
-  assert.equal(written.schema_version, 2);
+  assert.equal(written.schema_version, 4);
   assert.equal(written.rev, doc.rev + 1);
   assert.deepEqual(written.projects.map((project) => project.project_id), [P1]);
   assert.deepEqual(written.members, doc.members, 'user state is kept as it was');
@@ -68,6 +70,8 @@ test('a schema 1 members file with a projects key, or broken by the schema 1 rul
     await fx.buildTeam(fx.openStore());
     const doc = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
     delete doc.projects;
+    delete doc.team.model;
+    for (const invite of doc.invites) delete invite.name_refusals;
     doc.schema_version = 1;
     mutate(doc);
     fs.writeFileSync(fx.memberFile, JSON.stringify(doc));
@@ -77,11 +81,11 @@ test('a schema 1 members file with a projects key, or broken by the schema 1 rul
   }
 });
 
-test('a schema 3 members file fails closed and is left byte for byte', async (t) => {
+test('a schema 5 members file fails closed and is left byte for byte', async (t) => {
   const fx = createFixture(t);
   await fx.buildTeam(fx.openStore());
   const doc = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
-  doc.schema_version = 3;
+  doc.schema_version = 5;
   fs.writeFileSync(fx.memberFile, JSON.stringify(doc));
   const before = fs.readFileSync(fx.memberFile);
   const store = fx.newStore();
@@ -232,6 +236,36 @@ test('the last admin of an active project cannot be removed or demoted', async (
   assert.equal((await store.removeProjectMember({ actorMemberId: ids.T, projectId: P1, memberId: ids.A })).ok, true);
   assert.equal(store.directory.projectRole(ids.T, P1), 'admin');
   assert.equal(store.directory.projectRole(ids.A, P1), null);
+});
+
+test('a member of any role leaves a project themself (E29); removing anyone else stays an admin\'s', async (t) => {
+  const { store, ids } = await teamWithProject(t);
+  assert.equal((await store.addProjectMember({ actorMemberId: ids.A, projectId: P1, memberId: ids.R, role: 'reader' })).ok, true);
+  const events = [];
+  store.onProjectChange((event) => events.push(event));
+  assert.equal(reasonOf(await store.removeProjectMember({ actorMemberId: ids.T, projectId: P1, memberId: ids.R })), 'role_forbidden');
+  assert.equal(reasonOf(await store.removeProjectMember({ actorMemberId: ids.M, projectId: P1, memberId: ids.M })), 'team_not_found');
+  for (const [who, role] of [['T', 'writer'], ['R', 'reader']]) {
+    assert.equal((await store.removeProjectMember({ actorMemberId: ids[who], projectId: P1, memberId: ids[who] })).ok, true, who);
+    assert.equal(store.directory.projectRole(ids[who], P1), null, who);
+    const [entry] = lastAudit(store);
+    assert.deepEqual([entry.kind, entry.actor_member_id, entry.subject_member_id, entry.detail],
+      ['project_member_removed', ids[who], ids[who], `role=${role}`], who);
+    assert.deepEqual([events.at(-1).reason, [...events.at(-1).member_ids]], ['members', [ids[who]]], who);
+  }
+  assert.equal(reasonOf(await store.removeProjectMember({ actorMemberId: ids.A, projectId: P1, memberId: ids.A })),
+    'team_project_last_admin');
+  assert.equal(events.length, 2);
+});
+
+test('an owner holding a non-admin row in a project that has an admin cannot make themself admin', async (t) => {
+  const { store, ids } = await teamWithProject(t);
+  assert.equal((await store.addProjectMember({ actorMemberId: ids.O, projectId: P1, memberId: ids.O, role: 'reader' })).ok, true);
+  const rev = store.rev();
+  assert.equal(reasonOf(await store.setProjectRole({ actorMemberId: ids.O, projectId: P1, memberId: ids.O, role: 'admin' })),
+    'role_forbidden');
+  assert.equal(store.directory.projectRole(ids.O, P1), 'reader');
+  assert.equal(store.rev(), rev);
 });
 
 test('the owner adds themself to any project, with its own audit kind; not anyone else', async (t) => {
@@ -496,7 +530,7 @@ test('64 projects of eight members with a full team fit the 256 KiB store cap', 
   const invites = Array.from({ length: LIMITS.MAX_INVITE_RECORDS }, (_, index) => ({
     invite_id: id('invite', index), invite_public_key: fx.key(`size-invite-${index}`), role: 'member',
     member_id: null, created_by: owner.member_id, created_at: 1, expires_at: 9e15,
-    used_at: index < LIMITS.MAX_OUTSTANDING_INVITES ? null : 2, revoked_at: null,
+    used_at: index < LIMITS.MAX_OUTSTANDING_INVITES ? null : 2, revoked_at: null, name_refusals: LIMITS.MAX_NAME_REFUSALS,
   }));
   const projects = Array.from({ length: LIMITS.MAX_PROJECTS }, (_, index) => ({
     project_id: `project_${String(index).padStart(128, 'p')}`, created_by: owner.member_id, created_at: 1_800_000_000_000,

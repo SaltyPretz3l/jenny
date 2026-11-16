@@ -264,6 +264,69 @@ describe('preview_test / result honesty and bounds', () => {
     }
   });
 
+  test('lists the observed error texts, console first then page, under an untrusted heading', async () => {
+    const root = makeWorkspace();
+    const service = stubService({
+      inspectResult: {
+        console_messages: [
+          { level: 3, message: 'Failed to parse import map: invalid JSON' },
+          { level: 2, message: 'only a warning' },
+          { level: 3, message: 'second console failure' },
+        ],
+        page_errors: [{ message: 'ReferenceError: THREE is not defined' }],
+      },
+    });
+    const result = await makeTool().execute({ path: 'index.html' }, makeContext(root, service));
+
+    const lines = result.content.split('\n');
+    assert.match(lines[0], /loaded with 3 console error\(s\)/);
+    assert.equal(lines[1], 'Errors (untrusted page text):');
+    assert.equal(lines[2], '- page: ReferenceError: THREE is not defined');
+    assert.equal(lines[3], '- console: Failed to parse import map: invalid JSON');
+    assert.equal(lines[4], '- console: second console failure');
+    assert.ok(!result.content.includes('only a warning'));
+    assert.ok(!result.content.includes('more not shown'));
+  });
+
+  test('a page with no errors prints no error block', async () => {
+    const root = makeWorkspace();
+    const result = await makeTool().execute({ path: 'index.html' }, makeContext(root, stubService()));
+    assert.ok(!result.content.includes('Errors (untrusted page text):'));
+  });
+
+  test('more errors than the listing cap end with a count of the unlisted ones', async () => {
+    const root = makeWorkspace();
+    const service = stubService({
+      inspectResult: {
+        console_messages: Array.from({ length: 13 }, (_, index) => ({ level: 3, message: `fail ${index}` })),
+        page_errors: [],
+      },
+    });
+    const result = await makeTool().execute({ path: 'index.html' }, makeContext(root, service));
+
+    const lines = result.content.split('\n');
+    const heading = lines.indexOf('Errors (untrusted page text):');
+    assert.ok(heading > 0);
+    assert.equal(lines.filter((line) => line.startsWith('- console: ')).length, 10);
+    assert.equal(lines[heading + 11], '- (3 more not shown)');
+  });
+
+  test('an uncaught page error is listed even behind a full page of console errors', async () => {
+    const root = makeWorkspace();
+    const service = stubService({
+      inspectResult: {
+        console_messages: Array.from({ length: 12 }, (_, index) => ({ level: 3, message: `404 asset ${index}` })),
+        page_errors: [{ message: 'SyntaxError: Unexpected token' }],
+      },
+    });
+    const result = await makeTool().execute({ path: 'index.html' }, makeContext(root, service));
+
+    const lines = result.content.split('\n');
+    const heading = lines.indexOf('Errors (untrusted page text):');
+    assert.equal(lines[heading + 1], '- page: SyntaxError: Unexpected token');
+    assert.equal(lines[heading + 11], '- (3 more not shown)');
+  });
+
   test('a page that fails to load is reported as data, not an infra error', async () => {
     const root = makeWorkspace();
     const loadError = new Error('ERR_FILE_NOT_FOUND (-6) loading the page');

@@ -100,10 +100,9 @@
     pathLine.className = 'cli-path-settings-path';
     var manualLine = documentRef.createElement('code');
     manualLine.className = 'cli-path-settings-manual';
-    var status = documentRef.createElement('p');
+    var status = documentRef.createElement('div');
     status.className = 'settings-note cli-path-settings-status';
     status.setAttribute('aria-live', 'polite');
-    status.dataset.activityState = 'error';
     var actions = documentRef.createElement('div');
     actions.className = 'settings-actions cli-path-settings-actions';
     actions.innerHTML = actionButton({ id: 'cli-path-toggle', label: '', variant: 'secondary' });
@@ -120,7 +119,9 @@
       pathLine.hidden = !view.path;
       manualLine.textContent = view.manual;
       manualLine.hidden = !view.manual;
-      status.textContent = error;
+      var statusRow = globalThis.inventory && globalThis.inventory.statusRow;
+      if (error && statusRow) status.innerHTML = statusRow({ tone: 'danger', message: error, compact: true });
+      else status.textContent = error;
       status.hidden = !error;
       actions.hidden = !view.button;
       if (view.button && button) {

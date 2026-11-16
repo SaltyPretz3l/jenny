@@ -31,6 +31,22 @@ module.exports = Object.freeze({
   'llamaServer.importGguf': invokeMethod('llama-server:import-gguf'),
   'llamaServer.ggufImportStatus': invokeMethod('llama-server:gguf-import-status'),
   'llamaServer.cancelGgufImport': invokeMethod('llama-server:cancel-gguf-import'),
+  // Row 140: a model's MTP drafter and vision projector, downloaded beside it
+  // only on request (services/gguf-companion-download.js owns every path).
+  'llamaServer.companionStatus': invokeMethod('llama-server:companion-status'),
+  'llamaServer.installCompanion': invokeMethod('llama-server:install-companion'),
+  'llamaServer.cancelCompanion': invokeMethod('llama-server:cancel-companion'),
+  // Row 142: runtime folders and the build a model can run on
+  // (services/main/llama-server-runtime-ipc-handlers.js).
+  'llamaServer.chooseRuntimeFolder': invokeMethod('llama-server:choose-runtime-folder'),
+  'llamaServer.runtimeOptions': invokeMethod('llama-server:runtime-options'),
+  'llamaServer.useRuntimeBuild': invokeMethod('llama-server:use-runtime-build'),
+  // Row 142 S3: Get a build (services/llama-server-runtime-download.js) and the
+  // per-folder build counts for the runtime folders list.
+  'llamaServer.runtimeDownloadStart': invokeMethod('llama-server:runtime-download-start'),
+  'llamaServer.runtimeDownloadStatus': invokeMethod('llama-server:runtime-download-status'),
+  'llamaServer.runtimeDownloadCancel': invokeMethod('llama-server:runtime-download-cancel'),
+  'llamaServer.runtimeFolderSummary': invokeMethod('llama-server:runtime-folder-summary'),
   'offline.getState': invokeMethod('offline:get-state'),
   'offline.getDiagnostics': invokeMethod('offline:get-diagnostics'),
   'offline.updateSettings': invokeMethod('offline:update-settings'),

@@ -97,5 +97,11 @@ module.exports = Object.freeze({
   'primaryChat.getFullAuto': invokeMethod('primary-chat:get-full-auto'), // Full auto armed state
   'primaryChat.armFullAuto': invokeMethod('primary-chat:arm-full-auto'),
   'primaryChat.disarmFullAuto': invokeMethod('primary-chat:disarm-full-auto'),
+  'primaryChat.setModels': invokeMethod('primary-chat:set-models'), // Jenny's model pin + scheduled-check model
+  // Row 144: scheduled checks held for a model that is too small or not installed, and the user's answer.
+  'primaryChat.heldChecks': invokeMethod('primary-chat:held-checks'),
+  'primaryChat.runHeldCheck': invokeMethod('primary-chat:run-held-check'),
+  'primaryChat.skipHeldCheck': invokeMethod('primary-chat:skip-held-check'),
   'primaryChat.onChanged': subscribeMethod('primary-chat:changed'),
+  'primaryChat.onCheckHeld': subscribeMethod('primary-chat:check-held'),
 });

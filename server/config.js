@@ -7,6 +7,9 @@ const path = require('node:path');
 const { requireBoundedInteger } = require('./resource-limits');
 const { createBrowserAccessPolicy, PRIVATE_HTTPS, LOCALHOST_HTTP } = require('./browser-access-policy');
 const { isCleanText } = require('./team/member-schema');
+const { parsePublicAddress } = require('./team/invites');
+const { isCanonicalRelayUrl } = require('./team/transport/relay-url');
+const { MODEL_TRANSFER_LIMITS } = require('./team/model-manifest');
 
 const SETUP_PENDING_FILE = '.setup-pending.json';
 const HOST_CONFIG_SCHEMA_VERSION = 3;
@@ -53,6 +56,21 @@ const TOP_LEVEL_FIELDS = new Set([
 ]);
 const TEAM_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS, 'team']);
 const TEAM_FIELDS = new Set(['name', 'key_source', 'direct_port']);
+const TEAM_OPTIONAL_FIELDS = new Set([...TEAM_FIELDS, 'pool', 'projects_root', 'internet', 'model_relay_flowing',
+  'import_dir', 'exchange_dir']);
+// Model sharing (slice 6-3): transfers the relay lets flow at once, 0 to 4 (absent: 2); 0 turns model sharing off.
+// The relay's own ceiling on flowing transfers (one source: model-manifest.js).
+const TEAM_MODEL_RELAY_FLOWING_MAX = MODEL_TRANSFER_LIMITS.maxFlowingPerHost;
+// The setup service's two mounts (slices 3-13, 3-14): copy-in's read-only source and the export/restore folder.
+const TEAM_MOUNT_FIELDS = Object.freeze({ import_dir: 'importDir', exchange_dir: 'exchangeDir' });
+// Internet joining; the relay token is never in the config (it lives in the secure store).
+const TEAM_INTERNET_FIELDS = Object.freeze(['map_port', 'public_address', 'relay_url']);
+// A desktop host (key_source parent_channel) keeps its project folders beside its config.
+const DESKTOP_PROJECTS_DIR = 'projects';
+const TEAM_POOL_FIELDS = new Set(['context_length']);
+// The pool's context length bounds (slice 4a-4): the gateway's context cap.
+const TEAM_POOL_CONTEXT_MIN = 2048;
+const TEAM_POOL_CONTEXT_MAX = 1048576;
 const TEAM_KEY_SOURCES = new Set(['parent_channel', 'secret_file']);
 const LEGACY_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS].filter((field) => (
   field !== 'browser_access_mode' && field !== 'execution'
@@ -155,6 +173,31 @@ function assertDirectoryLike(targetPath, field) {
   }
 }
 
+// Windows only: the root shapes the file-access library refuses too, refused here first with the
+// spec's reason (a UNC path, a drive root, a `\\?\` or `\\.\` prefix). The volume is the library's call.
+// Answers the detail word, or null; off Windows it answers null for every value.
+const WINDOWS_ROOT_REASON = 'file_access_root_invalid';
+function windowsRootRefusal(value, platform = process.platform) {
+  if (platform !== 'win32' || typeof value !== 'string') return null;
+  const text = value.trim();
+  if (/^[\\/]{2}[?.][\\/]/u.test(text)) return 'device_prefix';
+  if (/^[\\/]{2}/u.test(text)) return 'unc_path';
+  // A drive-relative form (`C:`, `C:x`) or a rooted one without a drive is left to the
+  // absolute-path check, so the answer never depends on the process's current directory.
+  if (!/^[A-Za-z]:[\\/]/u.test(text)) return null;
+  const resolved = path.win32.resolve(text);
+  return path.win32.parse(resolved).root === resolved ? 'drive_root' : null;
+}
+
+// The value as written, then the real path it resolved to (a link can name a drive root or share).
+function normalizeWindowsSafePath(value, field) {
+  const refusal = windowsRootRefusal(value);
+  const resolved = refusal ? null : normalizePath(value, field);
+  const detail = refusal || windowsRootRefusal(resolved);
+  if (detail) throw Object.assign(invalid(WINDOWS_ROOT_REASON), { detail });
+  return resolved;
+}
+
 function assertWorkspaceSafe(workspaceRoot, sensitivePaths) {
   if (workspaceRoot === null) return;
   const home = resolveExistingRealPath(os.homedir());
@@ -215,13 +258,16 @@ function normalizeExecution(value, workspaceRoot, schemaVersion, declaredPolicyV
   return Object.freeze({ mode: 'offline-copy', stagingRoot: EXECUTION_STAGING_ROOT });
 }
 
-function normalizeModelEndpoint(value) {
+// `teamHost`: "local engines only" (review sweeps, second run, X5b-F02): a team host never names a model Ollama sends
+// to its hosted service, on either engine (an OpenAI-compatible URL may be Ollama's own /v1), by the node side's rule.
+function normalizeModelEndpoint(value, teamHost = false) {
   assertClosed(value, MODEL_FIELDS, 'model_endpoint_invalid');
   const engine = normalizeString(value.engine, 'model_engine', { max: 32 }).toLowerCase();
   if (!['ollama', 'openai-compatible'].includes(engine)) {
     throw invalid(engine === 'replay' ? 'replay_engine_forbidden' : 'model_engine_unsupported');
   }
   const model = normalizeString(value.model, 'model_name', { max: 240 });
+  if (teamHost && require('../services/cli-host/local-only-providers').isCloudModelName(model)) throw invalid('team_model_not_local');
   const apiUrl = normalizeString(value.api_url, 'model_api_url', { max: 2048 });
   let parsed;
   try { parsed = new URL(apiUrl); } catch (_error) { throw invalid('model_api_url_invalid'); }
@@ -232,9 +278,34 @@ function normalizeModelEndpoint(value) {
   return Object.freeze({ engine, model, apiUrl });
 }
 
-// The schema 3 `team` block: a closed record of three required fields.
+// The optional `team.pool` block (slice 4a-4): absent means no pool; present, a closed record
+// whose one field is the pool's context length. A null value is refused (absent, not null).
+function normalizeTeamPool(value) {
+  if (!isRecord(value) || Object.keys(value).some((key) => !TEAM_POOL_FIELDS.has(key))) throw invalid('team_pool_invalid');
+  const contextLength = value.context_length;
+  if (!Number.isSafeInteger(contextLength) || contextLength < TEAM_POOL_CONTEXT_MIN || contextLength > TEAM_POOL_CONTEXT_MAX) {
+    throw invalid('team_pool_invalid');
+  }
+  return Object.freeze({ contextLength });
+}
+
+// The optional `team.internet` record: absent is off; present, exactly its three fields, each checked with the
+// invite and relay validators, and a direct port to map and to default an address's port to.
+function normalizeTeamInternet(value, directPort) {
+  const refuse = () => invalid('team_internet_invalid');
+  if (!isRecord(value) || Object.keys(value).length !== TEAM_INTERNET_FIELDS.length
+    || TEAM_INTERNET_FIELDS.some((key) => !Object.hasOwn(value, key))) throw refuse();
+  const { map_port: mapPort, public_address: publicAddress, relay_url: relayUrl } = value;
+  if (directPort === null || typeof mapPort !== 'boolean') throw refuse();
+  if (publicAddress !== null && parsePublicAddress(publicAddress, directPort).ok !== true) throw refuse();
+  if (relayUrl !== null && !isCanonicalRelayUrl(relayUrl)) throw refuse();
+  return Object.freeze({ mapPort, publicAddress, relayUrl });
+}
+
+// The schema 3 `team` block: a closed record of three required fields and the optional `pool` and `internet`;
+// the optional `projects_root` is checked in normalizeHostConfig once the other paths are known.
 function normalizeTeam(value) {
-  assertClosed(value, TEAM_FIELDS, 'team_block_invalid');
+  assertClosed(value, TEAM_OPTIONAL_FIELDS, 'team_block_invalid');
   if ([...TEAM_FIELDS].some((field) => !Object.hasOwn(value, field))) throw invalid('team_block_invalid');
   if (!isCleanText(value.name)) throw invalid('team_name_invalid');
   if (!TEAM_KEY_SOURCES.has(value.key_source)) throw invalid('team_key_source_invalid');
@@ -242,14 +313,59 @@ function normalizeTeam(value) {
   if (port !== null && !(Number.isSafeInteger(port) && port >= 1 && port <= 65535)) {
     throw invalid('team_direct_port_invalid');
   }
-  return Object.freeze({ name: value.name, keySource: value.key_source, directPort: port });
+  const pool = Object.hasOwn(value, 'pool') ? normalizeTeamPool(value.pool) : null;
+  const internet = Object.hasOwn(value, 'internet') ? normalizeTeamInternet(value.internet, port) : null;
+  // Absent: the default (model-sharing.js); the normalized block carries the field only when the file does.
+  const hasFlowing = Object.hasOwn(value, 'model_relay_flowing');
+  const flowing = value.model_relay_flowing;
+  if (hasFlowing && !(Number.isSafeInteger(flowing) && flowing >= 0 && flowing <= TEAM_MODEL_RELAY_FLOWING_MAX)) {
+    throw invalid('team_model_relay_flowing_invalid');
+  }
+  return Object.freeze({ name: value.name, keySource: value.key_source, directPort: port, ...(pool ? { pool } : {}),
+    ...(internet ? { internet } : {}), ...(hasFlowing ? { modelRelayFlowing: flowing } : {}) });
 }
 
-// A team host is loopback-only with no command execution and no workspace.
+// A team host is loopback-only with no command execution, no workspace and no browser surface.
 function assertTeamHostSource(source) {
+  const carries = (field) => source[field] !== undefined && source[field] !== null;
   if (source.listen_host !== '127.0.0.1') throw invalid('team_listen_host_loopback_required');
-  if (source.execution !== undefined && source.execution !== null) throw invalid('team_execution_forbidden');
+  if (carries('execution')) throw invalid('team_execution_forbidden');
+  if (carries('browser_access_mode')) throw invalid('browser_access_mode_invalid');
+  if (carries('canonical_origin')) throw invalid('canonical_origin_invalid');
   if (source.workspace_root !== null) throw invalid('team_workspace_forbidden');
+}
+
+// The optional `team.projects_root`: a plain directory or absent, never a link; not the home
+// directory or an ancestor of it (inside home is allowed: this replaces the workspace rule for this
+// one field); no overlap either way with the profile, the secrets or the runtime home.
+function normalizeProjectsRoot(value, sensitivePaths) {
+  const field = 'team_projects_root';
+  const root = normalizeWindowsSafePath(value, field);
+  // normalizePath has already followed a link the value names, so the named entry is checked as given.
+  assertDirectoryLike(path.resolve(value.trim()), field);
+  assertDirectoryLike(root, field);
+  if (sameOrWithin(root, resolveExistingRealPath(os.homedir()))) throw invalid(`${field}_home_overlap`);
+  if (sensitivePaths.some((candidate) => sameOrWithin(candidate, root) || sameOrWithin(root, candidate))) {
+    throw invalid(`${field}_profile_overlap`);
+  }
+  return root;
+}
+
+// The optional mount paths: absolute, never existence-checked (only the setup service mounts them), apart from
+// each other and from the profile, the secrets, the runtime home and the projects root's volume.
+function normalizeTeamMounts(team, sensitivePaths) {
+  const mounts = {};
+  for (const [field, key] of Object.entries(TEAM_MOUNT_FIELDS)) {
+    if (!Object.hasOwn(team, field)) continue;
+    const value = normalizeString(team[field], `team_${field}`, { max: 2048 });
+    if (!path.isAbsolute(value)) throw invalid(`team_${field}_must_be_absolute`);
+    const resolved = path.resolve(value);
+    if ([...sensitivePaths, ...Object.values(mounts)].some((other) => sameOrWithin(other, resolved) || sameOrWithin(resolved, other))) {
+      throw invalid('team_mount_overlap');
+    }
+    mounts[key] = resolved;
+  }
+  return mounts;
 }
 
 function normalizeResourceLimits(value, team = false) {
@@ -292,7 +408,17 @@ function loadHostConfig(filePath, { allowPendingSetup = false } = {}) {
     && fs.existsSync(path.join(path.dirname(filePath), SETUP_PENDING_FILE))) {
     throw invalid('setup_incomplete');
   }
-  return normalizeHostConfig(readConfig(filePath));
+  const config = normalizeHostConfig(readConfig(filePath));
+  // The desktop rule, which only a config file can carry: a parent_channel host's projects root is
+  // exactly `<directory of the config file>/projects`.
+  if (config.team?.keySource === 'parent_channel' && config.team.projectsRoot) {
+    const named = path.join(path.dirname(filePath), DESKTOP_PROJECTS_DIR);
+    // A link standing at that name is refused, though its target would compare equal.
+    assertDirectoryLike(named, 'team_projects_root');
+    const expected = resolveExistingRealPath(named);
+    if (comparable(expected) !== comparable(config.team.projectsRoot)) throw invalid('team_projects_root_layout_invalid');
+  }
+  return config;
 }
 
 function normalizeHostConfig(source) {
@@ -305,6 +431,8 @@ function normalizeHostConfig(source) {
   if (source.host_mode !== 'server') throw invalid('server_host_mode_required');
   const team = source.team === undefined ? null : normalizeTeam(source.team);
   if (team) assertTeamHostSource(source);
+  // A pool host's model endpoint is the pool gateway, built at start; the config names none.
+  if (team?.pool && Object.hasOwn(source, 'model_endpoint')) throw invalid('team_pool_endpoint_conflict');
   const declaredPolicyVersion = source.host_execution_policy_version;
   if (schemaVersion === 1 && declaredPolicyVersion !== 1) {
     throw invalid(declaredPolicyVersion > 1 ? 'host_execution_policy_future' : 'host_execution_policy_unsupported');
@@ -314,7 +442,7 @@ function normalizeHostConfig(source) {
     throw invalid(declaredPolicyVersion > HOST_EXECUTION_POLICY_VERSION
       ? 'host_execution_policy_future' : 'host_execution_policy_unsupported');
   }
-  // A team host serves no browser, so neither browser field is read.
+  // A team host serves no browser: a team config that carries either browser field was refused above.
   const browserAccessMode = team ? null : schemaVersion === 1 ? PRIVATE_HTTPS : source.browser_access_mode;
   if (!team && schemaVersion >= 2
     && ![PRIVATE_HTTPS, LOCALHOST_HTTP].includes(browserAccessMode)) {
@@ -327,7 +455,7 @@ function normalizeHostConfig(source) {
   const userDataPath = normalizePath(source.user_data_path, 'user_data_path');
   const secretsDir = normalizePath(source.secrets_dir, 'secrets_dir');
   const workspaceRoot = source.workspace_root === null
-    ? null : normalizePath(source.workspace_root, 'workspace_root');
+    ? null : normalizeWindowsSafePath(source.workspace_root, 'workspace_root');
   const execution = normalizeExecution(source.execution, source.workspace_root, schemaVersion, declaredPolicyVersion);
   const memoryPath = source.memory_path === undefined
     ? normalizePath(path.join(userDataPath, 'sidecar-memory.db'), 'memory_path') : normalizePath(source.memory_path, 'memory_path');
@@ -360,6 +488,10 @@ function normalizeHostConfig(source) {
   ))) {
     throw invalid('runtime_home_overlap');
   }
+  const projectsRoot = team && Object.hasOwn(source.team, 'projects_root')
+    ? normalizeProjectsRoot(source.team.projects_root, [userDataPath, secretsDir, runtimeHome]) : null;
+  const mounts = team ? normalizeTeamMounts(source.team,
+    [userDataPath, secretsDir, runtimeHome, ...(projectsRoot ? [path.dirname(projectsRoot)] : [])]) : {};
   const pythonExecutable = source.python_executable === undefined
     ? null : normalizePythonExecutable(source.python_executable);
   return Object.freeze({
@@ -379,10 +511,11 @@ function normalizeHostConfig(source) {
     runtimeHome,
     // Owner decision E19: a team host has no model until Phase 4, so its config may leave the
     // endpoint out (absent, not null). Every other host still requires one.
-    modelEndpoint: team && !Object.hasOwn(source, 'model_endpoint') ? null : normalizeModelEndpoint(source.model_endpoint),
+    modelEndpoint: team && !Object.hasOwn(source, 'model_endpoint') ? null : normalizeModelEndpoint(source.model_endpoint, team !== null),
     resourceLimits: Object.freeze(normalizeResourceLimits(source.resource_limits, team !== null)),
     ...(pythonExecutable ? { pythonExecutable } : {}),
-    ...(team ? { team } : {}),
+    ...(team ? { team: projectsRoot || Object.keys(mounts).length
+      ? Object.freeze({ ...team, ...(projectsRoot ? { projectsRoot } : {}), ...mounts }) : team } : {}),
   });
 }
 
@@ -394,7 +527,11 @@ module.exports = {
   loadHostConfig,
   normalizeHostConfig,
   SETUP_PENDING_FILE,
+  TEAM_MAX_CONCURRENT_REQUESTS,
+  TEAM_POOL_CONTEXT_MAX,
+  TEAM_POOL_CONTEXT_MIN,
   sameOrWithin,
   resolveExistingRealPath,
   assertWorkspaceSafe,
+  windowsRootRefusal,
 };

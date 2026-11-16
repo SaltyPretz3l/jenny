@@ -4,7 +4,11 @@
  * groups out). Loaded late so it settles the older row idioms (toggle list, tools
  * rows, tuning and limits layouts). No boxes, no side bars, hairlines only. */
 
-.settings-view {
+/* The Models services drawer mounts on <body>, outside .settings-view, and its
+   rows are Settings rows: without the tokens its dropdowns, hairlines and text
+   basis fell back to browser defaults. */
+.settings-view,
+#modelServicesDrawer {
   /* Sized for their text at the Default text size (1.2), so they follow it:
      at Large a long dropdown name still fits. */
   --settings-row-control-width: calc(164px * var(--font-scale, 1.2) / 1.2);
@@ -16,12 +20,12 @@
 
 /* ── Group: a heading over one hairline ─────────────────────────────────── */
 .settings-card .settings-group-heading {
-  padding-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--settings-shell-muted-border);
-  color: var(--text-primary);
-  font-size: var(--font-size-heading);
-  font-weight: 700;
-  letter-spacing: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+  letter-spacing: 0.01em;
   line-height: 1.3;
   text-transform: none;
 }
@@ -83,13 +87,16 @@
 .settings-field--row .settings-field-title {
   color: var(--text-primary);
   font-size: var(--font-size-body);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
 }
 
 .settings-field--row label.settings-field-title {
   cursor: pointer;
 }
+
+/* A setting that cannot be used yet stays in its place, greyed out, and says what makes it available (owner, 2026-11-12). */
+.settings-field--unavailable .settings-field-title { color: var(--text-muted); cursor: default; }
 
 .settings-field--row .settings-field-help {
   margin: 0;
@@ -342,16 +349,19 @@
   position: relative;
   display: flex;
   gap: 0;
+  box-sizing: border-box;
   width: 100%;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface-2);
+  height: var(--settings-control-height);
+  border: 1px solid var(--settings-control-border);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control-bg);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .settings-field-number .inv-number-input-control:focus-within {
   z-index: 3;
-  outline: 2px solid var(--focus-outline);
-  outline-offset: 1px;
+  outline: var(--focus-ring-width) solid var(--focus-outline);
+  outline-offset: 2px;
 }
 
 .settings-field[data-state="error"] .settings-field-number .inv-number-input-control {
@@ -360,7 +370,7 @@
 
 .settings-field-number .inv-number-input input {
   width: 100%;
-  min-height: 32px;
+  min-height: 0;
   padding: 0 2.75rem;
   border: 0;
   border-radius: 0;
@@ -530,11 +540,12 @@
   outline-offset: var(--focus-ring-offset);
 }
 
-/* The fold for rarely needed rows. */
+/* The fold for rarely needed rows: its summary reads as a group heading. */
 .settings-fold > summary {
-  color: var(--text-primary);
-  font-size: var(--font-size-heading);
-  font-weight: 700;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+  letter-spacing: 0.01em;
   line-height: 1.3;
   cursor: pointer;
 }
@@ -568,12 +579,6 @@
 .settings-view .settings-field-row-text > strong,
 .settings-view .settings-row-link {
   font-size: var(--font-size-body);
-}
-
-/* A group that folds (Editor › Advanced) titles itself like a group heading. */
-.settings-view details.settings-group > summary {
-  font-size: var(--font-size-heading);
-  font-weight: 700;
 }
 
 /* A form mounted under a group's copy keeps the copy's distance from it. */

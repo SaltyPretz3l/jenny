@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const { heroCopy, setupFootnote, etaSeconds, etaText } = require('../renderer/chat/renderer-hero-model-state');
-const { deriveHeroView } = require('../renderer/chat/renderer-hero-model-state');
+const { deriveHeroView, createSessionProjectLookup } = require('../renderer/chat/renderer-hero-model-state');
 
 test('derive prioritizes failure, running pull, missing route, then ready without mutating state', () => {
   const failure = { cause: 'out_of_memory', model: 'large', context: 40960 };
@@ -71,7 +71,12 @@ test('no model: pick a model, the recommended fit first, Browse beside it, the c
     ['download', 'qwen3:4b', 'Download qwen3:4b', true],
     ['browse', '', 'Browse models', false],
   ]);
-  assert.equal(copy.hint, 'Or sign in with ChatGPT in Settings › Cloud models.');
+  assert.equal(copy.hint, 'Or sign in with ChatGPT.');
+  // heroCopy stays pure: the link is data, and renderHero builds the button.
+  assert.deepEqual(copy.hintAction, {
+    action: 'cloud', label: 'sign in with ChatGPT', lead: 'Or ', tail: '.',
+    html: '<button type="button" class="hero-hint-link" data-hero-action="cloud">sign in with ChatGPT</button>',
+  });
   assert.equal(copy.composerLine, 'Send turns on once a model is ready.');
   const bare = heroCopy({ kind: 'noModel', recommended: null });
   assert.equal(bare.subtitle, 'Jenny needs a model before she can reply.');
@@ -82,11 +87,13 @@ test('downloading: progress with an ETA once a rate exists, Cancel, and the comp
   const pull = { tag: 'qwen3:4b', percent: 61, completedBytes: 1.6 * 1024 ** 3, totalBytes: 2.6 * 1024 ** 3, startedAt: 1000 };
   const copy = heroCopy({ kind: 'downloading', pull, now: 1000 + 100000 });
   assert.equal(copy.title, 'Getting qwen3:4b ready');
-  assert.equal(copy.subtitle, "1.6 GB of 2.6 GB · about 1 minute left. You can write your first message now; Jenny replies once it's in.");
+  // Send is off during a download, so the hero says so in the composer's terms.
+  assert.equal(copy.subtitle, '1.6 GB of 2.6 GB · about 1 minute left. Write your first message now; you can send it when the download finishes.');
+  assert.equal(copy.hintAction, null);
   assert.deepEqual(actions(copy.actionsHtml), [['cancel-download', 'qwen3:4b', 'Cancel download', false]]);
   assert.equal(copy.composerLine, 'Jenny is downloading qwen3:4b. Send turns on when it is ready.');
   const early = heroCopy({ kind: 'downloading', pull: { ...pull, completedBytes: 0, percent: 0 } });
-  assert.equal(early.subtitle, "You can write your first message now; Jenny replies once it's in.", 'no bytes yet: the wait alone');
+  assert.equal(early.subtitle, 'Write your first message now; you can send it when the download finishes.', 'no bytes yet: the wait alone');
   const noTotal = heroCopy({ kind: 'downloading', pull: { tag: 'x', percent: 40 } });
   assert.match(noTotal.subtitle, /^40% so far\. /);
 });
@@ -117,16 +124,75 @@ test("failed: the model that didn't load, the cause in plain words, item 1's two
   assert.equal(unreachable.subtitle, "Ollama isn't responding.");
 });
 
-test('ready: today\'s hero, naming the model that loads on first message only while none is loaded', () => {
+test('ready: "New chat", no subtitle, and the model note only while none is loaded', () => {
   const lazy = heroCopy({ kind: 'ready', model: 'qwen3:4b', loaded: false });
-  assert.equal(lazy.title, 'New session');
-  assert.equal(lazy.subtitle, 'Ask Jenny anything to begin');
+  assert.equal(lazy.title, 'New chat');
+  assert.equal(lazy.subtitle, '', 'the placeholder already says what to do');
   assert.equal(lazy.hint, 'qwen3:4b loads with your first message');
+  assert.equal(lazy.hintAction, null);
   assert.equal(lazy.actionsHtml, '');
   assert.equal(lazy.composerLine, '');
   assert.equal(heroCopy({ kind: 'ready', model: 'qwen3:4b', loaded: true }).hint, '');
   assert.equal(heroCopy({ kind: 'ready', model: '', loaded: false }).hint, '', 'no model to name, no hint');
-  assert.equal(heroCopy(null).title, 'New session', 'an unknown view reads as ready');
+  assert.equal(heroCopy(null).title, 'New chat', 'an unknown view reads as ready');
+});
+
+test('ready in a project: the title names it from one string, and the facts line leads with its folder', () => {
+  const project = { name: 'jenny', path: 'D:\\Work\\jenny' };
+  const lazy = heroCopy({ kind: 'ready', model: 'fit:3b', loaded: false, project });
+  assert.equal(lazy.title, 'New chat in jenny');
+  assert.equal(lazy.hint, 'D:\\Work\\jenny · fit:3b loads with your first message');
+  assert.equal(heroCopy({ kind: 'ready', model: 'fit:3b', loaded: true, project }).hint, 'D:\\Work\\jenny');
+  const folderless = heroCopy({ kind: 'ready', model: 'fit:3b', loaded: true, project: { name: 'Notes', path: '' } });
+  assert.equal(folderless.title, 'New chat in Notes');
+  assert.equal(folderless.hint, '', 'a folderless project with a loaded model has nothing to say');
+  assert.equal(heroCopy({ kind: 'ready', project: { name: '', path: 'C:\\x' } }).title, 'New chat', 'no name, no project title');
+  assert.equal(heroCopy({ kind: 'noModel', project }).title, 'Pick a model to start', 'only the ready state names the project');
+});
+
+test('the session project lookup loads the switcher once, waits for it, and stops listening on dispose', async () => {
+  const projects = [{ id: 'p1', name: 'jenny', rootPath: 'D:\\Work\\jenny' }, { id: 'p2', name: 'Notes', rootPath: '' }];
+  const switcherListeners = new Set();
+  let loads = 0;
+  let refreshes = 0;
+  const switcher = {
+    projectById: (id) => projects.find((project) => project.id === id) || null,
+    onProjectsChanged: (listener) => { switcherListeners.add(listener); return () => switcherListeners.delete(listener); },
+    refreshProjects: () => { refreshes += 1; return Promise.resolve(projects); },
+  };
+  let cleanup = null;
+  const lookup = createSessionProjectLookup({
+    getProjectSwitcher: () => { loads += 1; return Promise.resolve(switcher); },
+    isPrimarySession: (session) => session.id === 'primary',
+    registerCleanup: (fn) => { cleanup = fn; },
+  });
+  let notified = 0;
+  const unsubscribe = lookup.onProjectsChanged(() => { notified += 1; });
+  for (const session of [null, { id: 'g' }, { id: 'g', project_id: 'project_general' }, { id: 'primary', project_id: 'p1' },
+    { id: 'plugin', project_id: 'p1', session_type: 'plugin' }]) {
+    assert.equal(lookup.getSessionProject(session), null);
+  }
+  assert.equal(loads, 0, 'General, primary and plugin chats never load the switcher');
+  assert.equal(lookup.getSessionProject({ id: 'a', project_id: 'p1' }), null, 'unknown until the switcher answers');
+  assert.equal(lookup.getSessionProject({ id: 'b', project_id: 'p1' }), null);
+  assert.equal(loads, 1, 'one load however many renders ask');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(refreshes, 1);
+  assert.ok(notified >= 1, 'the hero hears when the switcher arrives');
+  assert.deepEqual(lookup.getSessionProject({ id: 'a', project_id: 'p1' }), { name: 'jenny', path: 'D:\\Work\\jenny' });
+  assert.deepEqual(lookup.getSessionProject({ id: 'a', project_id: 'p2' }), { name: 'Notes', path: '' });
+  assert.equal(lookup.getSessionProject({ id: 'a', project_id: 'gone' }), null);
+  const before = notified;
+  switcherListeners.forEach((listener) => listener([]));
+  assert.equal(notified, before + 1, 'a list change reaches the hero');
+  unsubscribe();
+  switcherListeners.forEach((listener) => listener([]));
+  assert.equal(notified, before + 1);
+  lookup.onProjectsChanged(() => { notified += 1; });
+  assert.equal(typeof cleanup, 'function', 'the lookup registers its teardown');
+  cleanup();
+  assert.equal(switcherListeners.size, 0, 'dispose leaves the switcher');
+  assert.equal(lookup.getSessionProject({ id: 'a', project_id: 'p1' }), null);
 });
 
 test('the setup footnote appears only when a reply can happen, and names the model', () => {

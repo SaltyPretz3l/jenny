@@ -21,14 +21,25 @@ const MAIN = path.join(ROOT, 'cli/main.js');
 const PYTHON = path.join(ROOT, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 const LOCK_CHILD = path.join(ROOT, 'tests/helpers/cli-profile-lock-child.js');
 
+// One cleanup hook per case, in a fixed order: stop every process the case started, then remove
+// its directory. Windows cannot remove a directory that is a live process's working directory, and
+// a hook that throws stops the hooks after it, so separate hooks left the servers of a failed case
+// running and the file alive until the runner's watchdog.
 function tempRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-cli-mcp-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const stops = [];
+  t.after(async () => {
+    await Promise.all(stops.map((stop) => stop().catch(() => {})));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
   const workspace = path.join(root, 'workspace');
   fs.mkdirSync(workspace);
   fs.writeFileSync(path.join(workspace, 'fixture.txt'), 'mcp fixture 9b1d');
-  return { root, workspace, profile: path.join(root, 'profile') };
+  return { root, workspace, profile: path.join(root, 'profile'), beforeRemove: (stop) => stops.push(stop) };
 }
+
+const exited = (child) => (child.exitCode !== null || child.signalCode !== null
+  ? Promise.resolve() : new Promise((resolve) => child.once('exit', resolve)));
 
 function replayScript(root, calls, extra = {}) {
   const file = path.join(root, `replay-${Math.random().toString(16).slice(2)}.json`);
@@ -45,12 +56,12 @@ function startServer(t, args, { dirs, replay }) {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  t.after(async () => {
+  dirs.beforeRemove(async () => {
     if (child.exitCode !== null) return;
     // Ask for a clean stop first so the sidecar is closed by its owner; kill only if that fails.
     try { child.stdin.end(); } catch (_error) { /* closed */ }
-    await Promise.race([new Promise((resolve) => child.once('exit', resolve)), settle(10_000)]);
-    if (child.exitCode === null) child.kill();
+    await Promise.race([exited(child), settle(10_000)]);
+    if (child.exitCode === null) { child.kill(); await Promise.race([exited(child), settle(5_000)]); }
   });
   const pending = new Map();
   const others = [];
@@ -64,16 +75,25 @@ function startServer(t, args, { dirs, replay }) {
       buffer = buffer.slice(newline + 1);
       if (!line) continue;
       const message = JSON.parse(line);
-      if (message.id !== undefined && message.id !== null && pending.has(message.id)) { pending.get(message.id)(message); pending.delete(message.id); }
+      if (message.id !== undefined && message.id !== null && pending.has(message.id)) { pending.get(message.id).resolve(message); pending.delete(message.id); }
       else others.push(message);
     }
   });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
+  // A server that is gone answers nothing: fail whoever is still waiting, with its stderr, instead
+  // of leaving the case to its timeout. The entries stay in `pending` (a cancelled ask is asserted
+  // to be there), and a request nobody awaits must not surface as an unhandled rejection.
+  // `close`, not `exit`: an answer written just before the exit is still read first.
+  child.once('close', (code) => {
+    for (const [id, waiter] of pending) waiter.reject(new Error(`mcp serve exited (code ${code}) before answering request ${id}: ${stderr.slice(-600)}`));
+  });
   let nextId = 1;
   const request = (method, params) => {
     const id = nextId++;
-    const response = new Promise((resolve) => pending.set(id, resolve));
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) })}\n`);
+    const response = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    response.catch(() => {});
+    if (child.exitCode !== null || child.signalCode !== null) pending.get(id).reject(new Error(`mcp serve had already exited (code ${child.exitCode}): ${stderr.slice(-600)}`));
+    else child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) })}\n`);
     return Object.assign(response, { id });
   };
   const call = async (name, args) => {
@@ -195,7 +215,11 @@ test('mcp serve: a tool outside the launch policy ends the ask denied; cancellat
 
   // The profile lock holds for the server too.
   const holder = spawn(process.execPath, [LOCK_CHILD, dirs.profile, PYTHON], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
-  t.after(() => { if (holder.exitCode === null) holder.kill(); });
+  dirs.beforeRemove(async () => {
+    if (holder.exitCode !== null) return;
+    holder.kill();
+    await Promise.race([exited(holder), settle(5_000)]);
+  });
   await new Promise((resolve) => holder.stdout.once('data', resolve));
   const busy = startServer(t, ['--engine', 'replay'], { dirs, replay: slow });
   assert.equal(await busy.exit, EXIT_CODES.PROFILE_BUSY, busy.stderr());

@@ -97,7 +97,7 @@ test('an unset optional field renders empty with the engine default as placehold
   const withDefault = sectionDom.advancedTuningFields.querySelector(
     '[data-tuning-input="maxToolsPerTurn"]'
   );
-  assert.equal(withDefault.value, '20', 'a field with a default shows the effective value');
+  assert.equal(withDefault.value, '200', 'a field with a default shows the effective value');
 });
 
 test('a fractional field keeps its precision instead of rounding to 1', () => {
@@ -226,8 +226,8 @@ test('a per-field revert is offered only for overrides and reads as Revert', () 
   const { sectionDom } = createHarness({ values: { maxToolsPerTurn: 7 } });
   const revert = sectionDom.advancedTuningFields.querySelector('[data-setting-revert="advancedTuningField-maxToolsPerTurn"]');
   assert.ok(revert, 'override row offers a revert');
-  assert.equal(revert.getAttribute('data-setting-revert-default'), '20');
-  assert.match(revert.getAttribute('aria-label') || '', /^Revert .* to 20$/);
+  assert.equal(revert.getAttribute('data-setting-revert-default'), '200');
+  assert.match(revert.getAttribute('aria-label') || '', /^Revert .* to 200$/);
   assert.ok(revert.classList.contains('settings-field-reset'), 'same affordance class as the Appearance per-field reset');
   assert.equal(sectionDom.advancedTuningFields.querySelector('[data-setting-revert="advancedTuningField-maxChatLoopIterations"]'), null);
 });
@@ -239,7 +239,7 @@ test('a stacked row places Modified beside the title and Revert before its side 
   const lines = [...row.querySelectorAll('.settings-field-stack-line')];
   assert.equal(lines.length, 2);
   assert.deepEqual([...lines[0].children].map(node => node.className), ['settings-field-revert-slot', 'settings-field-side', 'settings-field-number']);
-  assert.equal(lines[0].querySelector('button[data-setting-revert]').getAttribute('data-setting-revert-default'), '20');
+  assert.equal(lines[0].querySelector('button[data-setting-revert]').getAttribute('data-setting-revert-default'), '200');
   assert.equal(lines[1].querySelector('.settings-field-revert-slot').textContent, '');
   assert.equal(row.querySelector('.settings-field-meta-default'), null);
 });
@@ -267,7 +267,7 @@ test('the shared Revert goes through submit: one null update, controls locked un
   await new Promise((resolve) => setTimeout(resolve, 0));
   const row = sectionDom.advancedTuningFields.querySelector('[data-settings-field="limitsRow-toolCallsPerReply"]');
   assert.equal(row.querySelector('[data-setting-revert]'), null, 'the reverted row is back at its default');
-  assert.equal(documentRef.getElementById('advancedTuningField-maxToolsPerTurn').value, '20');
+  assert.equal(documentRef.getElementById('advancedTuningField-maxToolsPerTurn').value, '200');
   assert.equal(documentRef.getElementById('advancedTuningField-maxToolsPerTurn').disabled, false);
 });
 

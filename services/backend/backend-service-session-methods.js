@@ -27,6 +27,26 @@ const {
   PRIMARY_PROTECTED, ensurePrimarySession: _ensurePrimarySession, isPrimarySession,
 } = require('./primary-session');
 const { trackMemoryOptOutChange: _trackMemoryOptOutChange } = require('./backend-memory');
+const { isReadOnlyPrimaryChat } = require('../shell-config-primary-chat');
+
+// Jenny's model pin (primaryChat.model) is the source of truth; a recreated primary (fresh profile, import) loses its
+// preferred_model, so re-apply the pin once the session exists. Never throws; a newer build's block is left alone.
+async function reconcilePrimaryModelPin(service, sessionId) {
+  try {
+    const block = service.configService?.getState?.()?.primaryChat;
+    const model = block && !isReadOnlyPrimaryChat(block) ? block.model : '';
+    if (!sessionId || typeof model !== 'string' || !model) return;
+    if (service.sessionStore?.getSessionSummary?.(sessionId)?.preferred_model === model) return;
+    await service.setSessionPreferences(sessionId, { preferred_model: model });
+    service._emitServiceLog('INFO', 'primary_session.model_pin_reconciled', { sessionId });
+  } catch (error) {
+    try {
+      service._emitServiceLog('WARN', 'primary_session.model_pin_reconcile_failed', {
+        errorName: String(error?.name || 'Error').slice(0, 80),
+      });
+    } catch (_logError) { /* logging must not break startup */ }
+  }
+}
 
 const sessionMethods = {
   async listSessions() {
@@ -66,12 +86,14 @@ const sessionMethods = {
   // Row 69: the profile's one primary Jenny chat. Internal path only (the wiring runs it deferred after
   // the window exists); never throws, and sessions.create can never mint a primary.
   async ensurePrimarySession() {
-    return _ensurePrimarySession({
+    const result = await _ensurePrimarySession({
       sessionStore: this.sessionStore,
       createSession: (options) => _createSession(this, options),
       featureFlags: this.featureFlags,
       log: (level, event, details) => this._emitServiceLog(level, event, details),
     });
+    await reconcilePrimaryModelPin(this, result?.session_id);
+    return result;
   },
 
   // The session directory behind sessions_list (row 69), or null before the runtime composition

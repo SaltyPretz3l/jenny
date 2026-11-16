@@ -9,7 +9,7 @@ const FIELDS = Object.freeze({
   attachments: 'attachments', plan_mode: 'planMode', context_preferences: 'contextPreferences',
   active_file_context: 'activeFileContext', mention_contents: 'mentionContents',
   tool_preferences: 'toolPreferences', approval_mode: 'approvalMode', debug_options: 'debugOptions',
-  skill_invocation: 'skillInvocation', image_prompt_pin: 'imagePromptPin',
+  skill_invocation: 'skillInvocation', image_prompt_pin: 'imagePromptPin', board_id: 'boardId',
   client_timing: 'clientTiming',
 });
 const CLIENT_TIMING_KEYS = Object.freeze(['send_started_at_ms', 'optimistic_rendered_at_ms', 'local_render_latency_ms']);
@@ -31,7 +31,7 @@ function normalizeSubmission(payload) {
     || typeof payload.prompt !== 'string' || !payload.prompt.trim()
     || (payload.attachments !== undefined && !Array.isArray(payload.attachments))
     || (payload.plan_mode !== undefined && typeof payload.plan_mode !== 'boolean')
-    || ['visible_prompt', 'preferred_model', 'reasoning_effort', 'approval_mode']
+    || ['visible_prompt', 'preferred_model', 'reasoning_effort', 'approval_mode', 'board_id']
       .some(key => payload[key] !== undefined && typeof payload[key] !== 'string')) return null;
   let encoded;
   try { encoded = JSON.stringify(payload); } catch (_error) { return null; }

@@ -132,3 +132,39 @@ test('a second launch ignores a missing or destroyed window', () => {
   assert.equal(revealExistingWindow(win), false);
   assert.deepEqual(win.calls, []);
 });
+
+test('the lock forwards additionalData, and a file hand-off skips the dev conflict box (row 137)', () => {
+  const notices = [];
+  let lockData = 'unset';
+  const app = {
+    requestSingleInstanceLock: (data) => { lockData = data; return false; },
+    quit() {},
+    on() {},
+  };
+  const additionalData = { v: 1, outsidePaths: ['C:\\notes\\a.md'], cwd: 'C:\\' };
+  assert.equal(applySingleInstance(app, undefined, {
+    additionalData,
+    env: { JENNY_LAUNCH_PATH: 'dev' },
+    showErrorBox: (title) => notices.push(title),
+    claimDesktopProfile: () => {},
+  }), false);
+  assert.equal(lockData, additionalData);
+  assert.deepEqual(notices, [], 'handing a file to the running app is not a failed start');
+  applySingleInstance(app, undefined, {
+    additionalData: { v: 1, outsidePaths: [], cwd: 'C:\\' },
+    env: { JENNY_LAUNCH_PATH: 'dev' },
+    showErrorBox: (title) => notices.push(title),
+    claimDesktopProfile: () => {},
+  });
+  assert.equal(notices.length, 1, 'a plain second dev launch still explains the conflict');
+});
+
+test('the second-instance listener passes argv, cwd and additionalData through', () => {
+  const listeners = new Map();
+  const app = { requestSingleInstanceLock: () => true, quit() {}, on: (event, handler) => listeners.set(event, handler) };
+  let seen = null;
+  applySingleInstance(app, (...args) => { seen = args; }, { claimDesktopProfile: () => {} });
+  const data = { v: 1, outsidePaths: ['/a.md'], cwd: '/' };
+  listeners.get('second-instance')({}, ['jenny', '--', '/a.md'], '/', data);
+  assert.deepEqual(seen.slice(1), [['jenny', '--', '/a.md'], '/', data]);
+});

@@ -21,11 +21,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  SKIP, withBrowser, frames, FONT_SCALE_IDS, CHAT_WIDTH_IDS, mountReadingLayout, setReadingAppearance, createCollector, fmt,
+  SKIP, frames, FONT_SCALE_IDS, CHAT_WIDTH_IDS, mountReadingLayout, setReadingAppearance, createCollector, fmt,
 } = require('./helpers/chat-reading-layout-harness');
 const {
   RESERVE_PX, READING_FLOOR_PX, installRails, toggleRail, openPanel, measureRails, writeReport, checkCommon, checkDocked,
 } = require('./helpers/session-rail-layout');
+const { withSharedBrowser, closeSharedBrowser } = require('./helpers/layout-shared-browser');
+
+// One browser serves every cell of the file, each on its own page; it exits with the file.
+test.after(closeSharedBrowser);
 
 const CELLS = [
   { name: '1455x900 single', viewport: { width: 1455, height: 900 }, split: false, expect: ['docked'] },
@@ -38,7 +42,7 @@ const CELLS = [
 for (const cell of CELLS) {
   test(`session rail layout ${cell.name}: placement, composer = measure, no horizontal scroll`, { skip: SKIP, timeout: 180000 }, async () => {
     const collector = createCollector();
-    await withBrowser(async (browser) => {
+    await withSharedBrowser(async (browser) => {
       const page = await mountReadingLayout(browser, { viewport: cell.viewport, split: cell.split, sidebarCollapsed: cell.sidebarCollapsed === true });
       await installRails(page, { artifactsToggle: cell.artifactsToggle !== false });
       if (cell.panel) await openPanel(page);
@@ -80,7 +84,7 @@ for (const cell of CELLS) {
 
 test('session rail layout: below 920px the toggle opens a sheet anchored inside the pane; Escape returns focus; nothing is persisted', { skip: SKIP, timeout: 180000 }, async () => {
   const collector = createCollector();
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     for (const sidebarCollapsed of [true, false]) {
       const page = await mountReadingLayout(browser, { viewport: { width: 700, height: 900 }, split: false, sidebarCollapsed });
       await installRails(page);
@@ -119,7 +123,7 @@ test('session rail layout: below 920px the toggle opens a sheet anchored inside 
 
 test('session rail layout: hiding the docked rail gives the room back and keeps composer = measure; showing takes it again', { skip: SKIP, timeout: 120000 }, async () => {
   const collector = createCollector();
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
     await installRails(page);
     const docked = (await page.evaluate(measureRails)).panes[0];
@@ -142,7 +146,7 @@ test('session rail layout: hiding the docked rail gives the room back and keeps 
 });
 
 test('session rail layout: a section disclosure animates height and a collapsed body is out of the tab order', { skip: SKIP, timeout: 120000 }, async () => {
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
     await installRails(page);
     const read = () => page.evaluate(() => {
@@ -177,7 +181,7 @@ test('session rail layout: a section disclosure animates height and a collapsed 
 });
 
 test('session rail layout: data arriving after "checking" settles at once, with no height or opacity motion', { skip: SKIP, timeout: 120000 }, async () => {
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
     await installRails(page, { summaryDelayMs: 250 });
     assert.equal(await page.evaluate(() => document.querySelector('[data-section="context"]').dataset.state), 'checking', 'the first paint is still checking');
@@ -196,7 +200,7 @@ test('session rail layout: data arriving after "checking" settles at once, with 
    where it was whether the rail is docked, hidden or the panel beside it is open. */
 test('session bar: the cluster keeps flex-direction row and the Session button does not move when the rail docks, hides or a panel opens', { skip: SKIP, timeout: 120000 }, async () => {
   const collector = createCollector();
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
     await installRails(page);
     const docked = (await page.evaluate(measureRails)).panes[0];
@@ -232,7 +236,7 @@ test('session bar: the cluster keeps flex-direction row and the Session button d
 });
 
 test('session bar: the buttons keep a fixed visual order whatever order they mounted in', { skip: SKIP, timeout: 120000 }, async () => {
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
     await installRails(page);
     const order = await page.evaluate(() => {
@@ -259,7 +263,7 @@ test('session bar: the buttons keep a fixed visual order whatever order they mou
 
 test('session bar: in a split the kicker row is the bar, the buttons sit before the close glyph and the title ellipsizes', { skip: SKIP, timeout: 120000 }, async () => {
   const collector = createCollector();
-  await withBrowser(async (browser) => {
+  await withSharedBrowser(async (browser) => {
     const page = await mountReadingLayout(browser, { viewport: { width: 2327, height: 1300 }, split: true });
     await installRails(page);
     await page.evaluate(() => {

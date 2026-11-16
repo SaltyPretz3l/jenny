@@ -201,3 +201,110 @@ test('row 63 composer menus: heading, footer, glyph column, upward placement and
   rows[0].click();
   assert.deepEqual(picks, ['ask']);
 });
+
+test('row 151 sectioned menus: a heading item is a line between rows that the arrows skip, and placement below opens under the leading edge', (t) => {
+  const { doc, trigger, picks } = setup(t);
+  trigger.getBoundingClientRect = () => ({ left: 40, right: 240, top: 20, bottom: 50, width: 200, height: 30 });
+  contextMenu.show({ anchorEl: trigger, rootEl: trigger, placement: 'below', focusChecked: true, ariaLabel: 'Projects', items: [
+    { heading: 'My projects' }, { label: 'Alpha', checked: false, action: () => picks.push('alpha') },
+    { heading: '<b>Lab</b> team' }, { label: 'Site', checked: true, action: () => picks.push('site') }] });
+  const menu = doc.querySelector('.inv-context-menu');
+  assert.deepEqual([...menu.children].map((el) => [el.className.split(' ')[0], el.getAttribute('role'), el.textContent.trim()]), [
+    ['inv-context-menu-heading', 'presentation', 'My projects'], ['inv-context-menu-item', 'menuitemradio', 'Alpha'],
+    ['inv-context-menu-heading', 'presentation', '<b>Lab</b> team'], ['inv-context-menu-item', 'menuitemradio', 'Site']]);
+  assert.equal(menu.querySelector('b'), null, 'a heading is text');
+  assert.deepEqual([menu.getAttribute('aria-label'), menu.style.left, menu.style.top], ['Projects', '40px', '50px']);
+  const items = [...menu.querySelectorAll('.inv-context-menu-item')];
+  assert.equal(doc.activeElement, items[1]);
+  doc.activeElement.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  assert.equal(doc.activeElement, items[0], 'the arrows move between rows, over the heading');
+  items[0].click();
+  assert.deepEqual(picks, ['alpha']);
+});
+
+// Row 123 slice 2a-6c: a row with `items` opens a submenu (the team menu's Export).
+function nestedItems(picks) {
+  return [{ label: 'Members', action: () => picks.push('members') }, { separator: true },
+    { label: 'Export', items: [{ label: 'This conversation…', action: () => picks.push('one') }, { label: 'Every conversation…', action: () => picks.push('all') }] }];
+}
+const rows = (el) => [...el.querySelectorAll('.inv-context-menu-item')];
+
+test('a nested row: keyboard opens it with ArrowRight or Enter, arrows stay inside, ArrowLeft and Esc go back to the row', (t) => {
+  const picks = [];
+  const { doc, open, menuEl, key } = setup(t, nestedItems(picks));
+  open();
+  const parent = rows(menuEl()).find((b) => b.textContent.startsWith('Export'));
+  assert.deepEqual([parent.getAttribute('role'), parent.getAttribute('aria-haspopup'), parent.getAttribute('aria-expanded')], ['menuitem', 'menu', 'false']);
+  parent.focus();
+  key(parent, 'ArrowRight');
+  const sub = doc.querySelector('.inv-context-menu--sub');
+  assert.deepEqual([sub.getAttribute('role'), sub.getAttribute('aria-label'), parent.getAttribute('aria-expanded')], ['menu', 'Export', 'true']);
+  assert.equal(doc.activeElement.textContent, 'This conversation…');
+  key(doc.activeElement, 'ArrowDown');
+  assert.equal(doc.activeElement.textContent, 'Every conversation…');
+  key(doc.activeElement, 'ArrowDown');
+  assert.equal(doc.activeElement.textContent, 'This conversation…', 'arrows wrap inside the submenu');
+  key(doc.activeElement, 'ArrowLeft');
+  assert.equal(doc.querySelector('.inv-context-menu--sub'), null);
+  assert.deepEqual([doc.activeElement, parent.getAttribute('aria-expanded')], [parent, 'false']);
+  parent.click();
+  assert.equal(doc.activeElement.textContent, 'This conversation…', 'Enter or a click opens it and focuses the first choice');
+  key(doc.activeElement, 'Escape');
+  assert.ok(menuEl(), 'Esc in the submenu keeps the menu');
+  assert.deepEqual([doc.querySelector('.inv-context-menu--sub'), parent.getAttribute('aria-expanded'), doc.activeElement], [null, 'false', parent], 'Esc closes the submenu only');
+  parent.click();
+  doc.activeElement.nextElementSibling.click();
+  assert.deepEqual([picks, menuEl(), doc.querySelector('.inv-context-menu--sub')], [['all'], null, null], 'a choice runs and closes both');
+});
+
+test('a nested row: pointing opens it after a short delay, another row closes it, and a narrow window flips it before', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const picks = [];
+  const { window, doc, open, menuEl } = setup(t, nestedItems(picks));
+  const proto = window.HTMLElement.prototype;
+  const real = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function rect() {
+    if (this.classList.contains('inv-context-menu--sub')) return { left: 0, top: 0, right: 220, bottom: 80, width: 220, height: 80 };
+    if (this.getAttribute('aria-haspopup') === 'menu') return { left: 400, top: 100, right: 600, bottom: 128, width: 200, height: 28 };
+    return real.call(this);
+  };
+  t.after(() => { proto.getBoundingClientRect = real; });
+  window.innerWidth = 680;
+  open();
+  const [members, parent] = rows(menuEl());
+  parent.dispatchEvent(new window.MouseEvent('mouseenter'));
+  assert.equal(doc.querySelector('.inv-context-menu--sub'), null, 'not at once');
+  t.mock.timers.tick(200);
+  const sub = doc.querySelector('.inv-context-menu--sub');
+  assert.ok(sub, 'open after the delay');
+  assert.deepEqual([sub.dataset.side, sub.style.left], ['before', '182px'], 'no room after the row: it opens before it');
+  members.dispatchEvent(new window.MouseEvent('mouseenter'));
+  sub.dispatchEvent(new window.MouseEvent('mouseenter'));
+  t.mock.timers.tick(300);
+  assert.ok(doc.querySelector('.inv-context-menu--sub'), 'moving onto the submenu keeps it open');
+  members.dispatchEvent(new window.MouseEvent('mouseenter'));
+  t.mock.timers.tick(200);
+  assert.equal(doc.querySelector('.inv-context-menu--sub'), null, 'resting on another row closes it');
+  window.innerWidth = 1400;
+  parent.click();
+  assert.equal(doc.querySelector('.inv-context-menu--sub').dataset.side, 'after');
+  doc.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  assert.deepEqual([menuEl(), doc.querySelector('.inv-context-menu--sub'), picks], [null, null, []], 'an outside click closes both');
+});
+
+test('a disabled nested row has no submenu and keeps its reason', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { window, doc, trigger, key } = setup(t);
+  const picks = [];
+  contextMenu.show({ anchorEl: trigger, rootEl: trigger, items: [{ label: 'Members', action: () => picks.push('members') },
+    { label: 'Export', disabled: true, description: 'Needs the team online', items: [{ label: 'x', action: () => picks.push('x') }] }] });
+  const row = doc.querySelectorAll('.inv-context-menu-item')[1];
+  assert.deepEqual([row.disabled, row.hasAttribute('aria-haspopup'), row.textContent.includes('Needs the team online')], [true, false, true]);
+  // What an enabled nested row does (the test above) must not happen here: click, ArrowRight, Enter and pointing open nothing.
+  row.click();
+  key(row, 'ArrowRight');
+  key(row, 'Enter');
+  row.dispatchEvent(new window.MouseEvent('mouseenter'));
+  t.mock.timers.tick(400);
+  assert.deepEqual([doc.querySelector('.inv-context-menu--sub'), picks, Boolean(doc.querySelector('.inv-context-menu'))], [null, [], true], 'no submenu, nothing run, the menu stays');
+});

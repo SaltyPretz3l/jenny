@@ -497,7 +497,7 @@ def test_the_models_own_scratch_state_defaults_to_auto() -> None:
     """Owner decision 2026-09-22: approval is for the user's files and commands.
 
     The in-session todo list and inert create_artifact documents are the
-    model's own scratch state, so they no longer ask (Claude Code parity).
+    model's own scratch state, so they no longer ask.
     Mirrors services/tools/tool-policy-evaluator.js; the two must agree.
     """
     cases = (

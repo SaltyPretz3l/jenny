@@ -1,0 +1,82 @@
+/* Source hover card and lit list entry (row 154, S3). One shared card, built by
+   renderer/chat/renderer-source-card.js, for the inline source numbers and the list titles.
+   Palette and role tokens only; no side bars, no extra borders. */
+
+.source-card {
+  position: fixed;
+  z-index: var(--z-popover);
+  box-sizing: border-box;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-popover-background);
+  box-shadow: var(--shadow-elevation-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition-fast), visibility 0s linear var(--motion-duration-fast);
+}
+
+.source-card.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--transition-fast);
+}
+
+.source-card-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.source-card-site {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.source-card-snippet {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+
+.source-card-actions {
+  display: flex;
+  gap: 14px;
+  font-size: var(--font-size-caption);
+}
+
+.source-card-actions a,
+.source-card-copy {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.source-card-actions a:hover,
+.source-card-copy:hover {
+  text-decoration: underline;
+}
+
+.source-card-actions a:focus-visible,
+.source-card-copy:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-card,
+  .source-card.is-open {
+    transition: none;
+  }
+}

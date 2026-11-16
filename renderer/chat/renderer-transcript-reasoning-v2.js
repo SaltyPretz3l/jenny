@@ -145,8 +145,7 @@
     // 256, up from 32 (timeline-perf 2026-09-30): a 40-row managed turn plus
     // the settled rows of earlier turns thrashed a 32-entry scan on every
     // render drain. Hits refresh insertion order (LRU), so the rows the drain
-    // keeps re-rendering stay resident. Bodies with fenced code are still
-    // never cached (see below).
+    // keeps re-rendering stay resident.
     const settledBodyCacheLimit = 256;
     let settledBodyContext = [];
 
@@ -160,6 +159,7 @@
         typeof document !== 'undefined' ? document : null,
         jt('markdown.table.copyLabel', 'Copy table as tab-separated values'),
         jt('common.copy', 'Copy'),
+        jt('markdown.code.copyLabel', 'Copy code'),
       ];
       if (context.some((value, index) => value !== settledBodyContext[index])) {
         settledBodyCache.clear();
@@ -171,16 +171,11 @@
         settledBodyCache.set(cacheKey, cached);
         return cached.html;
       }
-      const html = renderMarkdown(markdown, { mermaid: 'plain' });
+      const html = renderMarkdown(markdown, { mermaid: 'plain', codeBlocks: 'plain' });
       settledBodyCache.delete(cacheKey);
-      // Fenced code depends on private Monaco warm-up/grammar state and,
-      // for collapsible blocks, a private generated-ID counter. Neither has
-      // an observable revision, so preserve fresh rendering for those bodies.
-      if (!/<pre(?:\s|>)/i.test(html)) {
-        settledBodyCache.set(cacheKey, { markdown, html });
-        if (settledBodyCache.size > settledBodyCacheLimit) {
-          settledBodyCache.delete(settledBodyCache.keys().next().value);
-        }
+      settledBodyCache.set(cacheKey, { markdown, html });
+      if (settledBodyCache.size > settledBodyCacheLimit) {
+        settledBodyCache.delete(settledBodyCache.keys().next().value);
       }
       return html;
     }
@@ -194,7 +189,6 @@
       groupCount,
       transcriptView,
       controller,
-      holdOpen = false,
     }) {
       const thinkingId = String(group?.thinkingId || '');
       const phaseKey = String(group?.phaseKey || group?.phaseId || thinkingId || `legacy_phase_${iteration}`);
@@ -218,9 +212,7 @@
       const tone = reasoningStatusTone(status, { isStreaming: isPhaseStreaming });
       // A settled body-less phase has nothing to open: the view default (e.g.
       // everything) must not rotate its caret over a hidden empty panel.
-      // holdOpen (HB-038 H1): a live turn's phase with only reasoning after it
-      // keeps the streaming default across a thinking cut-off.
-      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming || holdOpen, transcriptView })
+      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming, transcriptView })
         && (isPhaseStreaming || Boolean(bodyMarkdown));
       const expanded = controller.isPhaseExpanded(message.id, phaseKey, autoExpand);
 
@@ -239,7 +231,8 @@
 
       // mermaid: 'plain' — reasoning is a working surface, not the answer:
       // a diagram the model drafts while thinking must not render as a
-      // duplicate interactive chart here.
+      // duplicate interactive chart here. codeBlocks: 'plain' keeps a fence the
+      // same unclamped block while it streams and once settled.
       let bodyHtml = '';
       let bodyUnitsHtml = '';
       if (bodyMarkdown) {
@@ -251,6 +244,7 @@
             : Date.now();
           const streamModel = renderStreamingMarkdownUnits(bodyMarkdown, {
             mermaid: 'plain',
+            codeBlocks: 'plain',
             allowTailRewrite: true,
             previousUnits: cached ? cached.units : [],
             previousStreamState: cached ? cached.streamState : null,
@@ -465,7 +459,6 @@
           groupCount: phaseGroups.length,
           transcriptView,
           controller,
-          holdOpen: options?.holdOpen === true,
         });
       }).join('');
 

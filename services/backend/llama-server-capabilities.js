@@ -78,7 +78,9 @@ function failedResult(token) {
 function cacheResult(binaryPath, signature, result) {
   capabilityCache.delete(binaryPath);
   capabilityCache.set(binaryPath, { signature, result });
-  if (capabilityCache.size > 4) {
+  // Row 142: the build chooser probes up to 32 candidates (16 trusted builds plus
+  // failures); a smaller bound would re-spawn builds on each prepare() and evict the running one.
+  if (capabilityCache.size > 40) {
     capabilityCache.delete(capabilityCache.keys().next().value);
   }
   return result;

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  GgufHeaderError, readGgufHeader, readGgufArchitecture, GGUF_KV_TYPES,
+  GgufHeaderError, readGgufHeader, readGgufArchitecture, GGUF_KV_TYPES, GENERAL_ONLY,
 } = require('../services/gguf-header');
 
 function integer(value, bytes = 4) {
@@ -193,4 +193,15 @@ test('architecture cache drops the oldest insertion at 512 entries', (t) => {
   assert.equal(cache.size, 512);
   assert.equal(cache.has('model-0'), false);
   assert.equal(cache.has('model-1'), true);
+});
+
+test('the general-only read stops at the tokenizer, so a vocabulary past the prefix does not fail it (row 144)', (t) => {
+  const vocab = Array.from({ length: 4000 }, (_, index) => `token_${index}`);
+  const file = fixture(t, gguf([
+    ['general.architecture', 8, 'qwen3'], ['general.size_label', 8, '27B'],
+    ['tokenizer.ggml.tokens', 9, { type: 8, values: vocab }], ['tail', 4, 1],
+  ]));
+  assert.throws(() => readGgufHeader(file, { maxBytes: 4096 }), GgufHeaderError);
+  assert.deepEqual(readGgufHeader(file, { maxBytes: 4096, [GENERAL_ONLY]: true }).kv,
+    { 'general.architecture': 'qwen3', 'general.size_label': '27B' });
 });

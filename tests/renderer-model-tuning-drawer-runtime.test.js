@@ -246,7 +246,9 @@ test('the build row follows the Model-file row grammar under Model file, escaped
 
   const row = render({ runtimePath: FORK, runtimeBuild: 10683 });
   assert.ok(row, 'the row renders with the bridge');
-  assert.equal(row.previousElementSibling.dataset.modelTuningRow, 'modelPath', 'placed right after Model file');
+  // Row 140: the hidden Vision row sits between Model file and the build row.
+  assert.equal(row.previousElementSibling.dataset.modelTuningRow, 'vision', 'placed right after the Vision row');
+  assert.equal(row.previousElementSibling.previousElementSibling.dataset.modelTuningRow, 'modelPath', 'which follows Model file');
   assert.equal(row.className, 'model-tuning-row model-tuning-row--wide');
   assert.equal(row.hidden, false);
   assert.deepEqual(Array.from(row.children, (child) => child.className),

@@ -55,7 +55,7 @@ function createFollowReveal() {
 
 function buildEnv(timelineHtml, extraOptions) {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed">' + (timelineHtml || '') + '</div>'
     + '</div>'
     + '<textarea id="composer"></textarea>'
@@ -129,7 +129,7 @@ test('search next navigation releases follow-latest even after follow re-latches
 
 test('canonical search navigation releases follow-latest (messageId path)', async (t) => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<div id="chatView">'
+    + '<div id="chatView" class="chat-pane"><div data-chat-node="chatTimelineUtilityCluster"></div>'
     + '  <div id="chatTimeline" role="feed"><article class="chat-entry" data-message-id="m2" data-virtualized="true"><div class="chat-entry-virtualized"></div></article></div>'
     + '</div></body></html>');
   shimCssHighlights(dom.window);
@@ -195,4 +195,61 @@ test('a search reveal carries the current match range', async (t) => {
   const range = follow.revealCalls[0].range;
   assert.ok(range instanceof dom.window.Range, 'the reveal gets the match range');
   assert.equal(String(range).toLowerCase(), 'hello');
+});
+
+// Review 2026-11-12 (stale-dup-decor 1): the mutation rescan re-applied the
+// current match through the reveal helper, so every stream patch or elapsed-clock
+// tick re-centred the match and released follow during a live turn.
+test('a timeline mutation refreshes the match count without scrolling or releasing follow (legacy path)', async (t) => {
+  const follow = createFollowReveal();
+  const { dom, overlay } = buildEnv(FIXTURE, { viewportReveal: follow.viewportReveal });
+  t.after(() => overlay.dispose());
+  overlay.attach();
+  overlay.open();
+  const input = dom.window.document.querySelector('.chat-search-bar-input');
+  input.value = 'hello';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => dom.window.CSS.highlights.get('chat-search-match')?.ranges.length === 2);
+  const revealsAfterQuery = follow.revealCalls.length;
+
+  follow.uiState.ui.followLatest = true; // the reader went back to the live reply
+  const live = dom.window.document.createElement('article');
+  live.className = 'chat-entry';
+  live.setAttribute('data-message-id', 'm4');
+  live.innerHTML = '<div class="chat-bubble">streaming hello</div>';
+  dom.window.document.getElementById('chatTimeline').appendChild(live);
+  await waitForUiState(dom.window, () => dom.window.CSS.highlights.get('chat-search-match')?.ranges.length === 3);
+
+  assert.equal(follow.revealCalls.length, revealsAfterQuery, 'a mutation rescan must not scroll to the match');
+  assert.equal(follow.uiState.ui.followLatest, true, 'a mutation rescan must not release follow');
+  input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert.equal(follow.revealCalls.length, revealsAfterQuery + 1, 'next still scrolls to the match');
+});
+
+test('a timeline mutation refreshes the match count without scrolling or releasing follow (messageId path)', async (t) => {
+  const follow = createFollowReveal();
+  const messages = [{ id: 'm1', role: 'assistant', content: 'Hello world' }];
+  const { dom, overlay } = buildEnv(FIXTURE, {
+    viewportReveal: follow.viewportReveal,
+    getCurrentSessionMessages: () => messages,
+    getSessionTurnEventState: () => ({ turnEvents: [] }),
+  });
+  t.after(() => overlay.dispose());
+  overlay.attach();
+  overlay.open();
+  const input = dom.window.document.querySelector('.chat-search-bar-input');
+  const info = () => dom.window.document.querySelector('.chat-search-bar')?.textContent || '';
+  input.value = 'hello';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => follow.revealCalls.length >= 1);
+  const revealsAfterQuery = follow.revealCalls.length;
+  const infoAfterQuery = info();
+
+  follow.uiState.ui.followLatest = true;
+  messages.push({ id: 'm3', role: 'assistant', content: 'Goodbye hello' });
+  dom.window.document.querySelector('[data-message-id="m3"] .chat-bubble').textContent = 'Goodbye hello!';
+  await waitForUiState(dom.window, () => info() !== infoAfterQuery);
+
+  assert.equal(follow.revealCalls.length, revealsAfterQuery, 'a mutation rescan must not scroll to the match');
+  assert.equal(follow.uiState.ui.followLatest, true, 'a mutation rescan must not release follow');
 });

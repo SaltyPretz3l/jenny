@@ -123,6 +123,7 @@
       },
     };
 
+    // The notice follows the backend phase (latched below), so its actions keep it up.
     function buildNoticeActions(keys) {
       const actions = [];
       for (const key of keys) {
@@ -134,7 +135,7 @@
           actions.push({ id: 'backend-open-logs', label: jt('titlebar.status.openDiagnostics', 'Open Diagnostics'), kind: 'secondary', onClick: () => { openLogs(); } });
         }
       }
-      return actions;
+      return actions.map((action) => ({ ...action, keepOpen: true }));
     }
 
     let lastNoticeSignature = '';

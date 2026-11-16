@@ -498,5 +498,31 @@
     return { buildTurnEventFromStreamPayload };
   }
 
-  return { createTurnReducerStreamEventUtils };
+  // A text stream sends one event per delta. The turn keeps one event per
+  // segment run: a delta that continues the last retained text event (same
+  // message, phase and segment, no new phase metadata) appends to it. The
+  // retained event is the turn's own copy, never the caller's (a replay hands
+  // in persisted events). Rows are built per delta and do not read this.
+  const ownedTextEvents = new WeakSet();
+  function coalesceRetainedTextEvent(turn, event) {
+    const events = turn && Array.isArray(turn.events) ? turn.events : null;
+    const last = events && events[events.length - 1];
+    if (!last || !event || last.kind !== 'assistant_text_segment' || event.kind !== 'assistant_text_segment') return false;
+    const id = (value) => String(value == null ? '' : value).trim();
+    const lastBody = last.payload || {};
+    const body = event.payload || {};
+    if (body.phase || id(last.primary_message_id) !== id(event.primary_message_id)
+      || id(last.assistant_phase) !== id(event.assistant_phase)
+      || id(lastBody.segment_id) !== id(body.segment_id) || id(lastBody.phase_id) !== id(body.phase_id)) return false;
+    let retained = last;
+    if (!ownedTextEvents.has(retained)) {
+      retained = { ...last, payload: { ...lastBody } };
+      ownedTextEvents.add(retained);
+      events[events.length - 1] = retained;
+    }
+    retained.payload.text = String(retained.payload.text || '') + String(body.text || '');
+    return true;
+  }
+
+  return { createTurnReducerStreamEventUtils, coalesceRetainedTextEvent };
 });

@@ -133,6 +133,9 @@
     var smoothNavigationStartTop = 0;
     var smoothNavigationScrolls = 0;
     var deferredAnchorRestore = false;
+    // Where the timeline sat when the reader anchor was last captured or
+    // restored; null while no anchor is held.
+    var readerAnchorTop = null;
     var lastScrollTop = finiteNumber(scrollContainer && scrollContainer.scrollTop, 0);
     var lastSnapshot = null;
     var detachListeners = [];
@@ -364,9 +367,24 @@
       var current = snapshot || readSnapshot(now(win));
       if (current.nearBottom || followState.get() !== false) {
         anchorRegistry.clear('reader');
+        readerAnchorTop = null;
         return false;
       }
-      return anchorRegistry.capture('reader', scrollContainer, timelineContainer || scrollContainer);
+      var captured = anchorRegistry.capture('reader', scrollContainer, timelineContainer || scrollContainer);
+      readerAnchorTop = captured ? finiteNumber(scrollContainer.scrollTop, 0) : null;
+      return captured;
+    }
+
+    // The anchor is re-read once per coordinator frame, but a restore can run
+    // earlier in the same frame (the viewport sync a streamed chunk queued).
+    // Mid-gesture the anchor then still names the position from before the
+    // reader's latest movement, and restoring it put that movement back: the
+    // timeline scrolled in place while a reply streamed (2026-11-11).
+    function readerMovedSinceAnchor() {
+      if (readerAnchorTop === null) return false;
+      var intentIsFresh = userIntentUntil > 0 && now(win) <= userIntentUntil;
+      if (!intentIsFresh && !pointerActive && !touchActive) return false;
+      return Math.abs(finiteNumber(scrollContainer.scrollTop, 0) - readerAnchorTop) >= 1;
     }
 
     // A smooth explicit navigation (message jump) animates toward the target
@@ -427,8 +445,13 @@
     function restoreReaderAnchor() {
       if (disposed || !anchorRegistry || !scrollContainer || followState.get() !== false) return 'skipped';
       if (isSmoothNavigationInFlight()) { deferredAnchorRestore = true; return 'navigating'; }
+      if (readerMovedSinceAnchor()) {
+        captureReaderAnchor();
+        return 'reader_moved';
+      }
       var topBefore = scrollContainer.scrollTop;
       var outcome = anchorRegistry.restore('reader', scrollContainer, timelineContainer || scrollContainer);
+      if (readerAnchorTop !== null) readerAnchorTop = finiteNumber(scrollContainer.scrollTop, 0);
       // The registry skips a write when the anchor did not move; a marker for
       // that no-op would excuse the next genuine unattributed jump.
       if (!['skipped', 'unavailable', 'missing'].includes(outcome) && scrollContainer.scrollTop !== topBefore) {
@@ -451,6 +474,13 @@
       var renderedInFrame = hasContentMutationObserver
         && frameContentGeneration !== lastFrameContentGeneration;
       var snapshot = readSnapshot(finiteNumber(timestamp, startedAt));
+      // A smooth End/PageDown or wheel glide keeps moving after its one input
+      // event: an unmarked frame that continues reader movement renews the
+      // window, so the frame that lands at the bottom can re-latch (2026-11-12).
+      // Not on an upward frame: a shrink clamping the view up mid-glide is not the reader.
+      if (snapshot.userInitiated && !snapshot.programmaticReason && snapshot.direction !== 'up') {
+        userIntentUntil = Math.max(userIntentUntil, snapshot.timestamp + USER_INTENT_WINDOW_MS);
+      }
       var fromTop = lastScrollTop;
       var delta = snapshot.scrollTop - fromTop;
       var attributionReason = snapshot.programmaticReason || 'marker_absent';
@@ -522,7 +552,7 @@
         logRateLimited('chat.scroll_consumer_failed', { consumer: 'jump_controls' });
       }
 
-      if (snapshot.nearBottom) anchorRegistry?.clear?.('reader');
+      if (snapshot.nearBottom) { anchorRegistry?.clear?.('reader'); readerAnchorTop = null; }
       else captureReaderAnchor(snapshot);
       pendingUserIntent = false;
       var duration = Math.max(0, now(win) - startedAt);
@@ -590,8 +620,9 @@
       stats.scrollEvents += 1;
       noteWriteRateWindow(writeRateMeter?.noteScrollEvent(now(win)));
       if (smoothNavigationUntil) smoothNavigationScrolls += 1;
-      if (readSnapshot(now(win)).userInitiated) {
-        try { viewportController?.noteScrollInputIntent?.(); } catch (_error) {
+      var nativeSnapshot = readSnapshot(now(win));
+      if (nativeSnapshot.userInitiated) {
+        try { viewportController?.noteScrollInputIntent?.(nativeSnapshot.direction); } catch (_error) {
           logRateLimited('chat.scroll_consumer_failed', { consumer: 'viewport_intent' });
         }
       }
@@ -721,7 +752,7 @@
       userIntentUntil = 0;
       if (settings.smooth === true && settings.followLatest !== true) armSmoothNavigation();
       else clearSmoothNavigation();
-      if (settings.followLatest === true) anchorRegistry?.clear?.('reader');
+      if (settings.followLatest === true) { anchorRegistry?.clear?.('reader'); readerAnchorTop = null; }
       else captureReaderAnchor();
     }
 

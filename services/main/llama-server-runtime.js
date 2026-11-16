@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { MAX_RUNTIME_BUILD, isLlamaServerRuntimePath, managedModelKey } = require('../shell-config-engines');
+const { MAX_RUNTIME_BUILD, isLlamaServerRuntimePath, isLocalAbsolutePath, managedModelKey } = require('../shell-config-engines');
 const { peekCapabilities, probeCapabilitiesAsync } = require('../backend/llama-server-capabilities');
 
 const MAX_RUNTIME_PICKS = 8;
@@ -161,6 +161,34 @@ function reconcileManagedRuntimePaths(patch, { persisted = null, picks = null, p
   return result;
 }
 
+function rootKey(root, platform) {
+  return platform === 'win32' ? String(root).toLowerCase() : String(root);
+}
+
+// Rewrites `runtimeRoots` in place on an untrusted `managed` patch: a folder
+// is a place main will run programs from, so a saved folder may stay or go,
+// and a new one lands only when this session's main dialog returned that exact
+// string (the folder-pick registry). Anything else is dropped and counted.
+function reconcileRuntimeRoots(patch, { persisted = null, folderPicks = null, platform = process.platform } = {}) {
+  const result = { accepted: [], rejected: 0 };
+  if (!isPlainObject(patch) || !hasOwn(patch, 'runtimeRoots')) return result;
+  const savedKeys = new Set((Array.isArray(persisted?.runtimeRoots) ? persisted.runtimeRoots : [])
+    .filter((root) => typeof root === 'string').map((root) => rootKey(root, platform)));
+  const kept = [];
+  for (const root of Array.isArray(patch.runtimeRoots) ? patch.runtimeRoots : []) {
+    if (typeof root === 'string' && savedKeys.has(rootKey(root, platform))) {
+      kept.push(root);
+    } else if (typeof root === 'string' && isLocalAbsolutePath(root, { platform }) && folderPicks?.has?.(root) === true) {
+      kept.push(root);
+      result.accepted.push(root);
+    } else {
+      result.rejected += 1;
+    }
+  }
+  patch.runtimeRoots = kept;
+  return result;
+}
+
 // The single write path for a renderer `managed` patch. A pick is consumed only
 // once its runtime is actually saved: a write can throw, or succeed without
 // landing (a newer config version blocks it; the per-model cap drops a new
@@ -171,6 +199,7 @@ function writeManagedPatch({
   shellConfigService,
   patch,
   picks = null,
+  folderPicks = null,
   log = () => {},
   platform = process.platform,
 } = {}) {
@@ -179,8 +208,20 @@ function writeManagedPatch({
   if (reconciled.rejectedKeys.length) {
     log('WARN', 'engines.managed_runtime_rejected', { keys: reconciled.rejectedKeys.slice(0, MAX_LOGGED_KEYS) });
   }
+  const roots = reconcileRuntimeRoots(reconciled.patch, { persisted, folderPicks, platform });
+  if (roots.rejected) {
+    log('WARN', 'engines.managed_runtime_root_rejected', { count: roots.rejected });
+  }
   const state = shellConfigService?.updateManagedLlamaServer?.(reconciled.patch);
-  const savedPerModel = shellConfigService?.getLocalEngines?.()?.openaiCompatible?.managed?.perModel;
+  const savedManaged = shellConfigService?.getLocalEngines?.()?.openaiCompatible?.managed;
+  const savedRootKeys = new Set((Array.isArray(savedManaged?.runtimeRoots) ? savedManaged.runtimeRoots : [])
+    .map((root) => rootKey(root, platform)));
+  const landedRoots = roots.accepted.filter((root) => savedRootKeys.has(rootKey(root, platform)));
+  for (const root of landedRoots) folderPicks?.consume?.(root);
+  if (landedRoots.length) {
+    log('INFO', 'engines.managed_runtime_root_accepted', { count: landedRoots.length });
+  }
+  const savedPerModel = savedManaged?.perModel;
   const landedKeys = reconciled.acceptedKeys.filter((key, index) => {
     const saved = isPlainObject(savedPerModel) && hasOwn(savedPerModel, key) ? savedPerModel[key] : null;
     const sent = reconciled.patch.perModel[key];
@@ -208,11 +249,13 @@ function runtimeFolderToken(runtimePath, { platform = process.platform } = {}) {
 }
 
 // Launch precedence: the env override (a developer escape hatch that shadows a
-// saved runtime), then the model's saved runtime, then the bundled build. A
-// saved runtime that is gone fails the launch; it never falls back to bundled.
+// saved runtime), then the model's saved runtime, then the automatic build
+// (row 142, llama-server-runtime-choice.js), then the bundled build. A saved
+// runtime that is gone fails the launch; it never falls back to bundled.
 function resolveLaunchRuntime({
   binaryOverride = '',
   runtimePath = '',
+  autoRuntimePath = '',
   resolveBundledPath = () => '',
   fsImpl = fs,
   platform = process.platform,
@@ -240,11 +283,56 @@ function resolveLaunchRuntime({
         error: `llama_server_runtime_missing:${runtimeFolderToken(saved, { platform })}`,
       };
   }
+  if (typeof autoRuntimePath === 'string' && autoRuntimePath) {
+    return { binaryPath: autoRuntimePath, source: 'auto', shadowed: false, error: '' };
+  }
   let bundled = '';
   try {
     bundled = String(resolveBundledPath() || '');
   } catch (_error) { /* no bundled build: the lifecycle reports it */ }
   return { binaryPath: bundled, source: 'bundled', shadowed: false, error: '' };
+}
+
+// The executable a launch of this model would run, resolved once per launch so
+// the spawn, the acceleration probe and the relaunch check never disagree.
+// The automatic build applies only without an env override or a saved build.
+function resolveModelRuntime({ settings = {}, entry = null, modelPath = '', chooser = null, resolveBundledPath = () => '' } = {}) {
+  const savedPath = typeof entry?.runtimePath === 'string' ? entry.runtimePath : '';
+  const override = typeof settings.binaryOverride === 'string' ? settings.binaryOverride.trim() : '';
+  let auto = null;
+  if (!override && !savedPath && chooser) {
+    try {
+      auto = chooser.chooseFor({ modelPath }) || null;
+    } catch (_error) { /* no automatic build */ }
+  }
+  const runtime = resolveLaunchRuntime({
+    binaryOverride: settings.binaryOverride,
+    runtimePath: savedPath,
+    autoRuntimePath: auto ? auto.binaryPath : '',
+    resolveBundledPath,
+  });
+  return { runtime, runtimeBuild: auto ? auto.build : (Number(entry?.runtimeBuild) || 0) };
+}
+
+// A saved build deleted or renamed after the plan resolved it fails the spawn
+// with a generic error: name it the way the plan would have, and never spawn
+// the missing file again for the unaccelerated retry.
+function vanishedRuntimeError(launchOptions, { fsImpl = fs } = {}) {
+  if (launchOptions?.runtimeSource !== 'saved') {
+    return '';
+  }
+  try {
+    if (fsImpl.statSync(launchOptions.binaryPath).isFile()) {
+      return '';
+    }
+  } catch (error) {
+    // Only a build that is gone; a refused stat (antivirus, permissions)
+    // proves nothing, so the usual retry decides.
+    if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+      return '';
+    }
+  }
+  return `llama_server_runtime_missing:${runtimeFolderToken(launchOptions.binaryPath)}`;
 }
 
 // Status token for the running build: 'bundled', 'env', 'build <N>' or
@@ -271,8 +359,11 @@ module.exports = {
   createRuntimePickRegistry,
   describeRuntimeLabel,
   reconcileManagedRuntimePaths,
+  reconcileRuntimeRoots,
   resolveLaunchRuntime,
+  resolveModelRuntime,
   runtimeFolderToken,
+  vanishedRuntimeError,
   validateRuntimeExecutable,
   writeManagedPatch,
 };

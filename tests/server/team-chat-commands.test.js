@@ -66,7 +66,7 @@ test('happy path: post, history, sync, thread, edit, delete, mark_read, set_noti
   const overview = await f.send(bob, 'team.chat.overview');
   assert.deepEqual(overview.channels, [{
     channel_id: 'chan_team', kind: 'team', archived: false, rev: deleted.rev, last_seq: 3, floor_seq: 1,
-    last_read_seq: 1, notify: 'none', unread: 0, unread_capped: false, mention: false,
+    last_read_seq: 1, notify: 'none', unread: 0, unread_capped: false, mention: false, threads: [], reads: [], pin_count: 0,
   }]);
 });
 
@@ -320,7 +320,7 @@ test('a prune report from a post becomes a team_chat_channel event with an audie
   const pruned = f.chatEvents().filter((e) => e.type === 'team_chat_channel');
   assert.ok(pruned.length > 0, 'a post that pruned published a channel event');
   for (const event of pruned) {
-    assert.deepEqual(Object.keys(event.payload).sort(), ['channel_id', 'channel_rev', 'floor_seq', 'reason']);
+    assert.deepEqual(Object.keys(event.payload).sort(), ['channel_id', 'channel_rev', 'floor_seq', 'pin_count', 'reason']);
     assert.equal(event.payload.reason, 'pruned');
     assert.equal(event.options.bucket, 'teamchat:chan_team');
     assert.ok(event.options.audience instanceof Set);
@@ -340,7 +340,8 @@ test('the chat host runs retention at start and every six hours on an unref\'d t
   fs.mkdirSync(path.join(f.fx.dir, 'second'));
   assert.deepEqual(await host.start(), { ok: true });
   assert.equal(host.store.listChannels().channels[0].channel_id, 'chan_team');
-  assert.deepEqual(calls, [['set', 6 * 60 * 60 * 1000], 'unref']);
+  // Slice 2c host: the staged-upload sweep every five minutes, on the same injected timers.
+  assert.deepEqual(calls, [['set', 6 * 60 * 60 * 1000], 'unref', ['set', 5 * 60 * 1000], 'unref']);
   await host.runRetention();
   await host.dispose();
   assert.deepEqual(calls.at(-1), ['clear', true]);
@@ -493,7 +494,7 @@ test('two concurrent deletes of one message announce its tombstone once', async 
 });
 
 test('a failed mutation after a committed prune announces the prune and answers without it', async () => {
-  const report = { channel_id: 'chan_team', reason: 'pruned', floor_seq: 5, channel_rev: 7, segments_removed: 1,
+  const report = { channel_id: 'chan_team', reason: 'pruned', floor_seq: 5, channel_rev: 7, pin_count: 3, segments_removed: 1,
     messages_removed: 4, replies_removed: 0, bytes_removed: 900 };
   const failure = { ok: false, error: { code: 'CMP-HOST-0006', reason: 'team_chat_store_failed', retryable: false } };
   const store = {
@@ -510,7 +511,7 @@ test('a failed mutation after a committed prune announces the prune and answers 
       { canAdmit: () => true, publish: (type, payload, options) => published.push({ type, payload, options }) });
     assert.deepEqual(answer, failure, `${operation}: the answer carries no prune list`);
     assert.deepEqual(published.map((entry) => [entry.type, entry.payload, entry.options.bucket]),
-      [['team_chat_channel', { channel_id: 'chan_team', reason: 'pruned', floor_seq: 5, channel_rev: 7 },
+      [['team_chat_channel', { channel_id: 'chan_team', reason: 'pruned', floor_seq: 5, channel_rev: 7, pin_count: 3 },
         'teamchat:chan_team']], operation);
   }
 });

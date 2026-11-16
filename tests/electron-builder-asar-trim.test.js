@@ -11,6 +11,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { minimatch } = require('minimatch');
+const { withoutLocalInstall } = require('./helpers/local-node-modules');
+
+// These two cases walk the installed vendor packages themselves, not only the lockfile.
+const NO_VENDOR_FILES = withoutLocalInstall(['pdfjs-dist', 'mermaid']);
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -66,7 +70,7 @@ function referencedVendorFiles() {
   return [...refs].sort();
 }
 
-test('asar trim: every vendor file the app references at runtime stays packaged', () => {
+test('asar trim: every vendor file the app references at runtime stays packaged', { skip: NO_VENDOR_FILES }, () => {
   const globs = fileGlobs();
   const refs = referencedVendorFiles();
   for (const required of [
@@ -117,7 +121,7 @@ test('asar trim: source maps and unused vendor builds are excluded', () => {
   }
 });
 
-test('asar trim: mermaid.min.js is self-contained (no chunk or dynamic imports)', () => {
+test('asar trim: mermaid.min.js is self-contained (no chunk or dynamic imports)', { skip: NO_VENDOR_FILES }, () => {
   const bundle = readRepoFile('node_modules/mermaid/dist/mermaid.min.js');
   assert.ok(bundle.length > 1_000_000);
   assert.doesNotMatch(bundle, /chunks\//);
@@ -179,4 +183,14 @@ test('asar trim: whole-package exclusions only drop packages owned by mermaid or
   }
   assert.ok(dropped.length >= 30, `expected the exclusions to cover the mermaid-only tree, dropped ${dropped.length}`);
   assert.deepEqual(violations, []);
+});
+
+test('asar trim: the sketch frame bundle ships beside the preload bundle, the Node test bundle and the vendored sources do not', () => {
+  const globs = fileGlobs();
+  assert.equal(isPackaged('preload.bundle.js', globs), true, 'sanity: the preload bundle ships');
+  assert.equal(isPackaged('sketch-frame.bundle.js', globs), true);
+  assert.equal(isPackaged('sketch-core.bundle.cjs', globs), false);
+  assert.equal(isPackaged('vendor/sketchy/src/scene/compact.ts', globs), false);
+  // Mermaid's own elkjs 0.9.3 (nested once the root installs 0.12.1) is not loaded at run time either.
+  assert.equal(isPackaged('node_modules/mermaid/node_modules/elkjs/lib/elk.bundled.js', globs), false);
 });

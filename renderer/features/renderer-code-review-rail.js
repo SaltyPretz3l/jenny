@@ -84,25 +84,25 @@
   const chatPicturesLoads = new WeakMap();
 
   /**
-   * The transcript's pictures, called after every chat render. `root` is the timeline or one article.
+   * Asks for the last reply's pictures for the Changes view, called after every chat render; draws nothing. `root` is the timeline or one article.
    * The modules load the first time a chat shows a change; until then this only looks for one.
    */
-  function decorateChatPictures({ root, timeline, getSessionId, getTurns, isEnabled, windowRef, log } = {}) {
+  function captureChatPictures({ root, timeline, getSessionId, getTurns, isEnabled, windowRef, log } = {}) {
     const globalRef = windowRef || globalThis;
     const enabled = () => typeof isEnabled !== 'function' || isEnabled() !== false;
     const decorate = (module, target) => {
       const sessionId = normalizeId(getSessionId());
-      module.decorateChat({ root: target, sessionId, getTurns: () => getTurns(sessionId) || [], enabled: enabled() });
+      module.captureForChat({ root: target, sessionId, getTurns: () => getTurns(sessionId) || [], enabled: enabled() });
     };
     const ready = globalRef.rendererChangePictures;
-    if (ready && typeof ready.decorateChat === 'function') {
+    if (ready && typeof ready.captureForChat === 'function') {
       if (root) decorate(ready, root);
       return;
     }
     if (chatPicturesLoads.has(globalRef) || !enabled() || !root || typeof root.querySelector !== 'function' || !root.querySelector('[data-jenny-code-review]')) return;
     chatPicturesLoads.set(globalRef, loadChangePictures({ windowRef: globalRef, log }).then((module) => {
       const target = timeline || root;
-      if (module && typeof module.decorateChat === 'function' && target.isConnected) decorate(module, target);
+      if (module && typeof module.captureForChat === 'function' && target.isConnected) decorate(module, target);
     }).catch(() => {}));
   }
 
@@ -535,6 +535,6 @@
 
   return {
     CHANGES_VIEW_SCRIPTS, WORKING_TREE_SCRIPTS, CHANGE_PICTURES_SCRIPTS,
-    createCodeReviewRail, loadChangesViewModules, loadChangePictures, decorateChatPictures,
+    createCodeReviewRail, loadChangesViewModules, loadChangePictures, captureChatPictures,
   };
 });

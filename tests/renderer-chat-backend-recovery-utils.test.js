@@ -184,6 +184,32 @@ test('recoverInflightSendsForUnusableBackend clears stranded send state with bou
   assert.equal(toasts[0].options.dedupeKey, 'chat-stream:backend-unusable');
 });
 
+// mixed-states #6: a dead backend ends the turn, so nothing waits on its
+// approval any more and the live turn stops reading as running.
+test('recoverInflightSendsForUnusableBackend clears the session approvals and settles its live turn', () => {
+  const state = createState();
+  state.pendingToolApprovals = new Map([
+    ['approval-live', { approvalId: 'approval-live', callId: 'call-live', sessionId: 'session-live', streamId: 'stream-live' }],
+    ['approval-elsewhere', { approvalId: 'approval-elsewhere', callId: 'call-x', sessionId: 'session-idle', streamId: 'stream-x' }],
+  ]);
+  state.pendingStreams = new Map([['stream-live', { sessionId: 'session-live' }]]);
+  state.toolCallsByStream = new Map([['stream-live', new Map()]]);
+  const turn = { turn_id: 'stream-live', status: 'streaming', rows: [
+    { kind: 'tool_call', payload: { state: 'awaiting_approval' } },
+    { kind: 'approval_gap', payload: { state: 'awaiting_approval' } },
+    { kind: 'tool_call', payload: { state: 'completed' } },
+  ] };
+  state.ui.chatTimelineLiveStateBySession = new Map([['session-live', { turns_by_id: { 'stream-live': turn } }]]);
+  recoverInflightSendsForUnusableBackend({
+    payload: { phase: 'failed' }, state, getMultiStreamController: () => createMultiStreamController(),
+  });
+  assert.deepEqual([...state.pendingToolApprovals.keys()], ['approval-elsewhere'], 'only the dead turn approval goes');
+  assert.equal(state.pendingStreams.has('stream-live'), false);
+  assert.equal(state.toolCallsByStream.has('stream-live'), false);
+  assert.equal(turn.status, 'errored', 'the live turn is settled');
+  assert.deepEqual(turn.rows.map((row) => row.payload.state), ['interrupted', 'interrupted', 'completed']);
+});
+
 test('recoverInflightSendsForUnusableBackend ignores usable phases and empty recovery sets', () => {
   const state = createState();
   const controller = createMultiStreamController();

@@ -130,6 +130,30 @@
     return mutated;
   }
 
+  // The backend that ran the turn is gone: no approval of it can be answered,
+  // and its live turn is over. Clear the session's waits and stream records and
+  // seal the live turn the way the terminal fold does.
+  function settleDeadTurnState(state, sessionId, streamId) {
+    for (const [approvalId, approval] of [...(state.pendingToolApprovals?.entries?.() || [])]) {
+      if (normalizeToken(approval?.sessionId) === sessionId || (streamId && normalizeToken(approval?.streamId) === streamId)) {
+        state.pendingToolApprovals.delete(approvalId);
+      }
+    }
+    if (!streamId) return;
+    state.pendingStreams?.delete?.(streamId);
+    state.toolCallsByStream?.delete?.(streamId);
+    // A resumed turn keeps its turn id on a fresh stream: match the stream too.
+    const turnsById = state.ui?.chatTimelineLiveStateBySession?.get?.(sessionId)?.turns_by_id || {};
+    const turn = turnsById[streamId]
+      || Object.values(turnsById).find((candidate) => normalizeToken(candidate?.stream_id) === streamId);
+    const reducer = globalThis.rendererTurnReducer
+      || (typeof require === 'function' ? require('./renderer-turn-reducer') : null);
+    if (turn && !isTerminalMessageStatus(turn.status) && typeof reducer?.sealTurnRows === 'function') {
+      turn.status = 'errored';
+      reducer.sealTurnRows(turn);
+    }
+  }
+
   function recoverInflightSendsForUnusableBackend({
     payload,
     state,
@@ -169,6 +193,7 @@
         errorMessage,
         nowIso,
       });
+      settleDeadTurnState(state, sessionId, streamId);
     }
     appendClientLog('WARN', 'chat.backend_unusable_send_recovery', {
       phase,

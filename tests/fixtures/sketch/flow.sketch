@@ -1,0 +1,9 @@
+title Sign in
+dir right
+user Browser
+api API server
+db Database
+user -> api request
+api -> db query
+db -> api rows
+api -> user page

@@ -1,7 +1,8 @@
 /* renderer/shell/renderer-shell-artifact-rails.js - the lazily built rails of the artifact side panel.
  *
  * Split out of renderer-shell-artifact-bridge.js (which builds one per bridge): the Changes undo controller,
- * the code-review, file-preview, task, subagent and project-notes rails, and the memory chip / notes entries.
+ * the code-review, file-preview, task, subagent and project-notes rails, the memory chip / notes entries, and the
+ * lazily loaded Background tasks panel with its always-present global API (window.rendererBackgroundTasksPanel).
  * Each is built once on first use, bound to the stable #artifactReviewPanel container and torn down through
  * registerCleanup; a construction failure is logged and degrades to "no owner". The artifact surface stays
  * with the bridge and is read through getSurface().
@@ -14,6 +15,7 @@
   root.rendererShellArtifactRails = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  const jt = (k, d) => (globalRef.jennyI18n && typeof globalRef.jennyI18n.t === 'function' ? globalRef.jennyI18n.t(k, d) : d);
   function noop() {}
 
   function createShellArtifactRails(ctx) {
@@ -56,6 +58,12 @@
     let browserPanel = null;
     let browserPanelFailed = false;
     let browserPanelSync = null; // while loading: the newest sync
+    // Row 138: the Background tasks panel loads on first open; its global API exists from startup.
+    const BACKGROUND_TASKS_SCRIPTS = [
+      ['renderer/features/renderer-background-tasks-panel-render.js', 'rendererBackgroundTasksPanelRender'],
+      ['renderer/features/renderer-background-tasks-panel.js', 'rendererBackgroundTasksPanelOwner'],
+    ];
+    let backgroundTasksPanel = null;
 
     // One Changes undo controller for both hosts (row 34 S5): the IDE chat
     // dock and the side panel. Created once its lazily loaded script is ready.
@@ -353,6 +361,61 @@
       return projectNotesRailController;
     }
 
+    function ensureBackgroundTasksPanel() {
+      const owner = windowRef?.rendererBackgroundTasksPanelOwner;
+      if (backgroundTasksPanel || typeof owner?.createBackgroundTasksPanel !== 'function') return backgroundTasksPanel;
+      try {
+        const panel = owner.createBackgroundTasksPanel({
+          state,
+          windowRef,
+          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
+          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
+          renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
+          toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
+          claimOwner: (sessionId) => sidePanel.claim(sessionId),
+          getPanelSessionId: () => sidePanel.getSessionId(),
+          openSession: (sessionId) => callbacks.activateWorkspaceSession?.(sessionId, { mode: 'replace' }),
+          stopSession: owner.createStopSession({ stopSessionStream: (id) => callbacks.stopSessionStream?.(id), getChat: () => windowRef?.jennyShell?.chat }),
+          appendClientLog: (...args) => appendClientLog(...args),
+        });
+        panel.bind();
+        registerCleanup(() => panel.dispose());
+        backgroundTasksPanel = panel;
+      } catch (error) {
+        appendClientLog('ERROR', 'background_tasks.panel_init_failed', { message: error?.message || String(error) });
+      }
+      return backgroundTasksPanel;
+    }
+
+    async function loadBackgroundTasksPanel() {
+      // ensureScript answers at once for a loaded script and shares one load between concurrent callers.
+      for (const [src, name] of BACKGROUND_TASKS_SCRIPTS) {
+        if (!await windowRef?.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef?.[name]), log: appendClientLog })) return null;
+      }
+      return ensureBackgroundTasksPanel();
+    }
+
+    // The More menu and the session rail's rows call this; it loads the panel on first use.
+    const backgroundTasksApi = {
+      async open(options) {
+        if (!ensureBackgroundTasksPanel()) await loadBackgroundTasksPanel().catch(() => null);
+        if (!backgroundTasksPanel) {
+          appendClientLog('WARN', 'background_tasks.panel_load_failed', {});
+          showToastMessage(jt('backgroundTasks.unavailable', 'Background tasks are unavailable right now.'));
+          return false;
+        }
+        return backgroundTasksPanel.open(options);
+      },
+      toggle: (options) => (backgroundTasksApi.isOpen() ? Promise.resolve(!backgroundTasksApi.close()) : backgroundTasksApi.open(options)),
+      close: () => backgroundTasksPanel?.close?.() === true,
+      isOpen: () => backgroundTasksPanel?.isOpen?.() === true,
+      titleHtml: () => backgroundTasksPanel?.titleHtml?.() || '', // the panel chrome's title while a task is open
+    };
+    if (windowRef && typeof windowRef === 'object') {
+      windowRef.rendererBackgroundTasksPanel = backgroundTasksApi;
+      registerCleanup(() => { if (windowRef.rendererBackgroundTasksPanel === backgroundTasksApi) delete windowRef.rendererBackgroundTasksPanel; });
+    }
+
     async function loadBrowserPanel() {
       try {
         for (const [src, name] of BROWSER_PANEL_SCRIPTS) {
@@ -381,6 +444,8 @@
       getCodeReviewRailController: () => codeReviewRailController,
       getFilePreviewController: () => filePreviewController,
       getSubagentRailController: () => subagentRailController,
+      renderBackgroundTasksSurface: (surface) => backgroundTasksPanel?.renderRailContent?.(surface) === true,
+      backgroundTasksApi,
       ensureCodeReviewRail,
       ensureFilePreviewController,
       ensureTaskRailController,

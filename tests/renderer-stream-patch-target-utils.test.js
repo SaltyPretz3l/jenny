@@ -287,3 +287,41 @@ test('reasoning patch block resolution names why it declined', () => {
   list.insertAdjacentHTML('beforeend', reasoningRow('r0', 'seg2', { status: 'complete', fp: 'f0' }));
   assert.equal(resolve(block('r0', 'complete', 'f0') + block('r1')), 'sibling_duplicate_key');
 });
+
+// 4th-checkpoint cost: the per-delta live patch finds rows and reasoning
+// blocks without a selector query over the row list, and never walks into a
+// finished checkpoint's (hidden) body, so its cost does not grow with them.
+test('the live reasoning patch walks rows and blocks without entering a row body', () => {
+  const finishedBody = '<div class="reasoning-row-panel">' + '<p>finished</p>'.repeat(50)
+    + '<div class="reasoning-row-block" data-phase-key="nested" data-reasoning-status="complete"></div></div>';
+  const dom = new JSDOM(`<div id="list" data-turn-row-list="true">
+    ${reasoningRow('r1', 'seg1', { status: 'complete', fp: 'f1', body: finishedBody })}
+    <div class="chat-row-group">${reasoningRow('r1b', 'seg1')}</div>
+  </div>`);
+  const doc = dom.window.document;
+  const list = doc.getElementById('list');
+  const scope = doc.querySelector('[data-row-id="r1b"]');
+  const queries = [];
+  for (const node of [list, ...list.querySelectorAll('.chat-row')]) {
+    for (const name of ['querySelector', 'querySelectorAll']) {
+      const original = node[name].bind(node);
+      node[name] = (selector) => { queries.push(`${node.getAttribute('data-row-id') || 'list'} ${selector}`); return original(selector); };
+    }
+  }
+  const { resolveReasoningPatchBlocks } = require('../renderer/chat/renderer-stream-patch-target-utils');
+
+  assert.equal(resolveLiveReasoningScope(list, 'seg1'), scope, 'the last row naming the segment, inside a wrapper');
+  const markup = buildLiveReasoningRowStackMarkup({
+    scope, rowModelList: list, messageId: 'seg1', doc,
+    buildLiveReasoningRowsMarkup: () => reasoningRow('r1', 'seg1', { status: 'complete', fp: 'f1' }) + reasoningRow('r1b', 'seg1', { body: 'more' }),
+  });
+  assert.match(String(markup), /data-row="r1b".*more/, 'the nested block inside the finished panel is not a phase of that row');
+  const next = doc.createElement('template');
+  next.innerHTML = '<div class="reasoning-row-stack"><div class="reasoning-row-block" data-phase-key="r1" data-reasoning-status="complete" data-reasoning-fp="f1"></div>'
+    + '<div class="reasoning-row-block" data-phase-key="r1b" data-reasoning-status="streaming"></div></div>';
+  const key = (block, index) => block.getAttribute('data-phase-key') || `index:${index}`;
+  const existing = [scope.querySelector('.reasoning-row-block')];
+  queries.splice(queries.indexOf('r1b .reasoning-row-block'), 1);
+  assert.equal(resolveReasoningPatchBlocks(existing, next.content.firstElementChild, scope, list, key)?.length, 1);
+  assert.deepEqual(queries, [], 'no selector query over the row list or a row');
+});

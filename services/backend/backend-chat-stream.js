@@ -16,6 +16,7 @@ const {
 const { buildCompactPayload } = require('./backend-compact-payload');
 const { requestRuntimeInference } = require('./backend-runtime-inference');
 const { resolveForcedLocalRoute } = require('./local-engine-requests');
+const { assertTeamModelUsable, liveTeamSelection } = require('./team-engine-models');
 const { NEVER_PERSIST_ALWAYS_ALLOW } = require('../tools/tool-permission-store');
 const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 const {
@@ -135,6 +136,13 @@ async function prepareSessionHistoryRequest(service, sessionId, { logEvent = 'ch
     });
   } catch (_lockdownError) {
     return refuse('session_offline_lockdown');
+  }
+  // A loaded team model carries a chat's text off this PC: only for the chat that chose it, and only
+  // while it is still usable (the same check resolveModel makes on every send).
+  const teamSelection = liveTeamSelection(service);
+  if (teamSelection && target.model !== teamSelection.id) return refuse('team_engine_other_chat');
+  if (teamSelection) {
+    try { assertTeamModelUsable(service, target.model); } catch (error) { return refuse(String(error.reason)); }
   }
   const rawMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
   const canonicalMessages = Array.isArray(rawMessages) ? rawMessages : [];
@@ -444,7 +452,9 @@ function approveToolCall(service, approvalRef, options = {}) {
   }
   // Row 87 D6: the card's "Always allow for chats Jenny started" answer, exactly; the waiter honours it only on its own offer.
   const remember = options?.remember === 'linked_children' ? ['linked_children'] : [];
-  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : 'once', ...remember);
+  // D10: "Allow all" on a card that offered a round of edits; the waiter honours it only on its own offer.
+  const round = options?.round === true && Array.isArray(entry.pending.roundOffer) && entry.pending.roundOffer.length > 0;
+  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : (round ? 'round' : 'once'), ...remember);
   service.pendingToolApprovals.delete(entry.key);
   return true;
 }
@@ -503,6 +513,7 @@ function declineUserQuestions(service, questionRef) {
 }
 
 module.exports = {
+  hasActiveChatStreams,
   resolveModel,
   cancelChatStream,
   compactContextNow,

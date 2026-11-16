@@ -18,6 +18,7 @@
     'save-as': '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
     reveal: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+    pin: '<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z"/><path d="M12 14v6"/>',
   };
   const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
   const ratioStyle = (width, height) => (positiveInteger(width) && positiveInteger(height) ? ` style="--inv-image-ratio: ${Number(width)} / ${Number(height)}"` : '');
@@ -28,10 +29,14 @@
     return ` data-image-kind="${escapeHtml(kind)}" data-image-id="${escapeHtml(id)}" data-session-id="${escapeHtml(sessionId)}"`;
   }
 
+  /* Pin to board (row 150 slice C5): a generated or tool-output picture only (the main process finds those by session and
+   * id), and only while the chat's pin entry says the project_boards flag is on. */
+  const pinnable = (kind) => (kind === 'artifact' || kind === 'tool') && globalThis.rendererChatMessageActionBindings?.pinEnabled?.() === true;
+
   function renderTools(kind, id, sessionId, actions, labels) {
-    const names = { copy: labels.copy, 'save-as': labels.saveAs, reveal: labels.reveal, panel: labels.panel };
+    const names = { copy: labels.copy, 'save-as': labels.saveAs, reveal: labels.reveal, panel: labels.panel, pin: jt('chat.artifactFigure.pin', 'Pin to board') };
     return `<span class="inv-artifact-figure-actions" role="group" aria-label="${escapeHtml(labels.actions)}">`
-      + actions.map((action) => `<button type="button" class="inv-artifact-figure-tool" data-image-action="${action}"${identity(kind, id, sessionId)}`
+      + (pinnable(kind) ? actions.concat('pin') : actions).map((action) => `<button type="button" class="inv-artifact-figure-tool" data-image-action="${action}"${identity(kind, id, sessionId)}`
         + ` aria-label="${escapeHtml(names[action])}" title="${escapeHtml(names[action])}">${icon(action)}</button>`).join('')
       + '</span>';
   }
@@ -149,13 +154,24 @@
     return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== '' && value !== undefined));
   }
 
+  /* A byte count as plain text: "512 B", "8.4 KB", "412 KB", "1.4 MB"; '' for anything that is not a positive size. */
+  function formatBytes(bytes) {
+    const n = Number(bytes);
+    if (!present(bytes) || !Number.isFinite(n) || n <= 0) return '';
+    if (n < 1024) return `${Math.round(n)} B`;
+    if (n < 1024 * 1024) return n < 10 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${Math.round(n / 1024)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   /* [label, value] rows for the details facts list, present values only. */
   function detailRows(details, size) {
     const d = details || {};
     const steps = present(d.steps) ? String(d.steps) + (present(d.cfgScale) ? ` · ${jt('imageViewer.cfg', 'CFG')} ${d.cfgScale}` : '') : '';
-    return [[jt('imageViewer.size', 'Size'), size || ''], [jt('imageViewer.seed', 'Seed'), present(d.seed) ? String(d.seed) : ''],
+    return [[jt('imageViewer.size', 'Size'), size || ''], [jt('imageViewer.type', 'Type'), d.type],
+      [jt('imageViewer.seed', 'Seed'), present(d.seed) ? String(d.seed) : ''],
       [jt('imageViewer.steps', 'Steps'), steps], [jt('imageViewer.model', 'Model'), d.model],
       [jt('imageViewer.time', 'Time'), Number.isFinite(d.seconds) ? jt('imageViewer.seconds', '{seconds} s', { seconds: Math.round(d.seconds) }) : ''],
+      [jt('imageViewer.fileSize', 'File size'), formatBytes(d.bytes)],
       [jt('imageViewer.file', 'File'), d.fileName]].filter((row) => present(row[1]));
   }
 

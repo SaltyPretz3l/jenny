@@ -170,7 +170,9 @@
     }) || null;
 
     // The chat dock element (session picker + transcript body) is the chat view's content.
+    // Not while another page (the Board, row 150) is the one on screen and holds it.
     function adoptChatDock() {
+      if (typeof d.canAdoptChatDock === 'function' && d.canAdoptChatDock() === false) return;
       const dock = getDom().ideChatDock || null;
       const host = workbench?.hostFor('chat');
       if (dock && host && dock.parentNode !== host) host.appendChild(dock);

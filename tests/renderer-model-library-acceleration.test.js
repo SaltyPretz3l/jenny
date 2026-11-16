@@ -8,6 +8,7 @@ const {
   createModelLibrarySectionController,
 } = require('../renderer/shell/renderer-settings-model-library-section');
 const modelLibraryView = require('../renderer/shell/model-library/model-library-view');
+const { mergeModelLibrary } = require('../renderer/shell/model-library/model-library-merge');
 
 const ACCELERATION_CATALOG = {
   defaults: { vramHeadroomMb: 2048 },
@@ -26,6 +27,7 @@ function makeDom() {
     <section class="settings-card" data-settings-section="models">
       <div id="modelLibrarySectionToolbarHost"></div>
       <div class="model-library-section-status" aria-live="polite"></div>
+      <div id="modelRunningHost"></div>
       <div id="modelLibrarySectionHost"></div>
     </section>
   </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
@@ -150,16 +152,50 @@ test('model card badges render MTP eligibility only when explicitly eligible', (
   assert.doesNotMatch(ineligible.textContent, /MTP ready/);
 });
 
-test('flag-on catalog projection marks a gemma4 installed card MTP ready exactly once', async (t) => {
+const readyFlags = (h) => Array.from(h.document.querySelectorAll('.mrow-flag'))
+  .filter((flag) => flag.textContent === 'MTP ready');
+const gemmaGguf = (extra) => ({
+  listLocalGgufs: async () => ({ ok: true, entries: [{ tag: 'gemma4:12b', dir: 'G:\\m', mainGguf: 'g.gguf', drafterGguf: '', sizeBytes: 1, ...extra }] }),
+  getStatus: async () => ({ ok: true, state: 'stopped' }),
+});
+
+test('flag-on catalog projection marks a gemma4 installed card with a drafter MTP ready exactly once', async (t) => {
   const h = harness(t, {
     state: makeState({ accelerationFlag: true, mode: 'mtp', catalog: ACCELERATION_CATALOG }),
     installed: [{ id: 'gemma4:12b', size: 1024, engine_type: 'openai-compatible' }],
+    llamaServer: gemmaGguf({ drafterGguf: 'mtp-gemma4.gguf' }),
   });
   await bindAndFlush(h);
 
-  const badges = Array.from(h.document.querySelectorAll('.inv-badge'))
-    .filter((badge) => badge.textContent === 'MTP ready');
-  assert.equal(badges.length, 1);
+  assert.equal(readyFlags(h).length, 1);
+});
+
+test('MTP ready needs a drafter beside the model or a head built into it (F7)', async (t) => {
+  const installed = [{ id: 'gemma4:12b', size: 1024, engine_type: 'openai-compatible' }];
+  const state = () => makeState({ accelerationFlag: true, mode: 'mtp', catalog: ACCELERATION_CATALOG });
+  const bare = harness(t, { state: state(), installed, llamaServer: gemmaGguf({}) });
+  const unscanned = harness(t, { state: state(), installed });
+  await Promise.all([bindAndFlush(bare), bindAndFlush(unscanned)]);
+
+  assert.equal(readyFlags(bare).length, 0, 'an eligible family with no drafter and no head cannot run MTP');
+  assert.equal(readyFlags(unscanned).length, 0);
+});
+
+test('the merged card is MTP-runnable with a drafter or a built-in head only', () => {
+  const card = (entry) => mergeModelLibrary({
+    installed: [{ id: 'gemma4:12b', engineType: 'openai-compatible' }],
+    acceleration: { enabled: true, headroomMb: 2048, families: ACCELERATION_CATALOG.families },
+    localGgufs: entry ? [{ tag: 'gemma4:12b', dir: 'G:\\m', mainGguf: 'g.gguf', ...entry }] : [],
+  }).cards.find((c) => c.tag === 'gemma4:12b');
+
+  assert.equal(card({ drafterGguf: 'mtp-gemma4.gguf' }).mtpRunnable, true);
+  assert.equal(card({ embeddedMtpLayers: 1 }).mtpRunnable, true);
+  assert.equal(card({ embeddedMtpLayers: 0 }).mtpRunnable, false);
+  assert.equal(card({}).mtpRunnable, false);
+  assert.equal(card(null).mtpRunnable, false);
+  const html = (entry) => new JSDOM(modelLibraryView.buildModelCard(card(entry), {})).window.document.body.textContent;
+  assert.match(html({ embeddedMtpLayers: 1 }), /MTP ready/);
+  assert.doesNotMatch(html({}), /MTP ready/);
 });
 
 test('managed llama-server rows show serving and per-model MTP state', async (t) => {
@@ -207,17 +243,16 @@ test('managed llama-server rows show serving and per-model MTP state', async (t)
   });
   await Promise.all([bindAndFlush(mtp), bindAndFlush(off)]);
 
+  // A served model that is not the chat's model still holds GPU memory, so its row says so.
+  const flagsOf = (row) => Array.from(row.querySelectorAll('.mrow-flag')).map((flag) => flag.textContent);
   const mtpRow = mtp.host.querySelector('[data-model-key="gemma4:12b"]');
-  assert.match(mtpRow.textContent, /Serving on :8033/);
-  assert.match(mtpRow.textContent, /llama-server · MTP/);
-  assert.doesNotMatch(mtpRow.textContent, /MTP ready/);
+  assert.deepEqual(flagsOf(mtpRow).slice(0, 2), ['MTP', 'Serving on :8033']);
+  assert.match(mtpRow.querySelector('.mrow-meta').textContent, /^llama-server/);
   assert.equal(mtp.document.querySelector('.model-library-acceleration-row'), null);
 
   const offRow = off.host.querySelector('[data-model-key="gemma4:12b"]');
-  assert.match(offRow.textContent, /Serving on :8033/);
-  assert.match(offRow.textContent, /llama-server/);
-  assert.doesNotMatch(offRow.textContent, /llama-server · MTP/);
-  assert.match(offRow.textContent, /MTP ready/);
+  assert.deepEqual(flagsOf(offRow).slice(0, 2), ['MTP ready', 'Serving on :8033']);
+  assert.match(offRow.querySelector('.mrow-meta').textContent, /^llama-server/);
 });
 
 // Owner gate P2: while an image render holds the GPU the chat GPU handoff
@@ -246,19 +281,20 @@ test('a serving card reads paused while an image render parks llama-server, then
   });
   h.state.status.model = 'gemma4:12b';
   await bindAndFlush(h);
-  const badges = () => Array.from(h.host.querySelector('[data-model-key="gemma4:12b"]').querySelectorAll('.inv-badge'))
-    .map((badge) => badge.textContent);
-  assert.deepEqual(badges().slice(0, 2), ['Active', 'Serving on :8033']);
+  // The active model sits in Running now, whose meta line carries the port or the pause.
+  const meta = () => h.document.querySelector('#modelRunningHost .mm-meta').textContent;
+  assert.equal(h.host.querySelector('[data-model-key="gemma4:12b"]'), null, 'the active model is not a Library row');
+  assert.match(meta(), /port 8033/);
 
   h.controller.syncFromState();
   await flush();
-  assert.ok(badges().includes('Paused for an image render'), badges().join(' | '));
-  assert.equal(badges().some((text) => /^Serving/.test(text)), false);
+  assert.match(meta(), /Paused for an image render/);
+  assert.doesNotMatch(meta(), /port 8033/);
 
   h.controller.syncFromState();
   await flush();
-  assert.ok(badges().includes('Serving on :8033'), badges().join(' | '));
-  assert.equal(badges().includes('Paused for an image render'), false);
+  assert.match(meta(), /port 8033/);
+  assert.doesNotMatch(meta(), /Paused/);
   assert.equal(h.modelListCalls(), 1, 'only the llama-server status is reread');
 });
 
@@ -294,6 +330,8 @@ test('syncEngineSettings re-renders engine pills without refetching bridge sourc
   h.controller.syncEngineSettings(nextLocalEngines);
 
   assert.equal(h.state.localEngines, nextLocalEngines);
-  assert.match(h.host.textContent, /llama-server · MTP/);
+  const row = h.host.querySelector('[data-model-key="gemma4:12b"]');
+  assert.match(row.querySelector('.mrow-meta').textContent, /^llama-server/);
+  assert.equal(row.querySelector('.mrow-flag').textContent, 'MTP');
   assert.equal(h.modelListCalls(), 1);
 });

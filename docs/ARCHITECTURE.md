@@ -6,11 +6,12 @@ NEXT_STEPS.md for status and release gates.
 
 ## 1. What Jenny is
 
-Jenny is a local-first AI coding harness with an Electron companion shell.
+Jenny is a local-first AI workstation for one owner, built on Electron.
 Ollama and the local OpenAI-compatible engine (including managed llama-server)
-run coding workflows, visualizations, and bounded tools. vLLM is another local
-engine. ChatGPT sign-in and the Codex CLI engine are explicit optional cloud
-routes; selecting them changes where inference runs.
+run coding workflows, visualizations, and bounded tools. Managed NInfer and
+vLLM are other local engines. ChatGPT sign-in, the Codex CLI engine and
+providers added with your own API key are explicit optional cloud routes;
+selecting them changes where inference runs.
 
 Application services own canonical history, persistence, project authority,
 and consent. Conversation files are JSON under the profile's `sessions/`

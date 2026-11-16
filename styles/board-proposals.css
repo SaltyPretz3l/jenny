@@ -1,0 +1,230 @@
+/* ---- Jenny's proposals (row 150 slice C3: board-proposals-view.js; mockup .pb-statebar and review()) ---- */
+
+/* The bar: one line in the toolbar's column, under the toolbar and the selection bar. Not a card. */
+.board-proposal-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: calc(100% - var(--space-12));
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+/* With no toolbar to stand under (the view alone), it floats where the mockup puts it. */
+.board-centre > .board-proposal-bar {
+  position: absolute;
+  inset-block-start: calc(var(--space-6) + 44px);
+  inset-inline: 0;
+  z-index: 4;
+  margin-inline: auto;
+}
+
+.board-proposal-bar__text {
+  padding-inline: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.board-proposal-btn {
+  flex: none;
+  --btn-min-height: 26px;
+}
+
+/* The review list fills the Changes view; its heading takes focus when Review shows the view. */
+.board-changes-host {
+  overflow-y: auto;
+}
+
+.board-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-8) var(--space-12);
+}
+
+.board-changes__title {
+  margin: 0;
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+}
+
+.board-changes__title:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.board-changes__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.board-changes__empty,
+.board-changes__overflow {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+/* A section is one grid: what would change, then a column for each button, so the buttons stand under each other
+   down the list and at the same place in every section. */
+.board-changes__sec {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--space-4) var(--space-2);
+  padding-block-end: var(--space-8);
+  border-block-end: 1px solid var(--border-subtle);
+}
+
+.board-changes__sec > * {
+  grid-column: 1 / -1;
+}
+
+.board-changes__heading {
+  margin: 0;
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+}
+
+/* Accept additions stands on the heading's line, at the end, over the column of the rows' buttons. Both span the
+   whole line, so the wide button does not stretch a button column. */
+.board-changes__sec > .board-changes__heading,
+.board-changes__sec > .board-changes__acts {
+  grid-row: 1;
+  align-self: center;
+}
+
+.board-changes__acts {
+  display: flex;
+  gap: var(--space-2);
+  justify-self: end;
+}
+
+.board-change {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  row-gap: var(--space-1);
+  font-size: var(--font-size-body);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.board-change > * {
+  grid-column: 1;
+}
+
+/* A row's buttons stand in the section's columns, outlined so they do not read as part of the sentence: the one
+   that makes the change, then the one that leaves it. A lone button takes the last column. */
+.board-change__acts {
+  display: contents;
+}
+
+.board-change__acts > .board-proposal-btn {
+  grid-area: 1 / 2;
+  min-width: 80px;
+  margin-inline-start: var(--space-4);
+}
+
+.board-change__acts > .board-proposal-btn:last-child {
+  grid-column: 3;
+  margin-inline-start: 0;
+}
+
+.board-change__target {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+/* An edit: the text it replaces struck through, then the text that would stand, line breaks kept. */
+.board-change__before,
+.board-change__after {
+  grid-column: 1 / -1;
+  white-space: pre-wrap;
+}
+
+.board-change__before,
+.board-change__line {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.board-change__outcome,
+.board-change__reason {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.board-change__line {
+  white-space: pre-wrap;
+}
+
+/* A reason is a sentence and takes the row's width; a one-word outcome stands where the buttons stood. */
+.board-change__line,
+.board-change__reason,
+.board-change__outcome {
+  grid-column: 1 / -1;
+}
+
+.board-change:is([data-state="applied"], [data-state="rejected"]) > .board-change__outcome {
+  grid-area: 1 / 2 / auto / -1;
+  justify-self: end;
+  margin-inline-start: var(--space-4);
+}
+
+/* The ghosts: dashed outlines in board coordinates, last in the surface's layer and above every card (a card's z is
+   its own number, so this one is far past it). They take no click, no focus and no selection. */
+.inv-board-layer > .board-ghosts {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: 0;
+  height: 0;
+  z-index: 1000000;
+}
+
+/* The empty-board hint steps aside while a proposal's ghosts are drawn (board-proposals-view.js sets the attribute). */
+.board-centre[data-board-ghosting] > .board-empty-hint {
+  display: none;
+}
+
+.board-ghosts,
+.board-ghosts * {
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-ghost {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  padding: var(--space-3) var(--space-4);
+  overflow: hidden;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.board-ghost--group {
+  border-radius: var(--radius-lg);
+  font-weight: 600;
+}
+
+.board-ghost__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

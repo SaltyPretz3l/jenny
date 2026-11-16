@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { createFixture, assertOwnerInvariant } = require('./helpers/team-store-fixture');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 function failureOf(result) {
   assert.equal(result.ok, false, 'expected a failure');
@@ -246,7 +247,7 @@ async function assertBroken(fx, expectedReason, { storeOverrides } = {}) {
   assert.equal(store.snapshot(), null);
   assert.equal(store.directory.resolveActor(fx.key('anything')), null);
   const attempt = await store.createInvite({
-    kind: 'owner_first', actorMemberId: null, invitePublicKey: fx.nextKey(),
+    kind: 'owner_first', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey(),
   });
   assert.equal(attempt.ok, false);
   assert.equal(attempt.error.reason, expectedReason);
@@ -289,7 +290,7 @@ test('strict load: an unknown field at any level breaks the store', async (t) =>
 });
 
 test('strict load: a newer or unknown schema_version is unsupported and the bytes stay', async (t) => {
-  for (const version of [3, 99, 0]) {
+  for (const version of [5, 99, 0]) {
     const fx = createFixture(t);
     await writeDoc(fx, (doc) => { doc.schema_version = version; doc.future_field = { a: 1 }; });
     await assertBroken(fx, 'team_store_schema_unsupported');

@@ -147,6 +147,53 @@
   color: var(--state-warning);
 }
 
+.model-tuning-row-note[data-tone="warn"] {
+  color: var(--state-warning);
+}
+
+.model-tuning-row-note[data-tone="muted"] {
+  color: var(--text-muted);
+}
+
+/* Drafter file and Vision rows (row 140): a value or a progress bar on the left, one small button on the right. */
+.model-tuning-companion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.model-tuning-companion .model-tuning-gguf-path {
+  flex: 0 1 auto;
+}
+
+.model-tuning-companion-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.model-tuning-companion .model-tuning-row-actions {
+  margin-inline-start: auto;
+}
+
+.model-tuning-companion .inv-progress {
+  flex: 0 0 160px;
+}
+
+.model-tuning-companion-bytes {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
 /* "Changed" and the revert sit on the title line and never move the row. */
 .model-tuning-row-changed {
   color: var(--text-link);
@@ -314,6 +361,15 @@
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
+}
+
+/* Row 142: "Use build N" beside a failed restart's status line. */
+.model-tuning-drawer-status-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-inline-start: 8px;
+  vertical-align: middle;
 }
 
 .model-tuning-drawer-actions {

@@ -99,9 +99,9 @@ function buildHarness(t, { paneId, coordinator = false, rail = false, calls = nu
     },
     rendererChatEventSettingsBindings: {
       createSettingsEventBindings: (deps) => Object.assign({
-        bindSettingsEvents(register, options) {
+        // Toast clicks belong to the toast controller (row 162), not these bindings.
+        bindSettingsEvents() {
           log.push('settings.bind');
-          register(deps.toastViewport, 'click', noop, options);
         },
       }, rail ? {
         // W2-2a: the rail listeners a pane binds on its own nodes.
@@ -208,7 +208,6 @@ const PANE_ZERO_SET = [
   'transcript.bind',
   'chatTimeline:click',
   'settings.bind',
-  'toastViewport:click',
   'accessibility:document:none',
   'chatTimeline:keydown',
 ];

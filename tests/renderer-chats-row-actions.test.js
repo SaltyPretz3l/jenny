@@ -259,7 +259,7 @@ test('delete is optimistic with an undo toast; Undo restores without any delete 
   assert.deepEqual(deleteCalls, [], 'undo never issues the delete IPC');
 });
 
-test('"Delete now" flushes the deferred delete through the workspace-aware path', async (t) => {
+test('the undo toast\'s × commits the deferred delete through the workspace-aware path', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const doc = window.document;
   const deleteCalls = spyOnSessionDelete(t, window);
@@ -269,13 +269,16 @@ test('"Delete now" flushes the deferred delete through the workspace-aware path'
 
   await openRowMenu(window, 'session-flush');
   await clickMenuItem(window, 'Delete');
-  const deleteNowButton = doc.querySelector('[data-toast-action-id="session-delete-now"]');
-  assert.ok(deleteNowButton, 'the undo toast offers Delete now');
+  const undoToast = doc.querySelector('[data-toast-action-id="session-delete-undo"]').closest('.inv-toast');
+  assert.ok(undoToast.classList.contains('inv-toast--info'), 'a delete the user asked for is not shown as a failure');
+  assert.equal(undoToast.querySelectorAll('.inv-toast__action').length, 1, 'one action: Undo (no Delete now)');
+  assert.ok(undoToast.querySelector('.inv-toast__countdown'), 'the time left drains along the bottom');
 
-  deleteNowButton.click();
+  undoToast.querySelector('[data-toast-dismiss]').click();
   await waitForUi(window, 80);
 
-  assert.deepEqual(deleteCalls, ['session-flush'], 'flush issues the delete IPC once');
+  assert.deepEqual(deleteCalls, ['session-flush'], 'the × issues the delete IPC once');
+  assert.equal(doc.querySelector('[data-toast-action-id="session-delete-undo"]'), null, 'the toast closes with the commit');
   assert.equal(doc.querySelector('[data-session-id="session-flush"]'), null, 'row stays gone');
 });
 
@@ -296,7 +299,7 @@ test('a pending delete is canceled when the session gains new activity', async (
   summary.updated_at = '2026-06-12T09:30:00.000Z';
   summary.message_count = 5;
 
-  doc.querySelector('[data-toast-action-id="session-delete-now"]').click();
+  doc.querySelector('[data-toast-action-id="session-delete-undo"]').closest('.inv-toast').querySelector('[data-toast-dismiss]').click();
   await waitForUi(window, 60);
 
   assert.deepEqual(deleteCalls, [], 'fresher data than the user saw is never deleted');
@@ -304,4 +307,39 @@ test('a pending delete is canceled when the session gains new activity', async (
     doc.querySelector('[data-session-id="session-guard"]'),
     'the row is restored instead'
   );
+});
+
+test('row 136: the row menu leads with Finish this first while a reply runs, and Take turns again on the first chat', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  await seedSessions(window, shell, [
+    buildSidebarSession('session-run', 'Port the reader', '2026-06-12T08:00:00.000Z'),
+  ]);
+  const requests = [];
+  let first = null;
+  window.jennyShell.chat.firstSession = async (request) => {
+    requests.push(request);
+    if (request.action === 'set') first = { sessionId: request.sessionId, setBy: 'user', setAt: 1 };
+    if (request.action === 'clear') first = null;
+    return { status: 'ok', first };
+  };
+  const labels = () => getMenuItems(window).map((item) => item.textContent.trim());
+
+  await openRowMenu(window, 'session-run');
+  assert.equal(labels().some((label) => label === 'Finish this first' || label === 'Take turns again'), false,
+    'a chat with no reply running offers neither');
+  window.document.body.click();
+  await waitForUi(window, 10);
+
+  window.rendererMultiStreamController.registerStream('session-run', 'stream-1');
+  await openRowMenu(window, 'session-run');
+  assert.equal(labels()[0], 'Finish this first');
+  await clickMenuItem(window, 'Finish this first');
+  assert.deepEqual({ ...requests.at(-1) }, { action: 'set', sessionId: 'session-run' });
+  assert.ok(window.document.querySelector('[data-session-id="session-run"] .session-row__first'), 'the row is tagged');
+
+  await openRowMenu(window, 'session-run');
+  assert.equal(labels()[0], 'Take turns again');
+  await clickMenuItem(window, 'Take turns again');
+  assert.deepEqual({ ...requests.at(-1) }, { action: 'clear', sessionId: 'session-run' });
+  assert.equal(window.document.querySelector('.session-row__first'), null);
 });

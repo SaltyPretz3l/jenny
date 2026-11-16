@@ -1,11 +1,15 @@
 'use strict';
 
 const { validateCommand, hostFailure } = require('./api-contract');
-const { createIdentityCheck } = require('./command-router-identity');
+const { createAccessCheck, createIdentityCheck } = require('./command-router-identity');
+const { createControlHandlers } = require('./command-router-control');
+const { createDecisionHandlers } = require('./command-router-decisions');
+const { createSessionList } = require('./command-router-session-list');
 const { createDecisionAdapter } = require('./decision-adapter');
 const { CancellationRegistry, SessionMutationQueue } = require('./command-router-concurrency');
 const { buildSessionSnapshot } = require('./session-snapshots');
 const { memberAuthor } = require('../services/backend/message-author');
+const { preferencesFor } = require('./command-router-preferences');
 const {
   PROJECT_LEASE_OPERATIONS, PROJECT_MUTATIONS, PROJECT_OPERATIONS,
   createProjectCommandDispatcher,
@@ -79,17 +83,8 @@ function safeBackendError(error, requestId) {
 }
 
 function createCommandRouter({
-  backend,
-  clients,
-  leases,
-  receipts,
-  bootEpoch,
-  eventStream,
-  resolveAttachments,
-  canAdmit = () => true,
-  canAdmitDeletion = () => true,
-  authorize,
-  teamCommands = null,
+  backend, clients, leases, receipts, bootEpoch, eventStream, resolveAttachments, canAdmit = () => true,
+  canAdmitDeletion = () => true, authorize, teamCommands = null, approvals = null,
 } = {}) {
   if (!isRecord(backend)) throw new TypeError('Command router requires backend.');
   if (!isRecord(clients) || typeof clients.authorize !== 'function') {
@@ -106,11 +101,19 @@ function createCommandRouter({
     throw new TypeError('Command router requires event stream.');
   }
 
+  // Team commands exist only on a team host, which is built with its authorize function.
+  if (teamCommands && typeof authorize !== 'function') {
+    throw new TypeError('Command router team commands require an authorize function.');
+  }
+
   const disposed = { value: false };
   const identity = createIdentityCheck({ clients, bootEpoch, disposed, authorize });
+  // Slice 3-2: the per-row check behind the list and runtime filters, through the same function.
+  const allows = createAccessCheck({ authorize });
+  const teamHost = typeof authorize === 'function';
   // Slice 3-5: a team host (built with `authorize`) names the actor as a user message's author (null, refused, without
   // a valid member id); the single-owner host's constant owner actor is never an author.
-  const trustedAuthor = typeof authorize === 'function' ? (context) => memberAuthor(context?.actor?.member_id) : () => undefined;
+  const trustedAuthor = teamHost ? (context) => memberAuthor(context?.actor?.member_id) : () => undefined;
   const decisionAdapter = createDecisionAdapter({ backend });
   const revisions = new Map();
   const mutationQueue = new SessionMutationQueue({ capacity: MAX_SESSIONS });
@@ -120,14 +123,17 @@ function createCommandRouter({
   const listeners = [];
   const projectDispatcher = createProjectCommandDispatcher({
     applicationService: backend.projectApplicationService,
-    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority },
+    authorization: { identity, allows, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority },
     transaction: { runReceipt },
-    result: { safeSession, bumpRevision, publish },
+    result: { safeSession, bumpRevision, publish, captureScope: (id) => eventStream.captureScope?.(id) },
+    // Slice 3-9: a team host's list rows carry the caller's stored role and no host path.
+    team: { teamHost, listExtras: teamCommands?.projectListExtras ?? null },
   });
 
   const runtimeDispatcher = createRuntimeCommandDispatcher({
     applicationService: backend.runtimeApplicationService,
-    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity, trustedAuthor },
+    authorization: { identity, allows, teamHost, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority,
+      assertPostAwaitIdentity, trustedAuthor },
     transaction: { runReceipt }, result: { bumpRevision, publish, trustedChatOptions },
   });
   const suggestedDispatcher = createSuggestedChangesCommandDispatcher({ getService: () => backend.suggestedChanges || null,
@@ -178,8 +184,8 @@ function createCommandRouter({
     listeners.push(['chat-stream', onBackendStream]);
   }
 
-  function revisionAndLease(command, context, { expectedRevision = true, requireSession = true } = {}) {
-    const authFailure = identity(command, context);
+  function revisionAndLease(command, context, { expectedRevision = true, requireSession = true, recheck = true } = {}) {
+    const authFailure = recheck ? identity(command, context) : null;
     if (authFailure) return authFailure;
     if (!LEASE_OPERATIONS.has(command.operation)) return null;
     if (!Number.isSafeInteger(command.control_generation)) {
@@ -202,9 +208,7 @@ function createCommandRouter({
     return null;
   }
 
-  function mutationGuard(command, context) {
-    return revisionAndLease(command, context);
-  }
+  function mutationGuard(command, context) { return revisionAndLease(command, context); }
 
   function assertMutationAuthority(command, context) {
     const failure = mutationGuard(command, context);
@@ -265,13 +269,15 @@ function createCommandRouter({
     return value;
   }
 
-  async function listSessions(command) {
-    try {
-      const value = await backend.listSessions();
-      const data = Array.isArray(value?.data) ? value.data : (Array.isArray(value) ? value : []);
-      return { ok: true, sessions: data.map(safeSession).filter(Boolean), total: data.length };
-    } catch (error) { return safeBackendError(error, command.request_id); }
-  }
+  const listSessions = createSessionList({ backend, identity, allows, safeSession, safeBackendError });
+  const control = createControlHandlers({ leases, identity, allows, teamHost, trustedAuthor, backend, hasSession, publish });
+  // Slice 3-6b. The existence check of the decisions and `session.view` is cache-neutral (no transcript load).
+  const sessionExists = (id) => (typeof backend.sessionStore?.peekSessionSummary === 'function'
+    ? backend.sessionStore.peekSessionSummary(id) != null : hasSession(id));
+  const decisions = createDecisionHandlers({ decisionAdapter, identity, teamHost, approvals, trustedAuthor, mutationGuard,
+    runReceipt, assertMutationAuthority, assertPostAwaitAuthority, sessionExists, bumpRevision, publish });
+  // A team host's snapshot names each pending decision's prompter (the running turn's starter).
+  const prompterOf = teamHost ? (approvals?.prompterOf ?? (() => null)) : undefined;
 
   async function createSession(command, context) {
     return runReceipt(command, context, async () => {
@@ -289,7 +295,7 @@ function createCommandRouter({
       const rows = Array.isArray(listed) ? listed : listed?.data;
       if (!Array.isArray(rows)) return hostFailure('unavailable', 'sessions_unavailable', command.request_id);
       if (rows.length >= MAX_SESSIONS) return hostFailure('limit', 'session_capacity', command.request_id);
-      const value = await backend.createSession({ title: command.params.title });
+      const value = await backend.createSession({ title: command.params.title, projectId: command.params.project_id });
       assertPostAwaitIdentity(command, context);
       const session = safeSession(unwrapData(value));
       if (!session) return hostFailure('persistence', 'session_create_failed', command.request_id);
@@ -300,55 +306,17 @@ function createCommandRouter({
     });
   }
 
-  async function snapshot(command, options = {}) {
+  async function snapshot(command, options = {}, context) {
     const value = buildSessionSnapshot({
       backend, eventStream, decisionAdapter, sessionId: command.session_id,
       revision: currentRevision(command.session_id),
-      options: { ...options, boot_epoch: bootEpoch },
+      options: { ...options, boot_epoch: bootEpoch }, prompterOf,
     });
     if (!value) return hostFailure('conflict', 'session_not_found', command.request_id);
     if (value.ok === false) return hostFailure('invalid', value.reason, command.request_id);
     value.control = leases.get(command.session_id);
+    decisions.noteSnapshot(command.session_id, context);
     return { ok: true, snapshot: value };
-  }
-
-  async function controlAcquire(command, context) {
-    const authFailure = identity(command, context);
-    if (authFailure) return authFailure;
-    if (!hasSession(command.session_id)) return hostFailure('conflict', 'session_not_found', command.request_id);
-    const lease = leases.acquire(command.session_id, command.client_id, context.deviceId, command.params.takeover === true);
-    if (!lease) return hostFailure('conflict', 'control_lease_unavailable', command.request_id, true);
-    publish('control_changed', {
-      session_id: command.session_id,
-      client_id: lease.client_id,
-      generation: lease.generation,
-      expires_at: lease.expires_at,
-    });
-    return { ok: true, lease };
-  }
-
-  async function controlHeartbeat(command, context) {
-    const authFailure = identity(command, context);
-    if (authFailure) return authFailure;
-    if (!Number.isSafeInteger(command.control_generation)) {
-      return hostFailure('forbidden', 'control_generation_required', command.request_id);
-    }
-    const lease = leases.heartbeat(command.session_id, command.client_id, context.deviceId, command.control_generation);
-    if (!lease) return hostFailure('forbidden', 'control_lease_required', command.request_id);
-    return { ok: true, lease };
-  }
-
-  async function controlRelease(command, context) {
-    const authFailure = identity(command, context);
-    if (authFailure) return authFailure;
-    if (!Number.isSafeInteger(command.control_generation)) {
-      return hostFailure('forbidden', 'control_generation_required', command.request_id);
-    }
-    if (!leases.release(command.session_id, command.client_id, context.deviceId, command.control_generation)) {
-      return hostFailure('forbidden', 'control_lease_required', command.request_id);
-    }
-    publish('control_changed', { session_id: command.session_id, state: 'released' });
-    return { ok: true, released: true };
   }
 
   async function renameSession(command, context) {
@@ -370,33 +338,40 @@ function createCommandRouter({
     const failure = mutationGuard(command, context); if (failure) return failure;
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
-      // Only the given keys change: entering Propose leaves plan_mode alone.
-      const value = await backend.setSessionPreferences(command.session_id, { ...command.params });
+      const value = await backend.setSessionPreferences(command.session_id, preferencesFor(command, teamHost));
       assertPostAwaitAuthority(command, context);
       const session = safeSession(unwrapData(value));
       if (!session) return hostFailure('persistence', 'session_preferences_failed', command.request_id);
       const revision = bumpRevision(command.session_id);
       publish('session_changed', { session_id: command.session_id, revision, reason: 'preferences' });
       return { ok: true, session, revision };
-
     });
+  }
+
+  const sessionBusy = (id) => Boolean(backend.sessionTurnActors?.hasActiveLifecycle?.(id) || backend.sessionStore?.getActiveTurn?.(id));
+  // Every conversation delete (also the team project delete, which holds no lease): null during a turn;
+  // the scope is taken before the delete; `afterDelete` (the caller's post-await check) runs before the
+  // revision entry is dropped and `session_changed` goes to that scope.
+  async function removeSession(sessionId, afterDelete = () => {}) {
+    if (sessionBusy(sessionId)) return null;
+    const scope = eventStream.captureScope?.(sessionId); // the project, before the conversation is gone
+    const value = await backend.deleteSession(sessionId);
+    afterDelete();
+    const deleted = value === true || value?.deleted === true;
+    if (deleted) { revisions.delete(sessionId); publish('session_changed', { session_id: sessionId, state: 'deleted' }, scope); }
+    return { deleted, cleanup: cleanupOutcome(value) };
   }
 
   async function deleteSession(command, context) {
     const failure = mutationGuard(command, context); if (failure) return failure;
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
-      if (backend.sessionTurnActors?.hasActiveLifecycle?.(command.session_id)
-        || backend.sessionStore?.getActiveTurn?.(command.session_id)) {
-        return hostFailure('conflict', 'session_active', command.request_id);
-      }
-      const value = await backend.deleteSession(command.session_id);
-      assertPostAwaitAuthority(command, context, { requireSession: false });
-      const deleted = value === true || value?.deleted === true;
-      if (!deleted) return hostFailure('persistence', 'session_delete_failed', command.request_id);
-      revisions.delete(command.session_id);
-      publish('session_changed', { session_id: command.session_id, state: 'deleted' });
-      return { ok: true, session_id: command.session_id, deleted: true, ...cleanupOutcome(value) };
+      // A committed delete keeps the lease check; identity would read the gone conversation as General (3-3 limit).
+      const removed = await removeSession(command.session_id,
+        () => assertPostAwaitAuthority(command, context, { requireSession: false, recheck: false }));
+      if (!removed) return hostFailure('conflict', 'session_active', command.request_id);
+      if (!removed.deleted) return hostFailure('persistence', 'session_delete_failed', command.request_id);
+      return { ok: true, session_id: command.session_id, deleted: true, ...removed.cleanup };
     });
   }
 
@@ -435,9 +410,18 @@ function createCommandRouter({
           return hostFailure('invalid', 'attachment_resolution_failed', command.request_id);
         }
       }
+      // Row 151 T5: a board id is accepted only by the team host's board hook, as (this conversation's project,
+      // board id) for a sender who may read that project's boards. Any other host has no boards to send from.
+      let board = null;
+      if (command.params.board_id !== undefined) {
+        board = typeof teamCommands?.admitChatBoard === 'function' ? await teamCommands.admitChatBoard(command, context) : null;
+        if (board?.ok !== true) return hostFailure('forbidden', board?.error?.reason ?? 'team_board_not_found', command.request_id);
+        assertMutationAuthority(command, context);
+      }
       const options = trustedChatOptions(command);
       const saved = await backend.runtimeApplicationService.submit({
         session_id: command.session_id, prompt: command.params.prompt, visible_prompt: command.params.prompt,
+        ...(board ? { board_id: board.boardId } : {}),
         idempotency_key: submissionKey(context.deviceId, command.request_id), attachments,
         preferred_model: options.preferredModel, reasoning_effort: options.reasoningEffort,
         plan_mode: options.planMode, context_preferences: options.contextPreferences,
@@ -488,37 +472,6 @@ function createCommandRouter({
     });
   }
 
-  async function decision(command, context) {
-    const failure = mutationGuard(command, context); if (failure) return failure;
-    return runReceipt(command, context, async () => {
-      assertMutationAuthority(command, context);
-      let result;
-      if (command.operation === 'approval.resolve') {
-        result = decisionAdapter.resolveApproval({ sessionId: command.session_id, streamId: command.params.stream_id,
-          approvalId: command.params.approval_id, decisionRevision: command.params.decision_revision,
-          approved: command.params.approved });
-      } else if (command.operation === 'questions.answer') {
-        result = decisionAdapter.answerQuestions({ sessionId: command.session_id, streamId: command.params.stream_id,
-          questionRef: command.params.question_ref, answers: command.params.answers });
-      } else if (command.operation === 'questions.decline') {
-        result = decisionAdapter.declineQuestions({ sessionId: command.session_id, streamId: command.params.stream_id,
-          questionRef: command.params.question_ref });
-      }
-      assertPostAwaitAuthority(command, context);
-      if (!result?.ok) return hostFailure('conflict', result?.reason || 'decision_stale', command.request_id);
-      const revision = bumpRevision(command.session_id);
-      publish('session_changed', { session_id: command.session_id, revision, reason: 'decision' });
-      publish('decision_changed', {
-        session_id: command.session_id,
-        stream_id: command.params.stream_id,
-        ...(command.operation === 'approval.resolve'
-          ? { approval_id: command.params.approval_id }
-          : { question_ref: command.params.question_ref }),
-      });
-      return { ...result, revision };
-    });
-  }
-
   async function dispatch(rawCommand, context = {}) {
     const checked = validateCommand(rawCommand);
     if (!checked.ok) return hostFailure('invalid', checked.reason, rawCommand?.request_id);
@@ -548,13 +501,14 @@ function createCommandRouter({
       if (PROJECT_OPERATIONS.has(command.operation)) return projectDispatcher.dispatch(command, context);
       if (SUGGESTED_OPERATIONS.has(command.operation)) return suggestedDispatcher.dispatch(command, context);
       switch (command.operation) {
-        case 'sessions.list': return listSessions(command);
+        case 'sessions.list': return listSessions(command, context);
         case 'requests.status': return receipts.status(command.params.request_id, context.deviceId);
         case 'sessions.create': return createSession(command, context);
-        case 'sessions.snapshot': return snapshot(command, command.params);
-        case 'control.acquire': return controlAcquire(command, context);
-        case 'control.heartbeat': return controlHeartbeat(command, context);
-        case 'control.release': return controlRelease(command, context);
+        case 'sessions.snapshot': return snapshot(command, command.params, context);
+        case 'session.view': return decisions.view(command, context);
+        case 'control.acquire': return control.acquire(command, context);
+        case 'control.heartbeat': return control.heartbeat(command, context);
+        case 'control.release': return control.release(command, context);
         case 'sessions.rename': return renameSession(command, context);
         case 'sessions.preferences': return setPreferences(command, context);
         case 'sessions.delete': return deleteSession(command, context);
@@ -562,7 +516,7 @@ function createCommandRouter({
         case 'chat.cancel': return cancelChat(command, context);
         case 'approval.resolve':
         case 'questions.answer':
-        case 'questions.decline': return decision(command, context);
+        case 'questions.decline': return decisions.decision(command, context);
         default: return hostFailure('invalid', 'unsupported_operation', command.request_id);
       }
     } catch (_error) {
@@ -572,7 +526,7 @@ function createCommandRouter({
 
   function getSnapshot(sessionId, options = {}) {
     const value = buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId,
-      revision: currentRevision(sessionId), options: { ...options, boot_epoch: bootEpoch } });
+      revision: currentRevision(sessionId), options: { ...options, boot_epoch: bootEpoch }, prompterOf });
     if (!value) return null;
     value.control = leases.get(sessionId);
     return value;
@@ -588,7 +542,11 @@ function createCommandRouter({
     cancellations.clear();
   }
 
-  return Object.freeze({ dispatch, snapshot: getSnapshot, dispose });
+  // The team project delete (no lease): an index-only busy read for its pre-check, the admission
+  // `sessions.delete` passes, and each delete inside that conversation's mutation queue (never queued twice).
+  const projectDeletes = Object.freeze({ admit: () => Boolean(canAdmitDeletion()), remove: (id) => mutationQueue.run(id, () => removeSession(id)),
+    busy: (id) => Boolean(backend.sessionTurnActors?.hasActiveLifecycle?.(id) || backend.sessionStore?.peekActiveTurn?.(id)) });
+  return Object.freeze({ dispatch, snapshot: getSnapshot, dispose, projectDeletes });
 }
 
 module.exports = { createCommandRouter };

@@ -53,6 +53,20 @@
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
+  // A record's pages with a usable path, three at most.
+  function pagesOf(record) {
+    return record && Array.isArray(record.pages)
+      ? record.pages.filter(function (pg) { return pg && typeof pg === 'object' && typeof pg.path === 'string' && pg.path; }).slice(0, 3)
+      : [];
+  }
+
+  // External hosts a page's renders were refused: untrusted strings from the
+  // bridge, so only short strings are kept, four at most.
+  function blockedHostsOf(page) {
+    const hosts = page && Array.isArray(page.blockedHosts) ? page.blockedHosts : [];
+    return hosts.filter(function (host) { return typeof host === 'string' && host && host.length <= 253; }).slice(0, 4);
+  }
+
   /* ── turnFiles ── */
 
   function normalizedStatus(value) {
@@ -395,5 +409,7 @@
     splitPath,
     isFileUrl,
     positiveInt,
+    blockedHostsOf,
+    pagesOf,
   };
 });

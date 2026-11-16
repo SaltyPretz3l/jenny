@@ -79,6 +79,7 @@ test('normalizeState fills default localEngines.openaiCompatible on fresh state'
     lastUsedTag: '',
     lastPickDir: '',
     libraryRoots: [],
+    runtimeRoots: [],
     perModel: {},
   });
 });
@@ -95,6 +96,7 @@ test('normalizeState backfills managed llama-server settings and stays idempoten
     lastUsedTag: '',
     lastPickDir: '',
     libraryRoots: [],
+    runtimeRoots: [],
     perModel: {},
   });
   assert.deepEqual(twice.localEngines, once.localEngines);
@@ -137,6 +139,7 @@ test('normalizeState bounds and sanitizes managed llama-server settings', () => 
     'lastUsedTag',
     'lastPickDir',
     'libraryRoots',
+    'runtimeRoots',
     'perModel',
   ]);
 });
@@ -170,6 +173,17 @@ test('managed llama-server directory settings are normalized and persist without
   assert.deepEqual(normalizeState({
     localEngines: { openaiCompatible: { managed: { libraryRoots: 'not-an-array' } } },
   }).localEngines.openaiCompatible.managed.libraryRoots, []);
+  // Row 142: runtime folders share the folder rules with a cap of 8.
+  const runtimeRoots = normalizeState({
+    localEngines: { openaiCompatible: { managed: {
+      runtimeRoots: [validLibraryRoots[0], validLibraryRoots[0].toUpperCase(), 'relative-runtimes', '\\\\host\\share',
+        ...validLibraryRoots.slice(1)],
+    } } },
+  }).localEngines.openaiCompatible.managed.runtimeRoots;
+  assert.deepEqual(runtimeRoots, validLibraryRoots.slice(0, 8));
+  assert.deepEqual(normalizeState({
+    localEngines: { openaiCompatible: { managed: { runtimeRoots: 'not-an-array' } } },
+  }).localEngines.openaiCompatible.managed.runtimeRoots, []);
 
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-directories-'));
   trackDirectory(userDataPath);

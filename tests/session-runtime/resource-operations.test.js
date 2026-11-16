@@ -574,3 +574,25 @@ test('HB-014: a definite no-effect failure settled confirmed never blocks later 
   nextTurn.gateway.handle(settle(nextTurn.trusted, { operation_id: 'next-1' }));
   nextTurn.gateway.close({ producerSettled: true });
 });
+
+test('a waiting admission logs the tool, the blocking class and the holder owners, never paths or arguments', t => {
+  const harness = createHarness(t);
+  const logs = [];
+  const { gateway, trusted } = harness.createGateway('request-logged',
+    { log: (level, event, details) => logs.push({ level, event, details }) });
+  // 2026-11-11 session review F6: an IDE git status (owner "git:...") holds the
+  // whole workspace root while the model's edit asks for one file in it.
+  const blocker = harness.broker.tryAcquire({ ownerId: 'git:3f1c', resources: [
+    filesystemResource(harness.pathResolver.resolve(harness.workspace)),
+  ] });
+  assert.equal(blocker.status, 'granted');
+  assert.equal(gateway.handle(admit(trusted, {
+    tool_name: 'write_file', arguments: { path: 'secret-name.html', content: 'x' },
+  })).status, 'waiting');
+  assert.deepEqual(logs.map(entry => [entry.level, entry.event]), [['INFO', 'tool_resource.admission_waiting']]);
+  assert.deepEqual(logs[0].details, { tool: 'write_file', resource_class: 'filesystem', holder_count: 1,
+    holders: [{ owner: 'git:3f1c', status: 'active', session_id: null }] });
+  assert.equal(JSON.stringify(logs[0].details).includes(harness.workspace), false);
+  assert.equal(JSON.stringify(logs[0].details).includes('secret-name'), false);
+  harness.broker.release(blocker.lease, { producerSettled: true });
+});

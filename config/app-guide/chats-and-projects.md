@@ -28,6 +28,7 @@ The Chats panel on the left of the Chat view lists your conversations. Ctrl+B co
 - Groups: Pinned first, then Today, Yesterday, Previous 7 days, Previous 30 days and Older.
 - Archived: archive a chat from its row menu and it moves to the Archived view. Unarchive restores it.
 - Row menu: Open in New Tab or This Tab, Pin or Unpin, Archive, Rename chat, Move to project, Send to chat, and for linked chats a Report back to the original chat checkbox.
+- Finish this first: chats that share one local model take turns at every model request. To let one chat's task finish first, open its row menu while it is working and choose Finish this first, or use the same button on the "Waiting for the model" line of a chat that is waiting. The other chats wait and continue on their own; a reply that is already being written is never cut off. The chat shows First in the panel. Choose Take turns again in its row menu to go back, or leave it: the order returns to taking turns about a minute after its task ends.
 - Multiselect: bulk archive, restore, move, and delete. Deleting asks for confirmation and offers Undo, and a busy chat is protected.
 - Sweep empty chats deletes untitled chats that have no messages.
 - A small dot on each row shows its state. Waiting on you (an approval, a plan to review, or a question) outranks streaming, which outranks open and idle. A badge shows queued sends.
@@ -43,6 +44,8 @@ A bounded inbox sits above the chat groups, titled Needs you, with a badge such 
 - Questions Jenny asked, with an Answer button that opens the chat.
 - Plans ready for review, with Open.
 - A message that is stuck waiting to start.
+
+When the Chats panel is collapsed to its narrow strip, a dot and a count appear under New chat. Click it and the same list opens beside the strip, so you can answer without expanding the panel. Escape or a click elsewhere closes it. The chat you are looking at keeps a one-line row, "Waiting in the chat on screen", instead of repeating Allow and Deny, because you answer it on its own card in the conversation.
 
 Desktop notifications can announce the same events; see settings-reference for the Notifications section.
 

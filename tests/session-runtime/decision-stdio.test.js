@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { ROOT, waitFor, createBackend } = require('../helpers/session-runtime-stdio-fixture');
+const { ROOT, waitFor, createBackend, createSharedHost } = require('../helpers/session-runtime-stdio-fixture');
+
+// The two cases that run to completion share one backend and sidecar (a fresh directory, replay
+// script, workspace and session each). The reconstruct cases restart the backend and the
+// publication-failure cases leave an abandoned decision wait behind, so they keep a backend of their own.
+const host = createSharedHost({ prefix: 'desktop-decision-' });
+test.after(() => host.close());
 function pendingDecisions(backend, kind) {
   return kind === 'approval' ? backend.pendingToolApprovals : backend.pendingUserQuestions;
 }
@@ -49,14 +55,8 @@ for (const [kind, reconstruct, publicationFailure, policyDrift = false] of [
   ['user_questions', true, false, true],
 ]) {
   test(`real Python ${kind} checkpoint resumes once with fresh consent (reconstruct=${reconstruct}, publicationFailure=${publicationFailure}, policyDrift=${policyDrift})`, { timeout: 55_000 }, async t => {
-    const artifacts = path.join(ROOT, 'artifacts'); fs.mkdirSync(artifacts, { recursive: true });
-    const root = fs.mkdtempSync(path.join(artifacts, 'desktop-decision-'));
-    const profile = path.join(root, 'profile'); fs.mkdirSync(profile);
-    const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(workspace, 'fixture.txt'), 'Saved approval result.');
-    fs.writeFileSync(path.join(workspace, 'later.txt'), 'Later file.');
-    const script = path.join(root, 'replay.json');
+    const shared = !reconstruct && !publicationFailure;
+    const files = { 'fixture.txt': 'Saved approval result.', 'later.txt': 'Later file.' };
     const completedCall = { tool_id: 'list_dir', arguments: { path: '.' } };
     const decisionCall = kind === 'approval'
       ? { tool_id: 'read_file', arguments: { path: 'fixture.txt' } }
@@ -69,16 +69,28 @@ for (const [kind, reconstruct, publicationFailure, policyDrift = false] of [
       : reconstruct
         ? [{ tool_calls: [completedCall] }, { tool_calls: [decisionCall, laterCall] }, padding]
         : [{ tool_calls: [completedCall, decisionCall, laterCall] }, padding, padding];
-    fs.writeFileSync(script, JSON.stringify({ version: 1, calls: [
-      ...batches, { text: 'Finished after the decision.' },
-    ] }));
-    const prior = process.env.JENNY_REPLAY_SCRIPT;
-    process.env.JENNY_REPLAY_SCRIPT = script;
-    t.after(() => { if (prior === undefined) delete process.env.JENNY_REPLAY_SCRIPT; else process.env.JENNY_REPLAY_SCRIPT = prior; });
-    const seen = []; const logs = [];
-    let backend = createBackend(profile, workspace, seen, logs, kind);
+    const calls = [...batches, { text: 'Finished after the decision.' }];
+    let backend; let seen; let logs; let workspace; let profile; let key = name => name;
+    if (shared) {
+      ({ backend, seen, logs, workspace, profile, key } = await host.beginCase(t, { calls, files,
+        readFilePolicy: kind === 'approval' ? 'ask' : null }));
+    } else {
+      const artifacts = path.join(ROOT, 'artifacts'); fs.mkdirSync(artifacts, { recursive: true });
+      const root = fs.mkdtempSync(path.join(artifacts, 'desktop-decision-'));
+      profile = path.join(root, 'profile'); fs.mkdirSync(profile);
+      workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(workspace, name), content);
+      const script = path.join(root, 'replay.json');
+      fs.writeFileSync(script, JSON.stringify({ version: 1, calls }));
+      const prior = process.env.JENNY_REPLAY_SCRIPT;
+      process.env.JENNY_REPLAY_SCRIPT = script;
+      t.after(() => { if (prior === undefined) delete process.env.JENNY_REPLAY_SCRIPT; else process.env.JENNY_REPLAY_SCRIPT = prior; });
+      seen = []; logs = [];
+      backend = createBackend(profile, workspace, seen, logs, kind);
+    }
     try {
-      await backend.start();
+      if (!shared) await backend.start();
       const sessionId = (await backend.createSession({ title: 'Decision checkpoint' })).data.id;
       const projects = backend.projectApplicationService;
       // The Workspace folder is already a project (provisioned by createSession);
@@ -86,7 +98,7 @@ for (const [kind, reconstruct, publicationFailure, policyDrift = false] of [
       const created = backend.ensureWorkspaceProject(workspace, 'test_fixture');
       assert.equal(created.ok, true, JSON.stringify(created));
       assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: created.project.id }).ok, true);
-      const request = { session_id: sessionId, prompt: 'List and read the fixture.', idempotency_key: 'decision_fixture' };
+      const request = { session_id: sessionId, prompt: 'List and read the fixture.', idempotency_key: key('decision_fixture') };
       const sent = reconstruct ? await backend.runtimeApplicationService.start({ ...request,
         purpose: 'Bounded decision continuation',
         limits: { inference_requests: 3, input_tokens: 1_000_000, output_tokens: 1_000_000 } })
@@ -187,6 +199,6 @@ for (const [kind, reconstruct, publicationFailure, policyDrift = false] of [
         logs: logs.filter(event => /continuation|pause|attention/i.test(JSON.stringify(event))).slice(-6),
         pending: [...backend.pendingToolApprovals.keys()] }));
       throw error;
-    } finally { await backend.stop(); backend.dispose(); }
+    } finally { if (!shared) { await backend.stop(); backend.dispose(); } }
   });
 }

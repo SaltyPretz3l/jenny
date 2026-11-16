@@ -83,7 +83,6 @@
 
   /* ── Shadows — soft true-black drops and neutral hairline rings, without sheen ── */
   --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.42);
-  --shadow-accent: 0 8px 20px rgba(127, 182, 221, 0.14);
   --shadow-elevation-1: 0 0 0 1px rgba(168, 176, 188, 0.10);
   --shadow-elevation-2: 0 2px 10px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(168, 176, 188, 0.11);
   --shadow-elevation-3: 0 6px 22px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(168, 176, 188, 0.13);
@@ -164,7 +163,6 @@
   --widget-button-danger-border: rgba(239, 152, 160, 0.28);
   --widget-button-danger-color: #f2a1a8;
   --widget-close-hover-bg: #a24d52;
-  --widget-hero-avatar-bg: #7fb6dd;
 
   /* Sidebar & item states */
   --widget-item-active-bg: #252a30;
@@ -256,11 +254,7 @@
   --settings-shell-field-bg: var(--surface-input-background);
 
   /* Activity states */
-  --widget-activity-pending-glow: rgba(127, 182, 221, 0.12);
-  --widget-activity-pending-border: rgba(127, 182, 221, 0.50);
   --widget-activity-pending-color: #9ccbec;
-  --widget-activity-success-color: rgba(79, 224, 160, 0.92);
-  --widget-activity-error-color: #ff9aa6;
   --widget-activity-pulse-color: rgba(127, 182, 221, 0.16);
 
   /* Attachments */

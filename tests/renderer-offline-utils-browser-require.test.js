@@ -14,7 +14,7 @@ const { JSDOM } = require('jsdom');
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'features', 'renderer-offline-utils.js'), 'utf8');
 
 function loadAsBrowserScript() {
-  const dom = new JSDOM('<!doctype html><body><div id="offlineLocalOnlyList"></div><div id="offlineModelStatus"></div><div id="offlineSummary"></div></body>');
+  const dom = new JSDOM('<!doctype html><body><div id="offlineLocalOnlyList"></div><span id="composerChatPostureDot"></span></body>');
   const amdRequireCalls = [];
   const sandbox = {
     document: dom.window.document,
@@ -38,18 +38,13 @@ test('loading and rendering never touch the browser-global require', () => {
   const manager = utils.createOfflineManager({
     state: {},
     callbacks: { appendClientLog() {}, renderSettings() {} },
-    dom: {
-      offlineLocalOnlyList: doc.getElementById('offlineLocalOnlyList'),
-      offlineModelStatus: doc.getElementById('offlineModelStatus'),
-      offlineSummary: doc.getElementById('offlineSummary'),
-    },
+    dom: { offlineLocalOnlyList: doc.getElementById('offlineLocalOnlyList') },
   });
   manager.applyOfflinePayload({ mode: 'disabled' });
   assert.doesNotThrow(() => manager.renderOfflineManager());
 
   assert.deepEqual(amdRequireCalls, [], 'no AMD require for the lazy Settings modules');
-  assert.notEqual(doc.getElementById('offlineModelStatus').textContent.trim(), '', 'the render ran to its end');
-  assert.notEqual(doc.getElementById('offlineSummary').innerHTML, '', 'the summary row rendered through its fallback');
+  assert.equal(doc.getElementById('composerChatPostureDot').getAttribute('data-posture'), 'local', 'the render ran to its end');
 });
 
 test('the lazy toggle-list renderer is used when its global is present', () => {

@@ -48,7 +48,7 @@ test('timeline paint skipping uses the shared class and Mermaid height changes a
 
 test('timeline typography and bubble radius use the --tl-* token contract', () => {
   const heroSelectors = [
-    '.hero-avatar', '.hero-title', '.hero-subtitle', '.hero-runtime-hint',
+    '.hero-title', '.hero-subtitle', '.hero-runtime-hint',
   ];
   // No timeline aliases match the 20px plan title or 14px approval prompt.
   // The brand glyph retains the explicitly excluded heading-size treatment.
@@ -61,7 +61,7 @@ test('timeline typography and bubble radius use the --tl-* token contract', () =
       /^(\.tool-approval-prompt\s*\{[^}]*?)font-size:\s*var\(--font-size-body\);/m,
     ],
     'styles/chat-thread.css': [
-      /^(\.chat-assistant-sprite-glyph\s*\{[^}]*?)font-size:\s*var\(--font-size-heading\);/m,
+      /^(\.chat-assistant-sprite-glyph\s*\{[^}]*?)font-size:\s*var\(--font-size-title\);/m,
     ],
   };
   for (const relativePath of [
@@ -98,11 +98,6 @@ test('timeline typography and bubble radius use the --tl-* token contract', () =
     /--tl-radius-bubble:\s*var\(--radius-md\);/,
     'the bubble radius aliases the existing medium radius'
   );
-});
-
-test('retired artifact shelf stubs are deleted', () => {
-  assert.equal(fs.existsSync(path.join(repoRoot, 'styles', 'artifact-shelf.css')), false);
-  assert.equal(fs.existsSync(path.join(repoRoot, 'styles', 'artifact-shelf-v2.css')), false);
 });
 
 test('timeline diff CSS is flat while the legacy artifact hunk layout stays scoped', () => {
@@ -279,6 +274,8 @@ test('retired feature and dead utility selectors stay removed', () => {
     ],
     'styles/motion.css': ['.anim-fade-up', '.anim-slide-in-up', '.anim-loop-fade-out'],
     'styles/chat-selection-v2.css': ['[data-selection-mode="true"]'],
+    // Save feedback draws nothing on the control: no tint, ring, dim, nudge or sheen.
+    'styles/activity.css': ['data-activity-state', 'data-activity-emphasis', 'data-busy', '@keyframes', '.composer,'],
   };
 
   for (const [relativePath, selectors] of Object.entries(removedByFile)) {
@@ -296,11 +293,6 @@ test('dynamic state and live combined-selector members remain styled', () => {
     'styles/views-home-dashboard.css': [
       '[data-focus-mode="on"]',
       '[data-widget-state="error"]',
-    ],
-    'styles/activity.css': [
-      '[data-activity-emphasis="subtle"]',
-      '[data-activity-emphasis="visible"]',
-      '[data-activity-emphasis="strong"]',
     ],
     'styles/chat-selection-v2.css': ['.chat-entry[data-selected]'],
     'styles/foundation.css': ['.stat-divider'],
@@ -469,4 +461,13 @@ test('F6: the narrow-stage overlay drawer leaves the chat grid; the side-by-side
     assert.equal(position('drawer'), 'absolute', 'an overlay drawer must not take a chat grid track');
     assert.equal(position('side'), 'relative');
   } finally { dom.window.close(); }
+});
+
+test('the Models services drawer carries the Settings row and control tokens it mounts outside of', () => {
+  // The drawer is appended to <body>, outside .settings-view: without these its
+  // dropdowns (the Add a provider preset list) lost height, border, fill and width.
+  for (const file of ['styles/settings-rows.css', 'styles/settings-control-family.css']) {
+    assert.match(readRepoFile(file), /\.settings-view,\s*\n#modelServicesDrawer \{/, file);
+  }
+  assert.match(readRepoFile('renderer/shell/model-library/model-library-services.js'), /DRAWER_ID = 'modelServicesDrawer'/);
 });

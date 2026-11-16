@@ -1,0 +1,9 @@
+a Alpha
+b Beta
+c Gamma
+d Delta
+a -> b plain
+b --> c dashed
+c <-> d both ways
+a -> d !accent
+d -> b !muted

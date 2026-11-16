@@ -79,3 +79,36 @@ test('a bare switch hit flashes its whole settings row, not only the switch', (t
   assert.equal(documentRef.getElementById('catalogRow').getAttribute('data-search-hit'), 'true');
   controller.dispose();
 });
+
+test('Team and the Team-only density row are offered only while the Team flag is on, as it is when searching', (t) => {
+  const app = buildNavDom();
+  t.after(() => app.dispose());
+  const documentRef = app.dom.window.document;
+  documentRef.querySelector('.settings-nav-scroll').insertAdjacentHTML('beforeend',
+    '<button class="settings-nav-item" data-settings-section="team" data-feature-flag="team" role="tab" hidden>Team</button>');
+  documentRef.querySelector('.settings-nav-header').insertAdjacentHTML('beforeend', buildSettingsSearchBoxMarkup());
+  const teamItem = documentRef.querySelector('[data-settings-section="team"]');
+  const controller = createSettingsSearchController({
+    documentRef, settingsNav: documentRef.querySelector('.settings-nav'), navigateToSection: () => {},
+  });
+  controller.bind();
+  const ids = (query) => { controller.runQuery(query); return controller.getActiveHits().map((hit) => hit.id); };
+  const index = buildSettingsSearchIndex();
+  assert.ok(index.some((entry) => entry.id === 'appearanceTeamDensitySelect'), 'the density row is in the index');
+  for (const word of ['team', 'invite', 'host', 'server', 'members']) {
+    const off = ids(word);
+    assert.equal(off.includes('section:team'), false, `"${word}" offers no Team page with the flag off`);
+    assert.equal(off.includes('appearanceTeamDensitySelect'), false, `"${word}" offers no density row with the flag off`);
+    assert.equal(searchSettingsIndex(index, word).some((hit) => hit.id === 'section:team'), false, `"${word}": no flag source, no Team`);
+  }
+  // The flag turns on after the index was built and the controller bound: the next search sees it.
+  teamItem.hidden = false;
+  for (const word of ['team', 'invite', 'host', 'server', 'members']) {
+    assert.ok(ids(word).includes('section:team'), `"${word}" finds the Team page with the flag on`);
+  }
+  assert.ok(ids('team').includes('appearanceTeamDensitySelect'), 'and the density row');
+  assert.ok(searchSettingsIndex(index, 'members', () => true).some((hit) => hit.id === 'section:team'));
+  teamItem.hidden = true;
+  assert.equal(ids('members').includes('section:team'), false, 'the flag going off hides it again');
+  controller.dispose();
+});

@@ -415,3 +415,22 @@ test('the team host gives its router the team commands, the live address hints a
   assert.equal(limited.error.code, 'CMP-HOST-0007');
   assert.equal(limited.error.reason, 'team_rate_limit');
 });
+
+// An invite made a moment after internet joining went on waits for the router's answer, so it carries the mapped address.
+test('a new invite waits for the mapping to settle and is still made when the wait fails', async (t) => {
+  let mapped = null;
+  let release;
+  const internet = () => ({ direct_port: 4455, mapped, public_address: null, relay_url: null, relay_token: null });
+  const settle = () => new Promise((resolve) => { release = () => { mapped = '203.0.113.9:5999'; resolve(); }; });
+  const f = await createTeamCommandsFixture(t, { addresses: ['10.0.0.5:4455'], internet, settle });
+  const pending = f.send(f.seats.owner, 'team.invite.create', { role: 'member' });
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const created = await pending;
+  assert.equal(created.ok, true);
+  const revealed = await f.send(f.seats.owner, 'team.invite.reveal', { invite_id: created.invite_id });
+  assert.deepEqual(parseInvite(revealed.invite).hints, ['203.0.113.9:5999', '10.0.0.5:4455']);
+
+  const failing = await createTeamCommandsFixture(t, { addresses: ['10.0.0.5:4455'], settle: () => Promise.reject(new Error('x')) });
+  assert.equal((await failing.send(failing.seats.owner, 'team.invite.create', { role: 'member' })).ok, true);
+});

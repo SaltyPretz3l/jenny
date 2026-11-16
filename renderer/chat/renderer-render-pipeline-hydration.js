@@ -281,6 +281,11 @@
     function buildHydratedTurnProjection(sourceMessages, threadTree, turnEventState, {
       messageById: providedMessageById = null,
       turnRowCache = null,
+      // Turns the previous pass evicted from turnRowCache past its budget. Their
+      // rows are still held by the previous projection, so serving an unchanged
+      // one from here costs no memory and stops the cap re-projecting every turn
+      // past it on each pass. Rewritten below to hold only this pass's evictions.
+      turnRowOverflow = null,
       messageContentFingerprintById = null,
       sessionId = '',
     } = {}) {
@@ -355,7 +360,11 @@
           : '';
         let rows;
         let viewModel = null;
-        const cachedTurn = turnCacheSignature ? turnRowCache.get(turnId) : null;
+        let cachedTurn = turnCacheSignature ? turnRowCache.get(turnId) : null;
+        if (!cachedTurn && turnCacheSignature && turnRowOverflow instanceof Map) {
+          cachedTurn = turnRowOverflow.get(turnId) || null;
+          if (cachedTurn && cachedTurn.signature === turnCacheSignature) turnRowCache.set(turnId, cachedTurn);
+        }
         if (cachedTurn && cachedTurn.signature === turnCacheSignature) {
           touchMapEntry(turnRowCache, turnId);
           rows = cachedTurn.rows;
@@ -427,11 +436,21 @@
             turnRowCache.delete(cachedTurnId);
           }
         }
-        if (isLongThreadBoundsEnabled(state?.features?.featureFlags)) {
+        const boundsEnabled = isLongThreadBoundsEnabled(state?.features?.featureFlags);
+        const beforePrune = boundsEnabled && turnRowOverflow instanceof Map
+          && turnRowCache.size > LONG_THREAD_BUDGETS.projectedTurns
+          ? new Map(turnRowCache)
+          : null;
+        if (turnRowOverflow instanceof Map) turnRowOverflow.clear();
+        if (boundsEnabled) {
           const pinnedTurnIds = collectPinnedTurnIds(turns, rowsByTurnId);
-          pruneMapOldestFirst(turnRowCache, LONG_THREAD_BUDGETS.projectedTurns, {
+          const pruned = pruneMapOldestFirst(turnRowCache, LONG_THREAD_BUDGETS.projectedTurns, {
             isPinned(turnId) { return pinnedTurnIds.has(String(turnId || '').trim()); },
           });
+          // Only turns of this projection, whose rows it already holds.
+          if (beforePrune) {
+            (pruned?.evicted || []).forEach((turnId) => turnRowOverflow.set(turnId, beforePrune.get(turnId)));
+          }
         }
       }
       // Single-source the rowsByRenderMessageId build through the helper so
@@ -717,13 +736,62 @@
     // the live segment owns, rendered exactly as the turn article renders them
     // for that streaming message, so a surgical patch writes what a full render
     // would (HB-010); returns all of those rows.
+    // A finished reasoning row of the live segment (an earlier thinking
+    // checkpoint) is not re-rendered per delta: the live patch only checks that
+    // it is on screen in the same state, so it gets a stub carrying that state,
+    // rendered once per distinct row state: one entry per row, refreshed on use.
+    const finishedReasoningStubs = new Map();
+    const FINISHED_REASONING_STUB_CAP = 256;
+    function isFinishedReasoningRow(row) {
+      const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {};
+      return payload.completed === true || Boolean(payload.completed_at);
+    }
+    // The key is short; the row's projection fingerprint (entry text, summary,
+    // state) is compared on a hit, so an edit renders a fresh stub and the
+    // memo holds one text per row.
+    function finishedReasoningStubKey(row, renderOptions) {
+      const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {};
+      return [
+        buildTurnRowId(row), renderOptions.transcriptView, renderOptions.reducedMotion ? 1 : 0,
+        renderOptions.streamingMessageId, payload.phase_id, payload.thinking_id,
+        payload.started_at, payload.completed_at, payload.completed === true ? 1 : 0,
+        payload.render_collapsed === true ? 1 : 0, payload.iteration,
+      ].map((value) => String(value ?? '')).join('|');
+    }
+    function buildFinishedReasoningStub(row, messages, renderOptions, template) {
+      const key = finishedReasoningStubKey(row, renderOptions);
+      const fingerprint = row.projection_fingerprint || buildLiveRowProjectionFingerprint(row);
+      const hit = finishedReasoningStubs.get(key);
+      if (hit && hit.fingerprint === fingerprint) {
+        finishedReasoningStubs.delete(key);
+        finishedReasoningStubs.set(key, hit);
+        return hit.stub;
+      }
+      template.innerHTML = String(buildTurnRowListMarkup([row], messages, renderOptions) || '').trim();
+      const rendered = template.content.querySelector('.chat-row[data-row-kind="reasoning"]');
+      const attr = (node, name) => String(node?.getAttribute?.(name) ?? '')
+        .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const stub = rendered
+        ? `<div class="chat-row" data-row-kind="reasoning" data-row-id="${attr(rendered, 'data-row-id')}">${
+          Array.from(rendered.querySelectorAll('.reasoning-row-block')).map((block) => `<div class="reasoning-row-block" data-phase-key="${
+            attr(block, 'data-phase-key')}" data-reasoning-status="${attr(block, 'data-reasoning-status')}"${
+            block.hasAttribute('data-reasoning-fp') ? ` data-reasoning-fp="${attr(block, 'data-reasoning-fp')}"` : ''}></div>`).join('')}</div>`
+        : '';
+      finishedReasoningStubs.delete(key);
+      if (finishedReasoningStubs.size >= FINISHED_REASONING_STUB_CAP) {
+        finishedReasoningStubs.delete(finishedReasoningStubs.keys().next().value);
+      }
+      finishedReasoningStubs.set(key, { fingerprint, stub });
+      return stub;
+    }
+
     function buildProjectionStreamingRowMarkup(target, messages, projectionContext) {
       const liveReasoningMessageId = String(target?.liveReasoningMessageId || '').trim();
-      const rows = target?.row ? [target.row] : findLiveReasoningRows(liveReasoningMessageId, projectionContext);
-      if (!rows.length) {
+      const ownedRows = target?.row ? [target.row] : findLiveReasoningRows(liveReasoningMessageId, projectionContext);
+      if (!ownedRows.length) {
         return '';
       }
-      const rowListMarkup = buildTurnRowListMarkup(rows, messages, {
+      const renderOptions = {
          projectionContext,
          messageById: projectionContext?.messageById,
          turnIdByMessageId: projectionContext?.turnIdByMessageId,
@@ -734,17 +802,22 @@
         reducedMotion: reducedMotionQuery.matches === true,
         streamingRowId: target?.row ? buildTurnRowId(target.row) : '',
         streamingMessageId: liveReasoningMessageId,
-      });
-      if (!String(rowListMarkup || '').trim()) {
-        return '';
-      }
+      };
       const template = (globalRef.document || chatTimeline?.ownerDocument)?.createElement?.('template');
       if (!template) {
         return '';
       }
+      const isStubbed = (row, index) => !target?.row && index < ownedRows.length - 1 && isFinishedReasoningRow(row);
+      const finishedRows = ownedRows.filter(isStubbed);
+      const rows = finishedRows.length ? ownedRows.filter((row, index) => !isStubbed(row, index)) : ownedRows;
+      const stubMarkup = finishedRows.map((row) => buildFinishedReasoningStub(row, messages, renderOptions, template)).join('');
+      const rowListMarkup = buildTurnRowListMarkup(rows, messages, renderOptions);
+      if (!String(rowListMarkup || '').trim()) {
+        return '';
+      }
       template.innerHTML = String(rowListMarkup || '').trim();
       if (!target?.row) {
-        return template.content.querySelector('[data-turn-row-list="true"]')?.innerHTML || '';
+        return stubMarkup + (template.content.querySelector('[data-turn-row-list="true"]')?.innerHTML || '');
       }
       return template.content.querySelector('.chat-row')?.outerHTML || '';
     }

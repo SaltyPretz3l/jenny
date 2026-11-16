@@ -566,3 +566,19 @@ test('list: active pages over the non-idle chats only', () => {
   assert.equal(page.total, 15);
   assert.equal(page.truncated, true);
 });
+
+test('descendsFrom follows spawn links upward, bounded, and never throws (row 136)', () => {
+  const { descendsFrom } = require('../services/session-directory-scope');
+  const parents = { helper: 'lead', grandchild: 'helper', loop_a: 'loop_b', loop_b: 'loop_a' };
+  const peek = (id) => {
+    if (id === 'broken') throw new Error('store closed');
+    return { spawned_from: parents[id] ? { parent_session_id: parents[id] } : null };
+  };
+  assert.equal(descendsFrom(peek, 'helper', 'lead'), true);
+  assert.equal(descendsFrom(peek, 'grandchild', 'lead'), true);
+  assert.equal(descendsFrom(peek, 'lead', 'helper'), false);
+  assert.equal(descendsFrom(peek, 'lead', 'lead'), false);
+  assert.equal(descendsFrom(peek, 'loop_a', 'lead'), false);
+  assert.equal(descendsFrom(peek, 'broken', 'lead'), false);
+  assert.equal(descendsFrom(peek, 'grandchild', 'lead', 1), false);
+});

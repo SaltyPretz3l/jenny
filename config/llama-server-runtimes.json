@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "_comment": "Newer llama.cpp build Jenny can download when no trusted build reads a model. Refreshed by scripts/dev/refresh_llama_server_runtimes.py and reviewed by a person.",
+  "release": "b12098",
+  "build": 12098,
+  "checkedOn": "2026-11-13",
+  "architectures": [
+    "afmoe", "apertus", "arcee", "arctic", "arwkv7", "baichuan", "bailingmoe", "bailingmoe2", "bailingmoe3",
+    "beam", "bitnet", "bloom", "chameleon", "chatglm", "clef", "clip", "clover_moe", "codeshell", "cogvlm",
+    "cohere2", "cohere2moe", "command-r", "dbrx", "deci", "deepseek", "deepseek2", "deepseek2-ocr", "deepseek32",
+    "deepseek4", "deepseek41", "dflash", "dots1", "dots3note", "dream", "eagle3", "ernie4_5", "ernie4_5-moe",
+    "eurobert", "exaone", "exaone-moe", "exaone4", "falcon", "falcon-h1", "flint", "gemma", "gemma-embedding",
+    "gemma-embedding2", "gemma2", "gemma3", "gemma3n", "gemma4", "gemma4-assistant", "glm-dsa", "glm4", "glm4moe",
+    "glm5-next", "gpt-oss", "gpt2", "gptj", "gptneox", "granite", "granite_swa", "granitehybrid", "granitemoe",
+    "graniteswitch", "grok", "grovemoe", "hrm_text", "hunyuan-dense", "hunyuan-moe", "hunyuan_vl", "hy_v3",
+    "hy_v4", "internlm2", "jais", "jais2", "jamba", "jina-bert-v2", "jina-bert-v3", "k2-horizon", "kimi-k3",
+    "kimi-linear", "kolibri1", "laguna", "lfm2", "lfm2moe", "lfm3", "limite", "llada", "llada-moe", "llama",
+    "llama-embed", "llama4", "maincoder", "maion-coder", "mamba", "mamba2", "maple", "mellum", "metis16", "mimo2",
+    "minicpm", "minicpm3", "minimax-01", "minimax-m2", "minimax-m3", "mistral-large4", "mistral3", "mistral4",
+    "modern-bert", "mpt", "muse-glimmer", "muse-spark", "nanbeige", "nemotron", "nemotron_h", "nemotron_h_moe",
+    "neo-bert", "nomic-bert", "nomic-bert-moe", "olmo", "olmo2", "olmoe", "openelm", "orion", "paddleocr",
+    "pangu-embedded", "phi2", "phi3", "phimoe", "plamo", "plamo2", "plamo3", "plm", "pockettts", "qwen2moe",
+    "qwen2vl", "qwen3", "qwen35", "qwen35moe", "qwen3moe", "qwen3next", "qwen3tts", "qwen3vl", "qwen3vlmoe",
+    "qwen4exp", "refact", "rnd1", "rwkv6", "rwkv6qwen2", "seed_oss", "sensenova_u1", "smallthinker", "smollm3",
+    "spark2_5", "stablelm", "starcoder", "starcoder2", "step35", "t5", "t5encoder", "talkie", "vllm-decision2",
+    "wavtokenizer-dec", "xverse"
+  ],
+  "variants": {
+    "win-x64-cuda-13.4": {
+      "platform": "win32",
+      "arch": "x64",
+      "gpu": "nvidia",
+      "assets": [
+        {
+          "name": "llama-b12098-bin-win-cuda-13.4-x64.zip",
+          "size": 169174587,
+          "sha256": "6399e31fd2e2f455288ce7d717331441708b21e9e57f1a0bb93233e47d1f398c"
+        },
+        {
+          "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+          "size": 423535356,
+          "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+        }
+      ]
+    },
+    "win-x64-cpu": {
+      "platform": "win32",
+      "arch": "x64",
+      "gpu": "none",
+      "assets": [
+        {
+          "name": "llama-b12098-bin-win-cpu-x64.zip",
+          "size": 24708083,
+          "sha256": "8d142d409515ce7a0f873654170ef0071d945acd1918fd774d374840917bf211"
+        }
+      ]
+    }
+  }
+}

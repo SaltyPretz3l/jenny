@@ -121,7 +121,7 @@
     renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe,
     prepareChatDockSessionTransitionSafe, getIdeCommandItemsSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe,
     openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeHelpOverlaySafe,
-    openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
+    openIdeTerminalSafe, runIdeTaskTerminalSafe, openIdeOutsideFilesSafe, closeIdeBottomPanelSafe,
     refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe, applyCompanionPayload,
     getAvailableCompanionDeferPresets,
     renderDashboardSafe, refreshAwayDigestSafe = (...a) => Promise.resolve(state.awayDigestReader?.refresh?.(...a) ?? false),
@@ -326,6 +326,14 @@
       toErrorMessage: (...a) => toErrorMessage(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
       getProjectSwitcher: (...a) => getProjectSwitcher(...a),
+      // Row 138, the Background tasks panel's Stop on a linked chat. handleStopActiveStream is built later (controller
+      // composition), so this cancels the stream the renderer knows; null sends the panel to the main process's turn.
+      stopSessionStream: async (sessionId) => {
+        const streamId = String(multiStreamController?.getActiveStreamIdForCancel?.(sessionId) || '').trim();
+        if (!streamId || typeof window.jennyShell?.chat?.cancelStream !== 'function') return null;
+        const result = await window.jennyShell.chat.cancelStream(streamId);
+        return multiStreamController.isCancelStreamRefused?.(result) ? null : { streamId, sessionId };
+      },
       getProjectionContext: () => uiRuntime.projectionContextBySession?.get?.(String(state.currentSessionId || '').trim())?.currentContext || null,
       getChatTimelineRowModelEnabled: (...a) => getChatTimelineRowModelEnabled(...a),
       recordChatTimelineRolloutSignal: (...a) => recordChatTimelineRolloutSignal(...a),
@@ -476,7 +484,7 @@
     handleLinkedSessionPopover, renderWorkspaceChrome, handleWorkspaceShortcut,
   } = window.rendererAppNavigationComposition.createNavigationComposition({
     __proto__: ctx, appendClientLog, escapeHtml, getSessionMonogram, isArtifactReviewVisible, setActiveView,
-    syncArtifactReviewLayout, updateComposerSafeOffset, getProjectSwitcher, showToastMessage, attachGlobalErrorBoundary,
+    syncArtifactReviewLayout, updateComposerSafeOffset, getProjectSwitcher, showToastMessage, showShellErrorToast, chatScrollCoordinator, attachGlobalErrorBoundary,
     detachGlobalErrorBoundary, lifecycleController, patchSessionSummary, showSessionActionError, setSidebarCollapsed,
     get topNavShellController() { return topNavShellController; },
     set topNavShellController(value) { topNavShellController = value; },
@@ -498,7 +506,7 @@
       bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe,
       renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
       reconcileChatDockHostSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe,
-      openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
+      openIdeTerminalSafe, runIdeTaskTerminalSafe, openIdeOutsideFilesSafe, closeIdeBottomPanelSafe,
       refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
       applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe, applySetupBackendStatusSafe, openSetupTileSafe,
       showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget,

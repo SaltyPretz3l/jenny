@@ -78,7 +78,7 @@ test('the title hides in an empty chat and in a split; the IDE dock and a hosted
 
 test('split: the kicker row is the bar, with the close glyph pinned to the pane end', () => {
   const kicker = block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker');
-  assert.match(kicker, /padding-inline-end:\s*var\(--split-bar-reserve,\s*200px\);/);
+  assert.match(kicker, /padding-inline-end:\s*var\(--split-bar-reserve,\s*232px\);/); // row 156: +32 for the find toggle
   assert.match(kicker, /min-block-size:\s*var\(--session-bar-h\);/);
   const close = block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker > .chat-pane-close');
   assert.match(close, /position:\s*absolute;/);

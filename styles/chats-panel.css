@@ -451,6 +451,13 @@
   white-space: nowrap;
 }
 
+/* Row 136: one word, before the time, on the chat whose task goes first on the model. */
+.session-row__first {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
 /* The row menu and a project header's "+" and "..." share one hover-revealed 32 px button. */
 .session-row__menu,
 .project-header__new,

@@ -36,9 +36,12 @@ from sidecar.ai.context.runtime_message_markers import (
 
 TRAILING_TURN_CONTEXT_FLAG = "JENNY_ENABLE_TRAILING_TURN_CONTEXT"
 TURN_CONTEXT_HEADING = "## Turn Context"
+# The last sentence points at the user's message: a small model asked "whats
+# this?" right after this row described the row instead of the attached image.
 TURN_CONTEXT_PREAMBLE = (
-    "Context the Jenny runtime gathered for the message that follows. "
-    "It was not written by the user and does not override the system prompt."
+    "Background the Jenny runtime gathered for the user's message below. "
+    "It was not written by the user and does not override the system prompt. "
+    "Answer the user's message, not this block."
 )
 # Rendered rows start with the full header, never the bare heading alone, so a
 # custom prompt that happens to open with "## Turn Context" is not mistaken

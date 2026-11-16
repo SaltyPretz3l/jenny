@@ -32,13 +32,21 @@ const MATRIX = [
   ['team.chat.search', 'OMR', () => ({ query: 'root', limit: 5 })],
   ['team.chat.typing', 'OM', () => ({ channel_id: 'chan_team' })],
   ['team.presence.set', 'OMR', () => ({ state: 'idle' })],
+  // Slice 2b-1: react and pin are writes; the edit history reads like history (E38).
+  ['team.chat.react', 'OM', (c) => ({ channel_id: 'chan_team', message_id: c.root.message_id, emoji: '\u{1F44D}', on: true })],
+  ['team.chat.pin', 'OM', (c) => ({ channel_id: 'chan_team', message_id: c.root.message_id, on: true })],
+  ['team.chat.edits', 'OMR', (c) => ({ channel_id: 'chan_team', message_id: c.root.message_id })],
+  // The pinned list reads like history.
+  ['team.chat.pins', 'OMR', () => ({ channel_id: 'chan_team' })],
+  // Slice 2d: a direct conversation with Bob, who is neither the owner nor Alice.
+  ['team.chat.dm_open', 'OM', (c) => ({ member_ids: [c.bob] })],
 ];
 
 test('the matrix covers every team.chat operation and the presence report in the closed vocabulary', () => {
   const chatOperations = Object.keys(PARAM_SCHEMAS)
     .filter((operation) => operation.startsWith('team.chat.') || operation.startsWith('team.presence.'));
   assert.deepEqual(chatOperations.sort(), MATRIX.map(([operation]) => operation).sort());
-  assert.equal(chatOperations.length, 13);
+  assert.equal(chatOperations.length, 18);
 });
 
 test('matrix: every chat operation by owner, member, read-only, pending, invite principal and revoked device', async (t) => {
@@ -48,7 +56,7 @@ test('matrix: every chat operation by owner, member, read-only, pending, invite 
   for (const seat of ['owner', 'alice']) own[seat] = await f.post(f.seats[seat], `mine ${seat}`);
   // Seats that may not post still need ids for their rows; the call is refused before the store.
   for (const seat of ['rae', 'pat', 'invite', 'revoked']) own[seat] = root;
-  const context = { root, own };
+  const context = { root, own, bob: f.seats.bob.member_id };
   const letters = { owner: 'O', alice: 'M', rae: 'R', pat: 'P', invite: 'I', revoked: 'X' };
   const denied = { P: 'member_pending', X: 'member_revoked' };
   let allowed = 0;
@@ -62,9 +70,9 @@ test('matrix: every chat operation by owner, member, read-only, pending, invite 
       assert.match(answer.error.request_id, /^request_\d+$/u, `${seat} ${operation}`);
     }
   }
-  // Owner and member: all thirteen. Read-only: the four reads, the three read-state
-  // writes, search and the presence report.
-  assert.equal(allowed, 13 + 13 + 9);
+  // Owner and member: all eighteen. Read-only: the four reads, the three read-state
+  // writes, search, the presence report, the edit history and the pinned list.
+  assert.equal(allowed, 18 + 18 + 11);
 });
 
 test('a refused command reaches no store: a read-only post leaves the channel unchanged', async (t) => {
@@ -99,12 +107,18 @@ test('a direct, an unknown and a not-yet-created project channel answer exactly 
       }
     }
   }
-  // The project channel passes the authorizer and gets the store's answer; the
-  // direct and unknown ids are refused by the authorizer. Both read the same.
+  // With no team project the project channel is refused by the authorizer like
+  // the direct and unknown ids (slice 3-2); once the owner is in the project it
+  // passes the authorizer and gets the store's answer. All read the same.
   assert.equal(f.chat.store.listChannels().channels.length, 1);
   const { authorize } = createAuthorizer({ directory: f.store.directory });
   const owner = { device_id: f.seats.owner.device_id };
+  assert.equal(authorize(owner, 'chat.read', { kind: 'channel', id: 'chan_project_not_yet' }, 'r').error.reason,
+    'team_chat_not_found');
+  await f.addToProject('project_not_yet', 'owner');
   assert.deepEqual(authorize(owner, 'chat.read', { kind: 'channel', id: 'chan_project_not_yet' }), { ok: true });
+  assert.deepEqual(strip(await f.send(f.seats.owner, 'team.chat.history', { channel_id: 'chan_project_not_yet',
+    limit: 5 })), expected);
   assert.equal(authorize(owner, 'chat.read', { kind: 'channel', id: DM }, 'r').error.reason, 'team_chat_not_found');
   assert.equal(authorize(owner, 'chat.read', { kind: 'session', id: 'chan_team' }, 'r').error.reason,
     'team_chat_not_found', 'the wrong kind for a channel action');
@@ -112,9 +126,9 @@ test('a direct, an unknown and a not-yet-created project channel answer exactly 
     'team_not_found');
 });
 
-test('a direct channel that exists in the store is still refused, the owner included', async (t) => {
+test('a direct channel id names nothing for the owner and members; the store will not make one without participants', async (t) => {
   const f = await createTeamChatCommandsFixture(t);
-  assert.equal((await f.chat.store.createChannel({ channelId: DM })).ok, true);
+  assert.equal((await f.chat.store.createChannel({ channelId: DM })).ok, false);
   for (const seat of ['owner', 'alice']) {
     for (const [operation, params] of [
       ['team.chat.history', { channel_id: DM, limit: 5 }],
@@ -125,7 +139,6 @@ test('a direct channel that exists in the store is still refused, the owner incl
     const overview = await f.send(f.seats[seat], 'team.chat.overview');
     assert.deepEqual(overview.channels.map((channel) => channel.channel_id), ['chan_team'], seat);
   }
-  assert.equal(f.chat.store.channelInfo(DM).last_seq, 0);
   assert.equal(f.chat.channelAudience(DM).size, 0);
   assert.equal(f.chat.channelAudience('chan_team').has(f.seats.pat.member_id), false, 'a pending member is outside');
   assert.equal(f.chat.channelAudience('chan_team').has(f.seats.rae.member_id), true);
@@ -150,6 +163,7 @@ test('a forged message or thread root id answers team_chat_not_found and changes
   assert.deepEqual(f.chatEvents(), []);
   // A thread root from another channel is not a root here (slice 2a-3b typing).
   assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_alpha' })).ok, true);
+  await f.addToProject('project_alpha', 'alice');
   const elsewhere = await f.send(f.seats.alice, 'team.chat.post', { channel_id: 'chan_project_alpha', text: 'root' });
   const typing = await f.send(f.seats.bob, 'team.chat.typing', { channel_id: 'chan_team',
     thread_root_id: elsewhere.message_id });

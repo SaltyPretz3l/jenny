@@ -77,6 +77,7 @@ function makeWindowRef() {
     rendererAtomicBurstUtils: { createAtomicBurstController: makeFactory('atomic-burst') },
     rendererCircuitTraceUtils: { createCircuitTraceController: makeFactory('circuit-trace') },
     rendererContextWeaveUtils: { createContextWeaveController: makeFactory('context-weave') },
+    rendererAuroraRidgeUtils: { createAuroraRidgeController: makeFactory('aurora-ridge') },
     document: { createElement() { return { style: {}, classList: { add() {}, remove() {} } }; } },
   };
   return windowRef;

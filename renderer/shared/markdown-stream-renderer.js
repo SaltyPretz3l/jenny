@@ -15,12 +15,15 @@
   const HASH_SEED = 5381;
   const CODE_BLOCK_ID_PLACEHOLDER = '__JENNY_STREAM_CODE_BLOCK_ID__';
   const EMPTY_DEFAULT_TOKEN_SPAN = '<span class="tok tok-default"></span>';
+  const PLAIN_CODE_HEAD = '<div class="thinking-code-host"><pre class="thinking-code"><code>';
   const issuedStates = new WeakSet();
   const FALLBACK_REASONS = Object.freeze({ INITIAL: 'initial', INVALID_STATE: 'invalid_state',
     SOURCE_REPLACED: 'source_replaced', GUARD_UNAVAILABLE: 'guard_unavailable',
     NO_STABLE_PREFIX: 'no_stable_prefix', RENDER_UNAVAILABLE: 'render_unavailable' });
   const REFERENCE_DEFINITION_RE = /^ {0,3}\[[^\]\n]+\]:/;
   const REFERENCE_LINK_RE = /(?:^|[\s(>.,;:!?-])!?\[[^\]\n]+\](?:\s*\[[^\]\n]*\]|(?!\s*[[(]))/;
+  // Answer mode: marked links a reference glued to a word too (docs[1], **[1]**, Text[^1]).
+  const GLUED_REFERENCE_LINK_RE = /!?\[[^\]\n]+\](?:\s*\[[^\]\n]*\]|(?!\s*[[(]))/;
   const TASK_CHECKBOX_RE = /^ {0,3}(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;
   const TABLE_UNIT_SUFFIX_RE = /^<\/tbody>\s*<\/table>(?:\s*<\/div>)?\s*$/;
   const RAW_TAG_RE = /<(\/?)([a-z][a-z0-9-]*)(?:\s[^>]*)?\s*\/?>/gi;
@@ -167,12 +170,38 @@
     return [...counts.values()].some((count) => count % 2 !== 0);
   }
 
+  // Drops complete inline code spans (a backtick run closed by a run of the same
+  // length): `Vec<T>` or `arr[i]` inside one is literal text, never a tag or link.
+  function stripInlineCodeSpans(line) {
+    const source = String(line || '');
+    if (!source.includes('`')) return source;
+    let result = '';
+    let cursor = 0;
+    const runRe = /`+/g;
+    let open = runRe.exec(source);
+    while (open) {
+      let close = runRe.exec(source);
+      while (close && close[0].length !== open[0].length) close = runRe.exec(source);
+      if (!close) {
+        // An unmatched run is literal; keep scanning after it.
+        runRe.lastIndex = open.index + open[0].length;
+        open = runRe.exec(source);
+        continue;
+      }
+      result += source.slice(cursor, open.index);
+      cursor = close.index + close[0].length;
+      open = runRe.exec(source);
+    }
+    return result + source.slice(cursor);
+  }
+
   function hasGlobalMarkdownDependency(line, plainHtml) {
     const source = String(line || '');
-    const proseSource = source.replace(TASK_CHECKBOX_RE, '');
-    return REFERENCE_DEFINITION_RE.test(source)
-      || (!plainHtml && REFERENCE_LINK_RE.test(proseSource))
-      || (!plainHtml && hasUnbalancedRawTags(source));
+    if (REFERENCE_DEFINITION_RE.test(source)) return true;
+    if (plainHtml) return false;
+    const proseSource = stripInlineCodeSpans(source);
+    return GLUED_REFERENCE_LINK_RE.test(proseSource.replace(TASK_CHECKBOX_RE, ''))
+      || hasUnbalancedRawTags(proseSource);
   }
 
   function findStablePrefixEnd(source, dependencies) {
@@ -205,7 +234,19 @@
         displayMathOpen = mathUtils.advanceDisplayMathState(line, displayMathOpen);
       }
       const insideOpenConstruct = !!fenceState?.marker || displayMathOpen;
-      if (!wasInFence && !fenceState?.marker && hasGlobalMarkdownDependency(line, dependencies.plainHtml)) return 0;
+      if (!wasInFence && !fenceState?.marker && hasGlobalMarkdownDependency(line, dependencies.plainHtml)) {
+        // Stop at the poison line, keeping the boundary that precedes it: its
+        // dependency reaches forward (an HTML block, a link waiting for its
+        // definition), and in answer mode a definition's earlier uses were
+        // poison themselves. Plain mode keeps uses paragraph-local, so there a
+        // definition still re-renders everything before it.
+        if (dependencies.plainHtml && REFERENCE_DEFINITION_RE.test(line)) return 0;
+        if (pendingBoundary && lineStart >= pendingBoundary.offset && !wasInDisplayMath
+            && (!isContinuationLine(line) || !pendingBoundary.previousWasContinuation)) {
+          stableBoundary = pendingBoundary.offset;
+        }
+        return stableBoundary;
+      }
       if (!line.trim()) {
         if (!insideOpenConstruct) {
           pendingBoundary = {
@@ -361,18 +402,21 @@
     const source = splitCodeSourceHtml(String(unit?.sourceHtml || ''));
     const id = String(unit?.sourceHtml || '').match(/\bid="(md-codeblock-[^"]+-pre)"/)?.[1];
     const codeBlockId = /^md-codeblock-\d+-pre$/.test(id) ? id : '';
-    const decorated = codeBlockId
+    // A plain thinking block carries no id and no colouring: its markup is its own split.
+    const plainCode = !id && String(unit?.sourceHtml || '').startsWith(PLAIN_CODE_HEAD);
+    const decorated = codeBlockId || plainCode
       ? splitCodeSourceHtml(String(unit?.html || '')) : splitBulkDecorated(String(unit?.html || ''));
-    if (!source || !decorated || !id || (!codeBlockId && source.body !== decorated.body)) return null;
+    if (!source || !decorated || !(id || plainCode) || (!codeBlockId && source.body !== decorated.body)) return null;
     const hasTrailingEmptySpan = codeBlockId && source.body.endsWith('\n')
       && decorated.body.endsWith(EMPTY_DEFAULT_TOKEN_SPAN);
     const htmlBody = hasTrailingEmptySpan
       ? decorated.body.slice(0, -EMPTY_DEFAULT_TOKEN_SPAN.length) : decorated.body;
     const htmlSuffix = (hasTrailingEmptySpan ? EMPTY_DEFAULT_TOKEN_SPAN : '') + decorated.suffix;
-    return { sourceHead: source.head.replaceAll(id, CODE_BLOCK_ID_PLACEHOLDER),
-      sourceBody: source.body, sourceSuffix: source.suffix.replaceAll(id, CODE_BLOCK_ID_PLACEHOLDER),
-      htmlHead: decorated.head.replaceAll(id, CODE_BLOCK_ID_PLACEHOLDER),
-      htmlBody, htmlSuffix: htmlSuffix.replaceAll(id, CODE_BLOCK_ID_PLACEHOLDER),
+    const withPlaceholder = (html) => (id ? html.replaceAll(id, CODE_BLOCK_ID_PLACEHOLDER) : html);
+    return { sourceHead: withPlaceholder(source.head),
+      sourceBody: source.body, sourceSuffix: withPlaceholder(source.suffix),
+      htmlHead: withPlaceholder(decorated.head),
+      htmlBody, htmlSuffix: withPlaceholder(htmlSuffix),
       codeBlockId };
   }
   function splitCodeSourceHtml(html) {
@@ -643,7 +687,7 @@
       : fenceSettlement(tailSource, construct, dependencies);
     const maxBodyLines = dependencies.codeHighlight?.MAX_BODY_LINES;
     const tailBodySource = settlement ? tailSource.slice(0, settlement.bodyEnd) : tailSource;
-    if (construct.kind === 'fence' && construct.codeBlockId && Number.isInteger(maxBodyLines)
+    if (construct.kind === 'fence' && construct.codeBlockId && !dependencies.plainCode && Number.isInteger(maxBodyLines)
         && construct.bodyLineCount + (tailBodySource.match(/\n/g) || []).length > maxBodyLines) {
       return { fallback: true };
     }
@@ -708,6 +752,7 @@
       mermaidText: dependencies?.mermaidText || resolveModule('markdownMermaidText', './markdown-mermaid-text'),
       mathUtils: dependencies?.mathUtils || resolveModule('markdownMathUtils', './markdown-math-utils'),
       plainHtml: options?.mermaid === 'plain',
+      plainCode: options?.codeBlocks === 'plain',
     };
     if (!deps.streamUnits?.findChangedStartIndex || typeof deps.renderChunk !== 'function') return null;
     const previousState = stateFromOptions(options, previousUnits);

@@ -25,12 +25,11 @@ test('narrow chat does not indent the first child wrapper off the root rail', ()
   assert.match(ruleBody(narrow, '.chat-view .chat-thread-children[data-thread-depth="1"]'), /padding-inline-start:\s*0/);
 });
 
-test('row node dots centre on a per-kind first line, not a fixed top', () => {
+test('rows carry no gutter dot or rail line: the per-kind dot axis and the root rail are gone', () => {
   const css = read('styles/chat-thread-rail.css');
-  assert.match(css, /top:\s*calc\(var\(--row-dot-center, calc\(var\(--tl-row-h\) \/ 2\)\) - var\(--thread-dot-size\) \/ 2\)/);
-  for (const kind of ['assistant_text', 'batch', 'recap', 'approval_gap']) {
-    assert.match(css, new RegExp(`\\.chat-row\\[data-row-kind="${kind}"\\][^{]*\\{\\s*(?:/\\*[^*]*\\*/\\s*)?--row-dot-center:`), kind);
-  }
+  assert.doesNotMatch(css, /--row-dot-center/);
+  assert.doesNotMatch(css, /\.chat-row-node-dot/);
+  assert.doesNotMatch(css, /\.chat-thread-root::before/);
   // The retired tool_step approval side bar never matched a rendered row.
   assert.doesNotMatch(css, /data-row-kind="tool_step"/);
 });

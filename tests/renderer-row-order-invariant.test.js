@@ -151,6 +151,51 @@ test('rows sharing a message id rank by their own source event, not the message'
   assert.equal(rowOrderInvariant.findRowOrderViolations(doc, sharedEvents).length, 1);
 });
 
+// Shape checks: rows a seq comparison cannot see (equal or missing seq).
+function paintTurn(rows, { live = false, dividers = 0 } = {}) {
+  const doc = createRenderDom().window.document;
+  const article = doc.createElement('article');
+  article.setAttribute('data-turn-id', 'turn_shape');
+  const list = rows.map(([kind, attrs = {}]) => `<div class="chat-row" data-row-kind="${kind}"`
+    + Object.entries(attrs).map(([name, value]) => ` ${name}="${value}"`).join('') + '></div>').join('');
+  article.innerHTML = '<span data-timeline-divider="time-gap"></span>'.repeat(dividers)
+    + `<div data-turn-row-list="true"${live ? ' data-turn-live="true"' : ''}>${list}</div>`;
+  doc.body.appendChild(article);
+  return doc;
+}
+const shapeEvents = [{ event_id: 'ev_shape_user', event_seq: 1, kind: 'user_prompt', primary_message_id: 'user_shape' }];
+const problems = (doc) => rowOrderInvariant.findRowOrderViolations(doc, shapeEvents).map((violation) => violation.problem);
+const userRow = ['user_bubble', { 'data-source-event-id': 'ev_shape_user' }];
+
+test('a duplicated tool card, a second divider and a misplaced final answer are violations', () => {
+  assert.deepEqual(problems(paintTurn([userRow, ['tool_call', { 'data-tool-call-id': 'c1' }], ['tool_call', { 'data-tool-call-id': 'c1' }]])),
+    ['duplicate_tool_card']);
+  assert.deepEqual(problems(paintTurn([userRow, ['assistant_text', { 'data-assistant-phase': 'final_answer' }]], { dividers: 2 })),
+    ['extra_divider']);
+  const answer = ['assistant_text', { 'data-assistant-phase': 'final_answer', 'data-source-message-id': 'assistant_seg1' }];
+  assert.deepEqual(problems(paintTurn([userRow, answer, ['reasoning', { 'data-source-message-id': 'assistant_seg1' }]])),
+    ['answer_before_reasoning']);
+  assert.deepEqual(problems(paintTurn([userRow, answer, ['tool_call', { 'data-tool-call-id': 'c2' }]])),
+    ['final_answer_not_last']);
+});
+
+test('the canonical shapes stay quiet: one divider, a live turn, a notice painted at its own message', () => {
+  const commentary = ['assistant_text', { 'data-assistant-phase': 'commentary', 'data-source-message-id': 'assistant_seg0' }];
+  const answer = ['assistant_text', { 'data-assistant-phase': 'final_answer', 'data-source-message-id': 'assistant_seg1' }];
+  const tool = ['tool_call', { 'data-tool-call-id': 'c1' }];
+  const reasoning = ['reasoning', { 'data-source-message-id': 'assistant_seg1' }];
+  assert.deepEqual(problems(paintTurn([userRow, commentary, tool, reasoning, answer], { dividers: 1 })), []);
+  // Live text is stamped final until the turn settles; only a settled turn is checked.
+  assert.deepEqual(problems(paintTurn([userRow, answer, tool], { live: true })), []);
+  // The store records a compaction notice right after the prompt; it paints after the tool.
+  const events = [...shapeEvents,
+    { event_id: 'ev_notice', event_seq: 2, kind: 'system_notice' },
+    { event_id: 'ev_tool', event_seq: 3, kind: 'tool_executing' }];
+  const doc = paintTurn([userRow, ['tool_call', { 'data-source-event-id': 'ev_tool', 'data-tool-call-id': 'c1' }],
+    ['system_notice', { 'data-source-event-id': 'ev_notice' }]]);
+  assert.deepEqual(rowOrderInvariant.findRowOrderViolations(doc, events), []);
+});
+
 function createSinkController(doc) {
   const logs = [];
   const controller = global.rendererAppLifecyclePreferences.createChatTimelinePreferenceController({

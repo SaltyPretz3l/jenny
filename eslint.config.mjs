@@ -32,6 +32,10 @@ export default [
       // scripts/build/build-preload.js on every dev launch) — minified
       // output, never lint it.
       "preload.bundle.js",
+      // Generated sketch-block drawing bundles (gitignored; rebuilt by
+      // scripts/build/build-sketch.js from vendor/sketchy).
+      "sketch-frame.bundle.js",
+      "sketch-core.bundle.cjs",
       "PORT_BUNDLES/**",
       ".claude/**",
       ".venv/**",

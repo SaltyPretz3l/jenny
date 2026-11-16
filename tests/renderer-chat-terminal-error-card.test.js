@@ -358,3 +358,83 @@ test('duplicate terminals on a settled stream never blank the turn or add a card
   assert.equal(snap.textShown, true, 'the settled turn must keep its text after duplicate terminals');
   assert.equal(snap.errorCard, false, 'duplicate terminals on a completed stream must not surface an error card');
 });
+
+// Mixed states: a stopped and a denied turn compared across the three builds.
+// Rows painted live, after the terminal reconcile and after a reopen must keep
+// one order (the terminal adds only its card, a system_notice row), and the card keeps its calm
+// treatment on reopen. The reopen payload is what the store holds at settle:
+// the turn's messages and its content events (the live-only 'started' is not).
+function paintedEnding(doc) {
+  const timeline = doc.getElementById('chatTimeline');
+  const rows = [...timeline.querySelectorAll('.chat-row[data-row-kind]')].map((row) => row.getAttribute('data-row-kind'))
+    .filter((kind) => kind !== 'thread_compat' && kind !== 'tool_result');
+  const cards = [...timeline.querySelectorAll('.chat-error-card')];
+  return { rows, cards: cards.length, calm: cards.every((card) => card.classList.contains('chat-error-card--calm')) };
+}
+
+async function compareEndingAcrossBuilds(t, sessionId, playEnding) {
+  const { window, doc, emit, streamId } = await bootStreamedTurn(t, sessionId);
+  await playEnding(emit, streamId, window);
+  await waitForUi(window, 150);
+  return { window, doc, emit, live: paintedEnding(doc) };
+}
+
+async function reopenEnding(t, sessionId, window) {
+  const turns = Object.values(window.__rendererState.ui.chatTimelineLiveStateBySession.get(sessionId)?.turns_by_id || {});
+  const turnEvents = structuredClone(turns.flatMap((turn) => turn.events || [])).filter((event) => event.kind !== 'started');
+  const persisted = {
+    data: structuredClone(window.__rendererState.messagesBySession.get(sessionId)),
+    turn_events: turnEvents.map((event, eventSeq) => ({ ...event, event_seq: eventSeq })),
+    turn_event_log_version: 4,
+  };
+  const reopened = await loadRendererApp({ shell: {
+    sessions: [{ id: sessionId, title: 'Reopened', session_type: 'chat', conversation_mode: 'chat', updated_at: new Date().toISOString() }],
+    workspaceState: { activeSessionId: sessionId, openSessionIds: [sessionId] },
+    sessionMessagePayloads: { [sessionId]: persisted },
+  } });
+  t.after(async () => { await reopened.dispose(); });
+  await waitForUi(reopened.window, 250);
+  return paintedEnding(reopened.window.document);
+}
+
+const USER_STOP = {
+  type: 'error', message: 'Stream cancelled.', error_code: 'CMP-SIDECAR-0002', retryable: true, category: 'cancelled',
+  status: 'cancelled', terminal_subcode: 'user_cancel', cancel_reason: 'user_cancel', recovery_class: 'cancelled',
+};
+
+test('a stopped tool turn paints one row order live, at the terminal and after reopen', async (t) => {
+  const sessionId = 'sess-tec-stop-builds';
+  const { window, doc, emit, live } = await compareEndingAcrossBuilds(t, sessionId, async (emitTurn, streamId) => {
+    await emitTurn({ type: 'tool_use', callId: `call-${streamId}`, toolName: 'read_file', summary: 'Read notes.md', input: { path: 'notes.md' }, status: 'running' });
+  });
+  await emit(USER_STOP);
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.chat-error-card'), {
+    timeoutMs: 5000, message: 'Stop card never rendered.',
+  });
+  const terminal = paintedEnding(doc);
+  assert.deepEqual(terminal.rows, [...live.rows, 'system_notice'], 'the terminal keeps the live rows in order and adds its card row');
+  assert.deepEqual([terminal.cards, terminal.calm], [1, true], 'one calm stop card');
+  const reopened = await reopenEnding(t, sessionId, window);
+  assert.deepEqual(reopened.rows, terminal.rows, 'the reopened chat keeps the terminal rows in order');
+  assert.deepEqual([reopened.cards, reopened.calm], [1, true], 'the reopened stop card stays one and calm');
+});
+
+test('a denied tool turn paints one row order live, at the terminal and after reopen', async (t) => {
+  const sessionId = 'sess-tec-deny-builds';
+  const { window, doc, emit, live } = await compareEndingAcrossBuilds(t, sessionId, async (emitTurn, streamId) => {
+    const call = { callId: `call-${streamId}`, toolName: 'write_file', summary: 'Write notes/demo.md', input: { path: 'notes/demo.md' } };
+    await emitTurn({ type: 'tool_use', ...call, status: 'pending_approval' });
+    await emitTurn(withExactApproval({ type: 'tool_approval_needed', ...call, approvalId: `approval-${streamId}` }));
+    await emitTurn({ type: 'tool_use', ...call, status: 'denied', approvalState: 'denied' });
+  });
+  await emit({ type: 'error', message: 'The request was denied.', category: 'denied', status: 'denied', retryable: false });
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.chat-error-card'), {
+    timeoutMs: 5000, message: 'Denied card never rendered.',
+  });
+  const terminal = paintedEnding(doc);
+  assert.deepEqual(terminal.rows, [...live.rows, 'system_notice'], 'the terminal keeps the live rows in order and adds its card row');
+  assert.equal(terminal.cards, 1, 'one denied card');
+  const reopened = await reopenEnding(t, sessionId, window);
+  assert.deepEqual(reopened.rows, terminal.rows, 'the reopened chat keeps the terminal rows in order');
+  assert.deepEqual([reopened.cards, reopened.calm], [terminal.cards, terminal.calm], 'the reopened denied card keeps its treatment');
+});

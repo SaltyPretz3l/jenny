@@ -79,3 +79,23 @@ test('missing materialization context stays collapsed and warns once', () => {
   assert.equal(logs[0][0], 'WARN');
   assert.equal(logs[0][1], 'chat.file_diff_materialization_skipped');
 });
+
+test('toggling follows state in the accessible name and title, and a toggle without labels is left alone', () => {
+  const { row, toggle } = mount('labels');
+  bindings.registerFileDiffContext({ diffId: 'labels', sessionId: 's', materialize: () => '<div class="diff-line"></div>' });
+  assert.equal(toggle.getAttribute('aria-label'), 'Show diff for src/a.js');
+  assert.equal(bindings.toggleFileDiff(toggle), true);
+  assert.equal(toggle.getAttribute('aria-label'), 'Hide diff for src/a.js');
+  assert.equal(toggle.getAttribute('title'), 'Hide diff');
+  assert.equal(bindings.toggleFileDiff(toggle), false);
+  assert.equal(toggle.getAttribute('aria-label'), 'Show diff for src/a.js');
+  assert.equal(toggle.getAttribute('title'), 'Show diff');
+  assert.equal(row.dataset.expanded, 'false');
+
+  const bare = mount('no-labels');
+  bindings.registerFileDiffContext({ diffId: 'no-labels', sessionId: 's', materialize: () => '' });
+  for (const name of ['data-label-show', 'data-label-hide', 'data-title-show', 'data-title-hide']) bare.toggle.removeAttribute(name);
+  bare.toggle.setAttribute('aria-label', 'custom');
+  assert.equal(bindings.toggleFileDiff(bare.toggle), true);
+  assert.equal(bare.toggle.getAttribute('aria-label'), 'custom');
+});

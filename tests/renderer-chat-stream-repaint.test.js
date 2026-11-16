@@ -197,6 +197,30 @@ test('reconcileTurnRows: a TRANSIENT provisional tool state still settles to hyd
   assert.equal(result.finalRows[0].payload.state, 'interrupted');
 });
 
+// order-terminal #5: the terminal fold seals a still-pending approval to
+// 'interrupted' and a pending plan to 'abandoned'. When the carried log lags
+// the decision the live reducer already saw, the settled live state stands,
+// exactly as for a tool_call; a still-pending live row takes the seal.
+test('reconcileTurnRows: a settled approval or plan decision is not downgraded by the lagging seal', () => {
+  const row = (rowId, kind, state, extra = {}) => ({
+    row_id: rowId, turn_id: 'stream-x', kind, primary_message_id: 'tool_use_c1', tool_call_id: 'c1',
+    payload: { tool_call_id: 'c1', state, ...extra },
+  });
+  const settled = reconcileTurnRows(
+    [row('row:gap', 'approval_gap', 'approved'), row('row:plan', 'plan_document', 'approved', { transition: 'approved', transitions: ['pending', 'approved'] })],
+    [row('row:gap', 'approval_gap', 'interrupted'), row('row:plan', 'plan_document', 'abandoned', { transition: 'abandoned', transitions: ['pending', 'abandoned'] })],
+    { deterministicRowId: true },
+  ).finalRows;
+  assert.equal(settled[0].payload.state, 'approved', 'the approved receipt stays approved');
+  assert.deepEqual([settled[1].payload.state, settled[1].payload.transition], ['approved', 'approved'], 'the accepted plan stays accepted');
+  const pending = reconcileTurnRows(
+    [row('row:gap', 'approval_gap', 'awaiting_approval'), row('row:plan', 'plan_document', 'pending')],
+    [row('row:gap', 'approval_gap', 'interrupted'), row('row:plan', 'plan_document', 'abandoned')],
+    { deterministicRowId: true },
+  ).finalRows;
+  assert.deepEqual(pending.map((entry) => entry.payload.state), ['interrupted', 'abandoned'], 'a turn that died waiting keeps the seal');
+});
+
 /* ── C. Full-harness integration: live multi-tool stream replay ── */
 
 function buildSession(sessionId) {
@@ -354,4 +378,178 @@ test('live multi-tool stream: post-tool deltas keep painting, no mid-stream inte
     `no stale_row_deletion signal may fire at the terminal handoff: ${JSON.stringify(collectRolloutSignals(window, 'stale_row_deletion'))}`
   );
   assert.match(timeline.textContent, /Sentence four\./, 'settled transcript retains the full streamed text');
+});
+
+/* ── D. One turn, three builds: live fold, terminal reconcile, reopen ── */
+
+// The painted row order of a multi-segment tool turn: reasoning, preface text,
+// a tool call, reasoning again, the final answer. Each row is named by its kind
+// and, for text, its words, so a swap of two rows of the same kind still shows.
+function paintedRowOrder(doc) {
+  return [...doc.querySelectorAll('#chatTimeline .chat-row[data-row-kind]')].map((row) => {
+    const kind = row.getAttribute('data-row-kind');
+    if (kind !== 'assistant_text') return kind;
+    return `${kind}:${(row.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 24)}`;
+  }).filter((label) => label !== 'tool_result');
+}
+
+test('a multi-segment tool turn paints the same row order live, at the terminal reconcile and after reopen', async (t) => {
+  const sessionId = 'session-three-builds';
+  const streamId = 'stream-three-builds';
+  const app = await loadRendererApp({ shell: makeStartStreamShell(sessionId, streamId) });
+  t.after(async () => { await app.dispose(); });
+  const { window, shell } = app;
+  const doc = window.document;
+  doc.getElementById('chatInput').value = 'read the notes';
+  doc.getElementById('chatInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+  const emit = (payload) => shell.__emitChat({ sessionId, streamId, ...payload });
+
+  await emit({ type: 'started' });
+  await emit({ type: 'delta', content: '', aggregate: '', reasoning: { source: 'provider', entriesDelta: [{ id: 'r1', text: 'Find the notes first.' }] } });
+  await emit({ type: 'delta', content: 'Let me look. ', aggregate: 'Let me look. ' });
+  await emit({ type: 'tool_use', callId: 'c1', toolName: 'read_file', summary: 'Read notes.md', input: { path: 'notes.md' }, status: 'running' });
+  await emit({ type: 'tool_result', callId: 'c1', toolName: 'read_file', summary: 'Read notes.md', content: 'three items', isError: false, durationMs: 4 });
+  await emit({ type: 'delta', content: '', aggregate: 'Let me look. ', reasoning: { source: 'provider', entriesDelta: [{ id: 'r2', text: 'Now summarize them.' }] } });
+  await emit({ type: 'delta', content: 'There are three items.', aggregate: 'Let me look. There are three items.' });
+  await waitForUi(window, 120);
+  const live = paintedRowOrder(doc);
+  assert.ok(live.includes('tool_call') && live.filter((label) => label.startsWith('assistant_text')).length === 2,
+    `the live turn painted its tool call and both text rows: ${live.join(' | ')}`);
+
+  const liveTurn = window.__rendererState.ui.chatTimelineLiveStateBySession.get(sessionId).turns_by_id[streamId];
+  const persisted = {
+    data: structuredClone(window.__rendererState.messagesBySession.get(sessionId)).map((message) => (
+      message.status === 'streaming' ? { ...message, status: 'complete' } : message)),
+    // The store keeps the turn's content events; the live-only 'started' marker is not one.
+    turn_events: structuredClone(liveTurn.events).filter((event) => event.kind !== 'started')
+      .map((event, eventSeq) => ({ ...event, event_seq: eventSeq })),
+    turn_event_log_version: 4,
+  };
+  shell.sessions.getMessages = async () => structuredClone(persisted);
+  await emit({ type: 'complete', content: 'Let me look. There are three items.' });
+  await waitForUi(window, 200);
+  const terminal = paintedRowOrder(doc);
+  assert.deepEqual(terminal, live, 'the terminal reconcile keeps the live order');
+
+  const reopenedApp = await loadRendererApp({ shell: {
+    sessions: [buildSession(sessionId)],
+    workspaceState: { activeSessionId: sessionId, openSessionIds: [sessionId] },
+    sessionMessagePayloads: { [sessionId]: structuredClone(persisted) },
+  } });
+  t.after(async () => { await reopenedApp.dispose(); });
+  await waitForUi(reopenedApp.window, 200);
+  assert.deepEqual(paintedRowOrder(reopenedApp.window.document), live, 'the reopened chat keeps the live order');
+});
+
+/* ── E. Mixed states: a chat switch away and back mid-turn ── */
+
+// Streams the section D turn into `sessionId`; `midTurn` runs after the tool
+// call starts and before its result, so a caller can switch chats there.
+async function streamToolTurn(app, sessionId, streamId, midTurn = async () => {}) {
+  const { window, shell } = app;
+  const doc = window.document;
+  doc.getElementById('chatInput').value = 'read the notes';
+  doc.getElementById('chatInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+  const emit = (payload) => shell.__emitChat({ sessionId, streamId, ...payload });
+  await emit({ type: 'started' });
+  await emit({ type: 'delta', content: '', aggregate: '', reasoning: { source: 'provider', entriesDelta: [{ id: 'r1', text: 'Find the notes first.' }] } });
+  await emit({ type: 'delta', content: 'Let me look. ', aggregate: 'Let me look. ' });
+  await emit({ type: 'tool_use', callId: 'c1', toolName: 'read_file', summary: 'Read notes.md', input: { path: 'notes.md' }, status: 'running' });
+  await waitForUi(window, 60);
+  await midTurn();
+  await emit({ type: 'tool_result', callId: 'c1', toolName: 'read_file', summary: 'Read notes.md', content: 'three items', isError: false, durationMs: 4 });
+  await emit({ type: 'delta', content: '', aggregate: 'Let me look. ', reasoning: { source: 'provider', entriesDelta: [{ id: 'r2', text: 'Now summarize them.' }] } });
+  await emit({ type: 'delta', content: 'There are three items.', aggregate: 'Let me look. There are three items.' });
+  await waitForUi(window, 120);
+  return emit;
+}
+
+function makeTwoChatShell(sessionId, otherSessionId, streamId) {
+  return {
+    sessions: [buildSession(otherSessionId)],
+    chat: {
+      async startStream(_payload, { state }) {
+        state.sessions = [buildSession(sessionId), buildSession(otherSessionId)];
+        state.messagesBySession.set(sessionId, []);
+        state.messagesBySession.set(otherSessionId, []);
+        return { sessionId, streamId };
+      },
+    },
+  };
+}
+
+async function openChat(window, sessionId) {
+  const open = window.document.querySelector(`.conversation-item[data-session-id="${sessionId}"] [data-session-open]`);
+  assert.ok(open, `chat ${sessionId} has an open control in the list`);
+  open.click();
+  await waitForUi(window, 150);
+}
+
+test('a live turn keeps its rows and their order through a chat switch away and back', async (t) => {
+  const control = await loadRendererApp({ shell: makeStartStreamShell('session-control', 'stream-control') });
+  t.after(async () => { await control.dispose(); });
+  await streamToolTurn(control, 'session-control', 'stream-control');
+  // thread_compat rows are invisible message-id anchors; mid-turn the store
+  // lacks the segment still streaming, so their count may differ by one.
+  const visibleRows = (doc) => paintedRowOrder(doc).filter((label) => label !== 'thread_compat');
+  const expected = visibleRows(control.window.document);
+
+  const sessionId = 'session-switch-live';
+  const otherSessionId = 'session-switch-other';
+  const streamId = 'stream-switch-live';
+  const app = await loadRendererApp({ shell: makeTwoChatShell(sessionId, otherSessionId, streamId) });
+  t.after(async () => { await app.dispose(); });
+  const { window, shell } = app;
+  // Mid-turn the store holds the prompt, the segments closed at a tool boundary
+  // and the tool messages, not the segment still streaming
+  // (chat-stream-managed-runtime-segments.js), and names the turn in flight.
+  shell.sessions.getMessages = async (id) => (id === sessionId ? {
+    data: structuredClone(window.__rendererState.messagesBySession.get(sessionId) || [])
+      .filter((message) => message.status !== 'streaming'),
+    turn_events: [],
+    turn_event_log_version: 4,
+    active_turn: { turn_id: streamId, stream_id: streamId },
+  } : { data: [] });
+  const emit = await streamToolTurn(app, sessionId, streamId, async () => {
+    await openChat(window, otherSessionId);
+    assert.equal(window.__rendererState.currentSessionId, otherSessionId);
+  });
+  await openChat(window, sessionId);
+  assert.deepEqual(visibleRows(window.document), expected, 'switching back paints the rows that streamed while away, in order');
+  await emit({ type: 'delta', content: ' Done.', aggregate: 'Let me look. There are three items. Done.' });
+  await waitForUi(window, 120);
+  assert.match(window.document.getElementById('chatTimeline').textContent, /three items\. Done\./, 'a delta after switching back still paints');
+
+  const liveTurn = window.__rendererState.ui.chatTimelineLiveStateBySession.get(sessionId).turns_by_id[streamId];
+  const persisted = {
+    data: structuredClone(window.__rendererState.messagesBySession.get(sessionId)).map((message) => (
+      message.status === 'streaming' ? { ...message, status: 'complete' } : message)),
+    turn_events: structuredClone(liveTurn.events).filter((event) => event.kind !== 'started')
+      .map((event, eventSeq) => ({ ...event, event_seq: eventSeq })),
+    turn_event_log_version: 4,
+  };
+  shell.sessions.getMessages = async (id) => (id === sessionId ? structuredClone(persisted) : { data: [] });
+  await emit({ type: 'complete', content: 'Let me look. There are three items. Done.' });
+  await waitForUi(window, 200);
+  assert.deepEqual(visibleRows(window.document).map((label) => label.replace(/ D[one.]*$/, '')), expected,
+    'the terminal after the switch keeps the same order');
+});
+
+// order-terminal #7: when terminal hydration fails, the complete event's
+// cumulative text (every segment of the turn) must not land in the last
+// bubble on top of the earlier segment already painted above the tool card.
+test('a failed terminal hydration does not repeat an earlier segment in the final bubble', async (t) => {
+  const app = await loadRendererApp({ shell: makeStartStreamShell('session-hydrate-fail', 'stream-hydrate-fail') });
+  t.after(async () => { await app.dispose(); });
+  const emit = await streamToolTurn(app, 'session-hydrate-fail', 'stream-hydrate-fail');
+  app.shell.sessions.getMessages = async () => { throw new Error('store offline'); };
+  await emit({ type: 'complete', content: 'Let me look. There are three items.' });
+  await waitForUi(app.window, 250);
+  const text = app.window.document.getElementById('chatTimeline').textContent;
+  assert.equal(text.split('Let me look.').length - 1, 1, `the preface shows once: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+  assert.equal(text.split('There are three items.').length - 1, 1, 'the answer shows once');
 });

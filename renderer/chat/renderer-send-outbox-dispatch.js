@@ -172,6 +172,7 @@
         ? queuedMeta.skillInvocation : null;
       dispatchOptions.imagePromptPin = queuedMeta?.imagePromptPin && typeof queuedMeta.imagePromptPin === 'object'
         ? queuedMeta.imagePromptPin : null;
+      dispatchOptions.boardId = typeof queuedMeta?.boardId === 'string' ? queuedMeta.boardId : null; // row 150: the stamp it was typed with
       if (queuedMeta && Object.prototype.hasOwnProperty.call(queuedMeta, 'mentionContentsSnapshot')) {
         dispatchOptions.mentionContentsSnapshot = Array.isArray(queuedMeta.mentionContentsSnapshot)
           ? queuedMeta.mentionContentsSnapshot

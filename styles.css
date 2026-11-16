@@ -1,4 +1,4 @@
-@import url("./styles/foundation.css");
+/* styles/foundation.css loads from the <head> of index.html, ahead of the boot curtain; it is not re-imported here. */
 @import url("./styles/foundation-widget-tokens.css");
 @import url("./styles/motion.css");
 @import url("./styles/palette-paper.css");
@@ -12,6 +12,7 @@
 @import url("./styles/palette-darkroom.css");
 @import url("./styles/palette-slate.css");
 @import url("./styles/palette-chalk.css");
+@import url("./styles/palette-aurora.css");
 /* Third-party: KaTeX typeset base. Fonts resolve relative to the
    imported file inside node_modules/katex/dist/ — covered by font-src 'self'. */
 @import url("./node_modules/katex/dist/katex.min.css");
@@ -76,6 +77,7 @@
 @import url("./styles/chat-search-v2.css");
 @import url("./styles/chat-citation-v2.css");
 @import url("./styles/chat-citation-chips.css");
+@import url("./styles/chat-source-card.css");
 @import url("./styles/chat-composer.css");
 @import url("./styles/chat-composer-menus.css");
 @import url("./styles/chat-composer-meta-affordances.css");
@@ -149,6 +151,7 @@
 @import url("./styles/chat-session-rail-performance.css");
 @import url("./styles/image-viewer.css");
 @import url("./styles/task-rail.css");
+@import url("./styles/background-tasks-panel.css");
 @import url("./styles/project-notes-rail.css");
 @import url("./styles/browser-use-panel.css");
 @import url("./styles/workbench-health-pill.css");

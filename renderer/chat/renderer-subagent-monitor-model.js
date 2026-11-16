@@ -313,6 +313,13 @@
     return null;
   }
 
+  // Whether a message carries anything the monitor renders a trigger for.
+  function hasDelegationData(message) {
+    return (Array.isArray(message?.agent_status_steps) && message.agent_status_steps.length > 0)
+      || (Array.isArray(message?.agent_progress_snapshot) && message.agent_progress_snapshot.length > 0)
+      || Boolean(extractTerminalReport(message?.tool_result?.metadata));
+  }
+
   function selectLiveDelegationSteps(value) {
     const steps = Array.isArray(value) ? value : [];
     const groups = new Map();
@@ -494,6 +501,7 @@
     buildMonitorViewModel,
     extractTerminalReport,
     formatElapsed,
+    hasDelegationData,
     formatTokens,
     groupSteps,
     normalizeUsage,

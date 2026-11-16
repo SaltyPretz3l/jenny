@@ -24,9 +24,13 @@ on:
       - 'tests/sidecar/test_host*.py'
       - 'scripts/build-browser.js'
       - 'scripts/packaging/**'
+      - 'native/jenny-file-access/**'
+      - 'native/jenny-team-bridge/**'
       - 'package*.json'
       - 'Dockerfile'
+      - 'Dockerfile.team'
       - 'compose.host*.yml'
+      - 'compose.team.yml'
       - 'docker-setup.*'
       - '.dockerignore'
       - '.github/workflows/hosted.yml'
@@ -57,7 +61,26 @@ jobs:
       - run: node scripts/run-node-tests-safe.js tests/server/localhost-browser.integration.js --no-default-test-flags --timeout-ms=180000
       - run: node scripts/run-node-tests-safe.js tests/host-sandbox-bridge.test.js
       - run: .venv/bin/python -m pytest tests/sidecar/test_hosted_file_io.py tests/sidecar/test_host_execution_policy.py tests/sidecar/test_host_execution_worker_policy.py tests/sidecar/test_host_policy_dispatch.py -q
+      # One pinned Rust toolchain on every OS (crate minimum 1.91; the lockfile was resolved
+      # and tested on this version). Bump it here, in release.yml, in ci-linux-package.yml and in
+      # the windows-host job below together. Keeps the pure modules and the non-Windows stub building.
+      - name: Rust crate file-access tests (pinned toolchain, stub and pure modules)
+        shell: bash
+        working-directory: native/jenny-file-access
+        run: |
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install 1.99.1 --profile minimal
+            rustup default 1.99.1
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustc --version
+          cargo --version
+          cargo test --locked
       - run: docker compose -f compose.host.yml config --quiet
+      # The team image needs the Linux bridge built first; only its compose file is checked here.
+      - run: docker compose -f compose.team.yml config --quiet
       - name: Build local image (no publication)
         run: docker build --platform linux/amd64 -t jenny-host:ci .
       - name: Fresh-volume owner, entrypoint, readiness, login and SSE smoke
@@ -75,3 +98,123 @@ jobs:
           --env JENNY_TEST_PYTHON=/opt/jenny-venv/bin/python
           --entrypoint node jenny-host:ci
           --test tests/server/stdio-persistence.test.js tests/server/stdio-decisions.test.js
+  windows-host:
+    # The file tools of a Windows team host: the Rust crate native/jenny-file-access on a clean
+    # Windows runner, the shipped library built and loaded, and the hosted file tests with
+    # JENNY_REQUIRE_FILE_ACCESS=1 so a skipped end-to-end case is a failure.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Token state and file systems (fails unless the test folders are NTFS)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          $admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $level = (whoami /groups | Select-String 'Mandatory Label' | ForEach-Object { ($_.Line -split '\s{2,}')[0].Trim() }) -join '; '
+          Write-Output "token: administrator-role=$admin integrity=[$level]"
+          function Get-Format([string]$path) {
+            $root = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($path))
+            try { return [System.IO.DriveInfo]::new($root).DriveFormat } catch { return "unknown ($root)" }
+          }
+          $folders = [ordered]@{
+            'workspace' = $env:GITHUB_WORKSPACE
+            'runner temp' = $env:RUNNER_TEMP
+            'user temp' = [System.IO.Path]::GetTempPath()
+          }
+          $bad = @()
+          foreach ($name in $folders.Keys) {
+            $format = Get-Format $folders[$name]
+            Write-Output "file system: $name = $format"
+            if ($name -ne 'workspace' -and $format -ne 'NTFS') { $bad += $name }
+          }
+          if ($bad.Count -gt 0) { throw "test folders not on NTFS: $($bad -join ', ')" }
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      # One pinned Rust toolchain on every OS (crate minimum 1.91; the lockfile was resolved
+      # and tested on this version). Bump it here, in release.yml, in ci-linux-package.yml and in
+      # the linux-host job above together.
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.99.1
+          rustc --version
+          cargo --version
+      - name: Install Python dependencies (the release workflow's Windows recipe)
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-build-lock.txt
+          .venv/Scripts/python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-lock.txt
+          .venv/Scripts/python.exe -m pip install --no-build-isolation --no-deps -e .
+          .venv/Scripts/python.exe -m pip check
+          .venv/Scripts/python.exe -m pip install pytest pytest-asyncio pytest-mock pytest-cov pytest-xdist
+      - name: Crate gates, default build
+        shell: bash
+        working-directory: native/jenny-file-access
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets --locked -- -D warnings
+          cargo test --release --locked
+      - name: Crate gates, test-seams build
+        shell: bash
+        working-directory: native/jenny-file-access
+        run: |
+          cargo clippy --release --all-targets --locked --features test-seams --target-dir target/seams -- -D warnings
+          cargo test --release --locked --features test-seams --target-dir target/seams
+      - name: Build the shipping library
+        shell: bash
+        run: .venv/Scripts/python.exe scripts/packaging/build_file_access.py
+      - name: Load the shipping library in a fresh process
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe -c "
+          import ctypes, os, sys
+          path = os.path.abspath(os.path.join('build', 'sidecar', 'jenny_file_access.dll'))
+          library = ctypes.WinDLL(path)
+          library.jfa_abi_version.restype = ctypes.c_uint32
+          library.jfa_build_flags.restype = ctypes.c_uint32
+          abi, flags = library.jfa_abi_version(), library.jfa_build_flags()
+          print('file-access library loaded:', path, 'abi', abi, 'flags', flags)
+          sys.exit(0 if (abi, flags) == (1, 0) else 1)
+          "
+      - name: Hosted file tests (expected POSIX-only skips)
+        shell: bash
+        env:
+          JENNY_REQUIRE_FILE_ACCESS: '1'
+          # The team project file suites fail, rather than skip, their 8.3 alias case when the test volume has no short names.
+          JENNY_REQUIRE_SHORT_NAMES: '1'
+        run: |
+          export JENNY_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/Scripts/python.exe"
+          .venv/Scripts/python.exe -m pytest tests/sidecar/test_hosted_file_io.py tests/sidecar/test_hosted_file_io_backend_selection.py tests/sidecar/test_hosted_file_io_abi_contract.py tests/sidecar/test_hosted_file_io_win32_client.py tests/sidecar/test_hosted_file_io_win32_loader.py tests/sidecar/test_build_file_access.py tests/sidecar/test_builtin_server_hosted_degrade.py tests/sidecar/test_host_execution_policy.py tests/sidecar/test_host_policy_dispatch.py -q -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest-file-access"
+          node scripts/run-node-tests-safe.js tests/server/host-windows-workspace-root.test.js
+          node scripts/run-node-tests-safe.js tests/server/team-project-files.test.js tests/server/team-project-files-rules.test.js tests/server/team-project-files-host.test.js tests/server/team-project-file-routes.test.js tests/server/team-project-files-win32.test.js tests/server/team-project-files-win32-races.test.js
+      # Pytest exits 0 on a skip, so the end-to-end file runs on its own and its report is read:
+      # any skipped case, or a file that collects nothing, fails the step.
+      - name: End-to-end file tests (any skip fails)
+        shell: bash
+        env:
+          JENNY_REQUIRE_FILE_ACCESS: '1'
+        run: |
+          export JENNY_TEST_PYTHON="$GITHUB_WORKSPACE/.venv/Scripts/python.exe"
+          report="$RUNNER_TEMP/e2e-junit.xml"
+          .venv/Scripts/python.exe -m pytest tests/sidecar/test_hosted_file_io_win32_e2e.py -q -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest-file-access-e2e" --junitxml="$report"
+          .venv/Scripts/python.exe -c "
+          import sys
+          import xml.etree.ElementTree as ET
+          suites = ET.parse(sys.argv[1]).getroot().iter('testsuite')
+          total = skipped = 0
+          for suite in suites:
+              total += int(suite.get('tests', 0))
+              skipped += int(suite.get('skipped', 0))
+          print('e2e skip check: tests', total, 'skipped', skipped)
+          sys.exit(0 if total > 0 and skipped == 0 else 1)
+          " "$report"

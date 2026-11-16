@@ -470,13 +470,17 @@
           return;
         }
 
+        const spriteRow = usingThinkingFallback ? targetNode : spriteActivityUtils.resolveSpriteRow(targetNode);
         const layerRect = chatSpriteLayer.getBoundingClientRect?.();
-        const targetRect = targetNode.getBoundingClientRect?.();
+        const targetRect = spriteRow.getBoundingClientRect?.();
         if (!layerRect || !targetRect) {
           hideRailKeepPill('missing_geometry');
           return;
         }
-        let targetYValue = Math.max(targetRect.top - layerRect.top, 0);
+        const spriteHeight = Math.max(Number(chatAssistantSprite.getBoundingClientRect?.()?.height) || 0, 0);
+        // The fallback sets its own lane position below, so it skips the line measure.
+        let targetYValue = usingThinkingFallback
+          ? 0 : spriteActivityUtils.resolveSpriteTop(spriteRow, targetRect, layerRect.top, spriteHeight);
         if (usingThinkingFallback) {
           const bubbleNode = targetNode.querySelector?.('.chat-bubble') || targetNode;
           const bubbleRect = bubbleNode.getBoundingClientRect?.() || targetRect;
@@ -488,9 +492,7 @@
             : 20;
           targetYValue = Math.max((bubbleRect.bottom - layerRect.top) + laneOffset, 0);
         }
-        const spriteRect = chatAssistantSprite.getBoundingClientRect?.();
         const layerHeight = Math.max(Number(layerRect.height) || (layerRect.bottom - layerRect.top), 0);
-        const spriteHeight = Math.max(Number(spriteRect?.height) || 0, 0);
         if (layerHeight > 0 && spriteHeight > 0) {
           targetYValue = Math.min(targetYValue, Math.max(layerHeight - spriteHeight, 0));
         }
@@ -555,7 +557,7 @@
       ? new windowRef.MutationObserver(reconcileLayout) : null;
     if (chatTimeline) mountObserver?.observe(chatTimeline, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: ['hidden', 'open', 'class', 'style'],
+      attributeFilter: ['hidden', 'open', 'class', 'style', 'data-turn-live'],
     });
     chatTimeline?.addEventListener?.('load', reconcileLayout, true);
     windowRef.addEventListener?.('resize', reconcileLayout);

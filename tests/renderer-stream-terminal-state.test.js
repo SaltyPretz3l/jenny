@@ -65,3 +65,27 @@ test('hydration guard recognizes every canonical non-success terminal status', (
     assert.equal(hydrated[0].content, `${status} locally`);
   }
 });
+
+test('hydration guard keeps the terminal fields so a stopped or denied turn stays calm', () => {
+  const utils = createTerminalStateUtils({
+    MESSAGE_STATUS: { STREAMING: 'streaming', COMPLETE: 'complete', ERROR: 'error' },
+    normalizeId: (value) => String(value || '').trim(),
+    appendClientLog: () => {},
+  });
+  const local = {
+    id: 'm1', streamId: 'stream_1', status: 'error', content: 'partial', stream_error: 'Stopped',
+    terminal_status: 'cancelled', terminal_subcode: 'user_stop', error_code: 'CMP-CHAT-0001', retryable: false, category: 'user',
+  };
+  const [hydrated] = utils.guardTerminalHydratedMessages(
+    'session_1',
+    [{ id: 'm1', streamId: 'stream_1', status: 'streaming', content: 'old' }],
+    [local],
+    { streamId: 'stream_1' }
+  );
+  assert.equal(hydrated.status, 'error');
+  assert.equal(hydrated.terminal_status, 'cancelled');
+  assert.equal(hydrated.terminal_subcode, 'user_stop');
+  assert.equal(hydrated.error_code, 'CMP-CHAT-0001');
+  assert.equal(hydrated.retryable, false);
+  assert.equal(hydrated.category, 'user');
+});

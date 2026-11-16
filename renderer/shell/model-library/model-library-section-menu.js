@@ -15,7 +15,7 @@
   // deps: { windowRef, documentRef, state, contextMenu, isLibraryTag(tag),
   //   focusQuietly(element), card(), host(), toolbarHost(), folders(),
   //   isDisposed(), setStatusMessage(text), ninferLibraryInput(),
-  //   getSourceData(), requestRemove(tag) }
+  //   getSourceData(), requestRemove(tag), share() (slice 6-7: the share section or null) }
   function createModelLibrarySectionMenu(deps) {
     var d = deps || {};
     var windowRef = d.windowRef;
@@ -106,6 +106,17 @@
         });
     }
 
+    // Slice 6-7: "Send to someone in your team…" (and "Where it came from…" on a received model) from the share
+    // section when the team assets loaded it; without them the item is greyed with why (nothing is hidden)
+    // where the feature exists. E72: with the Team flag off the item is not drawn at all.
+    function shareItems(model, anchor) {
+      if (state.features?.featureFlags?.team !== true) return [];
+      var share = typeof d.share === 'function' ? d.share() : null;
+      if (share) return share.menuItems(model, anchor);
+      return [{ label: jt('settings.models.share.send', 'Send to someone in your team…'), disabled: true,
+        description: jt('settings.models.share.noTeam', 'Join or host a team to send models.') }];
+    }
+
     // The ⋯ menu for one card; `tag` is the card's data-model-tag.
     function open(model, tag, anchor) {
       var libraryTag = libraryTagOf(model);
@@ -114,7 +125,7 @@
         anchorEl: anchor,
         restoreFocusTo: anchor,
         onHide: function () { menuOpen = false; },
-        items: [
+        items: shareItems(model, anchor).concat([
           libraryTag ? {
             // A library GGUF only leaves the library: its file stays on
             // disk, and a model in use keeps its entry.
@@ -139,7 +150,7 @@
             label: jt('settings.modelLibrary.copyTag', 'Copy tag'),
             action: function () { return copyTag(tag); },
           },
-        ],
+        ]),
       });
       menuOpen = true;
     }

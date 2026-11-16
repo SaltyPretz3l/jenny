@@ -490,3 +490,56 @@ test('a reader-anchor restore that writes attributes the next frame as anchor_re
   assert.equal(snapshot.programmaticReason, null, 'a skipped restore writes nothing and must not attribute the frame');
   coordinator.dispose();
 });
+
+// Review 2026-11-12 (scroll-follow 2): a smooth End/PageDown scroll keeps moving
+// for longer than the 180 ms intent window with no further input event, so the
+// frame that reached the bottom was not the reader's and could not re-latch.
+test('a smooth keyboard scroll stays reader-initiated until it lands, then intent expires', () => {
+  const harness = createHarness();
+  harness.coordinator.attach();
+  harness.flush();
+  harness.state.ui.followLatest = false;
+  harness.scrollContainer.scrollTop = 100;
+  harness.scrollContainer.dispatch('scroll');
+  harness.flush();
+
+  harness.advance(500);
+  harness.win.dispatch('keydown', { key: 'End', target: { tagName: 'BODY' } });
+  let snapshot = null;
+  for (let step = 1; step <= 10; step += 1) { // 10 frames, 50 ms apart: a 500 ms glide
+    harness.advance(34);
+    harness.scrollContainer.scrollTop = 100 + step * 50;
+    harness.scrollContainer.dispatch('scroll');
+    snapshot = harness.flush();
+    assert.equal(snapshot.userInitiated, true, `glide frame ${step} is still the reader's`);
+  }
+  assert.equal(snapshot.nearBottom, true);
+  assert.equal(harness.state.ui.followLatest, true, 'the landing frame re-latches follow');
+
+  harness.advance(400);
+  harness.scrollContainer.scrollTop = 560;
+  harness.scrollContainer.dispatch('scroll');
+  snapshot = harness.flush();
+  assert.equal(snapshot.userInitiated, false, 'a move after the glide stopped is not reader input');
+});
+
+test('a programmatic write inside the intent window does not extend reader intent', () => {
+  const harness = createHarness();
+  harness.coordinator.attach();
+  harness.flush();
+  harness.scrollContainer.dispatch('wheel', { ctrlKey: false });
+  harness.scrollContainer.scrollTop = 40;
+  harness.scrollContainer.dispatch('scroll');
+  assert.equal(harness.flush().userInitiated, true);
+  for (let step = 1; step <= 6; step += 1) {
+    harness.advance(34);
+    harness.coordinator.noteProgrammaticWrite('live_follow');
+    harness.scrollContainer.scrollTop = 40 + step * 20;
+    harness.scrollContainer.dispatch('scroll');
+    harness.flush();
+  }
+  harness.advance(34);
+  harness.scrollContainer.scrollTop = 200;
+  harness.scrollContainer.dispatch('scroll');
+  assert.equal(harness.flush().userInitiated, false, 'the animator frames did not keep the gesture alive');
+});

@@ -52,6 +52,8 @@ class EngineMessage(TypedDict, total=False):
     tool_calls: list[EngineToolCall]
     tool_call_id: str
     name: str
+    # A tool row whose call failed; engines whose wire has no such flag ignore it.
+    is_error: bool
 
 
 def clamp_timeout_to_deadline(

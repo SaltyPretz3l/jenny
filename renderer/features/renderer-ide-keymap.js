@@ -23,6 +23,8 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  // Outside-Workspace documents (row 137) are keyed outside://<id>/<name>.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
   // The shared command registry (loaded before this module on the IDE manifest).
   const registryUtils = globalRef.rendererIdeCommandRegistry || require('./renderer-ide-command-registry');
 
@@ -66,6 +68,7 @@
     if (!value) return '';
     const prefix = Object.keys(REVIEW_KINDS).find((scheme) => value.indexOf(scheme) === 0);
     if (prefix) return REVIEW_KINDS[prefix];
+    if (outsideDocs()?.isOutsideKey(value)) return 'outside';
     return value.indexOf('://') === -1 ? 'file' : 'other';
   }
 
@@ -191,7 +194,7 @@
     add(quickOpen?.toggleRecent, 'ide:open-recent-file', jt('ide.keymap.openRecentFile', 'Go to Recently Edited File...'), ['ctrl+e'],
       () => quickOpen.toggleRecent());
     add(editorHost || quickOpen, 'ide:go-to-line', jt('ide.keymap.goToLine', 'Go to Line/Column...'), ['ctrl+g'], (ctx) => {
-      if (ctx.hasActiveFile !== false && editorHost?.triggerGoToLine?.() === true) return;
+      if ((ctx.hasActiveFile !== false || ctx.activeKind === 'outside') && editorHost?.triggerGoToLine?.() === true) return;
       // No Monaco editor: Quick Open's own ":line" mode, prefilled.
       quickOpen?.toggle?.();
       const input = doc?.querySelector?.('[data-ide-quick-open-input]');

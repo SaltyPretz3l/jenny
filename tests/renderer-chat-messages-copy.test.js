@@ -40,3 +40,20 @@ test('the grant expiry is a short readable date and an unreadable one is empty',
   assert.equal(copy.formatGrantExpiry(null), '');
   assert.equal(copy.GRANT_PURPOSE_MAX_BYTES, 512);
 });
+
+test('row 144: Activity says a check is waiting, ran anyway or was skipped by you, in closed sentences', () => {
+  const held = (reason) => copy.scheduleDetail({ kind: 'schedule_held', reason, title: 'Morning summary' });
+  assert.equal(held('model_too_small'), 'Scheduled check “Morning summary” is waiting: the model is too small');
+  assert.equal(held('model_unavailable'), 'Scheduled check “Morning summary” is waiting: the model is not available');
+  assert.equal(copy.scheduleDetail({ kind: 'schedule_run_anyway', reason: 'user', title: 'Morning summary' }),
+    'Scheduled check “Morning summary” ran on a small model because you chose Run anyway');
+  assert.equal(copy.scheduleDetail({ kind: 'schedule_skipped', reason: 'user', title: 'Morning summary' }),
+    'Scheduled check “Morning summary” was skipped by you');
+  assert.equal(copy.scheduleDetail({ kind: 'schedule_skipped', reason: 'paused', title: 'Morning summary' }), 'Jenny was paused.');
+  assert.match(copy.scheduleDetail({ kind: 'schedule_held', reason: 'rm_rf', title: 'x' }), /^Jenny could not start the turn\.$/u, 'an unknown reason is never printed');
+  assert.doesNotMatch(held('model_too_small'), /model_too_small/u);
+  assert.equal(copy.scheduleDetail({ kind: 'schedule_held', reason: 'model_too_small', title: '' }),
+    'Scheduled check “Scheduled check” is waiting: the model is too small');
+  assert.equal(copy.scheduleKindLabel('schedule_held'), 'Scheduled check waiting');
+  assert.equal(copy.scheduleKindLabel('schedule_run_anyway'), 'Check ran');
+});

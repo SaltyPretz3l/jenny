@@ -32,27 +32,27 @@
       label: jt('settings.safetyMode.label', 'Safety mode'),
       description: jt('settings.safetyMode.description', 'Strict removes web tools. Paranoid asks before every tool call.'),
       detail: jt('settings.safetyMode.hint', 'Normal: the run mode decides which tools ask. Strict: also removes web search and browsing. Paranoid: every tool call asks, even in Auto. Applies from the next turn.'),
-      sectionId: 'tools',
+      sectionId: 'permissions',
       keywords: ['safety', 'strict', 'paranoid', jt('settings.fieldCopy.safetyModeSelect.keywords.guardRails', 'guard rails'), jt('settings.fieldCopy.safetyModeSelect.keywords.webTools', 'web tools')],
     },
     defaultRunModeSelect: {
       label: jt('settings.fieldCopy.defaultRunModeSelect.label', 'Default run mode'),
       description: jt('settings.fieldCopy.defaultRunModeSelect.description', 'For new chats. Ask checks before changes, Auto runs without asking, Plan stays read-only until you approve the plan.'),
       detail: jt('settings.runMode.detail', 'In Auto, Python and explicit denies still ask and blocked commands are refused. The composer switcher changes the current chat.'),
-      sectionId: 'tools',
+      sectionId: 'permissions',
       keywords: [jt('settings.fieldCopy.defaultRunModeSelect.keywords.runMode', 'run mode'), 'ask', 'auto', 'plan', jt('settings.fieldCopy.defaultRunModeSelect.keywords.newChat', 'new chat'), jt('settings.fieldCopy.defaultRunModeSelect.keywords.toolApproval', 'tool approval')],
     },
     unattendedGuardMinutesInput: {
       label: jt('settings.unattendedGuard.durationLabel', 'Pause Auto when you are away'),
       description: jt('settings.unattendedGuard.optInDescription', 'After this long with no keyboard or mouse activity, the next action asks first.'),
       detail: jt('settings.unattendedGuard.optInHint', 'Unanswered approvals stop the turn after a further 10 minutes. A paused turn stays in Ask until you change its run mode or resume it.'),
-      sectionId: 'tools',
+      sectionId: 'permissions',
       keywords: ['unattended', 'idle', 'away', jt('settings.fieldCopy.unattendedGuardMinutesInput.keywords.autoMode', 'auto mode'), 'pause'],
     },
     autoApproveStreakCapInput: {
       label: jt('settings.autoApproveStreakCap.label', 'Auto-approval limit'),
       description: jt('settings.autoApproveStreakCap.description', 'In Auto, ask once after this many approvals in a single reply. Empty means no limit.'),
-      sectionId: 'tools',
+      sectionId: 'permissions',
       keywords: ['auto', 'approval', 'streak', 'cap', 'limit', jt('settings.fieldCopy.autoApproveStreakCapInput.keywords.turn', 'turn')],
     },
     // The semantic catalog's toggle (renderer-knowledge-catalog.js TOGGLE_ID), inside Knowledge folders.
@@ -65,7 +65,8 @@
     // ── Context ──────────────────────────────────────────────────────────
     modelStartupLoadToggle: {
       label: jt('settings.models.startupLoad.label', 'Load model at startup'),
-      description: jt('settings.models.startupLoad.description', 'On: a local model warms up when Jenny starts (the managed server resumes the model it last ran; Ollama loads your default model). Off: it loads with your first message.'),
+      description: jt('settings.models.startupLoad.help', 'A local model warms up when Jenny starts.'),
+      detail: jt('settings.models.startupLoad.detail', 'On: the managed server resumes the model it last ran; Ollama loads your default model. Off: the model loads with your first message.'),
       sectionId: 'models',
       keywords: ['startup', 'launch', 'lazy', 'message', 'warm', 'vram'],
     },
@@ -83,7 +84,7 @@
       keywords: ['persona', 'voice', 'character', 'personality', jt('settings.fieldCopy.contextIncludePersonalityToggle.keywords.longTermNotes', 'long-term notes')],
     },
     contextIncludeMemoryToggle: {
-      label: jt('settings.fieldCopy.contextIncludeMemoryToggle.label', 'Approved memories'),
+      label: jt('settings.fieldCopy.contextIncludeMemoryToggle.useInChatLabel', 'Use memory in this chat'),
       description: jt('settings.fieldCopy.contextIncludeMemoryToggle.description', 'Let Jenny recall memories you have approved.'),
       sectionId: 'context',
       keywords: ['remember', 'recall', jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.savedMemories', 'saved memories'), jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.longTermMemory', 'long-term memory')],
@@ -154,17 +155,17 @@
     use24HourTimeToggle: {
       label: jt('settings.timeFormat.label', '24-hour time'),
       description: jt('settings.timeFormat.description', 'Use 00:00–23:59 throughout Jenny and in the time context given to the model.'),
-      sectionId: 'appearance', keywords: ['clock', 'time', '24', 'AM', 'PM'],
+      sectionId: 'general', keywords: ['clock', 'time', '24', 'AM', 'PM'],
     },
     transcriptViewDefaultSelect: {
       label: jt('settings.transcriptView.label', 'Transcript view'),
       description: jt('settings.transcriptView.description', "View for chats you haven't set individually: answers only, answers with thinking, or everything expanded."),
-      sectionId: 'appearance', keywords: ['transcript', 'thinking', 'reasoning', 'answers', 'expand'],
+      sectionId: 'chat', keywords: ['transcript', 'thinking', 'reasoning', 'answers', 'expand'],
     },
     uiLanguageSelect: {
       label: jt('settings.language.label', 'Language'),
       description: jt('settings.language.description', 'Choose the language Jenny uses for interface text after the next restart.'),
-      sectionId: 'appearance',
+      sectionId: 'general',
       keywords: ['language', 'translation', 'locale', jt('settings.fieldCopy.uiLanguageSelect.keywords.interfaceLanguage', 'interface language')],
     },
     appearanceThemeBundleSelect: {
@@ -194,13 +195,13 @@
     appearanceSpellcheckToggle: {
       label: jt('settings.fieldCopy.appearanceSpellcheckToggle.label', 'Check spelling as you type'),
       description: jt('settings.fieldCopy.appearanceSpellcheckToggle.description', 'Misspelled words are underlined in message and note fields, and right-clicking one offers corrections.'),
-      sectionId: 'appearance',
+      sectionId: 'general',
       keywords: [jt('settings.fieldCopy.appearanceSpellcheckToggle.keywords.spellCheck', 'spell check'), 'spelling', 'spellcheck', 'dictionary', 'autocorrect', 'typos'],
     },
     appearanceChatWidthSelect: {
       label: jt('settings.fieldCopy.appearanceChatWidthSelect.label', 'Chat width'),
       description: jt('settings.fieldCopy.appearanceChatWidthSelect.description', 'Widen the chat transcript and composer for more text per line.'),
-      sectionId: 'appearance',
+      sectionId: 'chat',
       keywords: [jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.chatWidth', 'chat width'), 'wide', 'narrow', 'standard', jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.wideMode', 'wide mode'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.readingWidth', 'reading width'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.lineLength', 'line length'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.columnWidth', 'column width'), 'layout'],
     },
     appearanceSurfaceEffectSelect: {
@@ -224,25 +225,25 @@
     appearanceTitlebarLoadToggle: {
       label: jt('settings.fieldCopy.appearanceTitlebarLoadToggle.label', 'Show machine load in the title bar'),
       description: jt('settings.fieldCopy.appearanceTitlebarLoadToggle.description', 'GPU and VRAM as a small read-out next to the health dot. CPU, GPU and VRAM are always in the health popover.'),
-      sectionId: 'appearance',
+      sectionId: 'general',
       keywords: ['cpu', 'gpu', 'vram', 'ram', jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.systemLoad', 'system load'), jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.titleBar', 'title bar')],
     },
     performanceShowCounterToggle: {
       label: jt('settings.fieldCopy.performanceShowCounterToggle.label', 'Show performance in the session rail'),
       description: jt('settings.fieldCopy.performanceShowCounterToggle.description', 'Adds a Performance section to the session rail: writing speed, prompt reading, time to first token and cache reuse. A short speed readout also sits on the Session button when the rail is folded away. It only measures; turning it on never restarts a request.'),
-      sectionId: 'appearance',
+      sectionId: 'general',
       keywords: [jt('settings.fieldCopy.performanceShowCounterToggle.keywords.speed', 'speed'), jt('settings.fieldCopy.performanceShowCounterToggle.keywords.tokensPerSecond', 'tokens per second'), 'tok/s', jt('settings.fieldCopy.performanceShowCounterToggle.keywords.counter', 'counter'), jt('settings.fieldCopy.performanceShowCounterToggle.keywords.session', 'session rail')],
     },
     performanceGpuWarningsToggle: {
       label: jt('settings.fieldCopy.performanceGpuWarningsToggle.label', 'GPU memory warnings'),
       description: jt('settings.fieldCopy.performanceGpuWarningsToggle.description', 'Warns in the health menu when graphics memory runs low while the local engine is generating. It only observes: Jenny never stops or changes anything for you.'),
-      sectionId: 'appearance',
+      sectionId: 'general',
       keywords: ['gpu', 'vram', jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.graphicsMemory', 'graphics memory'), jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.slowdown', 'slowdown'), jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.healthMenu', 'health menu')],
     },
     appearanceArtifactAutoOpenToggle: {
       label: jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.label', 'Open the artifact panel when an artifact arrives'),
       description: jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.description', 'Automatically show the side panel on the first artifact a tool produces in a chat. Off never opens it for you; a panel you opened, or left open, stays as it was.'),
-      sectionId: 'appearance',
+      sectionId: 'chat',
       keywords: [jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.artifact', 'artifact'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.panel', 'panel'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.autoOpen', 'auto-open'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.sidePanel', 'side panel'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.toolResult', 'tool result')],
     },
     appearanceAppZoomSelect: {
@@ -251,6 +252,9 @@
       sectionId: 'appearance',
       keywords: ['zoom', jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.uiScale', 'ui scale'), jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.appSize', 'app size'), 'magnify'],
     },
+    appearanceTeamDensitySelect: { label: jt('settings.fieldCopy.appearanceTeamDensitySelect.label', 'Team chat density'), sectionId: 'appearance',
+      description: jt('settings.fieldCopy.appearanceTeamDensitySelect.description', 'How close messages sit in the Team tab. Compact drops the pictures and puts the time, name and text on one line.'),
+      keywords: [jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.team', 'team'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.compact', 'compact'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.density', 'density')] },
     appearanceResetButton: {
       label: jt('settings.fieldCopy.appearanceResetButton.label', 'Reset appearance'),
       description: jt('settings.fieldCopy.appearanceResetButton.description', 'Restore the coordinated appearance defaults.'),
@@ -450,13 +454,13 @@
     digestQuietStartSelect: {
       label: jt('settings.fieldCopy.digestQuietStartSelect.label', 'Quiet hours start'),
       description: jt('settings.fieldCopy.digestQuietStartSelect.description', 'Between these times the Jenny chat sends no desktop notifications and no digest. Anything that needs you waits in Needs you.'),
-      sectionId: 'jennyChat',
+      sectionId: 'notifications',
       keywords: [jt('settings.fieldCopy.digestQuietStartSelect.keywords.quietHours', 'quiet hours'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.night', 'night'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.doNotDisturb', 'do not disturb'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.digest', 'digest')],
     },
     digestQuietEndSelect: {
       label: jt('settings.fieldCopy.digestQuietEndSelect.label', 'Quiet hours end'),
       description: jt('settings.fieldCopy.digestQuietEndSelect.description', 'When quiet hours end; a digest they held back can run then.'),
-      sectionId: 'jennyChat',
+      sectionId: 'notifications',
       keywords: [jt('settings.fieldCopy.digestQuietEndSelect.keywords.quietHours', 'quiet hours'), jt('settings.fieldCopy.digestQuietEndSelect.keywords.morning', 'morning'), jt('settings.fieldCopy.digestQuietEndSelect.keywords.digest', 'digest')],
     },
 
@@ -516,8 +520,8 @@
       keywords: ['check', 'scheduled', 'update', 'wake', 'digest'],
     },
     notificationsReplyPreviewToggle: {
-      label: jt('settings.fieldCopy.notificationsReplyPreviewToggle.label', 'Show the first line of the reply'),
-      description: jt('settings.fieldCopy.notificationsReplyPreviewToggle.description', 'Off keeps reply text out of the system notification center; the notification names the chat only.'),
+      label: jt('settings.fieldCopy.notificationsReplyPreviewToggle.label', 'Show the first line of the reply or message'),
+      description: jt('settings.fieldCopy.notificationsReplyPreviewToggle.description', 'Off keeps reply and message text out of the system notification center; the notification names the chat or channel only.'),
       sectionId: 'notifications',
       keywords: ['preview', 'privacy', 'content'],
     },
@@ -525,7 +529,8 @@
     // ── Offline ──────────────────────────────────────────────────────────
     offlineLocalOnlyToggle: {
       label: jt('settings.fieldCopy.offlineLocalOnlyToggle.label', 'Force local inference'),
-      description: jt('settings.fieldCopy.offlineLocalOnlyToggle.description', 'Require local model inference without governing tools, extensions, authentication, updates, or other network-capable services.'),
+      description: jt('settings.fieldCopy.offlineLocalOnlyToggle.help', 'Blocks every cloud model.'),
+      detail: jt('settings.fieldCopy.offlineLocalOnlyToggle.detail', 'Governs model inference only. Tools, extensions, sign-in, updates and other services may still use the network. It needs an Ollama model as the local default.'),
       sectionId: 'offline',
       keywords: [jt('settings.fieldCopy.offlineLocalOnlyToggle.keywords.localInference', 'local inference'), jt('settings.fieldCopy.offlineLocalOnlyToggle.keywords.offlineInference', 'offline inference'), jt('settings.fieldCopy.offlineLocalOnlyToggle.keywords.noCloudInference', 'no cloud inference'), jt('settings.fieldCopy.offlineLocalOnlyToggle.keywords.onDeviceModel', 'on device model')],
     },
@@ -534,7 +539,7 @@
     saveLocalProfileButton: {
       label: jt('settings.fieldCopy.saveLocalProfileButton.label', 'Save local profile'),
       description: jt('settings.fieldCopy.saveLocalProfileButton.description', 'Save the optional profile name on this device.'),
-      sectionId: 'account',
+      sectionId: 'general',
       keywords: ['profile', jt('settings.fieldCopy.saveLocalProfileButton.keywords.localProfile', 'local profile'), jt('settings.fieldCopy.saveLocalProfileButton.keywords.displayName', 'display name'), 'name'],
     },
     checkUpdatesButton: {

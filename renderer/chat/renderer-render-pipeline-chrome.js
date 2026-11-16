@@ -45,7 +45,6 @@
       composerWrap = null,
       chatOriginChip = null,
       chatOriginLabel = null,
-      heroAvatar = null,
       heroTitle = null,
       heroSubtitle = null,
       heroRuntimeHint = null,
@@ -98,6 +97,7 @@
       // between #chatView and the Workspace dock; returns true on a real move.
       reconcileChatDockHost = () => false,
       rebuildChatVirtualizer = () => {},
+      getSessionProject, onProjectsChanged,
     } = callbacks;
 
     const sessionOriginMap = new Map();
@@ -110,6 +110,9 @@
     }
 
     function renderLayout() {
+      // Before the view is read: a Team view whose tab may not exist falls back to Chat here (row 123, 1g-2).
+      windowRef.rendererTopNavShellController?.syncTeamTab?.();
+      windowRef.rendererTopNavShellController?.syncBoardTab?.();
       const activeView = state.ui.activeView;
       // Chat-dock host reconcile (ide_chat_dock) MUST run before any
       // visibility toggle below: when leaving Workspace the chat nodes have to
@@ -154,6 +157,22 @@
         settingsView.classList.toggle('active-view', activeView === 'settings');
         settingsView.inert = activeView !== 'settings';
         settingsView.setAttribute('aria-hidden', activeView !== 'settings' ? 'true' : 'false');
+      }
+      // The Team view's panel is not in this pipeline's dom bag; it is one static section in index.html.
+      const teamView = documentRef?.getElementById?.('teamView');
+      if (teamView) {
+        teamView.classList.toggle('view-offscreen', activeView !== 'team');
+        teamView.classList.toggle('active-view', activeView === 'team');
+        teamView.inert = activeView !== 'team';
+        teamView.setAttribute('aria-hidden', activeView !== 'team' ? 'true' : 'false');
+      }
+      // The Board view (row 150, slice B4) is one static section in index.html as well.
+      const boardView = documentRef?.getElementById?.('boardView');
+      if (boardView) {
+        boardView.classList.toggle('view-offscreen', activeView !== 'board');
+        boardView.classList.toggle('active-view', activeView === 'board');
+        boardView.inert = activeView !== 'board';
+        boardView.setAttribute('aria-hidden', activeView !== 'board' ? 'true' : 'false');
       }
       homeNavButton?.classList.toggle('active-link', activeView === 'home');
       if (homeNavButton) {
@@ -345,10 +364,12 @@
 
     const heroChrome = heroChromeUtils.createHeroChrome({
       state,
-      dom: { heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint },
+      dom: { heroTitle, heroSubtitle, heroRuntimeHint },
       getPaneSessionId,
       getVisibleSessionMessages,
       setDatasetIfChanged,
+      getSessionProject,
+      onProjectsChanged,
     });
     const { renderHero } = heroChrome;
 

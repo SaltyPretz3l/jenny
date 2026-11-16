@@ -1332,7 +1332,7 @@ def test_unknown_tool_recovery_respects_per_turn_tool_cap() -> None:
             ),
         ]
     )
-    router = _build_router(engine=engine)
+    router = _build_router(engine=engine, max_tools_per_turn=20)
     events: list[object] = []
 
     decision = router.build_chat_decision(
@@ -1350,7 +1350,7 @@ def test_unknown_tool_recovery_respects_per_turn_tool_cap() -> None:
     )
 
     result_events = [event for event in events if isinstance(event, ToolResultEvent)]
-    assert len(result_events) == RuntimeConfig().max_tools_per_turn
+    assert len(result_events) == 20
     assert {event.error_code for event in result_events} == {CMP_LOOP_INVALID_TOOL_CALL}
     # Turn-survival: iteration exhaustion winds down with a summary response
     # (chat.done), not a CMP_LOOP_MAX_ITERATIONS chat error.
@@ -1360,7 +1360,7 @@ def test_unknown_tool_recovery_respects_per_turn_tool_cap() -> None:
 def test_unknown_tool_recovery_uses_remaining_cap_after_valid_calls() -> None:
     valid_count = 15
     unknown_count = 10
-    max_tools = RuntimeConfig().max_tools_per_turn
+    max_tools = 20
     engine = _ToolLoopEngine(
         plans=[
             _ToolPlan(
@@ -1395,6 +1395,7 @@ def test_unknown_tool_recovery_uses_remaining_cap_after_valid_calls() -> None:
     router = _build_router(
         engine=engine,
         mcp_client=mcp_client,
+        max_tools_per_turn=max_tools,
     )
     events: list[object] = []
 
@@ -3152,7 +3153,7 @@ def test_web_tool_quota_burst_is_bounded_before_empty_fallback() -> None:
         ]
     )
     mcp_client = _FailingFetchClient()
-    router = _build_router(engine=engine, mcp_client=mcp_client)
+    router = _build_router(engine=engine, mcp_client=mcp_client, web_tool_cap=10)
     events: list[object] = []
 
     decision = router.build_chat_decision(
@@ -3175,8 +3176,8 @@ def test_web_tool_quota_burst_is_bounded_before_empty_fallback() -> None:
         for event in result_events
         if (event.metadata or {}).get("summarized_blocked_count")
     ]
-    assert len(result_events) <= RuntimeConfig().max_web_tool_calls_per_turn + 2
-    assert len(mcp_client.executions) <= RuntimeConfig().max_web_tool_calls_per_turn
+    assert len(result_events) <= 10 + 2
+    assert len(mcp_client.executions) <= 10
     assert summarized_events
     assert "fetch_url" in decision.response_text
     assert "CMP-TOOL-0013" in decision.response_text
@@ -3250,8 +3251,8 @@ def test_failed_web_calls_do_not_consume_per_turn_budget() -> None:
 
 
 def test_web_calls_capped_at_new_default_per_turn() -> None:
-    # 11 web calls in one iteration: the per-turn budget admits exactly the new default
-    # (10) and blocks the 11th with web_per_turn at cap 10.
+    # 31 web calls in one iteration: the per-turn budget admits exactly the default
+    # (30) and blocks the 31st with web_per_turn at cap 30.
     engine = _ToolLoopEngine(
         plans=[
             _ToolPlan(
@@ -3264,7 +3265,7 @@ def test_web_calls_capped_at_new_default_per_turn() -> None:
                             arguments={"query": f"q{index}"},
                             call_id=f"call_web_{index}",
                         )
-                        for index in range(11)
+                        for index in range(31)
                     ),
                 )
             ),
@@ -3293,10 +3294,10 @@ def test_web_calls_capped_at_new_default_per_turn() -> None:
         ),
     )
 
-    assert RuntimeConfig().max_web_tool_calls_per_turn == 10
+    assert RuntimeConfig().max_web_tool_calls_per_turn == 30
     web_blocks = _web_per_turn_blocks(events)
     assert len(web_blocks) == 1
-    assert web_blocks[0].metadata["cap"] == 10
+    assert web_blocks[0].metadata["cap"] == 30
     # The model-facing message reassures it the network is available and resets next reply.
     assert "resets on your next reply" in web_blocks[0].content
 

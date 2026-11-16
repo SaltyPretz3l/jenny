@@ -82,11 +82,14 @@ function buildConfiguredToolAvailability(
   return availability;
 }
 
+// `hasTeamData` (row 123, E50): whether team data is on disk; asked only while the team flag is on, and
+// the payload then carries `teamData`. Without it the payload has no key, which the renderer reads as yes.
 function buildFeatureStatePayload({
   shellConfigService,
   backendService,
   env = process.env,
   platform = process.platform,
+  hasTeamData = null,
 } = {}) {
   const configState = shellConfigService?.getState?.() || {};
   const workspaceRootStatus = shellConfigService?.getWorkspaceRootStatus?.() || {
@@ -113,6 +116,7 @@ function buildFeatureStatePayload({
       fields: toolConfigFields,
     },
     featureFlags: features,
+    ...(features.team === true && typeof hasTeamData === 'function' ? { teamData: hasTeamData() !== false } : {}),
     featureOverrides: {
       ...(configState.featureOverrides || {}),
     },
@@ -291,6 +295,7 @@ async function runFeatureSettingsTransaction({
   sendToWindow,
   env = process.env,
   platform = process.platform,
+  hasTeamData = null,
 } = {}) {
   const previousConfigState = shellConfigService.getState();
   const nextConfigState = commitFeatureSettings(shellConfigService, patch);
@@ -304,6 +309,7 @@ async function runFeatureSettingsTransaction({
     backendService,
     env,
     platform,
+    hasTeamData,
   });
   try {
     if (runtimeSettingsChanged) {

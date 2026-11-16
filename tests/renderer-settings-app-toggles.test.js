@@ -13,7 +13,7 @@ test('offline local-only switch still routes through its section binder', () => 
       handleOfflineModeChange: (checked) => { calls.push(checked); return Promise.resolve({ mode: checked ? 'local_only' : 'disabled' }); },
       showSessionActionError() {},
     },
-    getLazySectionDom: () => ({ offlineLocalOnlyList: list, offlineModelActions: null }),
+    getLazySectionDom: () => ({ offlineLocalOnlyList: list }),
   });
   binders.bindSection('offline', {
     registerSectionListener: (target, type, handler) => target?.addEventListener(type, handler),

@@ -151,6 +151,38 @@ test('a stored effort outside the catalog-declared ladder runs as Automatic on t
   assert.equal(resolveRequestReasoningEffort(service, 'none', BONSAI), 'none');
 });
 
+test('an API-provider model sends the effort its listed ladder offers', () => {
+  const model = 'api-provider/claude-key/claude-opus-4-6';
+  const service = createService({
+    currentModel: model,
+    defaultModel: model,
+    currentEngineType: 'api-provider',
+    currentStatus: {
+      engine: 'api-provider',
+      model,
+      provider_capabilities: { 'api-provider': { reasoning_effort_support: 'supported' } },
+      active_model_capabilities: {},
+    },
+    _modelListLastResult: {
+      value: {
+        data: [{
+          id: model,
+          engine_type: 'api-provider',
+          capabilities: {
+            reasoning_efforts: ['none', 'low', 'medium', 'high', 'max'],
+            default_reasoning_effort: 'default',
+            reasoning_always_on: true,
+          },
+        }],
+      },
+    },
+  });
+
+  assert.equal(resolveRequestReasoningEffort(service, 'none', ''), 'none');
+  assert.equal(resolveRequestReasoningEffort(service, 'max', ''), 'max');
+  assert.equal(resolveRequestReasoningEffort(service, 'xhigh', ''), 'default', 'not on this model: Automatic');
+});
+
 test('a forced engine outranks a stale catalog hint for the request clamp', () => {
   const service = llamaServerService({
     currentModel: 'qwen3.5:9b',

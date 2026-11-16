@@ -24,14 +24,17 @@ function createHarness(options = {}) {
     url: 'http://localhost/',
   });
   let roots = options.roots || [];
+  let runtimeRoots = options.runtimeRoots || [];
   const calls = [];
   const chooseLibraryFolder = options.chooseLibraryFolder
     || (async () => ({ ok: true, picked: false, path: '' }));
   dom.window.jennyShell = {
-    llamaServer: { chooseLibraryFolder },
+    llamaServer: { chooseLibraryFolder, ...(options.runtime || {}) },
     engines: {
       async updateSettings(payload) {
         calls.push(['update', payload]);
+        await options.updateGate?.();
+        if (payload.managed.runtimeRoots) runtimeRoots = payload.managed.runtimeRoots;
         return {
           localEngines: { openaiCompatible: { managed: payload.managed } },
         };
@@ -42,6 +45,7 @@ function createHarness(options = {}) {
     windowRef: dom.window,
     documentRef: dom.window.document,
     getRoots: () => roots,
+    getLibrary: () => ({ managed: { runtimeRoots } }),
     onSettings: (localEngines) => calls.push(['settings', localEngines]),
     refresh: () => calls.push(['refresh']),
     hostId: 'folders',
@@ -189,4 +193,132 @@ test('dispose ignores a late picker result', async () => {
   await flush();
 
   assert.deepEqual(harness.calls, []);
+});
+
+test('addModel is exposed so the Manage drawer or the Library can start an Add GGUF model pick', async () => {
+  const h = createHarness();
+  assert.equal(typeof h.controller.addModel, 'function');
+  // No file picker on the bridge: the pick reports itself instead of throwing.
+  await h.controller.addModel();
+});
+
+// ---- Row 142: the "llama-server builds" list under the GGUF folders ----
+
+const RUNTIME_BLOCK = '[data-runtime-folders]';
+const runtimeText = (harness, selector) => [...harness.dom.window.document.querySelectorAll(`${RUNTIME_BLOCK} ${selector}`)].map((node) => node.textContent);
+const status = (harness) => harness.dom.window.document.querySelector('.model-library-folders-status').textContent;
+
+function runtimeBridge(extra = {}) {
+  return {
+    chooseRuntimeFolder: async () => ({ ok: true, picked: true, path: 'D:\\new-builds' }),
+    runtimeFolderSummary: async () => ({ ok: true, folders: [] }),
+    ...extra,
+  };
+}
+
+test('runtime folders list their saved folders, with what Jenny found once main has said', async () => {
+  const harness = createHarness({
+    runtimeRoots: ['D:\\r1', 'E:\\r2', 'F:\\r3'],
+    runtime: runtimeBridge({
+      runtimeFolderSummary: async () => ({ ok: true, folders: [{ path: 'D:\\r1', builds: 3, newest: 12098 }, { path: 'E:\\r2', builds: 1, newest: 12098 }, { path: 'F:\\r3', builds: 0, newest: 0 }] }),
+    }),
+  });
+  harness.controller.render();
+  assert.deepEqual(runtimeText(harness, '.model-library-folders-title'), ['llama-server builds']);
+  assert.deepEqual(runtimeText(harness, '.model-library-folders-path'), ['D:\\r1', 'E:\\r2', 'F:\\r3']);
+  assert.deepEqual(runtimeText(harness, '.model-library-folders-builds'), [], 'no counts while the summary is pending');
+  await flush();
+  assert.deepEqual(runtimeText(harness, '.model-library-folders-builds'), ['3 builds · newest 12098', '1 build · 12098', 'No builds found']);
+  assert.equal(harness.dom.window.document.querySelectorAll(`${RUNTIME_BLOCK} [data-runtime-folder-remove]`).length, 3);
+  harness.controller.dispose();
+});
+
+test('with no runtime folder the list says what Jenny uses instead', () => {
+  const harness = createHarness({ runtime: runtimeBridge() });
+  harness.controller.render();
+  assert.match(runtimeText(harness, '.model-library-folders-empty')[0], /^None yet · Jenny uses the bundled build and any build you chose in Tune\./);
+  harness.controller.dispose();
+});
+
+test('Add runtime folder opens the dialog first, then saves the list with the picked folder appended', async () => {
+  const harness = createHarness({ runtimeRoots: ['D:\\r1'], runtime: runtimeBridge() });
+  harness.controller.render();
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  const updates = harness.calls.filter((call) => call[0] === 'update');
+  assert.deepEqual(updates.map((call) => call[1]), [{ managed: { runtimeRoots: ['D:\\r1', 'D:\\new-builds'] } }]);
+  assert.equal(status(harness), 'Added D:\\new-builds.');
+  assert.deepEqual(runtimeText(harness, '.model-library-folders-path'), ['D:\\r1', 'D:\\new-builds']);
+  harness.controller.dispose();
+});
+
+test('a cancelled dialog and a folder already in the list save nothing', async () => {
+  const harness = createHarness({ runtimeRoots: ['D:\\new-builds'], runtime: runtimeBridge() });
+  harness.controller.render();
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  assert.equal(harness.calls.filter((call) => call[0] === 'update').length, 0);
+  assert.equal(status(harness), 'D:\\new-builds is already in the list.');
+  harness.dom.window.jennyShell.llamaServer.chooseRuntimeFolder = async () => ({ ok: true, picked: false, path: '' });
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  assert.equal(harness.calls.filter((call) => call[0] === 'update').length, 0);
+  harness.controller.dispose();
+});
+
+test('a network folder and a link folder are refused in plain words, and nothing is saved', async () => {
+  const harness = createHarness({ runtime: runtimeBridge({ chooseRuntimeFolder: async () => ({ ok: false, reason: 'network_path' }) }) });
+  harness.controller.render();
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  assert.equal(status(harness), 'Jenny can\'t run programs from a network folder.');
+  harness.dom.window.jennyShell.llamaServer.chooseRuntimeFolder = async () => ({ ok: false, reason: 'link_folder' });
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  assert.equal(status(harness), 'Choose the folder itself, not a link to it.');
+  assert.equal(harness.calls.filter((call) => call[0] === 'update').length, 0);
+  harness.controller.dispose();
+});
+
+test('flag_off from the dialog hides the whole block', async () => {
+  const harness = createHarness({ runtime: runtimeBridge({ chooseRuntimeFolder: async () => ({ ok: false, reason: 'flag_off' }) }) });
+  harness.controller.render();
+  click(harness, '[data-runtime-folder-action="add"]');
+  await flush();
+  assert.equal(harness.dom.window.document.querySelector(RUNTIME_BLOCK), null);
+  harness.controller.dispose();
+});
+
+test('Remove saves the list without that folder, in order', async () => {
+  const gate = deferred();
+  const harness = createHarness({ runtimeRoots: ['D:\\r1', 'E:\\r2', 'F:\\r3'], runtime: runtimeBridge(), updateGate: () => gate.promise });
+  harness.controller.render();
+  click(harness, `${RUNTIME_BLOCK} [data-runtime-folder-remove="0"]`);
+  await flush();
+  click(harness, `${RUNTIME_BLOCK} [data-runtime-folder-remove="1"]`);
+  await flush();
+  assert.equal(harness.calls.filter((call) => call[0] === 'update').length, 1, 'the second write waits for the first');
+  gate.resolve();
+  await flush();
+  await flush();
+  const lists = harness.calls.filter((call) => call[0] === 'update').map((call) => call[1].managed.runtimeRoots);
+  assert.deepEqual(lists, [['E:\\r2', 'F:\\r3'], ['F:\\r3']], 'each write starts from the saved list');
+  harness.controller.dispose();
+});
+
+test('at eight folders Add runtime folder is disabled and says why', () => {
+  const eight = Array.from({ length: 8 }, (_, index) => `D:\\r${index}`);
+  const harness = createHarness({ runtimeRoots: eight, runtime: runtimeBridge() });
+  harness.controller.render();
+  const add = harness.dom.window.document.querySelector('[data-runtime-folder-action="add"]');
+  assert.equal(add.disabled, true);
+  assert.equal(add.title, 'Up to 8 folders');
+  harness.controller.dispose();
+});
+
+test('without the runtime folder dialog on the bridge there is no block', () => {
+  const harness = createHarness();
+  harness.controller.render();
+  assert.equal(harness.dom.window.document.querySelector(RUNTIME_BLOCK), null);
+  harness.controller.dispose();
 });

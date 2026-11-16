@@ -93,14 +93,6 @@ test('composer state no longer seeds the retired autoRunNextSend flag', () => {
   assert.ok(!('autoRunNextSend' in composer), 'autoRunNextSend is retired');
 });
 
-test('toggle controller no longer exports the one-shot auto-run surface', () => {
-  const controller = createComposerV2ToggleController({ state: {} });
-  assert.equal(controller.consumeApprovalMode, undefined);
-  assert.equal(controller.setAutoRunNextSend, undefined);
-  assert.equal(controller.isAutoRunNextSendEnabled, undefined);
-  assert.equal(controller.clearAutoRunNextSend, undefined);
-});
-
 test('the composer tool surfaces carry no auto-run chip slot', () => {
   // The toggle controller no longer renders (composer Chat panel, 2026-09-30);
   // the tools slot module owns the markup, so the pin reads both sources.

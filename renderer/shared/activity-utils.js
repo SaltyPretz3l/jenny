@@ -237,10 +237,18 @@
       entry.emphasis = Object.prototype.hasOwnProperty.call(nextOptions, 'emphasis')
         ? normalizeEmphasis(nextOptions.emphasis)
         : entry.emphasis;
-      entry.autoClearMs = normalizeDuration(nextOptions.autoClearMs, DEFAULT_SETTLE_MS[entry.emphasis]);
+      // A failure stays until its scope moves on, unless the caller times it.
+      var timed = 'autoClearMs' in nextOptions;
+      entry.autoClearMs = timed ? normalizeDuration(nextOptions.autoClearMs, DEFAULT_SETTLE_MS[entry.emphasis]) : 0;
       emit(resolvedScope, 'fail');
-      scheduleSettle(resolvedScope, entry);
+      if (timed) scheduleSettle(resolvedScope, entry);
       return getActivitySnapshot(resolvedScope);
+    }
+
+    function clearFailedActivities(prefixes) {
+      Array.from(registry.keys()).forEach(function clearFailed(scope) {
+        if (registry.get(scope).state === 'error' && (prefixes || []).some(function matches(prefix) { return scope.indexOf(prefix) === 0; })) clearActivity(scope);
+      });
     }
 
     function clearActivity(scope) {
@@ -262,6 +270,7 @@
     return {
       beginActivity: beginActivity,
       clearActivity: clearActivity,
+      clearFailedActivities: clearFailedActivities,
       createActivityRegistry: createActivityRegistry,
       failActivity: failActivity,
       getActivitySnapshot: getActivitySnapshot,
@@ -287,6 +296,7 @@
   return {
     beginActivity: singleton.beginActivity,
     clearActivity: singleton.clearActivity,
+    clearFailedActivities: singleton.clearFailedActivities,
     createActivityRegistry: createActivityRegistry,
     failActivity: singleton.failActivity,
     getActivitySnapshot: singleton.getActivitySnapshot,

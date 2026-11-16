@@ -1,5 +1,111 @@
 !include "LogicLib.nsh"
 
+; "Open with Jenny" (row 137). Jenny is LISTED for these types, never made the
+; default: only OpenWithProgids entries, Applications\Jenny.exe\SupportedTypes
+; and a Default Apps capability are written, never a `.<ext>` default value or
+; UserChoice. HKCU only (per-user install). The command passes `--` so Chromium
+; stops reading switches before the file path. Macros only: an unreferenced
+; Function in either pass fails makensis -WX (warning 6010).
+!macro JennyOpenWithRegisterType EXT
+  WriteRegNone HKCU "Software\Classes\.${EXT}\OpenWithProgids" "Jenny.File"
+  WriteRegStr HKCU "Software\Classes\Applications\Jenny.exe\SupportedTypes" ".${EXT}" ""
+  WriteRegStr HKCU "Software\Jenny\Capabilities\FileAssociations" ".${EXT}" "Jenny.File"
+!macroend
+
+!macro JennyOpenWithUnregisterType EXT
+  DeleteRegValue HKCU "Software\Classes\.${EXT}\OpenWithProgids" "Jenny.File"
+!macroend
+
+; The one extension list: install and uninstall both expand it.
+!macro JennyOpenWithTypes _OP
+  !insertmacro ${_OP} "md"
+  !insertmacro ${_OP} "markdown"
+  !insertmacro ${_OP} "mdx"
+  !insertmacro ${_OP} "txt"
+  !insertmacro ${_OP} "text"
+  !insertmacro ${_OP} "log"
+  !insertmacro ${_OP} "json"
+  !insertmacro ${_OP} "jsonc"
+  !insertmacro ${_OP} "yaml"
+  !insertmacro ${_OP} "yml"
+  !insertmacro ${_OP} "toml"
+  !insertmacro ${_OP} "ini"
+  !insertmacro ${_OP} "cfg"
+  !insertmacro ${_OP} "conf"
+  !insertmacro ${_OP} "csv"
+  !insertmacro ${_OP} "tsv"
+  !insertmacro ${_OP} "xml"
+  !insertmacro ${_OP} "html"
+  !insertmacro ${_OP} "htm"
+  !insertmacro ${_OP} "css"
+  !insertmacro ${_OP} "scss"
+  !insertmacro ${_OP} "less"
+  !insertmacro ${_OP} "js"
+  !insertmacro ${_OP} "mjs"
+  !insertmacro ${_OP} "cjs"
+  !insertmacro ${_OP} "ts"
+  !insertmacro ${_OP} "tsx"
+  !insertmacro ${_OP} "jsx"
+  !insertmacro ${_OP} "mts"
+  !insertmacro ${_OP} "cts"
+  !insertmacro ${_OP} "py"
+  !insertmacro ${_OP} "pyi"
+  !insertmacro ${_OP} "rs"
+  !insertmacro ${_OP} "go"
+  !insertmacro ${_OP} "java"
+  !insertmacro ${_OP} "kt"
+  !insertmacro ${_OP} "kts"
+  !insertmacro ${_OP} "c"
+  !insertmacro ${_OP} "h"
+  !insertmacro ${_OP} "cc"
+  !insertmacro ${_OP} "cpp"
+  !insertmacro ${_OP} "hpp"
+  !insertmacro ${_OP} "cs"
+  !insertmacro ${_OP} "rb"
+  !insertmacro ${_OP} "php"
+  !insertmacro ${_OP} "lua"
+  !insertmacro ${_OP} "sh"
+  !insertmacro ${_OP} "bash"
+  !insertmacro ${_OP} "zsh"
+  !insertmacro ${_OP} "ps1"
+  !insertmacro ${_OP} "psm1"
+  !insertmacro ${_OP} "sql"
+  !insertmacro ${_OP} "mmd"
+  !insertmacro ${_OP} "mermaid"
+  !insertmacro ${_OP} "graphql"
+  !insertmacro ${_OP} "gql"
+  !insertmacro ${_OP} "proto"
+!macroend
+
+!macro customInstall
+  WriteRegStr HKCU "Software\Classes\Jenny.File" "" "Jenny file"
+  WriteRegStr HKCU "Software\Classes\Jenny.File\DefaultIcon" "" '"$INSTDIR\Jenny.exe",0'
+  WriteRegStr HKCU "Software\Classes\Jenny.File\shell\open" "" "Open with Jenny"
+  WriteRegStr HKCU "Software\Classes\Jenny.File\shell\open\command" "" '"$INSTDIR\Jenny.exe" -- "%1"'
+  WriteRegStr HKCU "Software\Classes\Applications\Jenny.exe" "FriendlyAppName" "Jenny"
+  WriteRegStr HKCU "Software\Classes\Applications\Jenny.exe\shell\open\command" "" '"$INSTDIR\Jenny.exe" -- "%1"'
+  WriteRegStr HKCU "Software\Jenny\Capabilities" "ApplicationName" "Jenny"
+  WriteRegStr HKCU "Software\Jenny\Capabilities" "ApplicationDescription" "Local-first assistant and code editor"
+  !insertmacro JennyOpenWithTypes JennyOpenWithRegisterType
+  WriteRegStr HKCU "Software\RegisteredApplications" "Jenny" "Software\Jenny\Capabilities"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
+
+; Every real uninstall, whatever the removal mode; an update reuses $INSTDIR
+; and the new installer registers again. Only Jenny's own keys and values go;
+; the `.<ext>` keys stay.
+!macro RemoveJennyOpenWith
+  ${ifNot} ${isUpdated}
+    !insertmacro JennyOpenWithTypes JennyOpenWithUnregisterType
+    DeleteRegKey HKCU "Software\Classes\Jenny.File"
+    DeleteRegKey HKCU "Software\Classes\Applications\Jenny.exe"
+    DeleteRegKey HKCU "Software\Jenny\Capabilities"
+    DeleteRegKey /ifempty HKCU "Software\Jenny"
+    DeleteRegValue HKCU "Software\RegisteredApplications" "Jenny"
+    System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+  ${endIf}
+!macroend
+
 ; Both variables are only read and written inside the uninstaller macros
 ; below, which electron-builder inserts solely in its BUILD_UNINSTALLER pass.
 ; Declaring them in the installer pass too leaves them unreferenced there, and
@@ -136,6 +242,7 @@
 
 !macro customUnInstall
   !insertmacro RemoveJennyCliPathEntry
+  !insertmacro RemoveJennyOpenWith
   StrCmp $JennyRemovalMode "cleanup" 0 done
   StrCpy $JennyCleanupIncomplete "0"
   ; A junction or symlink at the profile root would redirect every deletion
@@ -155,6 +262,8 @@
   !insertmacro RemoveJennyProfileChild "backend-sidecar"
   !insertmacro RemoveJennyProfileChild "background-memory"
   !insertmacro RemoveJennyProfileChild "blob_storage"
+  !insertmacro RemoveJennyProfileChild "board-assets"
+  !insertmacro RemoveJennyProfileChild "boards"
   !insertmacro RemoveJennyProfileChild "Cache"
   !insertmacro RemoveJennyProfileChild "change-pictures"
   !insertmacro RemoveJennyProfileChild "Code Cache"
@@ -246,6 +355,7 @@
   !insertmacro RemoveJennyProfileChild "model-load-durations.json"
   !insertmacro RemoveJennyProfileChild "ninfer-serve.pid"
   !insertmacro RemoveJennyProfileChild "operation-ledger"
+  !insertmacro RemoveJennyProfileChild "outside-files.json"
   !insertmacro RemoveJennyProfileChild "profile-owner.json"
   !insertmacro RemoveJennyProfileChild "session-shadow"
   !insertmacro RemoveJennyProfileChild "sidecar-memory.db-wal"

@@ -18,6 +18,10 @@
     // W10). The dockable 'workspace-files' widget host remains the follow-on
     // that re-introduces a panel descriptor here.
     ide: { panel: null },
+    // Team (row 123, slice 1g-2) is full-bleed: its own left column lives inside #teamView.
+    team: { panel: null },
+    // Board (row 150, slice B4) is full-bleed too: its columns are a workbench inside #boardView.
+    board: { panel: null },
     memory: { panel: null },
     artifacts: { panel: null },
     logs: { panel: null },

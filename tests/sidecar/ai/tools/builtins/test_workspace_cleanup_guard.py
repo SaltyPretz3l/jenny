@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -153,3 +155,23 @@ def test_cleanup_quarantines_junction_child_without_deleting_target(tmp_path: Pa
     ]
     assert len(quarantined) == 1
     os.rmdir(quarantined[0])
+
+
+def test_start_workspace_cleanup_runs_one_sweep_at_a_time() -> None:
+    """A config refresh during a sweep (initialize re-sent) starts no second sweep."""
+    release = threading.Event()
+    calls: list[object] = []
+
+    def slow_cleanup(root: object) -> None:
+        calls.append(root)
+        release.wait(timeout=5)
+
+    with mock.patch.object(cleanup_module, "cleanup_workspace_artifacts", side_effect=slow_cleanup):
+        first = cleanup_module.start_workspace_cleanup(Path("/dummy/a"))
+        second = cleanup_module.start_workspace_cleanup(Path("/dummy/b"))
+        release.set()
+        assert first is not None
+        first.join(timeout=5)
+    assert second is None
+    assert calls == [Path("/dummy/a")]
+    assert cleanup_module.start_workspace_cleanup(None) is None

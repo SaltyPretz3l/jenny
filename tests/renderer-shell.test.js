@@ -73,7 +73,7 @@ test('renderer queues pasted image attachments and renders them in the transcrip
   await waitForUi(window);
 
   assert.equal(shell.__state.attachmentSaveCalls.length, 1);
-  assert.equal(window.document.querySelectorAll('.attachment-chip-image').length, 1);
+  assert.equal(window.document.querySelectorAll('.composer-attachment--image').length, 1);
 
   input.value = 'Describe this screenshot';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));

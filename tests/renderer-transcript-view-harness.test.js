@@ -8,8 +8,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlagDefaults } = require('../services/feature-flags');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
+const { createReplayEmitter, flushFrames } = require('./helpers/replay-chat-stream');
 
 const SESSION_ID = 'sess_transcript_views';
 
@@ -87,46 +89,60 @@ async function loadApp(t) {
   const { window, shell } = app;
   const document = window.document;
 
-  function makeEmitter(streamId) {
-    let aggregate = '';
-    return async (payload, settleMs = 5) => {
-      const full = { sessionId: SESSION_ID, streamId, ...payload };
-      if (payload.type === 'delta') {
-        aggregate += payload.content || '';
-        full.aggregate = aggregate;
-      }
-      await shell.__emitChat(full);
-      await waitForUi(window, settleMs);
-    };
-  }
-
+  // The send is accepted once the renderer has registered the stream as active.
+  // `emit` delivers a payload and lets the frame-scheduled paints land; `post`
+  // delivers without waiting (for a batch followed by one wait on its end state).
   async function send(text) {
+    const streamId = `stream_tv_${streamCount + 1}`;
     const input = document.getElementById('chatInput');
     input.value = text;
     input.dispatchEvent(new window.Event('input', { bubbles: true }));
     document.getElementById('sendButton').click();
-    await waitForUi(window, 30);
-    const streamId = `stream_tv_${streamCount}`;
-    const emit = makeEmitter(streamId);
+    const replay = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId });
+    await replay.waitFor(() => window.__rendererState.activeStreamId === streamId, `${streamId} to become the active stream`);
+    const emit = async (payload) => { await replay.post(payload); await replay.flush(); };
     await emit({ type: 'started' });
-    return { streamId, emit };
+    return { ...replay, streamId, emit };
   }
 
-  // One settled turn: reasoning phase, one tool call, a text answer.
+  // One settled turn: reasoning phase, one tool call, a text answer. The payloads
+  // go in back to back; the turn is settled once the stream is no longer active,
+  // no live marker or streaming bubble is left and the tool card is painted.
   async function streamSettledTurn(text) {
-    const { streamId, emit } = await send(text);
-    await emit(reasoningPhaseEvent(streamId, 'phase_started', 1));
-    await emit(reasoningDelta(streamId, 1, 'Planning the answer.'), 40);
-    await emit(reasoningPhaseEvent(streamId, 'phase_completed', 1));
-    for (const payload of toolBatch(streamId, 1)) await emit(payload);
-    await emit(textPhaseStarted(streamId, 2), 40);
-    await emit(textDelta(streamId, 2, 'The answer.'), 40);
-    await emit(TERMINAL, 80);
+    const { streamId, postAll, waitFor, flush } = await send(text);
+    await postAll([
+      reasoningPhaseEvent(streamId, 'phase_started', 1),
+      reasoningDelta(streamId, 1, 'Planning the answer.'),
+      reasoningPhaseEvent(streamId, 'phase_completed', 1),
+      ...toolBatch(streamId, 1),
+      textPhaseStarted(streamId, 2),
+      textDelta(streamId, 2, 'The answer.'),
+      TERMINAL,
+    ]);
+    await waitFor(() => window.__rendererState.activeStreamId !== streamId
+      && !document.querySelector('.turn-row-list[data-turn-live="true"]')
+      && !document.querySelector('[data-streaming-bubble="true"]')
+      && document.querySelector(`.chat-row[data-tool-call-id="call_${streamId}_1"]`)
+      && /The answer\./.test(document.getElementById('chatTimeline').textContent),
+    `${streamId} to settle`);
+    await flush();
     return streamId;
   }
 
   return { app, window, shell, document, send, streamSettledTurn };
 }
+
+// A view switch is stamped on the pane timeline and repainted on the next frames.
+async function switchView(window, document, view) {
+  window.rendererTranscriptViewController.setView(SESSION_ID, view);
+  await waitFor(window, () => document.getElementById('chatTimeline').dataset.transcriptView === view, `the ${view} view to be stamped`);
+  await flushFrames(window);
+}
+
+// Every wait names the state it stands for and fails the case when it never arrives.
+const waitFor = (window, predicate, message) => waitForUiState(window, predicate, {
+  timeoutMs: 20_000, stepMs: 10, message: `timed out waiting for ${message}`,
+});
 
 const rows = (root, kind) => [...root.querySelectorAll(`.chat-row[data-row-kind="${kind}"]`)];
 const toolRows = (root) => [...root.querySelectorAll('.tool-call-row')];
@@ -141,7 +157,8 @@ test('Answers: the pane timeline carries the view, reasoning rows stay in the DO
 
   const controller = window.rendererTranscriptViewController;
   assert.equal(controller.setView(SESSION_ID, 'answers'), 'answers');
-  await waitForUi(window, 60);
+  await waitFor(window, () => timeline.dataset.transcriptView === 'answers', 'the answers view to be stamped');
+  await flushFrames(window);
 
   assert.equal(timeline.dataset.transcriptView, 'answers', 'the pane timeline stamps the view');
   assert.equal(rows(timeline, 'reasoning').length, 1, 'Answers hides via CSS: the row is still rendered');
@@ -149,10 +166,11 @@ test('Answers: the pane timeline carries the view, reasoning rows stay in the DO
     assert.equal(row.getAttribute('data-expanded'), 'false', 'tool cards collapse in Answers');
   }
 
-  const { streamId, emit } = await send('second question');
+  const { streamId, emit, waitFor: waitForStream } = await send('second question');
   await emit(reasoningPhaseEvent(streamId, 'phase_started', 1));
-  await emit(reasoningDelta(streamId, 1, 'Thinking about it.'), 40);
-  await emit(reasoningDelta(streamId, 1, 'Thinking about it more.'), 40);
+  await emit(reasoningDelta(streamId, 1, 'Thinking about it.'));
+  await emit(reasoningDelta(streamId, 1, 'Thinking about it more.'));
+  await waitForStream(() => document.querySelector('.turn-row-list[data-turn-live="true"] .chat-row[data-row-kind="reasoning"]'), 'the live reasoning row');
   const liveLists = [...document.querySelectorAll('.turn-row-list[data-turn-live="true"]')];
   assert.equal(liveLists.length, 1, 'exactly the streaming turn is marked live');
   assert.equal(rows(liveLists[0], 'reasoning').length, 1, 'the live reasoning row exists for the header-only line');
@@ -163,9 +181,10 @@ test('Answers: the pane timeline carries the view, reasoning rows stay in the DO
   assert.equal(liveLists[0].querySelector('.reasoning-row-block.expanded'), null, 'a click opens nothing');
   assert.equal(JSON.parse(window.localStorage.getItem('jenny.reasoningPhaseExpansionBySession.v1') || '{}')[SESSION_ID], undefined, 'a click writes no reasoning override');
   await emit(reasoningPhaseEvent(streamId, 'phase_completed', 1));
-  await emit(textPhaseStarted(streamId, 2), 40);
-  await emit(textDelta(streamId, 2, 'Second answer.'), 40);
-  await emit(TERMINAL, 120);
+  await emit(textPhaseStarted(streamId, 2));
+  await emit(textDelta(streamId, 2, 'Second answer.'));
+  await emit(TERMINAL);
+  await waitFor(window, () => !document.querySelector('.turn-row-list[data-turn-live="true"]'), 'the live marker to leave with the terminal');
   assert.equal(document.querySelector('.turn-row-list[data-turn-live="true"]'), null, 'the marker leaves with the terminal');
   assert.equal(timeline.dataset.transcriptView, 'answers', 'the view survives the turn');
   assert.equal(window.localStorage.getItem('jenny.transcriptViewBySession.v1'), JSON.stringify({ [SESSION_ID]: 'answers' }));
@@ -179,8 +198,7 @@ test('Answers: the pane timeline carries the view, reasoning rows stay in the DO
 test('Answers: the live-turn marker holds through preamble, tool gap and every render lane until the terminal', async (t) => {
   const { window, document, streamSettledTurn, send } = await loadApp(t);
   await streamSettledTurn('first question');
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await switchView(window, document, 'answers');
   const timeline = document.getElementById('chatTimeline');
   const liveLists = () => [...document.querySelectorAll('.turn-row-list[data-turn-live="true"]')];
   const assertLive = (step) => {
@@ -197,29 +215,24 @@ test('Answers: the live-turn marker holds through preamble, tool gap and every r
   const sentinelSurvived = () => document.querySelector('[data-test-sentinel]') !== null;
   const newestList = () => [...timeline.querySelectorAll('.turn-row-list')].pop();
   // Stream-reveal patches flush on a frame: wait for the delta's paint, not a fixed tick.
-  const waitUntil = async (predicate, label) => {
-    for (let waited = 0; !predicate(); waited += 10) {
-      assert.ok(waited < 3000, `timed out waiting for ${label}`);
-      await waitForUi(window, 10);
-    }
-  };
+  const waitUntil = (predicate, label) => waitFor(window, predicate, label);
 
   const { streamId, emit } = await send('second question');
   await emit(reasoningPhaseEvent(streamId, 'phase_started', 1));
-  await emit(reasoningDelta(streamId, 1, 'Planning the lookup.'), 40);
-  await emit(reasoningDelta(streamId, 1, 'Planning the lookup. Which file?'), 40);
+  await emit(reasoningDelta(streamId, 1, 'Planning the lookup.'));
+  await emit(reasoningDelta(streamId, 1, 'Planning the lookup. Which file?'));
   await waitUntil(() => rows(newestList(), 'reasoning').length === 1, 'the live turn article');
   assertLive('reasoning');
   await emit(reasoningPhaseEvent(streamId, 'phase_completed', 1));
   assertLive('reasoning completed');
-  await emit(textPhaseStarted(streamId, 2), 40);
-  await emit(textDelta(streamId, 2, 'Let me read the file.'), 40);
+  await emit(textPhaseStarted(streamId, 2));
+  await emit(textDelta(streamId, 2, 'Let me read the file.'));
   assertLive('preamble text');
 
   const [pending, usePhase, running, useDone, resultPhase, result, resultDone] = toolBatch(streamId, 3);
-  for (const payload of [pending, usePhase, running]) await emit(payload, 20);
+  for (const payload of [pending, usePhase, running]) await emit(payload);
   assertLive('tool running');
-  for (const payload of [useDone, resultPhase, result, resultDone]) await emit(payload, 20);
+  for (const payload of [useDone, resultPhase, result, resultDone]) await emit(payload);
   assertLive('tool result');
   assert.ok(rows(liveLists()[0], 'reasoning').length >= 1, 'the live turn keeps its reasoning row through the gap');
 
@@ -228,24 +241,25 @@ test('Answers: the live-turn marker holds through preamble, tool gap and every r
   for (const view of ['thinking', 'answers']) {
     plantSentinel();
     window.rendererTranscriptViewController.setView(SESSION_ID, view);
-    await waitForUi(window, 40);
+    await waitUntil(() => !sentinelSurvived() && timeline.dataset.transcriptView === view, `the ${view} switch to replace the timeline`);
+    await flushFrames(window);
     assert.equal(sentinelSurvived(), false, `precondition: the ${view} switch in the gap was a full render`);
     assertLive(`forced full render in the tool gap (${view})`);
   }
 
   await emit(reasoningPhaseEvent(streamId, 'phase_started', 4));
   let reasoning = 'Reading the result.';
-  await emit(reasoningDelta(streamId, 4, reasoning), 40);
+  await emit(reasoningDelta(streamId, 4, reasoning));
   assertLive('reasoning 2');
   reasoning += ' Checking the relevant part.';
-  await emit(reasoningDelta(streamId, 4, reasoning), 40);
+  await emit(reasoningDelta(streamId, 4, reasoning));
   assertLive('reasoning 2, second delta');
   // The live reasoning patch rewrites rows, not the list: it must re-sync the
   // list's own marker. Strip it, patch, and require it back without a full render.
   plantSentinel();
   liveLists()[0].removeAttribute('data-turn-live');
   reasoning += ' The file has what we need.';
-  await emit(reasoningDelta(streamId, 4, reasoning), 40);
+  await emit(reasoningDelta(streamId, 4, reasoning));
   await waitUntil(() => newestList().textContent.includes('what we need'), 'the reasoning patch');
   assert.equal(sentinelSurvived(), true, 'precondition: the reasoning delta took a patch lane');
   assertLive('reasoning 2 patch');
@@ -254,21 +268,21 @@ test('Answers: the live-turn marker holds through preamble, tool gap and every r
 
   // The answer's first delta opens its assistant_text row in place: the
   // stream-reveal row-list morph, which also writes children only.
-  await emit(textPhaseStarted(streamId, 5), 40);
+  await emit(textPhaseStarted(streamId, 5));
   const textRowsBefore = rows(newestList(), 'assistant_text').length;
   plantSentinel();
   liveLists()[0].removeAttribute('data-turn-live');
-  await emit(textDelta(streamId, 5, 'The answer'), 40);
+  await emit(textDelta(streamId, 5, 'The answer'));
   await waitUntil(() => rows(newestList(), 'assistant_text').length === textRowsBefore + 1, 'the morph to open the answer row');
   assert.equal(sentinelSurvived(), true, 'precondition: the answer delta took a patch lane');
   assertLive('answer text (row-list morph)');
   liveLists()[0].removeAttribute('data-turn-live');
-  await emit(textDelta(streamId, 5, ' is in the file.'), 40);
+  await emit(textDelta(streamId, 5, ' is in the file.'));
   await waitUntil(() => newestList().textContent.includes('is in the file.'), 'the answer patch');
   assert.equal(sentinelSurvived(), true, 'precondition: the next answer delta patched the bubble');
   assertLive('answer text patch');
 
-  await emit(TERMINAL, 120);
+  await emit(TERMINAL);
   await waitUntil(() => document.querySelector('.turn-row-list[data-turn-live]') === null, 'the marker to leave with the terminal');
 });
 
@@ -279,7 +293,8 @@ test('Everything: settled reasoning expands and tool details materialize; Thinki
   const controller = window.rendererTranscriptViewController;
 
   controller.setView(SESSION_ID, 'everything');
-  await waitForUi(window, 60);
+  await waitFor(window, () => timeline.dataset.transcriptView === 'everything', 'the everything view to be stamped');
+  await flushFrames(window);
   assert.equal(timeline.dataset.transcriptView, 'everything');
   const reasoningRow = rows(timeline, 'reasoning')[0];
   assert.ok(reasoningRow, 'the reasoning row rendered');
@@ -291,7 +306,8 @@ test('Everything: settled reasoning expands and tool details materialize; Thinki
   }
 
   controller.setView(SESSION_ID, 'thinking');
-  await waitForUi(window, 60);
+  await waitFor(window, () => timeline.dataset.transcriptView === 'thinking', 'the thinking view to be stamped');
+  await flushFrames(window);
   assert.equal(timeline.dataset.transcriptView, 'thinking');
   assert.equal(rows(timeline, 'reasoning')[0].querySelector('[aria-expanded]')?.getAttribute('aria-expanded'), 'false', 'settled reasoning collapses again');
   for (const row of toolRows(timeline)) {
@@ -306,14 +322,14 @@ test('switching mid-stream forces exactly one full render, then deltas return to
   // through the live reasoning patch that follows the switch.
   for (const iteration of [1, 2]) {
     await emit(reasoningPhaseEvent(streamId, 'phase_started', iteration));
-    await emit(reasoningDelta(streamId, iteration, `Planning step ${iteration}.`), 40);
+    await emit(reasoningDelta(streamId, iteration, `Planning step ${iteration}.`));
     await emit(reasoningPhaseEvent(streamId, 'phase_completed', iteration));
   }
   await emit(reasoningPhaseEvent(streamId, 'phase_started', 3));
   let text = 'Live thoughts.';
-  await emit(reasoningDelta(streamId, 3, text), 40);
+  await emit(reasoningDelta(streamId, 3, text));
   text += ' More live thoughts.';
-  await emit(reasoningDelta(streamId, 3, text), 40);
+  await emit(reasoningDelta(streamId, 3, text));
 
   const timeline = document.getElementById('chatTimeline');
   const sentinel = document.createElement('i');
@@ -324,18 +340,21 @@ test('switching mid-stream forces exactly one full render, then deltas return to
   // recreates it so the switch's render is counted.
   metricsModule.take(streamId);
   text += ' Still thinking.';
-  await emit(reasoningDelta(streamId, 3, text), 40);
+  await emit(reasoningDelta(streamId, 3, text));
 
   window.rendererTranscriptViewController.setView(SESSION_ID, 'everything');
-  await waitForUi(window, 60);
+  await waitFor(window, () => document.querySelector('[data-test-sentinel]') === null, 'the switch to replace the timeline (a full render)');
+  await flushFrames(window);
   assert.equal(document.querySelector('[data-test-sentinel]'), null, 'the switch replaced the timeline (a full render)');
 
   const deltas = 6;
   for (let index = 0; index < deltas; index += 1) {
     text += ` Checking pass ${index}.`;
-    await emit(reasoningDelta(streamId, 3, text), 40);
+    await emit(reasoningDelta(streamId, 3, text));
   }
-  await waitForUi(window, 120);
+  // The last delta's frame-scheduled paint must land before the counters are read.
+  await waitFor(window, () => /pass 5\./.test(rows(timeline, 'reasoning')[2]?.textContent || ''), 'the last delta to paint in the live row');
+  await flushFrames(window);
   const metrics = metricsModule.take(streamId);
   assert.equal(metrics?.full_renders || 0, 1, `one full render for the switch, none per delta (${JSON.stringify(metrics?.full_render_reasons || {})})`);
   assert.deepEqual(Object.keys(metrics?.full_render_reasons || {}), ['force']);
@@ -347,7 +366,7 @@ test('switching mid-stream forces exactly one full render, then deltas return to
     assert.equal(row.querySelector('[aria-expanded]')?.getAttribute('aria-expanded'), 'true', 'settled phases stay open in Everything through the live patch');
   }
   assert.match(reasoningRows[2].textContent, /pass 5\./, 'the last delta is painted in the live row');
-  await emit(TERMINAL, 80);
+  await emit(TERMINAL);
 });
 
 test('a view switch clears that session\'s per-row overrides and no others', async (t) => {
@@ -363,8 +382,7 @@ test('a view switch clears that session\'s per-row overrides and no others', asy
   const otherKey = buildToolRowKey({ sessionId: 'sess_other', turnId: 'turn-1', rowId: 'row-1', callId: 'call-1' });
   toolUtils.setToolRowExpansion(otherKey, false);
 
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await switchView(window, document, 'answers');
   assert.equal(toolUtils.getToolRowExpansion(rowKey), undefined, 'the switched session forgets its override');
   assert.equal(toolUtils.getToolRowExpansion(otherKey), false, 'another session keeps its override');
   assert.equal(toolRows(timeline)[0].getAttribute('data-expanded'), 'false', 'the view default wins after the switch');
@@ -405,14 +423,18 @@ test('split view: switching pane 1\'s session view leaves pane 0 byte-identical,
   t.after(() => app.dispose());
   const { window } = app;
   const doc = window.document;
-  await waitForUi(window, 150);
+  await waitFor(window, () => doc.querySelector('#chatTimeline [data-message-id="assistant_session-a"]')
+    && doc.querySelector('.workspace-rail-tab[data-session-id="session-b"]'), 'pane 0 to paint session-a and the rail to list session-b');
+  await flushFrames(window);
   const tab = doc.querySelector('.workspace-rail-tab[data-session-id="session-b"]');
   assert.ok(tab, 'precondition: session-b is an open rail tab');
   tab.dispatchEvent(new window.MouseEvent('contextmenu', { clientX: 5, clientY: 5, bubbles: true }));
   const openBeside = [...doc.querySelectorAll('.workspace-tab-context-menu-item')].find((item) => item.textContent === 'Open beside');
   assert.ok(openBeside, 'the tab menu offers Open beside');
   openBeside.click();
-  await waitForUi(window, 150);
+  await waitFor(window, () => window.rendererAppPaneComposition.getPaneComposition().getPane(1)?.dom.chatTimeline
+    .querySelector('[data-message-id="assistant_session-b"]'), 'pane 1 to mount and paint session-b');
+  await flushFrames(window);
   const pane1 = window.rendererAppPaneComposition.getPaneComposition().getPane(1);
   assert.ok(pane1, 'pane 1 is mounted');
   const pane0Timeline = doc.getElementById('chatTimeline');
@@ -423,7 +445,10 @@ test('split view: switching pane 1\'s session view leaves pane 0 byte-identical,
   const controller = window.rendererTranscriptViewController;
   const pane0Before = pane0Timeline.innerHTML;
   controller.setView('session-b', 'everything');
-  await waitForUi(window, 80);
+  await waitFor(window, () => pane1Timeline.dataset.transcriptView === 'everything'
+    && pane1Timeline.querySelector('.chat-row[data-row-kind="reasoning"] [aria-expanded]')?.getAttribute('aria-expanded') === 'true',
+  'pane 1 to show Everything with its settled reasoning open');
+  await flushFrames(window);
   assert.equal(pane1Timeline.dataset.transcriptView, 'everything', "pane 1 shows its session's view");
   assert.equal(pane0Timeline.dataset.transcriptView, 'thinking', 'pane 0 keeps the default');
   assert.equal(pane0Timeline.innerHTML, pane0Before, "pane 0's timeline is byte-identical across pane 1's switch");
@@ -432,7 +457,8 @@ test('split view: switching pane 1\'s session view leaves pane 0 byte-identical,
 
   const pane1Before = pane1Timeline.innerHTML;
   controller.setView('session-a', 'answers');
-  await waitForUi(window, 80);
+  await waitFor(window, () => pane0Timeline.dataset.transcriptView === 'answers', 'pane 0 to show Answers');
+  await flushFrames(window);
   assert.equal(pane0Timeline.dataset.transcriptView, 'answers');
   assert.equal(pane1Timeline.dataset.transcriptView, 'everything');
   assert.equal(pane1Timeline.innerHTML, pane1Before, "pane 1's timeline is byte-identical across pane 0's switch");
@@ -454,7 +480,8 @@ test('the pane More button switches the view through its menu and the reopened m
   const items = [...document.querySelectorAll('.inv-context-menu [role="menuitemradio"]')];
   assert.equal(items.length, 3, 'the menu opened with the three views');
   items[0].click();
-  await waitForUi(window, 80);
+  await waitFor(window, () => document.getElementById('chatTimeline').dataset.transcriptView === 'answers', 'the menu pick to stamp Answers');
+  await flushFrames(window);
   assert.equal(document.getElementById('chatTimeline').dataset.transcriptView, 'answers');
   button.click();
   assert.deepEqual([...document.querySelectorAll('.inv-context-menu [role="menuitemradio"]')].map((item) => item.getAttribute('aria-checked')), ['true', 'false', 'false'], 'the reopened menu checks the new view');

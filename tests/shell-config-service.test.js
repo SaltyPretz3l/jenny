@@ -537,8 +537,8 @@ test('shell config service migrates chat UI settings into v12 defaults', () => {
   assert.equal(service.getState().version, CONFIG_VERSION);
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 100, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
+    safetyMode: 'normal', autoApproveStreakCap: 250, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false, drawingInstructions: 'short',
   });
 });
 
@@ -553,8 +553,8 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 135, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
+    safetyMode: 'normal', autoApproveStreakCap: 250, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false, drawingInstructions: 'short',
   });
 
   service.updateChatUiSettings({
@@ -563,15 +563,15 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
+    safetyMode: 'normal', autoApproveStreakCap: 250, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false, drawingInstructions: 'short',
   });
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.deepEqual(reloaded.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
-    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false,
+    safetyMode: 'normal', autoApproveStreakCap: 250, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
+    digestQuietStart: '22:00', digestQuietEnd: '07:00', browserOnInNewChats: false, drawingInstructions: 'short',
   });
 });
 

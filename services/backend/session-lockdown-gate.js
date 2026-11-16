@@ -3,10 +3,14 @@
 const net = require('node:net');
 const toolManifest = require('../tools/tool-manifest.json');
 const { inferEngineTypeFromModel, resolveRequestedEngineType } = require('./backend-service-utils');
+const { isReservedTeamModelId, liveTeamSelection } = require('./team-engine-models');
 
 const LOCKDOWN_REMOTE_ENGINE = 'lockdown_remote_engine';
 const NETWORK_NONE = 'none';
 const NETWORK_POSSIBLE = 'possible';
+// What the openai-compatible endpoint counts as while a team model is live: the team engine port is a
+// loopback address, but what it carries leaves this PC (team-engine-models.js).
+const TEAM_ENGINE_REMOTE_URL = 'team-engine://remote';
 
 // Checked-in, fail-closed classification for every canonical manifest tool.
 // Dynamic MCP and plugin tools are intentionally absent and therefore denied.
@@ -82,6 +86,7 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   session_status: NETWORK_NONE,
   session_transcript: NETWORK_NONE,
   session_stop: NETWORK_NONE,
+  session_prioritize: NETWORK_NONE, // row 136: the in-process lane order only
   // Row 88: shell config, the local appearance relay and the history store; no network.
   settings_get: NETWORK_NONE,
   settings_change: NETWORK_NONE,
@@ -209,6 +214,7 @@ function readConfigValue(service, getter, ...keys) {
 }
 
 function openAiCompatibleUrlFromService(service) {
+  if (liveTeamSelection(service)) return TEAM_ENGINE_REMOTE_URL;
   const engines = readConfigValue(service, 'getLocalEngines', 'localEngines', 'local_engines') || {};
   const settings = engines.openaiCompatible || engines.openai_compatible || {};
   return String(settings.apiUrl || settings.api_url || '').trim();
@@ -231,6 +237,9 @@ function resolveSessionLockdownRequest(service, session, { requestedEngine, requ
       model ? resolveRequestedEngineType(readConfigValue(service, 'getPreferredEngineType', 'preferredEngineType'), model) : '',
       model ? inferEngineTypeFromModel(model) : '',
     ]).filter(Boolean);
+  // A team model is remote whatever engine it names; with Team on, fail closed on any `team/...` id, well formed or not
+  // (with Team off the prefix is reserved by nothing: E71).
+  if (active && isReservedTeamModelId(service, model)) throw lockdownRemoteEngineError('openai-compatible');
   const openAiCompatibleApiUrl = openAiCompatibleUrlFromService(service);
   for (const engineType of candidates.length ? candidates : ['']) {
     assertSessionLockdownAllowsEngine({ active, engineType, openAiCompatibleApiUrl });

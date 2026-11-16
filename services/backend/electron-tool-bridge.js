@@ -42,7 +42,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'propose_command',
   'propose_session',
   'complete_session_handoff',
-  'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
+  'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'session_prioritize', 'jenny_help',
   'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
   'session_export', 'terminal_read', 'terminal_run', 'browser',
 ]);

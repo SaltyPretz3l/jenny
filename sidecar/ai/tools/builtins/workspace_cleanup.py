@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -126,8 +127,43 @@ def _report_artifact_sessions(store: GuardedWorkspaceStore) -> int:
     return found
 
 
+_sweep_lock = threading.Lock()
+_sweep_thread: threading.Thread | None = None
+
+
+def _run_sweep(root: Path) -> None:
+    try:
+        cleanup_workspace_artifacts(root)
+    except Exception:  # noqa: BLE001
+        pass  # best-effort; it never affects initialization
+
+
+def start_workspace_cleanup(root: Path | None) -> threading.Thread | None:
+    """Prune stale workspace state on a background thread (initialize uses this).
+
+    It only removes tool-result entries older than a day, which no tool of
+    this process is writing, so it can run while tools start. Every config
+    refresh re-sends initialize: one sweep at a time, a refresh during a sweep
+    starts none.
+    """
+
+    global _sweep_thread  # noqa: PLW0603 - one process-wide sweep
+    if root is None:
+        return None
+    with _sweep_lock:
+        if _sweep_thread is not None and _sweep_thread.is_alive():
+            return None
+        thread = threading.Thread(
+            target=_run_sweep, args=(root,), name="workspace-cleanup", daemon=True
+        )
+        _sweep_thread = thread
+        thread.start()
+        return thread
+
+
 __all__ = [
     "CleanupResult",
     "TOOL_RESULTS_MAX_AGE_SECONDS",
     "cleanup_workspace_artifacts",
+    "start_workspace_cleanup",
 ]

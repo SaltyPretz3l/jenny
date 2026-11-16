@@ -19,6 +19,9 @@
   const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'bmp']);
   const MAX_LISTED = 20;
   const HOST_CLASS = 'ide-preview-frame-host';
+  const MAX_OUTSIDE_IMAGES = 32;
+  // Outside-Workspace documents (row 137): their images load through the registry, keyed by grant id.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
 
   function failReason(code) {
     return code === NOT_FOUND_CODE ? 'not_found' : 'unavailable';
@@ -123,14 +126,46 @@
       }
     }
 
+    // One image beside or below an outside document (relPath is relative to its folder).
+    async function outsideImage(key, relPath) {
+      try {
+        const r = await outsideDocs().readImage(key, relPath);
+        if (!r || r.ok !== true) return { ok: false, reason: failReason(r?.code) };
+        const dataUrl = typeof r.base64 === 'string' && String(r.mime || '').startsWith('image/') ? `data:${r.mime};base64,${r.base64}` : '';
+        return dataUrl ? { ok: true, dataUrl, bytes: r.size } : { ok: false, reason: 'unavailable' };
+      } catch (error) {
+        return { ok: false, reason: failReason(error?.code) };
+      }
+    }
+
+    // Markdown preview of an outside document: relative <img> sources load through the registry;
+    // anything unresolvable (absolute, '..' above the folder, refused by main) keeps the existing missing-image look.
+    async function loadOutsideImages(rootEl, key) {
+      const name = outsideDocs()?.describe(key)?.name;
+      if (!rootEl || !name) return;
+      for (const img of Array.from(rootEl.querySelectorAll('img[src]')).slice(0, MAX_OUTSIDE_IMAGES)) {
+        if (!rootEl.isConnected) return; // superseded by a newer render: stop reading
+        const ref = assetsUtils.resolveReference(img.getAttribute('src'), name, [...IMAGE_EXTENSIONS]);
+        if (ref.type !== 'path') continue;
+        const r = await outsideImage(key, ref.path);
+        if (r.ok && rootEl.isConnected) img.setAttribute('src', r.dataUrl);
+      }
+    }
+
     async function build(path, text) {
       const seq = ++buildSeq;
+      const outsideKey = outsideDocs()?.isOutsideKey(path) ? path : '';
       try {
+        // An outside document resolves links against its own folder (linked CSS/JS are not loaded: known limit).
         const result = await assetsUtils.inlineLinkedAssets({
-          html: text, path, readText, readDataUrl, DOMParser: windowRef.DOMParser || globalRef.DOMParser,
+          html: text,
+          path: outsideKey ? outsideDocs().describe(outsideKey)?.name || 'index.html' : path,
+          readText: outsideKey ? async () => ({ ok: false, reason: 'unavailable' }) : readText,
+          readDataUrl: outsideKey ? (assetPath) => outsideImage(outsideKey, assetPath) : readDataUrl,
+          DOMParser: windowRef.DOMParser || globalRef.DOMParser,
         });
         // A slower, superseded build must not replace the current page's list.
-        if (seq === buildSeq) dependencies = new Set(result.dependencies);
+        if (seq === buildSeq) dependencies = new Set(outsideKey ? [] : result.dependencies);
         return { html: result.html, ...describeLinks(result) };
       } catch (_error) {
         if (seq === buildSeq) dependencies = new Set();
@@ -224,6 +259,7 @@
       countExternalResources,
       disposeFrames,
       isDependency: (path) => dependencies.has(path),
+      loadOutsideImages,
       mount,
       resetScroll: () => { scroll = { path: '', y: 0 }; },
     };

@@ -81,7 +81,6 @@
 
   /* ── Shadows — deep true-black; cyan hairline only at the top elevation ── */
   --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.58);
-  --shadow-accent: 0 12px 26px rgba(27, 214, 255, 0.22);
   --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 0 1px rgba(184, 184, 192, 0.10);
   --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(184, 184, 192, 0.11);
   --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(61, 240, 255, 0.12);
@@ -176,7 +175,6 @@
   --widget-button-danger-border: rgba(255, 110, 124, 0.28);
   --widget-button-danger-color: #ff9aa6;
   --widget-close-hover-bg: #b24a4a;
-  --widget-hero-avatar-bg: linear-gradient(180deg, #39ecff, #1bd6ff);
 
   /* Sidebar & item states */
   --widget-item-active-bg: linear-gradient(180deg, rgba(27, 214, 255, 0.16), rgba(27, 214, 255, 0.04));
@@ -269,11 +267,7 @@
   --settings-shell-field-bg: var(--surface-input-background);
 
   /* Activity states */
-  --widget-activity-pending-glow: rgba(27, 214, 255, 0.12);
-  --widget-activity-pending-border: rgba(27, 214, 255, 0.50);
   --widget-activity-pending-color: #5fe6ff;
-  --widget-activity-success-color: rgba(79, 224, 160, 0.92);
-  --widget-activity-error-color: #ff9aa6;
   --widget-activity-pulse-color: rgba(27, 214, 255, 0.16);
 
   /* Attachments */

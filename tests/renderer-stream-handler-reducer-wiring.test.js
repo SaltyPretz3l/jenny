@@ -115,6 +115,7 @@ function createHarness(overrides = {}) {
     turnRowProjectorUtils,
     streamRehydrateUtils,
     isCanonicalRendererProjectionEnabled: overrides.isCanonicalRendererProjectionEnabled || (() => false),
+    isRenderTelemetryEnabled: overrides.isRenderTelemetryEnabled,
     recordChatTimelineRolloutSignal(sessionId, signal, details) {
       rolloutSignals.push({ sessionId, signal, details });
       return { logged: true, count: rolloutSignals.length };
@@ -448,6 +449,55 @@ test('reconcileLiveTurnWithHydratedRows records stale-row deletion rollout signa
   harness.wiring.applyLiveTurnPayload({ sessionId: 's1', streamId: 'stream-1', type: 'delta' });
   harness.wiring.reconcileLiveTurnWithHydratedRows('s1', 'stream-1', [{ id: 'a1', turn_id: 'stream-1', kind: 'assistant_text' }]);
   assert.ok(harness.rolloutSignals.some((s) => s.signal === 'stale_row_deletion'));
+});
+
+// Telemetry #1: a draft main threw away (a stream_reset tombstone: the live
+// "Draft discarded" fold and its hidden rows) is dropped at settle by design,
+// where the persisted receipt replaces it. That drop is not content loss, so
+// it must not raise stale_row_deletion; a real stale row still does.
+test('reconcileLiveTurnWithHydratedRows does not count tombstoned draft rows as stale', () => {
+  const tombstones = [
+    { row_id: 'r:discarded', kind: 'reasoning', discarded: true, payload: { discarded: true, discard_hidden: true } },
+    { row_id: 't:discarded', kind: 'assistant_text', discarded: true, payload: { discarded: true, discard_anchor: true } },
+  ];
+  const run = (staleRows) => {
+    const harness = createHarness({
+      reconcileTurnRows: () => ({ finalRows: [{ row_id: 'hr_0', kind: 'assistant_text' }], staleRows }),
+    });
+    harness.wiring.applyLiveTurnPayload({ sessionId: 's1', streamId: 'stream-1', type: 'delta' });
+    const result = harness.wiring.reconcileLiveTurnWithHydratedRows('s1', 'stream-1', [{ id: 'a1', turn_id: 'stream-1', kind: 'assistant_text' }]);
+    return { harness, result };
+  };
+  const discardedOnly = run(tombstones);
+  assert.equal(discardedOnly.harness.rolloutSignals.filter((s) => s.signal === 'stale_row_deletion').length, 0);
+  assert.equal(discardedOnly.result.staleRows.length, 2, 'the tombstones still leave the row list');
+  const mixed = run([...tombstones, { row_id: 'stale_a', kind: 'assistant_text' }]);
+  const signal = mixed.harness.rolloutSignals.find((s) => s.signal === 'stale_row_deletion');
+  assert.equal(signal && signal.details.staleRowCount, 1, 'only the real stale row is counted');
+});
+
+// order-reopen #8: a log version the tree projector does not read (a profile
+// last written by a newer build) cannot carry the canonical fold, so the
+// carried events are not handed over and telemetry names the store.
+test('reconcileLiveTurnWithHydratedRows does not claim the canonical fold for an unsupported log version', () => {
+  const realTree = require('../renderer/chat/renderer-turn-tree-projector');
+  const projectionInputs = [];
+  const harness = createHarness({
+    isRenderTelemetryEnabled: () => true,
+    turnTreeProjectorUtils: {
+      ...realTree,
+      projectTurnTree(input) {
+        projectionInputs.push(input);
+        return { turns: [{ turn_id: 'stream-1', events: [] }] };
+      },
+    },
+  });
+  harness.wiring.applyLiveTurnPayload({ sessionId: 's1', streamId: 'stream-1', type: 'delta' });
+  harness.wiring.reconcileLiveTurnWithHydratedRows('s1', 'stream-1', [{ id: 'a1', turn_id: 'stream-1', kind: 'assistant_text' }],
+    { turnEventLogVersion: 5, turnEvents: [] }, [{ event_id: 'carried', turn_id: 'stream-1', kind: 'assistant_text_segment' }]);
+  assert.equal(projectionInputs[0].turn_events, undefined, 'no carried events are handed to a projector that will drop them');
+  const parity = harness.rolloutSignals.find((entry) => entry.signal === 'terminal_canonical_parity');
+  assert.equal(parity.details.projectionSource, 'persisted_store');
 });
 
 test('reconcileLiveTurnWithHydratedRows records orphan_row and interrupted_running_tool_hydration signals', () => {

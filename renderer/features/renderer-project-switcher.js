@@ -74,7 +74,7 @@
     const menuUtils = d.menuUtils || resolveMenuUtils();
     const {
       GENERAL_PROJECT_ID, folderKey, countChatsByProject, normalizeProjectList, sortProjectsForMenu, orderProjects,
-      displayNames, generalName, sessionProjectId, projectRow,
+      displayNames, generalName, sessionProjectId, projectRow, shortPath,
     } = menuUtils;
     const getProjectsApi = typeof d.getProjectsApi === 'function'
       ? d.getProjectsApi
@@ -105,6 +105,10 @@
     let transitionSeq = 0;
     let inFlight = null;
     let disposed = false;
+    // The anchor of a menu that is still waiting on its list read (null = none),
+    // and a generation so a click elsewhere supersedes that pending open.
+    let openingAnchor = null;
+    let openSeq = 0;
     // D8: once the user picks a Chats filter this session ("All projects"
     // included), Workspace switches stop overwriting it.
     let filterPickedByUser = false;
@@ -291,7 +295,7 @@
         disabled: !workspaceRootPath(),
       });
       rows.push({ id: '__new', kind: 'action', label: jt('projects.menu.openFolder', 'Open folder…') });
-      rows.push({ id: '__manage', kind: 'action', label: jt('projects.menu.manageProjects', 'Manage projects…') });
+      rows.push(manageRow(false));
       return rows;
     }
 
@@ -505,10 +509,26 @@
       });
     }
 
+    // Every menu opens through here, after the list read (a no-op inside its
+    // 15 s window). False = do not open: the click toggled an open menu shut,
+    // repeated a click whose menu is still loading, or was superseded by a
+    // click on another anchor while it waited.
+    async function readyToOpenMenu(anchor) {
+      if (menu.isOpen()) { menu.close(); return false; }
+      const key = anchor || menu;
+      if (openingAnchor === key) return false;
+      const seq = ++openSeq;
+      openingAnchor = key;
+      try { await refresh(); } finally { if (seq === openSeq) openingAnchor = null; }
+      return !disposed && seq === openSeq;
+    }
+
+    function manageRow(separatorBefore) {
+      return { id: '__manage', kind: 'action', separatorBefore: separatorBefore === true, label: jt('projects.menu.manageProjects', 'Manage projects…') };
+    }
+
     async function openSwitcher(anchor) {
-      if (menu.isOpen()) { menu.close(); return null; }
-      await refresh();
-      if (disposed) return null;
+      if (!(await readyToOpenMenu(anchor))) return null;
       return menu.show({ anchor, heading: jt('projects.menu.openHeading', 'Open project'), rows: switcherRows(), onPick: handleSwitcherPick });
     }
 
@@ -675,27 +695,47 @@
       const origins = new Set(sessions.map(sessionProjectId));
       // "here now" only when every chat being moved already sits in one project.
       const origin = sessions.length === ids.length && origins.size === 1 ? Array.from(origins)[0] : '';
-      const busy = ids.length === 1 && sessions.length === 1 && !isSessionIdle(sessions[0]);
+      const busy = isMoveBusy(ids);
       const busyReason = busy ? jt('workspace.rootNudge.waitIdle', 'Wait for this chat to finish first.') : '';
-      const hereNow = jt('projects.move.hereNow', 'here now');
+      const hereNow = ids.length === 1
+        ? jt('projects.move.chatHere', 'This chat is here')
+        : jt('projects.move.hereNow', 'here now');
       const labels = displayNames(projects);
       const current = currentProject();
       const rows = sortProjectsForMenu(projects, current && current.id, state.sessions).map((project) => {
         const here = project.id === origin;
         const row = projectRow(project, { label: labels[project.id], selected: here, disabled: busy || here, reason: here ? hereNow : busyReason });
-        if (here) { row.detail = hereNow; row.danger = false; }
+        const path = shortPath(project.rootPath);
+        if (here) {
+          // The chat's own project reads as "you are here", not as a row that is switched off.
+          row.detail = path ? hereNow + ' · ' + path : hereNow;
+          row.danger = false;
+          row.here = true;
+        } else if (path && current && current.id === project.id && !project.folderMissing) {
+          row.detail = jt('projects.move.openInWorkspace', 'Open in Workspace · {path}', { path });
+        }
         return row;
       });
       const generalHere = origin === GENERAL_PROJECT_ID;
+      const generalDetail = jt('projects.switcher.generalDetail', 'no folder · file tools off');
       rows.push({
         id: GENERAL_PROJECT_ID, kind: 'project', separatorBefore: true,
         label: labelFor(GENERAL_PROJECT_ID),
-        detail: generalHere ? hereNow : jt('projects.switcher.generalDetail', 'no folder · file tools off'),
+        detail: generalHere ? hereNow + ' · ' + generalDetail : generalDetail,
         selected: generalHere,
+        here: generalHere,
         disabled: busy || generalHere,
         reason: generalHere ? hereNow : busyReason,
       });
+      rows.push(manageRow(true));
       return rows;
+    }
+
+    // One busy chat cannot move at all (its rows say why); several are moved one by one, busy ones skipped.
+    function isMoveBusy(sessionIds) {
+      const ids = uniqueIds(sessionIds);
+      const session = ids.length === 1 ? findSession(ids[0]) : null;
+      return Boolean(session) && !isSessionIdle(session);
     }
 
     // Opens "Move this chat to" / "Move {n} chats to" anchored on anchorEl.
@@ -704,19 +744,20 @@
       const o = options || {};
       const ids = uniqueIds(sessionIds);
       if (!ids.length) return null;
-      if (menu.isOpen()) { menu.close(); return null; }
-      await refresh();
-      if (disposed) return null;
+      if (!(await readyToOpenMenu(anchorEl))) return null;
       const heading = ids.length === 1
         ? jt('projects.move.headingOne', 'Move this chat to')
         : jtn('projects.move.headingMany', ids.length, { count: ids.length }, 'Move {count} chat to', 'Move {count} chats to');
       return menu.show({
         anchor: anchorEl,
         heading,
+        // A busy chat cannot move: say so in the menu, not only in each row's description.
+        note: isMoveBusy(ids) ? jt('projects.move.busyNote', 'This chat is still working. You can move it when it finishes.') : '',
         footnote: jt('projects.move.footnote', 'Its file access and memories follow the project.'),
         rows: moveRows(ids),
         onClose: o.onClose,
         onPick: (row) => {
+          if (row.id === '__manage') { openSettingsSection('runtime'); return; }
           Promise.resolve(moveSessionsToProject(ids, row.id, { source: o.source || 'menu' }))
             .then((result) => { if (typeof o.onMoved === 'function' && result && result.moved.length) o.onMoved(result); })
             .catch(noop);
@@ -747,9 +788,7 @@
 
     async function openFilterMenu(options) {
       const o = options || {};
-      if (menu.isOpen()) { menu.close(); return null; }
-      await refresh();
-      if (disposed) return null;
+      if (!(await readyToOpenMenu(o.anchor))) return null;
       return menu.show({
         anchor: o.anchor,
         heading: jt('projects.filter.heading', 'Show chats from'),

@@ -384,3 +384,69 @@ test('normalizeLayout never throws on random junk and always returns valid layou
   }
   assert.ok(accepted >= 20, `fuzz produced only ${accepted} salvageable layouts`);
 });
+
+/* ---------- Board profile (row 150): a second view list for the Board page's workbench ---------- */
+
+const WORKSPACE_ONLY = ['explorer', 'search', 'source-control', 'terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
+
+test('board profile: the default layout is boards | canvas | chat + changes, with nothing from the Workspace', () => {
+  const layout = createDefaultLayout('board');
+  assert.equal(layout.profile, 'board');
+  assert.equal(shape(layout.root), 'row(boards,E,chat+changes)');
+  assert.deepEqual(model.listViews(layout), ['boards', 'chat', 'changes']);
+  assert.equal(stackOf(layout, 'chat').collapsed, false, 'the chat is docked open on a new Board');
+  assert.equal(layout.bind, undefined);
+  assert.deepEqual(normalizeLayout(layout, 'board'), layout, 'normalize is idempotent');
+});
+
+test('board profile: normalizing never gains a Workspace view and drops any it is handed', () => {
+  const raw = {
+    v: 1,
+    profile: 'board',
+    root: spl('split-1', 'row',
+      ch(stk('stack-1', ['boards', 'explorer', 'terminal-2'], { active: 'explorer' }), 260),
+      ch(editor(), null),
+      ch(stk('stack-2', ['chat', 'chat-2', 'changes', 'outline'], { active: 'chat-2', collapsed: true }), 400)),
+    bind: { chat: 'editor-1' },
+  };
+  const out = normalizeLayout(raw, 'board');
+  assert.equal(out.profile, 'board');
+  assert.equal(shape(out.root), 'row(boards,E,chat+changes!)');
+  assert.equal(stackOf(out, 'boards').active, 'boards');
+  assert.equal(stackOf(out, 'chat').active, 'chat');
+  assert.equal(out.bind, undefined, 'a Board layout has no editor-group bindings');
+  WORKSPACE_ONLY.forEach((id) => assert.equal(findView(out, id), null, id));
+});
+
+test('board profile: one canvas only, and a lost view is re-homed on its own side', () => {
+  const twoEditors = normalizeLayout({ v: 1, root: spl('split-1', 'row', ch(editor('editor-1'), null), ch(editor('editor-2'), 400)) }, 'board');
+  assert.equal(shape(twoEditors.root), 'row(boards,E,chat+changes!)', 'the second canvas is dropped; boards left, chat right');
+  assert.equal(collectNodes(twoEditors.root).filter((n) => n.kind === 'editor').length, 1);
+
+  const lostChanges = normalizeLayout({
+    v: 1,
+    root: spl('split-1', 'row', ch(stk('stack-1', ['boards']), 240), ch(editor(), null), ch(stk('stack-2', ['chat']), 380)),
+  }, 'board');
+  assert.equal(shape(lostChanges.root), 'row(boards,E,chat+changes)', 'changes rejoins the chat stack');
+});
+
+test('board profile: the Workspace normalizer ignores a profile field and Board-only views', () => {
+  const smuggled = createDefaultLayout('board');
+  const out = normalizeLayout(JSON.parse(JSON.stringify(smuggled)));
+  assert.equal(out.profile, undefined, 'a stored Workspace layout cannot turn itself into a Board layout');
+  assert.equal(findView(out, 'boards'), null);
+  ALL_VIEWS.forEach((id) => assert.notEqual(findView(out, id), null, id));
+  assert.equal(createDefaultLayout().profile, undefined);
+  assert.deepEqual(createDefaultLayout('nonsense'), createDefaultLayout(), 'an unknown profile name is the Workspace');
+});
+
+test('board profile: the solver sizes the three columns and honours a collapsed chat', () => {
+  const layout = createDefaultLayout('board');
+  const open = model.solveLayout(layout, { width: 1400, height: 800 });
+  const boards = stackOf(layout, 'boards');
+  const chat = stackOf(layout, 'chat');
+  assert.equal(open.sizes[boards.id], sizeEntry(layout, boards.id).size);
+  assert.equal(open.sizes[chat.id], sizeEntry(layout, chat.id).size);
+  const folded = model.solveLayout(model.setCollapsed(layout, chat.id, true), { width: 1400, height: 800 });
+  assert.equal(folded.sizes[chat.id], model.STRIP_SIZE);
+});

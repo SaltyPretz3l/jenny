@@ -182,6 +182,10 @@
         truncated: windowed.truncated === true || result.truncated === true,
         byteTruncated: result.truncated === true,
         totalLines: windowed.totalLines,
+        // For the panel footer: the reader's file size (whole even when the read
+        // was cut short), else measured once here, never per repaint.
+        byteSize: Number.isFinite(result.size) ? result.size
+          : (typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length),
         languageId: resolveLanguageId(path),
         signature: projectId ? `project:${projectId}:${result.fileVersion || result.size}` : `${result.rootId}:${result.generation}:${result.fileVersion}`,
       };
@@ -194,7 +198,7 @@
           || !Number.isSafeInteger(result.generation)))) {
         return null;
       }
-      return { kind: 'image', mime, base64: result.base64, truncated: false, totalLines: 0 };
+      return { kind: 'image', mime, base64: result.base64, truncated: false, totalLines: 0, byteSize: Number.isFinite(result.size) ? result.size : Math.floor(result.base64.length * 3 / 4) };
     }
 
     function setFailure(slot, failure) {
@@ -424,7 +428,9 @@
 
     function writeDetailTitle(surface) {
       const liveTitle = surface?.root?.querySelector?.('#artifactReviewDetailTitle') || surface?.detailTitle || null;
-      if (!liveTitle) return;
+      // The V3 header titles a file preview by its file (renderer-artifact-panel-v2-render.js);
+      // blanking it here would only make that pass rebuild it.
+      if (!liveTitle || liveTitle.closest?.('.artifact-panel-v3')) return;
       const textNode = liveTitle.querySelector?.('.artifact-panel-title-text') || liveTitle;
       textNode.textContent = '';
     }
@@ -569,9 +575,14 @@
       const slot = ensureSlot();
       const normalized = nextView === 'code' ? 'code' : 'read';
       if (slot.view === normalized) return;
+      const toggleSelector = '[data-inv-segmented="file-preview-view"]';
+      const hadFocus = Boolean(panelEl?.ownerDocument?.activeElement?.closest?.(toggleSelector));
       slot.view = normalized;
       disposeFrame();
       renderArtifactReviewPanel();
+      // The toggle lives in the bar the re-render replaced: keep the keyboard
+      // on it so arrow keys keep working.
+      if (hadFocus) panelEl?.querySelector?.(toggleSelector + ' [aria-checked="true"]')?.focus?.({ preventScroll: true });
     }
 
     function handleRailClick(event) {
@@ -579,12 +590,6 @@
       const target = event?.target;
       if (!target || typeof target.closest !== 'function') return;
       if (target.closest('[data-artifact-panel-v2-copy]')) return void getActions()?.copyContents(ensureSlot());
-      const viewButton = target.closest('[data-file-preview-view]');
-      if (viewButton) {
-        event.preventDefault?.();
-        setView(viewButton.getAttribute('data-file-preview-view'));
-        return;
-      }
       const retryButton = target.closest('[data-file-preview-retry]');
       if (retryButton) {
         event.preventDefault?.();
@@ -613,8 +618,16 @@
       if (key !== 'Enter' && key !== ' ') return;
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('[data-file-preview-view], [data-file-preview-retry], [data-file-preview-open-ide]')) return;
+      if (!target.closest('[data-file-preview-retry], [data-file-preview-open-ide]')) return;
       handleRailClick(event);
+    }
+
+    // Preview / Code is an inventory segmented control: its own delegated
+    // handlers (renderer/inventory/index.js) turn a click or arrow key into
+    // this event.
+    function handleViewChange(event) {
+      if (disposed || !isFilePreviewMode() || event?.detail?.id !== 'file-preview-view') return;
+      setView(event.detail.value);
     }
 
     function bind() {
@@ -622,6 +635,7 @@
       bound = true;
       panelEl.addEventListener('click', handleRailClick);
       panelEl.addEventListener('keydown', handleRailKeydown);
+      panelEl.addEventListener('inv-segmented-change', handleViewChange);
     }
 
     function dispose() {
@@ -634,6 +648,7 @@
       if (bound && panelEl && typeof panelEl.removeEventListener === 'function') {
         panelEl.removeEventListener('click', handleRailClick);
         panelEl.removeEventListener('keydown', handleRailKeydown);
+        panelEl.removeEventListener('inv-segmented-change', handleViewChange);
       }
       bound = false;
     }

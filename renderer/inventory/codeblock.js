@@ -221,7 +221,7 @@
         var isTableCopy = btn.classList.contains('inv-table-copy');
         var tableWrap = isTableCopy ? btn.closest('.markdown-table-wrapper') : null;
         var tableEl = tableWrap ? tableWrap.querySelector('table') : null;
-        var wrap = btn.closest('.inv-codeblock-wrap');
+        var wrap = btn.closest('.inv-codeblock-wrap, .thinking-code-host');
         var codeEl = wrap ? (wrap.querySelector('code') || wrap.querySelector('.tool-kv-grid')) : null;
         var copyTarget = String(btn.getAttribute('data-inv-copy-target') || '').trim();
         var resolvedText = isTableCopy ? null : resolveRegisteredCopyText(copyTarget);

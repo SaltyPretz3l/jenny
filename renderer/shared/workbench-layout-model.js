@@ -5,7 +5,7 @@
  * inputs are never modified. normalizeLayout() is safe on untrusted persisted data
  * (it also runs in the main process) and never throws.
  *
- *   Layout = { v: 1, root: Node, bind?: { [viewId]: editorStackId } }
+ *   Layout = { v: 1, root: Node, bind?: { [viewId]: editorStackId }, profile?: 'board' }
  *   Node   = Split | Stack
  *   Split  = { t: 'split', id, dir: 'row'|'col', children: [{ node, size }] }
  *   Stack  = { t: 'stack', id, kind: 'views'|'editor', views: string[], active, collapsed }
@@ -13,6 +13,7 @@
  * `size` is px along the parent split's axis; exactly one child per split is flexible
  * (size === null): the child holding the editor stack, else the last child.
  * `bind` (W7c) binds a chat or terminal view to an editor group (see workbench-layout-ops).
+ * `profile` marks a Board page layout (row 150); a layout without it is the Workspace's.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -69,7 +70,6 @@
   });
   var OPTIONAL_VIEW_IDS = Object.freeze(Object.keys(OPTIONAL_VIEWS));
 
-  var CATALOG_IDS = Object.keys(VIEW_CATALOG);
   var LEFT_VIEWS = ['explorer', 'search', 'source-control'];
   var BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
   // Extra terminals (F3: four in all) are instances of the `terminal` view: terminal-2..4.
@@ -89,13 +89,46 @@
     return typeof v === 'object' && v !== null && !Array.isArray(v);
   }
 
-  function catalogEntry(id) {
+  function workspaceEntry(id) {
     if (typeof id !== 'string') return null;
     if (Object.prototype.hasOwnProperty.call(VIEW_CATALOG, id)) return VIEW_CATALOG[id];
     if (Object.prototype.hasOwnProperty.call(OPTIONAL_VIEWS, id)) return OPTIONAL_VIEWS[id];
     if (TERMINAL_INSTANCE_RE.test(id)) return VIEW_CATALOG.terminal;
     var chat = CHAT_INSTANCE_RE.exec(id);
     return chat ? VIEW_CATALOG[chat[1]] : null;
+  }
+
+  /* The Board page (row 150) is a second workbench: the boards list on the left, the canvas
+   * where the editor stack sits, and the chat dock's two views on the right. The CALLER names
+   * the profile (normalizeLayout's second argument); a stored layout cannot choose its own, so
+   * a Workspace layout never turns into a Board one. A Board layout has one editor stack, no
+   * instance views and no bindings. */
+  var BOARD_LIST_SIZE = 240;
+  var BOARD_VIEWS = Object.freeze({
+    boards: Object.freeze({ home: 'left', minWidth: 200, minHeight: 120, placement: 'edge' }),
+    chat: VIEW_CATALOG.chat,
+    changes: VIEW_CATALOG.changes,
+  });
+
+  function boardEntry(id) {
+    return typeof id === 'string' && Object.prototype.hasOwnProperty.call(BOARD_VIEWS, id) ? BOARD_VIEWS[id] : null;
+  }
+
+  // entry: is this id a view of the profile; homes: the views a tree must hold, with their side.
+  var WORKSPACE_PROFILE = {
+    name: null, entry: workspaceEntry, homes: VIEW_CATALOG, families: FAMILY_OF_HOME, maxEditors: MAX_EDITOR_GROUPS, binds: true,
+  };
+  var BOARD_PROFILE = {
+    name: 'board', entry: boardEntry, homes: BOARD_VIEWS, families: { left: ['boards'], bottom: [], right: RIGHT_VIEWS }, maxEditors: 1, binds: false,
+  };
+
+  function profileNamed(name) {
+    return name === 'board' ? BOARD_PROFILE : WORKSPACE_PROFILE;
+  }
+
+  // Any profile's view: minimum sizes and the layout ops ask by id alone.
+  function catalogEntry(id) {
+    return workspaceEntry(id) || boardEntry(id);
   }
 
   // The catalog view an instance id stands for (terminal-2..4 -> terminal, chat-2 -> chat,
@@ -207,6 +240,7 @@
   function cloneLayout(layout) {
     var out = { v: 1, root: cloneNode(layout.root) };
     if (isObj(layout.bind)) out.bind = Object.assign({}, layout.bind);
+    if (layout.profile === 'board') out.profile = 'board';
     return out;
   }
 
@@ -292,7 +326,7 @@
   function sanitizeStack(raw, ctx) {
     var id = isSafeId(raw.id) ? raw.id : null;
     if (raw.kind === 'editor') {
-      if (ctx.editors >= MAX_EDITOR_GROUPS) return null;
+      if (ctx.editors >= ctx.profile.maxEditors) return null;
       ctx.editors += 1;
       return { t: 'stack', id: id, kind: 'editor', views: [], active: null, collapsed: false };
     }
@@ -301,7 +335,7 @@
     var limit = Math.min(list.length, MAX_LIST);
     for (var i = 0; i < limit; i += 1) {
       var v = list[i];
-      if (isCatalogView(v) && !ctx.seen.has(v)) {
+      if (ctx.profile.entry(v) && !ctx.seen.has(v)) {
         ctx.seen.add(v);
         views.push(v);
       }
@@ -383,14 +417,14 @@
     return tree;
   }
 
-  /* Re-home every catalog view the tree lost, per its family (see VIEW_CATALOG.home). */
-  function ensureHomes(tree) {
+  /* Re-home every view of the profile the tree lost, per its family (see VIEW_CATALOG.home). */
+  function ensureHomes(tree, profile) {
     var out = tree;
     var present = new Set(collectViews(out));
-    CATALOG_IDS.forEach(function (viewId) {
+    Object.keys(profile.homes).forEach(function (viewId) {
       if (present.has(viewId)) return;
-      var home = VIEW_CATALOG[viewId].home;
-      var family = FAMILY_OF_HOME[home];
+      var home = profile.homes[viewId].home;
+      var family = profile.families[home];
       var target = null;
       for (var i = 0; i < family.length && !target; i += 1) target = stackHolding(out, family[i]);
       if (!target && home === 'left') target = edgeStackBeforeEditor(out);
@@ -458,17 +492,22 @@
     });
   }
 
-  function normalizeLayout(value) {
+  /* profileName: 'board' for a Board page layout; anything else is the Workspace. */
+  function normalizeLayout(value, profileName) {
     try {
       if (!isObj(value) || value.v !== 1 || !isObj(value.root)) return null;
-      var ctx = { count: 0, seen: new Set(), editors: 0 };
+      var profile = profileNamed(profileName);
+      var ctx = { count: 0, seen: new Set(), editors: 0, profile: profile };
       var tree = sanitizeNode(value.root, ctx, 1);
       if (!tree || !containsEditor(tree)) return null;
-      tree = ensureHomes(tree);
+      tree = ensureHomes(tree, profile);
       fixSplits(tree);
       assignIds(tree);
-      var bind = sanitizeBind(value.bind, tree);
-      return bind ? { v: 1, root: tree, bind: bind } : { v: 1, root: tree };
+      var out = { v: 1, root: tree };
+      var bind = profile.binds ? sanitizeBind(value.bind, tree) : null;
+      if (bind) out.bind = bind;
+      if (profile.name) out.profile = profile.name;
+      return out;
     } catch (_err) {
       return null;
     }
@@ -476,8 +515,19 @@
 
   /* ------------------------------------------------------------------ default layout */
 
-  /* The fresh-profile tree: rail | (editor over bottom panel) | chat dock. */
-  function createDefaultLayout() {
+  /* The fresh-profile tree: rail | (editor over bottom panel) | chat dock.
+   * For the Board: boards list | canvas | chat dock, with the chat open. */
+  function createDefaultLayout(profileName) {
+    if (profileNamed(profileName) === BOARD_PROFILE) {
+      return normalizeLayout({
+        v: 1,
+        root: mkSplit('row', [
+          entry(mkStack(['boards'], 'boards', false), BOARD_LIST_SIZE),
+          entry(mkEditor(), null),
+          entry(mkStack(RIGHT_VIEWS, 'chat', false), 380),
+        ]),
+      }, 'board');
+    }
     var column = mkSplit('col', [
       entry(mkEditor(), null),
       entry(mkStack(BOTTOM_VIEWS, 'terminal', true), DEFAULT_COL_SIZE),
@@ -603,6 +653,7 @@
   return {
     VIEW_CATALOG: VIEW_CATALOG,
     OPTIONAL_VIEW_IDS: OPTIONAL_VIEW_IDS,
+    BOARD_VIEW_IDS: Object.freeze(Object.keys(BOARD_VIEWS)),
     STRIP_SIZE: STRIP_SIZE,
     HEADER_SIZE: HEADER_SIZE,
     EDITOR_MIN_WIDTH: EDITOR_MIN_WIDTH,

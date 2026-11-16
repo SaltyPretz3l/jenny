@@ -195,8 +195,13 @@ test('renderer keeps segmented assistant rows in one turn article with source an
     'tool-parent branches should not render a nested toggle chip for a single assistant continuation'
   );
   assert.ok(
-    turnEntry.querySelector('.chat-row[data-row-kind="tool_call"] .chat-row-node-dot'),
-    'tool rows should render per-row node dots so the vertical rail remains continuous'
+    turnEntry.querySelector('.chat-row[data-row-kind="tool_call"]'),
+    'tool rows should still render as chat rows'
+  );
+  assert.equal(
+    turnEntry.querySelector('.chat-row-node-dot'),
+    null,
+    'rows no longer emit a gutter dot; the sprite is the only gutter mark'
   );
   assert.equal(
     toolNode?.classList.contains('chat-thread-node-tool-parent'),

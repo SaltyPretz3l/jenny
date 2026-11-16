@@ -19,7 +19,9 @@ const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { normalizeWorkspaceRelPath } = require('../workspace-ide-path-guard');
 const { workspaceRootId } = require('../workspace-root-identity');
+const { joinBlockedHosts, blockedHostsField } = require('./picture-store');
 const { normalizeDiffInputText, sha256Text } = require('../tools/structured-diff');
+const { changeShowsThroughMotion } = require('./picture-compare');
 const {
   MAX_OVERRIDE_ENTRY_BYTES,
   MAX_OVERRIDE_TOTAL_BYTES,
@@ -34,6 +36,10 @@ const MAX_FILES = 200;
 const MAX_PAGES = 3;
 const MAX_ID_LENGTH = 200;
 const DEFAULT_SETTLE_MS = 400;
+// A page is pictured once it holds still: it is looked at again this often,
+// this many times, so an entrance animation is over before its picture.
+const DEFAULT_STILL_MS = 300;
+const MAX_STILL_CHECKS = 4;
 const WORKING_TREE_TURN_ID = '@working-tree';
 // A turn's phone pictures are stored beside its desktop pictures, never in
 // their place: the chat always shows the desktop pair. The Working tree page
@@ -75,6 +81,7 @@ function createChangePicturesService({
   pathImpl = require('path'),
   logger = () => {},
   settleMs = DEFAULT_SETTLE_MS,
+  stillMs = DEFAULT_STILL_MS,
   setTimeoutImpl = setTimeout,
 }) {
   // One capture at a time: each one opens hidden windows from a pool of four
@@ -93,7 +100,7 @@ function createChangePicturesService({
 
   const extensionOf = (relPath) => pathImpl.extname(relPath).toLowerCase();
   const absoluteOf = (realRoot, relPath) => pathImpl.join(realRoot, ...relPath.split('/'));
-  const settle = () => new Promise((resolve) => setTimeoutImpl(resolve, settleMs));
+  const wait = (ms) => new Promise((resolve) => setTimeoutImpl(resolve, ms));
 
   function normalizeFiles(rawFiles) {
     const byPath = new Map();
@@ -229,15 +236,39 @@ function createChangePicturesService({
       return { ok: false, busy: /Maximum active browser sessions/.test(String(error?.message || '')) };
     }
     try {
-      await settle();
-      const shot = await browserSessionService.screenshot(sessionId, {});
+      await wait(settleMs);
+      let shot = await browserSessionService.screenshot(sessionId, {});
       if (!Buffer.isBuffer(shot?.buffer) || shot.buffer.length === 0) return { ok: false };
+      // The picture session is offline. A page that waits on a script from
+      // the internet is not drawn the way its author sees it and gets no
+      // pictures; one that only loads an async extra keeps them,
+      // with the blocked hosts named beside the pair.
+      const bare = (await browserSessionService.pageWaitsOnBlockedAsset?.(sessionId)) === true;
+      // Keep the first picture that repeats. A page that never does (a
+      // spinner, a game) keeps its last one and the one before it, which
+      // show how much it moves on its own. A page that will be dropped anyway
+      // is not waited for.
+      let earlier = null;
+      for (let check = 0; check < MAX_STILL_CHECKS && !bare; check += 1) {
+        await wait(stillMs);
+        const next = await browserSessionService.screenshot(sessionId, {}).catch(() => null);
+        if (!Buffer.isBuffer(next?.buffer) || next.buffer.length === 0) break;
+        const still = next.buffer.equals(shot.buffer);
+        earlier = still ? null : shot;
+        shot = next;
+        if (still) break;
+      }
       return {
         ok: true,
         buffer: shot.buffer,
         width: shot.width,
         height: shot.height,
+        thumb: shot.thumbnail || null,
+        earlierThumb: earlier ? earlier.thumbnail || {} : null,
+        bare,
         report: overrides ? browserSessionService.fileOverrideReport(sessionId) : null,
+        // Read before close(): the session and its record go away with it.
+        blockedHosts: joinBlockedHosts(browserSessionService.blockedExternalHosts?.(sessionId)),
       };
     } catch (_) {
       return { ok: false };
@@ -258,27 +289,33 @@ function createChangePicturesService({
         after = await render(realRoot, page.path, viewport, null);
         if (after.busy) return { busy: true };
         if (page.status === 'created' && !after.ok) failed = true;
+        if (after.bare) continue;
       }
       if (page.status !== 'created') {
         before = await render(realRoot, page.path, viewport, overrides);
         if (before.busy) return { busy: true };
         if (!before.ok) failed = true;
         // No Before, or a Before that needed a file whose earlier text is unknown.
-        if (!before.ok || !before.report || before.report.poisoned) continue;
+        if (!before.ok || !before.report || before.report.poisoned || before.bare) continue;
         // A page the finder guessed at that never asked for a changed file.
         if (page.status === 'unchanged' && before.report.requested.length === 0) continue;
       }
       const size = (shot) => ({ width: shot.width, height: shot.height });
+      const note = blockedHostsField(before?.blockedHosts, after?.blockedHosts);
       if (page.status === 'created') {
-        if (after.ok) out.push({ path: page.path, state: 'new', before: null, after: after.buffer, ...size(after) });
+        if (after.ok) out.push({ path: page.path, state: 'new', before: null, after: after.buffer, ...size(after), ...note });
       } else if (page.status === 'deleted') {
-        out.push({ path: page.path, state: 'deleted', before: before.buffer, after: null, ...size(before) });
+        out.push({ path: page.path, state: 'deleted', before: before.buffer, after: null, ...size(before), ...note });
       } else if (!after.ok) {
-        out.push({ path: page.path, state: 'after_failed', before: before.buffer, after: null, ...size(before) });
+        out.push({ path: page.path, state: 'after_failed', before: before.buffer, after: null, ...size(before), ...note });
       } else if (before.buffer.equals(after.buffer)) {
-        out.push({ path: page.path, state: 'same', before: null, after: after.buffer, ...size(after) });
+        out.push({ path: page.path, state: 'same', before: null, after: after.buffer, ...size(after), ...note });
+      } else if ((before.earlierThumb || after.earlierThumb) && !changeShowsThroughMotion(before, after)) {
+        // The page moves on its own and the change does not stand out from
+        // that: two pictures would differ for a reason nobody asked about.
+        continue;
       } else {
-        out.push({ path: page.path, state: 'ready', before: before.buffer, after: after.buffer, ...size(after) });
+        out.push({ path: page.path, state: 'ready', before: before.buffer, after: after.buffer, ...size(after), ...note });
       }
     }
     return { pages: out, failed };
@@ -299,6 +336,7 @@ function createChangePicturesService({
         afterUrl: page.afterUrl || null,
         width: page.width,
         height: page.height,
+        ...blockedHostsField(page.blockedHosts),
       })),
     };
   }

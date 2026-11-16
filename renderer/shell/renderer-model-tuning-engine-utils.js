@@ -140,6 +140,7 @@
       dir: String(result.dir || ''),
       mainGguf: modelPathName(result.path),
       drafterGguf: String(result.drafterGguf || ''),
+      embeddedMtpLayers: Number.isInteger(result.embeddedMtpLayers) ? result.embeddedMtpLayers : null,
       source: '',
     };
   }
@@ -184,16 +185,108 @@
     return /[\\/]/.test(path) ? path.replace(/[\\/][^\\/]*$/, '') : '';
   }
 
-  // The build row's value: "Bundled", or the runtime's folder name plus its
-  // build ("llama-prism-b10683-cuda13.3 · build 10683"); the full path is the title.
+  // The build row's value: "Bundled", the build Jenny picks on its own (row 142), or the runtime's
+  // folder name plus its build ("llama-prism-b10683-cuda13.3 · build 10683"); the full path is the title.
   function runtimeValueText(draft) {
     var path = String(draft && draft.runtimePath || '');
+    if (!path && draft && draft.runtimeAuto) return jt('models.library.tuning.automaticBuild', 'Automatic · build {build}', { build: draft.runtimeAuto.build });
     if (!path) return jt('models.library.tuning.bundledWithJenny', 'Bundled with Jenny');
     var folder = modelPathName(runtimeDir(path)) || path;
     var build = Number(draft.runtimeBuild);
     return Number.isSafeInteger(build) && build > 0
       ? jt('models.library.tuning.buildValue', '{folder} · build {build}', { folder: folder, build: build })
       : folder;
+  }
+
+  function runtimeTitleText(draft) {
+    return String(draft && (draft.runtimePath || (draft.runtimeAuto && draft.runtimeAuto.label)) || '');
+  }
+
+  // Why the build is automatic: the row note.
+  function runtimeNoteText(draft) {
+    var auto = draft && !draft.runtimePath ? draft.runtimeAuto : null;
+    if (!auto) return '';
+    return auto.architecture
+      ? jt('models.library.tuning.automaticNote', 'The bundled build can\'t read {architecture} models.', { architecture: auto.architecture })
+      : jt('models.library.tuning.automaticNoteGeneric', 'The bundled build can\'t read this model.');
+  }
+
+  // The build row, patched in place from the draft (no re-render: unapplied inputs survive).
+  function paintRuntimeValue(host, draft) {
+    var code = host && host.querySelector && host.querySelector('[data-model-tuning-runtime]');
+    if (code) {
+      code.textContent = runtimeValueText(draft);
+      code.title = runtimeTitleText(draft);
+      if (code.classList) code.classList.toggle('model-tuning-gguf-path--plain', !draft.runtimePath);
+    }
+    var note = host && host.querySelector && host.querySelector('[data-model-tuning-row="runtimePath"] [data-model-tuning-note]');
+    if (note) note.textContent = runtimeNoteText(draft);
+  }
+
+  // With no saved build, asks main whether it picks one on its own for this model; the answer lands on
+  // the draft (null when not), then done() repaints. A missing, failed or stale answer changes nothing.
+  function loadRuntimeAuto(windowRef, modelTag, draft, isStale, done) {
+    var server = windowRef && windowRef.jennyShell && windowRef.jennyShell.llamaServer;
+    if (!draft || draft.engine !== 'llama-server' || draft.runtimePath || !server || typeof server.runtimeOptions !== 'function') return;
+    Promise.resolve().then(function () { return server.runtimeOptions({ modelTag: modelTag }); }).then(function (answer) {
+      if (isStale()) return;
+      var current = answer && answer.ok === true && answer.current ? answer.current : null;
+      var build = Number(current && current.build);
+      draft.runtimeAuto = current && current.source === 'auto' && Number.isSafeInteger(build) && build > 0
+        ? { build: build, label: String(current.label || ''), architecture: typeof answer.architecture === 'string' ? answer.architecture : '' }
+        : null;
+      done();
+    }, function () { /* today's value stays */ });
+  }
+
+  function usingBuildText(build) {
+    return jt('models.library.runtime.usingBuildStarting', 'Using build {build} · starting…', { build: build });
+  }
+
+  // The Tune footer's "Use build N" buttons (row 142), or null until their module loads.
+  function createBuildRemedies(root, windowRef, handlers) {
+    var builds = (root && root.modelLibraryRuntimeBuilds)
+      || (typeof require === 'function' ? require('./model-library/model-library-runtime-builds') : null);
+    return builds && typeof builds.createRemedies === 'function' ? builds.createRemedies({
+      windowRef: windowRef, scope: 'tune', actionsTag: 'span', actionsClass: 'model-tuning-drawer-status-actions',
+      onChange: handlers.onChange, onSwitched: handlers.onSwitched, noneText: function (base) { return base + ' ' + builds.noOtherBuildRowText(); },
+    }) : null;
+  }
+
+  // The llama-server launch serving this model now, from a fresh status: its pid (0 for a reused
+  // server) and the time it became ready, which any relaunch changes. '' when the model is not
+  // served, null when the status could not be read.
+  async function servedLaunch(windowRef, modelId) {
+    try {
+      var status = await windowRef.jennyShell.llamaServer.getStatus();
+      return servesModel(status, modelId) ? (Number(status.pid) || 0) + '@' + (Number(status.changedAt) || 0) : '';
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // Row 142: restart() relaunches main's last spec, so a "Use build N" retry must not run while
+  // another model is served (it would restart that one). A failed status read is not another model.
+  async function otherModelServed(windowRef, modelId) {
+    try {
+      var status = await windowRef.jennyShell.llamaServer.getStatus();
+      return status?.state === 'ready' && !servesModel(status, modelId);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // Success copy after a restart: 'context' keeps its own; 'engine' names the build it now runs when the
+  // build changed (runtimeLabel is main's bounded token, never shown raw). savedNext: the copy for a
+  // reused server Jenny did not launch ('unknown'): it never took the new -c or engine settings.
+  function restartSucceededText(serverStatus, reason, opts, savedNext) {
+    var label = String(serverStatus?.runtimeLabel || '');
+    if (label === 'unknown') return savedNext(reason);
+    if (reason !== 'engine') return jt('models.tuning.restartSucceeded', 'Restarted llama-server. The new context window is live.');
+    var build = /^build ([1-9]\d{0,8})$/.exec(label);
+    if (opts?.runtimeChanged && build) return jt('models.tuning.restartSucceededBuild', 'Restarted llama-server. It now runs build {build}.', { build: build[1] });
+    if (opts?.runtimeChanged && label === 'bundled') return jt('models.tuning.restartSucceededBundled', 'Restarted llama-server. It now runs the bundled build.');
+    return jt('models.tuning.restartSucceededEngine', 'Restarted llama-server. The new engine settings are live.');
   }
 
   // llamaServer.chooseRuntime {ok:false, reason} -> status copy.
@@ -294,9 +387,17 @@
       if (view.ggufEntry.source === 'ollama' || view.ggufEntry.ollamaBlob === true) {
         return jt('models.library.tuning.ollamaDrafterMissing', 'MTP drafter not found beside Ollama\'s copy · add its folder under GGUF folders');
       }
-      return jt('models.library.tuning.drafterMissing', 'Drafter file missing · falls back to plain decoding');
+      // A GGUF with its own MTP head runs MTP without a drafter file, before launch too.
+      if (Number(view.ggufEntry.embeddedMtpLayers) > 0) return jt('models.library.tuning.mtpEmbeddedHead', 'Uses the MTP head built into this model');
+      return jt('models.library.tuning.drafterMissing', 'No drafter file yet. MTP falls back to plain decoding');
     }
     return jt('models.library.tuning.mtpVramUsage', 'MTP uses about {memory} more VRAM', { memory: formatGb(view.headroomMb) });
+  }
+
+  // The Drafter file and Vision rows start hidden and empty: the companions module
+  // (renderer-model-tuning-companions.js) fills and shows each one it applies to.
+  function companionRowHtml(row, key, label, tip) {
+    return row({ key: key, wide: true, hidden: true, label: label, tip: tip });
   }
 
   // Tune drawer > Engine section markup (per-model engine choice + MTP + GGUF
@@ -346,6 +447,8 @@
           disabled: ctx.pending || !view.eligible,
         }),
       })
+      + companionRowHtml(row, 'drafter', jt('models.library.tuning.companion.drafterLabel', 'Drafter file'),
+        jt('models.library.tuning.companion.drafterTip', 'A small model file that drafts tokens for multi-token prediction. It sits beside the model file.'))
       + row({
         key: 'modelPath', wide: true, label: jt('models.library.tuning.modelFile', 'Model file'),
         desc: jt('models.library.tuning.desc.modelFile', 'The GGUF file llama-server loads.'),
@@ -354,6 +457,8 @@
           + escapeHtml(pathLabel) + '</code>'
           + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseGgufText, title: chooseGgufText, variant: 'ghost', size: 'sm', disabled: ctx.pending }),
       })
+      + companionRowHtml(row, 'vision', jt('models.library.tuning.companion.visionLabel', 'Vision'),
+        jt('models.library.tuning.companion.visionTip', 'A projector file lets the model read images. It sits beside the model file and uses about 0.9 GB of VRAM.'))
       + buildRuntimeRowHtml(ctx);
     return rows.sectionHtml(escapeHtml, jt('models.library.tuning.engineTitle', 'Engine'), ctx.statusText, body,
       ' data-model-tuning-engine');
@@ -374,7 +479,8 @@
       label: jt('models.library.tuning.llamaServerBuild', 'llama-server build'),
       desc: jt('models.library.tuning.desc.build', 'Which llama-server program runs it.'),
       tip: jt('models.library.tuning.tip.build', 'Which llama-server program runs this model. Bundled ships with Jenny; choose another build to try a newer llama.cpp.'),
-      controlHtml: '<code class="model-tuning-gguf-path' + (path ? '' : ' model-tuning-gguf-path--plain') + '" data-model-tuning-runtime title="' + escapeHtml(path) + '">'
+      note: runtimeNoteText(draft),
+      controlHtml: '<code class="model-tuning-gguf-path' + (path ? '' : ' model-tuning-gguf-path--plain') + '" data-model-tuning-runtime title="' + escapeHtml(runtimeTitleText(draft)) + '">'
         + escapeHtml(runtimeValueText(draft)) + '</code>'
         + '<span class="model-tuning-row-actions">'
         + ctx.actionButton({ id: 'choose-llama-server-runtime', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseBuildText, title: chooseBuildText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
@@ -417,6 +523,7 @@
     applyStatusMessage: applyStatusMessage,
     buildEngineSectionHtml: buildEngineSectionHtml,
     buildRuntimeRowHtml: buildRuntimeRowHtml,
+    createBuildRemedies: createBuildRemedies,
     deriveEngineView: deriveEngineView,
     engineDirtyFields: engineDirtyFields,
     engineNote: engineNote,
@@ -425,12 +532,18 @@
     pickerFailureText: pickerFailureText,
     buildManagedPatch: buildManagedPatch,
     formatGb: formatGb,
+    loadRuntimeAuto: loadRuntimeAuto,
     modelPathName: modelPathName,
+    paintRuntimeValue: paintRuntimeValue,
+    restartSucceededText: restartSucceededText,
     returnedEntryMatches: returnedEntryMatches,
     runtimePickerDefaultDir: runtimePickerDefaultDir,
     runtimePickerFailureText: runtimePickerFailureText,
     runtimeValueText: runtimeValueText,
     servedContextNote: servedContextNote,
+    servedLaunch: servedLaunch,
     servesModel: servesModel,
+    otherModelServed: otherModelServed,
+    usingBuildText: usingBuildText,
   };
 });

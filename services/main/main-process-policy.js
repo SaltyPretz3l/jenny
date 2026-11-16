@@ -11,6 +11,8 @@ const MANAGED_CONFIG_REFRESH_REASONS = new Set([
   'tools_worktree_enabled_updated',
   'feature_settings_updated',
   'time_format_updated',
+  // The sidecar prompt reads drawing_instructions from the managed config.
+  'drawing_instructions_updated',
   // The sidecar parses ui_language from the managed config. Safety mode and the
   // auto-approve streak cap are NOT here: they ride every chat.send (owner D3).
   'ui_language_updated',
@@ -56,6 +58,7 @@ const FEATURE_STATE_CHANGE_REASONS = new Set([
 // Known shell-config write reasons whose sections the feature payload never reads.
 const NON_FEATURE_STATE_REASONS = new Set([
   'time_format_updated',
+  'drawing_instructions_updated',
   'default_run_mode_updated',
   'ui_language_updated',
   'safety_mode_updated',
@@ -106,12 +109,17 @@ function shouldBroadcastFeatureState(reason, reasons) {
     || !NON_FEATURE_STATE_REASONS.has(entry));
 }
 
+// One truthiness rule for the boot-policy switches above and below.
+function isEnvFlagSet(env, name) {
+  return /^(1|true|yes)$/i.test(String((env || {})[name] || '').trim());
+}
+
 function shouldAutoStartMainProcess({
   hasElectronRuntime = Boolean(process.versions && process.versions.electron),
   isMainModule = require.main === module,
   env = process.env,
 } = {}) {
-  const skipAutoStart = /^(1|true|yes)$/i.test(String(env.JENNY_SKIP_MAIN_AUTOSTART || '').trim());
+  const skipAutoStart = isEnvFlagSet(env, 'JENNY_SKIP_MAIN_AUTOSTART');
   return !skipAutoStart && (isMainModule || hasElectronRuntime);
 }
 
@@ -120,14 +128,24 @@ function shouldAutoStartMainProcess({
 // (its own reporter), windowless failures, and an explicit headless opt-in.
 function resolveBootFailureAction({ hasPackagedSmoke = false, hasLiveWindow = false, env = process.env } = {}) {
   if (hasPackagedSmoke) return 'packaged-smoke';
-  const exitRequested = /^(1|true|yes)$/i.test(String(env.JENNY_EXIT_ON_BOOT_FAILURE || '').trim());
+  const exitRequested = isEnvFlagSet(env, 'JENNY_EXIT_ON_BOOT_FAILURE');
   return hasLiveWindow && !exitRequested ? 'keep-window' : 'exit';
+}
+
+// A boot failure that exits with no window gets a native error box, except
+// where nobody is there to dismiss it (an agent or headless launch, or a quit
+// already under way) and once engine or sidecar children may be running: the
+// box is modal and the shutdown that stops them runs only after it closes.
+function shouldShowBootFailureDialog({ quitting = false, childrenStarted = false, env = process.env } = {}) {
+  return !quitting && !childrenStarted
+    && !isEnvFlagSet(env, 'JENNY_EXIT_ON_BOOT_FAILURE') && !isEnvFlagSet(env, 'JENNY_AGENT_DEV');
 }
 
 module.exports = {
   FEATURE_STATE_CHANGE_REASONS,
   MANAGED_CONFIG_REFRESH_REASONS,
   resolveBootFailureAction,
+  shouldShowBootFailureDialog,
   shouldAutoStartMainProcess,
   shouldBroadcastFeatureState,
   shouldRefreshManagedConfigForShellConfigReason,

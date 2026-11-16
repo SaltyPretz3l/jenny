@@ -144,6 +144,7 @@ test('an unscoped search spans the visible channels in order; a scoped one stays
   const f = await createTeamChatCommandsFixture(t);
   const { alice } = f.seats;
   assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_alpha' })).ok, true);
+  await f.addToProject('project_alpha', 'alice');
   const inTeam = await f.post(alice, 'hit in team');
   const inProject = await f.send(alice, 'team.chat.post', { channel_id: 'chan_project_alpha', text: 'hit in project' });
   assert.equal(inProject.ok, true);
@@ -224,6 +225,7 @@ test('an unscoped search answers a transient read failure instead of a partial r
   const f = await createTeamChatCommandsFixture(t, { storeLimits: { segmentMaxMessages: 2 } });
   const { alice } = f.seats;
   assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_alpha' })).ok, true);
+  await f.addToProject('project_alpha', 'alice');
   await f.post(alice, 'hit in team');
   for (let i = 0; i < 5; i += 1) {
     assert.equal((await f.send(alice, 'team.chat.post', { channel_id: 'chan_project_alpha', text: `hit ${i}` })).ok, true);
@@ -247,6 +249,7 @@ test('an unscoped search passes over a channel the store reports broken before t
   const f = await createTeamChatCommandsFixture(t);
   const { alice } = f.seats;
   assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_alpha' })).ok, true);
+  await f.addToProject('project_alpha', 'alice');
   const inTeam = await f.post(alice, 'hit in team');
   assert.equal((await f.send(alice, 'team.chat.post', { channel_id: 'chan_project_alpha', text: 'hit' })).ok, true);
   // As a corrupt segment leaves it: this channel only answers its reason.
@@ -307,4 +310,22 @@ test('the 250 ms budget starts after the channel load, so a cold first call scan
   assert.ok(now >= 3_000, 'the load ran on the search clock');
   assert.equal(answer.next_cursor, null, 'the budget was not spent on the load');
   assert.equal(answer.matches.length, 20);
+});
+
+test('a member who is not in a project finds nothing in its existing channel, unscoped or scoped', async (t) => {
+  const f = await createTeamChatCommandsFixture(t);
+  const { alice, bob } = f.seats;
+  assert.equal((await f.chat.store.createChannel({ channelId: 'chan_project_alpha' })).ok, true);
+  await f.addToProject('project_alpha', 'alice');
+  const posted = await f.post(alice, 'secret needle', { channel_id: 'chan_project_alpha' });
+  assert.equal(posted.ok, true, JSON.stringify(posted));
+  assert.equal((await search(f, alice, { query: 'needle', channel_id: 'chan_project_alpha' })).matches.length, 1,
+    'a member of the project finds it');
+  const unscoped = await search(f, bob, { query: 'needle' });
+  assert.equal(unscoped.ok, true, JSON.stringify(unscoped));
+  assert.deepEqual(unscoped.matches, [], 'unscoped: the channel is left out of the scan');
+  const scoped = await search(f, bob, { query: 'needle', channel_id: 'chan_project_alpha' });
+  assert.equal(scoped.ok, false, 'scoped: refused');
+  assert.equal(scoped.error.reason, 'team_chat_not_found');
+  assert.equal(JSON.stringify(scoped).includes('secret'), false, 'no excerpt');
 });

@@ -6,6 +6,9 @@
 //   { ok: false, failure }                          refused, nothing changes
 //   { ok: true, noop: true, result }                nothing to commit
 //   { ok: true, audit: [...], event, result }       commit, audit first
+//   { ok: true, audit: [...], event: null, result: { ok: false, error } }
+//                                                   commit, then the caller is refused (the store spreads the
+//                                                   result over `ok: true`): a redeem refused for a taken name
 // The store owns the commit protocol (audit, write, directory, events); this
 // file owns the table in the design spec's "States and transitions".
 //
@@ -18,7 +21,7 @@ const { isPublicKey } = require('./ids');
 const projects = require('./project-transitions');
 const { refuse, findMember, activeActor } = require('./transition-common');
 const {
-  ASSIGNABLE_ROLES, LOCAL_ACTOR, LIMITS, INVITE_KINDS, isCleanText,
+  ASSIGNABLE_ROLES, LOCAL_ACTOR, LOCAL_COMMAND, LIMITS, INVITE_KINDS, displayNameKey, isInputText, isTeamModel,
 } = require('./member-schema');
 
 function activeDevicesOf(doc, memberId) {
@@ -32,6 +35,31 @@ function allKeys(doc) {
 
 function isLiveInvite(invite, now) {
   return invite.used_at === null && invite.revoked_at === null && invite.expires_at > now;
+}
+
+// An invite never outlives the authority that minted it (R01-F01): revokes
+// every live invite `matches` picks, in the same commit as the change, and
+// answers how many.
+function revokeLiveInvites(doc, matches, now) {
+  let count = 0;
+  for (const invite of doc.invites) {
+    if (isLiveInvite(invite, now) && matches(invite)) {
+      invite.revoked_at = now;
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function withInvites(detail, count) {
+  if (count === 0) return detail;
+  return detail ? `${detail},revoked_invites=${count}` : `revoked_invites=${count}`;
+}
+
+// Invites a member minted for their own devices, never a recovery invite the
+// local command minted for them.
+function memberMinted(memberId) {
+  return (invite) => invite.member_id === memberId && invite.created_by !== LOCAL_ACTOR;
 }
 
 // The actor must be the active owner.
@@ -62,8 +90,12 @@ function createInvite(doc, input, ctx) {
   if (!isPublicKey(input.invitePublicKey) || allKeys(doc).has(input.invitePublicKey)) {
     return refuse('invalid', 'team_public_key_invalid');
   }
+  // Only the local command's marker mints an owner invite; null or undefined is
+  // never the local command, and the marker is no member.
   const local = input.kind === 'owner_first' || input.kind === 'recovery';
-  if (local !== (input.actorMemberId === null)) return refuse('forbidden', local ? 'role_forbidden' : 'team_not_found');
+  if (local !== (input.actorMemberId === LOCAL_COMMAND)) {
+    return refuse('forbidden', local ? 'role_forbidden' : 'team_not_found');
+  }
 
   let role;
   let memberId = null;
@@ -96,7 +128,10 @@ function createInvite(doc, input, ctx) {
       memberId = checked.actor.member_id;
     }
   }
-  if (doc.invites.filter((invite) => isLiveInvite(invite, ctx.now)).length >= LIMITS.MAX_OUTSTANDING_INVITES) {
+  // A local command's invite is neither counted nor refused (R02-F01): eight
+  // outstanding invites must not lock a lost owner out of recovery.
+  const outstanding = doc.invites.filter((invite) => invite.created_by !== LOCAL_ACTOR && isLiveInvite(invite, ctx.now));
+  if (!local && outstanding.length >= LIMITS.MAX_OUTSTANDING_INVITES) {
     return refuse('limit', 'team_invite_limit');
   }
   const invite = {
@@ -109,19 +144,21 @@ function createInvite(doc, input, ctx) {
     expires_at: ctx.now + ttlMs,
     used_at: null,
     revoked_at: null,
+    name_refusals: 0,
   };
   doc.invites.push(invite);
   return {
     ok: true,
     audit: [auditEntry('invite_created', {
-      actor_member_id: input.actorMemberId, subject_member_id: memberId, detail: `kind=${input.kind},role=${role}`,
+      actor_member_id: local ? null : input.actorMemberId, subject_member_id: memberId,
+      detail: `kind=${input.kind},role=${role}`,
     })],
     event: null,
     result: { invite_id: invite.invite_id, expires_at: invite.expires_at },
   };
 }
 
-// The local commands (actor exactly null, never undefined) may revoke only an
+// The local command (its marker, never null or undefined) may revoke only an
 // invite a local command minted: a first-owner or recovery invite whose string
 // never reached its holder.
 function revokeLocalInvite(doc, input, ctx) {
@@ -139,7 +176,7 @@ function revokeLocalInvite(doc, input, ctx) {
 }
 
 function revokeInvite(doc, input, ctx) {
-  if (input.actorMemberId === null) return revokeLocalInvite(doc, input, ctx);
+  if (input.actorMemberId === LOCAL_COMMAND) return revokeLocalInvite(doc, input, ctx);
   const checked = activeActor(doc, input.actorMemberId);
   if (!checked.ok) return checked;
   const invite = doc.invites.find((entry) => entry.invite_id === input.inviteId);
@@ -182,8 +219,16 @@ function redeemInput(doc, input) {
   if (!isPublicKey(input.devicePublicKey) || allKeys(doc).has(input.devicePublicKey)) {
     return refuse('invalid', 'team_public_key_invalid');
   }
-  if (!isCleanText(input.label)) return refuse('invalid', 'team_label_invalid');
+  if (!isInputText(input.label)) return refuse('invalid', 'team_label_invalid');
   return null;
+}
+
+// The owner admits a person by reading the name, so a joiner may not take the
+// name of a pending or active member (R01-F04).
+function isNewDisplayName(doc, displayName) {
+  if (!isInputText(displayName)) return false;
+  const key = displayNameKey(displayName);
+  return !doc.members.some((member) => member.state !== 'revoked' && displayNameKey(member.display_name) === key);
 }
 
 function redeem(doc, rawInput, ctx) {
@@ -204,24 +249,21 @@ function redeem(doc, rawInput, ctx) {
   if (kind === 'recovery' && existing.role !== 'owner') return refuse('forbidden', 'invite_not_valid');
   const badInput = redeemInput(doc, input);
   if (badInput) return badInput;
-  if ((kind === 'owner_first' || kind === 'new_member') && !isCleanText(input.displayName)) {
-    return refuse('invalid', 'team_display_name_invalid');
-  }
+  const named = kind === 'owner_first' || kind === 'new_member';
+  if (named && !isInputText(input.displayName)) return refuse('invalid', 'team_display_name_invalid');
   if (kind === 'new_member'
     && doc.members.filter((member) => member.state !== 'revoked').length >= LIMITS.MAX_LIVE_MEMBERS) {
     return refuse('limit', 'team_member_limit');
   }
+  // Every refusal above keeps the invite and depends on no name.
+  if (named && !isNewDisplayName(doc, input.displayName)) return refuseTakenName(invite, ctx);
   if (kind === 'add_device' && activeDevicesOf(doc, existing.member_id).length >= LIMITS.MAX_ACTIVE_DEVICES) {
     return refuse('limit', 'team_device_limit');
   }
   invite.used_at = ctx.now;
   // The first owner exists now: no other owner invite may stay live.
   if (kind === 'owner_first') {
-    for (const other of doc.invites) {
-      if (other !== invite && other.member_id === null && other.role === 'owner' && isLiveInvite(other, ctx.now)) {
-        other.revoked_at = ctx.now;
-      }
-    }
+    revokeLiveInvites(doc, (other) => other.member_id === null && other.role === 'owner', ctx.now);
   }
   if (kind === 'add_device' || kind === 'recovery') return redeemForExisting(doc, { kind, input, invite, member: existing }, ctx);
 
@@ -255,13 +297,36 @@ function redeem(doc, rawInput, ctx) {
   };
 }
 
+// Owner decision E79 (reverses the round-two fix for R10-F04): a taken name keeps the invite live and the holder
+// types another. The oracle stays bounded: the host counts each refusal on the invite (never a client's number) and
+// audits it by invite id, never the name tried; past MAX_NAME_REFUSALS the next one spends the invite and reads like
+// an invalid invite.
+function refuseTakenName(invite, ctx) {
+  const spent = invite.name_refusals >= LIMITS.MAX_NAME_REFUSALS;
+  if (spent) invite.used_at = ctx.now;
+  else invite.name_refusals += 1;
+  const tries = spent ? LIMITS.MAX_NAME_REFUSALS + 1 : invite.name_refusals;
+  const audit = [auditEntry('invite_name_taken', {
+    actor_member_id: null, subject_member_id: invite.member_id,
+    detail: `invite=${invite.invite_id},refusals=${tries}${spent ? ',spent' : ''}`,
+  })];
+  const failure = spent ? refuse('forbidden', 'invite_not_valid') : refuse('conflict', 'team_display_name_taken');
+  return { ok: true, audit, event: null, result: failure.failure };
+}
+
 function redeemForExisting(doc, { kind, input, invite, member }, ctx) {
   const dropped = kind === 'recovery' ? activeDevicesOf(doc, member.member_id) : [];
   for (const device of dropped) device.state = 'revoked';
+  // A recovery takes back everything the lost owner keys could have minted, and every other recovery invite
+  // whoever minted it (review round two, R10-F03): the owner is back, so no second string may sign them out.
+  // `minted` overlaps `created_by` on a well-formed file; kept against a hand-edited one.
+  const minted = memberMinted(member.member_id);
+  const killed = kind === 'recovery' ? revokeLiveInvites(doc, (other) => other.created_by === member.member_id
+    || minted(other) || inviteKind(other) === 'recovery', ctx.now) : 0;
   const device = newDevice(doc, input, member.member_id, ctx);
   const base = { actor_member_id: member.member_id, subject_member_id: member.member_id, name: member.display_name };
   const audit = kind === 'recovery'
-    ? [auditEntry('recovery_used', { ...base, detail: `revoked_devices=${dropped.length}` }),
+    ? [auditEntry('recovery_used', { ...base, detail: withInvites(`revoked_devices=${dropped.length}`, killed) }),
       ...dropped.map((old) => auditEntry('device_revoked', { ...base, subject_device_id: old.device_id }))]
     : [auditEntry('invite_redeemed', { ...base, subject_device_id: device.device_id, detail: 'add_device' })];
   audit.push(auditEntry('device_added', { ...base, subject_device_id: device.device_id }));
@@ -329,7 +394,7 @@ function setRole(doc, input, ctx) {
 function rename(doc, input) {
   const checked = ownerActor(doc, input.actorMemberId);
   if (!checked.ok) return checked;
-  if (!isCleanText(input.name)) return refuse('invalid', 'team_name_invalid');
+  if (!isInputText(input.name)) return refuse('invalid', 'team_name_invalid');
   if (doc.team.name === input.name) return { ok: true, noop: true, result: { changed: false } };
   doc.team.name = input.name;
   return {
@@ -340,18 +405,29 @@ function rename(doc, input) {
   };
 }
 
+// The team model (slice 4e, schema 3's `team.model`): the active owner only; null is Automatic.
+// Not audited: it changes which model a new conversation starts on, never who may do what.
+function setTeamModel(doc, input) {
+  const checked = ownerActor(doc, input.actorMemberId);
+  if (!checked.ok) return checked;
+  if (!(input.model === null || isTeamModel(input.model))) return refuse('invalid', 'team_model_invalid');
+  if (doc.team.model === input.model) return { ok: true, noop: true, result: { changed: false } };
+  doc.team.model = input.model;
+  return { ok: true, audit: [], event: null, result: { changed: true } };
+}
+
 // Revokes `member` and every one of its keys. Older revoked devices of the same
 // member are dropped (only the devices active now are kept as revoked), and its
-// unused invites die with it.
+// unused invites die with it: those for it and those it created.
 function applyRevoke(doc, member, byId, kind, ctx) {
   const droppedIds = activeDevicesOf(doc, member.member_id).map((device) => device.device_id);
   doc.devices = doc.devices.filter((device) => device.member_id !== member.member_id || device.state === 'active');
   for (const device of doc.devices) {
     if (device.member_id === member.member_id) device.state = 'revoked';
   }
-  for (const invite of doc.invites) {
-    if (invite.member_id === member.member_id && isLiveInvite(invite, ctx.now)) invite.revoked_at = ctx.now;
-  }
+  // The `created_by` clause is defence against a hand-edited file: transfer already took them.
+  const killed = revokeLiveInvites(doc, (invite) => invite.member_id === member.member_id
+    || invite.created_by === member.member_id, ctx.now);
   const wasPending = member.state === 'pending';
   member.state = 'revoked';
   member.revoked_at = ctx.now;
@@ -363,7 +439,7 @@ function applyRevoke(doc, member, byId, kind, ctx) {
       actor_member_id: byId,
       subject_member_id: member.member_id,
       name: member.display_name,
-      detail: projects.cascadeDetail(wasPending ? 'was=pending' : 'was=active', left),
+      detail: withInvites(projects.cascadeDetail(wasPending ? 'was=pending' : 'was=active', left), killed),
     })],
     event: memberEvent('member_revoked', member, droppedIds, ctx.now),
     result: { member_id: member.member_id },
@@ -399,6 +475,13 @@ function revokeDevice(doc, input, ctx) {
   if (device.state === 'revoked') return refuse('conflict', 'team_member_state_invalid');
   const member = findMember(doc, device.member_id);
   device.state = 'revoked';
+  // An invite does not record the device that minted it, so every invite the
+  // member minted for their own devices goes with any one of them, and an
+  // owner device takes the owner's new-member invites too.
+  const minted = memberMinted(member.member_id);
+  const ownerMinted = (invite) => member.role === 'owner' && invite.member_id === null
+    && invite.created_by === member.member_id;
+  const killed = revokeLiveInvites(doc, (invite) => minted(invite) || ownerMinted(invite), ctx.now);
   return {
     ok: true,
     audit: [auditEntry('device_revoked', {
@@ -406,6 +489,7 @@ function revokeDevice(doc, input, ctx) {
       subject_member_id: member.member_id,
       subject_device_id: device.device_id,
       name: member.display_name,
+      detail: withInvites(null, killed),
     })],
     event: memberEvent('device_revoked', member, [device.device_id], ctx.now),
     result: { device_id: device.device_id },
@@ -427,12 +511,18 @@ function transferOwner(doc, input, ctx) {
   const previousOwner = checked.actor;
   previousOwner.role = 'member';
   target.role = 'owner';
+  // Only an owner mints a new-member invite, and a recovery invite is void once
+  // ownership moves: the old owner's die with the role.
+  const killed = revokeLiveInvites(doc, (invite) => (invite.member_id === null
+    && invite.created_by === previousOwner.member_id)
+    || (invite.member_id === previousOwner.member_id && invite.created_by === LOCAL_ACTOR), ctx.now);
   const deviceIds = [...activeDevicesOf(doc, target.member_id), ...activeDevicesOf(doc, previousOwner.member_id)]
     .map((device) => device.device_id);
   return {
     ok: true,
     audit: [auditEntry('owner_transferred', {
       actor_member_id: previousOwner.member_id, subject_member_id: target.member_id, name: target.display_name,
+      detail: withInvites(null, killed),
     })],
     event: memberEvent('owner_transferred', target, deviceIds, ctx.now),
     result: { member_id: target.member_id },
@@ -493,6 +583,7 @@ module.exports = {
   revokeDevice,
   transferOwner,
   rename,
+  setTeamModel,
   touchDevice,
   prune,
 };

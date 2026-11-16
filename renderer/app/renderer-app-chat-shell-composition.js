@@ -51,7 +51,6 @@
       thinkingController,
       thinkingIndicator,
       composerToggleModule,
-      toastActionHandlers,
       timelineVirtualizer, chatScrollCoordinator, ...pane.controllers,
     },
     callbacks: {

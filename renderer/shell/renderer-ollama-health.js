@@ -2,7 +2,9 @@
  *
  * Renderer-only Ollama health UI consuming the feature-flagged
  * `window.jennyShell.ollamaTray` bridge. It fails soft when the bridge is
- * unavailable or the flag is off.
+ * unavailable or the flag is off. The Ollama row of "Engines and providers"
+ * (model-library-services.js) is registered here; the health facts and
+ * actions render into that row's Manage drawer.
  *
  * Remediation actions run only from an explicit click.
  */
@@ -18,11 +20,9 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var GROUP_ID = 'ollamaHealthGroup';
-  // Card-scoped selector — see renderer-knowledge-folders.js's identical comment:
-  // the settings NAV items carry the same data-settings-section attribute and
-  // precede the cards in the DOM, so a bare attribute selector would mount
-  // into the nav sidebar instead of the card.
-  var MODELS_SECTION_SELECTOR = '.settings-card[data-settings-section="models"]';
+  var DRAWER_HOST_ID = 'ollamaHealthDrawerHost';
+  var SERVICE_ID = 'ollama';
+  var SERVICES_READY_EVENT = 'model-library-services-ready';
 
   function resolveStringUtils() {
     return (root && root.stringUtils)
@@ -79,74 +79,49 @@
       : jt('models.ollama.health.notRunning', 'Not running');
     var shortcutsLabel = describeStartupShortcuts(view.status.startupShortcuts);
 
-    var rowsHtml = ''
-      + '<div class="settings-field-row ollama-health-row">'
-      + '<div class="settings-field-row-text">'
-      + '<span class="settings-field-label">' + escapeHtml(jt('models.ollama.health.trayApp', 'Tray app')) + '</span>'
-      + '<p class="settings-field-description">' + escapeHtml(trayLabel) + '</p>'
-      + '</div>'
-      + '</div>'
-      + '<div class="settings-field-row ollama-health-row">'
-      + '<div class="settings-field-row-text">'
-      + '<span class="settings-field-label">' + escapeHtml(jt('models.ollama.health.startupShortcuts', 'Startup shortcut(s)')) + '</span>'
-      + '<p class="settings-field-description">' + escapeHtml(shortcutsLabel) + '</p>'
-      + '</div>'
+    var rowsHtml = '<div class="eng-facts">'
+      + '<span><b>' + escapeHtml(jt('models.ollama.health.trayApp', 'Tray app')) + '</b> ' + escapeHtml(trayLabel) + '</span>'
+      + '<span><b>' + escapeHtml(jt('models.ollama.health.startupShortcuts', 'Startup shortcut(s)')) + '</b> ' + escapeHtml(shortcutsLabel) + '</span>'
       + '</div>';
 
     var buttonsHtml = ''
       + actionButton({
-        plain: true,
-        className: 'settings-secondary',
+        variant: 'secondary', size: 'sm',
         label: view.busyAction === 'recheck' ? jt('models.ollama.health.checking', 'Checking…') : jt('models.ollama.health.recheck', 'Re-check'),
         disabled: busy,
         dataset: { 'ollama-health-action': 'recheck' },
       })
       // The tray actions have nothing to act on unless the tray app or its Startup shortcut was found.
       + (view.status.detected ? actionButton({
-        plain: true,
-        className: 'settings-primary',
+        variant: 'primary', size: 'sm',
         label: view.busyAction === 'quit' ? jt('models.ollama.health.quitting', 'Quitting…') : jt('models.ollama.health.quitTrayApp', 'Quit tray app'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'quit' },
       })
       + actionButton({
-        plain: true,
-        className: 'settings-secondary',
+        variant: 'secondary', size: 'sm',
         label: view.busyAction === 'disable' ? jt('models.ollama.health.disabling', 'Disabling…') : jt('models.ollama.health.disableStartupShortcut', 'Disable Startup shortcut'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'disable' },
       }) : '')
       + actionButton({
-        plain: true,
-        className: 'settings-secondary',
+        variant: 'secondary', size: 'sm',
         label: view.busyAction === 'restart' ? jt('models.ollama.health.restarting', 'Restarting…') : jt('models.ollama.health.restartEngine', 'Restart engine'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'restart' },
       })
       + actionButton({
-        plain: true,
-        className: 'settings-secondary',
+        variant: 'ghost', size: 'sm',
         label: jt('models.ollama.health.openDiagnostics', 'Open Diagnostics'),
         disabled: busy,
         dataset: { 'ollama-health-action': 'diagnostics' },
       });
 
-    var bodyHtml = ''
-      + '<p class="settings-group-copy">' + escapeHtml(jt('models.ollama.health.description', 'Check for the Ollama tray app, which can silently kill Jenny\'s managed engine.')) + '</p>'
+    return '<div class="ollama-health-group" id="' + GROUP_ID + '">'
       + platformNoteHtml
       + rowsHtml
-      + '<div class="settings-actions">' + buttonsHtml + '</div>'
-      + '<div class="settings-note ollama-health-status" aria-live="polite">' + escapeHtml(view.statusMessage || '') + '</div>';
-    // While another engine runs and no tray app was found, the checks are
-    // troubleshooting only: they fold away under the heading.
-    if (view.folded === true) {
-      bodyHtml = '<details class="settings-fold ollama-health-fold"' + (view.foldOpen === true ? ' open' : '') + '><summary>'
-        + escapeHtml(jt('models.ollama.health.troubleshooting', 'Troubleshooting')) + '</summary>' + bodyHtml + '</details>';
-    }
-    return ''
-      + '<div class="settings-group ollama-health-group" role="group" aria-labelledby="ollamaHealthHeading" id="' + GROUP_ID + '">'
-      + '<h4 class="settings-group-heading" id="ollamaHealthHeading">' + escapeHtml(jt('models.ollama.health.heading', 'Ollama engine health')) + '</h4>'
-      + bodyHtml
+      + '<div class="eng-buttons">' + buttonsHtml + '</div>'
+      + '<div class="settings-note ollama-health-status" aria-live="polite">' + escapeHtml(view.statusMessage || '') + '</div>'
       + '</div>';
   }
 
@@ -158,7 +133,6 @@
     var appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : function noop() {};
     var setActiveView = typeof d.setActiveView === 'function' ? d.setActiveView : function noop() {};
 
-    var mountedRoot = null;
     var disposed = false;
     var requestGeneration = 0;
 
@@ -166,6 +140,8 @@
       status: { supported: true, detected: false, trayProcesses: [], startupShortcuts: [] },
       busyAction: '',
       statusMessage: '',
+      probing: false,
+      unavailable: false,
     };
 
     function isFeatureEnabled() {
@@ -177,58 +153,49 @@
       );
     }
 
-    // Folded while a known engine other than Ollama runs and no tray app was
-    // found; an unknown engine or a detected tray app keeps it open.
-    function isFolded() {
-      var engine = String((state.offline && state.offline.currentEngine) || '').trim().toLowerCase();
-      return Boolean(engine) && engine !== 'ollama' && view.status.detected !== true;
+    function services() {
+      if (typeof d.services === 'function') return d.services() || null;
+      var module = windowRef.modelLibraryServices || root.modelLibraryServices;
+      return module && typeof module.shared === 'function' ? module.shared({ documentRef: documentRef, windowRef: windowRef }) : null;
     }
 
-    function findModelsCard() {
-      if (!documentRef || typeof documentRef.querySelector !== 'function') {
-        return null;
-      }
-      return documentRef.querySelector(MODELS_SECTION_SELECTOR);
+    // The row's status, in priority order: a tray app that can kill the
+    // engine, then an unreadable status, then a check in flight.
+    function rowStatus() {
+      // Without the tray check nothing is probed, so the row claims no health it has not read.
+      if (!isFeatureEnabled()) return { text: jt('settings.models.services.ollama.builtIn', 'Built in'), tone: 'off', set: true };
+      if (view.status.detected) return { text: jt('settings.models.services.ollama.trayRunning', 'Tray app running'), tone: 'warn', set: true };
+      if (view.unavailable) return { text: jt('settings.models.services.ollama.unavailable', 'Status unavailable'), tone: 'off', set: true };
+      if (view.probing) return { text: jt('models.ollama.health.checking', 'Checking…'), tone: 'busy', set: true };
+      return { text: jt('settings.models.services.ollama.ready', 'Ready'), tone: 'ready', set: true };
     }
 
-    function removeExistingGroup() {
-      var card = findModelsCard();
-      var existing = card ? card.querySelector('#' + GROUP_ID) : (documentRef && documentRef.getElementById(GROUP_ID));
-      if (existing && existing.parentNode) {
-        existing.parentNode.removeChild(existing);
-      }
+    var serviceEntry = {
+      id: SERVICE_ID, kind: 'chat', order: 10, name: 'Ollama',
+      what: jt('settings.models.services.ollama.what', 'Runs Ollama models'),
+      getStatus: rowStatus,
+      renderDrawer: function (body) {
+        body.innerHTML = '<p class="mp-quiet">' + escapeHtml(jt('settings.models.services.ollama.description', 'Jenny runs her own Ollama engine. The Ollama tray app can silently stop it.'))
+          + '</p><div id="' + DRAWER_HOST_ID + '"></div>';
+        render();
+      },
+    };
+
+    // Registered while the controller is bound, as soon as the (lazily
+    // loaded) services module exists; every render retries until then.
+    function syncRow() {
+      var svc = services();
+      if (!svc) return null;
+      if (!svc.has(SERVICE_ID)) svc.register(serviceEntry);
+      return svc;
     }
 
     function render() {
       if (disposed) return;
-      if (!isFeatureEnabled()) {
-        removeExistingGroup();
-        mountedRoot = null;
-        return;
-      }
-      var card = findModelsCard();
-      if (!card) {
-        return;
-      }
-      var existing = card.querySelector('#' + GROUP_ID);
-      // A fold the user opened stays open across re-renders (a Re-check repaints it).
-      var foldOpen = Boolean(existing && existing.querySelector('details.ollama-health-fold[open]'));
-      var html = buildGroupHtml(Object.assign({}, view, { folded: isFolded(), foldOpen: foldOpen }));
-      var libraryExtras = card.querySelector('#modelLibrarySectionExtrasHost');
-      var libraryToolbar = card.querySelector('#modelLibrarySectionToolbarHost');
-      if (libraryExtras) {
-        // Engine health follows the library, which leads the page.
-        if (existing) existing.remove();
-        libraryExtras.insertAdjacentHTML('afterend', html);
-      } else if (libraryToolbar) {
-        if (existing) existing.remove();
-        libraryToolbar.insertAdjacentHTML('beforebegin', html);
-      } else if (existing) {
-        existing.outerHTML = html;
-      } else {
-        card.insertAdjacentHTML('beforeend', html);
-      }
-      mountedRoot = card.querySelector('#' + GROUP_ID);
+      var svc = syncRow();
+      var target = documentRef && documentRef.getElementById ? documentRef.getElementById(DRAWER_HOST_ID) : null;
+      if (target) target.innerHTML = isFeatureEnabled() ? buildGroupHtml(view) : '';
+      if (svc) svc.refresh(SERVICE_ID);
     }
 
     function getBridge() {
@@ -244,14 +211,19 @@
       var bridge = getBridge();
       if (!bridge || typeof bridge.status !== 'function') {
         view.statusMessage = jt('models.ollama.health.unavailable', 'Ollama engine health is unavailable right now.');
+        view.unavailable = true;
         render();
         return Promise.resolve();
       }
       var generation = ++requestGeneration;
+      view.probing = true;
+      render();
       return Promise.resolve()
         .then(function () { return bridge.status(); })
         .then(function (result) {
           if (disposed || generation !== requestGeneration) return;
+          view.probing = false;
+          view.unavailable = !(result && result.ok);
           if (result && result.ok) {
             view.status = {
               supported: result.supported !== false,
@@ -266,6 +238,8 @@
         })
         .catch(function (error) {
           if (disposed || generation !== requestGeneration) return;
+          view.probing = false;
+          view.unavailable = true;
           view.statusMessage = boundedStatusMessage(error, jt('models.ollama.health.readFailed', 'Could not read Ollama engine health.'));
           appendClientLog('WARN', 'ollama_health.status_failed', { message: view.statusMessage });
           render();
@@ -362,8 +336,8 @@
     // Idempotent feature (re)activation. Re-invoked post-hydration by
     // reactivateSettingsSections — the renderer boot seed omits
     // ollama_tray_remediation, so the flag is false at bind() time (the
-    // 0d0118d hydration-race class). refresh() mounts when enabled and removes
-    // the group when disabled, so it is safe to call in both states.
+    // 0d0118d hydration-race class). refresh() fills the drawer when enabled and
+    // clears it when disabled, so it is safe to call in both states.
     function syncFeatureState() {
       return refresh();
     }
@@ -373,6 +347,9 @@
         return;
       }
       documentRef.addEventListener('click', handleClick);
+      // The services module loads with the Settings page, after this controller binds.
+      documentRef.addEventListener(SERVICES_READY_EVENT, render);
+      syncRow();
       syncFeatureState();
     }
 
@@ -381,8 +358,10 @@
       requestGeneration += 1;
       if (documentRef && typeof documentRef.removeEventListener === 'function') {
         documentRef.removeEventListener('click', handleClick);
+        documentRef.removeEventListener(SERVICES_READY_EVENT, render);
       }
-      removeExistingGroup();
+      var svc = services();
+      if (svc) svc.unregister(SERVICE_ID);
     }
 
     return {

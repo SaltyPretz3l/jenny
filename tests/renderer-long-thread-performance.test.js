@@ -131,3 +131,70 @@ test('R2 retains identical full projection while capping only rebuildable turn c
   assert.equal(rollback.projection.rowsByTurnId.size, bounded.projection.rowsByTurnId.size);
   assert.ok(rollback.cache.size > BUDGETS.projectedTurns, 'rollback restores the prior full cache');
 });
+
+function createCountingHydration() {
+  const state = { features: { featureFlags: { chat_long_thread_bounds: true } }, pendingStreams: new Map(), ui: {} };
+  const counter = { projectTurn: 0 };
+  const hydration = createHydrationPipeline({
+    state,
+    callbacks: {
+      projectTurnTree,
+      projectTurn(turn, options) {
+        counter.projectTurn += 1;
+        return projectTurn(turn, options);
+      },
+      projectTurnRows: (events, options) => projectTurn({ turn_id: '', events }, options).rows,
+      buildMessageProjectionFingerprint,
+      indexRowsByRenderMessageId,
+    },
+  });
+  const turnRowCache = new Map();
+  const turnRowOverflow = new Map();
+  function build(messages) {
+    const fingerprints = computeMessageFingerprintList(messages);
+    const fingerprintById = new Map(messages.map((message, index) => [message.id, fingerprints[index].content]));
+    return hydration.buildHydratedTurnProjection(
+      messages,
+      null,
+      { turnEventLogVersion: 0, turnEvents: [] },
+      { turnRowCache, turnRowOverflow, messageContentFingerprintById: fingerprintById, sessionId: 'r2-overflow' }
+    );
+  }
+  return { build, counter, state, turnRowCache, turnRowOverflow };
+}
+
+test('R2 a streaming frame past the turn cap re-projects only the changed turn', () => {
+  let messages = buildCorpus(400, 'streaming');
+  const harness = createCountingHydration();
+  harness.build(messages);
+  assert.equal(harness.counter.projectTurn, 400);
+  harness.counter.projectTurn = 0;
+  const tail = messages[messages.length - 1];
+  messages = messages.slice(0, -1).concat({ ...tail, content: `${tail.content} more` });
+  const projection = harness.build(messages);
+  assert.ok(harness.counter.projectTurn <= 2, `second frame re-projected ${harness.counter.projectTurn} turns`);
+  assert.equal(projection.rowsByTurnId.size, 400);
+  assert.equal(harness.turnRowCache.size, BUDGETS.projectedTurns, 'the bounded cache keeps its budget');
+  assert.ok(harness.turnRowOverflow.size <= 400 - BUDGETS.projectedTurns, 'carry-over holds only turns of this projection');
+  // An edited older turn (beyond the cap) still re-projects.
+  harness.counter.projectTurn = 0;
+  messages = messages.map((message) => (message.id === 'r2_assistant_3' ? { ...message, content: 'edited' } : message));
+  harness.build(messages);
+  assert.equal(harness.counter.projectTurn, 1, 'only the edited old turn re-projects');
+});
+
+test('R2 1,250-turn chat: frame projection cost with the carry-over', () => {
+  let messages = buildCorpus(1250, 'streaming');
+  const harness = createCountingHydration();
+  harness.build(messages);
+  harness.counter.projectTurn = 0;
+  const startedAt = performance.now();
+  for (let index = 0; index < 20; index += 1) {
+    const tail = messages[messages.length - 1];
+    messages = messages.slice(0, -1).concat({ ...tail, content: `${tail.content}.${index}` });
+    harness.build(messages);
+  }
+  const elapsedMs = performance.now() - startedAt;
+  assert.ok(harness.counter.projectTurn <= 20, `20 frames re-projected ${harness.counter.projectTurn} turns`);
+  assert.ok(elapsedMs < PERF_BUDGET_MS * 4, `20 frames took ${elapsedMs.toFixed(1)}ms`);
+});

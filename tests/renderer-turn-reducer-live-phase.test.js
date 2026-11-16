@@ -297,3 +297,51 @@ test('reducer keeps errored status for unclassified error events', () => {
   const turn = applyPayload(state, { type: 'error', streamId: 'stream-live-phase' });
   assert.equal(turn.status, 'errored');
 });
+
+// Reopen labels text by position: before the first tool call commentary,
+// between calls intermediate, after the last call final_answer. The live rows
+// carry the same label from the moment the next tool call arrives, so the
+// preface does not change emphasis at the settle.
+test('live text followed by a tool call takes the phase the reopened projection gives it', () => {
+  const state = createTurnReducerState({ deterministicRowId: true });
+  const segment = (index) => ({ primary_assistant_message_id: `assistant_stream-live-phase_seg${index}` });
+  applyPayload(state, { type: 'started', streamId: 'stream-live-phase' });
+  applyPayload(state, { type: 'delta', streamId: 'stream-live-phase', content: 'Let me check that first.' }, segment(0));
+  const phases = () => state.turns_by_id['stream-live-phase'].rows
+    .filter((row) => row.kind === 'assistant_text').map((row) => [row.payload.text, row.assistant_phase, row.payload.assistant_phase]);
+  assert.deepEqual(phases(), [['Let me check that first.', 'final_answer', 'final_answer']]);
+  applyPayload(state, { type: 'tool_use', streamId: 'stream-live-phase', callId: 'call-a', toolName: 'read_file', status: 'running' },
+    { primary_tool_message_id: 'tool_use_call-a' });
+  assert.deepEqual(phases(), [['Let me check that first.', 'commentary', 'commentary']]);
+  applyPayload(state, { type: 'tool_result', streamId: 'stream-live-phase', callId: 'call-a', toolName: 'read_file', content: 'ok' },
+    { primary_tool_message_id: 'tool_use_call-a', tool_result_message_id: 'tool_result_call-a' });
+  applyPayload(state, { type: 'delta', streamId: 'stream-live-phase', content: 'One more file.' }, segment(1));
+  applyPayload(state, { type: 'tool_use', streamId: 'stream-live-phase', callId: 'call-b', toolName: 'read_file', status: 'running' },
+    { primary_tool_message_id: 'tool_use_call-b' });
+  applyPayload(state, { type: 'delta', streamId: 'stream-live-phase', content: 'Done.' }, segment(2));
+  assert.deepEqual(phases(), [
+    ['Let me check that first.', 'commentary', 'commentary'],
+    ['One more file.', 'intermediate', 'intermediate'],
+    ['Done.', 'final_answer', 'final_answer'],
+  ]);
+});
+
+// A long text stream adds one event per delta. The turn keeps one text event
+// per segment instead, and the rows it builds stay exactly as before.
+test('a long text stream keeps one retained text event per segment and the same rows', () => {
+  const state = createTurnReducerState({ deterministicRowId: true });
+  applyPayload(state, { type: 'started', streamId: 'stream-live-phase' });
+  const chunks = Array.from({ length: 400 }, (_value, index) => `word${index} `);
+  for (const chunk of chunks) {
+    applyPayload(state, { type: 'delta', streamId: 'stream-live-phase', content: chunk },
+      { primary_assistant_message_id: 'assistant_stream-live-phase_seg0' });
+  }
+  const turn = state.turns_by_id['stream-live-phase'];
+  const textEvents = turn.events.filter((event) => event.kind === 'assistant_text_segment');
+  assert.equal(textEvents.length, 1, 'one retained text event for the segment');
+  assert.equal(textEvents[0].payload.text, chunks.join(''));
+  const textRows = turn.rows.filter((row) => row.kind === 'assistant_text');
+  assert.equal(textRows.length, 1);
+  assert.equal(textRows[0].payload.text, chunks.join(''));
+  assert.equal(textRows[0].source_events.length, chunks.length, 'the row itself is unchanged');
+});

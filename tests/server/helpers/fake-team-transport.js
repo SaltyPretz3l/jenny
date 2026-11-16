@@ -47,9 +47,12 @@ class FakeEnd extends Duplex {
     cb();
   }
 
+  // A clean close after this end finished writing leaves the peer to read out what it already holds (its end of
+  // stream is queued), as a real transport delivers a finished stream; destroying it here dropped the tail of a large
+  // answer. A failure, or a close before this end finished, closes the peer at once.
   _destroy(err, cb) {
     this.registry.delete(this);
-    if (this.peer && !this.peer.destroyed) this.peer.destroy();
+    if (this.peer && !this.peer.destroyed && (err || !this.writableFinished)) this.peer.destroy();
     cb(err);
   }
 }

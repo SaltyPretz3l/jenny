@@ -41,8 +41,8 @@ After migration:
 
 1. Run `node scripts/i18n/ledger.js scan`.
 2. Remove the stale migrated occurrence ID reported by `check` from `string_ledger_baseline.json`; do not regenerate the whole baseline merely to hide unexplained growth.
-3. Translate new or changed English key families in every shipped `locales/<tag>.json`; remove keys that no longer exist.
-4. Run `node scripts/i18n/build-catalogs.js`, then `node scripts/i18n/ledger.js check`, `python scripts/checks/check_i18n_catalogs.py`, and the focused tests. The catalog policy wrapper verifies generated scripts and runs strict validation.
+3. Do not translate. Leave the other `locales/<tag>.json` files alone, also when rewording or removing an existing string: a language without the key shows the English default, a translation whose English has since changed is reported as stale, and the translation pass below repays both before the next public release.
+4. Run `node scripts/i18n/build-catalogs.js`, then `node scripts/i18n/ledger.js check`, `python scripts/checks/check_i18n_catalogs.py`, and the focused tests. The catalog policy wrapper verifies the generated scripts, validates every translation that is present, and counts the keys still waiting for the pass.
 
 The English catalog is derived from defaults at translation calls and current English content at marked HTML sites. Conflicting defaults for the same key are scanner errors. The pseudolocale accents text, adds expansion padding, and leaves `{param}` tokens unchanged.
 
@@ -88,7 +88,24 @@ The shipped languages are the tags listed in `services/shell-config-normalizers.
 
 The original non-English catalogs in `locales/` were machine-drafted for 1.0.1: each language was authored in one Codex session from `locales/en.json`, sentence by sentence, with a residual-English audit and the mechanical validator as the floor. That provenance does not establish native-speaker review of the current catalogs. Treat wording reports as ordinary bugs: fix the value in `locales/<tag>.json`, run `node scripts/i18n/build-catalogs.js`, and commit both files. A dictionary or word-substitution generator is not an acceptable way to produce or repair a catalog; the first 1.0.1 drafts made that way were discarded.
 
-`validate-catalogs.js` fails on unknown keys, placeholder or plural mismatches, markup, carriage returns, and excessive expansion. The policy wrapper `check_i18n_catalogs.py` always uses `--strict`: every shipped language must cover every English key family in the same change. Use `node scripts/i18n/validate-catalogs.js --strict --only <tag>` while drafting a language. The standalone validator's non-strict mode still supports incomplete drafts with warnings and a 90% floor; it is not the shipping gate. The ledger rejects CSP values in translation calls; security policies remain code constants.
+`validate-catalogs.js` fails on placeholder or plural mismatches, markup, carriage returns, and excessive expansion. A key a language lacks, or one English no longer has, is a warning by default and a failure under `--strict`; below 90% coverage the default mode fails too. With `--base-english <file>` (the English catalog of the last translation pass) the default mode also downgrades a mismatch in a family whose English has changed since then to a `stale translation` warning, because that translation was written for the earlier text. The per-commit policy wrapper `check_i18n_catalogs.py` runs the default mode and reads that earlier catalog from the marker's commit, so a feature commit changes English only; where git cannot supply the commit, a reworded string whose placeholders or plural shape changed fails as before. `check_i18n_catalogs.py --strict` is the public-release gate and runs as a step of `npm run release:public`: every shipped language covers every English key family, carries no leftover key, and English has not changed since the last translation pass. The ledger rejects CSP values in translation calls; security policies remain code constants.
+
+### The translation pass
+
+Run once before a public release, on a tree whose English changes are committed. `scripts/i18n/translation-sync.json` records the English catalog the languages were last level with (a commit and a digest), which is how a reworded string with an unchanged key is found.
+
+1. `node scripts/i18n/translation-pass.js worklist --out <file>` writes what each language owes: new key families, families whose English text changed (with the previous text), and per-language plural categories. It also lists the keys to prune.
+2. Translate each language from the worklist into a small JSON file of `"key": "translation"` pairs, giving every plural category that language needs (`key#one`, `key#few`, ...). The rule in the paragraph above on dictionary generators applies.
+3. `node scripts/i18n/translation-pass.js apply --tag <tag> --from <file>` merges one language. It replaces whole key families, drops keys English no longer has, keeps the catalog's key order, and writes nothing if the validator rejects a value.
+4. `node scripts/i18n/translation-pass.js seal` requires strict validation to pass with leftover keys pruned, then writes the pruned catalogs, rebuilds the catalog scripts and records the new marker; a failed seal writes nothing. Commit the catalogs, the scripts and the marker together.
+
+`worklist` and `apply` read the earlier English catalog from the marker's commit. If that commit is no longer reachable (a rebased branch, a shallow clone), pass `--base-file <en.json>` with a copy of it.
+
+Known limits:
+
+- `seal` cannot tell whether a family whose English changed, with the same placeholders and plural shape, was translated again or left as it was; the worklist is the record of what to redo.
+- Until the pass, a stale translation is what the user sees. If English dropped a `{placeholder}` the old translation still uses, that token shows literally.
+- The 90% floor still applies per commit: a language more than a tenth behind English fails the commit check, which is the signal that a pass is overdue.
 
 `renderer/browser/browser-i18n.js` loads the shared runtime and catalogs for the hosted browser. It uses the saved
 `jenny.ui.language` preference, otherwise the browser language, before the first

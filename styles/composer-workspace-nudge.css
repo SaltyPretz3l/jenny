@@ -1,70 +1,70 @@
-/* Pre-send workspace-root nudge, mounted when file tools are unavailable
- * because no root is configured. */
+/* Pre-send folder hint: one quiet line above the composer while file tools
+ * are off because the chat has no folder. No box, fill or icon; the action
+ * and the dismissal are text links. */
 @import url("./project-menu.css");
 
 .workspace-root-nudge {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-5);
   margin-bottom: var(--space-3);
-  border: 1px solid var(--state-warning-border);
-  background: var(--state-warning-bg);
-  border-radius: var(--radius-sm);
+  padding-inline: var(--space-5);
   font-size: var(--font-size-footnote);
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
-.workspace-root-nudge-icon {
-  color: var(--state-warning);
-  flex: 0 0 auto;
-}
-
 .workspace-root-nudge-text {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
-.workspace-root-nudge-action {
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-  flex: 0 0 auto;
-  background: none;
-  border: 1px solid var(--state-warning-border);
-  border-radius: var(--radius-xs);
-  color: var(--state-warning);
-  font-size: var(--font-size-footnote);
-  padding: 2px var(--space-3);
-  cursor: pointer;
-}
-
-.workspace-root-nudge-action:hover {
-  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
-}
-
-/* "Use <folder>" waits for an idle chat; the disabled button keeps its
- * place so the chip does not reflow when the turn ends. */
-.workspace-root-nudge-action[disabled] {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.workspace-root-nudge-action[disabled]:hover {
-  background: none;
-}
-
+.workspace-root-nudge-action,
 .workspace-root-nudge-dismiss {
   transition: color var(--transition-fast);
   flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
   background: none;
-  border: none;
-  color: var(--text-muted);
+  font: inherit;
+  white-space: nowrap;
   cursor: pointer;
-  padding: 0 var(--space-3);
-  line-height: 1;
+}
+
+.workspace-root-nudge-action {
+  color: var(--accent-strong);
+}
+
+.workspace-root-nudge-dismiss {
+  color: var(--text-muted);
+}
+
+.workspace-root-nudge-action:hover,
+.workspace-root-nudge-dismiss:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .workspace-root-nudge-dismiss:hover {
   color: var(--text-secondary);
+}
+
+.workspace-root-nudge-action:focus-visible,
+.workspace-root-nudge-dismiss:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* "Use <folder>" waits for an idle chat; the disabled link keeps its place
+ * so the line does not reflow when the turn ends. */
+.workspace-root-nudge-action[disabled] {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.workspace-root-nudge-action[disabled]:hover {
+  text-decoration: none;
 }
 
 /* Projects v2: the composer's project pill, beside the run-mode and model

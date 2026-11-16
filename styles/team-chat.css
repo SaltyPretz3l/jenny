@@ -1,0 +1,391 @@
+/* Team chat in the Team tab (row 123, slices 2a-5a onward; owner-approved mockup
+ * team-chat-2a5, its proposed.css). Loaded with the Team tab,
+ * after team-tab.css and team-settings.css. It adds chat classes and never
+ * restyles a class the Team tab already has (.team-shell, .team-panel,
+ * .team-switch, .team-row, .team-main, .team-head, .team-banner, .team-state):
+ * where the built rule needs a chat variant, a modifier class carries it.
+ * Real app tokens only; no side-border highlight bars, no cards around
+ * messages, nothing animates when a message arrives. Directions are logical.
+ * Slice 2a-5b adds the composer, the typing line, the mention list, the action
+ * row, edit in place, the delete confirm and the compact density, which reads
+ * the root's data-team-density (Settings > Appearance), so it needs no reload.
+ * Slice 2a-6a adds the thread column (aside.team-thread): the third grid column
+ * team-tab.css sets, floated over the channel under 980px, a third screen
+ * under 720px. */
+
+/* ---- shell: the regions ---- */
+.team-shell { position: relative; }
+.team-slot { display: contents; }
+.team-slot[hidden] { display: none; }
+
+/* ---- search: the field under the switcher; its results replace the lists ---- */
+.team-search { margin: 0 var(--space-4) var(--space-2); position: relative; }
+.team-search .inv-text-field-control { padding-inline-end: 28px; }
+.team-search__clear { position: absolute; inset-inline-end: 4px; inset-block-start: 50%; translate: 0 -50%; }
+.team-search__clear[hidden] { display: none; }
+.team-results { display: flex; flex-direction: column; flex: none; padding-block-end: var(--space-3); min-width: 0; }
+.team-results[hidden] { display: none; }
+.team-results[data-busy="true"] .team-results__rows { opacity: 0.55; }
+/* A result is a `.team-row--link` (its hover, current and focus rules) drawn edge to edge. */
+.team-row--link.team-result { box-sizing: border-box; display: block; padding: 7px var(--space-6); border-radius: 0; color: var(--text-secondary); }
+.team-result__top { display: flex; align-items: baseline; gap: 8px; font-size: var(--font-size-footnote); }
+.team-result__who { color: var(--text-primary); font-weight: 600; }
+.team-result__when { color: var(--text-muted); font-size: var(--font-size-caption); }
+.team-result__where { margin-inline-start: auto; color: var(--text-muted); font-size: var(--font-size-caption); white-space: nowrap; }
+.team-result__text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin-block-start: 2px; font-size: var(--font-size-footnote); line-height: 1.4; overflow-wrap: anywhere; }
+.team-result mark { background: color-mix(in srgb, var(--accent-amber) 34%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.team-results__note { margin: 0; padding: var(--space-3) var(--space-6); font-size: var(--font-size-footnote); color: var(--text-muted); line-height: 1.45; }
+.team-results__note:empty { display: none; }
+.team-results__note b { display: block; color: var(--text-secondary); font-weight: 600; }
+.team-results__more { margin: var(--space-2) var(--space-6); align-self: flex-start; }
+
+/* ---- a jump: the target row tinted for 2.4 s (a steady faint tint with reduced motion); a message-link chip ---- */
+.team-msg[data-jumped="true"] { animation: team-jumped 2.4s ease-out 1; }
+@keyframes team-jumped { 0%, 35% { background: color-mix(in srgb, var(--accent-amber) 20%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .team-msg[data-jumped="true"] { animation: none; background: color-mix(in srgb, var(--accent-amber) 12%, transparent); } }
+.team-msglink { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; font: inherit; font-size: 0.93em; color: var(--text-secondary); cursor: pointer; vertical-align: baseline; }
+.team-msglink:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.team-msglink:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 1px; }
+.team-msglink__where { color: var(--text-muted); }
+.team-msglink__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 26ch; }
+/* "Link copied": the app's toast look (.inv-toast), centred low over the log it was copied from. */
+.team-copied { position: absolute; inset-block-end: 118px; inset-inline: 0; width: max-content; margin-inline: auto; z-index: 5; }
+
+/* ---- left column: channel rows are buttons; people rows stay the built, non-interactive row ---- */
+.team-row--link { width: 100%; border: 0; border-radius: var(--radius-sm); background: transparent; font: inherit; text-align: start; cursor: pointer; }
+.team-row--link:hover { background: var(--rail-hover-bg); color: var(--text-primary); }
+.team-row--link[aria-current="true"] { background: var(--rail-active-bg, var(--rail-hover-bg)); color: var(--text-primary); }
+.team-row--link:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-row__glyph { flex: none; width: 14px; text-align: center; color: var(--text-muted); }
+.team-row[data-unread="true"] .team-row__name { color: var(--text-primary); font-weight: 600; }
+.team-row__muted { flex: none; width: 13px; height: 13px; color: var(--text-decorative); }
+.team-count { flex: none; min-width: 18px; padding: 0 var(--space-2); border-radius: var(--radius-pill); font-size: var(--font-size-caption); line-height: 18px; text-align: center; font-weight: 600; color: var(--text-primary); background: color-mix(in srgb, var(--text-muted) 26%, transparent); }
+.team-count[data-mention="true"] { background: var(--accent); color: var(--bg-base); }
+.team-dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-decorative); }
+.team-dot[data-p="online"] { background: var(--widget-tool-success-color, #6fbf8f); }
+.team-dot[data-p="away"] { background: var(--accent-amber); }
+.team-dot[data-p="offline"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-decorative); }
+
+/* ---- channel header additions ---- */
+.team-head__actions { display: flex; flex: none; align-items: center; gap: 2px; }
+.team-icon-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--font-size-footnote); cursor: pointer; }
+.team-icon-btn:hover, .team-icon-btn[aria-pressed="true"], .team-icon-btn[aria-expanded="true"] { background: var(--rail-hover-bg); color: var(--text-primary); }
+.team-icon-btn:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-icon-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.team-back { display: none; }
+[dir="rtl"] .team-back svg { transform: scaleX(-1); }
+.team-head-note { flex: none; margin: 0; padding: var(--space-3) var(--space-9); border-bottom: 1px solid var(--line); }
+.inv-context-menu.team-notify-menu { min-width: 200px; }
+
+/* ---- a join request: the app's own notice (.inv-toast), centred over the top of the timeline ---- */
+.team-notice { position: absolute; top: 58px; inset-inline: 18px; z-index: 5; display: grid; justify-items: center; pointer-events: none; }
+.team-notice .inv-toast { width: min(460px, 100%); }
+.team-notice .inv-toast__actions { align-items: center; }
+.team-notice__pager { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.team-notice__pager .team-icon-btn { height: 24px; padding: 0 4px; }
+.team-notice__next svg { transform: scaleX(-1); }
+[dir="rtl"] .team-notice__pager svg { transform: scaleX(-1); }
+[dir="rtl"] .team-notice__pager .team-notice__next svg { transform: none; }
+.team-notice__hint { margin: var(--space-2) 0 0; font-size: var(--font-size-caption); line-height: 1.4; color: var(--text-muted); }
+.team-notice__error { margin: var(--space-2) 0 0; font-size: var(--font-size-caption); color: var(--text-danger-soft); }
+
+/* ---- timeline ---- */
+.team-main--chat { position: relative; background: var(--bg-base); }
+.team-timeline { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.team-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0 6px; position: relative; }
+.team-scroll:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-jump { position: absolute; inset-block-end: var(--space-5); inset-inline: 0; width: max-content; margin-inline: auto; z-index: 3; }
+.team-jump[hidden] { display: none; }
+.team-day { display: flex; align-items: center; gap: 12px; margin: 10px 18px 6px; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-day::before, .team-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.team-new { display: flex; align-items: center; gap: 10px; margin: 8px 18px 4px; font-size: var(--font-size-caption); font-weight: 600; color: var(--accent); }
+.team-new::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.team-pruned { margin-block: 4px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-muted); }
+.team-timeline-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-block: 8px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-danger-soft); }
+.team-timeline-error p { margin: 0; }
+
+.team-msg { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; padding: 2px 18px; }
+.team-msg[data-first="true"] { margin-top: 9px; }
+.team-msg:hover, .team-msg:focus-within { background: color-mix(in srgb, var(--text-muted) 7%, transparent); }
+.team-msg:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-avatar { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; margin-top: 2px; font-size: var(--font-size-caption); font-weight: 600; color: var(--text-secondary); background: color-mix(in srgb, var(--text-muted) 18%, transparent); }
+.team-avatar[data-jenny="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.team-avatar[data-former="true"] { color: var(--text-muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.team-msg__gutter-time { font-size: var(--font-size-caption); color: transparent; text-align: end; line-height: 22px; font-variant-numeric: tabular-nums; }
+.team-msg:hover .team-msg__gutter-time, .team-msg:focus-within .team-msg__gutter-time, .team-msg:focus .team-msg__gutter-time { color: var(--text-decorative); }
+.team-msg__body { min-width: 0; }
+.team-msg__meta { display: flex; align-items: baseline; gap: 8px; }
+.team-msg__author { font-size: var(--font-size-footnote); font-weight: 600; color: var(--text-primary); }
+.team-msg__author[data-former="true"] { color: var(--text-muted); font-weight: 500; }
+.team-msg__role { font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-msg__time { font-size: var(--font-size-caption); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* The text (code blocks, lists and tables in it) stops at the desktop chat's measure (foundation.css, set by the
+   Chat width preference); a wide block scrolls inside itself. The avatar, name and time line are not capped. */
+.team-msg__text { max-width: var(--chat-measure-cap); font-size: var(--font-size-body); line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.team-msg__text p { margin: 0; }
+.team-msg__text code:not(pre code) { font-family: var(--font-family-mono, ui-monospace, "Cascadia Mono", Consolas, monospace); font-size: var(--font-size-code); padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--text-muted) 14%, transparent); color: var(--text-primary); }
+.team-msg__edited { font-size: var(--font-size-caption); color: var(--text-muted); margin-inline-start: 6px; }
+.team-msg__deleted { font-size: var(--font-size-footnote); font-style: italic; color: var(--text-muted); }
+.team-mention { color: var(--text-link); font-weight: 500; }
+.team-mention[data-me="true"] { background: color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 3px; padding: 0 2px; color: var(--text-primary); }
+
+.team-msg__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 4px; }
+.team-thread-link { padding: 0; border: 0; background: transparent; color: var(--text-link); font: inherit; font-size: var(--font-size-caption); cursor: pointer; }
+.team-thread-link:hover { text-decoration: underline; }
+/* E59: a followed thread's unseen replies, in words inside the link ("2 new"); the rest keeps the link colour. */
+.team-thread-link__new { font-weight: 600; color: var(--text-primary); }
+.team-thread-link:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; border-radius: 2px; }
+.team-queued { font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-failed { font-size: var(--font-size-caption); color: var(--text-danger-soft); }
+.team-msg[data-pending="true"] .team-msg__text { opacity: .6; }
+.team-foot-btn { min-height: 0; padding-block: 0; }
+
+/* the action row: a quiet floating row, shown on hover and focus */
+/* The toolbar ends where the capped text column ends (row padding 18px + avatar 30px + gap 12px before the text). */
+.team-acts { position: absolute; inset-inline-end: max(18px, calc(100% - 60px - var(--chat-measure-cap))); inset-block-start: -14px; display: none; gap: 1px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg-surface); z-index: 2; }
+.team-msg:hover .team-acts, .team-msg:focus-within .team-acts { display: flex; }
+.team-acts .team-icon-btn { height: 24px; padding: 0 5px; }
+.team-acts svg circle { fill: currentColor; stroke: none; }
+
+/* the two text areas size to their text (no script measures them); edit in place and the delete confirm sit in the row */
+.team-edit__input, .team-composer__input { display: block; width: 100%; box-sizing: border-box; min-height: 40px; field-sizing: content; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--font-size-body); line-height: 1.45; }
+.team-edit { margin-block: 4px 2px; border: 1px solid var(--border-focus); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.team-edit__input { max-height: 240px; resize: vertical; padding-block: 8px 4px; padding-inline: 10px; }
+.team-edit__bar { display: flex; align-items: center; gap: var(--space-2); padding-block: 2px 6px; padding-inline: 10px 6px; }
+.team-edit__hint { margin-inline-end: auto; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--font-size-footnote); color: var(--text-primary); }
+
+/* the composer: the typing line keeps its height, so nothing above it shifts */
+.team-composer-root:empty { display: none; }
+.team-composer-root { flex: none; display: flex; flex-direction: column; }
+.team-typing { flex: none; height: 18px; margin-inline: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--font-size-caption); line-height: 18px; color: var(--text-muted); }
+.team-composer { flex: none; position: relative; margin-block: 2px 14px; margin-inline: 18px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-surface); }
+.team-composer:focus-within { border-color: var(--border-focus); }
+.team-composer__input { max-height: 180px; resize: none; padding-block: 10px 4px; padding-inline: 12px; }
+.team-composer__input::placeholder { color: var(--text-muted); }
+.team-composer__bar { display: flex; align-items: center; gap: 2px; padding-block: 2px 6px; padding-inline: 6px; }
+.team-composer__hint { margin-inline-start: auto; padding-inline-end: 8px; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-composer--closed { padding-block-start: 12px; border: 0; border-block-start: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--font-size-footnote); color: var(--text-muted); }
+
+/* the mention list, above the composer */
+.team-menu { position: absolute; z-index: 6; min-width: 220px; max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-surface); box-shadow: var(--shadow-soft); }
+.team-menu[hidden] { display: none; }
+.team-menu--mention { inset-block-end: calc(100% + 6px); inset-inline-start: 0; }
+.team-menu .team-row--link { display: flex; align-items: center; gap: var(--space-3); padding-block: 4px; padding-inline: 8px; }
+.team-menu .team-row--link[aria-selected="true"] { background: var(--rail-hover-bg); color: var(--text-primary); }
+.team-row__note { margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); }
+
+/* compact density: one line per message, no avatars */
+:root[data-team-density="compact"] .team-msg { grid-template-columns: 44px minmax(0, 1fr); column-gap: 8px; padding-block: 0; }
+:root[data-team-density="compact"] .team-msg[data-first="true"] { margin-block-start: 2px; }
+:root[data-team-density="compact"] .team-avatar { display: none; }
+:root[data-team-density="compact"] .team-acts { inset-inline-end: 18px; }
+:root[data-team-density="compact"] .team-msg__gutter-time { color: var(--text-decorative); }
+:root[data-team-density="compact"] .team-msg__meta { display: inline; margin-inline-end: 6px; }
+:root[data-team-density="compact"] .team-msg__role { display: none; }
+:root[data-team-density="compact"] .team-msg__text, :root[data-team-density="compact"] .team-msg__text > p:first-child { display: inline; }
+:root[data-team-density="compact"] .team-pruned, :root[data-team-density="compact"] .team-timeline-error, :root[data-team-density="compact"] .team-empty { margin-inline-start: 70px; }
+
+/* empty channel: words at the foot of the timeline, where the first message will land */
+.team-empty { margin-block: auto 10px; margin-inline: 60px 18px; max-width: 560px; font-size: var(--font-size-body); line-height: 1.5; color: var(--text-muted); }
+.team-empty b { display: block; margin-bottom: 2px; font-size: var(--font-size-heading); color: var(--text-primary); }
+.team-empty .btn { display: flex; margin-top: var(--space-4); }
+.team-scroll:has(> .team-empty) { display: flex; flex-direction: column; }
+
+/* ---- thread column (2a-6a): the root, a count rule, the replies, then its own typing line and composer ---- */
+.team-thread { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-inline-start: 1px solid var(--line); background: var(--bg-base); }
+.team-head--thread { gap: var(--space-3); padding-inline: var(--space-6) var(--space-3); }
+.team-thread__note { flex: none; margin: 0; padding: var(--space-3) var(--space-6); border-bottom: 1px solid var(--line); font-size: var(--font-size-footnote); color: var(--text-danger-soft); }
+.team-thread__count { display: flex; align-items: center; gap: 12px; margin: 10px 18px 6px; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-thread__count::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.team-thread__capped, .team-thread-gone { margin-block: 6px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-muted); }
+.team-thread__error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-block: 8px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-danger-soft); }
+.team-thread__error p { margin: 0; }
+.team-thread .team-msg { padding-inline: 14px; }
+.team-thread .team-acts { inset-inline-end: 14px; }
+.team-thread .team-typing, .team-thread .team-composer { margin-inline: 14px; }
+
+/* Under 980px the thread floats over the channel, at the inline end, with a shadow. */
+@container teamview (max-width: 980px) {
+  .team-shell[data-thread="side"] { grid-template-columns: 288px minmax(0, 1fr); }
+  .team-thread { position: absolute; inset-block: 0; inset-inline-end: 0; z-index: 4; width: min(380px, 100%); box-shadow: var(--shadow-soft); }
+}
+
+/* ---- direct messages (slice 2d, owner picks 2026-11-12, mockup team-dm) ---- */
+/* The Direct messages label carries one quiet New message button; a row leads with a presence dot or the people count. */
+.team-panel__label .team-icon-btn { margin-inline-start: auto; }
+.team-dm-row { display: flex; align-items: center; gap: var(--space-3); }
+.team-dm-row .team-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A conversation's header: the dot before the names, the names cut with an ellipsis, the standing line in the sub line's place.
+   The names give way first: the standing line never shrinks, so its whole sentence shows (owner pick 2). */
+.team-head > .team-dot { margin-inline-end: -2px; }
+.team-head__name[title] { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.team-head__sub[data-standing="true"] { flex: 0 0 auto; min-width: max-content; overflow: visible; }
+.team-head__actions { margin-inline-start: auto; }
+/* The New message view: the To line and the people list take the place of the timeline and composer. */
+.team-pick-root { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.team-to { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: var(--space-4) var(--space-6) var(--space-3); border-block-end: 1px solid var(--line-soft, var(--line-strong)); }
+.team-to__label { color: var(--text-muted); font-size: var(--font-size-footnote); }
+.team-to__chips { display: contents; }
+.team-to__chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); font-size: var(--font-size-footnote); color: var(--text-primary); }
+.team-to__chip .team-icon-btn { width: 18px; height: 18px; }
+.team-to__field { flex: 1; min-width: 120px; margin: 0; }
+.team-to__field .inv-text-field-control { border: 0; background: transparent; padding: 3px 0; box-shadow: none; }
+.team-pick { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3) var(--space-4); }
+.team-pick .team-row--link { display: flex; align-items: center; gap: var(--space-3); padding-block: 5px; padding-inline: 8px; }
+.team-pick .team-row--link[aria-selected="true"] { background: var(--rail-hover-bg); color: var(--text-primary); }
+.team-pick__tick { margin-inline-start: auto; width: 14px; color: var(--accent); }
+.team-pick__note { margin: var(--space-3) 8px 0; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-pick__bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-6) var(--space-4); }
+.team-pick__hint { margin-inline-end: auto; color: var(--text-muted); font-size: var(--font-size-caption); }
+.team-pick__error { flex-basis: 100%; margin: 0; }
+
+/* ---- widths ---- */
+/* Under 720px the list, the channel and an open thread are screens with a Back control (the thread since 2a-6a).
+   This replaces the People toggle of slice 1g-2. */
+@container teamview (max-width: 720px) {
+  .team-back { display: inline-flex; }
+  .team-shell[data-screen="list"] > .team-panel { display: flex; }
+  .team-shell[data-screen="list"] > .team-main { display: none; }
+  .team-shell[data-screen="channel"] > .team-main { flex: 1; }
+  .team-shell > .team-thread { display: none; }
+  .team-shell[data-screen="thread"] > .team-main { display: none; }
+  .team-shell[data-screen="thread"] > .team-thread { position: relative; display: flex; flex: 1; width: auto; border-inline-start: 0; box-shadow: none; }
+  .team-msg { padding-inline: 12px; }
+  .team-head__sub { display: none; }
+  /* The standing line of a direct conversation stays (owner pick 2), on a row of its own under the names. */
+  .team-head:has(> .team-head__sub[data-standing="true"]) { flex-wrap: wrap; row-gap: 2px; }
+  .team-head__sub[data-standing="true"] { display: inline; order: 1; flex-basis: 100%; min-width: 0; white-space: normal; }
+  .team-head__name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* Slice 2a-6c: the export line, one status row under the channel head with its actions. */
+.team-export { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-2) var(--space-8); border-bottom: 1px solid var(--line); min-width: 0; }
+.team-export .inv-status-row { flex: 1 1 auto; min-width: 0; }
+.team-export .btn { flex: none; }
+/* A row in the team menu that cannot run now says why, in the row's own description. */
+.inv-context-menu-item:disabled .inv-context-menu-description { color: var(--text-muted); }
+
+/* Slice 2b-2: reactions, pins, a message's earlier versions and "Seen by". Real tokens only; no side bars, no cards
+ * around messages, nothing animates; state is words, a pressed button or a heavier count, never colour alone. */
+.team-reacts { display: flex; flex-wrap: wrap; flex-basis: 100%; gap: 4px; }
+.team-react { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--font-size-caption); font-variant-numeric: tabular-nums; cursor: pointer; }
+.team-react:hover { border-color: var(--text-muted); color: var(--text-primary); }
+.team-react:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 1px; }
+.team-react__e { font-size: var(--font-size-body); line-height: 1; }
+.team-react[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text-primary); }
+.team-react[aria-pressed="true"] .team-react__n { font-weight: 600; }
+.team-react[aria-disabled="true"] { cursor: default; color: var(--text-muted); }
+.team-react[aria-disabled="true"]:hover { border-color: var(--line-strong); color: var(--text-muted); }
+.team-react--add { padding: 0 6px; color: var(--text-muted); }
+.team-react--add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.team-pinmark, .team-seen { display: inline-flex; align-items: center; gap: 4px; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-pinmark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+button.team-seen, button.team-msg__edited { padding: 0; border: 0; background: transparent; font: inherit; font-size: var(--font-size-caption); color: var(--text-muted); cursor: pointer; }
+button.team-seen:hover, button.team-msg__edited:hover, button.team-seen[aria-expanded="true"], button.team-msg__edited[aria-expanded="true"] { color: var(--text-primary); text-decoration: underline; }
+button.team-seen:focus-visible, button.team-msg__edited:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; border-radius: 2px; }
+button.team-msg__edited { margin-inline-start: 6px; }
+button.team-msg__edited:disabled, button.team-seen:disabled { cursor: default; text-decoration: none; color: var(--text-decorative); }
+.team-icon-btn:disabled { color: var(--text-decorative); cursor: not-allowed; background: transparent; }
+.team-head__actions .team-icon-btn { font-variant-numeric: tabular-nums; }
+.team-pins__n { margin-inline-start: 4px; font-size: var(--font-size-caption); }
+
+/* One popover look for the picker, the pinned list, the earlier versions and the seen list. */
+.team-pop { position: absolute; z-index: 6; box-sizing: border-box; max-width: calc(100% - 24px); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-surface); box-shadow: var(--shadow-soft); text-align: start; }
+.team-pop__head { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 14px 2px; font-size: var(--font-size-footnote); font-weight: 600; color: var(--text-primary); }
+.team-pop__head .team-icon-btn { margin-inline-start: auto; height: 24px; padding: 0 5px; }
+.team-pop__note { margin: 0; padding: 2px 14px 10px; font-size: var(--font-size-caption); line-height: 1.45; color: var(--text-muted); }
+.team-pop__note--end { padding-block: 8px 12px; border-block-start: 1px solid var(--line); }
+.team-pop__note[data-tone="danger"] { color: var(--text-danger-soft); }
+
+/* The picker: the host's list as a grid, eight to a row. */
+.team-pop--emoji { width: max-content; }
+.team-emoji { display: grid; grid-template-columns: repeat(8, 32px); gap: 2px; padding: 4px 8px 8px; }
+.team-emoji__btn { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: var(--font-size-heading); line-height: 1; cursor: pointer; }
+.team-emoji__btn:hover { background: var(--rail-hover-bg); }
+.team-emoji__btn:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: -2px; }
+.team-emoji__btn[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+.team-emoji__btn:disabled { opacity: .3; cursor: not-allowed; background: transparent; }
+
+/* The pinned list: search-result rows, each with who pinned it and Unpin. A row is also a message link (.team-msglink),
+ * drawn as a result row, not as the chip. */
+.team-pop--pins { inset-block-start: 46px; inset-inline-end: 18px; width: 420px; max-height: min(520px, calc(100% - 70px)); overflow-y: auto; }
+.team-pin { display: flex; align-items: flex-start; }
+.team-pin .team-result { flex: 1; min-width: 0; max-width: none; padding-inline: 14px 6px; border: 0; border-radius: 0; font-size: inherit; text-align: start; }
+.team-pin .team-result.team-msglink { display: block; }
+.team-pin__thread { margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); white-space: nowrap; }
+.team-pin__by, .team-pin__why { display: block; margin-block-start: 2px; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-pin__why { color: var(--text-danger-soft); }
+.team-pin .btn { flex: none; margin-block-start: 6px; margin-inline-end: 8px; }
+
+/* Earlier versions: time, then the text as it was. Whitespace and one hairline between versions, no boxes. */
+.team-pop--hist { width: 460px; max-height: 380px; overflow-y: auto; }
+.team-ver { padding: 8px 14px; }
+.team-ver + .team-ver { border-block-start: 1px solid var(--line); }
+.team-ver__when { font-size: var(--font-size-caption); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.team-ver__text { margin-block-start: 2px; font-size: var(--font-size-footnote); line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.team-ver__text p { margin: 0; }
+
+/* Who has seen it. */
+.team-pop--seen { width: 300px; padding-block: 8px; }
+.team-pop--seen p { margin: 0; padding: 2px 14px; font-size: var(--font-size-footnote); line-height: 1.45; color: var(--text-secondary); }
+.team-pop--seen p b { font-weight: 600; color: var(--text-primary); }
+
+@container teamview (max-width: 720px) {
+  .team-pop--pins { inset-inline: 12px; width: auto; }
+  .team-pop--hist { width: auto; }
+}
+
+/* Slice 2c renderer: files (owner picks 2026-11-13, mockup docs/plans/mockups/team-chat-attachments-2026-11 at 0060fb012).
+   The declined forks' rules are not here. No side bars, no new boxes, every state in words. */
+
+/* Files in a message: under the text, above the foot. */
+.team-files { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-block-start: 6px; }
+
+/* Pictures (pick 4 A): a fixed height, so nothing below moves when a picture arrives; the width follows the picture. */
+.team-imgs { display: flex; flex-wrap: wrap; gap: 6px; max-inline-size: 100%; }
+.team-img { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; block-size: 220px; min-inline-size: 120px; max-inline-size: min(400px, 100%);
+  padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--text-muted) 8%, transparent); color: var(--text-muted); cursor: zoom-in; }
+.team-imgs[data-many="true"] .team-img { block-size: 140px; max-inline-size: min(260px, 100%); }
+.team-img img { display: block; block-size: 100%; inline-size: auto; max-inline-size: 100%; object-fit: contain; }
+.team-img:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; }
+.team-img[data-state] { inline-size: 240px; cursor: default; }
+.team-imgs[data-many="true"] .team-img[data-state] { inline-size: 180px; }
+.team-img__words { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-inline: 14px; text-align: center; font-size: var(--font-size-caption); line-height: 1.4; }
+.team-img__words b { font-weight: 500; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+/* Other files (pick 5 A): one flat line, no box. */
+.team-file { display: grid; grid-template-columns: 20px minmax(0, auto) auto; align-items: center; column-gap: 8px; max-inline-size: 100%; }
+.team-file__glyph { inline-size: 20px; block-size: 20px; color: var(--text-muted); }
+.team-file__glyph svg, .team-file__dl svg { inline-size: 16px; block-size: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.team-file__text { min-inline-size: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
+.team-file__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-inline-size: 360px; color: var(--text-primary); }
+.team-file__meta { font-size: var(--font-size-caption); color: var(--text-muted); white-space: nowrap; }
+.team-file__meta[data-tone="danger"] { color: var(--text-danger-soft); }
+.team-file[data-gone="true"] .team-file__name { color: var(--text-muted); }
+.team-file__dl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.team-file__dl-btn { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Files waiting in the composer (pick 2 A): Jenny's own attachment chips, at the top of the composer, start-aligned. */
+.team-composer .team-staged { justify-content: flex-start; margin: 0; padding-block: 8px 0; padding-inline: 8px; }
+/* An empty tray is not drawn: chat-composer.css `.attachment-tray { display: flex }` would beat the hidden attribute. */
+.team-staged[hidden] { display: none; }
+.team-composer .team-staged .attachment-chip { box-shadow: none; }
+.team-staged__glyph { display: inline-grid; place-items: center; inline-size: 40px; block-size: 40px; border-radius: var(--radius-base); color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 10%, transparent); }
+.team-staged__glyph svg { inline-size: 18px; block-size: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.team-staged .attachment-chip-meta[data-tone="danger"] { color: var(--text-danger-soft); }
+.team-staged .attachment-chip-meta[data-tone="busy"]::before { content: ""; display: inline-block; inline-size: 8px; block-size: 8px; margin-inline-end: 5px; border-radius: 50%; border: 1.5px solid currentColor; border-inline-end-color: transparent; vertical-align: -1px; }
+.team-staged .attachment-chip-remove svg { inline-size: 12px; block-size: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.team-staged__retry { margin-inline-start: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-size-caption); cursor: pointer; text-decoration: underline; }
+.team-staged__note { margin: 0; padding-block: 4px 0; padding-inline: 8px; font-size: var(--font-size-caption); color: var(--text-muted); }
+
+/* The paperclip uses .team-icon-btn as Mention and Code do. A greyed Send keeps its reason in the hint. */
+.team-composer__hint[data-tone="blocked"] { color: var(--text-secondary); }
+
+/* Dragging files over the channel or an open thread (pick 1 A): the overlay belongs to that column's own box. */
+.team-drop { position: absolute; inset: 8px; z-index: 6; display: grid; place-items: center; border: 1.5px dashed var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--bg-base) 86%, transparent); pointer-events: none; }
+.team-drop__words { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; font-size: var(--font-size-body); color: var(--text-primary); }
+.team-drop__words span { font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-drop[data-blocked="true"] { border-color: var(--line-strong); }
+
+@media (prefers-reduced-motion: reduce) { .team-staged .attachment-chip-meta[data-tone="busy"]::before { border-inline-end-color: currentColor; } }

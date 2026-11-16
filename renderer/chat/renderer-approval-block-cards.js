@@ -56,6 +56,39 @@
     return `<p class="tool-approval-message-note" data-approval-exact-unavailable="${reason}">${escapeHtml(note)}</p>`;
   }
 
+  // Row 166 D10: the later edits of the same step that this card offers to allow with its own (the backend made the
+  // offer: services/backend/round-approval-gate.js). All of them or none: a call that did not arrive whole would
+  // make "Allow all" cover something the card never showed.
+  const ROUND_APPROVAL_TOOLS = new Set(['edit_file', 'write_file']);
+  const ROUND_APPROVAL_MAX_CALLS = 16;
+  function normalizeRoundApproval(value, toolName) {
+    const calls = value && typeof value === 'object' && !Array.isArray(value) ? value.calls : null;
+    if (!ROUND_APPROVAL_TOOLS.has(toolName) || !Array.isArray(calls) || !calls.length || calls.length > ROUND_APPROVAL_MAX_CALLS) return null;
+    const round = calls.map((call) => {
+      const exact = call && typeof call === 'object' ? normalizeExactApproval(call.exact_approval) : null;
+      const callId = exact && typeof call.call_id === 'string' ? call.call_id.trim() : '';
+      return callId && !exact.tooLarge ? { callId, summary: typeof call.summary === 'string' ? call.summary : '', exact } : null;
+    });
+    return round.every(Boolean) ? round : null;
+  }
+
+  // Each call folded under the file it changes; opened, it shows the same exact blocks as the card's own call.
+  function renderRoundApproval(round, toolName, escapeHtml) {
+    const count = round.length;
+    const heading = toolName === 'write_file'
+      ? jtn('approval.block.roundFiles', count, { count }, '1 more file comes with this one', '{count} more files come with this one')
+      : jtn('approval.block.roundEdits', count, { count }, '1 more edit comes with this one', '{count} more edits come with this one');
+    return `<div class="tool-approval-round" data-approval-round="${count}">`
+      + `<p class="tool-approval-round-heading">${escapeHtml(heading)}</p>`
+      + round.map((call) => {
+        const path = call.exact.fields.find((field) => field.name === 'file_path' || field.name === 'path');
+        return `<details class="tool-approval-disclosure tool-approval-round-call" data-approval-round-call="${escapeHtml(call.callId)}">`
+          + `<summary><code>${quotedArgumentMarkup(path ? path.text : call.summary, escapeHtml)}</code></summary>`
+          + `${renderExactApproval(call.exact, escapeHtml)}</details>`;
+      }).join('')
+      + `</div>`;
+  }
+
   // Agent-to-chat message approval (row 59 cp5b-2). The request carries the whole body, the
   // recipient and the envelope hash in its own field, because the stock input preview clips. The
   // value arrives from a persisted/replayed payload, so it is validated and rebuilt, not trusted.
@@ -456,6 +489,7 @@
     browserApprovalCopy,
     normalizeBrowserApproval,
     normalizeExactApproval,
+    normalizeRoundApproval,
     normalizeScheduleChangeApproval,
     normalizeSessionMessageApproval,
     normalizeSessionStopApproval,
@@ -463,6 +497,7 @@
     renderBrowserApproval,
     renderExactApproval,
     renderExactUnavailable,
+    renderRoundApproval,
     renderScheduleChangeApproval,
     renderSessionMessageApproval,
     renderSessionStopApproval,

@@ -11,7 +11,8 @@
 // so a file planted between the check and the open is refused too. The file is
 // created 0600 (POSIX), synced, and removed again if any step of the write
 // fails. The key goes nowhere but the file: not to an output, a log line, an
-// argument or the result. The command prints the team id only.
+// argument or the result. The command prints the team id only. A delete or
+// restore marker in the profile refuses (that command finishes first).
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -20,6 +21,7 @@ const path = require('node:path');
 const { loadHostConfig } = require('../config');
 const { TEAM_HOST_SECRET_FILES } = require('../file-secret-store');
 const { PUBLIC_KEY_BYTES, deriveTeamId, keyPairFromSeed } = require('./ids');
+const { unfinishedReason } = require('./maintenance-markers');
 const { safeLogger } = require('./safe-logger');
 
 const REASON = /^[a-z][a-z0-9_]{0,79}$/u;
@@ -88,6 +90,9 @@ async function createTeamHostKey({
   const say = safeLogger(logger);
   const loaded = loadSecretFileTeamConfig(configPath);
   if (!loaded.ok) return loaded;
+  // A half-done delete or restore (slice 3-14) is finished by its own command, never under a new key.
+  const unfinished = unfinishedReason(loaded.config.userDataPath);
+  if (unfinished) return refusal(unfinished);
   const directory = loaded.config.secretsDir;
   const target = path.join(directory, TEAM_HOST_SECRET_FILES.team_host_key);
   // lstat: a dangling link "does not exist" to existsSync and must still be refused.
@@ -125,4 +130,5 @@ async function createTeamHostKey({
   return { ok: true, team_id: teamId };
 }
 
-module.exports = { createTeamHostKey, loadSecretFileTeamConfig };
+// `writeKeyFile` and `syncDirectory` are also team-restore.js's key sink (slice 3-14): the same checks and mode.
+module.exports = { createTeamHostKey, loadSecretFileTeamConfig, syncDirectory, writeKeyFile };

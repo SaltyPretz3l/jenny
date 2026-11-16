@@ -103,3 +103,22 @@ test('row 87: the rules wake check counts wake turns, mail-admitted turns and a 
   assert.equal(match('turn-mail'), null);
   assert.equal(match(null), null);
 });
+
+test('row 144: a model pin write retries held checks, and held notices go to the bridge', async (t) => {
+  const { backendService } = setup(t);
+  let retried = 0;
+  const realOps = backendService.primaryScheduledChecks;
+  assert.equal(typeof realOps.onModelsChanged, 'function');
+  backendService.primaryScheduledChecks = { onModelsChanged: async () => { retried += 1; return { outcome: 'retried' }; } };
+  const answer = await backendService.primaryChatControls.setModels({ check_model: 'qwen3.8:27b' });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.equal(answer.check_model, 'qwen3.8:27b');
+  assert.equal(retried, 1);
+
+  const bridged = [];
+  const second = { sessionStore: backendService.sessionStore, featureFlags: {}, projectService: backendService.projectService, chatMessages: backendService.chatMessages };
+  attachPrimaryChat(second, { configService: () => fakeConfigService(), sendBridgeEvent: (path, payload) => bridged.push([path, payload]) });
+  assert.equal(typeof second.primaryScheduledChecks.listHeld, 'function');
+  assert.deepEqual(second.primaryScheduledChecks.listHeld(), []);
+  assert.deepEqual(bridged, []);
+});

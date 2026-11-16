@@ -221,6 +221,19 @@
           return;
         }
 
+        // Back to the defaults; the issue scope has its own Show all records.
+        var clearFilters = event.target.closest('[data-action="clear-diagnostics-filters"]');
+        if (clearFilters) {
+          var filters = view();
+          filters.query = '';
+          filters.levelFilter = 'all';
+          filters.sourceFilter = 'all';
+          filters.returnState = null;
+          renderLogs();
+          afterRender(function () { document.getElementById('logSearchInput')?.focus?.(); });
+          return;
+        }
+
         var inspect = event.target.closest('[data-action="inspect-diagnostic-issue"]');
         if (inspect) {
           var key;

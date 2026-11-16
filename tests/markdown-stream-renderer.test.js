@@ -331,3 +331,50 @@ test('lazy list continuations stay inside the item at every streamed character',
     }
   }
 });
+
+test('a streamed Mermaid block keeps one id while later text re-renders its unit', () => {
+  const source = 'Intro.\n\n```mermaid\nflowchart TD\n  A-->B\n```\nThen some explanation follows the diagram here.';
+  const fenceEnd = source.indexOf('```\nThen') + 4;
+  let previousUnits = [];
+  let previousStreamState = null;
+  const ids = new Set();
+  for (let end = 1; end <= source.length; end += 1) {
+    const model = markdownUtils.renderStreamingMarkdownUnits(
+      source.slice(0, end),
+      previousUnits.length ? { previousUnits, previousStreamState } : {}
+    );
+    previousUnits = model.units;
+    previousStreamState = model.streamState;
+    if (end < fenceEnd) continue;
+    const mermaidUnit = model.units.find((unit) => String(unit.html || '').includes('markdown-mermaid-block'));
+    const id = /class="markdown-mermaid-block"[^>]*\bid="([^"]+)"|\bid="([^"]+)"[^>]*class="markdown-mermaid-block"/.exec(mermaidUnit.html);
+    ids.add(id[1] || id[2]);
+  }
+  assert.equal(ids.size, 1, `the diagram's id changed across deltas: ${[...ids].slice(0, 3).join(', ')}`);
+});
+
+// Thinking text: a fence still being written is never clamped, and it streams on
+// the bounded construct path in the same shape its settled render has.
+test('codeBlocks:plain streams an open fence unclamped and in its settled shape', () => {
+  const options = { mermaid: 'plain', codeBlocks: 'plain' };
+  const body = Array.from({ length: codeHighlight.MAX_BODY_LINES + 700 }, (_, index) => `line ${index}\n`).join('');
+  const source = `Intro.\n\n\`\`\`js\n${body}`;
+  let previousUnits = [];
+  let previousStreamState = null;
+  let model;
+  for (let end = 40; ; end += 120) {
+    model = markdownUtils.renderStreamingMarkdownUnits(source.slice(0, Math.min(end, source.length)), {
+      ...options, previousUnits, previousStreamState,
+    });
+    previousUnits = model.units;
+    previousStreamState = model.streamState;
+    assert.doesNotMatch(model.html, /collaps|expand-overlay|markdown-code-block|\bid="md-codeblock|tok-/, `frame ending at ${end}`);
+    if (end >= source.length) break;
+  }
+  assert.equal(model.streamState.activeConstruct?.kind, 'fence');
+  assert.equal(model.html, markdownUtils.renderStreamingMarkdownUnits(source, options).html);
+  const closed = `${source}\`\`\`\n`;
+  model = markdownUtils.renderStreamingMarkdownUnits(closed, { ...options, previousUnits, previousStreamState });
+  const settled = markdownUtils.renderMarkdown(closed, options);
+  assert.equal(model.units.at(-1).html, settled.slice(settled.indexOf('<div class="thinking-code-host">')).trimEnd());
+});

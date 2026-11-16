@@ -11,6 +11,7 @@ from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.container import BrainContainer
 from sidecar.ai.context.builder import (
     ContextBuilder,
+    diagram_guidance_kwargs,
     normalize_learned_lessons,
     request_workspace_root_kwargs,
 )
@@ -259,6 +260,8 @@ def _build_live_approval_system_prompt(
     kwargs.update(request_workspace_root_kwargs(
         stack.config, getattr(plan.request_context, "execution_context", None),
     ))
+    # The same diagram language as the original turn (the prompt hash must match).
+    kwargs.update(diagram_guidance_kwargs(stack.config))
     if plan.prompt_cache_enabled:
         kwargs["cache_aware"] = True
     return stack.router._context_builder.build_system_prompt(
@@ -712,11 +715,11 @@ def resume_chat_send_response_from_approval_plan(
             "disabled_tools",
         )
         resume_tool_calls, dropped_tool_calls = _approval_resume_call_window(
-            plan,
-            kernel=kernel,
-            tool_contract=tool_contract,
-            recheck_trailing=True,
-        )
+            plan, kernel=kernel, tool_contract=tool_contract, recheck_trailing=True)
+        # D10: the same-tool edits straight after the window are asked for next, not dropped.
+        from sidecar.runtime.approval_round_carry import run_loop_or_pause_round, split_round_carry
+        round_carry, dropped_tool_calls = split_round_carry(
+            plan, resume_tool_calls, dropped_tool_calls, kernel=kernel, tool_contract=tool_contract)
         if effective_runtime.quota_registry is not None:
             effective_runtime.quota_registry.validate_pending_admissions(
                 plan.tool_calls, tool_contract=tool_contract)
@@ -743,9 +746,7 @@ def resume_chat_send_response_from_approval_plan(
 
         approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
         audit_metadata_by_call = _approval_audit_metadata_map(
-            plan,
-            call_ids=frozenset({approved_call_id}) if approved_call_id else frozenset(),
-        )
+            plan, call_ids=frozenset({approved_call_id}) if approved_call_id else frozenset())
         trusted_plan_artifact_write_call_ids = frozenset(
             frozen_input.call_id
             for frozen_input in plan.frozen_inputs
@@ -871,8 +872,8 @@ def resume_chat_send_response_from_approval_plan(
                 if effective_runtime.remaining_tool_calls > 0 and not refused_repeatedly
                 else []
             )
-            resumed = run_tool_loop(
-                runtime=effective_runtime,
+            resumed = run_loop_or_pause_round(
+                round_carry, plan, run_tool_loop, runtime=effective_runtime,
                 kernel=kernel,
                 request_context=resumed_request_context,
                 working_messages=working_messages,

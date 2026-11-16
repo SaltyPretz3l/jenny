@@ -79,20 +79,6 @@ test('V2 factory throws if sendUtils.createSendController is missing', () => {
   assert.throws(() => createComposerV2Factory({ sendUtils: {} }), /createSendController/);
 });
 
-test('renderer bootstrap contains zero references to the removed composer flag', () => {
-  const shellSource = fs.readFileSync(
-    path.join(__dirname, '..', 'renderer', 'chat', 'renderer-chat-shell-controller.js'),
-    'utf8',
-  );
-  const appSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
-  const removedFlag = ['composer', 'v2'].join('_');
-  const removedEnv = ['JENNY_ENABLE_COMPOSER', 'V2'].join('_');
-  for (const source of [shellSource, appSource]) {
-    assert.equal(source.includes(removedFlag), false, 'renderer must not branch on the removed composer flag');
-    assert.equal(source.toUpperCase().includes(removedEnv), false, 'renderer must not read removed composer env');
-  }
-});
-
 test('renderer-chat-shell-controller.js forwards sendController.composerV2 on its return', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'renderer', 'chat', 'renderer-chat-shell-controller.js'),

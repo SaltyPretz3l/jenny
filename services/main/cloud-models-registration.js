@@ -9,6 +9,7 @@
 // material to the renderer.
 
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
+const { clearModelListCaches } = require('../backend/backend-model-list');
 const {
   createChatGptAuthServiceDefault,
   ensureChatgptAuthService,
@@ -82,12 +83,7 @@ function registerCloudModels(ipcMainLike, {
       ? { source: 'core' } : null),
     onInvalidated: () => {
       backendService._modelCatalogEpoch = (backendService._modelCatalogEpoch || 0) + 1;
-      backendService._modelListLastResult = null;
-      backendService._modelListInFlightPromise = null;
-      for (const cache of [backendService._modelListForEngineLastResults,
-        backendService._modelListForEngineInFlightPromises]) {
-        if (typeof cache?.clear === 'function') cache.clear();
-      }
+      clearModelListCaches(backendService);
     },
     log: (event, data) => log('INFO', event, data),
   });

@@ -25,12 +25,12 @@ from sidecar.ai.tools.builtins.grep_search_file import (
 from sidecar.ai.tools.builtins.grep_search_worker import (
     WORKER_PROTOCOL_MAX_LINE_CHARS,
     WORKER_READY_MESSAGE,
+    hosted_request_fields,
 )
 from sidecar.ai.tools.builtins.grep_search_worker import (
     encode_worker_message as _encode_worker_message,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled
 
 REGEX_SEARCH_TIMEOUT_SECONDS = 5.0
 REGEX_WORKER_STARTUP_TIMEOUT_SECONDS = 15.0
@@ -105,7 +105,7 @@ class _RegexSearchWorker:
                 "pattern": compiled.pattern,
                 "flags": int(compiled.flags),
                 "workspace_root": str(workspace_root) if workspace_root is not None else "",
-                "hosted_file_io": hosted_file_io_enabled(),
+                **hosted_request_fields(),
                 "context_lines": context_lines,
                 "max_output_matches": max_output_matches,
                 "max_output_bytes": max_output_bytes,

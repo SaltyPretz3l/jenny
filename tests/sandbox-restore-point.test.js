@@ -7,7 +7,7 @@
 // run), sandbox-only retention, and the recovery IPC routing a sandbox ref to
 // the chat's project root instead of the IDE root.
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
@@ -19,11 +19,15 @@ const { registerWorkspaceRecoveryIpcHandlers } = require('../services/workspace-
 const { getBridgeChannel } = require('../services/ipc-contract');
 const { WorkspaceGitService } = require('../services/workspace-git-service');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
-const { createGitRepo, createTrash, git } = require('./helpers/workspace-recovery-harness');
+const { createTrash, git } = require('./helpers/workspace-recovery-harness');
+const { buildCommittedRepo, createGitTemplates, initStandardRepo } = require('./helpers/git-template-repo');
 
 const NODE = process.execPath.replace(/\\/g, '/');
 const SESSION = 'sess_1730000000000_abcdef012345';
 const SANDBOX_REF_RE = /^refs\/jenny\/sandbox\/sess_1730000000000_abcdef012345\/([1-9][0-9]*)$/;
+
+const templates = createGitTemplates();
+after(() => templates.dispose());
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -45,16 +49,18 @@ async function repoState(repo) {
 }
 
 // Committed: tracked.txt, same.txt. Then: tracked.txt modified, notes.txt untracked.
-async function seedRepo() {
-  const repo = await createGitRepo('jenny-sandbox-rp-');
-  await fs.writeFile(path.join(repo, 'tracked.txt'), 'tracked before\n');
-  await fs.writeFile(path.join(repo, 'same.txt'), 'unchanged\n');
-  await git(repo, ['add', '.']);
-  await git(repo, ['commit', '-m', 'initial']);
-  await fs.writeFile(path.join(repo, 'tracked.txt'), 'tracked dirty\n');
-  await fs.writeFile(path.join(repo, 'notes.txt'), 'notes untracked\n');
-  return repo;
+// Built once per file and copied per case (see helpers/git-template-repo.js).
+function seedRepo() {
+  return templates.copy('seeded', async (dir) => {
+    await buildCommittedRepo(dir, { 'tracked.txt': 'tracked before\n', 'same.txt': 'unchanged\n' });
+    await fs.writeFile(path.join(dir, 'tracked.txt'), 'tracked dirty\n');
+    await fs.writeFile(path.join(dir, 'notes.txt'), 'notes untracked\n');
+  }, 'jenny-sandbox-rp-');
 }
+
+// A repository with no commits, and one with a single clean commit.
+const createGitRepo = (prefix) => templates.copy('empty', initStandardRepo, prefix);
+const createCleanRepo = () => templates.copy('clean', (dir) => buildCommittedRepo(dir, { 'a.txt': 'a\n' }), 'jenny-sandbox-clean-');
 
 // A helper command that records it ran; a clean filter also passes stdin
 // through, the others never read stdin.
@@ -168,10 +174,7 @@ describe('create', () => {
   });
 
   test('a clean tree still yields a restore point (HEAD pinned)', async () => {
-    const repo = await createGitRepo('jenny-sandbox-clean-');
-    await fs.writeFile(path.join(repo, 'a.txt'), 'a\n');
-    await git(repo, ['add', '.']);
-    await git(repo, ['commit', '-m', 'initial']);
+    const repo = await createCleanRepo();
     const head = (await git(repo, ['rev-parse', 'HEAD'])).stdout.trim();
     const point = await createSandboxRestorePoints().create({ root: repo, sessionId: SESSION });
     assert.equal((await git(repo, ['rev-parse', point.ref])).stdout.trim(), head);

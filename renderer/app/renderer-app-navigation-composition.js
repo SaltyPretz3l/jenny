@@ -52,6 +52,11 @@
       openSession: (...a) => activateWorkspaceSession(...a),
       newChat: () => document.getElementById('newChatButton')?.click?.(),
       prepareChatsPanelForExpansion: () => chatsPanelController?.prepareForStripExpansion?.(),
+      // The Board page (row 150, slice B4): the current project, and the app's toast for "Board deleted. Undo".
+      getProjectSwitcher: (...a) => getProjectSwitcher(...a),
+      showToastMessage: (...a) => showToastMessage(...a),
+      // The Board's docked chat (slice C1): the dock's shell hooks when the Board opens before the Workspace.
+      showShellErrorToast: (...a) => showShellErrorToast(...a), noteScrollProgrammaticWrite: (reason) => chatScrollCoordinator?.noteProgrammaticWrite?.(reason),
     },
   }) || null;
   _applySidebarLayout = (...a) => topNavShellController?.applyViewChrome?.(...a);

@@ -97,6 +97,15 @@ function createDirectory({ clock = Date.now, isDegraded = () => false } = {}) {
     return ids;
   }
 
+  // Read-only: a member's team role and state by member id, as a fresh plain
+  // object (a session event's audience, slice 3-3); null for a non-string or
+  // unknown id and for a revoked member, as actorForDevice answers.
+  function memberActor(memberId) {
+    const member = typeof memberId === 'string' ? membersById.get(memberId) : null;
+    if (!member || member.state === 'revoked') return null;
+    return { member_id: memberId, role: member.role, state: member.state };
+  }
+
   // The member's role in an active project as stored: null when they are not in
   // it, the project is deleting or gone, or either id is unknown. The effective
   // role (team state on top) is the visibility module's job.
@@ -130,6 +139,7 @@ function createDirectory({ clock = Date.now, isDegraded = () => false } = {}) {
     isDeviceActive,
     admitKind,
     activeMemberIds,
+    memberActor,
     projectRole,
     projectsOf,
     projectState,

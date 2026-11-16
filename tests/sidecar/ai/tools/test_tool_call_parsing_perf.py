@@ -4,10 +4,14 @@ Each input below took between half a second and five seconds before the
 scanners stopped retrying the rest of the text from every unclosed opener and
 the healer stopped scanning every string span per character. The budget is
 generous for a slow CI host; the fixed code finishes each in milliseconds.
+It counts this process's CPU time, so the other workers of a parallel run do
+not spend it, and it is four times wider while coverage traces every line:
+heal-many-members takes 0.13 s plain and 0.58 s under --cov (2026-11-14).
 """
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Callable
 
@@ -22,7 +26,13 @@ from sidecar.ai.tools.tool_call_healing import (
     repair_json_payload,
 )
 
-_BUDGET_SECONDS = 0.5
+
+def _coverage_active() -> bool:
+    coverage = sys.modules.get("coverage")
+    return coverage is not None and coverage.Coverage.current() is not None
+
+
+_BUDGET_SECONDS = 0.5 * (4 if _coverage_active() else 1)
 _KNOWN = frozenset({"read_file", "write_file"})
 
 
@@ -34,9 +44,9 @@ def _healing_on():
 
 
 def _elapsed(work: Callable[[], object]) -> float:
-    started = time.perf_counter()
+    started = time.process_time()
     work()
-    return time.perf_counter() - started
+    return time.process_time() - started
 
 
 _MANY_MEMBERS = "{" + ",".join('"k%d": "v%d"' % (i, i) for i in range(12000)) + ",}"

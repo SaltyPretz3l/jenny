@@ -84,6 +84,8 @@ function buildSessionSummary(session) {
     messaging_addressable: Boolean(String(session.session_incarnation || '').trim()),
     // Row 69: 'primary' on the profile's one Jenny chat, null on every other chat.
     session_role: normalizeSessionRole(session.session_role),
+    // The nodes a team host may lease this conversation's turns to; present only when there is a list.
+    ...(Array.isArray(session.allowed_nodes) ? { allowed_nodes: [...session.allowed_nodes] } : {}),
   };
 }
 

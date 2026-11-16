@@ -46,6 +46,13 @@ test('companion action utils format handoff origin labels for chat actions', () 
 function createLoopHarness({ loops = [], companion = {}, extraWindow = {}, extraCallbacks = {}, dom = {}, state = {} } = {}) {
   const calls = { toasts: [], errors: [], renders: 0, views: [], applied: [], dismissed: [] };
   const board = { active: loops, deferred: [], recentResolved: [], archived: [] };
+  // Like the toast store: a toast that leaves (dismissed or run out) calls its onExpire once.
+  const liveToasts = new Map();
+  const leave = (toastId) => {
+    const options = liveToasts.get(toastId);
+    liveToasts.delete(toastId);
+    options?.onExpire?.();
+  };
   const utils = createCompanionActionUtils({
     state,
     windowRef: {
@@ -59,8 +66,12 @@ function createLoopHarness({ loops = [], companion = {}, extraWindow = {}, extra
       getCompanionState: () => ({ loaded: true, openLoopsBoard: board }),
       applyCompanionPayload: (payload) => calls.applied.push(payload),
       renderAll: () => { calls.renders += 1; },
-      showToastMessage: (message, options) => `toast-${calls.toasts.push({ message, options })}`,
-      dismissToast: (toastId) => calls.dismissed.push(toastId),
+      showToastMessage: (message, options) => {
+        const toastId = `toast-${calls.toasts.push({ message, options })}`;
+        liveToasts.set(toastId, options || {});
+        return toastId;
+      },
+      dismissToast: (toastId) => { calls.dismissed.push(toastId); leave(toastId); },
       showShellErrorToast: (message, options) => calls.errors.push({ message, options }),
       toErrorMessage: (error, fallback) => (error?.message ? error.message : fallback),
       setActiveView: (view) => calls.views.push(view),
@@ -81,7 +92,7 @@ function createLoopHarness({ loops = [], companion = {}, extraWindow = {}, extra
     },
     preventDefault() {},
   });
-  return { utils, calls, click };
+  return { utils, calls, expireToast: leave, click };
 }
 
 const deleteAction = { id: 'delete_follow_up:f1', type: 'delete_follow_up', label: 'Delete', slot: 'overflow', followUpId: 'f1' };
@@ -89,7 +100,7 @@ const deleteAction = { id: 'delete_follow_up:f1', type: 'delete_follow_up', labe
 test('delete hides the loop for the undo window, then commits exactly once', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const deleted = [];
-  const { utils, calls, click } = createLoopHarness({
+  const { utils, calls, click, expireToast } = createLoopHarness({
     loops: [{ followUpId: 'f1', status: 'active', actions: [deleteAction] }],
     companion: { deleteFollowUp: async (id) => { deleted.push(id); return { deleted: id }; } },
   });
@@ -100,6 +111,7 @@ test('delete hides the loop for the undo window, then commits exactly once', asy
   const toast = calls.toasts.at(-1);
   assert.equal(toast.message, 'Loop deleted.');
   assert.equal(toast.options.durationMs, 6000);
+  assert.equal(toast.options.countdown, true, 'the window drains on the toast');
 
   toast.options.actions[0].onClick();
   assert.equal(utils.isLoopPendingDelete('f1'), false, 'Undo restores the row');
@@ -109,9 +121,12 @@ test('delete hides the loop for the undo window, then commits exactly once', asy
 
   await click({ companionActionId: 'delete_follow_up:f1' });
   await click({ companionActionId: 'delete_follow_up:f1' });
-  t.mock.timers.tick(6000);
+  t.mock.timers.tick(60000);
+  await Promise.resolve();
+  assert.deepEqual(deleted, [], 'no second clock: only the toast running out commits');
+  expireToast(`toast-${calls.toasts.length}`);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(deleted, ['f1'], 'the timer commits one delete');
+  assert.deepEqual(deleted, ['f1'], 'the toast running out commits one delete');
   assert.equal(utils.isLoopPendingDelete('f1'), false);
   assert.deepEqual(calls.applied.at(-1), { deleted: 'f1' });
 });
@@ -247,17 +262,17 @@ test('a mutation on a vanished loop resyncs and says the loop is gone', async ()
 test('committing a delete dismisses its Undo toast; dispose cancels a pending delete', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const deleted = [];
-  const { utils, calls, click } = createLoopHarness({
+  const { utils, calls, click, expireToast } = createLoopHarness({
     loops: [{ followUpId: 'f1', status: 'active', actions: [deleteAction] }],
     companion: { deleteFollowUp: async (id) => { deleted.push(id); return {}; } },
   });
 
   await click({ companionActionId: 'delete_follow_up:f1' });
   const toastId = `toast-${calls.toasts.length}`;
-  t.mock.timers.tick(6000);
+  expireToast(toastId);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(deleted, ['f1']);
-  assert.deepEqual(calls.dismissed, [toastId], 'a hovered toast cannot outlive the commit');
+  assert.deepEqual(calls.dismissed, [toastId], 'the commit closes its toast');
 
   await click({ companionActionId: 'delete_follow_up:f1' });
   const secondToast = `toast-${calls.toasts.length}`;

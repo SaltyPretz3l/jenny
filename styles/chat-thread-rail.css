@@ -196,108 +196,8 @@
   border: 0;
 }
 
-/* ── Per-row thread node dots ── */
-
-.chat-row-node-dot {
-  display: none;
-}
-
 .chat-thread-node-nested .chat-thread-node-article .chat-row {
   position: relative;
-}
-
-.chat-thread-node-nested .chat-thread-node-article .chat-row .chat-row-node-dot {
-  display: block;
-  position: absolute;
-  /*
-    Horizontal: place dot centre at -(--_dot-offset) from .chat-thread-node-row's
-     inline-start edge — the same horizontal axis as the toggle button and rail.
-    .chat-row left edge = article left edge = grid column 2 start
-                        = thread-dot-hit-size + space-5 from the row's left.
-    dot centre from .chat-row left = -(dot-offset + hit-size + space-5)
-    dot visual left edge           = that centre - dot-size / 2
-  */
-  inset-inline-start: calc(
-    -1 * (var(--_dot-offset) + var(--thread-dot-hit-size) + var(--space-5))
-    - var(--thread-dot-size) / 2
-  );
-  /* Centred on the row's first line; --row-dot-center is set per row kind
-     below (a single fixed top sat 3-14px off prose and card first lines). */
-  top: calc(var(--row-dot-center, calc(var(--tl-row-h) / 2)) - var(--thread-dot-size) / 2);
-  width: var(--thread-dot-size);
-  height: var(--thread-dot-size);
-  border-radius: 50%;
-  background: var(--_dot-bg);
-  border: 2px solid var(--bg-base);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--_dot-ring) 78%, transparent);
-  opacity: 0.9;
-  pointer-events: none;
-  z-index: 1;
-  transition:
-    transform var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    filter var(--motion-duration-fast) var(--motion-ease-standard),
-    opacity var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-/* First-line centre per row kind, from the row top (line box = padding +
-   half the line height). Machinery one-liners use the --tl-row-h default. */
-.chat-row[data-row-kind="assistant_text"] {
-  /* .chat-bubble line-height 1.6; the paragraph sits --space-1 down. */
-  --row-dot-center: calc(var(--space-1) + var(--tl-font-prose) * 0.8);
-}
-
-.chat-row[data-row-kind="batch"] {
-  /* Ask card: border + padding, then the caption-size kicker line. */
-  --row-dot-center: calc(1px + var(--space-6) + var(--tl-font-meta) * 0.6);
-}
-
-.chat-row[data-row-kind="recap"] {
-  /* Recap block margin + border + row padding, then the label line. */
-  --row-dot-center: calc(var(--space-3) + 1px + var(--space-5) + var(--tl-font-ui) * 0.675);
-}
-
-.chat-row[data-row-kind="plan_proposal"],
-.chat-row[data-row-kind="plan_document"] {
-  --row-dot-center: calc(1px + var(--space-3) + 0.6em);
-}
-
-.chat-row[data-row-kind="approval_gap"] {
-  /* Row + receipt padding, then the quiet receipt line. */
-  --row-dot-center: calc(2 * var(--space-2) + var(--tl-font-detail) * 0.58);
-}
-
-.chat-row[data-row-kind="approval_gap"][data-row-state="resolved"] {
-  /* The decision mark is taller than the text and baseline-aligned. */
-  --row-dot-center: calc(2 * var(--space-2) + var(--tl-font-detail) * 0.83);
-}
-
-.chat-row[data-row-kind="approval_gap"][data-row-state="awaiting_approval"] {
-  /* Card offset, then the caption-size "Approval needed" kicker line. */
-  --row-dot-center: calc(var(--space-2) + var(--space-3) + var(--tl-font-meta) * 0.6);
-}
-
-.chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot {
-  transform: scale(1.15);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--widget-input-focus-glow) 80%, transparent));
-  opacity: 1;
-}
-
-/*
-  Collapsible nodes already have a .chat-thread-toggle button as the visual dot
-  for the first content landmark. Suppress the first row's dot to avoid doubling.
-*/
-.chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
-  .chat-thread-node-article
-  .chat-row:first-child
-  .chat-row-node-dot {
-  display: none;
-}
-
-/* system_notice rows are small one-line status bars — no dot indicator needed */
-.chat-thread-node-nested .chat-thread-node-article
-  .chat-row[data-row-kind="system_notice"] .chat-row-node-dot {
-  display: none;
 }
 
 .chat-thread-children {
@@ -332,31 +232,9 @@
   display: none !important;
 }
 
-/* Thread rail — JS sets --_rail-top / --_rail-height so the line
-   starts at the first dot and ends at the last dot. */
-.chat-thread-root::before {
-  content: "";
-  position: absolute;
-  top: var(--_rail-top, 0);
-  height: var(--_rail-height, 0);
-  inset-inline-start: calc(-1 * var(--_dot-offset) - var(--thread-rail-width) / 2);
-  width: var(--thread-rail-width);
-  border-radius: var(--radius-pill);
-  background: var(--border-default);
-  opacity: var(--thread-rail-opacity);
-  pointer-events: none;
-  transition:
-    background var(--motion-duration-regular) var(--motion-ease-standard),
-    opacity var(--motion-duration-regular) var(--motion-ease-standard);
-  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .chat-thread-toggle:hover::before,
-  .chat-thread-toggle:active::before,
-  .chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot,
-  .turn-row-list .chat-row:hover > .chat-row-node-dot {
+  .chat-thread-toggle:active::before {
     transform: none !important;
     filter: none !important;
   }
@@ -407,8 +285,7 @@
 }
 
 /* A hidden row still counts as a sibling: the first visible row after a hidden
-   leading reasoning row keeps the list's own top edge, and its node dot is not
-   doubled by the thread toggle dot. */
+   leading reasoning row keeps the list's own top edge. */
 .chat-timeline[data-transcript-view="answers"]
   .turn-row-list:not([data-turn-live="true"])
   .chat-row[data-row-kind="reasoning"]:first-child + .chat-row {
@@ -431,17 +308,8 @@
   margin-block-start: var(--tl-cluster-gap);
 }
 
-.chat-timeline[data-transcript-view="answers"]
-  .chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
-  .chat-thread-node-article
-  .turn-row-list:not([data-turn-live="true"])
-  .chat-row[data-row-kind="reasoning"]:first-child + .chat-row
-  .chat-row-node-dot {
-  display: none;
-}
-
 /* Phase changes can leave two hidden reasoning siblings; keep their visible
-   neighbours' spacing and dot. Runs of three or more remain out of scope. */
+   neighbours' spacing. Runs of three or more remain out of scope. */
 .chat-timeline[data-transcript-view="answers"]
   .turn-row-list:not([data-turn-live="true"])
   .chat-row[data-row-kind="reasoning"]:first-child + [data-row-kind="reasoning"].chat-row + .chat-row {
@@ -460,20 +328,11 @@
   margin-block-start: var(--tl-cluster-gap);
 }
 
-.chat-timeline[data-transcript-view="answers"]
-  .chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
-  .chat-thread-node-article
-  .turn-row-list:not([data-turn-live="true"])
-  .chat-row[data-row-kind="reasoning"]:first-child + [data-row-kind="reasoning"].chat-row + .chat-row
-  .chat-row-node-dot {
-  display: none;
-}
-
 /* Answers tool runs (NEXT_STEPS row 21; renderer-turn-row-list-utils.js). In
    Answers the row list emits one tool_run summary row before each run of two
    or more tool steps and stamps the steps (and the reasoning rows between
    them) with data-run-member. A collapsed run hides its members; an expanded
-   run shows them indented under the summary, without their own rail dots.
+   run shows them indented under the summary.
    Hidden members stay siblings, so the adjacency spacing above still pairs
    prose -> summary and machinery -> prose correctly. Other views emit no run
    rows; the first rule only guards a node left over from a view switch. */
@@ -487,8 +346,4 @@
 
 .chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member][data-run-expanded="true"] {
   padding-inline-start: var(--space-5);
-}
-
-.chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member] .chat-row-node-dot {
-  display: none;
 }

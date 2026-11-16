@@ -24,6 +24,13 @@ const BODY_CASES = [
 
 test('prettified reasoning tail rewrites avoid source replacement only when opted in', () => {
   const raw = 'Okay.' + ' So we check the loader. Then we look at init. Actually init runs twice. Let me verify.'.repeat(60);
+  // The from-scratch reference depends on the frame's source only, not on the
+  // options under test: render it once per frame and compare both passes to it.
+  const references = new Map();
+  const referenceFor = (source) => {
+    if (!references.has(source)) references.set(source, markdownUtils.renderStreamingMarkdownUnits(source, {}));
+    return references.get(source);
+  };
   for (const options of [{}, { allowTailRewrite: true }]) {
     let previousUnits = [];
     let previousStreamState = null;
@@ -36,11 +43,11 @@ test('prettified reasoning tail rewrites avoid source replacement only when opte
         ...options, previousUnits, previousStreamState,
       });
       if (model.fallbackReason === 'source_replaced') sourceReplacedCount += 1;
-      assert.equal(model.html, markdownUtils.renderStreamingMarkdownUnits(finalPrettified, {}).html, `frame ${end}`);
+      assert.equal(model.html, referenceFor(finalPrettified).html, `frame ${end}`);
       previousUnits = model.units;
       previousStreamState = model.streamState;
     }
-    assert.equal(model.html, markdownUtils.renderStreamingMarkdownUnits(finalPrettified, {}).html);
+    assert.equal(model.html, referenceFor(finalPrettified).html);
     assert.equal(model.streamState.source, finalPrettified);
     if (options.allowTailRewrite) {
       assert.equal(sourceReplacedCount, 0, 'tail rewrites must preserve the settled prefix');
@@ -327,7 +334,7 @@ test('reasoning renderPhase incrementally renders a growing ~48K body without co
   t.diagnostic(`reasoning renderPhase fallback distribution: ${JSON.stringify(fallbackDistribution)}`);
 
   const finalModel = models[models.length - 1];
-  const fullModel = markdownUtils.renderStreamingMarkdownUnits(body, { mermaid: 'plain' });
+  const fullModel = markdownUtils.renderStreamingMarkdownUnits(body, { mermaid: 'plain', codeBlocks: 'plain' });
   assert.equal(finalModel.html, fullModel.html, 'final HTML matches a from-scratch full render');
   assert.deepEqual(
     comparableUnits(finalModel.units),

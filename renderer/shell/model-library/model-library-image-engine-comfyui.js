@@ -146,6 +146,18 @@
       : jt('models.library.imageEngine.comfyui.readyUnknown', 'ComfyUI · portable') };
   }
 
+  // The table row: { text, tone: 'ready'|'warn'|'off'|'busy', set }, or null while the kill switch is off.
+  function summary(comfyui, checking) {
+    if (!comfyui || comfyui.enabled !== true) return null;
+    var health = comfyui.health;
+    var recipes = (health && health.recipes) || {};
+    if (checking) return { text: jt('models.library.imageEngine.comfyui.checking', 'Checking the folder…'), tone: 'busy', set: true };
+    if (!health) return { text: jt('models.library.imageEngine.comfyui.notSetUp', 'Not set up'), tone: 'off', set: false };
+    if (!health.ok) return { text: jt('settings.models.services.comfy.unusable', 'Folder not usable'), tone: 'warn', set: false };
+    if (Object.keys(recipes).some(function (id) { return recipes[id].version_ok === false; })) return { text: jt('settings.models.services.comfy.update', 'Needs a newer ComfyUI'), tone: 'warn', set: true };
+    return { text: health.version ? jt('settings.models.services.comfy.readyVersion', 'Ready · {version}', { version: health.version }) : jt('settings.models.services.comfy.ready', 'Ready'), tone: 'ready', set: true };
+  }
+
   function folderLine(ctx, health) {
     return '<div class="model-library-image-engine-folder">'
       + (health ? '<code class="model-library-folders-path">' + escapeHtml(health.folder) + '</code>' : '')
@@ -245,6 +257,6 @@
   }
 
   return {
-    blockMarkup: blockMarkup, setsMarkup: setsMarkup, quantOf: quantOf, savePayload: savePayload, parseSlot: parseSlot, saveFailureMessage: saveFailureMessage, chooseFailureMessage: chooseFailureMessage,
+    blockMarkup: blockMarkup, setsMarkup: setsMarkup, summary: summary, quantOf: quantOf, savePayload: savePayload, parseSlot: parseSlot, saveFailureMessage: saveFailureMessage, chooseFailureMessage: chooseFailureMessage,
   };
 });

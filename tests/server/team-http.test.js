@@ -8,8 +8,9 @@ const http = require('node:http');
 const net = require('node:net');
 const test = require('node:test');
 
-const { deriveTeamId } = require('../../server/team/ids');
-const { TEAM_HOST, createTeamHttpServer } = require('../../server/team/team-http-server');
+const { TeamChatStore } = require('../../services/host/team-chat-store');
+const { deriveTeamId, newId } = require('../../server/team/ids');
+const { TEAM_HOST, createTeamHttpServer, createTeamListener } = require('../../server/team/team-http-server');
 const { PROTOCOL_RANGE } = require('../../server/team/team-routes');
 const { command } = require('../helpers/command-router-fixture');
 const { createTeamHttpFixture, pause, randomPublicKey, waitUntil } = require('./helpers/team-http-fixture');
@@ -216,6 +217,50 @@ test('a registered client of an active member gets an answer from sessions.list 
   assert.equal(reasonOf(foreign), 'client_unauthorized');
 });
 
+// A member revoked while their team chat post waits inside the store for its channel's load gets member_revoked
+// from the HTTP layer's re-check after dispatch (team-http-server.js): the chat layer checks a post only before
+// the store call, so the post lands (TEAM_CHAT_SPEC 2a-3a, known limit) and only this re-check refuses the answer.
+// X6b-F02: a held read is refused by the chat layer's own check after the load, so it cannot pin this line.
+test('a member revoked while a post waits in the store gets 403 member_revoked and none of the payload', async (t) => {
+  const gates = [];
+  let armed = false;
+  const limits = { segmentMaxMessages: 2 };
+  const env = await createTeamHttpFixture(t, { withChat: true, chatStoreLimits: limits,
+    chatStoreYield: () => (armed ? new Promise((resolve) => { gates.push(resolve); }) : Promise.resolve()),
+    // Six messages in three segments, written before this host's chat starts, so its first post loads them.
+    beforeChat: async (profileDir) => {
+      const seeder = new TeamChatStore({ profileDir, limits });
+      assert.equal(seeder.open().ok, true);
+      assert.equal((await seeder.createChannel({ channelId: 'chan_team' })).ok, true);
+      const [actorId, deviceId] = [newId('member'), newId('device')];
+      for (let i = 0; i < 6; i += 1) {
+        assert.equal((await seeder.post({ channelId: 'chan_team', actorId, deviceId, requestId: `seed_${i}`,
+          text: `seed-${i}` })).ok, true);
+      }
+      await seeder.settled();
+    } });
+  const { owner, member } = await env.seed();
+  const memberClient = env.client(member.key);
+  assert.equal((await memberClient.hello()).status, 200);
+  const auth = await memberClient.registerClient();
+  armed = true;
+  const body = { ...command(auth, 'team.chat.post', { channel_id: 'chan_team', text: 'queued-post' }),
+    boot_epoch: env.context.bootEpoch };
+  const answering = memberClient.request('POST', '/api/v1/commands', { body, headers: { 'X-Client-Token': auth.client_token } });
+  assert.equal(await waitUntil(() => gates.length > 0), true, 'the post is parked on the channel load');
+  assert.equal((await env.store.revokeMember({ actorMemberId: owner.member_id, memberId: member.member_id })).ok, true);
+  let answer = null;
+  answering.then((value) => { answer = value; });
+  for (let i = 0; i < 200 && answer === null; i += 1) { gates.shift()?.(); await pause(5); }
+  answer = await answering;
+  assert.equal(answer.status, FORBIDDEN);
+  assert.equal(reasonOf(answer), 'member_revoked');
+  assert.equal(answer.json.message_id, undefined, 'no id or seq of the message that landed');
+  await env.chat.store.settled();
+  assert.equal(env.chat.store.history('chan_team', { limit: 1 }).messages.at(-1)?.text, 'queued-post',
+    'the post landed (the recorded limit), so only the HTTP layer refused its answer');
+});
+
 test('client registration answers client_capacity when the device is full', async (t) => {
   const env = await createTeamHttpFixture(t);
   const { member } = await env.seed();
@@ -254,14 +299,19 @@ test('an owner and a member hold event streams; a revoked member receives nothin
   const memberStream = await memberClient.openStream(await memberClient.registerClient());
   assert.equal(ownerStream.status, 200);
   assert.equal(memberStream.status, 200);
-  env.core.events.publish('probe_one', {});
+  // A team host broadcasts no unlisted type (slice 3-3): the probes carry an audience.
+  const both = new Set([owner.member_id, member.member_id]);
+  env.core.events.publish('team_presence', { probe: 'probe_one' }, { audience: both });
   assert.equal(await waitUntil(() => ownerStream.frames.join('').includes('probe_one')
     && memberStream.frames.join('').includes('probe_one')), true);
   // The owner's device revokes the member through the store.
   const revoked = await env.store.revokeMember({ actorMemberId: owner.member_id, memberId: member.member_id });
   assert.equal(revoked.ok, true);
-  env.core.events.publish('probe_two', {});
+  env.core.events.publish('team_presence', { probe: 'probe_two' }, { audience: both });
   assert.equal(await waitUntil(() => ownerStream.frames.join('').includes('probe_two')), true);
+  // No event reaches a revoked member's stream any more, so the next heartbeat closes it (team-main's revoke
+  // fan-out closes it at once; this fixture has none).
+  env.core.events.heartbeat();
   assert.equal(await waitUntil(() => memberStream.closed), true);
   assert.equal(memberStream.frames.join('').includes('probe_two'), false);
   await assert.rejects(memberClient.request('POST', '/api/v1/team/status'));
@@ -276,7 +326,7 @@ test('a member demoted to read-only keeps the event stream', async (t) => {
   const stream = await memberClient.openStream(await memberClient.registerClient());
   const demoted = await env.store.setRole({ actorMemberId: owner.member_id, memberId: member.member_id, role: 'read_only' });
   assert.equal(demoted.ok, true);
-  env.core.events.publish('after_demotion', {});
+  env.core.events.publish('team_presence', { probe: 'after_demotion' }, { audience: new Set([member.member_id]) });
   assert.equal(await waitUntil(() => stream.frames.join('').includes('after_demotion')), true);
   assert.equal(stream.closed, false);
 });
@@ -322,13 +372,20 @@ function stubContext() {
     context: {
       resourceLimits: { maxConcurrentRequests: 8 }, logger: () => {}, addresses: () => [], isReady: () => true,
       bootEpoch: 'boot', clients: {}, events: { heartbeat() {} }, router: {}, assetRoutes: null,
-      authorize: () => ({ ok: true }),
+      authorize: () => ({ ok: true }), dropKey: () => 0,
       directory: { resolveActor: (key) => everyone(deviceOf(key)), liveActor: (id) => everyone(id), isDeviceActive: () => true },
       store: { teamId: () => 'team_x', teamName: () => 'x',
         onMembershipChange: (listener) => { listeners.push(listener); return () => listeners.splice(listeners.indexOf(listener), 1); } },
     },
   };
 }
+
+test('a team HTTP layer without a dropKey function is refused at construction', () => {
+  for (const dropKey of [undefined, null, 'drop']) {
+    const { context } = stubContext();
+    assert.throws(() => createTeamHttpServer({ ...context, dropKey }), TypeError);
+  }
+});
 
 test('hello state is bounded to 128 devices and a revoke event forgets its devices', async (t) => {
   const { context, listeners } = stubContext();
@@ -473,4 +530,46 @@ test('closing the layer ends every socket it was handed, also one that never sen
   assert.equal(lingering.closed || idle.closed, false);
   await layer.close();
   assert.equal(await waitUntil(() => lingering.closed && idle.closed), true);
+});
+
+// Slice 5-3, I12 (TEAM_INTERNET_SPEC T3, T5). Fault: the hello gate removed, so an invite holder
+// learns the host's interface addresses again.
+test('an invite principal says hello and gets no addresses; device principals, pending included, do', async (t) => {
+  const env = await createTeamHttpFixture(t);
+  const seeded = await env.seed();
+  const invite = await env.client(seeded.invite.key).hello();
+  assert.equal(invite.status, 200);
+  assert.deepEqual(invite.json, { ok: true, api_version: 1, protocol: { min: 1, max: 1 },
+    team_id: deriveTeamId(env.fx.hostPublicKey), app_version: packageJson.version });
+  assert.equal(JSON.stringify(invite.json).includes('192.0.2.7'), false);
+  for (const principal of ['owner', 'member', 'readOnly', 'pending']) {
+    const response = await env.client(seeded[principal].key).hello();
+    assert.deepEqual(response.json.addresses, ['192.0.2.7:4242'], principal);
+  }
+});
+
+// Slice 6-6. Fault: `bulk_streams` told to an invite holder, or told while the running bridge would pass the class
+// byte into this HTTP layer (a binary from before bulk streams under a newer host).
+test('6-6: hello says bulk_streams to a device only while the bridge reads them, never to an invite', async (t) => {
+  const env = await createTeamHttpFixture(t);
+  const seeded = await env.seed();
+  const today = { ok: true, api_version: 1, protocol: { min: 1, max: 1 }, team_id: deriveTeamId(env.fx.hostPublicKey),
+    app_version: packageJson.version };
+  // The same host behind a second listener whose context has the bridge's answer, as team-main.js gives it.
+  let bulk = true;
+  const listener = await createTeamListener(Object.freeze({ ...env.context, bulkStreams: () => bulk }));
+  t.after(() => listener.close());
+  env.port = listener.port;
+  for (const principal of ['owner', 'member', 'readOnly', 'pending']) {
+    const response = await env.client(seeded[principal].key).hello();
+    assert.deepEqual(response.json, { ...today, addresses: ['192.0.2.7:4242'], bulk_streams: 1 }, principal);
+  }
+  assert.equal((await env.client(seeded.invite.key).hello()).text, JSON.stringify(today));
+  // A bridge that does not read them (an older binary, or one that is down): the answer is today's, byte for byte.
+  for (const answer of [false, null, 1, 'true']) {
+    bulk = answer;
+    const response = await env.client(seeded.member.key).hello();
+    assert.equal(response.text, JSON.stringify({ ...today, addresses: ['192.0.2.7:4242'] }), String(answer));
+    assert.equal((await env.client(seeded.invite.key).hello()).text, JSON.stringify(today));
+  }
 });

@@ -172,7 +172,7 @@ test('/v1/models and /props work with the key alone and not without it', async (
   const props = await send(fx.port, { method: 'GET', path: '/props', headers: key });
   assert.equal(props.status, 200);
   const body = JSON.parse(props.text);
-  assert.equal(body.default_generation_settings.n_ctx, 16384);
+  assert.equal(body.default_generation_settings.n_ctx, 65536, 'the largest model (slice 4f)');
   assert.equal(body.modalities.vision, true);
   for (const path of ['/v1/models', '/props']) {
     const none = await send(fx.port, { method: 'GET', path });

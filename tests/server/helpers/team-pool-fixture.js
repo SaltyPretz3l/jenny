@@ -4,6 +4,9 @@
 // clock, deterministic random bytes, a logger spy, model fixtures and a real
 // scheduler built through its facade.
 
+const crypto = require('node:crypto');
+
+const { createPoolComposition } = require('../../../server/team/pool-composition');
 const { createPoolScheduler } = require('../../../server/team/scheduler');
 const { createClock } = require('./clock');
 
@@ -68,7 +71,47 @@ function sseData(text) {
   return Buffer.from(`data: ${text}\n\n`);
 }
 
+// A pool composition on the real scheduler and gateway, stopped after the test.
+// `clock: null` keeps the composition's default clock.
+function composePool(t, { clock = createClock(), logger = createLoggerSpy(), limits, createScheduler: makeScheduler,
+  createGateway, contextLength = 32768, mayUsePool = () => true } = {}) {
+  const pool = createPoolComposition({ contextLength, ...(clock ? { clock } : {}), logger, limits, mayUsePool,
+    randomBytes: crypto.randomBytes,
+    ...(makeScheduler ? { createScheduler: makeScheduler } : {}), ...(createGateway ? { createGateway } : {}) });
+  t.after(() => pool.stop());
+  return { pool, clock, logger, scheduler: pool.scheduler };
+}
+
+// The turn route's acquire input for one conversation turn.
+const poolTurn = (overrides = {}) => ({ sessionId: 'session_1', projectId: 'project_a', memberId: 'member_alice',
+  model: 'alpha', wantsVision: false, ...overrides });
+
+// Polls `predicate` every 10 ms until it holds or the deadline passes.
+async function waitFor(predicate, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+  }
+}
+
+// A hosted backend's terminal chat-stream event for one conversation, with the deltas before it.
+function terminalFor(backend, sessionId) {
+  return new Promise((resolve) => {
+    const deltas = [];
+    const onEvent = (event) => {
+      if (event.sessionId !== sessionId) return;
+      if (event.type === 'delta' && typeof event.delta === 'string') deltas.push(event.delta);
+      if (['complete', 'error', 'cancelled'].includes(event.type)) {
+        backend.off('chat-stream', onEvent);
+        resolve({ event, deltas });
+      }
+    };
+    backend.on('chat-stream', onEvent);
+  });
+}
+
 module.exports = {
-  DONE_LINE, activeLease, createClock, createLoggerSpy, createRandomBytes, createScheduler, model,
-  registerNode, requestLease, sseData,
+  DONE_LINE, activeLease, composePool, createClock, createLoggerSpy, createRandomBytes, createScheduler, model,
+  poolTurn, registerNode, requestLease, sseData, terminalFor, waitFor,
 };

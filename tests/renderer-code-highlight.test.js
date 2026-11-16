@@ -144,7 +144,7 @@ test('code syntax token sheet defines every expanded variable and class', () => 
   }
 });
 
-test('settled reasoning-phase fenced code is decorated with Monaco token spans', async () => {
+test('settled reasoning-phase fenced code stays a plain block with no token spans', async () => {
   const markdownUtils = require('../renderer/shared/markdown-utils');
   const { createReasoningV2Renderer } = require('../renderer/chat/renderer-transcript-reasoning-v2');
   const {
@@ -169,7 +169,8 @@ test('settled reasoning-phase fenced code is decorated with Monaco token spans',
       entries: [{ text: '```js\nconst value = 1;\n```', thinkingId: 'thinking-code' }],
     },
   }, 'other-message');
-  assert.match(html, /class="tok tok-keyword"/);
+  assert.match(html, /<pre class="thinking-code"><code>const value = 1;/);
+  assert.doesNotMatch(html, /class="tok /);
 });
 
 test('memo evicts oldest entries and warm failures emit one bounded warning', async () => {
@@ -293,4 +294,78 @@ test('a grammar still loading is neither settled nor memoized as monochrome, and
   assert.ok(code.querySelector('.tok-keyword'), 'the grammar-ready pass colors the body without another render');
   assert.ok(highlight.highlightLine('export function add(a, b) { return a + b; }', 'javascript').some((token) => token.cls === 'tok-keyword'),
     'the loading window was not memoized');
+});
+
+// A stateful fake: inside <script> ... </script> lines tokenize as script, the
+// way Monaco's HTML grammar hands them to JavaScript. Per-line calls start
+// fresh each time and so never see the opening tag.
+function htmlMonaco(colorized) {
+  return {
+    editor: {
+      tokenize(text) {
+        let inScript = false;
+        return text.split('\n').map((line) => {
+          if (line.includes('</script>')) inScript = false;
+          const tokens = [{ offset: 0, type: inScript ? 'keyword.js' : 'tag.html' }];
+          if (line.includes('<script>')) inScript = true;
+          return tokens;
+        });
+      },
+      // Each grammar load waits until the test releases it.
+      colorize: (_text, languageId) => new Promise((resolve) => { colorized.push({ languageId, resolve }); }),
+    },
+    languages: { getLanguages: () => [{ id: 'html', extensions: ['.html'] }, { id: 'javascript', extensions: ['.js'] }, { id: 'css', extensions: ['.css'] }] },
+  };
+}
+
+test('a line block tokenizes as one document and settles only once its embedded grammars are loaded', async () => {
+  const rows = ['<script>', 'const x = 1;', '</script>'].map((line) => `<li><code data-code-highlight-line data-language-id="html">${line.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></li>`).join('');
+  const dom = new JSDOM(`<!doctype html><body><ol data-code-highlight-block data-language-id="html">${rows}</ol></body>`);
+  const colorized = [];
+  await highlight.warmCodeHighlighting({ root: dom.window.document, monacoUtils: { ensureMonacoEditorApi: async () => htmlMonaco(colorized) } });
+  const codes = [...dom.window.document.querySelectorAll('code')];
+  highlight.decorateCodeBlocks(dom.window.document);
+  const untouched = () => codes.every((code) => !code.hasAttribute('data-code-highlighted') && !code.querySelector('.tok'));
+  assert.ok(untouched(), 'rows keep their plain text while grammars load');
+  assert.deepEqual(colorized.map((load) => load.languageId).sort(), ['css', 'html', 'javascript'], 'the HTML block also loads the script and style grammars');
+  colorized.find((load) => load.languageId === 'html').resolve('');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(untouched(), 'not rewritten per grammar load: untouched until script and style load too');
+  colorized.forEach((load) => load.resolve(''));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(codes.every((code) => code.getAttribute('data-code-highlighted') === 'tokenized'));
+  assert.equal(codes[1].querySelector('.tok').className, 'tok tok-keyword', 'the script line colors as script');
+  assert.equal(codes[0].querySelector('.tok').className, 'tok tok-tag');
+  assert.equal(highlight.highlightLine('const x = 1;', 'html')[0].cls, 'tok-tag', 'line by line the same text has no script context');
+  assert.equal(highlight.decorateCodeBlocks(dom.window.document), 0, 'a settled block is not rewritten');
+});
+
+test('highlightLines falls back to line by line past the block size cap', async () => {
+  await highlight.warmCodeHighlighting({ monacoUtils: { ensureMonacoEditorApi: async () => fakeMonaco() } });
+  const line = 'const value';
+  const lines = Array.from({ length: Math.ceil(highlight.MAX_BLOCK_CHARS / line.length) + 1 }, () => line);
+  const result = highlight.highlightLines(lines, 'javascript');
+  assert.equal(result.length, lines.length);
+  assert.deepEqual(result[0], highlight.highlightLine(line, 'javascript'));
+});
+
+test('in a block, a line over MAX_LINE_CHARS stays plain while its neighbours color', async () => {
+  const monaco = htmlMonaco([]);
+  delete monaco.editor.colorize;
+  await highlight.warmCodeHighlighting({ monacoUtils: { ensureMonacoEditorApi: async () => monaco } });
+  const long = 'x'.repeat(highlight.MAX_LINE_CHARS + 1);
+  const [first, second] = highlight.highlightLines(['<p>', long], 'html');
+  assert.equal(first[0].cls, 'tok-tag');
+  assert.deepEqual(second, [{ text: long, cls: 'tok-default' }]);
+});
+
+test('a diff line keeps its changed-word mark when the highlight pass rewrites it', () => {
+  const dom = new JSDOM('<!doctype html><body><div class="diff-line"><span class="diff-content" data-code-highlight-line data-language-id=""><span class="tok tok-default">const </span><mark class="diff-word"><span class="tok tok-default">bar</span></mark><span class="tok tok-default"> = 1;</span></span></div></body>');
+  highlight.decorateCodeBlocks(dom.window.document);
+  const line = dom.window.document.querySelector('.diff-content');
+  assert.equal(line.textContent, 'const bar = 1;');
+  const marks = line.querySelectorAll('mark.diff-word');
+  assert.equal(marks.length, 1);
+  assert.equal(marks[0].textContent, 'bar');
+  assert.ok(marks[0].querySelector('.tok'), 'the marked text keeps its token span');
 });

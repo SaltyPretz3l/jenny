@@ -18,6 +18,9 @@ _WORD_RE = re.compile(r"\b\w+\b")
 THINKING_BUDGET_CHARS_PER_TOKEN = 3.2
 THINKING_BUDGET_CHARS_FLOOR = 65_536
 THINKING_BUDGET_ENGINE_CHARS_FLOOR = 16_384
+# A scaled continuation leg keeps at least this much room to act, unless the
+# full budget was already smaller.
+CONTINUATION_THINKING_BUDGET_CHARS_FLOOR = 16_384
 # Share of a request's num_predict a model may spend thinking when thinking and
 # the answer draw on one pool. The remainder is what is left to answer with, so
 # the checkpoint fires while the model can still act on it.
@@ -77,10 +80,17 @@ def resolve_thinking_budget_chars(engine: object | None, max_tokens: int) -> int
     engine_reported = callable(engine_tokens) or callable(headroom)
     tokens = resolve_thinking_budget_tokens(engine, max_tokens)
     if tokens is None:
-        return THINKING_BUDGET_CHARS_FLOOR
-    chars = _budget_chars(tokens)
-    if engine_reported:
-        return max(chars, THINKING_BUDGET_ENGINE_CHARS_FLOOR)
+        chars = THINKING_BUDGET_CHARS_FLOOR
+    elif engine_reported:
+        chars = max(_budget_chars(tokens), THINKING_BUDGET_ENGINE_CHARS_FLOOR)
+    else:
+        chars = _budget_chars(tokens)
+    # Lazy: the local_engine package imports context modules at load time.
+    from sidecar.runtime.local_engine.request_context import thinking_budget_scale
+
+    scale = thinking_budget_scale(engine)
+    if scale < 1:
+        return min(chars, max(int(chars * scale), CONTINUATION_THINKING_BUDGET_CHARS_FLOOR))
     return chars
 
 

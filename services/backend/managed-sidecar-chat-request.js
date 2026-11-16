@@ -31,6 +31,8 @@ const {
 const {
   buildImageAttachmentSendParams,
   buildAutomaticCompactionSendContext,
+  createModelWaitClock,
+  createModelWaitNotice,
   emitManagedHistoryScopeNarrowing,
 } = require('./managed-sidecar-chat-helpers');
 const { computeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
@@ -40,6 +42,7 @@ const {
   assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol,
 } = require('../session-runtime/inference-protocol');
 const { createManagedContinuationSend } = require('./managed-sidecar-continuation');
+const { acquireTurnRoute } = require('./turn-route');
 // Idle watchdog + absolute backstop are engine-keyed (cloud engines get wider
 // ceilings than local ones) — see resolveChatStreamCeilings in
 // managed-sidecar-chat-helpers.js for the values and rationale.
@@ -136,82 +139,100 @@ async function sendManagedChatTurnRequest(service, {
   executionAuthority, checkpointHistory, canonicalSessionMessages, compactedHistory, preparedHistoryMessages,
   contextPreferences, sessionSummary, prompt, textAttachments, skillInvocation, imagePromptPin, wireKinds,
   resolvedSessionId, streamId, requestId, requestTraceId, userMessageId, toolContext, normalizedPreferences,
-  streamWatchdog, activeTurnLease, engineType,
+  streamWatchdog, activeTurnLease, engineType, author = null,
 }) {
   await waitForManagedInitialization(service, controller.signal);
-  const continuationSend = createManagedContinuationSend({ service, runtimeContinuation, controller, activateCanonical: runtime.activateCanonicalContinuation,
-    gateway: runtimeOperationGateway, collector: turnEventCollector, executionAuthority, canonicalSessionMessages,
-    contextPreferences, compactedHistory, sessionSummary, traceId: requestTraceId });
-  applyRuntimeChildSendFields(chatSendParams, executionAuthority, runtimeOperationGateway, continuationSend, runtimeBudgetRequired);
-  // Frame fitting trims canonical history first, then whole history rounds.
-  const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
-    rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
-      attachments: textAttachments, skillInvocation, imagePromptPin, ...wireKinds,
-      contextPreferences: { ...contextPreferences, history_scope: historyScope },
-    }),
-    // The helper reports an irreducible frame at ERROR.
-    log: (level, event, payload) => service._emitServiceLog(level, event, {
-      sessionId: resolvedSessionId,
-      streamId,
-      traceId: requestTraceId,
-      ...payload,
-    }),
-  });
-  const boundedChatSendParams = frameFit.params;
-  const continuationBoundary = continuationSend?.bindFrame(frameFit);
-  runtime.setAutomaticCompactionContext(buildAutomaticCompactionSendContext({
-    contextPreferences,
-    featureFlags: service.featureFlags,
-    frameOutcome: frameFit.outcome,
-    canonicalSessionMessages,
-    userMessageId,
-  }));
-  emitManagedHistoryScopeNarrowing(service, frameFit.outcome, runtime.getEventBase());
-  // Request-time auth retry remains legal only before any turn effect.
-  const turnEffectProbe = createTurnEffectProbe();
-  const chatSendOptions = () => buildManagedSidecarChatSendOptions({
-      service, controller, streamId, resolvedSessionId, requestId, requestTraceId,
-      runtime, toolContext, handleToolNotification, waitForToolApproval,
-      turnEventCollector, normalizedPreferences,
-      noteStreamActivity: streamWatchdog.noteActivity,
-      pauseStreamIdleTimer: streamWatchdog.pauseForApproval,
-      onNotificationObserved: turnEffectProbe.note,
-      onApprovalObserved: turnEffectProbe.noteApproval,
-      executionAuthority, turnIdentity: activeTurnLease.identity,
-      // The idle watchdog handles progress; transport follows the absolute cap.
-      timeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs
-        + CHAT_STREAM_REQUEST_SETTLE_GRACE_MS,
-  });
-  const runtimeOperationHandler = (params) => {
-    if (params?.kind === 'continuation' && continuationBoundary) return continuationBoundary.handleOperation(params);
-    const result = ['inference', 'tool'].includes(params?.kind) && runtimeOperationGateway
-      ? runtimeOperationGateway.handle(params)
-      : service.sessionExecutionAuthority.checkRuntimeOperation(executionAuthority, params);
-    return noteRuntimeInferenceSettlement(params, result, runtimeOnInferenceSettlement);
-  };
-  if (runtimeOperationGateway) {
-    (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
-    controller._runtimeSettlementUnregister = retainRuntimeSettlementHandler(service.sidecarClient,
-      requestId, runtimeOperationHandler);
+  // A host's turn route (turn-route.js) puts its opaque token on this send and is released on
+  // every exit below. Without one nothing is awaited and the params are unchanged.
+  const turnRoute = service.turnRoute
+    ? await acquireTurnRoute(service, { params: chatSendParams, sessionSummary, author, signal: controller.signal })
+    : null;
+  let sent = false;
+  // Row 136: waiting for the model behind another chat stops this turn's clocks, as a wait on the person does.
+  const modelWait = createModelWaitClock({ suspend: () => {
+    const resumeTransport = service.sidecarClient?.suspendRequestTimeout?.(requestId);
+    const resumeWatchdog = streamWatchdog.pauseForApproval();
+    return () => { resumeTransport?.(); resumeWatchdog(); };
+  }, ...createModelWaitNotice(service, runtime, runtimeOperationGateway) });
+  try {
+    const continuationSend = createManagedContinuationSend({ service, runtimeContinuation, controller, activateCanonical: runtime.activateCanonicalContinuation,
+      gateway: runtimeOperationGateway, collector: turnEventCollector, executionAuthority, canonicalSessionMessages,
+      contextPreferences, compactedHistory, sessionSummary, traceId: requestTraceId });
+    applyRuntimeChildSendFields(chatSendParams, executionAuthority, runtimeOperationGateway, continuationSend, runtimeBudgetRequired);
+    // Frame fitting trims canonical history first, then whole history rounds.
+    const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
+      rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
+        attachments: textAttachments, skillInvocation, imagePromptPin, ...wireKinds,
+        contextPreferences: { ...contextPreferences, history_scope: historyScope },
+      }),
+      // The helper reports an irreducible frame at ERROR.
+      log: (level, event, payload) => service._emitServiceLog(level, event, {
+        sessionId: resolvedSessionId,
+        streamId,
+        traceId: requestTraceId,
+        ...payload,
+      }),
+    });
+    const boundedChatSendParams = frameFit.params;
+    const continuationBoundary = continuationSend?.bindFrame(frameFit);
+    runtime.setAutomaticCompactionContext(buildAutomaticCompactionSendContext({
+      contextPreferences,
+      featureFlags: service.featureFlags,
+      frameOutcome: frameFit.outcome,
+      canonicalSessionMessages,
+      userMessageId,
+    }));
+    emitManagedHistoryScopeNarrowing(service, frameFit.outcome, runtime.getEventBase());
+    // Request-time auth retry remains legal only before any turn effect.
+    const turnEffectProbe = createTurnEffectProbe();
+    const chatSendOptions = () => buildManagedSidecarChatSendOptions({
+        service, controller, streamId, resolvedSessionId, requestId, requestTraceId,
+        runtime, toolContext, handleToolNotification, waitForToolApproval,
+        turnEventCollector, normalizedPreferences,
+        noteStreamActivity: streamWatchdog.noteActivity,
+        pauseStreamIdleTimer: streamWatchdog.pauseForApproval,
+        onNotificationObserved: turnEffectProbe.note,
+        onApprovalObserved: turnEffectProbe.noteApproval,
+        executionAuthority, turnIdentity: activeTurnLease.identity,
+        // The idle watchdog handles progress; transport follows the absolute cap.
+        timeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs
+          + CHAT_STREAM_REQUEST_SETTLE_GRACE_MS,
+    });
+    const runtimeOperationHandler = (params) => {
+      if (params?.kind === 'continuation' && continuationBoundary) return continuationBoundary.handleOperation(params);
+      const result = ['inference', 'tool'].includes(params?.kind) && runtimeOperationGateway
+        ? runtimeOperationGateway.handle(params)
+        : service.sessionExecutionAuthority.checkRuntimeOperation(executionAuthority, params);
+      return noteRuntimeInferenceSettlement(params, modelWait.note(params, result), runtimeOnInferenceSettlement);
+    };
+    if (runtimeOperationGateway) {
+      (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
+      controller._runtimeSettlementUnregister = retainRuntimeSettlementHandler(service.sidecarClient,
+        requestId, runtimeOperationHandler);
+    }
+    runtimeAssertCurrent?.();
+    const providerOptions = () => ({
+      ...chatSendOptions(),
+      onRuntimeOperation: runtimeOperationHandler,
+    });
+    const result = await sendManagedChatWithProviderAuthRetry({
+      service, engineType, runtime, controller, probe: turnEffectProbe,
+      params: boundedChatSendParams,
+      options: providerOptions(),
+      assertBeforeSend: () => {
+        runtimeAssertCurrent?.(); continuationSend?.assertProtocol();
+        if (runtimeOperationGateway) (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
+        setImmediate(() => service.backgroundJobWake?.onTurnStarted?.(resolvedSessionId)); // after this frame, before the first step
+      },
+      log: service._emitServiceLog.bind(service),
+      ids: { sessionId: resolvedSessionId, streamId, traceId: requestTraceId },
+    });
+    sent = true;
+    return { result, boundedChatSendParams, continuationBoundary };
+  } finally {
+    modelWait.close();
+    turnRoute?.release({ ok: sent });
   }
-  runtimeAssertCurrent?.();
-  const providerOptions = () => ({
-    ...chatSendOptions(),
-    onRuntimeOperation: runtimeOperationHandler,
-  });
-  const result = await sendManagedChatWithProviderAuthRetry({
-    service, engineType, runtime, controller, probe: turnEffectProbe,
-    params: boundedChatSendParams,
-    options: providerOptions(),
-    assertBeforeSend: () => {
-      runtimeAssertCurrent?.(); continuationSend?.assertProtocol();
-      if (runtimeOperationGateway) (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
-      setImmediate(() => service.backgroundJobWake?.onTurnStarted?.(resolvedSessionId)); // after this frame, before the first step
-    },
-    log: service._emitServiceLog.bind(service),
-    ids: { sessionId: resolvedSessionId, streamId, traceId: requestTraceId },
-  });
-  return { result, boundedChatSendParams, continuationBoundary };
 }
 
 module.exports = {

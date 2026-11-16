@@ -2,13 +2,17 @@
    from a drawer stack above it (a hard-coded 1400 hid all three). */
 .inv-drawer-host { position: fixed; inset: 0; z-index: calc(var(--z-popover) - 1); display: grid; grid-template-columns: 1fr minmax(320px, 520px); }
 .inv-drawer-host[hidden] { display: none; }
-.inv-drawer-scrim { background: color-mix(in srgb, var(--bg-base) 62%, transparent); }
+/* The scrim starts under the title bar like the panel: a full-height scrim dimmed only the
+   part of the bar left of the panel column, splitting a status label like "Starting engine". */
+.inv-drawer-scrim { margin-top: var(--titlebar-height, 0px); background: color-mix(in srgb, var(--bg-base) 62%, transparent); }
 /* The panel starts under the title bar: the window controls stack above this tier, so a
-   full-height panel put its close button beneath Jenny's own Close (the scrim still covers the bar). */
-.inv-drawer-panel { min-width: 0; height: calc(100% - var(--titlebar-height, 0px)); margin-top: var(--titlebar-height, 0px); overflow: auto; background: var(--bg-surface); border-left: 1px solid var(--border-subtle); box-shadow: var(--shadow-float); }
+   full-height panel put its close button beneath Jenny's own Close. */
+.inv-drawer-panel { min-width: 0; height: calc(100% - var(--titlebar-height, 0px)); margin-top: var(--titlebar-height, 0px); overflow: hidden auto; background: var(--bg-surface); border-left: 1px solid var(--border-subtle); box-shadow: var(--shadow-float); }
 .inv-drawer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; background: inherit; border-bottom: 1px solid var(--border-subtle); }
 .inv-drawer-header h2 { margin: 0; font-size: var(--font-size-heading); font-weight: 500; }
 .inv-drawer-close { width: 36px; height: 36px; border: 0; border-radius: 8px; color: inherit; background: transparent; font-size: var(--font-size-title); cursor: pointer; }
 .inv-drawer-close:hover, .inv-drawer-close:focus-visible { background: color-mix(in srgb, var(--text-primary) 5%, transparent); outline: 2px solid var(--border-focus); outline-offset: 2px; }
-.inv-drawer-body { display: grid; gap: 18px; padding: 22px; }
+/* One column no wider than the panel: an implicit auto track grew to the widest unwrapped
+   line in the body and scrolled the whole drawer sideways, controls and all. */
+.inv-drawer-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 22px; }
 @media (max-width: 720px) { .inv-drawer-host { grid-template-columns: 0 minmax(0, 1fr); } }

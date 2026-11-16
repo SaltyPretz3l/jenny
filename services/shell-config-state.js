@@ -124,6 +124,9 @@ const WORKSPACE_WRITE_DELAY_MS = 500;
 const DEFAULT_CHAT_UI = Object.freeze({
   zoomPercent: CHAT_UI_ZOOM_DEFAULT,
 });
+// Settings > Chat > Drawing instructions: which diagram language the model is told about.
+const DRAWING_INSTRUCTIONS = Object.freeze(['short', 'full', 'mermaid']);
+const normalizeDrawingInstructions = (value) => (DRAWING_INSTRUCTIONS.includes(value) ? value : 'short');
 
 function normalizeState(value = {}, options = {}) {
   const validWorkspaceSessionIds = normalizeValidWorkspaceSessionIds(
@@ -200,6 +203,7 @@ function normalizeState(value = {}, options = {}) {
     browserOnInNewChats: source.browserOnInNewChats === true,
     uiLanguage: normalizeUiLanguage(source.uiLanguage),
     use24HourTime: source.use24HourTime === true,
+    drawingInstructions: normalizeDrawingInstructions(source.drawingInstructions),
     safetyMode: normalizeSafetyMode(source.safetyMode),
     autoApproveStreakCap: normalizeAutoApproveStreakCap(source.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(source.unattendedGuardMinutes),
@@ -270,6 +274,7 @@ function cloneState(state) {
     browserOnInNewChats: state.browserOnInNewChats === true,
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
+    drawingInstructions: normalizeDrawingInstructions(state.drawingInstructions),
     safetyMode: normalizeSafetyMode(state.safetyMode),
     autoApproveStreakCap: normalizeAutoApproveStreakCap(state.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(state.unattendedGuardMinutes),
@@ -339,6 +344,7 @@ function serializeState(state) {
     browserOnInNewChats: state.browserOnInNewChats === true,
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
+    drawingInstructions: normalizeDrawingInstructions(state.drawingInstructions),
     safetyMode: normalizeSafetyMode(state.safetyMode),
     autoApproveStreakCap: normalizeAutoApproveStreakCap(state.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(state.unattendedGuardMinutes),
@@ -462,6 +468,7 @@ module.exports = {
   normalizeState,
   normalizeToolsSettings,
   normalizeAutoApproveStreakCap,
+  normalizeDrawingInstructions,
   normalizeSafetyMode,
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,

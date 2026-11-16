@@ -2,18 +2,26 @@
 //! channel on standard input and output. The control channel, lifecycle and limits are
 //! specified in `docs/plans/TEAM_MEMBERSHIP_SPEC.md`, section "1d-R slice spec".
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::AsyncBufRead;
 use tokio::sync::mpsc;
 
+mod accept;
+pub mod admission;
+mod bulk;
 pub mod control;
 mod host;
 mod host_conn;
+mod key_share;
 mod member;
+mod member_dial;
 pub mod messages;
 mod pipe;
+pub mod portmap;
 pub mod preamble;
+mod relay;
 
 pub use host::run_host_with;
 pub use member::run_member_with;
@@ -32,6 +40,15 @@ pub struct RunOptions {
     /// Bind every socket to loopback only. A test seam: in-process tests use it so no
     /// socket listens on a real interface. Never set by the binary.
     pub loopback_only: bool,
+    /// The port mapper used when `start` asks for one. A test seam: `None` (the binary)
+    /// builds the real client, and only when the sockets are not loopback-only.
+    pub mapper: Option<Arc<dyn portmap::Mapper>>,
+    /// How the relay's certificate is checked. A test seam for the loopback test relay's
+    /// self-signed certificate: `None` (the binary) checks it against the embedded roots.
+    pub relay_tls: Option<iroh::tls::CaTlsConfig>,
+    /// How long the host waits for its relay before it says `unreachable`. A test seam for a
+    /// shorter wait; the binary uses the default, ten seconds.
+    pub relay_unreachable_after: Duration,
 }
 
 impl Default for RunOptions {
@@ -39,6 +56,9 @@ impl Default for RunOptions {
         Self {
             start_timeout: START_TIMEOUT,
             loopback_only: false,
+            mapper: None,
+            relay_tls: None,
+            relay_unreachable_after: relay::UNREACHABLE_AFTER,
         }
     }
 }

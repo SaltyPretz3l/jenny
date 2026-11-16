@@ -36,10 +36,11 @@
       "clientTiming",
       "skillInvocation",
       "imagePromptPin",
+      "boardId",
       "editedMessageId",
       "failureRetry"
     ],
-    "identifier_fields": ["sessionId", "traceId", "editedMessageId"],
+    "identifier_fields": ["sessionId", "traceId", "editedMessageId", "boardId"],
     "string_fields": ["prompt", "visiblePrompt", "preferredModel", "reasoningEffort", "approvalMode"],
     "object_fields": [
       "interactiveResponse",

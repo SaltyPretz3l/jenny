@@ -287,6 +287,7 @@
           getChangesUndoController: () => callbacks.getChangesUndoController?.() || null,
           onSendToJenny: (payload) => ideSendController?.handleSendToJenny?.(payload),
           activateWorkspaceSession: (...args) => callbacks.activateWorkspaceSession?.(...args),
+          mergePreparedAttachments: (...args) => callbacks.mergePreparedAttachments?.(...args),
           getProjectSwitcher, peekProjectSwitcher,
         },
       }) || null;

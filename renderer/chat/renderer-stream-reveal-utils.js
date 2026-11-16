@@ -165,6 +165,7 @@
       runtime.activeTurnStructureHash = 0;
       runtime.activeTurnTailFingerprint = '';
       runtime.previousUnits = [];
+      runtime.imageReferenceUnits = null;
       if (!nextOptions.preserveStructureSignature) {
         runtime.structureSignature = 0;
       }
@@ -352,12 +353,13 @@
       runtime.previousUnits = renderModel.units;
       const firstReferenceChange = streamUnits?.findIndex((unit, i) => unit.html !== runtime.imageReferenceUnits?.[i]?.html) ?? -1;
       runtime.imageReferenceUnits = streamUnits;
+      const markdownChange = renderModel.changedStartIndex;
 
       return {
         bubbleInnerHtml,
         streamUnits,
-        // Artifact metadata can arrive without a Markdown fingerprint change.
-        streamChangedStart: firstReferenceChange >= 0 ? Math.min(firstReferenceChange, renderModel.changedStartIndex) : renderModel.changedStartIndex,
+        // Artifact metadata can change with no Markdown change (markdownChange -1).
+        streamChangedStart: firstReferenceChange >= 0 && (markdownChange < 0 || firstReferenceChange < markdownChange) ? firstReferenceChange : markdownChange,
       };
     }
 
@@ -518,6 +520,7 @@
         return;
       }
 
+      let rowNodeRewritten = false; // a rewritten row node decorates the whole article
       if (
         patchTarget
         && patchTarget !== article
@@ -526,10 +529,16 @@
         const rowMarkup = String(patchOptions.buildRowNodeMarkup() || '').trim();
         if (rowMarkup) {
           setOuterHtmlPreservingCodeScroll(patchTarget, rowMarkup);
+          rowNodeRewritten = true;
         }
       }
 
-      const patchModel = patchOptions.buildMessageNodeState(message, patchOptions.messages, patchOptions.latestAssistantMessageId);
+      // Row-model turns skip the message-level widget (every phase) per delta:
+      // a cheap key stands in; the widget is built only if the row path declines.
+      const rowModelList = article.querySelector('[data-turn-row-list="true"]');
+      const omitMessageThinking = Boolean(rowModelList) && typeof patchOptions.buildLiveReasoningRowsMarkup === 'function';
+      const patchModel = patchOptions.buildMessageNodeState(message, patchOptions.messages, patchOptions.latestAssistantMessageId,
+        omitMessageThinking ? { omitThinking: true } : undefined);
 
       // Pretext streaming height prediction: prepare accumulated text and
       // store the prediction on the patch model for scroll anchoring.
@@ -565,17 +574,19 @@
       // source-id-list match, falling back to the last stack — segments
       // append in order). Legacy single-message articles keep the article
       // scope unchanged.
-      const rowModelList = article.querySelector('[data-turn-row-list="true"]');
       const segmentScope = rowModelList
         ? streamPatchTargetUtils.resolveLiveReasoningScope(rowModelList, message.id, escapeSelectorValue)
         : article;
       let patchedSurgically = false;
       const existingBubble = article.querySelector('[data-streaming-bubble="true"]');
-      const hasMessageThinkingMarkup = Object.prototype.hasOwnProperty.call(patchModel, 'thinkingMarkup');
+      const hasMessageThinkingMarkup = omitMessageThinking || Object.prototype.hasOwnProperty.call(patchModel, 'thinkingMarkup');
+      const messageThinkingKey = omitMessageThinking
+        ? streamPatchTargetUtils.buildLiveReasoningKey(message, patchOptions.latestAssistantMessageId, chatTimeline?.getAttribute?.('data-transcript-view'))
+        : patchModel.thinkingMarkup;
       // Owner-gated assumption: no row-only state changes while message-level thinking markup is equal.
       const reuseReasoning = hasMessageThinkingMarkup
         && runtime.lastMessageThinkingMarkupKey === runtime.streamingMessageId
-        && runtime.lastMessageThinkingMarkup === patchModel.thinkingMarkup
+        && runtime.lastMessageThinkingMarkup === messageThinkingKey
         && segmentScope.querySelector('.reasoning-row-stack');
       let reasoningPatch;
       const liveStackDiagnostics = { reason: '' };
@@ -587,10 +598,11 @@
           buildLiveReasoningRowsMarkup: patchOptions.buildLiveReasoningRowsMarkup, doc: article.ownerDocument,
           diagnostics: liveStackDiagnostics,
         });
-        reasoningPatch = patchReasoningStack(segmentScope, rowStackMarkup == null
-          ? patchModel : { thinkingMarkup: rowStackMarkup }, article.ownerDocument, rowModelList);
+        const stackModel = rowStackMarkup != null ? { thinkingMarkup: rowStackMarkup } : (omitMessageThinking
+          ? patchOptions.buildMessageNodeState(message, patchOptions.messages, patchOptions.latestAssistantMessageId, { thinkingOnly: true }) : patchModel);
+        reasoningPatch = patchReasoningStack(segmentScope, stackModel, article.ownerDocument, rowModelList);
         if (hasMessageThinkingMarkup && reasoningPatch.patched) {
-          runtime.lastMessageThinkingMarkup = patchModel.thinkingMarkup;
+          runtime.lastMessageThinkingMarkup = messageThinkingKey;
           runtime.lastMessageThinkingMarkupKey = runtime.streamingMessageId;
         }
       }
@@ -664,6 +676,11 @@
       if (reasoningPatch.patched) {
         syncExpandedThinkingPanelHeight(segmentScope);
       }
+      // The roots this patch wrote, for post-patch decoration; null decorates the article.
+      const decorateRoots = rowModelList && patchedSurgically && !rowNodeRewritten ? [
+        reasoningPatch.patched && !reuseReasoning ? segmentScope : null,
+        existingBubble && patchModel.bubbleInnerHtml != null ? existingBubble : null,
+      ].filter(Boolean) : null;
 
       if (!patchedSurgically) {
         // A row-model article must NEVER be overwritten with the legacy
@@ -732,6 +749,7 @@
         patchOptions.onAfterPatch(patchOptions.messages, {
           messageId: String(message.id || ''),
           predictedHeight: patchModel.predictedHeight,
+          decorateRoots,
         });
       }
     }
@@ -740,8 +758,9 @@
       const nextOptions = options || {};
       const currentSessionId = String(nextOptions.currentSessionId || '');
       const activeTurnRootMessageId = String(nextOptions.activeTurnRootMessageId || '').trim();
+      const decline = (reason) => { if (nextOptions.diagnostics) nextOptions.diagnostics.reason = reason; return false; };
       if (!chatTimeline || !currentSessionId || runtime.sessionId !== currentSessionId || !activeTurnRootMessageId) {
-        return false;
+        return decline(runtime.sessionId !== currentSessionId ? 'session_mismatch' : 'no_target');
       }
       const expectedRootOrder = Array.isArray(nextOptions.expectedRootOrder)
         ? nextOptions.expectedRootOrder.map((value) => String(value || '').trim()).filter(Boolean)
@@ -754,14 +773,14 @@
           actualRootOrder.length !== expectedRootOrder.length
           || actualRootOrder.some((value, index) => value !== expectedRootOrder[index])
         ) {
-          return false;
+          return decline('root_order_mismatch');
         }
       }
       const rootNode = chatTimeline.querySelector(
         `[data-thread-message-id="${escapeSelectorValue(activeTurnRootMessageId)}"]`
       );
       if (!rootNode || rootNode.parentElement !== chatTimeline) {
-        return false;
+        return decline(rootNode ? 'root_not_top_level' : 'root_not_on_screen');
       }
       const nextTurnStructureHash = Number(nextOptions.turnStructureHash) || 0;
       const nextTurnTailFingerprint = String(nextOptions.turnTailFingerprint || '');
@@ -778,16 +797,16 @@
           ? nextOptions.buildTurnRootMarkup
           : null;
       if (!buildTurnRootMarkup) {
-        return false;
+        return decline('no_builder');
       }
       let nextMarkup;
       try {
         nextMarkup = String(buildTurnRootMarkup() || '').trim();
       } catch (_error) {
-        return false;
+        return decline('build_threw');
       }
       if (!nextMarkup) {
-        return false;
+        return decline('build_empty');
       }
       // Render-path telemetry (Track A): per-rebuild-granularity diagnostics
       // only on the path that actually commits a rebuild (the no-op

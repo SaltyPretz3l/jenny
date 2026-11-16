@@ -269,3 +269,26 @@ test('roleLabel maps roles to human labels', () => {
 test('escapeMarkdownToken collapses newlines and escapes pipes', () => {
   assert.equal(escapeMarkdownToken('a|b\nc'), 'a\\|b c');
 });
+
+/* ── fenced diagrams: a sketch block is exported the way a Mermaid block is ── */
+
+test('a sketch block and a Mermaid block are exported as their fenced source, tag and id kept, in Markdown and plain text', () => {
+  const mermaid = '```mermaid\nflowchart TD\n  A[Cart] --> B[Pay]\n```';
+  const sketch = '```sketch login-flow\ntitle Sign in\nuser User @user\napp App\nuser -> app\n```';
+  const messages = [
+    makeAssistantMessage({ id: 'm-mermaid', content: `Here is a diagram.\n\n${mermaid}\n\nDone.` }),
+    makeAssistantMessage({ id: 'm-sketch', content: `Here is a drawing.\n\n${sketch}\n\nDone.` }),
+    makeAssistantMessage({ id: 'm-bare', content: '```sketch\na Alpha\nb Beta\na -> b\n```' }),
+  ];
+  const markdown = buildMarkdown(messages);
+  assert.ok(markdown.includes(`\n${mermaid}\n`), 'the Mermaid fence comes out as it went in');
+  assert.ok(markdown.includes(`\n${sketch}\n`), 'the sketch fence comes out as it went in, with its id');
+  assert.ok(markdown.includes('```sketch\na Alpha\nb Beta\na -> b\n```'), 'a sketch fence without an id too');
+  const plain = buildPlainText(messages);
+  assert.ok(plain.includes(mermaid));
+  assert.ok(plain.includes(sketch));
+  // Streamed in segments, the block is whole once the segments are joined.
+  const [head, tail] = [sketch.slice(0, 40), sketch.slice(40)];
+  const segmented = buildMarkdown([makeAssistantMessage({ content: '', visible_segments: [{ text: head }, { text: tail }] })]);
+  assert.ok(segmented.includes(sketch));
+});

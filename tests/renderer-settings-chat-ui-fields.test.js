@@ -73,8 +73,8 @@ test('language options exactly match supported tags and endonym labels', () => {
 });
 
 test('streak cap normalizer defaults, clamps, and preserves off', () => {
-  assert.equal(support.normalizeAutoApproveStreakCap(undefined), 50);
-  assert.equal(support.normalizeAutoApproveStreakCap('nope'), 50);
+  assert.equal(support.normalizeAutoApproveStreakCap(undefined), 250);
+  assert.equal(support.normalizeAutoApproveStreakCap('nope'), 250);
   assert.equal(support.normalizeAutoApproveStreakCap(0), 0);
   assert.equal(support.normalizeAutoApproveStreakCap(999), 500);
 });
@@ -85,8 +85,9 @@ test('renderer bootstrap, hydration, and settings composition thread the streak 
   // The persisted chatUi state seeds `state` in the lifecycle composition's boot-preferences section.
   const lifecycle = fs.readFileSync(path.join(root, 'app', 'renderer-app-boot-preferences-composition.js'), 'utf8');
   const settings = fs.readFileSync(path.join(root, 'shell', 'renderer-settings-utils.js'), 'utf8');
-  assert.match(bootstrap, /autoApproveStreakCap:\s*50/);
-  assert.match(bootstrap, /normalizeAutoApproveStreakCap\(config\?\.autoApproveStreakCap\)/);
+  assert.match(bootstrap, /autoApproveStreakCap:\s*250/);
+  // One boot read of chatUi state: the bootstrap only holds the default above.
+  assert.doesNotMatch(bootstrap, /chatUi\?\.getState/);
   assert.match(lifecycle, /normalizeAutoApproveStreakCap\?\.\(persistedChatZoomState\?\.autoApproveStreakCap\)/);
   assert.match(settings, /state\.autoApproveStreakCap/);
 });
@@ -102,11 +103,14 @@ function createBindingHarness(options = {}) {
     + support.buildUiLanguageFieldMarkup({ value: 'en', use24HourTime: false })
     // Appearance mounts this row in its Chat layout group; the chatUi binding finds it anywhere in the view.
     + fieldBinding.renderSettingRow(fieldDescriptors.getSettingDescriptor('transcriptViewDefaultSelect'), 'thinking', {})
-    + '<div id="toolsConfigFieldList">'
+    // Row 133: the four run-mode and approval rows live on the Permissions page and bind on its card.
+    + '<section id="permissionsCard" data-settings-section="permissions">'
     + settingRow('safetyModeSelect', 'normal')
     + settingRow('defaultRunModeSelect', 'ask')
     + settingRow('unattendedGuardMinutesInput', guardMinutes)
     + settingRow('autoApproveStreakCapInput', 50)
+    + '</section>'
+    + '<div id="toolsConfigFieldList">'
     + support.buildToolConfigFieldListMarkup({ fields: options.toolFields || support.DEFAULT_TOOL_CONFIG_FIELDS, tools: {}, availability: {}, toggleSwitch })
     + '</div>'
     + `<div id="contextSourcesList">${lists.sources}</div><div id="contextRuntimeList">${lists.runtime}</div>`
@@ -145,6 +149,7 @@ function createBindingHarness(options = {}) {
     dom: {
       settingsView: byId('settingsView'),
       toolsConfigFieldList: byId('toolsConfigFieldList'),
+      permissionsSettingsSection: byId('permissionsCard'),
       contextSourcesList: byId('contextSourcesList'),
       contextRuntimeList: byId('contextRuntimeList'),
       modelStartupLoadList: byId('modelStartupLoadList'),
@@ -438,7 +443,7 @@ test('startup model load toggle saves through engines and rolls back an unconfir
 });
 
 test('chat UI field copy entries remain searchable and section-owned', () => {
-  for (const [id, sectionId] of [['uiLanguageSelect', 'appearance'], ['safetyModeSelect', 'tools'], ['unattendedGuardMinutesInput', 'tools'], ['autoApproveStreakCapInput', 'tools']]) {
+  for (const [id, sectionId] of [['uiLanguageSelect', 'general'], ['safetyModeSelect', 'permissions'], ['unattendedGuardMinutesInput', 'permissions'], ['autoApproveStreakCapInput', 'permissions']]) {
     const copy = fieldCopy.getSettingsFieldCopy(id);
     assert.ok(copy);
     assert.ok(copy.description.length >= 10);
@@ -552,4 +557,36 @@ test('transcript view default without a controller rejects and never bypasses th
     globalThis.rendererTranscriptViewController = previous;
     harness.cleanup();
   }
+});
+
+test('drawing instructions: a Chat row after the pictures switch, three choices, saved through chatUi, disabled when sketch blocks are off', async (t) => {
+  const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
+  const patches = [];
+  const { window, shell, dispose } = await loadRendererApp({ shell: { chatUi: { async getState() { return { drawingInstructions: 'mermaid' }; }, async updateSettings(patch) { patches.push({ ...patch }); return patch; } } } });
+  t.after(dispose);
+  await openSettingsView(window);
+  await waitForUi(window, 30);
+  const doc = window.document;
+  const mount = doc.querySelector('[data-setting-mount="drawingInstructionsSelect"]');
+  assert.ok(mount, 'the row mounts');
+  assert.equal(mount.previousElementSibling?.dataset.settingMount, 'changePicturesToggle');
+  assert.ok(mount.closest('.settings-card[data-settings-section="chat"]'));
+  assert.match(mount.textContent, /Drawing instructions/);
+  assert.match(mount.textContent, /Short suits small local models/);
+  assert.deepEqual([...doc.querySelectorAll('[data-inv-segmented="drawingInstructionsSelect"] .inv-segmented-option')].map((o) => o.textContent.trim()), ['Short', 'Full', 'Mermaid']);
+  assert.equal(segmentedValue(doc, 'drawingInstructionsSelect'), 'mermaid', 'the saved choice shows');
+  assert.equal(mount.querySelector('.settings-field--unavailable'), null);
+
+  chooseSegmented(doc, 'drawingInstructionsSelect', 'full');
+  await waitForUi(window, 30);
+  assert.deepEqual(patches.at(-1), { drawingInstructions: 'full' });
+  assert.equal(segmentedValue(doc, 'drawingInstructionsSelect'), 'full');
+
+  await shell.__emitFeaturesChanged({ featureFlags: { sketch_blocks: false } });
+  await waitForUi(window, 30);
+  const row = doc.querySelector('[data-setting-mount="drawingInstructionsSelect"] .settings-field');
+  assert.ok(row, 'the row is never hidden');
+  assert.ok(row.classList.contains('settings-field--unavailable'));
+  assert.match(row.textContent, /Sketch drawings are turned off, so the model is told to write Mermaid\./);
+  assert.ok([...row.querySelectorAll('.inv-segmented-option')].every((option) => option.disabled));
 });

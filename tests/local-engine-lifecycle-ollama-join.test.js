@@ -55,8 +55,13 @@ function makeService({ engine, openaiCompatible = { port: 8033, apiUrl: '' } }) 
   return service;
 }
 
-test('a llama-server engine initializes without waiting on a slow Ollama start', async () => {
-  const service = makeService({ engine: 'openai-compatible' });
+for (const [label, engine] of [
+  ['a llama-server engine', 'openai-compatible'],
+  ['the ChatGPT engine', 'chatgpt'],
+  ['an API provider engine', 'api-provider'],
+  ['the Codex CLI engine', 'codex-cli'],
+]) test(`${label} initializes without waiting on a slow Ollama start`, async () => {
+  const service = makeService({ engine });
   const progress = [];
 
   await startBackendService(service, { onProgress: (phase) => progress.push(phase) });

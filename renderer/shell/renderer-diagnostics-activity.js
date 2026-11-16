@@ -80,6 +80,11 @@
     return jt('shell.bootstrap.diagnostics.info', 'Info');
   }
 
+  // A record with no layer or source is the App (electron), as sourceLabel names it.
+  function entrySource(entry) {
+    return String(entry.layer || entry.source || 'electron').toLowerCase();
+  }
+
   function filterEntries(state, entries, scopeGroup) {
     var view = diagnosticsState(state);
     var query = String(view.query || '').trim().toLowerCase();
@@ -87,7 +92,7 @@
     var group = scopeGroup === undefined ? groupForScope(view.issueScope, entries) : scopeGroup;
     return entries.filter(function (entry) {
       var level = String(entry.level || '').toLowerCase();
-      var source = String(entry.layer || entry.source || '').toLowerCase();
+      var source = entrySource(entry);
       if (view.levelFilter !== 'all' && level !== view.levelFilter) return false;
       if (view.sourceFilter !== 'all' && source !== view.sourceFilter) return false;
       if (scoped && !(group && issueUtils.issueEntryMatches(group, entry))) return false;
@@ -111,12 +116,15 @@
     ].join(', ');
   }
 
-  // The 16 px level cell: a stroke icon for errors and warnings, muted "dbg" for debug, nothing for info.
-  function levelCell(level) {
+  function levelIcon(level) {
     var key = String(level || '').toUpperCase();
-    var icon = typeof stateIcon === 'function' && typeof stateIcon.forLevel === 'function' ? stateIcon.forLevel(key, { size: 'sm' }) : '';
+    return typeof stateIcon === 'function' && typeof stateIcon.forLevel === 'function' ? stateIcon.forLevel(key, { size: 'sm' }) : '';
+  }
+
+  // The 16 px level cell: a stroke icon for errors and warnings, muted "dbg" for debug, nothing for info.
+  function levelCell(level, icon) {
     if (icon) return icon;
-    return key === 'DEBUG' ? escapeHtml(jt('diagnostics.activity.debugShort', 'dbg')) : '';
+    return String(level || '').toUpperCase() === 'DEBUG' ? escapeHtml(jt('diagnostics.activity.debugShort', 'dbg')) : '';
   }
 
   function renderActivityRow(entry, selectedEntryId, focusable) {
@@ -125,15 +133,15 @@
     var timestamp = String(entry.ts || '');
     var eventName = String(entry.event || 'event');
     var message = displayMessage(entry.message || entry.details?.message, eventName);
+    var icon = levelIcon(entry.level);
     return '<article class="log-entry" role="option" aria-controls="logDetailPanel"'
       + ' aria-label="' + escapeHtml(activityRowAriaLabel(entry, timestamp, eventName, message)) + '"'
-      + ' title="' + escapeHtml(levelWord(entry.level)) + '"'
       + ' data-log-index="' + escapeHtml(id) + '" data-entry-id="' + escapeHtml(id) + '"'
       + ' data-level="' + escapeHtml(String(entry.level || 'INFO').toLowerCase()) + '"'
       + ' tabindex="' + (focusable || selected ? '0' : '-1') + '" aria-selected="' + selected + '">'
       + '<time datetime="' + escapeHtml(timestamp) + '" title="' + escapeHtml(timestamp || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
       + escapeHtml(formatCompactTime(timestamp)) + '</time>'
-      + '<span class="log-entry-level" aria-hidden="true">' + levelCell(entry.level) + '</span>'
+      + '<span class="log-entry-level" aria-hidden="true"' + (icon ? ' title="' + escapeHtml(levelWord(entry.level)) + '"' : '') + '>' + levelCell(entry.level, icon) + '</span>'
       + '<span class="log-entry-message' + (message ? '' : ' diagnostics-muted') + '">'
       + (message ? escapeHtml(message) : '<span class="log-entry-no-message" aria-hidden="true">—</span>'
         // Below 900 px the Event column drops, so a message-less row names its event instead of a bare dash.
@@ -159,6 +167,9 @@
     if (selected) virtualizer?.ensureMountedForId?.(selectedId);
     var focused = list.contains(document.activeElement) ? document.activeElement.closest('[data-entry-id]') : null;
     var stop = focused || selected || rows[0] || null;
+    // A virtualized row is a blank placeholder, and mounting it later would restore its stashed tabindex:
+    // mount the tab stop first so the stop is a real row and keeps tabindex 0.
+    if (stop && stop !== selected) virtualizer?.ensureMountedForId?.(stop.dataset.entryId);
     rows.forEach(function (row) {
       var isSelected = row === selected;
       if (row.getAttribute('aria-selected') !== String(isSelected)) row.setAttribute('aria-selected', String(isSelected));
@@ -182,18 +193,104 @@
       : '';
     paintMarkup(scope,
       '<span class="diagnostics-scope-label">' + escapeHtml(jt('diagnostics.activity.showingRecordsFor', 'Showing records for {title}', { title: title })) + '</span>'
-      + '<span class="diagnostics-scope-count">' + escapeHtml(jtn('diagnostics.activity.scopeCount', count, { count: formatNumber(count) }, '{count} record', '{count} records')) + '</span>'
+      + (count > 0 ? '<span class="diagnostics-scope-count">' + escapeHtml(jtn('diagnostics.activity.scopeCount', count, { count: formatNumber(count) }, '{count} record', '{count} records')) + '</span>' : '')
       + clear);
   }
 
-  function emptyListMarkup(entries, view, group) {
-    if (!entries.length) {
-      return emptyNote({ text: jt('diagnostics.activity.noRecordsYet', 'No records yet.'), hint: jt('diagnostics.activity.noRecordsYetHint', 'Records appear as Jenny works.') });
+  // A launch with no records says why: not loaded yet, failed to load, a finished launch, or still starting.
+  function noRecordsMarkup(state) {
+    // The logs refresher sets the snapshot; a failed refresh sets it too, with refresh_logs_failed.
+    if (!state.diagnosticsSnapshot) return emptyNote({ text: jt('diagnostics.activity.loadingRecords', 'Loading records…'), role: 'status' });
+    var reasons = state.diagnosticsSnapshot?.integrity?.partial_reasons;
+    if (Array.isArray(reasons) && reasons.includes('refresh_logs_failed')) {
+      return emptyNote({ text: jt('diagnostics.activity.recordsUnavailable', 'Records couldn’t load.'), hint: jt('diagnostics.activity.recordsUnavailableHint', 'Refresh on Overview to try again.') });
     }
+    var activeRunId = page.activeRunId(state);
+    if (activeRunId && selectedRunId(state) !== activeRunId) {
+      return emptyNote({ text: jt('diagnostics.activity.previousLaunchEmpty', 'The previous launch left no records.'), hint: jt('diagnostics.activity.previousLaunchEmptyHint', 'Choose This launch to see what Jenny is doing now.') });
+    }
+    return emptyNote({ text: jt('diagnostics.activity.noRecordsYet', 'No records yet.'), hint: jt('diagnostics.activity.noRecordsYetHint', 'Records appear as Jenny works.') });
+  }
+
+  function emptyListMarkup(state, entries, view, group) {
+    if (!entries.length) return noRecordsMarkup(state);
     if (view.issueScope && !group) {
       return emptyNote({ text: jt('diagnostics.activity.noRecordsForIssue', 'No records for this issue in this launch.') });
     }
-    return emptyNote({ text: jt('diagnostics.activity.noRecordsMatch', 'No records match.'), hint: jt('diagnostics.activity.noRecordsMatchHint', 'Clear the search or filters.') });
+    var clear = typeof actionButton === 'function'
+      ? actionButton({ id: 'clear-diagnostics-filters', label: jt('diagnostics.activity.clearFilters', 'Clear search and filters'), plain: true, className: 'diagnostics-issue-link diagnostics-empty-action' })
+      : '';
+    return emptyNote({ text: jt('diagnostics.activity.noRecordsMatch', 'No records match.') }) + clear;
+  }
+
+  // The match count is announced once the filters stop changing, not on every keystroke.
+  var ANNOUNCE_DELAY_MS = 600;
+
+  function scheduleAnnouncement(cache, signature, filteredCount) {
+    if (cache.filterAnnouncementSignature !== signature) {
+      cache.filterAnnouncementSignature = signature;
+      clearTimeout(cache.announceTimer);
+      cache.announceTimer = setTimeout(function () {
+        cache.announceTimer = null;
+        announce(cache.announceMessage, cache.announceKey);
+      }, ANNOUNCE_DELAY_MS);
+    }
+    if (!cache.announceTimer) return;
+    cache.announceMessage = jtn('diagnostics.activity.matchingEventCount', filteredCount, { count: filteredCount }, '{count} matching event.', '{count} matching events.');
+    cache.announceKey = 'activity|' + signature + '|' + filteredCount;
+  }
+
+  // The focused row keeps focus; when it leaves, the next surviving row takes it, else the previous, else the first.
+  function focusedRow(list) {
+    return list.contains(document.activeElement) ? document.activeElement.closest('[data-entry-id]') : null;
+  }
+
+  function focusToKeep(list, previousIds, ids) {
+    var focusId = focusedRow(list)?.dataset.entryId || '';
+    if (focusId && !ids.includes(focusId)) {
+      var focusIndex = previousIds.indexOf(focusId);
+      focusId = previousIds.slice(focusIndex + 1).find(function (id) { return ids.includes(id); })
+        || previousIds.slice(0, focusIndex).reverse().find(function (id) { return ids.includes(id); })
+        || ids[0];
+    }
+    return focusId;
+  }
+
+  function moveFocusTo(list, focusId) {
+    if (!focusId) return;
+    var focusTarget = findRow(list, focusId);
+    list.querySelectorAll('[data-entry-id]').forEach(function (row) {
+      var tabIndex = row === focusTarget ? 0 : -1;
+      if (row.tabIndex !== tabIndex) row.tabIndex = tabIndex;
+    });
+    focusTarget?.focus({ preventScroll: true });
+  }
+
+  // Retention drops old rows from anywhere in the list and adds new ones at the end. When the rows
+  // that stay keep their order and only new ids follow, the list can be edited in place instead of rebuilt.
+  function trimPlan(previousIds, ids) {
+    var kept = new Set(ids);
+    var survivors = previousIds.filter(function (id) { return kept.has(id); });
+    if (!survivors.length || survivors.length === previousIds.length) return null;
+    var known = new Set(previousIds);
+    var inOrder = survivors.every(function (id, index) { return ids[index] === id; })
+      && ids.slice(survivors.length).every(function (id) { return !known.has(id); });
+    return inOrder ? { dropped: new Set(previousIds.filter(function (id) { return !kept.has(id); })), keep: survivors.length } : null;
+  }
+
+  // The first surviving row still in view and where it sits, so the reader's rows do not move when rows
+  // above leave. A row about to be dropped cannot anchor: once removed its rect is all zeros.
+  function scrollAnchor(list, dropped) {
+    var top = list.getBoundingClientRect().top;
+    var row = Array.from(list.querySelectorAll('[data-entry-id]')).find(function (candidate) {
+      return !dropped.has(candidate.dataset.entryId) && candidate.getBoundingClientRect().bottom > top;
+    });
+    return row ? { row: row, offset: row.getBoundingClientRect().top - top } : null;
+  }
+
+  function restoreAnchor(list, anchor) {
+    if (!anchor) return;
+    list.scrollTop += (anchor.row.getBoundingClientRect().top - list.getBoundingClientRect().top) - anchor.offset;
   }
 
   function renderActivity(state, entries, virtualizer, cache) {
@@ -206,6 +303,7 @@
     }
     var filtered = filterEntries(state, entries, group);
     var list = document.getElementById('logList');
+    var emptyHost = document.getElementById('logEmpty');
     var label = document.getElementById('logResultsLabel');
     if (label) {
       label.textContent = filtered.length === entries.length
@@ -214,14 +312,19 @@
     }
     renderScope(view);
     var activityRoot = document.getElementById('diagnosticsActivity');
-    if (activityRoot) activityRoot.dataset.scoped = String(Boolean(view.issueScope));
+    if (activityRoot) {
+      activityRoot.dataset.scoped = String(Boolean(view.issueScope));
+      // Two facts the stylesheet reads: whether the launch has records at all, and whether the filtered list has rows.
+      activityRoot.dataset.records = entries.length ? 'some' : 'none';
+      activityRoot.dataset.list = filtered.length ? 'rows' : 'empty';
+    }
 
     var activeRunId = String(state.diagnosticsSnapshot?.active_run?.run_id || '');
     var currentRunSelected = !activeRunId || selectedRunId(state) === activeRunId;
     var follow = document.getElementById('logAutoScrollToggle');
     if (follow) {
       var following = currentRunSelected && view.autoScroll;
-      follow.disabled = !currentRunSelected;
+      follow.disabled = !currentRunSelected || !entries.length;
       follow.setAttribute('aria-pressed', String(following));
       follow.classList.toggle('active', following);
     }
@@ -236,30 +339,44 @@
       view.sourceFilter,
       view.issueScope && view.issueScope.key,
     ].join('|');
-    if (cache.filterAnnouncementSignature !== filterSignature) {
+    if (entries.length) scheduleAnnouncement(cache, filterSignature, filtered.length);
+    else {
+      // A launch with no records has its own note (a status while loading); a "0 matching events" would talk over it.
+      clearTimeout(cache.announceTimer);
+      cache.announceTimer = null;
       cache.filterAnnouncementSignature = filterSignature;
-      announce(jtn('diagnostics.activity.matchingEventCount', filtered.length, { count: filtered.length }, '{count} matching event.', '{count} matching events.'), 'activity|' + filterSignature + '|' + filtered.length);
     }
 
+    // The note lives beside the listbox, never inside it: a button may not be a child of role="listbox".
     if (!filtered.length) {
-      var emptyMarkup = emptyListMarkup(entries, view, group);
-      if (cache.signature !== filterSignature || cache.ids.length || cache.emptyMarkup !== emptyMarkup) {
-        paintMarkup(list, emptyMarkup);
+      var emptyMarkup = emptyListMarkup(state, entries, view, group);
+      if (emptyHost) {
+        paintMarkup(emptyHost, emptyMarkup);
+        emptyHost.hidden = false;
       }
-      cache.emptyMarkup = emptyMarkup;
+      paintMarkup(list, '');
+      list.hidden = true;
       cache.signature = filterSignature;
       cache.ids = [];
       cache.selectedEntryId = '';
       virtualizer?.rebuild?.();
       return;
     }
-    cache.emptyMarkup = '';
+    // Rows came back while focus sat on Clear search and filters: the search field takes it, not the page body.
+    var emptyHadFocus = Boolean(emptyHost && emptyHost.contains(document.activeElement));
+    if (emptyHost) {
+      paintMarkup(emptyHost, '');
+      emptyHost.hidden = true;
+    }
+    list.hidden = false;
+    if (emptyHadFocus) document.getElementById('logSearchInput')?.focus?.();
 
     var idsMatch = cache.ids.length === ids.length && cache.ids.every(function (id, index) { return id === ids[index]; });
     var canAppend = cache.ids.length > 0
       && cache.signature === filterSignature
       && cache.ids.length < ids.length
       && cache.ids.every(function (id, index) { return id === ids[index]; });
+    var trim = !canAppend && !idsMatch && cache.signature === filterSignature ? trimPlan(cache.ids, ids) : null;
     var mutated = false;
     if (canAppend) {
       list.insertAdjacentHTML('beforeend', filtered.slice(cache.ids.length).map(function (entry) {
@@ -268,25 +385,29 @@
       page.forgetMarkup(list);
       settleRows(list, view.selectedEntryId, virtualizer);
       mutated = true;
+    } else if (trim) {
+      var anchor = view.autoScroll && !view.selectedEntryId ? null : scrollAnchor(list, trim.dropped);
+      // Surviving nodes keep their focus; only a dropped focused row hands it on.
+      var focused = focusedRow(list);
+      var keepFocus = focused && trim.dropped.has(focused.dataset.entryId) ? focusToKeep(list, cache.ids, ids) : '';
+      Array.from(list.querySelectorAll('[data-entry-id]')).forEach(function (row) {
+        if (trim.dropped.has(row.dataset.entryId)) row.remove();
+      });
+      list.insertAdjacentHTML('beforeend', filtered.slice(trim.keep).map(function (entry) {
+        return renderActivityRow(entry, view.selectedEntryId, false);
+      }).join(''));
+      page.forgetMarkup(list);
+      moveFocusTo(list, keepFocus);
+      settleRows(list, view.selectedEntryId, virtualizer);
+      restoreAnchor(list, anchor);
+      mutated = true;
     } else if (cache.signature !== filterSignature || !idsMatch) {
-      var focusedRow = list.contains(document.activeElement) ? document.activeElement.closest('[data-entry-id]') : null;
-      var focusId = focusedRow?.dataset.entryId || '';
-      if (focusId && !ids.includes(focusId)) {
-        var focusIndex = cache.ids.indexOf(focusId);
-        focusId = cache.ids.slice(focusIndex + 1).find(function (id) { return ids.includes(id); })
-          || cache.ids.slice(0, focusIndex).reverse().find(function (id) { return ids.includes(id); })
-          || ids[0];
-      }
+      var focusId = focusToKeep(list, cache.ids, ids);
       list.innerHTML = filtered.map(function (entry, index) {
         return renderActivityRow(entry, view.selectedEntryId, !view.selectedEntryId && index === 0);
       }).join('');
       page.forgetMarkup(list);
-      if (focusId) {
-        var rows = Array.from(list.querySelectorAll('[data-entry-id]'));
-        var focusTarget = rows.find(function (row) { return row.dataset.entryId === focusId; });
-        rows.forEach(function (row) { row.tabIndex = row === focusTarget ? 0 : -1; });
-        focusTarget?.focus({ preventScroll: true });
-      }
+      moveFocusTo(list, focusId);
       mutated = true;
     } else {
       settleRows(list, view.selectedEntryId, virtualizer);
@@ -349,8 +470,8 @@
       ? logContractUtils.redactLogReportValue(entry.data || entry.details || {})
       : (entry.data || entry.details || {});
     var title = displayMessage(entry.message || entry.details?.message, entry.event) || entry.event || 'event';
-    var levelIcon = typeof stateIcon === 'function' && typeof stateIcon.forLevel === 'function' ? stateIcon.forLevel(entry.level, { size: 'sm' }) : '';
-    var meta = [levelWord(entry.level), formatCompactTime(entry.ts), sourceLabel(entry.layer || entry.source)].join(' · ');
+    var icon = levelIcon(entry.level);
+    var meta = [levelWord(entry.level), format.formatDetailTime(entry.ts), sourceLabel(entry.layer || entry.source)].join(' · ');
     var correlations = issueUtils.correlations ? issueUtils.correlations(entry) : {};
     var facts = fact(jt('diagnostics.labels.event', 'Event'), entry.event || 'event', true)
       + fact(jt('diagnostics.labels.component', 'Component'), entry.component || 'unknown', true)
@@ -373,7 +494,7 @@
       })
       : emptyNote({ text: jt('diagnostics.detail.structuredAttributesUnavailable', 'Structured attributes unavailable.') });
     paintMarkup(panel,
-      '<div class="diagnostics-detail-head"><span class="diagnostics-detail-icon">' + levelIcon + '</span>'
+      '<div class="diagnostics-detail-head"><span class="diagnostics-detail-icon">' + icon + '</span>'
       + '<div><h3>' + escapeHtml(title) + '</h3><p class="diagnostics-detail-meta">' + escapeHtml(meta) + '</p></div>' + detailClose() + '</div>'
       + '<dl class="diagnostics-facts">' + facts + '</dl>' + codeMarkup);
   }

@@ -29,6 +29,9 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  // Outside-Workspace documents (row 137): a chat prompt gets the real path, never the key.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+  const displayPath = (path) => outsideDocs()?.displayPathFor(path) ?? path;
 
   // Lines of context kept on each side of a diagnostic when squiggle-fix
   // slices the surrounding code range out of the active document.
@@ -117,7 +120,7 @@
         kind: 'code_selection',
         target: target || 'current',
         code,
-        path,
+        path: displayPath(path),
         language: typeof language === 'string' ? language : editorHost?.getFocusedLanguageId?.() || '',
         startLine,
         endLine,
@@ -162,8 +165,8 @@
     // selection, no git bridge, or the range is not tracked in HEAD.
     async function sendBlameSummary(target) {
       const path = focusedPath();
-      if (!path) {
-        return false;
+      if (!path || outsideDocs()?.isOutsideKey(path)) {
+        return false; // an outside document has no Workspace git history
       }
       const range = editorHost?.getSelectionRange?.();
       if (!range || !(Number(range.startLine) > 0)) {
@@ -318,11 +321,11 @@
         { separator: true },
         {
           label: jt('ide.selection.sendCurrentChat', 'Send to Jenny — current chat'),
-          action: () => onSendToJenny({ kind: 'file_path', target: 'current', path }),
+          action: () => onSendToJenny({ kind: 'file_path', target: 'current', path: displayPath(path) }),
         },
         {
           label: jt('ide.selection.sendNewChat', 'Send to Jenny — new chat'),
-          action: () => onSendToJenny({ kind: 'file_path', target: 'new', path }),
+          action: () => onSendToJenny({ kind: 'file_path', target: 'new', path: displayPath(path) }),
         },
       ];
     }

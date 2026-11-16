@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -23,6 +23,7 @@ const {
   trackDirectory,
 } = require('./helpers/resource-cleanup');
 const { linkDirectory } = require('./helpers/platform-skips');
+const { buildCommittedRepo, createGitTemplates } = require('./helpers/git-template-repo');
 
 const execFileAsync = promisify(execFile);
 
@@ -34,15 +35,14 @@ async function git(cwd, args) {
   });
 }
 
+// Built once per file, copied per case (see helpers/git-template-repo.js); keeps
+// the host's default branch and signing config, as the cases always ran with.
+const templates = createGitTemplates();
+after(() => templates.dispose());
+
 async function createGitRepo(prefix = 'jenny-worktree-repo-') {
-  const repoRoot = createTrackedTempDir(prefix);
+  const repoRoot = await templates.copy('standard', (dir) => buildCommittedRepo(dir, { 'README.md': '# fixture\n' }, { hostDefaults: true }), prefix);
   trackDirectory(path.join(path.dirname(repoRoot), `${path.basename(repoRoot)}-worktrees`));
-  await git(repoRoot, ['init']);
-  await git(repoRoot, ['config', 'user.email', 'jenny@example.invalid']);
-  await git(repoRoot, ['config', 'user.name', 'Jenny Tests']);
-  await fs.writeFile(path.join(repoRoot, 'README.md'), '# fixture\n', 'utf8');
-  await git(repoRoot, ['add', 'README.md']);
-  await git(repoRoot, ['commit', '-m', 'initial']);
   return repoRoot;
 }
 

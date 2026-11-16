@@ -17,6 +17,10 @@ function t(key, englishDefault, params) {
     : interpolate(englishDefault, params);
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function mapAppLocaleToUiLanguage(locale) {
   return normalizeTag(locale);
 }
@@ -47,14 +51,17 @@ function createI18nMain({
     if (!catalogCache.has(activeLocale)) {
       try {
         const catalog = JSON.parse(readFileSync(path.join(localesDir, `${activeLocale}.json`), 'utf8'));
-        if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)
-          || normalizeTag(catalog.tag) !== activeLocale
-          || !catalog.strings || typeof catalog.strings !== 'object'
-          || Array.isArray(catalog.strings)) {
+        if (!isPlainObject(catalog)) throw new Error('invalid catalog');
+        // The shipped locales/<tag>.json is a flat key-to-text object; a
+        // wrapped { tag, strings } catalog is accepted when it names this tag
+        // (the same two shapes scripts/i18n/build-catalogs.js parses).
+        const wrapped = Object.prototype.hasOwnProperty.call(catalog, 'strings');
+        const source = wrapped ? catalog.strings : catalog;
+        if (!isPlainObject(source) || (wrapped && normalizeTag(catalog.tag) !== activeLocale)) {
           throw new Error('invalid catalog');
         }
         const strings = Object.create(null);
-        for (const [key, value] of Object.entries(catalog.strings)) {
+        for (const [key, value] of Object.entries(source)) {
           if (typeof value === 'string') strings[key] = value;
         }
         catalogCache.set(activeLocale, strings);

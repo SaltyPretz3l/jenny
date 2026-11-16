@@ -186,7 +186,11 @@ profile) refuses acceleration because its allocation has zero slack.
   projector size, and caps the context at the largest one that keeps every layer
   on the GPU (never below 32K). The server gets `--fit-target` of 1024 MiB + the
   projector only: its own fit already counts the MTP draft context, which
-  `llama-fit-params` cannot see (it rejects `--spec-type`). Measured 2026-11-04
+  `llama-fit-params` cannot see (it rejects `--spec-type`). When the dry run
+  keeps every layer on the GPU the server also gets `-ngl all`: its own draft
+  estimate is more cautious than the real use, and without the pin it moved 4
+  of 66 layers to the CPU (2026-11-12, UD-Q6_K + projector at 154K: 62 tok/s on
+  ~20 CPU cores; pinned, 119 tok/s using 30.9 of 32.6 GB). Measured 2026-11-04
   on the RTX 5090 (Qwen3.8-27B Q6_K finetune, embedded head, b10749): the old
   launch (256K f16, 4 slots, ngram) put 17 of 66 layers on the CPU and decoded
   ~30 tok/s; the plan (166K q8_0, 1 slot, MTP) keeps 66/66 on the GPU and
@@ -259,6 +263,66 @@ note under the folder list offers **Move and add**, **Add where it is**,
   shows "The bundled llama-server can't run <arch> models" after the add; any
   doubt shows nothing and the launch-time `llama_server_model_unsupported`
   copy still applies.
+
+## Drafter and vision files (Get drafter / Get vision)
+
+Settings > Models > Tune > Engine shows a **Drafter file** row above Model file
+and a **Vision** row below it for a llama-server GGUF model (row 140, plan
+`docs/plans/GGUF_COMPANION_FILES_2026-11-12.md`). Each row shows the installed
+file, the MTP head built into the model, or a **Get drafter** / **Get vision**
+button with the download size and VRAM cost. A row whose gate blocks stays
+visible and disabled with the reason (kill switch, Local only, Ollama's copy,
+not in the list, folder rejected, not enough space, another download running,
+a file the launch rules would not pick beside the model, a name already taken).
+
+- **Source.** Only `config/gguf-companions.json`: per base model a Hugging Face
+  repo, a 40-hex `revision`, `repoPath`, `saveAs`, exact `bytes` and `sha256`
+  for the drafter and the F16 projector. `services/gguf-companion-catalog.js`
+  validates it fail-closed (a bad file offers nothing). A model matches by its
+  header's `general.base_model`, then its basename, then a separator-bounded
+  base name in the file name (a fine-tune gets the base model's files with a
+  "made for" note), then the file family.
+- **Built-in head.** A GGUF whose header has `<arch>.nextn_predict_layers > 0`
+  runs MTP without a drafter. The drafter is offered over it only when the
+  catalog's `gainOverBuiltInPct` is at least 10 (Qwen3.8-27B: 10.8 %, measured
+  2026-11-12, about 800 MB more VRAM).
+- **Download.** `services/hf-resumable-download.js` fetches only the pinned
+  `resolve/<revision>/<repoPath>` URL; a redirect may go only to a Hugging Face
+  CDN host over https. The partial is `<saveAs>.jenny-partial` beside the model
+  and resumes with HTTP Range (206 with an exact `Content-Range`, else restart
+  from 0). Bytes past the pin, a stall or a whole-file sha256 mismatch fail
+  the download (a mismatch deletes the partial). Cancel keeps the partial so
+  the next try resumes. One download runs at a time; status is polled
+  (`llamaServer.companionStatus`, `installCompanion`, `cancelCompanion`).
+- **Placement.** `services/gguf-companion-download.js` re-resolves the model
+  from a fresh scan (a running download's poll reuses the entry it started
+  with), and checks that its folder is local, absolute and a real directory
+  (`lstat` not a link, `realpath` equal to the path) once the reply starts,
+  right before the partial opens, and again before placement. A file is
+  offered only when `pickDrafter` / `pairProjector` would pick it beside the
+  model (else `not_paired`: a fine-tune beside other models' files), and never
+  over a name something already holds (`name_taken`). The checked file is
+  hard-linked to `saveAs` with no overwrite; where links fail, the partial
+  (same folder) is renamed into place while the name is free, so the final
+  name never holds a half-written file. A file that appears under the name
+  mid-download is kept: a different one fails with `name_taken`, an identical
+  one counts as installed. A cancel after the last byte keeps the checked
+  partial. Restart the server to load a new file; the row offers **Restart
+  now** after an install it watched.
+- **Kill switch.** `JENNY_ENABLE_GGUF_COMPANIONS=0` disables both buttons.
+  Local only disables them too (nothing is downloaded in that mode).
+- **Refreshing the list (maintainer).** For each file run
+  `python scripts/dev/refresh_gguf_companions.py <repo> <revision> <repoPath> [--save-as NAME]`;
+  it prints the catalog object from the Hugging Face API (LFS size and sha256)
+  and writes nothing. Review it, paste it into `config/gguf-companions.json`,
+  and run `tests/gguf-companion-catalog.test.js`. Gated repos stay manual.
+- **Reasons.** Download: `url_rejected`, `invalid_pin`, `partial_rejected`,
+  `insufficient_space`, `redirect_host_rejected`, `redirect_scheme_rejected`,
+  `hf_gated`, `not_found`, `content_range_mismatch`, `size_mismatch`,
+  `byte_overflow`, `response_timeout`, `download_inactivity`,
+  `sha256_mismatch`, `cancelled`, `download_failed`. Service: `disabled`,
+  `local_only`, `ollama_copy`, `not_in_catalog`, `folder_rejected`, `busy`,
+  `not_paired`, `name_taken`, `unknown_model`, `invalid_kind`.
 
 ## Per-model llama-server builds
 

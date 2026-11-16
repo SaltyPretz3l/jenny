@@ -155,6 +155,18 @@ test('a team field needs schema three and earlier schemas return no team key', (
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_schema_future');
 }));
 
+// Slice 5-5b: `internet` joins the team block with no schema step. Top-level it is an unknown key in
+// every schema; a schema 4 file with it is still a future schema, not an internet refusal.
+test('internet is a team key only: never top level, and schema 4 stays future', () => withFixture(({ configPath, write }) => {
+  const internet = { map_port: true, public_address: null, relay_url: null };
+  for (const schemaVersion of [1, 2, 3]) {
+    write({ schema_version: schemaVersion, internet });
+    assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_unknown_field', `schema ${schemaVersion}`);
+  }
+  write({ schema_version: 4, team: { name: 'Core team', key_source: 'secret_file', direct_port: 45123, internet } });
+  assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'config_schema_future');
+}));
+
 test('rejects replay, malformed origins, and unsafe model URLs', () => withFixture(({ configPath, write }) => {
   write({ model_endpoint: { engine: 'replay', model: 'replay', api_url: 'http://x' } });
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'replay_engine_forbidden');

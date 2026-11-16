@@ -54,7 +54,8 @@
       // A command's Always allow saved a program + subcommand prefix (row 103).
       const prefix = scope === 'always' ? normalizeText(last.always_allow_prefix) : '';
       if (prefix) return { decision: 'allowed', scope, alwaysAllowPrefix: prefix };
-      return scope === 'always' || scope === 'once' || scope === 'full_auto' ? { decision: 'allowed', scope } : { decision: 'allowed' };
+      return scope === 'always' || scope === 'once' || scope === 'full_auto' || scope === 'round'
+        ? { decision: 'allowed', scope } : { decision: 'allowed' };
     }
     if (RECEIPT_HARD_OUTCOMES.has(resolved)) return { decision: resolved };
     if (RECEIPT_HARD_OUTCOMES.has(state)) return { decision: state };
@@ -78,6 +79,7 @@
       case 'allowed':
         if (scope === 'always') return jt('approval.receipt.alwaysAllowed', 'Always allowed');
         if (scope === 'full_auto') return jt('approval.receipt.fullAuto', 'Ran in Full auto');
+        if (scope === 'round') return jt('approval.receipt.round', 'Allowed together'); // row 166 D10
         return scope === 'once' ? jt('approval.receipt.allowedOnce', 'Allowed once') : jt('approval.receipt.allowed', 'Allowed');
       case 'denied': return jt('approval.receipt.denied', 'Denied');
       case 'timed_out': return jt('approval.receipt.timedOut', 'Not answered in time');
@@ -134,6 +136,7 @@
       // What a command card's Always allow covers (row 103): only the live request carries it.
       if (live.alwaysAllowScope && typeof live.alwaysAllowScope === 'object') card.alwaysAllowScope = live.alwaysAllowScope;
       if (live.rememberOffer === 'linked_children') card.rememberOffer = 'linked_children'; // row 87 C1
+      if (live.roundApproval && typeof live.roundApproval === 'object') card.roundApproval = live.roundApproval; // row 166 D10
       return card;
     }
     const sessionId = normalizeText(ref.sessionId);

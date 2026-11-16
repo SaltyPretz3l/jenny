@@ -64,6 +64,29 @@ test('secondary and muted text clear 4.5:1 on every background, the sidebar incl
   assert.deepEqual(failures, [], failures.join('\n'));
 });
 
+// Row 149 (plan section 5.8, D14): a drawing takes the theme's colours, so its ink has to read on
+// its paper, on a node and inside a group, and on a node marked with the amber marker.
+test('a sketch drawing is readable in every palette: ink on paper, on a node, in a group and on the marker', () => {
+  const { PALETTE_TOKENS, MARKER_TOKEN, MARKER_SHARE } = require('../renderer/features/renderer-sketch-frame-palette.js');
+  const failures = collect(({ table }, fail) => {
+    const ink = readSolid(table, PALETTE_TOKENS.ink);
+    const card = readSolid(table, PALETTE_TOKENS.card);
+    const marker = readSolid(table, MARKER_TOKEN);
+    if (!ink || !card || !marker) { fail('ink, node fill or marker is not one literal colour'); return; }
+    const grounds = [
+      ['paper', readSolid(table, PALETTE_TOKENS.paper)],
+      ['a node', card],
+      ['a group', readSolid(table, PALETTE_TOKENS.groupFill)],
+      ['the marker', composite({ ...marker, a: MARKER_SHARE }, card)],
+    ];
+    for (const [name, ground] of grounds) {
+      const ratio = ground ? contrastRatio(ink, ground) : 0;
+      if (ratio < TEXT_RATIO) fail(`ink is ${ratio.toFixed(2)} on ${name}`);
+    }
+  });
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
 test('secondary text is never fainter than muted text', () => {
   const failures = collect(({ table }, fail) => {
     const base = readSolid(table, '--bg-base');

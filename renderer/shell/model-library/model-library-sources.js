@@ -78,7 +78,7 @@
       var tag = String(source.tag || '').trim();
       if (!tag) return null;
       var sizeBytes = Number(source.sizeBytes);
-      return {
+      var normalized = {
         tag: tag,
         source: String(source.source || '').trim(),
         dir: String(source.dir || '').trim(),
@@ -86,6 +86,9 @@
         drafterGguf: String(source.drafterGguf || '').trim(),
         sizeBytes: Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : 0,
       };
+      // Row 140: the GGUF's own MTP head (layer count), present only when the header was read.
+      if (Number.isInteger(source.embeddedMtpLayers)) normalized.embeddedMtpLayers = source.embeddedMtpLayers;
+      return normalized;
     }).filter(Boolean);
   }
 

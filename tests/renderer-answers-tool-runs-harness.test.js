@@ -8,8 +8,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp } = require('./helpers/renderer-shell-harness');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 const { buildFeatureFlagDefaults } = require('../services/feature-flags');
+const { createReplayEmitter, flushFrames } = require('./helpers/replay-chat-stream');
 
 const SESSION_ID = 'sess_answers_tool_runs';
 
@@ -66,33 +68,22 @@ async function loadApp(t) {
   const { window, shell } = app;
   const document = window.document;
 
+  // The send is accepted once the renderer has registered the stream as active.
   async function send(text) {
+    const streamId = `stream_runs_${streamCount + 1}`;
     const input = document.getElementById('chatInput');
     input.value = text;
     input.dispatchEvent(new window.Event('input', { bubbles: true }));
     document.getElementById('sendButton').click();
-    await waitForUi(window, 30);
-    const streamId = `stream_runs_${streamCount}`;
-    let aggregate = '';
-    const emit = async (payload, settleMs = 5) => {
-      const full = { sessionId: SESSION_ID, streamId, ...payload };
-      if (payload.type === 'delta') {
-        aggregate += payload.content || '';
-        full.aggregate = aggregate;
-      }
-      await shell.__emitChat(full);
-      await waitForUi(window, settleMs);
-    };
-    await emit({ type: 'started' });
-    return { streamId, emit };
+    const replay = createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId });
+    await replay.waitFor(() => window.__rendererState.activeStreamId === streamId, `${streamId} to become the active stream`);
+    await replay.post({ type: 'started' });
+    await replay.flush();
+    return { streamId, ...replay };
   }
 
-  const waitUntil = async (predicate, label) => {
-    for (let waited = 0; !predicate(); waited += 10) {
-      assert.ok(waited < 3000, `timed out waiting for ${label}`);
-      await waitForUi(window, 10);
-    }
-  };
+  const waitUntil = (predicate, label) => createReplayEmitter({ window, shell, sessionId: SESSION_ID, streamId: '' })
+    .waitFor(predicate, label);
 
   return { window, document, send, waitUntil };
 }
@@ -101,29 +92,51 @@ const timelineOf = (document) => document.getElementById('chatTimeline');
 const runRows = (root) => [...root.querySelectorAll('.chat-row[data-row-kind="tool_run"]')];
 const memberRows = (root) => [...root.querySelectorAll('.chat-row[data-run-member="step"]')];
 
-async function streamThreeToolTurn(send) {
-  const { streamId, emit } = await send('look around');
-  await emit(textPhaseStarted(1), 20);
-  await emit(textDelta(1, 'Let me look.'), 20);
-  for (const index of [2, 3, 4]) {
-    const tool = toolEvents(streamId, index);
-    for (const payload of [...tool.start, ...tool.finish]) await emit(payload, 10);
-  }
-  await emit(textPhaseStarted(5), 20);
-  await emit(textDelta(5, 'Found it.'), 20);
-  await emit(TERMINAL, 80);
+// A view switch is stamped on the pane timeline and repainted on the next frames.
+async function switchView(window, document, view) {
+  window.rendererTranscriptViewController.setView(SESSION_ID, view);
+  await waitForUiState(window, () => timelineOf(document).dataset.transcriptView === view, {
+    timeoutMs: 20_000, stepMs: 10, message: `timed out waiting for the ${view} view to be stamped`,
+  });
+  await flushFrames(window);
+}
+
+// Delivers a whole settled turn back to back, then waits once for its end state:
+// the stream is no longer active, the live marker is gone and every tool card of
+// every turn so far is in the DOM.
+async function settle(document, window, streamId, { postAll, waitFor, flush }, toolCallIds) {
+  await waitFor(() => window.__rendererState.activeStreamId !== streamId
+    && !document.querySelector('.turn-row-list[data-turn-live="true"]')
+    && !document.querySelector('[data-streaming-bubble="true"]')
+    && toolCallIds.every((callId) => document.querySelector(`.chat-row[data-tool-call-id="${callId}"]`)),
+  `${streamId} to settle with its ${toolCallIds.length} tool cards`);
+  await flush();
+}
+
+async function streamThreeToolTurn(send, document, window) {
+  const replay = await send('look around');
+  const { streamId, postAll } = replay;
+  const tools = [2, 3, 4].map((index) => toolEvents(streamId, index));
+  await postAll([
+    textPhaseStarted(1),
+    textDelta(1, 'Let me look.'),
+    ...tools.flatMap((tool) => [...tool.start, ...tool.finish]),
+    textPhaseStarted(5),
+    textDelta(5, 'Found it.'),
+    TERMINAL,
+  ]);
+  await settle(document, window, streamId, replay, tools.map((tool) => tool.callId));
 }
 
 test('Answers folds a settled run into one summary row; Thinking renders no run', async (t) => {
   const { window, document, send } = await loadApp(t);
-  await streamThreeToolTurn(send);
+  await streamThreeToolTurn(send, document, window);
   const timeline = timelineOf(document);
   assert.equal(timeline.dataset.transcriptView, 'thinking');
   assert.equal(runRows(timeline).length, 0, 'the default view emits no run rows');
   assert.equal(timeline.querySelectorAll('[data-run-id]').length, 0, 'the default view stamps no run attributes');
 
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await switchView(window, document, 'answers');
   const [summary] = runRows(timeline);
   assert.ok(summary, 'Answers emits the run summary');
   assert.equal(runRows(timeline).length, 1);
@@ -139,9 +152,8 @@ test('Answers folds a settled run into one summary row; Thinking renders no run'
 
 test('the run toggle expands in place, survives a re-render and resets on a view switch', async (t) => {
   const { window, document, send } = await loadApp(t);
-  await streamThreeToolTurn(send);
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await streamThreeToolTurn(send, document, window);
+  await switchView(window, document, 'answers');
   const timeline = timelineOf(document);
   runRows(timeline)[0].querySelector('[data-tool-run-toggle]').click();
   assert.equal(runRows(timeline)[0].querySelector('[data-tool-run-toggle]').getAttribute('aria-expanded'), 'true');
@@ -151,7 +163,7 @@ test('the run toggle expands in place, survives a re-render and resets on a view
   // drops any attribute the new markup lacks, so the planted marker proves the
   // first run's row was rebuilt, and its state must come from the override.
   runRows(timeline)[0].setAttribute('data-test-stale-marker', 'true');
-  await streamThreeToolTurn(send);
+  await streamThreeToolTurn(send, document, window);
   const firstRun = runRows(timeline)[0];
   assert.equal(firstRun.hasAttribute('data-test-stale-marker'), false, 'precondition: the first run was re-rendered');
   assert.equal(runRows(timeline).length, 2, 'the second turn adds its own run');
@@ -161,10 +173,8 @@ test('the run toggle expands in place, survives a re-render and resets on a view
   assert.ok(memberRows(timeline).filter((row) => row.getAttribute('data-run-id') === firstRunId)
     .every((row) => row.getAttribute('data-run-expanded') === 'true'));
 
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'thinking');
-  await waitForUi(window, 60);
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await switchView(window, document, 'thinking');
+  await switchView(window, document, 'answers');
   assert.equal(runRows(timeline)[0].getAttribute('data-run-expanded'), 'false', 'a view switch resets the run');
 
   const toggle = runRows(timeline)[0].querySelector('[data-tool-run-toggle]');
@@ -174,23 +184,21 @@ test('the run toggle expands in place, survives a re-render and resets on a view
 
 test('a live run keeps one summary line, reuses the first step node and settles in place', async (t) => {
   const { window, document, send, waitUntil } = await loadApp(t);
-  await streamThreeToolTurn(send);
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await streamThreeToolTurn(send, document, window);
+  await switchView(window, document, 'answers');
   const timeline = timelineOf(document);
   const newestList = () => [...timeline.querySelectorAll('.turn-row-list')].pop();
 
-  const { streamId, emit } = await send('look again');
-  await emit(textPhaseStarted(1), 20);
-  await emit(textDelta(1, 'Checking.'), 20);
+  const replay = await send('look again');
+  const { streamId, postAll } = replay;
   const first = toolEvents(streamId, 2);
-  for (const payload of [...first.start, ...first.finish]) await emit(payload, 10);
+  await postAll([textPhaseStarted(1), textDelta(1, 'Checking.'), ...first.start, ...first.finish]);
   await waitUntil(() => newestList().querySelector(`.chat-row[data-tool-call-id="${first.callId}"]`), 'the first step');
   const firstNode = newestList().querySelector(`.chat-row[data-tool-call-id="${first.callId}"]`);
   assert.equal(runRows(newestList()).length, 0, 'one step is not a run');
 
   const second = toolEvents(streamId, 3);
-  for (const payload of second.start) await emit(payload, 10);
+  await postAll(second.start);
   await waitUntil(() => runRows(newestList()).length === 1, 'the run summary');
   const summary = runRows(newestList())[0];
   assert.equal(newestList().querySelector(`.chat-row[data-tool-call-id="${first.callId}"]`), firstNode,
@@ -199,14 +207,13 @@ test('a live run keeps one summary line, reuses the first step node and settles 
   assert.match(summary.querySelector('.tool-run-summary').textContent, /call_stream_runs_2_3\.js/, 'the live label names the running step');
   assert.match(summary.textContent, /1 done/);
 
-  for (const payload of second.finish) await emit(payload, 10);
+  await postAll(second.finish);
   await waitUntil(() => runRows(newestList())[0]?.querySelector('.tool-run-row')?.getAttribute('data-tool-run-state') === 'ok',
     'the run to settle');
   assert.equal(runRows(newestList())[0].querySelector('.tool-run-summary').textContent, 'Read 2 files');
 
-  await emit(textPhaseStarted(4), 20);
-  await emit(textDelta(4, 'Same answer.'), 20);
-  await emit(TERMINAL, 80);
+  await postAll([textPhaseStarted(4), textDelta(4, 'Same answer.'), TERMINAL]);
+  await settle(document, window, streamId, replay, [first.callId, second.callId]);
   assert.equal(runRows(newestList()).length, 1, 'the settled turn keeps its one run');
   assert.equal(newestList().querySelector(`.chat-row[data-tool-call-id="${first.callId}"]`)?.getAttribute('data-run-member'), 'step');
 });
@@ -215,31 +222,28 @@ test('a live run keeps one summary line, reuses the first step node and settles 
 // open, then a second tool arrives) must keep that tool visible.
 async function openFirstToolThenAddSecond(t) {
   const { window, document, send, waitUntil } = await loadApp(t);
-  await streamThreeToolTurn(send);
-  window.rendererTranscriptViewController.setView(SESSION_ID, 'answers');
-  await waitForUi(window, 60);
+  await streamThreeToolTurn(send, document, window);
+  await switchView(window, document, 'answers');
   const timeline = timelineOf(document);
   const newestList = () => [...timeline.querySelectorAll('.turn-row-list')].pop();
   const rowFor = (callId) => newestList().querySelector(`.chat-row[data-tool-call-id="${callId}"]`);
 
-  const { streamId, emit } = await send('look again');
-  await emit(textPhaseStarted(1), 20);
-  await emit(textDelta(1, 'Checking.'), 20);
+  const { streamId, postAll } = await send('look again');
   const first = toolEvents(streamId, 2);
-  for (const payload of [...first.start, ...first.finish]) await emit(payload, 10);
+  await postAll([textPhaseStarted(1), textDelta(1, 'Checking.'), ...first.start, ...first.finish]);
   await waitUntil(() => rowFor(first.callId), 'the first step');
   const firstNode = rowFor(first.callId);
   assert.equal(runRows(newestList()).length, 0, 'one step is not a run');
 
+  const isOpen = () => rowFor(first.callId).querySelector('.tool-call-row--minimal')?.getAttribute('data-expanded') === 'true';
   firstNode.querySelector('[data-tool-row-toggle]').click();
-  await waitForUi(window, 20);
-  assert.equal(rowFor(first.callId).querySelector('.tool-call-row--minimal').getAttribute('data-expanded'), 'true',
-    'precondition: the user opened the first tool');
+  await waitUntil(isOpen, 'the first tool to open');
+  assert.equal(isOpen(), true, 'precondition: the user opened the first tool');
 
   const second = toolEvents(streamId, 3);
-  for (const payload of second.start) await emit(payload, 10);
+  await postAll(second.start);
   await waitUntil(() => runRows(newestList()).length === 1, 'the run summary');
-  return { window, newestList, rowFor, first, firstNode, second, streamId, emit, waitUntil };
+  return { window, newestList, rowFor, first, firstNode, second, streamId, postAll, waitUntil };
 }
 
 test('a run forming around an opened tool starts expanded and keeps that tool visible', async (t) => {
@@ -254,14 +258,13 @@ test('a run forming around an opened tool starts expanded and keeps that tool vi
 });
 
 test('closing the opened tool afterwards keeps the run expanded for later tools', async (t) => {
-  const { window, newestList, rowFor, first, second, streamId, emit, waitUntil } = await openFirstToolThenAddSecond(t);
+  const { newestList, rowFor, first, second, streamId, postAll, waitUntil } = await openFirstToolThenAddSecond(t);
   rowFor(first.callId).querySelector('[data-tool-row-toggle]').click();
-  await waitForUi(window, 20);
-  assert.equal(rowFor(first.callId).querySelector('.tool-call-row--minimal').getAttribute('data-expanded'), 'false');
+  await waitUntil(() => rowFor(first.callId).querySelector('.tool-call-row--minimal')?.getAttribute('data-expanded') === 'false',
+    'the first tool to close');
 
-  for (const payload of second.finish) await emit(payload, 10);
   const third = toolEvents(streamId, 4);
-  for (const payload of [...third.start, ...third.finish]) await emit(payload, 10);
+  await postAll([...second.finish, ...third.start, ...third.finish]);
   await waitUntil(() => newestList().querySelector(`.chat-row[data-tool-call-id="${third.callId}"]`), 'the third step');
   assert.equal(runRows(newestList()).length, 1);
   assert.equal(runRows(newestList())[0].getAttribute('data-run-expanded'), 'true', 'the seeded choice survives');
@@ -271,13 +274,12 @@ test('closing the opened tool afterwards keeps the run expanded for later tools'
 });
 
 test('an explicit run collapse wins over an opened member when another tool arrives', async (t) => {
-  const { newestList, first, second, streamId, emit, waitUntil } = await openFirstToolThenAddSecond(t);
+  const { newestList, first, second, streamId, postAll, waitUntil } = await openFirstToolThenAddSecond(t);
   runRows(newestList())[0].querySelector('[data-tool-run-toggle]').click();
   assert.ok(memberRows(newestList()).every((row) => row.getAttribute('data-run-expanded') === 'false'), 'the run collapses');
 
-  for (const payload of second.finish) await emit(payload, 10);
   const third = toolEvents(streamId, 4);
-  for (const payload of third.start) await emit(payload, 10);
+  await postAll([...second.finish, ...third.start]);
   await waitUntil(() => newestList().querySelector(`.chat-row[data-tool-call-id="${third.callId}"]`), 'the third step');
   assert.equal(newestList().querySelector(`.chat-row[data-tool-call-id="${first.callId}"] .tool-call-row--minimal`)
     .getAttribute('data-expanded'), 'true', 'precondition: the first tool is still open');

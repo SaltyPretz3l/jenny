@@ -161,7 +161,7 @@ test('open() builds DOM per the CSS contract and unhides it', () => {
   assert.ok(overlay.querySelector('.quick-settings-row-control'));
   assert.ok(overlay.querySelector('.quick-settings-row-note'));
   assert.ok(overlay.querySelector('.quick-settings-footer'));
-  assert.ok(overlay.querySelector('.quick-settings-all'));
+  assert.ok(overlay.querySelector('[data-action="quick-settings-all"]'));
 
   controller.close();
   assert.equal(overlay.hidden, true);
@@ -299,7 +299,7 @@ test('model shortcut follows the selected catalog model without duplicating capa
   assert.equal(documentRef.querySelector('[data-action="open-model-tuning"]').disabled, false);
 });
 
-test('model shortcut is hidden for provider-owned generation controls', async () => {
+test('model shortcut is disabled, with the reason, for provider-owned generation controls', async () => {
   const documentRef = buildDom();
   const harness = buildDeps(documentRef, {
     stateOverrides: {
@@ -312,9 +312,9 @@ test('model shortcut is hidden for provider-owned generation controls', async ()
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(documentRef.querySelector('[data-action="open-model-tuning"]'), null);
-  assert.match(documentRef.querySelector('.quick-settings-overlay').textContent,
-    /engine owns its generation controls/i);
+  const tune = documentRef.querySelector('[data-action="open-model-tuning"]');
+  assert.equal(tune.disabled, true);
+  assert.match(tune.getAttribute('title'), /engine owns its generation controls/i);
 });
 
 test('an overlay manager that refuses the overlay is logged and never asked to close it', () => {
@@ -343,7 +343,7 @@ test('quick settings has no session model selector or duplicated tuning controls
   assert.equal(documentRef.getElementById('quickSettingsModel'), null);
   assert.equal(documentRef.getElementById('quickSettingsContextWindow'), null);
   assert.ok(documentRef.querySelector('[data-action="open-model-tuning"]'));
-  assert.match(documentRef.querySelector('[data-slot="model"] .quick-settings-slot-title').textContent, /Model runtime/);
+  assert.match(documentRef.querySelector('[data-slot="model"] .quick-settings-slot-title').textContent, /^Model$/);
 });
 
 // ── local-only readiness chip ─────────────────────────────────────────────
@@ -388,6 +388,12 @@ test('one local-only click fires exactly ONE offline write (no double-fire from 
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
+  // Like production's offline adapter, a write applies the new mode to state.offline first.
+  const fakeWrite = harness.offlineAdapter.write;
+  harness.offlineAdapter.write = (value) => {
+    harness.deps.state.offline = Object.assign({}, harness.deps.state.offline, value);
+    return fakeWrite(value);
+  };
   const toggleTrack = documentRef.querySelector('[data-slot="model"] [data-inv-toggle]');
   toggleTrack.dispatchEvent(new documentRef.defaultView.MouseEvent('click', { bubbles: true }));
 
@@ -419,10 +425,8 @@ test('font-scale writes ONLY through the appearance adapter; zoom is untouched',
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
-  const zoomSlot = documentRef.querySelector('[data-slot="zoom"]');
-  const fontScaleControl = zoomSlot.querySelector('.quick-settings-row-control');
   // Presets: small/default/large = 3 entries -> rendered as a SegmentedControl.
-  const segmented = fontScaleControl.querySelector('[role="radiogroup"]');
+  const segmented = documentRef.querySelector('[data-inv-segmented="quickSettingsFontScale"]');
   assert.ok(segmented, 'font-scale renders as a segmented control for a 2-4 preset catalog');
   const largeOption = segmented.querySelector('[data-value="large"]');
   largeOption.dispatchEvent(new documentRef.defaultView.MouseEvent('click', { bubbles: true }));
@@ -432,25 +436,15 @@ test('font-scale writes ONLY through the appearance adapter; zoom is untouched',
   assert.equal(harness.zoomAdapter._writeCalls.length, 0, 'zoom adapter must never see a font-scale write');
 });
 
-test('the retired chat zoom has no quick-settings control', () => {
+test('palette swatch writes through the appearance adapter, preserving the other appearance fields', () => {
   const documentRef = buildDom();
   const harness = buildDeps(documentRef);
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
-  assert.equal(documentRef.querySelector('#quickSettingsChatZoom'), null);
-  assert.equal(documentRef.querySelector('[data-slot="zoom"] select'), null);
-});
-
-test('palette select writes through the appearance adapter, preserving the other appearance fields', () => {
-  const documentRef = buildDom();
-  const harness = buildDeps(documentRef);
-  const controller = createQuickSettingsModal(harness.deps);
-
-  controller.open();
-  const paletteSelect = documentRef.querySelector('[data-slot="appearance"] select');
-  paletteSelect.value = 'obsidian';
-  paletteSelect.dispatchEvent(new documentRef.defaultView.Event('change', { bubbles: true }));
+  documentRef.querySelector('[data-inv-segmented="quickSettingsPalette"] [data-value="obsidian"]').dispatchEvent(
+    new documentRef.defaultView.MouseEvent('click', { bubbles: true })
+  );
 
   assert.equal(harness.appearanceAdapter._writeCalls.length, 1);
   const written = harness.appearanceAdapter._writeCalls[0];
@@ -466,7 +460,7 @@ test('"All settings" closes the modal and invokes openSettingsSection', () => {
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
-  documentRef.querySelector('.quick-settings-all').dispatchEvent(
+  documentRef.querySelector('[data-action="quick-settings-all"]').dispatchEvent(
     new documentRef.defaultView.MouseEvent('click', { bubbles: true })
   );
 
@@ -483,15 +477,16 @@ test('a failed write logs via appendClientLog and re-renders the reverted value'
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
-  const paletteSelect = documentRef.querySelector('[data-slot="appearance"] select');
   harness.appearanceAdapter._rejectNext(new Error('disk full'));
-  paletteSelect.value = 'obsidian';
-  paletteSelect.dispatchEvent(new documentRef.defaultView.Event('change', { bubbles: true }));
+  documentRef.querySelector('[data-inv-segmented="quickSettingsPalette"] [data-value="obsidian"]').dispatchEvent(
+    new documentRef.defaultView.MouseEvent('click', { bubbles: true })
+  );
 
   return Promise.resolve().then(() => Promise.resolve()).then(() => {
     assert.ok(harness.appendClientLogCalls.some((call) => call[1] === 'quick_settings.write_failed'));
-    const reRendered = documentRef.querySelector('[data-slot="appearance"] select');
-    assert.equal(reRendered.value, 'midnight', 'control reflects the adapter-reverted value, not the failed write');
+    const reRendered = documentRef.querySelector('[data-inv-segmented="quickSettingsPalette"] [aria-checked="true"]');
+    assert.equal(reRendered.getAttribute('data-value'), 'midnight', 'control reflects the adapter-reverted value, not the failed write');
+    assert.equal(documentRef.querySelector('.quick-settings-row-value').textContent, 'Midnight');
   });
 });
 
@@ -718,10 +713,9 @@ test('open() with an appearanceUtils that exposes no preset getters renders empt
   const controller = createQuickSettingsModal(harness.deps);
 
   assert.equal(controller.open(), true);
-  // Palette select renders (empty options), font-scale falls back to a select
-  // (presets.length 0 -> not segmented) -- both present, neither threw.
+  // No presets: the palette and text-size controls render empty -- the rows are present, nothing threw.
   assert.ok(documentRef.querySelector('[data-slot="appearance"] .quick-settings-row-control'));
-  assert.ok(documentRef.querySelector('[data-slot="zoom"] .quick-settings-row-control'));
+  assert.ok(documentRef.querySelector('[data-slot="chats"] .quick-settings-row-control'));
   assert.equal(documentRef.querySelector('.quick-settings-overlay').hidden, false);
 });
 

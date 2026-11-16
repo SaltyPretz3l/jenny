@@ -25,6 +25,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_IO_FAILED,
 )
 from sidecar.ai.tools.builtins import cancellation, output_chunk_slot, shell_harness
+from sidecar.ai.tools.builtins import shell_live_output as _live_output
 from sidecar.ai.tools.builtins import shell_test_progress as _test_progress
 from sidecar.ai.tools.builtins.executable_lookup import (
     which_on_explicit_path as _which_on_explicit_path,
@@ -662,7 +663,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             cwd=cwd,
             workspace_root=root,
             timeout_seconds=timeout_seconds,
-            progress_tap=_test_progress.background_tap_for(command, cwd, root),
+            progress_tap=_live_output.background_tap_for(command, cwd, root),
         )
         job_id = started.job_id
         bg_payload = {

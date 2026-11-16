@@ -253,7 +253,7 @@ test('markUserQuestionsStale settles the matching pending message and maps its m
   assert.match(renderUserQuestionsReceipt({
     toolCallId: toolUse.tool_call.call_id,
     stale: toolUse.tool_call.user_questions_stale,
-  }), /Questions no longer active/);
+  }), /These questions are no longer active/);
   assert.equal(markUserQuestionsStale('session-1', 'question-stale', {
     getSessionMessages: (sessionId) => harness.messagesBySession.get(sessionId) || [],
     setSessionMessages() { throw new Error('settled message must not be written twice'); },

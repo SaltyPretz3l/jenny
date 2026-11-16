@@ -90,6 +90,8 @@ _DEFAULT_TOOL_DEFAULTS = {
     "session_status": POLICY_DECISION_AUTO,
     "session_transcript": POLICY_DECISION_AUTO,
     "session_stop": POLICY_DECISION_ASK,
+    # Row 136: the order chats use the model in; undoable, the person's pick stands.
+    "session_prioritize": POLICY_DECISION_AUTO,
     # Row 88: reading the allowlisted settings is free; every change asks.
     "settings_get": POLICY_DECISION_AUTO,
     "settings_change": POLICY_DECISION_ASK,

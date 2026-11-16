@@ -1,8 +1,8 @@
 'use strict';
 
 // Background-job tracker, Session rail half: count-based finished-job history,
-// stopRequested, getSessionJobs, the in-process onChanged / onJobSettled
-// subscriptions and the readOutput tail.
+// stopRequested, getSessionJobs, clearFinished, the in-process onChanged /
+// onJobSettled subscriptions and the readOutput tail.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -251,6 +251,66 @@ test('a throwing subscriber is contained and never breaks the tracker', (t) => {
   assert.equal(typeof tracker.onChanged(() => {}), 'function', 'subscribing after dispose is inert');
 });
 
+test('clearFinished hides the finished jobs of one chat, leaves live ones and keeps them for chat-delete cleanup', (t) => {
+  const h = makeTracker(t);
+  for (const index of [1, 2, 3]) h.tracker.registerJob({ jobId: jobIdAt(index), sessionId: 's-1' });
+  h.tracker.registerJob({ jobId: jobIdAt(9), sessionId: 's-2' });
+  settle(h, jobIdAt(1));
+  settle(h, jobIdAt(2), 'failed', { exit_code: 1 });
+  settle(h, jobIdAt(9));
+  h.statusByPath.set(h.statusPath(jobIdAt(3)), { state: 'running' });
+  h.tracker.pollNow();
+  const changes = [];
+  h.tracker.onChanged((sessionIds) => changes.push(sessionIds));
+  const bridgeBefore = h.bridgeEvents.length;
+
+  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 2 });
+  assert.deepEqual(changes, [['s-1']], 'one changed notification for that chat');
+  assert.equal(h.bridgeEvents.length, bridgeBefore + 1);
+  assert.deepEqual(h.tracker.getSessionJobs('s-1').map((job) => [job.jobId, job.state]), [[jobIdAt(3), 'running']]);
+  assert.deepEqual(h.tracker.getState().jobs.map((job) => job.jobId).sort(), [jobIdAt(3), jobIdAt(9)]);
+  assert.equal(h.bridgeEvents.at(-1).payload.jobs.some((job) => job.jobId === jobIdAt(1)), false, 'the bridge snapshot drops them');
+  assert.deepEqual(h.tracker.readOutput(jobIdAt(1)), { ok: false, reason: 'not_found' });
+  assert.deepEqual(h.tracker.getSessionJobRoots('s-1').map((entry) => entry.jobId).sort(), [jobIdAt(1), jobIdAt(2)],
+    'deleting the chat still removes their output');
+  assert.equal(h.tracker.getSessionJobs('s-2').length, 1, 'another chat is untouched');
+
+  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 0 });
+  assert.equal(changes.length, 1, 'nothing cleared: no notification');
+  for (const bad of ['', '   ', null, undefined, 42]) {
+    assert.deepEqual(h.tracker.clearFinished(bad), { ok: false, reason: 'invalid_session' });
+  }
+  settle(h, jobIdAt(3));
+  h.tracker.pollNow();
+  assert.equal(h.tracker.getSessionJobs('s-1')[0].state, 'completed', 'a job finishing after Clear shows up');
+});
+
+test('dismissed jobs leave the per-chat cap and are evicted first at the global cap', (t) => {
+  const h = makeTracker(t);
+  for (let index = 1; index <= MAX_FINISHED_PER_SESSION; index += 1) {
+    h.tracker.registerJob({ jobId: jobIdAt(index), sessionId: 's-1' });
+    settle(h, jobIdAt(index));
+    h.advance(1_000);
+    h.tracker.pollNow();
+  }
+  h.tracker.clearFinished('s-1');
+  for (let index = 101; index <= 100 + MAX_FINISHED_PER_SESSION; index += 1) {
+    h.tracker.registerJob({ jobId: jobIdAt(index), sessionId: 's-1' });
+    settle(h, jobIdAt(index));
+    h.advance(1_000);
+    h.tracker.pollNow();
+  }
+  assert.equal(h.tracker.getSessionJobs('s-1').length, MAX_FINISHED_PER_SESSION, 'twenty new jobs fit beside the dismissed ones');
+  assert.equal(h.tracker.getSessionJobRoots('s-1').length, 2 * MAX_FINISHED_PER_SESSION, 'dismissed jobs were not trimmed');
+  for (let index = 201; h.tracker.getSessionJobRoots('s-1').length + h.tracker.getSessionJobs('s-2').length < MAX_TRACKED_JOBS; index += 1) {
+    h.tracker.registerJob({ jobId: jobIdAt(index), sessionId: 's-2' });
+  }
+  assert.equal(h.tracker.registerJob({ jobId: jobIdAt(999), sessionId: 's-3' }), true);
+  const roots = h.tracker.getSessionJobRoots('s-1').map((entry) => entry.jobId);
+  assert.equal(roots.includes(jobIdAt(1)), false, 'the oldest dismissed job went first');
+  assert.equal(roots.includes(jobIdAt(101)), true, 'visible history survives while dismissed jobs remain');
+});
+
 // ---- readOutput ---------------------------------------------------------------
 
 function makeOutputTracker(t) {
@@ -275,33 +335,34 @@ function makeOutputTracker(t) {
 test('readOutput returns the stdout tail with stderr after a blank line', (t) => {
   const h = makeOutputTracker(t);
   h.tracker.registerJob({ jobId: JOB_ID, sessionId: 's-1' });
-  assert.deepEqual(h.tracker.readOutput(JOB_ID), { ok: true, state: 'running', text: '', truncated: false, fullOutputPath: '' },
-    'a running job has no output view yet');
+  assert.deepEqual(h.tracker.readOutput(JOB_ID), { ok: true, state: 'running', live: true, text: '', truncated: false, fullOutputPath: '', stale: true },
+    'a running job without a live file has empty live text');
   h.writeStatus({ state: 'completed', exit_code: 0, stdout: 'built\nok\n', stderr: 'warning: x\n' });
   h.tracker.pollNow();
   assert.deepEqual(h.tracker.readOutput(JOB_ID), {
-    ok: true, state: 'completed', text: 'built\nok\n\nwarning: x', truncated: false, fullOutputPath: '',
+    ok: true, state: 'completed', live: false, text: 'built\nok\n\nwarning: x', truncated: false, fullOutputPath: '',
   });
   h.writeStatus({ state: 'completed', exit_code: 0, stdout: 'only out\n', stderr: '', output_truncated: true });
   assert.deepEqual(h.tracker.readOutput(JOB_ID), {
-    ok: true, state: 'completed', text: 'only out', truncated: true, fullOutputPath: '',
+    ok: true, state: 'completed', live: false, text: 'only out', truncated: true, fullOutputPath: '',
   }, 'empty stderr adds no separator; output_truncated carries through');
   h.writeStatus({ state: 'completed', stdout: 42, stderr: 'err only' });
   assert.equal(h.tracker.readOutput(JOB_ID).text, 'err only', 'non-string stdout is ignored');
 });
 
-test('readOutput bounds the tail to sixty lines and eight thousand characters', (t) => {
+test('readOutput bounds the tail to two hundred lines and sixteen thousand characters', (t) => {
   const h = makeOutputTracker(t);
   h.tracker.registerJob({ jobId: JOB_ID });
-  const lines = Array.from({ length: 100 }, (_, index) => `line ${index}`);
+  assert.deepEqual([MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS], [200, 16_000]);
+  const lines = Array.from({ length: 300 }, (_, index) => `line ${index}`);
   h.writeStatus({ state: 'failed', exit_code: 1, stdout: lines.join('\n') });
   h.tracker.pollNow();
   const tail = h.tracker.readOutput(JOB_ID);
   assert.equal(tail.state, 'failed');
   assert.equal(tail.truncated, true);
   assert.equal(tail.text.split('\n').length, MAX_OUTPUT_LINES);
-  assert.ok(tail.text.endsWith('line 99'));
-  assert.ok(tail.text.startsWith(`line ${100 - MAX_OUTPUT_LINES}`));
+  assert.ok(tail.text.endsWith('line 299'));
+  assert.ok(tail.text.startsWith(`line ${300 - MAX_OUTPUT_LINES}`));
 
   h.writeStatus({ state: 'failed', exit_code: 1, stdout: `${'x'.repeat(20_000)}END` });
   const wide = h.tracker.readOutput(JOB_ID);
@@ -318,7 +379,7 @@ test('readOutput refuses unknown ids and degrades on an unreadable status', (t) 
   h.writeStatus({ state: 'completed', exit_code: 0 });
   h.tracker.pollNow();
   h.writeStatus('not json {{');
-  assert.deepEqual(h.tracker.readOutput(JOB_ID), { ok: false, reason: 'output_unavailable', state: 'completed', fullOutputPath: '' });
+  assert.deepEqual(h.tracker.readOutput(JOB_ID), { ok: false, reason: 'output_unavailable', state: 'completed', live: false, fullOutputPath: '' });
 });
 
 test('readOutput fullOutputPath comes only from the registered root, never from status.json', (t) => {

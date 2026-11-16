@@ -191,10 +191,13 @@
     // Multiset (content key -> count) of hydrated user messages, so a duplicate
     // optimistic user row is matched/consumed one-for-one against its persisted
     // twin while a genuinely-new or legitimately-repeated prompt is preserved.
-    function buildHydratedUserContentCounts(hydratedMessages) {
+    // A hydrated prompt the live list already holds under its own id is matched;
+    // only the rest can stand in for a local prompt with the same content.
+    function buildHydratedUserContentCounts(hydratedMessages, currentMessages = []) {
+      const heldIds = new Set(currentMessages.map((message) => normalizeId(message?.id)).filter(Boolean));
       const counts = new Map();
       hydratedMessages.forEach((message) => {
-        if (String(message?.role || '') !== 'user') {
+        if (String(message?.role || '') !== 'user' || heldIds.has(normalizeId(message?.id))) {
           return;
         }
         const key = readUserMessageContentKey(message);
@@ -291,7 +294,7 @@
       // unique local message; it can. Only the id/content-multiset
       // reconciliation below (not the cardinality compare) tells local-only
       // apart from matched/consumed, so it must always run.
-      const hydratedUserContentCounts = buildHydratedUserContentCounts(hydratedMessages);
+      const hydratedUserContentCounts = buildHydratedUserContentCounts(hydratedMessages, list);
       const isReleasedLegShell = buildReleasedLegShellCheck(list, hydratedMessages, options);
       const localOnlyMessages = list.filter((message) => {
         const messageId = normalizeId(message?.id);
@@ -390,13 +393,65 @@
           streamId: String(options.streamId || '').slice(0, 30),
           preservedCount: terminalArtifacts.length,
         });
-        mergedMessages = mergedMessages.concat(terminalArtifacts);
+        // Each lands after the nearest message before it in the live list that the
+        // merged list holds; one with no such message goes to the tail as before.
+        const mergedIds = new Set(mergedMessages.map((message) => normalizeId(message?.id)).filter(Boolean));
+        const artifactSet = new Set(terminalArtifacts);
+        const afterAnchor = new Map();
+        const unanchored = [];
+        let anchorId = '';
+        list.forEach((message) => {
+          if (artifactSet.has(message)) {
+            if (!anchorId) unanchored.push(message);
+            else afterAnchor.set(anchorId, [...(afterAnchor.get(anchorId) || []), message]);
+            return;
+          }
+          const messageId = normalizeId(message?.id);
+          if (messageId && mergedIds.has(messageId)) anchorId = messageId;
+        });
+        mergedMessages = mergedMessages.flatMap((message) => {
+          const insertions = afterAnchor.get(normalizeId(message?.id));
+          afterAnchor.delete(normalizeId(message?.id));
+          return insertions ? [message, ...insertions] : [message];
+        }).concat(unanchored);
       }
       return mergedMessages;
     }
 
+    // `complete` carries the turn's cumulative text (every segment), while the
+    // earlier segments already hold their own bubbles above the tool cards. The
+    // last bubble takes only what follows them, so a failed or slow hydration
+    // never repeats them; text that does not start with them stays whole.
+    function resolveFinalSegmentContent(messages, index, streamId, fullContent, existingContent) {
+      const normalizedStreamId = normalizeId(streamId);
+      const earlier = (Array.isArray(messages) ? messages.slice(0, Math.max(0, index)) : [])
+        .filter((message) => isPlainAssistantStreamMessage(message, normalizedStreamId))
+        .map((message) => String(message.content || '')).join('');
+      if (!fullContent) return existingContent;
+      if (!earlier.trim() || !fullContent.startsWith(earlier) || fullContent.length === earlier.length) return fullContent;
+      return fullContent.slice(earlier.length);
+    }
+
+    // A message the live list lacks goes after the nearest message before it in
+    // the store's order that the live list holds (the front when none does).
+    function insertAtStoredPosition(messages, storedMessages, message) {
+      const storedIndex = storedMessages.indexOf(message);
+      const heldIndexById = new Map(messages.map((entry, index) => [normalizeId(entry?.id), index]));
+      for (let index = storedIndex - 1; index >= 0; index -= 1) {
+        const heldIndex = heldIndexById.get(normalizeId(storedMessages[index]?.id));
+        if (heldIndex !== undefined) {
+          messages.splice(heldIndex + 1, 0, { ...message });
+          return heldIndex + 1;
+        }
+      }
+      messages.splice(0, 0, { ...message });
+      return 0;
+    }
+
     return {
       isPlainAssistantStreamMessage,
+      insertAtStoredPosition,
+      resolveFinalSegmentContent,
       findLateReconcileBubbleIndex,
       findUnpersistedTerminalArtifacts,
       readUserMessageContentKey,

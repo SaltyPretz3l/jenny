@@ -193,3 +193,20 @@
 .settings-field-row-text > .settings-field-note {
   grid-column: 1 / -1;
 }
+
+/* The one line under a model row that names the model that will really run (row 144). */
+.settings-field-effective {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+.settings-field-effective strong {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.settings-field-effective--warn strong {
+  color: var(--state-warning);
+}

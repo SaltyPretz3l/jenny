@@ -4,7 +4,10 @@
  * routes the queue read/write through the session-keyed helpers of renderer-composer-session-state.js;
  * omitted, it is the live queue (pane 0's) through today's direct path. A session other
  * than the live queue's re-renders through its pane (renderSessionAttachments) instead of pane 0's
- * tray, notice and composer. */
+ * tray, notice and composer.
+ * Row 153: an op that has the names of what it is preparing (a drop, a paste, a screen capture)
+ * lists them in `state.attachmentPending` ({ operationId, sessionId, kind, name }) until it settles,
+ * so the tray can hold a placeholder for each; the picker's single IPC call has no names to show. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -12,6 +15,7 @@
   }
   root.rendererAttachmentQueueUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const IMAGE_NAME = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createAttachmentQueueController(deps) {
     const state = deps?.state || {};
@@ -31,6 +35,50 @@
     let nextOperationId = 0;
     const activeTokens = new Map();
     const paneTokens = new WeakSet(); // W2-2b: ops begun by another pane's bindings
+
+    function pendingList() {
+      return Array.isArray(state.attachmentPending) ? state.attachmentPending : [];
+    }
+
+    // Repaints the tray an op's placeholders show in: its pane's for another pane's op, else the live one.
+    function renderTokenSurface(token) {
+      const sessionId = paneTokens.has(token) ? String(token?.sessionId || '').trim() : undefined;
+      if (!isLiveQueue(sessionId)) { renderSessionAttachments(sessionId); return; }
+      renderAttachmentTray();
+    }
+
+    // Placeholders for an op's items; `items` are { kind: 'image' | 'file', name }.
+    function markAttachmentPending(token, items) {
+      const operationId = String(token?.operationId || '').trim();
+      const sessionId = String(token?.sessionId || '').trim();
+      const list = (Array.isArray(items) ? items : []).filter((item) => item && String(item.name || '').trim());
+      if (disposed || !operationId || !sessionId || !activeTokens.has(operationId) || !list.length) return;
+      state.attachmentPending = pendingList().concat(list.map((item) => ({
+        operationId, sessionId, kind: item.kind === 'image' ? 'image' : 'file', name: String(item.name).trim(),
+      })));
+      renderTokenSurface(token);
+    }
+
+    // Drops an op's placeholders; true when there were any (the caller re-renders).
+    function clearAttachmentPending(token) {
+      const operationId = String(token?.operationId || '').trim();
+      const before = pendingList();
+      if (!operationId || !before.some((entry) => entry.operationId === operationId)) return false;
+      state.attachmentPending = before.filter((entry) => entry.operationId !== operationId);
+      return true;
+    }
+
+    function settlePending(token) {
+      if (clearAttachmentPending(token) && !disposed) renderTokenSurface(token);
+    }
+
+    function pendingItemsFor(dropped) {
+      return dropped.map((entry) => {
+        const name = typeof entry === 'string' ? entry.trim().split(/[\\/]/).pop() : String(entry?.name || '').trim();
+        const type = typeof entry === 'string' ? '' : String(entry?.type || '');
+        return { kind: type.startsWith('image/') || IMAGE_NAME.test(name) ? 'image' : 'file', name };
+      });
+    }
 
     function filterReleasableAssetPaths(paths) {
       const controller = state.sendReceiptController;
@@ -146,7 +194,7 @@
           discarded.push(entry);
           continue;
         }
-        if (nextQueued.length >= 8) {
+        if (nextQueued.length >= (Number(queueHelpers()?.ATTACHMENT_CAP) || 8)) {
           droppedForCapacity += 1;
           discarded.push(entry);
           continue;
@@ -207,6 +255,7 @@
 
     function cancelAttachmentToken(token) {
       const operationId = String(token?.operationId || '').trim();
+      settlePending(token);
       return operationId ? activeTokens.delete(operationId) : false;
     }
 
@@ -223,16 +272,23 @@
         return routed;
       };
       const activeToken = operationId ? activeTokens.get(operationId) : null;
+      // The placeholders go first, so the merge's own render shows the real items in their place.
+      const hadPending = clearAttachmentPending(token);
       if (disposed || !activeToken || activeToken !== token) {
+        if (hadPending && !disposed) renderTokenSurface(token);
         releaseAssetEntries(payload?.accepted);
         return logRouted({ target: 'discarded', reason: disposed ? 'disposed' : 'stale_operation' });
       }
       activeTokens.delete(operationId);
       const controller = windowRef.rendererComposerSessionStateController;
       if (controller && token) {
-        return logRouted(controller.commitAttachmentResult(token, payload, { mergeActive: mergePreparedAttachments }));
+        const routed = controller.commitAttachmentResult(token, payload, { mergeActive: mergePreparedAttachments });
+        // A result kept for (or dropped from) another session still clears this op's placeholders on screen.
+        if (hadPending && routed?.target !== 'active') renderTokenSurface(token);
+        return logRouted(routed);
       }
       if (token?.sessionId && String(state.currentSessionId || '').trim() !== String(token.sessionId)) {
+        if (hadPending) renderTokenSurface(token);
         releaseAssetEntries(payload?.accepted);
         return logRouted({ target: 'discarded', reason: 'origin_unavailable' });
       }
@@ -274,6 +330,7 @@
         cancelAttachmentToken(token);
         return;
       }
+      markAttachmentPending(token, pendingItemsFor(dropped));
       try {
         const scope = { session_id: token?.sessionId || '' };
         const payload = useFiles
@@ -287,6 +344,7 @@
     }
 
     async function queueInlineImageAttachment(payload, token = beginAttachmentToken()) {
+      markAttachmentPending(token, [{ kind: 'image', name: payload?.displayName }]);
       try {
         const saved = await windowRef.jennyShell.attachments.saveImageAsset(payload, { session_id: token?.sessionId || '' });
         routeAttachmentResult(token, { accepted: [saved], rejected: [] });
@@ -298,9 +356,37 @@
       }
     }
 
+    // A picture made by the app (the sketch "Mark up" question) takes the pasted image's path, with its checks:
+    // the queue's image and total caps here, the type and size checks of saveImageAsset. The vision gate is
+    // read through resolveActiveVision so the caller can leave the picture out for a model that takes none.
+    function resolveActiveVision() {
+      const gate = windowRef.rendererComposerVisionGate || globalThis.rendererComposerVisionGate || null;
+      const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => entry && entry.id === state.currentSessionId);
+      const preferredModel = String((session ? session.preferred_model : state.runtimeDraft?.preferredModel) || '').trim();
+      return gate?.resolveActiveModelVision?.(state, { preferredModel }) || { supported: null, modelLabel: '' };
+    }
+
+    async function attachPicture({ bytes, mimeType, displayName } = {}) {
+      const queued = readQueue();
+      const maxImages = (windowRef.rendererComposerVisionGate || globalThis.rendererComposerVisionGate)?.MAX_IMAGE_ATTACHMENTS ?? 4;
+      if (queued.length >= 8 || queued.filter((entry) => entry?.kind === 'image').length >= maxImages) return { ok: false, reason: 'too_many' };
+      try {
+        await queueInlineImageAttachment({ bytes, mimeType: mimeType || 'image/png', displayName, sourceKind: 'capture' });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: /byte limit/i.test(String(error?.message || '')) ? 'too_large' : 'failed' };
+      }
+    }
+
+    // Lazy feature modules reach the composer through this one object (windowRef.rendererComposerPictures).
+    const pictures = Object.freeze({ resolveVision: resolveActiveVision, attachPicture });
+    try { windowRef.rendererComposerPictures = pictures; } catch (_error) { /* a frozen test window */ }
+
+    // dragenter and dragover both call this many times a second; only a change of drop state renders.
     function setDropActive(active) {
+      const wasActive = state.attachments.dragDepth > 0;
       state.attachments.dragDepth = active ? Math.max(state.attachments.dragDepth, 1) : 0;
-      renderAttachmentTray();
+      if (wasActive !== Boolean(active)) renderAttachmentTray();
     }
 
     function suppressFileDropNavigation(event) {
@@ -323,7 +409,10 @@
 
     function dispose() {
       disposed = true;
+      const ours = new Set(activeTokens.keys());
+      state.attachmentPending = pendingList().filter((entry) => !ours.has(entry.operationId));
       activeTokens.clear();
+      try { if (windowRef.rendererComposerPictures === pictures) windowRef.rendererComposerPictures = null; } catch (_error) { /* a frozen test window */ }
     }
 
     return {
@@ -335,6 +424,8 @@
       handleAttachmentPicker,
       prepareDroppedAttachments,
       queueInlineImageAttachment,
+      attachPicture,
+      resolveActiveVision,
       setDropActive,
       suppressFileDropNavigation,
       getDroppedFilePaths,

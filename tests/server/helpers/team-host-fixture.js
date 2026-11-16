@@ -17,6 +17,8 @@ const { createFakeTransport, publicKeyOf } = require('./fake-team-transport');
 const { MemberStore } = require('../../../server/team/member-store');
 const { startTeamHost } = require('../../../server/team/team-main');
 const { keyPairFromSeed } = require('../../../server/team/ids');
+const { LOCAL_COMMAND } = require('../../../server/team/member-schema');
+const { RuntimeLaneAdmission } = require('../../../services/session-runtime/lanes');
 
 const HOST_SEED = crypto.createHash('sha256').update('team-startup-host-seed').digest();
 const TEAM_NAME = 'Quiet Harbor';
@@ -97,7 +99,7 @@ function createTeamHostFixture(t, { keySource = 'secret_file', writeKey = true, 
     root, profile, secrets, configPath, hostKey, hostPublicKey, fake, spawner, logs, lock, contexts, backends, teamName: TEAM_NAME,
     logger(level, event, fields) { logs.push({ level, event, fields: fields ?? {} }); },
     keyFile: path.join(secrets, 'team-host-key'),
-    writeConfig({ source = keySource, port = 0, extra = {} } = {}) {
+    writeConfig({ source = keySource, port = 0, extra = {}, team = {} } = {}) {
       fs.writeFileSync(configPath, JSON.stringify({
         schema_version: 3,
         host_mode: 'server',
@@ -109,7 +111,7 @@ function createTeamHostFixture(t, { keySource = 'secret_file', writeKey = true, 
         workspace_root: null,
         secrets_dir: secrets,
         model_endpoint: { engine: 'ollama', model: 'qwen3.5:9b', api_url: 'http://ollama:11434' },
-        team: { name: TEAM_NAME, key_source: source, direct_port: directPort },
+        team: { name: TEAM_NAME, key_source: source, direct_port: directPort, ...team },
         ...extra,
       }), { mode: 0o600 });
     },
@@ -119,13 +121,16 @@ function createTeamHostFixture(t, { keySource = 'secret_file', writeKey = true, 
       lock.acquired += 1;
       return { release() { lock.released += 1; } };
     },
-    // A fake composition the router accepts; stop() reports a confirmed exit.
-    createBackend() {
+    // A fake composition the router accepts; stop() reports a confirmed exit. It keeps the options
+    // it was built with and carries a real lane admission and a status (the pool binds to them).
+    createBackend(options = {}) {
       const dir = path.join(root, `backend-${backends.length}`);
       fs.mkdirSync(dir, { recursive: true });
       const backend = new BackendHarness(dir);
       backend.sidecarManager = { process: null };
-      const composition = { backend, calls: [], start: async () => { composition.calls.push('start'); },
+      backend.sessionRuntime = { lanes: new RuntimeLaneAdmission() };
+      backend.currentStatus = { effective_context_length: null };
+      const composition = { backend, options, calls: [], start: async () => { composition.calls.push('start'); },
         stop: async () => { composition.calls.push('stop'); return { exitConfirmed: true }; },
         dispose: async () => { composition.calls.push('dispose'); backend.dispose(); } };
       backends.push(composition);
@@ -155,7 +160,7 @@ function createTeamHostFixture(t, { keySource = 'secret_file', writeKey = true, 
     async seedMembers(memberKey) {
       const store = new MemberStore({ userDataPath: profile, hostPublicKey, teamName: TEAM_NAME });
       const redeemFirst = async (input) => {
-        const created = await store.createInvite({ kind: input.kind, actorMemberId: input.actor ?? null,
+        const created = await store.createInvite({ kind: input.kind, actorMemberId: input.actor ?? LOCAL_COMMAND,
           ...(input.kind === 'new_member' ? { role: 'member' } : {}), invitePublicKey: randomKey() });
         if (!created.ok) throw new Error(`seed invite failed: ${created.error.reason}`);
         const redeemed = await store.redeem({ inviteId: created.invite_id, devicePublicKey: input.key,

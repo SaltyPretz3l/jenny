@@ -391,7 +391,23 @@ test('renderer: hydrate normalizes the stored layout through the pane model', as
   const layout = controller.getPaneLayout();
   assert.deepEqual(layout, { panes: panesOf('a', 'b', ''), focusedPaneId: 1, splitRatio: 0.8 });
   assert.equal(Object.isFrozen(layout.panes), false);
-  // The rail write is exactly what it was before W1-5.
+  // The stored layout needed normalizing, so the two-field rail write still goes to main
+  // (it is what makes main re-normalize the stored layout).
+  assert.deepEqual(workspace.updates, [{ activeSessionId: 'b', openSessionIds: ['a', 'b'] }]);
+});
+
+test('renderer: a boot restore of an already-normal rail and layout writes nothing back', async () => {
+  const workspace = createFakeWorkspace(full('b', ['a', 'b'], panesOf('a', 'b'), 1, 0.5));
+  const controller = createWorkspaceStateController({ jennyShell: workspace.shell, paneModel });
+  assert.deepEqual(await controller.restore(['a', 'b']), { activeSessionId: 'b', openSessionIds: ['a', 'b'] });
+  assert.deepEqual(controller.getPaneLayout(), { panes: panesOf('a', 'b'), focusedPaneId: 1, splitRatio: 0.5 });
+  assert.deepEqual(workspace.updates, []);
+});
+
+test('renderer: a boot restore that prunes the stored rail writes the two-field rail back', async () => {
+  const workspace = createFakeWorkspace({ activeSessionId: 'b', openSessionIds: ['a', 'b', 'gone'] });
+  const controller = createWorkspaceStateController({ jennyShell: workspace.shell, paneModel });
+  assert.deepEqual(await controller.restore(['a', 'b']), { activeSessionId: 'b', openSessionIds: ['a', 'b'] });
   assert.deepEqual(workspace.updates, [{ activeSessionId: 'b', openSessionIds: ['a', 'b'] }]);
 });
 

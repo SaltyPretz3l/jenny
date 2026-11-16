@@ -1,0 +1,72 @@
+{
+  "nodes": [
+    {
+      "id": "db",
+      "label": "Storage",
+      "icon": "lucide:database",
+      "shape": "cylinder",
+      "description": "Keeps the data"
+    },
+    {
+      "id": "u",
+      "label": "Reader",
+      "icon": "lucide:user",
+      "shape": "person"
+    },
+    {
+      "id": "n",
+      "label": "Note",
+      "shape": "note",
+      "tone": "muted"
+    },
+    {
+      "id": "c",
+      "label": "Hub",
+      "shape": "circle",
+      "tone": "accent"
+    },
+    {
+      "id": "r",
+      "label": "Rounded",
+      "shape": "rounded"
+    },
+    {
+      "id": "t",
+      "label": "Plain text",
+      "shape": "text"
+    },
+    {
+      "id": "g",
+      "label": "Web",
+      "icon": "lucide:globe"
+    }
+  ],
+  "edges": [
+    {
+      "id": "u->db",
+      "from": "u",
+      "to": "db",
+      "label": "read"
+    },
+    {
+      "id": "db->c",
+      "from": "db",
+      "to": "c",
+      "label": "feeds"
+    },
+    {
+      "id": "c->g",
+      "from": "c",
+      "to": "g",
+      "label": "serves"
+    }
+  ],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": [],
+  "title": "Shapes and icons"
+}

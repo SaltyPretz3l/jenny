@@ -46,6 +46,9 @@
     return {};
   }
 
+  // Outside-Workspace documents (row 137): the folder crumbs come from the real path's folder.
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+
   function createIdeStatusBar(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
@@ -250,7 +253,11 @@
       if (typeof actionButton !== 'function') {
         return '';
       }
-      const segments = String(path || '').split('/').filter(Boolean);
+      const outside = outsideDocs()?.isOutsideKey(path) === true;
+      const keyParts = String(path || '').split('/').filter(Boolean);
+      const segments = outside
+        ? [...String(outsideDocs().describe(path)?.dirLabel || '').split(/[\\/]/).filter(Boolean), keyParts[keyParts.length - 1]]
+        : keyParts;
       const parts = [];
       let prefix = '';
       for (let index = 0; index < segments.length; index += 1) {
@@ -272,6 +279,15 @@
             title: jt('ide.statusbar.outlineOf', 'Outline of {file}', { file: segment }),
             trustedHtml: escapeHtml(segment),
             dataset: { 'ide-crumb-leaf': prefix },
+          }));
+        } else if (outside) {
+          // A folder outside the Workspace has no listing to browse: a crumb that does not act.
+          parts.push(actionButton({
+            plain: true,
+            className: 'ide-crumb',
+            disabled: true,
+            title: prefix,
+            trustedHtml: escapeHtml(segment),
           }));
         } else {
           // Folder crumb: opens a dropdown of that folder's contents (handled in

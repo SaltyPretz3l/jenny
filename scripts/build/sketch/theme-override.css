@@ -1,0 +1,60 @@
+/*
+ * Jenny's colour override for the vendored viewer stylesheet (plan section 5.8). It is appended after
+ * upstream's viewer/src/styles.css, repeats the selectors that hold a literal colour, and reads the
+ * variables palette.ts sets on the document. The fallbacks are upstream's cream values, so the frame
+ * looks like upstream until a theme arrives.
+ *
+ * One rule is not about colour: the viewer's own toolbar (Draw, and the export buttons) is hidden. The
+ * page's action row under the drawing does those jobs and reaches the frame through its messages
+ * (renderer/frames/sketch-frame-init.js). The drawing tools shown in drawing mode are kept.
+ */
+.toolbar {
+  display: none;
+}
+
+button {
+  background: var(--jenny-card, #fff);
+}
+
+button:hover:not(:disabled) {
+  background: var(--jenny-marker-soft, #fff4c2);
+}
+
+.tooltip,
+.notice {
+  background: var(--jenny-card, #fff);
+  box-shadow: 2px 2px 0 var(--jenny-shadow, rgba(0, 0, 0, 0.12));
+}
+
+.card {
+  background: var(--jenny-card, #fff);
+}
+
+.card.active {
+  box-shadow: 3px 3px 0 var(--jenny-marker, #ffe58a);
+}
+
+.bar > div {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--jenny-marker, #ffe58a) 0 6px,
+    var(--jenny-marker-deep, #f5c518) 6px 12px
+  );
+}
+
+.drawbar button[aria-pressed="true"] {
+  background: var(--jenny-marker-soft, #fff4c2);
+}
+
+.drawbar-ask input,
+.note-input {
+  background: var(--jenny-card, #fff);
+}
+
+.sliders {
+  color: var(--jenny-annotation, #1a5fb4);
+}
+
+.slider input[type="range"] {
+  accent-color: var(--jenny-annotation, #1a5fb4);
+}

@@ -114,11 +114,7 @@ test.after(() => {
 test('offline posture renders loading then live/error without a header badge', () => {
   const document = offlineDom.window.document;
   document.body.innerHTML = `
-    <div id="offlineSummary"></div>
-    <div id="offlineStatus"></div>
     <div id="offlineLocalOnlyList"></div>
-    <div id="offlineModelStatus"></div>
-    <div id="offlineModelActions"></div>
     <span class="status-dot" id="composerChatPostureDot" data-posture="local" aria-hidden="true"></span>
     <div id="composerChatPosture" hidden></div><span id="composerChatPostureText"></span>
   `;
@@ -148,11 +144,7 @@ test('offline posture renders loading then live/error without a header badge', (
     state,
     dom: {},
     getDom: () => ({
-      offlineSummary: document.getElementById('offlineSummary'),
-      offlineStatus: document.getElementById('offlineStatus'),
       offlineLocalOnlyList: document.getElementById('offlineLocalOnlyList'),
-      offlineModelStatus: document.getElementById('offlineModelStatus'),
-      offlineModelActions: document.getElementById('offlineModelActions'),
     }),
     callbacks: {
       escapeHtml: (value) => String(value || ''),
@@ -235,17 +227,15 @@ test('a late offline refresh cannot overwrite a newer acknowledged settings upda
   assert.equal(state.offline.mode, 'local_only');
 });
 
-test('model badge keeps the tag, shortens paths and exposes the full id; idle status lines stay hidden', async (t) => {
+test('idle status lines stay hidden while a model is loaded', async (t) => {
   const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
-  for (const model of ['organization/path/model:tag', 'model:tag']) {
+  for (const model of ['organization/path/model:tag']) {
     const app = await loadRendererApp({ shell: { status: { async get() { return { model, model_loaded: true }; } } } });
     t.after(() => app.dispose());
     const doc = app.window.document;
     // The Settings page paints on activation (renderAll no longer paints it on the chat view).
     doc.querySelector('[data-tab-id="settings"]').click();
     await waitForUi(app.window, 20);
-    assert.equal(doc.getElementById('modelBadge').textContent, 'model:tag');
-    assert.equal(doc.getElementById('modelBadge').title, model);
     for (const id of ['contextStatus', 'editorStatus', 'homeStatus']) {
       assert.equal(doc.getElementById(id).textContent, '', id);
       assert.equal(doc.getElementById(id).hidden, true, id);

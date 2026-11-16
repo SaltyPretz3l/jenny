@@ -4,8 +4,8 @@
 // host controller, with a fake utility process and, for the owner's join, the
 // real member client against the real host modules of
 // tests/helpers/team-client-host.js. Fail closed on the secure store; the config
-// is written with real paths and no secret; the host key is made once and never
-// overwritten; the first-owner invite stays inside the main process.
+// is written with real paths and no secret; a Deploy with no saved config makes a fresh key over any found (E75),
+// one over a saved config never overwrites it; the first-owner invite stays inside the main process.
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -13,7 +13,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { HOST_KEY_NAME } = require('../services/team/host/host-key-store');
+const { HOST_KEY_NAME, createHostKeyStore } = require('../services/team/host/host-key-store');
+const { DEPLOY_POOL_CONTEXT_LENGTH, buildHostConfig, prepareHostLayout, writeHostConfig } = require('../services/team/host/host-layout');
 const { TEAM_ERROR_CODES } = require('../services/backend/error-codes');
 const { loadHostConfig } = require('../server/config');
 const { deriveTeamId, keyPairFromSeed } = require('../server/team/ids');
@@ -82,13 +83,21 @@ test('first Deploy: real-path config with no secret, --config and --team-init, s
   assert.equal(config.secrets_dir, fs.realpathSync.native(path.join(root, 'secrets')));
   assert.equal(config.runtime_home, fs.realpathSync.native(path.join(root, 'runtime')));
   assert.deepEqual(fs.readdirSync(config.secrets_dir), [], 'the secrets directory stays empty');
-  assert.deepEqual(config.team, { name: 'Studio', key_source: 'parent_channel', direct_port: DIRECT_PORT });
+  const projects = fs.realpathSync.native(path.join(root, 'projects'));
+  // Slice 4a-5 (E65): Deploy turns the GPU pool on; the owner's own Jenny shares into it like any member.
+  assert.deepEqual(config.team, { name: 'Studio', key_source: 'parent_channel', direct_port: DIRECT_PORT, projects_root: projects,
+    pool: { context_length: DEPLOY_POOL_CONTEXT_LENGTH } });
+  assert.equal(fs.lstatSync(path.join(root, 'trash')).isDirectory(), true, 'the trash folder is made too');
+  assert.equal(loadHostConfig(configPath).team.projectsRoot, projects, 'the written root passes the desktop rule');
   assert.equal(config.workspace_root, null);
   assert.equal(config.listen_host, '127.0.0.1');
-  // E19: a team host has no model until Phase 4, so no endpoint and no sidecar interpreter.
+  // A pool host's endpoint is the pool gateway, built at start: the config never names one. From a
+  // source checkout the hosted sidecar runs on the desktop sidecar's own interpreter (4a-5).
   assert.equal(Object.hasOwn(config, 'model_endpoint'), false);
-  assert.equal(Object.hasOwn(config, 'python_executable'), false);
-  assert.equal(loadHostConfig(configPath).modelEndpoint, null, 'the host loader accepts the written config');
+  assert.equal(config.python_executable, process.execPath);
+  const loaded = loadHostConfig(configPath);
+  assert.equal(loaded.modelEndpoint, null, 'the host loader accepts the written config');
+  assert.deepEqual(loaded.team.pool, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH });
 
   const forbidden = [stored, Buffer.from(stored, 'base64url').toString('hex')];
   const everything = [raw, JSON.stringify(call.args), JSON.stringify(call.options), JSON.stringify(logs),
@@ -99,42 +108,77 @@ test('first Deploy: real-path config with no secret, --config and --team-init, s
   for (const snapshot of [...pushed, answer.host]) assert.equal(Object.hasOwn(snapshot, 'addresses'), false, 'no address leaves main');
 });
 
-test('on Linux from a source checkout the config names the profile lock interpreter, and only there', async (t) => {
-  for (const [platform, expected] of [['linux', process.execPath], ['win32', undefined]]) {
+// Slice 4a-5: from a source checkout (Linux or Windows) the config names the desktop sidecar's interpreter,
+// which runs the hosted sidecar (and on Linux the profile lock); a packaged app runs its packaged sidecar.
+test('from a source checkout the config names the desktop sidecar interpreter, and only there', async (t) => {
+  for (const [platform, isPackaged, expected] of [['linux', false, process.execPath], ['win32', false, process.execPath],
+    ['win32', true, undefined]]) {
+    const label = `${platform}${isPackaged ? ' packaged' : ''}`;
     const userDataPath = tempProfile(t, 'jenny-host-deploy-');
-    const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(), platform,
+    const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(), platform, isPackaged,
       script: healthyHostScript({ teamId: 'team_x' }) });
-    assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true, platform);
+    assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true, label);
     const config = JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
-    assert.equal(config.python_executable, expected, platform);
-    assert.equal(Object.hasOwn(config, 'model_endpoint'), false, platform);
+    assert.equal(config.python_executable, expected, label);
+    assert.equal(Object.hasOwn(config, 'model_endpoint'), false, label);
+    assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH }, label);
   }
 });
+
+// Deploy through the real registration (services/main/team-registration.js), whose `lockPython` is
+// `launch.desktopPythonExecutable(backendService)`; answers the written config.
+async function deployThroughRegistration(t, backendExtra) {
+  const { registerTeam } = require('../services/main/team-registration');
+  const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  const fake = createFakeFork({ script: healthyHostScript({ teamId: 'team_x' }) });
+  const handlers = new Map();
+  const shutdown = [];
+  const backendService = { currentModel: 'any-model', featureFlags: { team: true },
+    getBackendStatus: () => ({ phase: 'ready' }), on() {}, off() {}, removeListener() {}, ...backendExtra };
+  registerTeam({ handle: (channel, fn) => handlers.set(channel, fn) }, { featureFlags: { team: true }, backendService,
+    userDataPath, getSecureStore: () => createMemorySecureStore(), readOfflineMode: () => 'disabled', // Force local off (E64: no reader wired counts as on)
+    getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
+    hostOptions: { platform: 'win32', isPackaged: () => false, fork: fake.fork, entryPath: 'e.js',
+      pickDirectPort: async () => DIRECT_PORT, probeDirectPort: async () => true, bounds: { ownerInviteMs: 50 } } });
+  t.after(() => shutdown[0]?.());
+  const answer = await handlers.get('team:host-deploy')({ sender: {} }, { ...DEPLOY });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.equal(answer.host.state, 'running');
+  return JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
+}
 
 // E19: Deploy works whatever engine the desktop runs, through the real registration.
 for (const engine of ['codex-cli', 'llama-server', 'ninfer', 'chatgpt', '']) {
   test(`Deploy works with the desktop engine set to ${engine || 'nothing'}`, async (t) => {
-    const { registerTeam } = require('../services/main/team-registration');
-    const userDataPath = tempProfile(t, 'jenny-host-deploy-');
-    const fake = createFakeFork({ script: healthyHostScript({ teamId: 'team_x' }) });
-    const handlers = new Map();
-    const shutdown = [];
-    const backendService = { currentEngineType: engine, currentModel: 'any-model', featureFlags: { team: true },
-      getBackendStatus: () => ({ phase: 'ready' }), on() {}, off() {}, removeListener() {} };
-    registerTeam({ handle: (channel, fn) => handlers.set(channel, fn) }, { featureFlags: { team: true }, backendService,
-      userDataPath, getSecureStore: () => createMemorySecureStore(),
-      getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
-      hostOptions: { platform: 'win32', isPackaged: () => false, fork: fake.fork, entryPath: 'e.js',
-        pickDirectPort: async () => DIRECT_PORT, probeDirectPort: async () => true, bounds: { ownerInviteMs: 50 } } });
-    t.after(() => shutdown[0]?.());
-    const answer = await handlers.get('team:host-deploy')({ sender: {} }, { ...DEPLOY });
-    assert.equal(answer.ok, true, JSON.stringify(answer));
-    assert.equal(answer.host.state, 'running');
-    const config = JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
+    const config = await deployThroughRegistration(t, { currentEngineType: engine });
     assert.equal(Object.hasOwn(config, 'model_endpoint'), false);
+    assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH }, 'the pool whatever the engine');
+    // This fake backend has no sidecar manager, so there is no interpreter to name.
     assert.equal(Object.hasOwn(config, 'python_executable'), false);
   });
 }
+
+// Slice 4a-5: the desktop sidecar's real interpreter reaches the config through `desktopPythonExecutable`;
+// a relative, empty or missing one writes no key (the host then reports its model unavailable).
+test('the desktop sidecar interpreter reaches the config only when it is an absolute path to a file', async (t) => {
+  const missing = path.join(path.dirname(process.execPath), 'no-such-python.exe');
+  for (const [value, expected] of [[process.execPath, process.execPath], ['python.exe', undefined], ['', undefined],
+    [missing, undefined]]) {
+    const config = await deployThroughRegistration(t, { currentEngineType: 'llama-server',
+      sidecarManager: { pythonExecutable: value } });
+    assert.equal(config.python_executable, expected, JSON.stringify(value));
+  }
+});
+
+test('a lockPython getter that answers a path with no file writes no python_executable', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(),
+    lockPython: path.join(userDataPath, 'missing', 'python.exe'), script: healthyHostScript({ teamId: 'team_x' }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  const config = JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
+  assert.equal(Object.hasOwn(config, 'python_executable'), false);
+  assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+});
 
 test('Deploy after a stop reuses the stored key and the direct port; a second Deploy while running is refused', async (t) => {
   const userDataPath = tempProfile(t, 'jenny-host-deploy-');
@@ -158,8 +202,101 @@ test('Deploy after a stop reuses the stored key and the direct port; a second De
   assert.equal(config.team.direct_port, DIRECT_PORT + 1);
 });
 
-test('a stored key is never regenerated: key mismatch is reported and nothing changes', async (t) => {
+// Slice 5-5b: Deploy and Recover rewrite the whole config and carry the saved internet setting through;
+// with none saved the rewritten file is the same bytes as before.
+test('Deploy, Recover and Deploy again keep the saved internet setting; without one the file is rewritten byte for byte', async (t) => {
   const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(),
+    script: healthyHostScript({ teamId: 'team_x' }) });
+  const configPath = path.join(hostDir(userDataPath), 'host-config.json');
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal((await controller.handle('hostStop', {})).ok, true);
+  const plain = fs.readFileSync(configPath);
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal((await controller.handle('hostStop', {})).ok, true);
+  assert.equal(Buffer.compare(fs.readFileSync(configPath), plain), 0, 'no internet: the same bytes');
+  const internet = { map_port: true, public_address: 'team.example.org', relay_url: null };
+  const saved = JSON.parse(plain.toString('utf8'));
+  fs.writeFileSync(configPath, JSON.stringify({ ...saved, team: { ...saved.team, internet } }));
+  const steps = [['hostRecover', { display_name: 'Olive Owner', label: 'Desk' }], ['hostDeploy', { ...DEPLOY }]];
+  for (const [method, payload] of steps) {
+    assert.equal((await controller.handle(method, payload)).ok, true, method);
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).team.internet, internet, method);
+    assert.deepEqual({ ...loadHostConfig(configPath).team.internet },
+      { mapPort: true, publicAddress: 'team.example.org', relayUrl: null }, method);
+    assert.equal((await controller.handle('hostStop', {})).ok, true);
+  }
+});
+
+test('prepareHostLayout makes projects/ and trash/ and answers their real paths; the written config loads', (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-layout-');
+  const layout = prepareHostLayout(userDataPath);
+  const root = fs.realpathSync.native(hostDir(userDataPath));
+  assert.equal(layout.projects, path.join(root, 'projects'));
+  assert.equal(layout.trash, path.join(root, 'trash'));
+  assert.equal(layout.logs, path.join(root, 'logs'));
+  for (const dir of [layout.projects, layout.trash, layout.logs]) assert.equal(fs.lstatSync(dir).isDirectory(), true);
+  const written = buildHostConfig({ layout, name: 'Studio', directPort: null });
+  assert.equal(written.team.projects_root, layout.projects);
+  assert.equal(JSON.stringify(written).includes(layout.trash), false, 'nothing about the trash is written');
+  writeHostConfig(layout, written);
+  assert.equal(loadHostConfig(layout.configPath).team.projectsRoot, layout.projects);
+  assert.deepEqual(prepareHostLayout(userDataPath), layout, 'a second prepare answers the same');
+});
+
+test('a Deploy over a saved config with no projects_root writes one with it', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(),
+    script: healthyHostScript({ teamId: 'team_x' }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal((await controller.handle('hostStop', {})).ok, true);
+  const configPath = path.join(fs.realpathSync.native(hostDir(userDataPath)), 'host-config.json');
+  const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const { projects_root: _dropped, ...oldTeam } = saved.team;
+  fs.writeFileSync(configPath, JSON.stringify({ ...saved, team: oldTeam }));
+  assert.equal(Object.hasOwn(loadHostConfig(configPath).team, 'projectsRoot'), false, 'a host from before loads');
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  const rewritten = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(rewritten.team.projects_root, path.join(path.dirname(configPath), 'projects'));
+  assert.equal(loadHostConfig(configPath).team.projectsRoot, rewritten.team.projects_root);
+});
+
+test('a relaunch of a host deployed before 4a-5 (no pool block) writes the pool', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  const { controller } = controllerFor(t, { userDataPath, secureStore: createMemorySecureStore(),
+    script: healthyHostScript({ teamId: 'team_x' }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal((await controller.handle('hostStop', {})).ok, true);
+  const configPath = path.join(fs.realpathSync.native(hostDir(userDataPath)), 'host-config.json');
+  const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const { pool: _dropped, ...oldTeam } = saved.team;
+  const { python_executable: _python, ...oldConfig } = saved;
+  fs.writeFileSync(configPath, JSON.stringify({ ...oldConfig, team: oldTeam }));
+  assert.equal(Object.hasOwn(loadHostConfig(configPath).team, 'pool'), false, 'a host from before loads with no pool');
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  const rewritten = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.deepEqual(rewritten.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+  assert.equal(rewritten.python_executable, process.execPath);
+  assert.deepEqual(loadHostConfig(configPath).team.pool, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH });
+});
+
+test('buildHostConfig always writes the pool and never a model endpoint, and the loader takes it', (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-layout-');
+  const layout = prepareHostLayout(userDataPath);
+  assert.equal(DEPLOY_POOL_CONTEXT_LENGTH, 32768);
+  for (const options of [{}, { lockPython: process.execPath }, { internet: { relay_url: null } }]) {
+    const written = buildHostConfig({ layout, name: 'Studio', directPort: 4242, ...options });
+    assert.deepEqual(written.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+    assert.equal(Object.hasOwn(written, 'model_endpoint'), false);
+  }
+  writeHostConfig(layout, buildHostConfig({ layout, name: 'Studio', directPort: 4242 }));
+  const loaded = loadHostConfig(layout.configPath);
+  assert.deepEqual([loaded.modelEndpoint, loaded.team.pool], [null, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH }]);
+});
+
+test('over a saved config a stored key is never regenerated: key mismatch is reported and nothing changes', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  savedConfig(userDataPath);
   const secureStore = createMemorySecureStore();
   const seed = crypto.randomBytes(32).toString('base64url');
   secureStore.values.set(HOST_KEY_NAME, seed);
@@ -174,8 +311,9 @@ test('a stored key is never regenerated: key mismatch is reported and nothing ch
   assert.equal(fake.calls.length, 1, 'no retry');
 });
 
-test('an unreadable stored key is refused, never replaced', async (t) => {
+test('over a saved config an unreadable stored key is refused, never replaced', async (t) => {
   const userDataPath = tempProfile(t, 'jenny-host-deploy-');
+  savedConfig(userDataPath);
   const secureStore = createMemorySecureStore();
   secureStore.values.set(HOST_KEY_NAME, 'not-a-key');
   const { controller, fake } = controllerFor(t, { userDataPath, secureStore, script: healthyHostScript({ teamId: 't' }) });
@@ -208,6 +346,7 @@ test('ready then owner_invite: the owner joins through the loopback fallback; th
   const teamId = parseInvite(invite).team_id;
   assert.equal(teamId, deriveTeamId(keyPairFromSeed(Buffer.from(HOST_SEED)).publicKey));
   host.secureStore.values.set(HOST_KEY_NAME, Buffer.from(HOST_SEED).toString('base64url'));
+  savedConfig(host.userData); // deployed here before, so the key is kept (E75)
   // The invite's hint is unreachable from this machine; only the loopback address reaches the host.
   host.setReachable([`127.0.0.1:${DIRECT_PORT}`]);
   const { controller, fake, logs, pushed } = controllerFor(t, { userDataPath: host.userData, secureStore: host.secureStore,
@@ -312,4 +451,139 @@ test('a user data path reached through a junction or link is written as its real
     assert.equal(config[field].includes('linked-profile'), false, field);
   }
   assert.doesNotThrow(() => loadHostConfig(configPath));
+});
+
+// Every path under the profile with its bytes, so "nothing was written" is a comparison.
+function listing(root) {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, entry.name);
+      const stat = fs.statSync(full);
+      out.push(entry.isDirectory() ? `${full}/` : `${full} ${stat.mtimeMs} ${fs.readFileSync(full, 'hex')}`);
+      if (entry.isDirectory()) walk(full);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function savedConfig(userDataPath) {
+  fs.mkdirSync(hostDir(userDataPath), { recursive: true });
+  fs.writeFileSync(path.join(hostDir(userDataPath), 'host-config.json'),
+    JSON.stringify({ schema_version: 3, team: { name: 'Studio', key_source: 'parent_channel', direct_port: DIRECT_PORT } }));
+}
+
+// The real key store with its create calls counted.
+function countingKeys(secureStore) {
+  const real = createHostKeyStore({ getSecureStore: () => secureStore });
+  const keys = { creates: 0, load: () => real.load(), create: () => { keys.creates += 1; return real.create(); } };
+  return keys;
+}
+
+// Replaces fs[name] while the controller answers; `fake(original, target)` decides per path.
+function swapFs(name, fake) {
+  const original = fs[name];
+  fs[name] = (target, ...rest) => fake(original, String(target), rest);
+  return () => { fs[name] = original; };
+}
+
+async function refusedDeploy(t, prepare, { during = () => () => {} } = {}) {
+  const userDataPath = tempProfile(t, 'jenny-host-lost-');
+  const secureStore = createMemorySecureStore();
+  prepare(userDataPath);
+  const before = listing(userDataPath);
+  const hostKeys = countingKeys(secureStore);
+  const { controller, fake, logs } = controllerFor(t, { userDataPath, secureStore, hostKeys,
+    script: healthyHostScript({ teamId: 't' }) });
+  const undo = during(userDataPath);
+  let answer;
+  try { answer = await controller.handle('hostDeploy', { ...DEPLOY }); } finally { undo(); }
+  assert.equal(hostKeys.creates, 0, 'create was never called');
+  assert.equal(fake.calls.length, 0, 'nothing spawned');
+  assert.deepEqual(secureStore.sets, [], 'no key was made');
+  assert.equal(secureStore.values.has(HOST_KEY_NAME), false);
+  assert.deepEqual(listing(userDataPath), before, 'no file or directory was created or changed');
+  const said = JSON.stringify([answer, logs]);
+  for (const needle of [userDataPath, 'secure-state', 'team-members', 'corrupt-']) assert.equal(said.includes(needle), false, needle);
+  return answer;
+}
+
+test('a lost host key: Deploy on a deployed profile with no stored key is refused team_host_key_missing and writes nothing', async (t) => {
+  const answer = await refusedDeploy(t, savedConfig);
+  assert.deepEqual(answer, { ok: false, error: { code: TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE, reason: 'team_host_key_missing' } });
+});
+
+test('a lost host key: with a set-aside secure store file beside it the refusal is team_host_key_set_aside', async (t) => {
+  const answer = await refusedDeploy(t, (userDataPath) => {
+    savedConfig(userDataPath);
+    fs.writeFileSync(path.join(userDataPath, 'secure-state.json.corrupt-1731300000123'), '{ damaged');
+  });
+  assert.deepEqual(answer, { ok: false, error: { code: TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE, reason: 'team_host_key_set_aside' } });
+});
+
+test('a lost host key: a member store file in the host profile counts as deployed with no config; other names do not', async (t) => {
+  const { MEMBERS_FILE } = require('../server/team/member-store');
+  const answer = await refusedDeploy(t, (userDataPath) => {
+    fs.mkdirSync(path.join(hostDir(userDataPath), 'profile'), { recursive: true });
+    fs.writeFileSync(path.join(hostDir(userDataPath), 'profile', MEMBERS_FILE), 'not opened');
+    fs.writeFileSync(path.join(userDataPath, 'secure-state.json.corrupt-x'), 'not a set-aside name');
+  });
+  assert.equal(answer.error.reason, 'team_host_key_missing');
+
+  const userDataPath = tempProfile(t, 'jenny-host-e48-');
+  fs.mkdirSync(path.join(hostDir(userDataPath), 'profile'), { recursive: true });
+  fs.writeFileSync(path.join(hostDir(userDataPath), 'profile', 'team-audit.json'), '{}');
+  const secureStore = createMemorySecureStore();
+  const { controller } = controllerFor(t, { userDataPath, secureStore, script: healthyHostScript({ teamId: 't' }) });
+  const deployed = await controller.handle('hostDeploy', { ...DEPLOY });
+  assert.equal(deployed.ok, true, 'a profile with no config and no member store deploys as today');
+  assert.equal(secureStore.values.has(HOST_KEY_NAME), true, 'and makes the key');
+});
+
+test('a stored key that does not decode stays team_host_key_invalid and is never overwritten', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-e48-');
+  const secureStore = createMemorySecureStore();
+  savedConfig(userDataPath);
+  secureStore.values.set(HOST_KEY_NAME, 'not-a-key');
+  const { controller, fake } = controllerFor(t, { userDataPath, secureStore, script: healthyHostScript({ teamId: 't' }) });
+  const answer = await controller.handle('hostDeploy', { ...DEPLOY });
+  assert.equal(answer.error.reason, 'team_host_key_invalid');
+  assert.equal(secureStore.values.get(HOST_KEY_NAME), 'not-a-key');
+  assert.equal(fake.calls.length, 0);
+});
+
+test('a lost host key: a config that exists and does not parse counts as deployed', async (t) => {
+  const answer = await refusedDeploy(t, (userDataPath) => {
+    fs.mkdirSync(hostDir(userDataPath), { recursive: true });
+    fs.writeFileSync(path.join(hostDir(userDataPath), 'host-config.json'), '{ not json');
+  });
+  assert.deepEqual(answer, { ok: false, error: { code: TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE, reason: 'team_host_key_missing' } });
+});
+
+test('a lost host key: a check that cannot tell (EACCES on both paths) counts as deployed; both absent deploys as today', async (t) => {
+  const denied = (original, target, rest) => {
+    if (/host-config\.json$|team-members\.json$/u.test(target)) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return original(target, ...rest);
+  };
+  const answer = await refusedDeploy(t, () => {}, { during: () => swapFs('statSync', denied) });
+  assert.equal(answer.error.reason, 'team_host_key_missing');
+
+  const userDataPath = tempProfile(t, 'jenny-host-lost-');
+  const secureStore = createMemorySecureStore();
+  const hostKeys = countingKeys(secureStore);
+  const { controller } = controllerFor(t, { userDataPath, secureStore, hostKeys, script: healthyHostScript({ teamId: 't' }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal(hostKeys.creates, 1, 'with both paths absent the first Deploy makes the key');
+});
+
+test('a lost host key: a folder listing that throws still refuses, with the sentence for no set-aside store seen', async (t) => {
+  const answer = await refusedDeploy(t, (userDataPath) => {
+    savedConfig(userDataPath);
+    fs.writeFileSync(path.join(userDataPath, 'secure-state.json.corrupt-1731300000123'), '{ damaged');
+  }, { during: (userDataPath) => swapFs('readdirSync', (original, target, rest) => {
+    if (target === userDataPath) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    return original(target, ...rest);
+  }) });
+  assert.equal(answer.error.reason, 'team_host_key_missing');
 });

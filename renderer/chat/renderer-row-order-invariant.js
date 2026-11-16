@@ -27,6 +27,15 @@
   const TURN_SELECTOR = '[data-turn-id]';
   const MAX_ORDER_ENTRIES = 24;
   const MAX_VIOLATIONS_PER_CHECK = 4;
+  const DIVIDER_SELECTOR = '[data-timeline-divider="time-gap"]';
+  const LIVE_ROW_LIST_SELECTOR = '[data-turn-row-list][data-turn-live="true"]';
+  // Rows ranked by event_seq: the kinds the turn records as they happen. The
+  // store records notices, progress and other projected kinds ahead of or after
+  // the captured events, while the turn paints them at their own message, so
+  // their seq says nothing about where they belong.
+  const SEQ_RANKED_ROW_KINDS = new Set([
+    'user_bubble', 'reasoning', 'assistant_text', 'tool_call', 'tool_result', 'tool_step', 'approval_gap',
+  ]);
 
   function text(value) {
     return String(value == null ? '' : value).trim();
@@ -56,6 +65,7 @@
   // source event, painted as data-source-event-id). A row whose event is not
   // canonical yet (a live row before its turn persists) is skipped.
   function rankRow(rowEl, index) {
+    if (!SEQ_RANKED_ROW_KINDS.has(text(rowEl.getAttribute('data-row-kind')))) return null;
     const eventId = text(rowEl.getAttribute('data-source-event-id'));
     return eventId && index.has(eventId) ? index.get(eventId) : null;
   }
@@ -81,15 +91,55 @@
       const turnEl = rowEl.closest(TURN_SELECTOR);
       const owner = turnEl ? text(turnEl.getAttribute('data-turn-id')) : rowEl.closest(ROW_LIST_SELECTOR);
       if (!owner) continue;
-      const rank = rankRow(rowEl, index);
-      if (rank === null) continue;
       if (!current || current.owner !== owner) {
-        current = { owner, turnId: turnEl ? owner : '', rows: [] };
+        current = { owner, turnId: turnEl ? owner : '', rows: [], allRows: [], containers: new Set() };
         groups.push(current);
       }
-      current.rows.push({ kind: text(rowEl.getAttribute('data-row-kind')), rank, rowId: rowEl.getAttribute('data-row-id') });
+      current.containers.add(turnEl || rowEl.closest(ROW_LIST_SELECTOR));
+      const row = {
+        kind: text(rowEl.getAttribute('data-row-kind')),
+        rank: rankRow(rowEl, index),
+        rowId: rowEl.getAttribute('data-row-id'),
+        toolCallId: text(rowEl.getAttribute('data-tool-call-id')),
+        phase: text(rowEl.getAttribute('data-assistant-phase')),
+        messageId: text(rowEl.getAttribute('data-source-message-id')),
+        live: Boolean(rowEl.closest(LIVE_ROW_LIST_SELECTOR)),
+      };
+      current.allRows.push(row);
+      if (row.rank !== null) current.rows.push(row);
     }
     return groups;
+  }
+
+  // Shape checks that need no event: one card per tool call, one divider per
+  // turn, and in a settled turn the final answer after its own reasoning and
+  // after every tool call.
+  function findShapeProblem(group) {
+    const toolCards = new Set();
+    for (const row of group.allRows) {
+      if (row.kind !== 'tool_call' || !row.toolCallId) continue;
+      if (toolCards.has(row.toolCallId)) return { problem: 'duplicate_tool_card', row: describeRow(row) };
+      toolCards.add(row.toolCallId);
+    }
+    let dividers = 0;
+    for (const container of group.containers) {
+      if (container && typeof container.querySelectorAll === 'function') dividers += container.querySelectorAll(DIVIDER_SELECTOR).length;
+    }
+    if (dividers > 1) return { problem: 'extra_divider', dividers };
+    const settled = group.allRows.filter((row) => !row.live);
+    for (let index = 0; index < settled.length; index += 1) {
+      const answer = settled[index];
+      if (answer.kind !== 'assistant_text' || answer.phase !== 'final_answer') continue;
+      for (const later of settled.slice(index + 1)) {
+        if (later.kind === 'reasoning' && answer.messageId && later.messageId === answer.messageId) {
+          return { problem: 'answer_before_reasoning', before: describeRow(answer), after: describeRow(later) };
+        }
+        if (later.kind === 'tool_call') {
+          return { problem: 'final_answer_not_last', before: describeRow(answer), after: describeRow(later) };
+        }
+      }
+    }
+    return null;
   }
 
   function checkTurnRows(turnId, rows) {
@@ -120,7 +170,9 @@
     const violations = [];
     for (const group of groupRankedRowsByTurn(rootEl, index)) {
       const violation = checkTurnRows(group.turnId, group.rows);
+      const shape = violation ? null : findShapeProblem(group);
       if (violation) violations.push(violation);
+      else if (shape) violations.push({ turnId: group.turnId.slice(0, 40), rowCount: group.allRows.length, ...shape });
       if (violations.length >= MAX_VIOLATIONS_PER_CHECK) break;
     }
     return violations;

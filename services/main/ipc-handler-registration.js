@@ -108,8 +108,8 @@ function registerMainIpcHandlers({
   authorizeWorkspaceSender = null,
   versionedTempRecoveryStarter = startVersionedWorkspaceTempRecovery,
   spellcheckSessionRef = null,
+  outsideFileLaunch = null,
 } = {}) {
-  require('./ipc-handler-timing').installIpcHandlerTiming(ipcMain, { log });
   const modelTuningService = new ModelTuningService({
     shellConfigService,
     backendService,
@@ -139,17 +139,38 @@ function registerMainIpcHandlers({
     workspaceAuthorization,
   });
   const { workspaceRootCoordinator } = workspace;
+  // Row 137: files opened from outside the Workspace. The launch buffer holds
+  // what arrived before now (cold launch, macOS open-file, second launches).
+  const outsideFiles = require('./outside-files/outside-file-ipc').registerOutsideFileIpc(ipcMain, {
+    app, backendService, shellConfigService, dialog, getMainWindow, attachmentAssetStore, processRef,
+    showItemInFolderImpl, sendBridgeEvent, workspaceRootCoordinator, workspaceAuthorization, log,
+  });
+  outsideFileLaunch?.attach?.(outsideFiles.service);
+  void outsideFiles.service.restore();
   registerGuidanceKnowledgeIpcHandlers(ipcMain, {
     backendService, skillsService, knowledgeService, shellConfigService, dialog, getMainWindow,
     workspaceAuthorization,
   });
-  // Row 123 slice 1f-1: the team member client; nothing of it loads while the flag is off.
+  // Row 123 slice 1f-1: the team member client; nothing of it loads while the flag is off. Slice 6-5: model sharing reads
+  // the discovery scan (a scan before the engine handlers exist is a failed scan) and the model roots late-bound.
+  let engineHandlers = null;
+  const modelSources = {
+    list: () => { if (!engineHandlers?.listLocalGgufs) throw new Error('scan_unavailable'); return engineHandlers.listLocalGgufs(); },
+    roots: () => require('./team-model-roots').teamModelRoots({ userDataPath: app.getPath('userData'),
+      libraryRoots: shellConfigService?.getLocalEngines?.()?.openaiCompatible?.managed?.libraryRoots }),
+  };
   if (backendService?.featureFlags?.team === true) {
     require('./team-registration').registerTeam(ipcMain, { featureFlags: backendService.featureFlags, backendService,
       userDataPath: app.getPath('userData'), getSecureStore: () => backendService.secureStore || null,
-      sendBridgeEvent, authorization: workspaceAuthorization, getMainLifecycle, appVersion: app.getVersion?.() || '', log });
+      sendBridgeEvent, authorization: workspaceAuthorization, getMainLifecycle, appVersion: app.getVersion?.() || '', log,
+      // E64: Force local means no team networking; the mode is read live and compared on every saved config change.
+      readOfflineMode: () => offlineIntelligenceService.getMode(), modelSources,
+      subscribeConfig: (listener) => { shellConfigService.on('changed', listener); return () => shellConfigService.off('changed', listener); } });
   }
-  registerEngineIpcHandlers(ipcMain, {
+  // Row 150: project boards. Always registered (each call answers `disabled` with the flag off); nothing is built or read before the first call.
+  require('./board-ipc-registration').registerBoardIpc(ipcMain, { app, backendService, sendBridgeEvent, authorization: workspaceAuthorization, log });
+  require('./sketch-ipc-registration').registerSketchIpc(ipcMain, { backendService, authorization: workspaceAuthorization, log }); // Row 149: a drawing's file node, checked against the chat's project root.
+  engineHandlers = registerEngineIpcHandlers(ipcMain, {
     app, backendService, shellConfigService, processRef, dialog, getMainWindow, getLlamaServerManager,
     attachmentAssetStore, sendBridgeEvent, log, getMainLifecycle, workspaceAuthorization,
   });

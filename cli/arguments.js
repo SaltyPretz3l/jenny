@@ -49,6 +49,7 @@ const OPTIONS = Object.freeze({
   all: { type: 'boolean' },
   limit: { type: 'string' },
   'show-origin': { type: 'boolean' },
+  team: { type: 'boolean' },
   thinking: { type: 'boolean' },
   'tool-output': { type: 'boolean' },
   'no-color': { type: 'boolean' },
@@ -68,7 +69,7 @@ function usage() {
     '       jenny config set <key> <value> [--json]   (an empty value removes the key)',
     '       jenny mcp serve [run options]              (a read-only MCP server over stdio)',
     '       jenny completion bash|zsh|powershell',
-    '       jenny doctor [--json]',
+    '       jenny doctor [--team] [--json]',
     '       jenny help',
     '',
     'Options:',
@@ -92,6 +93,7 @@ function usage() {
     '      --all                   sessions list: every workspace in the profile, not only this one',
     '      --limit <n>             sessions list: at most n sessions; sessions show: the last n messages',
     '      --show-origin           config list: which layer set each value (flag, env, file, default)',
+    '      --team                  doctor: also check this PC for a team (docs/operations/TEAM_SECOND_PC.md)',
     '      --json                  Machine-readable output for read commands, doctor and -V',
     '      --thinking              Include thinking frames (stream-json)',
     '      --tool-output           Include tool output frames (stream-json)',
@@ -167,6 +169,7 @@ function parseArguments(argv) {
   if ((command === 'doctor' && rest.length) || (command === 'help' && rest.length > 1)) {
     throw usageError('unexpected_argument', `jenny ${command} takes no further arguments.`);
   }
+  if (values.team && command !== 'doctor') throw usageError('misplaced_option', '--team works only with jenny doctor.');
   if (command && COMMAND_VERBS[command] && !COMMAND_VERBS[command].includes(rest[0])) {
     throw usageError('unknown_verb', `jenny ${command} needs one of: ${COMMAND_VERBS[command].join(', ')}.`);
   }
@@ -205,6 +208,7 @@ function parseArguments(argv) {
       all: values.all === true,
       limit: parseCount(values.limit, 'limit'),
       showOrigin: values['show-origin'] === true,
+      team: values.team === true,
       thinking: values.thinking === true,
       toolOutput: values['tool-output'] === true,
       noColor: values['no-color'] === true,

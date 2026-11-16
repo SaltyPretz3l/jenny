@@ -1,0 +1,51 @@
+{
+  "nodes": [
+    {
+      "id": "user",
+      "label": "Browser"
+    },
+    {
+      "id": "api",
+      "label": "API server"
+    },
+    {
+      "id": "db",
+      "label": "Database"
+    }
+  ],
+  "edges": [
+    {
+      "id": "user->api",
+      "from": "user",
+      "to": "api",
+      "label": "request"
+    },
+    {
+      "id": "api->db",
+      "from": "api",
+      "to": "db",
+      "label": "query"
+    },
+    {
+      "id": "db->api",
+      "from": "db",
+      "to": "api",
+      "label": "rows"
+    },
+    {
+      "id": "api->user",
+      "from": "api",
+      "to": "user",
+      "label": "page"
+    }
+  ],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [],
+  "steps": [],
+  "title": "Sign in",
+  "direction": "right"
+}

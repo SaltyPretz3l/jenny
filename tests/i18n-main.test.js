@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const path = require('path');
 
 const {
@@ -46,6 +47,34 @@ test('setLocale loads, translates, and interpolates a valid catalog', () => {
   assert.equal(i18n.setLocale('es'), 'es');
   assert.equal(i18n.locale(), 'es');
   assert.equal(i18n.t('greeting', 'Hello, {name}!', { name: 'Ada' }), 'Hola, Ada!');
+});
+
+test('setLocale loads a shipped catalog, which is a flat key-to-text object', () => {
+  // The fixtures are wrapped as { tag, strings }; locales/<tag>.json is not, and
+  // a loader that only took the wrapped shape left every main-process string English.
+  const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', 'de.json'), 'utf8'));
+  assert.equal(Object.prototype.hasOwnProperty.call(shipped, 'strings'), false);
+  const logs = [];
+  const i18n = createI18nMain({ log: (...args) => logs.push(args) });
+
+  i18n.setLocale('de');
+
+  assert.notEqual(shipped['activity.close'], 'Close');
+  assert.equal(i18n.t('activity.close', 'Close'), shipped['activity.close']);
+  assert.deepEqual(logs, []);
+});
+
+test('a flat catalog keeps only string values and a wrapped one must name its own tag', () => {
+  const flat = createI18nMain({ readFileSync: () => JSON.stringify({ greeting: 'Hallo', broken: 3 }) });
+  flat.setLocale('de');
+  assert.equal(flat.t('greeting', 'Hello'), 'Hallo');
+  assert.equal(flat.t('broken', 'Broken'), 'Broken');
+
+  const mislabeled = createI18nMain({
+    readFileSync: () => JSON.stringify({ tag: 'fr', strings: { greeting: 'Bonjour' } }),
+  });
+  mislabeled.setLocale('de');
+  assert.equal(mislabeled.t('greeting', 'Hello'), 'Hello');
 });
 
 test('invalid catalog falls back to English and logs once per tag', () => {

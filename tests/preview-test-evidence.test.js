@@ -15,6 +15,7 @@ holdEventLoopUntilTestsFinish(test);
 const assert = require('node:assert/strict');
 
 const { buildEvalScript } = require('../services/browser-interaction-utils');
+const { externalResourcesLine } = require('../services/tools/builtin/preview-test-evidence');
 const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
 const {
   callsOf,
@@ -190,8 +191,45 @@ describe('preview_test / observe', () => {
     );
     assert.equal(byName['#overlay'].visible, false);
     assert.equal(byName['.missing'].count, 0);
-    assert.equal(byName['#long'].text.length, 160);
+    assert.equal(byName['#long'].text.length, 409, 'text under the cap is returned whole');
     assert.equal(byName['#long'].count, 2);
+  });
+
+  test('long observed text keeps its head and tail around an omission marker', async () => {
+    const root = makeWorkspace();
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    const long = Array.from({ length: 2000 }, (_, index) => alphabet[(index * 7) % 26]).join('');
+    const medium = Array.from({ length: 500 }, (_, index) => alphabet[(index * 5) % 26]).join('');
+    const service = stubService({
+      evalHandler: observingHandler({
+        '#diag': [fakeElement({ text: long })],
+        '#note': [fakeElement({ text: medium })],
+      }),
+    });
+    const result = await makeTool().execute(
+      { path: 'index.html', observe: ['#diag', '#note'] },
+      makeContext(root, service)
+    );
+
+    const byName = Object.fromEntries(result.metadata.observations.map((entry) => [entry.selector, entry]));
+    assert.equal(
+      byName['#diag'].text,
+      `${long.slice(0, 150)} [... 1410 chars omitted ...] ${long.slice(-440)}`
+    );
+    assert.equal(byName['#note'].text, medium);
+    assert.ok(result.content.includes(JSON.stringify(byName['#diag'].text)));
+  });
+
+  test('a workspace path straddling the head cut is redacted whole, not left as a fragment', async () => {
+    const root = makeWorkspace();
+    const text = `${'x'.repeat(140)}${root}${'y'.repeat(2000)}`;
+    const service = stubService({ evalHandler: observingHandler({ '#diag': [fakeElement({ text })] }) });
+    const result = await makeTool().execute({ path: 'index.html', observe: ['#diag'] }, makeContext(root, service));
+
+    const observed = result.metadata.observations[0].text;
+    assert.ok(observed.startsWith(`${'x'.repeat(140)}[workspace`), observed.slice(0, 160));
+    assert.equal(observed.includes(root.slice(0, 8)), false);
+    assert.ok(observed.endsWith('y'.repeat(440)));
   });
 
   test('observation runs after events and the post-event settle, in one eval', async () => {
@@ -328,6 +366,23 @@ describe('preview_test / in-app preview parity', () => {
       { ...result.metadata.external_resources },
       { scripts: ['game.js'], stylesheets: ['style.css'], media: [] }
     );
+  });
+
+  test('names the unique external hosts that were blocked and skips relative names', () => {
+    const line = externalResourcesLine({
+      scripts: ['https://cdn.jsdelivr.net/npm/three.js', 'local.js', 'HTTPS://CDN.JSDELIVR.NET/npm/other.js'],
+      stylesheets: ['http://Fonts.Example.com/a.css', '//protocol-relative.test/x.css'],
+      media: [],
+    });
+    assert.ok(line.endsWith(' Blocked: cdn.jsdelivr.net, fonts.example.com.'), line);
+    const none = externalResourcesLine({ scripts: ['game.js'], stylesheets: [], media: ['a.png'] });
+    assert.ok(!none.includes('Blocked:'));
+    const many = externalResourcesLine({
+      scripts: ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => `https://${name}.test/x.js`),
+      stylesheets: [],
+      media: [],
+    });
+    assert.ok(many.endsWith(' Blocked: a.test, b.test, c.test, d.test.'), many);
   });
 
   test('pluralizes and mentions only the categories present', async () => {

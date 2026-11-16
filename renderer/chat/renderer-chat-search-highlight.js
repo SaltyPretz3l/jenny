@@ -76,6 +76,13 @@
     return win.Highlight;
   }
 
+  // The current match paints over the match paint where the two overlap.
+  function currentHighlight(Ctor, range) {
+    var highlight = new Ctor(range);
+    highlight.priority = 1;
+    return highlight;
+  }
+
   function entryHasStreamingBubble(entry) {
     return !!entry.querySelector('.chat-bubble-streaming');
   }
@@ -358,6 +365,9 @@
       || (doc && doc.defaultView)
       || (typeof globalThis !== 'undefined' ? globalThis : null);
 
+    // nameSuffix: a second pane paints under its own highlight names.
+    var NAME_ALL = HIGHLIGHT_NAME_ALL + (options.nameSuffix || '');
+    var NAME_CURRENT = HIGHLIGHT_NAME_CURRENT + (options.nameSuffix || '');
     var matches = [];
     var currentIndex = -1;
     var truncated = false;
@@ -395,6 +405,34 @@
       return matches;
     }
 
+    // Row 156: canonical matches carry no DOM range, so the match paint walks
+    // the mounted entries that hold a counted match (by message or row source
+    // id), skipping a streaming entry as scan() does.
+    function paintMounted(query, scanOptions) {
+      var registry = getCssHighlights(win);
+      var Ctor = getHighlightCtor(win);
+      if (!registry || !Ctor || !chatTimeline || !doc || !query) return 0;
+      var ids = new Set();
+      matches.forEach(function noteIds(match) { ids.add(match.messageId); ids.add(match.sourceMessageId); });
+      var holds = function holds(entry) {
+        if (ids.has(entry.getAttribute('data-message-id'))) return true;
+        return Array.prototype.some.call(entry.querySelectorAll('[data-source-message-id]'), function ofMatch(row) {
+          return ids.has(row.getAttribute('data-source-message-id'));
+        });
+      };
+      var pattern = buildPattern(String(query), scanOptions);
+      var ranges = [];
+      var entries = chatTimeline.querySelectorAll('.chat-entry');
+      for (var i = 0; i < entries.length && ranges.length < MAX_SEARCH_TOTAL_MATCHES; i++) {
+        if (entryHasStreamingBubble(entries[i]) || !holds(entries[i])) continue;
+        collectMatchesInEntry(entries[i], i, pattern, doc, MAX_SEARCH_TOTAL_MATCHES - ranges.length)
+          .forEach(function pushRange(match) { ranges.push(match.range); });
+      }
+      if (ranges.length) registry.set(NAME_ALL, Reflect.construct(Ctor, ranges));
+      else registry.delete(NAME_ALL);
+      return ranges.length;
+    }
+
     function scanDocuments(documents, query, scanOptions) {
       clear();
       matches = findDocumentMatches(documents, query, scanOptions);
@@ -430,9 +468,9 @@
       var Ctor = getHighlightCtor(win);
       if (selected) {
         matches[currentIndex] = { ...matches[currentIndex], ...selected };
-        if (registry && Ctor) registry.set(HIGHLIGHT_NAME_CURRENT, new Ctor(selected.range));
+        if (registry && Ctor) registry.set(NAME_CURRENT, currentHighlight(Ctor, selected.range));
       } else if (registry) {
-        registry.delete(HIGHLIGHT_NAME_CURRENT);
+        registry.delete(NAME_CURRENT);
       }
       return matches[currentIndex];
     }
@@ -442,13 +480,13 @@
       var Ctor = getHighlightCtor(win);
       if (!registry || !Ctor) return;
       if (matches.length === 0) {
-        registry.delete(HIGHLIGHT_NAME_ALL);
-        registry.delete(HIGHLIGHT_NAME_CURRENT);
+        registry.delete(NAME_ALL);
+        registry.delete(NAME_CURRENT);
         return;
       }
       var ranges = matches.filter(function (m) { return m.range; }).map(function (m) { return m.range; });
       if (!ranges.length) return;
-      registry.set(HIGHLIGHT_NAME_ALL, Reflect.construct(Ctor, ranges));
+      registry.set(NAME_ALL, Reflect.construct(Ctor, ranges));
     }
 
     function setCurrentIndex(index) {
@@ -456,15 +494,15 @@
       var Ctor = getHighlightCtor(win);
       if (!matches.length) {
         currentIndex = -1;
-        if (registry) registry.delete(HIGHLIGHT_NAME_CURRENT);
+        if (registry) registry.delete(NAME_CURRENT);
         return null;
       }
       var clamped = Math.max(0, Math.min(matches.length - 1, Number(index) || 0));
       currentIndex = clamped;
       if (registry && Ctor && matches[clamped].range) {
-        registry.set(HIGHLIGHT_NAME_CURRENT, new Ctor(matches[clamped].range));
+        registry.set(NAME_CURRENT, currentHighlight(Ctor, matches[clamped].range));
       } else if (registry) {
-        registry.delete(HIGHLIGHT_NAME_CURRENT);
+        registry.delete(NAME_CURRENT);
       }
       return matches[clamped];
     }
@@ -484,8 +522,8 @@
     function clear() {
       var registry = getCssHighlights(win);
       if (registry) {
-        registry.delete(HIGHLIGHT_NAME_ALL);
-        registry.delete(HIGHLIGHT_NAME_CURRENT);
+        registry.delete(NAME_ALL);
+        registry.delete(NAME_CURRENT);
       }
       matches = [];
       currentIndex = -1;
@@ -495,6 +533,7 @@
     return {
       scan: scan,
       scanDocuments: scanDocuments,
+      paintMounted: paintMounted,
       bindCurrentToEntry: bindCurrentToEntry,
       clear: clear,
       setCurrentIndex: setCurrentIndex,

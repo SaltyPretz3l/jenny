@@ -1,0 +1,337 @@
+/* The team half of the Board page (row 151 slice T7, D30; owner-approved mockup team-board-chat, screen A).
+ * Loaded by board-team.js with the Team scripts, never with Team off. Tokens come from foundation.css; the classes it styles belong
+ * to board-team*.js, board-list-view.js and board-proposals-view.js. No side accent bars, no new boxes, nothing that moves, so
+ * nothing here needs a reduced-motion rule. Directions are logical; the pointers and held-note labels sit at board coordinates. */
+
+/* ---------------------------------------------------------------- the project button (the list's heading) */
+
+.board-list__project:has(> .board-list__project-button) {
+  padding: 0;
+}
+
+.board-list__project-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-1) var(--space-4) var(--space-4);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.board-list__project-name {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.board-list__project-team {
+  grid-column: 1;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.board-list__project-team[hidden] {
+  display: none;
+}
+
+.board-list__chevron {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+/* The host-can-read line sits right under the count line, not at the foot of the column again. */
+.board-list__foot--team {
+  margin-block-start: 0;
+  padding-block-start: 0;
+}
+
+/* ---------------------------------------------------------------- the conversation column */
+
+.board-team-conv {
+  min-height: 0;
+}
+
+.board-team-conv__head {
+  gap: var(--space-2);
+}
+
+.board-team-conv__chevron {
+  flex: none;
+}
+
+.board-team-conv__viewers {
+  margin: 0;
+  padding: var(--space-2) var(--space-8) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-team-conv__viewers[hidden] {
+  display: none;
+}
+
+.board-team-conv__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.board-team-conv__empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-8) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.board-team-conv__new {
+  align-self: flex-start;
+  margin-inline: var(--space-8);
+}
+
+/* The conversation's head in the column: two short lines, not the Team tab's one row with a title. */
+.board-team-conv .team-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-height: 0;
+  padding: var(--space-2) var(--space-8) var(--space-3);
+}
+
+.board-team-conv .team-head__sub {
+  display: inline;
+  flex-basis: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+
+/* The hint line wraps: it is a sentence, not a label. */
+.board-team-conv .team-composer__hint {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+/* ---------------------------------------------------------------- who else is on the board */
+
+.inv-board-layer > .board-team-presence {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: 0;
+  height: 0;
+  z-index: 999999;
+  pointer-events: none;
+}
+
+.board-team-cursor {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  pointer-events: none;
+  color: var(--accent);
+}
+
+.board-team-cursor svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  stroke: var(--bg-base);
+  stroke-width: 1;
+}
+
+.board-team-cursor span {
+  margin-block-start: 12px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.board-team-hold {
+  position: absolute;
+  transform: translateY(-100%);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- proposals asked for by a member */
+
+.board-proposal-bar__by {
+  color: var(--text-muted);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.board-changes__asked {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------- History and deleted boards (row 151 slice T9, D31 and D32) */
+
+/* History takes the conversation column; the conversation stays mounted, hidden. */
+.board-team-conv[hidden],
+.board-team-history [hidden] {
+  display: none;
+}
+
+.board-team-history__title {
+  padding-inline: var(--space-2);
+}
+
+.board-team-history__sub,
+.board-team-history__empty p {
+  margin: 0;
+  padding: var(--space-2) var(--space-8) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-team-history__empty .btn {
+  margin-inline: var(--space-8);
+}
+
+/* One set of columns for the whole list: the times and the sentences line up whatever the width of the locale's clock. */
+.board-team-history__log {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-content: start;
+  column-gap: var(--space-5);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-8) var(--space-8);
+}
+
+.board-team-history__log > li {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  padding-block: var(--space-1);
+}
+
+.board-team-history__log time {
+  min-width: 5ch;
+  margin-inline-end: 0;
+}
+
+.board-team-history__log > .board-team-history__day {
+  display: block;
+  padding-block: var(--space-5) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-team-history__log > .board-team-history__day:first-child {
+  padding-block-start: 0;
+}
+
+.board-team-history__log > .board-team-history__open > span {
+  color: var(--text-primary);
+}
+
+/* Take back shows on the row under the pointer or holding the keyboard focus, and is always reachable by Tab: hidden with opacity only. */
+.board-team-history__take {
+  opacity: 0;
+}
+
+.board-team-history__log > li:hover .board-team-history__take,
+.board-team-history__log > li:focus-within .board-team-history__take {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .board-team-history__take {
+    opacity: 1;
+  }
+}
+
+.board-team-history__taken {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-team-history__log > .board-team-history__confirm {
+  display: block;
+  padding-block: 0 var(--space-5);
+}
+
+.board-team-history__confirm .team-set-confirm {
+  margin-top: var(--space-1);
+  padding-top: var(--space-4);
+}
+
+.board-team-history__confirm .team-set-confirm p {
+  margin: 0 0 var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+/* The deleted boards, under the boards list: one quiet line, and when it is open what the host still keeps. */
+.board-team-deleted {
+  align-self: stretch;
+  margin-block: var(--space-5) var(--space-4);
+}
+
+.board-team-deleted > .btn.board-team-deleted__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.board-team-deleted__list {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board-team-deleted__list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.board-team-deleted__name {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-team-deleted__meta {
+  grid-column: 1;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.board-team-deleted__list .btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin-inline-start: 0;
+}
+
+.board-team-deleted__note {
+  margin: var(--space-2) 0 0;
+  padding-inline: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}

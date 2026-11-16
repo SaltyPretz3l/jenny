@@ -473,13 +473,18 @@ test('preload exposes the primary chat bridge with only its closed methods and a
     'getFullAuto',
     'getState',
     'grantLaunch',
+    'heldChecks',
     'onChanged',
+    'onCheckHeld',
     'pause',
     'permissions',
     'reset',
     'resume',
     'revokeLaunch',
     'revokeRule',
+    'runHeldCheck',
+    'setModels',
+    'skipHeldCheck',
     'undoChatChange',
     'undoSettingChange',
   ]);
@@ -495,4 +500,28 @@ test('preload exposes the primary chat bridge with only its closed methods and a
   assert.equal(captured.subscriptions.at(-1).channel, 'primary-chat:changed');
   unsubscribe();
   assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes exactly the boards API of boards-api.md and its disposable changed subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const boards = captured.api.api.boards;
+  assert.deepEqual(Object.keys(boards).sort(), [
+    'addAsset', 'apply', 'chatRefs', 'create', 'decideProposal', 'delete', 'duplicate', 'exportFile', 'fetchLinkTitle', 'fileStatus', 'get', 'importFile', 'list', 'listProposals', 'onChanged', 'openFile', 'pin', 'readAsset', 'redo', 'rename', 'resolveFile', 'restore', 'revealFile', 'setAside', 'setSelection', 'undo',
+  ]);
+  await boards.list({ projectId: 'project_general' });
+  await boards.apply({ boardId: 'board_x', batch: { ops: [] } });
+  await boards.fetchLinkTitle({ url: 'https://example.com/' });
+  assert.deepEqual(captured.invokeCalls.map((call) => [call.channel, call.args.length]), [['boards:list', 1], ['boards:apply', 1], ['boards:fetch-link-title', 1]]);
+  const unsubscribe = boards.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'boards:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes sketch.openFile alone, one argument to sketch:open-file (row 149)', async () => {
+  const captured = captureJennyShellPreload();
+  const sketch = captured.api.api.sketch;
+  assert.deepEqual(Object.keys(sketch), ['openFile']);
+  await sketch.openFile({ sessionId: 'sess_x', path: 'src/app.js', line: 3 });
+  assert.deepEqual(captured.invokeCalls.map((call) => [call.channel, call.args]), [['sketch:open-file', [{ sessionId: 'sess_x', path: 'src/app.js', line: 3 }]]]);
 });

@@ -24,10 +24,10 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import islice
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence
 from weakref import WeakValueDictionary
 
-from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_IO_FAILED
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_INVALID_PATH, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.jenny_state_dir import ensure_jenny_dir_gitignore
 from sidecar.ai.tools.workspace import ensure_safe_internal_destination
@@ -62,6 +62,9 @@ _JENNY_DIR = ".jenny"
 _SAFE_QUARANTINE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 # Trailing-dot/space Windows I/O quirk; mirrors workspace-root-identity.js.
 _JENNY_DIR_TRAILING_RE = re.compile(r"[.\s]+$")
+# The pinned store class while hosted file IO is on, else None (R12-F01). Installed
+# by `hosted_file_io_store` when the facade turns hosted IO on.
+_hosted_store_class: Callable[[], type[GuardedWorkspaceStore] | None] | None = None
 
 
 class WorkspaceStoreKind(str, Enum):
@@ -138,6 +141,10 @@ def _lock_for_root(identity_key: str) -> _RootLockState:
 
 class GuardedWorkspaceStore:
     """The sole operation owner for managed ``.jenny`` paths."""
+
+    def __new__(cls, workspace_root: Path | str) -> GuardedWorkspaceStore:
+        hosted = _hosted_store_class if cls is GuardedWorkspaceStore else None
+        return super().__new__((hosted and hosted()) or cls)  # on a host, through the pin
 
     def __init__(self, workspace_root: Path | str) -> None:
         try:
@@ -888,6 +895,9 @@ class GuardedWorkspaceStore:
 
 
 def _validate_store_ref(ref: StoreRef) -> None:
+    if _hosted_store_class and _hosted_store_class():  # never a path walk on a host
+        raise ToolExecutionFailure(code=CMP_TOOL_INVALID_PATH, retryable=False,
+                                   message="Hosted file access requires the pinned store.")
     if not isinstance(ref, StoreRef) or not isinstance(ref.kind, WorkspaceStoreKind):
         raise _store_failure("workspace store reference is invalid", retryable=False)
     if normalize_workspace_store_parts(ref.parts) != ref.parts:

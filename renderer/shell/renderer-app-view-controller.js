@@ -318,5 +318,104 @@
     return { dispose, handleRunRequest };
   }
 
-  return { ACTIONS, createAppViewController, createTerminalRunHandler, normalizeRequest };
+  // Row 137 "Open with Jenny": the renderer half of files handed over from outside the Workspace (Explorer's Open with,
+  // a second launch, the File: Open File... picker, the restored open set). Main queues the requests and pushes only a
+  // wake-up on `outsideFiles.onRequest`; this handler pulls them with `takePending` (once at registration, so a cold
+  // start loses nothing, and on every ping) and serializes them. A launch/picker request switches to the IDE and opens
+  // the items in order, the last one active. A restore request never switches the view and never loads the IDE: its items
+  // wait until the IDE is the active view, then open without taking over the active tab. Without the bridge it is a no-op.
+  function createOutsideFileRequestHandler(deps) {
+    const d = deps || {};
+    const getBridge = typeof d.getBridge === 'function' ? d.getBridge : function () { return null; };
+    const setActiveView = typeof d.setActiveView === 'function' ? d.setActiveView : noop;
+    const getActiveView = typeof d.getActiveView === 'function' ? d.getActiveView : function () { return ''; };
+    const openers = d.openers || {};
+    const showShellErrorToast = typeof d.showShellErrorToast === 'function' ? d.showShellErrorToast : noop;
+    const appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : noop;
+    const documentRef = d.documentRef || null;
+    const MAX_ITEMS = 32;
+    const restoreQueue = [];
+    let tail = Promise.resolve();
+    let disposed = false;
+
+    function enqueue(job) {
+      tail = tail.then(job).catch(function (error) {
+        appendClientLog('WARN', 'outside_files.request_failed', { message: String((error && error.message) || error).slice(0, 200) });
+      });
+      return tail;
+    }
+
+    function openItems(items, options) {
+      return typeof openers.openOutsideFiles === 'function' ? openers.openOutsideFiles(items, options) : false;
+    }
+
+    async function flushRestore() {
+      if (!restoreQueue.length) return;
+      await openItems(restoreQueue.splice(0, restoreQueue.length), { activate: false });
+    }
+
+    function validItems(request) {
+      const items = Array.isArray(request && request.items) ? request.items : [];
+      return items.filter(function (item) {
+        return item && ((item.kind === 'outside' && typeof item.id === 'string' && typeof item.name === 'string')
+          || (item.kind === 'workspace' && typeof item.relPath === 'string' && item.relPath));
+      }).slice(0, MAX_ITEMS);
+    }
+
+    async function processRequest(request) {
+      if (disposed || !request || typeof request !== 'object') return;
+      const names = (Array.isArray(request.failures) ? request.failures : [])
+        .map(function (failure) { return text(failure && failure.name, 120); }).filter(Boolean).slice(0, 5);
+      if (names.length) {
+        showShellErrorToast(jt('ide.outside.openFailedMany', 'Couldn’t open {names}.', { names: names.join(', ') }), {
+          title: jt('ide.fileLifecycle.couldNotOpen', 'Could Not Open'),
+          dedupeKey: 'outside:open-failed:' + names.join('|'),
+        });
+      }
+      const items = validItems(request);
+      if (!items.length) return;
+      if (request.source === 'restore') {
+        if (getActiveView() === 'ide') await openItems(items, { activate: false });
+        else restoreQueue.push.apply(restoreQueue, items.slice(0, MAX_ITEMS - restoreQueue.length));
+        return;
+      }
+      setActiveView('ide');
+      await flushRestore();
+      await openItems(items);
+    }
+
+    async function drain() {
+      const bridge = getBridge();
+      if (disposed || typeof (bridge && bridge.takePending) !== 'function') return tail;
+      let result;
+      try { result = await bridge.takePending(); } catch (_error) { result = null; }
+      const requests = result && result.ok === true && Array.isArray(result.requests) ? result.requests : [];
+      requests.forEach(function (request) { enqueue(function () { return processRequest(request); }); });
+      return tail;
+    }
+
+    // Queued restore items open once the IDE becomes the active view (the shell mirrors it on <html data-active-view>).
+    let observer = null;
+    const view = documentRef && documentRef.defaultView;
+    if (documentRef && documentRef.documentElement && view && typeof view.MutationObserver === 'function') {
+      observer = new view.MutationObserver(function () {
+        if (restoreQueue.length && getActiveView() === 'ide') enqueue(flushRestore);
+      });
+      observer.observe(documentRef.documentElement, { attributes: true, attributeFilter: ['data-active-view'] });
+    }
+
+    const bridge = getBridge();
+    const unsubscribe = typeof (bridge && bridge.onRequest) === 'function' ? bridge.onRequest(function () { void drain(); }) : null;
+    if (bridge) void drain();
+
+    function dispose() {
+      disposed = true;
+      restoreQueue.length = 0;
+      if (observer) { try { observer.disconnect(); } catch (_error) { /* best effort */ } }
+      if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
+    }
+    return { dispose, drain };
+  }
+
+  return { ACTIONS, createAppViewController, createTerminalRunHandler, createOutsideFileRequestHandler, normalizeRequest };
 });

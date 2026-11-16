@@ -298,3 +298,67 @@ test('handleCreateSession always creates a plain chat; a plugin session type is 
   assert.equal('sessionType' in payloads[0], false);
   assert.equal('providerAuthority' in payloads[0], false);
 });
+
+// A new chat starts on Default (the model running now), never on the open chat's pick: a copied
+// model from another engine made the first send load it and rewrite the app-wide engine (owner, 2026-11-15).
+for (const busy of [false, true]) {
+  test(`a new chat starts on Default, not the open chat's model (${busy ? 'local draft' : 'backend create'})`, async (t) => {
+    const state = {
+      ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
+      logs: [],
+      sessions: [{ id: 's0', title: 'Old', preferred_model: 'qwen3.8-27b-ud-q6_k', reasoning_effort: 'high' }],
+      currentSessionId: 's0',
+      runtimeDraft: { preferredModel: 'qwen3.8-27b-ud-q6_k', reasoningEffort: 'high', runMode: 'auto', planMode: false, contextPreferences: {} },
+      features: { featureFlags: {} },
+    };
+    const payloads = [];
+    const upserts = [];
+    const { controller } = createHarness(t, {
+      state,
+      jennyShell: { sessions: { create: async (payload) => { payloads.push(payload); return { data: { id: 'sess_new' } }; }, list: async () => ({ data: [] }) } },
+      callbacks: {
+        normalizeReasoningEffort: (value) => value,
+        renderAll: () => {},
+        isAnySendBusy: () => busy,
+        clearComposerStatusNotice: () => {},
+        upsertSessionSummary: (summary) => { upserts.push(summary); },
+        setSessionMessages: () => {},
+        setFollowLatest: () => {},
+      },
+    });
+    await controller.handleCreateSession().catch(() => {});
+    if (busy) {
+      assert.equal(upserts[0]?.preferred_model, '');
+      assert.equal(state.runtimeDraft.preferredModel, '');
+      assert.equal(upserts[0]?.reasoning_effort, 'high', 'other choices still carry over');
+    } else {
+      assert.equal(payloads[0]?.preferences?.preferred_model, '');
+    }
+  });
+}
+
+test('a new chat still takes a model the caller names explicitly', async (t) => {
+  const state = {
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
+    logs: [],
+    sessions: [],
+    currentSessionId: 's0',
+    runtimeDraft: { preferredModel: 'qwen3.8-27b-ud-q6_k', reasoningEffort: 'default', runMode: 'ask', planMode: false, contextPreferences: {} },
+    features: { featureFlags: {} },
+  };
+  const payloads = [];
+  const { controller } = createHarness(t, {
+    state,
+    jennyShell: { sessions: { create: async (payload) => { payloads.push(payload); return { data: { id: 'sess_new' } }; }, list: async () => ({ data: [] }) } },
+    callbacks: {
+      normalizeReasoningEffort: (value) => value,
+      renderAll: () => {},
+      isAnySendBusy: () => false,
+      clearComposerStatusNotice: () => {},
+      setSessionMessages: () => {},
+      setFollowLatest: () => {},
+    },
+  });
+  await controller.handleCreateSession({ preferences: { preferred_model: 'mock-v1' } }).catch(() => {});
+  assert.equal(payloads[0]?.preferences?.preferred_model, 'mock-v1');
+});

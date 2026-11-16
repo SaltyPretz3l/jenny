@@ -64,12 +64,50 @@ test('renderEditorSection has no inline-suggestion rows, even for a profile that
   });
 });
 
+test('renderEditorSection emits flat top-level groups, with Saving and Terminal outside the Advanced fold', () => {
+  withGlobals(() => {
+    const { container } = makeContainer();
+    editorSection.renderEditorSection({ container, ide: {} });
+    const blocks = [...container.children];
+    assert.equal(blocks.length, 6, 'five groups and one fold, as siblings of the container');
+    const groups = blocks.slice(0, 5);
+    groups.forEach((block) => {
+      assert.ok(block.matches('div.settings-group'), 'a group block');
+      assert.ok(block.firstElementChild.matches('h4.settings-group-heading'), 'the heading comes first');
+    });
+    assert.deepEqual(groups.map((g) => g.firstElementChild.textContent), ['General', 'Cursor and text', 'Indentation', 'Saving', 'Terminal']);
+    assert.deepEqual(groups.map((g) => g.getAttribute('data-editor-group')), ['general', 'cursor', 'indentation', 'autosave', 'terminal']);
+    groups.forEach((g) => {
+      assert.equal(g.getAttribute('aria-labelledby'), g.firstElementChild.id, 'the group is named by its heading');
+    });
+    assert.equal(container.querySelectorAll('.settings-group .settings-group').length, 0, 'no group is nested in another');
+    const fold = blocks[5];
+    assert.ok(fold.matches('details.settings-fold.settings-editor-advanced'), 'the last block is the standard fold');
+    assert.equal(fold.matches('.settings-group'), false);
+    assert.equal(fold.querySelector('summary').textContent, 'Advanced');
+
+    const [general, , , saving, terminal] = groups;
+    const has = (scope, id) => scope.querySelector(`#${id}, [data-inv-toggle="${id}"]`) !== null;
+    ['editorFontSizeSelect', 'editorTabSizeSelect', 'editorWordWrapToggle', 'editorMinimapToggle', 'editorLineNumbersToggle']
+      .forEach((id) => assert.ok(has(general, id), id + ' sits in General'));
+    const savingIds = ['editorAutoSaveModeSelect', 'editorAutoSaveDelayInput', 'editorFormatOnSaveToggle',
+      'editorTrimTrailingWhitespaceToggle', 'editorInsertFinalNewlineToggle'];
+    const terminalIds = ['editorTerminalProfileSelect', 'editorTerminalScrollbackInput'];
+    savingIds.forEach((id) => assert.ok(has(saving, id), id + ' sits in Saving'));
+    terminalIds.forEach((id) => assert.ok(has(terminal, id), id + ' sits in Terminal'));
+    [...savingIds, ...terminalIds].forEach((id) => assert.equal(has(fold, id), false, id + ' is not in the Advanced fold'));
+    ['editorRenderWhitespaceSelect', 'editorRulersSelect', 'editorBracketPairColorizationToggle', 'editorIndentGuidesToggle',
+      'editorStickyScrollToggle', 'editorFoldingToggle', 'editorScrollBeyondLastLineToggle', 'editorMouseWheelZoomToggle', 'editorInlineBlameToggle']
+      .forEach((id) => assert.ok(has(fold, id), id + ' sits in Advanced'));
+  });
+});
+
 test('renderEditorSection groups the row 82 editor options under labelled subgroups', () => {
   withGlobals(() => {
     const { container } = makeContainer();
     editorSection.renderEditorSection({ container, ide: {} });
     const headings = [...container.querySelectorAll('.settings-group-heading')].map((h) => h.textContent);
-    assert.deepEqual(headings, ['Cursor and text', 'Indentation', 'Auto save']);
+    assert.deepEqual(headings, ['General', 'Cursor and text', 'Indentation', 'Saving', 'Terminal']);
     const group = (id) => container.querySelector(`[data-editor-group="${id}"]`);
     assert.ok(group('cursor').querySelector('#editorCursorBlinkingSelect'));
     assert.ok(group('cursor').querySelector('[data-inv-toggle="editorFontLigaturesToggle"]'));

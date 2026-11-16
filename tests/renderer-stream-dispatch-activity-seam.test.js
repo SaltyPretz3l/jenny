@@ -202,3 +202,30 @@ test('through the real stream handler a waiting reply is marked waiting until it
   assert.equal(harness.state.streamWaits.isWaitingStream('stream-1'), false);
   assert.equal(harness.state.streamWaits.isWaitingWork('work_1'), false);
 });
+
+test('row 136: the wait line asks the first-chat copy who goes first and hands it the pick', () => {
+  const waitingRow = require('../renderer/chat/renderer-stream-waiting-line');
+  const picks = [];
+  const store = { isFirst: (sessionId) => sessionId === 'session-1', set: (sessionId) => picks.push(sessionId) };
+  const wiring = waitingRow.createWaitingRowWiring({ state: {}, firstChat: () => store });
+  assert.equal(wiring.rowOptions.isFirstChat('session-1'), true);
+  assert.equal(wiring.rowOptions.isFirstChat('session-2'), false);
+  wiring.rowOptions.onFinishFirst('session-2');
+  assert.deepEqual(picks, ['session-2']);
+});
+
+test('row 136: through the real stream handler a model wait is shown as a wait while the reply keeps running', async (t) => {
+  const { createHarness } = require('./helpers/renderer-stream-handler-harness');
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-1' });
+  await harness.emit({ type: 'model_waiting', sessionId: 'session-1', streamId: 'stream-1', waitState: 'waiting',
+    blockingSessionId: 'session-2', heldForFirst: false, firstSetBy: '' });
+  assert.equal(harness.state.streamWaits.getTypedActivity('stream-1').waitState, 'model');
+  // Not a paused reply: Pause stays in the composer, and the stream is still the session's live one.
+  assert.equal(harness.state.streamWaits.isWaitingStream('stream-1'), false);
+  assert.equal(harness.multiStreamController.getStreamIdForSession('session-1'), 'stream-1');
+  assert.equal(harness.multiStreamController.isStreamFinalized('stream-1'), false);
+  await harness.emit({ type: 'model_waiting', sessionId: 'session-1', streamId: 'stream-1', waitState: 'granted' });
+  assert.equal(harness.state.streamWaits.getTypedActivity('stream-1'), null);
+});

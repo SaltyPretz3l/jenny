@@ -385,7 +385,7 @@ function persistUserTurn(adapter, {
   content,
   attachments,
   skill_invocation = null,
-  image_prompt_pin = null,
+  image_prompt_pin = null, board_id = null,
   author = null,
   application_turn = '',
   timestamp = new Date().toISOString(),
@@ -400,7 +400,7 @@ function persistUserTurn(adapter, {
       client_message_id: String(messageId || ''),
       attachments: normalizeAttachmentMetadataList(attachments),
       skill_invocation,
-      ...(image_prompt_pin ? { image_prompt_pin } : {}),
+      ...(image_prompt_pin ? { image_prompt_pin } : {}), ...(board_id ? { board_id } : {}),
       // Slice 3-5: the store's normalization keeps only a valid member author.
       ...(author ? { author } : {}),
       ...(application_turn ? { application_turn } : {}),

@@ -415,6 +415,14 @@ test('edit action is enabled on the row currently being edited (no reason)', () 
   assert.equal(model.actions.edit.enabled, false);
 });
 
+test('the hover row is hidden on the user row being edited and kept on another user row', () => {
+  const settings = { latestReplyAssistantMessageId: 'assistant_1', editingMessageId: 'user_1' };
+  const editing = buildMessageActionModel({ id: 'user_1', role: 'user', content: 'one' }, settings);
+  const other = buildMessageActionModel({ id: 'user_2', role: 'user', content: 'two' }, settings);
+  assert.equal(editing.showHoverRow, false);
+  assert.equal(other.showHoverRow, true);
+});
+
 test('edit action is blocked + reasoned when followUpDisabledReason is set', () => {
   const model = buildMessageActionModel(
     { id: 'user_1', role: 'user', content: 'hi' },
@@ -553,4 +561,25 @@ test('unsaved failure and interactive terminals expose the same recovery control
     assert.equal(model.unsavedReply.visible, true, message.id);
     assert.equal(model.unsavedReply.artifactId, `repair_${message.id}`);
   }
+});
+
+test('Pin to board (row 150 slice C5): no pin action exists unless the caller turns it on', () => {
+  const message = { id: 'user_pin', role: 'user', content: 'Pin me' };
+  assert.equal('pin' in buildMessageActionModel(message, {}).actions, false);
+  assert.equal('pin' in buildMessageActionModel(message, { pinToBoard: false }).actions, false);
+  assert.deepEqual(Object.keys(buildMessageActionModel(message, {}).actions), ['edit', 'regenerate', 'branch', 'copy', 'elaborate']);
+});
+
+test('Pin to board: shown for a person\'s message and a finished reply with text, never on a streaming, failed or empty row', () => {
+  const on = (message) => buildMessageActionModel(message, { pinToBoard: true });
+  assert.deepEqual(on({ id: 'user_1', role: 'user', content: 'Hello' }).actions.pin, { visible: true, enabled: true });
+  assert.equal(on({ id: 'a1', role: 'assistant', status: COMPLETE_STATUS, content: 'Done.' }).actions.pin.visible, true);
+  assert.equal(on({ id: 'a2', role: 'assistant', content: 'No status means complete' }).actions.pin.visible, true);
+  assert.equal(on({ id: 'a3', role: 'assistant', status: STREAMING_STATUS, content: 'partial' }).actions.pin.visible, false);
+  assert.equal(on({ id: 'a4', role: 'assistant', status: 'error', content: 'partial' }).actions.pin.visible, false);
+  assert.equal(on({ id: 'a5', role: 'assistant', status: COMPLETE_STATUS, content: '  ' }).actions.pin.visible, false);
+  assert.equal(on({ id: 'a6', role: 'assistant', status: COMPLETE_STATUS, content: 'x', kind: 'question_batch' }).actions.pin.visible, false);
+  assert.equal(on({ id: 'a7', role: 'assistant', status: COMPLETE_STATUS, content: 'x', kind: 'tool_use' }).actions.pin.visible, false);
+  assert.equal(on({ id: '', role: 'user', content: 'no id' }).actions.pin.visible, false);
+  assert.equal(on({ id: 'u2', role: 'user', content: '' }).actions.pin.visible, false);
 });

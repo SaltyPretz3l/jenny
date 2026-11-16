@@ -39,7 +39,7 @@ const MANAGED_LOCAL_MAX_LOOP_WALL_SECONDS = getConfiguredWithDefault(
 );
 const CHAT_STREAM_SETTLEMENT_MARGIN_MS = 60_000;
 // 2026-08-30: idle/orphan detection is decoupled from the working-time budget
-// (an hour by default, up to two), so a wedged sidecar is caught in minutes, not
+// (two hours by default, up to eight), so a wedged sidecar is caught in minutes, not
 // at the wall budget. The ceiling must still exceed every LEGITIMATE silent
 // stretch of a healthy turn: the longest is a run_command honoring a requested
 // timeout (600s + 5s handler slop in tool_execution.py's carve-out) that emits

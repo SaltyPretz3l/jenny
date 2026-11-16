@@ -418,6 +418,12 @@
       String(message.visible_segments?.at?.(-1)?.text || ''),
       String(message.durability?.state || message.durability?.status || ''),
       String(message.durability?.revision ?? message.durability?.commit_epoch ?? ''),
+      // The error card reads these; a same-id error replacement may change only them.
+      String(message.stream_error || ''),
+      String(message.error_code || message.errorCode || ''),
+      String(message.terminal_subcode || ''),
+      String(message.recovery_title || ''),
+      boundedValueSignature(message.recovery_actions),
     ];
   }
 

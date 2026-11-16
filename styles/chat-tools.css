@@ -277,6 +277,25 @@
   font-size: var(--tl-font-detail);
 }
 
+/* The same step's later edits, each folded under its file (row 166 D10). */
+.tool-approval-round {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-approval-round-heading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+  font-weight: var(--tl-weight-label);
+}
+
+.tool-approval-round-call > summary code {
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
 /* An invisible control character (bidi override, zero-width space) shown as a marker. */
 .tool-approval-invisible {
   padding-inline: var(--space-1);
@@ -335,7 +354,8 @@
 /* The persistent choice sits between the two one-off ones and is drawn
    quieter: an outline, filling in only on hover, so the reflex click lands
    on "Allow once". */
-.tool-approve-always-btn {
+.tool-approve-always-btn,
+.tool-approve-btn--quiet {
   --tool-approval-button-bg: transparent;
   --tool-approval-button-color: var(--text-secondary);
   --tool-approval-button-border: color-mix(in srgb, var(--widget-approve-border) 60%, transparent);

@@ -95,11 +95,16 @@ test('mounts the flag-gated Settings sibling groups after feature-flag hydration
   );
   assert.ok(extensionsCard.querySelector('#mcpServersGroup.settings-group--wide'));
   assert.equal(extensionsCard.querySelectorAll(':scope > .settings-card-header > h3').length, 1);
-  // Ollama engine health (Models card, ollama_tray_remediation).
+  // Ollama engine health (Models card, ollama_tray_remediation): its row joins Engines and providers once
+  // the lazily loaded Settings page brings the services table, and the health facts open in that row's
+  // Manage drawer, never in the card itself.
+  doc.getElementById('settingsTopRailTab').click();
+  await waitForUi(window, 40);
   assert.ok(
-    modelsCard.querySelector('#ollamaHealthGroup'),
-    'Ollama engine health group must mount into the Models card once ollama_tray_remediation hydrates'
+    modelsCard.querySelector('#modelServicesHost [data-service-id="ollama"]'),
+    'the Ollama row must register in the Models card services table once the Settings page loads'
   );
+  assert.equal(modelsCard.querySelector('#ollamaHealthGroup'), null, 'the health group lives in the drawer only');
 
   // Guard against the card-scoping regression the controllers warn about: the
   // groups must NOT leak into the settings nav (which carries the same

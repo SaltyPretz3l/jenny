@@ -416,3 +416,25 @@ test('managed sidecar listModels marks NInfer and managed llama-server models', 
     [['ninfer-qwen', 'ninfer'], ['qwen3.8-27b:latest', 'llama-server'], ['remote-model', ''], ['gemma4:e4b', '']]
   );
 });
+
+test('4b member wiring: an endpoint owned by the team engine drops its own rows, so a team id never takes a local hint', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-team-engine-rows-'));
+  trackDirectory(userDataPath);
+  const port = { getStatus: () => ({ state: 'ready', alias: '' }), getBaseUrl: () => 'http://127.0.0.1:51234/v1', getApiKey: () => 'k' };
+  const service = createManagedService(userDataPath, { getTeamEnginePort: () => port });
+  service.options.getTeamEngine = () => ({ portFor: () => port,
+    listTeams: () => [{ teamId: 'team_alpha1', name: 'Alpha crew', models: ['alpha'] }] });
+  service.currentEngineType = 'openai-compatible';
+  service._teamEngineSelection = { id: 'team/team_alpha1/alpha', teamId: 'team_alpha1', modelId: 'alpha' };
+  service.sidecarClient = {
+    async modelsList(engineType) {
+      return engineType === 'openai-compatible'
+        ? { models: [{ id: 'alpha' }], available: true, reason: '' }
+        : { models: [{ id: 'gemma4:e4b' }], available: true, reason: '' };
+    },
+  };
+  const models = await service.listModels();
+  assert.deepEqual(models.data.map((entry) => [entry.id, entry.engine_type]),
+    [['gemma4:e4b', 'ollama'], ['team/team_alpha1/alpha', 'openai-compatible']]);
+  assert.equal(service._modelEngineHints.has('alpha'), false);
+});

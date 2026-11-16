@@ -25,6 +25,26 @@ function instanceHasKey(service, instance) {
   }
 }
 
+// Mirrors model_version and thinking_plan in sidecar/ai/engines/api_provider_anthropic_wire.py:
+// from Claude 4.6 the Anthropic request carries an effort and thinking cannot be turned
+// off, so "none" runs at the lowest effort. Any other id declares nothing, and the
+// composer keeps its effort control hidden.
+const CLAUDE_VERSION_RE = /(?:^|[/.])claude-[a-z]+-(\d{1,2})(?:[-.](\d{1,2}))?(?!\d)/;
+const CLAUDE_LEGACY_RE = /(?:^|[/.])claude-\d(?!\d)/;
+
+function anthropicEffortCapabilities(instance, modelId, limits) {
+  if (instance.transport !== 'anthropic_messages_v1' || limits.reasoning !== true) return {};
+  const id = String(modelId || '').trim().toLowerCase();
+  const match = CLAUDE_LEGACY_RE.test(id) ? null : CLAUDE_VERSION_RE.exec(id);
+  const version = match ? Number(match[1]) * 100 + Number(match[2] || 0) : 0;
+  if (version < 406) return {};
+  return {
+    reasoning_efforts: ['none', 'low', 'medium', 'high', ...(version >= 407 ? ['xhigh'] : []), 'max'],
+    default_reasoning_effort: 'default',
+    reasoning_always_on: true,
+  };
+}
+
 function buildApiProviderModelEntries(service) {
   if (!apiProvidersAvailable(service)) return [];
   const entries = [];
@@ -44,6 +64,7 @@ function buildApiProviderModelEntries(service) {
           vision: limits.vision,
           reasoning: limits.reasoning,
           thinking: limits.reasoning,
+          ...anthropicEffortCapabilities(instance, model.id, limits),
         },
         apiProviderInstanceId: instance.id,
         apiProviderModelId: model.id,

@@ -74,6 +74,10 @@
   --ide-terminal-selection: #7fb6dd59;
 }
 
+:root[data-palette="aurora"] {
+  --ide-terminal-selection: #5fd3a059;
+}
+
 :root[data-palette="jenny-night"] {
   --ide-terminal-ansi-red: #ff6b8b;
   --ide-terminal-ansi-magenta: #ff5fa8;

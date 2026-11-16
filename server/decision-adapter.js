@@ -119,6 +119,13 @@ function createDecisionAdapter({ backend } = {}) {
     return { key, pending };
   }
 
+  // Slice 3-6b: the waiting approval a resolve with these ids and this revision would settle, as
+  // `{ toolName }`, or null when that resolve would answer stale. Reads only; settles nothing.
+  function peekApproval({ sessionId, streamId, approvalId, decisionRevision: revision } = {}) {
+    const entry = findApproval({ sessionId, streamId, approvalId, revision });
+    return entry ? { toolName: text(entry.pending.toolName, 128) } : null;
+  }
+
   function resolveApproval({ sessionId, streamId, approvalId, decisionRevision: revision, approved } = {}) {
     const entry = findApproval({ sessionId, streamId, approvalId, revision });
     if (!entry || typeof approved !== 'boolean') return { ok: false, reason: 'decision_stale' };
@@ -180,7 +187,7 @@ function createDecisionAdapter({ backend } = {}) {
     return { ok: true, question_ref: entry.key, declined: true };
   }
 
-  return Object.freeze({ listApprovals, listQuestions, resolveApproval, answerQuestions, declineQuestions });
+  return Object.freeze({ listApprovals, listQuestions, peekApproval, resolveApproval, answerQuestions, declineQuestions });
 }
 
 module.exports = { createDecisionAdapter };

@@ -10,7 +10,7 @@ const test = require('node:test');
 
 const { createHostBridge, DEFAULT_LIMITS } = require('../../server/team/transport/host-bridge');
 const { resolveBridgeBinary, BINARY_NAME } = require('../../server/team/transport/bridge-binary');
-const { attachControl, filterLog, spawnBridgeChild } = require('../../server/team/transport/control-channel');
+const { attachControl, filterLog, parseMapping, spawnBridgeChild } = require('../../server/team/transport/control-channel');
 const { FakeChildProcess } = require('./helpers/fake-bridge/fake-child');
 const { createFakeBridgeSpawner } = require('./helpers/fake-bridge');
 const { createFakeTransport, waitFor } = require('./helpers/fake-team-transport');
@@ -64,7 +64,7 @@ test('start sends the secrets only in the start line', async (t) => {
   await env.bridge.stop();
 });
 
-test('the default limits arrive in the start line as 64, 16, 128, 64, 5000 and 1000', async (t) => {
+test('the default limits arrive in the start line as 64, 16, 128, 64, 5000, 1000, 16, 8 and 60000', async (t) => {
   const env = makeHost(t);
   await env.bridge.start();
   const start = env.spawner.last().received[0];
@@ -75,6 +75,9 @@ test('the default limits arrive in the start line as 64, 16, 128, 64, 5000 and 1
     max_handshakes: 64,
     admit_timeout_ms: 5000,
     drop_grace_ms: 1000,
+    max_waiting: 16,
+    max_handshakes_per_source: 8,
+    refused_cooldown_ms: 60000,
   });
   assert.equal(start.direct_port, null);
   assert.equal(DEFAULT_LIMITS.startTimeoutMs, 10000);
@@ -90,6 +93,22 @@ test('limits are mapped to snake_case and the JavaScript-only limits are not sen
   assert.equal(limits.drop_grace_ms, 7);
   assert.equal('start_timeout_ms' in limits, false);
   assert.equal('stop_timeout_ms' in limits, false);
+});
+
+test('the three admission limits may be lowered and never raised past their defaults', async (t) => {
+  const env = makeHost(t, { limits: { maxWaiting: 2, maxHandshakesPerSource: 1, refusedCooldownMs: 50 } });
+  await env.bridge.start();
+  const { limits } = env.spawner.last().received[0];
+  assert.equal(limits.max_waiting, 2);
+  assert.equal(limits.max_handshakes_per_source, 1);
+  assert.equal(limits.refused_cooldown_ms, 50);
+  const base = { secretKey: new Uint8Array(32).fill(1), bootSecret: new Uint8Array(32).fill(2), loopbackPort: 9, admit: () => null };
+  for (const [name, value] of [['maxWaiting', 17], ['maxHandshakesPerSource', 9], ['refusedCooldownMs', 60_001]]) {
+    assert.throws(() => createHostBridge({ ...base, limits: { [name]: value } }), new RegExp(`limits\\.${name} must not exceed`));
+  }
+  for (const [name, value] of [['maxWaiting', 0], ['maxHandshakesPerSource', 1.5], ['refusedCooldownMs', -1]]) {
+    assert.throws(() => createHostBridge({ ...base, limits: { [name]: value } }), new RegExp(`limits\\.${name}`));
+  }
 });
 
 test('start twice throws, and a stop before start resolves at once', async (t) => {
@@ -217,10 +236,104 @@ test('only allowlisted log lines reach the logger, and only their allowed fields
   assert.equal(JSON.stringify(env.logs).includes(keyLike), false);
 });
 
+test('the refusal summary reaches the logger as counts by cause only', async (t) => {
+  const env = makeHost(t);
+  await env.bridge.start();
+  const child = env.spawner.last();
+  const keyLike = b64(new Uint8Array(32).fill(4));
+  child.write({
+    t: 'log',
+    event: 'team.bridge.refusal_summary',
+    fields: {
+      rate: 196, cooldown: 1, waiting_cap: 2, handshake_cap: 0,
+      address: '203.0.113.9:4433', key: keyLike, source: '203.0.113.9', reason: keyLike, invite: 'jteam1_x',
+    },
+  });
+  await waitFor(() => env.logs.some((entry) => entry.event === 'team.bridge.refusal_summary'));
+  const summary = env.logs.find((entry) => entry.event === 'team.bridge.refusal_summary');
+  assert.deepEqual(summary.fields, { rate: 196, cooldown: 1, waiting_cap: 2, handshake_cap: 0 });
+  const text = JSON.stringify(env.logs);
+  for (const needle of ['203.0.113.9', '4433', keyLike, 'jteam1_']) assert.equal(text.includes(needle), false, needle);
+});
+
+test('internet joining off sends internet: null, on sends map_port, and nothing else is accepted', async (t) => {
+  const off = makeHost(t, { directPort: 40404 });
+  await off.bridge.start();
+  assert.equal(off.spawner.last().received[0].internet, null);
+  const on = makeHost(t, { directPort: 40404, internet: { mapPort: true } });
+  await on.bridge.start();
+  assert.deepEqual(on.spawner.last().received[0].internet, { map_port: true });
+  const base = { secretKey: new Uint8Array(32).fill(1), bootSecret: new Uint8Array(32).fill(2), loopbackPort: 9, admit: () => null };
+  for (const internet of [{ mapPort: false }, { mapPort: 'yes' }, {}, true, 'map', { mapPort: true, relay: 'x' }]) {
+    assert.throws(() => createHostBridge({ ...base, directPort: 40404, internet }), /internet/, JSON.stringify(internet));
+  }
+  assert.throws(() => createHostBridge({ ...base, internet: { mapPort: true } }), /internet/, 'mapping needs a direct port');
+});
+
+test('a mapped address that cannot be the router\'s outside address is refused; private ones pass', () => {
+  const mapped = (external) => parseMapping({ state: 'mapped', external });
+  for (const external of [
+    '0.0.0.0:4444', // unspecified: the router's WAN is down
+    '127.0.0.1:4444', // loopback
+    '224.0.0.1:4444', // multicast
+    '255.255.255.255:4444', // broadcast
+    '169.254.10.20:4444', // link-local
+    '[2001:db8::1]:4444', // IPv6: the mapping is IPv4 only
+  ]) {
+    assert.equal(mapped(external), null, external);
+  }
+  // Behind another router: slice 5-5 reads these, so they are reported as given.
+  for (const external of ['192.168.1.5:4444', '10.0.0.1:4444', '100.64.0.1:4444', '203.0.113.7:4444']) {
+    assert.deepEqual(mapped(external), { state: 'mapped', external }, external);
+  }
+});
+
+test('a mapping line before ready is ignored', async (t) => {
+  const env = makeHost(t, { directPort: 40404, internet: { mapPort: true }, spawnerOptions: { silent: true } });
+  const starting = env.bridge.start();
+  const child = env.spawner.last();
+  await waitFor(() => child.received.length === 1);
+  child.write({ t: 'mapping', state: 'mapped', external: '203.0.113.7:4444' });
+  child.write({ t: 'ready', public_key: b64(new Uint8Array(32).fill(5)), addresses: ['127.0.0.1:40404'] });
+  await starting;
+  assert.equal(env.bridge.mapping(), null);
+  assert.equal(env.logs.some((entry) => entry.event === 'team.bridge.mapping'), false);
+});
+
+test('a mapping line reaches the caller with its address, and the logger gets the state word only', async (t) => {
+  const env = makeHost(t, { directPort: 40404, internet: { mapPort: true } });
+  await env.bridge.start();
+  assert.equal(env.bridge.mapping(), null, 'nothing reported yet');
+  const child = env.spawner.last();
+  child.write({ t: 'mapping', state: 'requesting', external: null });
+  await waitFor(() => env.bridge.mapping() !== null);
+  assert.deepEqual(env.bridge.mapping(), { state: 'requesting', external: null });
+  child.write({ t: 'mapping', state: 'mapped', external: '203.0.113.7:4444' });
+  await waitFor(() => env.bridge.mapping()?.state === 'mapped');
+  assert.deepEqual(env.bridge.mapping(), { state: 'mapped', external: '203.0.113.7:4444' });
+  // Malformed lines change nothing: an unknown state, a mapped line without an address, an
+  // address on a state that has none.
+  child.write({ t: 'mapping', state: 'open', external: null });
+  child.write({ t: 'mapping', state: 'mapped', external: 'router.home:4444' });
+  child.write({ t: 'mapping', state: 'off', external: '203.0.113.7:4444' });
+  child.write({ t: 'mapping', state: 'unavailable', external: null });
+  await waitFor(() => env.bridge.mapping()?.state === 'unavailable');
+  assert.deepEqual(env.bridge.mapping(), { state: 'unavailable', external: null });
+  const states = env.logs.filter((entry) => entry.event === 'team.bridge.mapping').map((entry) => entry.fields);
+  assert.deepEqual(states, [{ state: 'requesting' }, { state: 'mapped' }, { state: 'unavailable' }]);
+  const text = JSON.stringify(env.logs);
+  for (const needle of ['203.0.113.7', '4444', 'router.home']) assert.equal(text.includes(needle), false, needle);
+  child.crash();
+  await waitFor(() => env.downs.length === 1);
+  assert.equal(env.bridge.mapping(), null, 'a dead child holds no mapping');
+});
+
 test('filterLog keeps known events with integer or fixed-word fields and nothing else', () => {
   assert.deepEqual(filterLog('team.bridge.started', {}), { event: 'team.bridge.started', fields: {} });
-  assert.deepEqual(filterLog('team.bridge.connection_refused', { reason: 'handshake_cap', connections: 3 }),
-    { event: 'team.bridge.connection_refused', fields: { reason: 'handshake_cap', connections: 3 } });
+  assert.deepEqual(filterLog('team.bridge.connection_refused', { reason: 'connection_cap', connections: 3 }),
+    { event: 'team.bridge.connection_refused', fields: { reason: 'connection_cap', connections: 3 } });
+  assert.deepEqual(filterLog('team.bridge.connection_refused', { reason: 'handshake_cap' }).fields, {},
+    'handshake_cap is a summary count now, not a reason word');
   assert.equal(filterLog('team.bridge.unknown', {}), null);
   assert.equal(filterLog('team.member_bridge.state', {}), null);
   assert.equal(filterLog(42, {}), null);
@@ -232,6 +345,11 @@ test('filterLog keeps known events with integer or fixed-word fields and nothing
   });
   assert.deepEqual(dirty.fields, { reason: 'closing' });
   assert.deepEqual(filterLog('team.bridge.dropped', null).fields, {});
+  assert.deepEqual(filterLog('team.bridge.stream_refused', { reason: 'early_data', streams: 0 }).fields,
+    { reason: 'early_data', streams: 0 });
+  // A key past its share of streams (16 across its connections).
+  assert.deepEqual(filterLog('team.bridge.stream_refused', { reason: 'key_cap', streams: 16 }).fields,
+    { reason: 'key_cap', streams: 16 });
   assert.deepEqual(filterLog('team.bridge.dropped', { connections: Number.MAX_SAFE_INTEGER + 1 }).fields, {});
 });
 
@@ -341,4 +459,132 @@ test('the binary is looked up in resources/sidecar, then build/sidecar, else not
   resolveBridgeBinary({ resourcesPath: undefined, root: '/repo', exists: (c) => { noResources.push(c); return false; } });
   assert.equal(noResources.length, 1, 'no resources path, no packaged lookup');
   assert.equal(BINARY_NAME, process.platform === 'win32' ? 'jenny-team-bridge.exe' : 'jenny-team-bridge');
+});
+
+// The owner's relay (TEAM_INTERNET_SPEC slice 5-4).
+const RELAY = Object.freeze({ url: 'https://relay.example.com:8443', token: 'tok-SECRET-relay.1~' });
+
+test('a relay goes on the start line only, and no relay leaves the start line as it was', async (t) => {
+  const env = makeHost(t, { relay: RELAY });
+  await env.bridge.start();
+  const child = env.spawner.last();
+  assert.deepEqual(child.received[0].relay, { url: RELAY.url, token: RELAY.token });
+  const without = makeHost(t, { relay: null });
+  await without.bridge.start();
+  assert.equal('relay' in without.spawner.last().received[0], false, 'null sends no relay field');
+  const absent = makeHost(t);
+  await absent.bridge.start();
+  assert.equal('relay' in absent.spawner.last().received[0], false, 'absent sends no relay field');
+  const tokenless = makeHost(t, { relay: { url: 'https://relay.example.com', token: null } });
+  await tokenless.bridge.start();
+  assert.deepEqual(tokenless.spawner.last().received[0].relay, { url: 'https://relay.example.com', token: null });
+  child.write({ t: 'relay', state: 'connected' });
+  await waitFor(() => env.bridge.relay() === 'connected');
+  await env.bridge.stop();
+  const text = JSON.stringify([env.logs, env.spawner.spawns, child.received.slice(1)]);
+  for (const needle of [RELAY.token, 'relay.example.com']) assert.equal(text.includes(needle), false, needle);
+});
+
+test('a bad relay option is a TypeError naming the field, never the value', () => {
+  const base = {
+    secretKey: hostSecret, loopbackPort: 4321, bootSecret, admit: () => 'device',
+    spawnChild: () => { throw new Error('never spawned'); },
+  };
+  const secret = 'SECRET-VALUE';
+  const cases = [
+    [`https://${secret}.example.com/`, /relay\.url/], [`http://${secret}.example.com`, /relay\.url/],
+    [`https://user@${secret}.example.com`, /relay\.url/], [`https://${secret}.example.com/x`, /relay\.url/],
+    [`https://${secret}.example.com?x=1`, /relay\.url/], [`https://${secret}.example.com#x`, /relay\.url/],
+    [`https://127.0.0.1`, /relay\.url/], [`https://${'a'.repeat(93)}.com`, /relay\.url/], [7, /relay\.url/],
+  ].map(([url, pattern]) => [{ url, token: null }, pattern]);
+  for (const token of ['', `${secret} x`, `${secret}${'x'.repeat(257)}`, 7, undefined]) {
+    cases.push([{ url: 'https://relay.example.com', token }, /relay\.token/]);
+  }
+  cases.push([{ url: 'https://relay.example.com' }, /relay must be/]);
+  cases.push([{ url: 'https://relay.example.com', token: null, extra: secret }, /relay must be/]);
+  cases.push([`https://${secret}.example.com`, /relay must be/], [[secret], /relay must be/], [false, /relay must be/]);
+  for (const [relay, pattern] of cases) {
+    assert.throws(() => createHostBridge({ ...base, relay }), (error) => {
+      assert.ok(error instanceof TypeError);
+      assert.match(error.message, pattern);
+      assert.equal(error.message.includes(secret), false, 'the value is not in the message');
+      return true;
+    });
+  }
+});
+
+test('relay lines: ignored before ready, known states kept and logged as the word, the rest dropped', async (t) => {
+  const env = makeHost(t, { relay: RELAY, spawnerOptions: { silent: true } });
+  const starting = env.bridge.start();
+  const child = env.spawner.last();
+  await waitFor(() => child.received.length === 1);
+  child.write({ t: 'relay', state: 'connecting' });
+  child.write({ t: 'ready', public_key: b64(new Uint8Array(32).fill(5)), addresses: ['127.0.0.1:40404'] });
+  await starting;
+  assert.equal(env.bridge.relay(), null, 'a relay line before ready is ignored');
+  for (const state of ['connected', 'denied', 'unreachable']) {
+    child.write({ t: 'relay', state });
+    await waitFor(() => env.bridge.relay() === state);
+  }
+  child.write({ t: 'relay', state: 'open' });
+  child.write({ t: 'relay', state: 7 });
+  child.write({ t: 'relay' });
+  child.write({ t: 'relay', state: 'off' });
+  await waitFor(() => env.bridge.relay() === 'off');
+  const states = env.logs.filter((entry) => entry.event === 'team.bridge.relay').map((entry) => entry.fields);
+  assert.deepEqual(states, [{ state: 'connected' }, { state: 'denied' }, { state: 'unreachable' }, { state: 'off' }]);
+  child.crash();
+  await waitFor(() => env.downs.length === 1);
+  assert.equal(env.bridge.relay(), null, 'a dead child holds no relay state');
+});
+
+test('the stats line path counts: both counts are kept, a bad count drops the whole line', async (t) => {
+  const env = makeHost(t, { relay: RELAY });
+  await env.bridge.start();
+  assert.deepEqual(env.bridge.stats(), {
+    connections: 0, streams: 0, refusedStreams: 0, refusedConnections: 0, directExternalConnections: 0, relayedConnections: 0,
+  });
+  const child = env.spawner.last();
+  const base = { t: 'stats', connections: 2, streams: 3, refused_streams: 0, refused_connections: 0 };
+  child.write({ ...base, direct_external_connections: 1, relayed_connections: 1 });
+  await waitFor(() => env.bridge.stats().relayedConnections === 1);
+  assert.equal(env.bridge.stats().directExternalConnections, 1);
+  assert.equal(env.bridge.stats().streams, 3);
+  for (const bad of [
+    { direct_external_connections: -1, relayed_connections: 0 }, { direct_external_connections: 0, relayed_connections: '1' },
+    { direct_external_connections: 0 }, { relayed_connections: 2 }, { direct_external_connections: 0.5, relayed_connections: 0 },
+  ]) {
+    child.write({ ...base, streams: 9, ...bad });
+  }
+  child.write({ ...base, streams: 4, direct_external_connections: 0, relayed_connections: 2 });
+  await waitFor(() => env.bridge.stats().relayedConnections === 2);
+  assert.equal(env.bridge.stats().streams, 4, 'no dropped line changed a count');
+  child.write({ ...base, streams: 5 });
+  await waitFor(() => env.bridge.stats().streams === 5);
+  assert.equal(env.bridge.stats().relayedConnections, 0, 'a line without path counts is zero paths');
+});
+
+// Slice 6-6. Fault: bulk() true for a binary that passes the class byte into the HTTP layer.
+test('6-6: bulk() is true only while a running child said it reads bulk streams', async (t) => {
+  const env = makeHost(t);
+  assert.equal(env.bridge.bulk(), false, 'not before start');
+  await env.bridge.start();
+  assert.equal(env.bridge.bulk(), true);
+  env.spawner.last().crash();
+  await waitFor(() => env.downs.length === 1);
+  assert.equal(env.bridge.bulk(), false, 'not after the child is gone');
+
+  const old = makeHost(t, { spawnerOptions: { noBulk: true } });
+  await old.bridge.start();
+  assert.equal(old.bridge.bulk(), false, 'a binary from before bulk streams');
+
+  // Only the number 1 counts.
+  for (const value of [true, '1', 2, 0, null]) {
+    const odd = makeHost(t, { spawnerOptions: { silent: true } });
+    const starting = odd.bridge.start();
+    await waitFor(() => odd.spawner.last().received.length === 1);
+    odd.spawner.last().write({ t: 'ready', public_key: b64(new Uint8Array(32).fill(5)), addresses: ['127.0.0.1:40404'], bulk: value });
+    await starting;
+    assert.equal(odd.bridge.bulk(), false, String(value));
+  }
 });

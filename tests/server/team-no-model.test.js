@@ -45,7 +45,7 @@ test('E19: a team host with no model endpoint reaches ready and spawns no sideca
   const seeded = await fx.seedMembers(fx.client().deviceKey);
   const parent = fx.newParent();
   const host = await fx.start(parent, { createBackend });
-  assert.deepEqual(parent.sentTypes(), ['ready']);
+  assert.deepEqual(parent.sentTypes(), ['ready', 'reach']);
   const [{ options, composition }] = built;
   assert.equal(options.modelEndpoint, null);
   assert.equal(options.modelOptional, true, 'host-core opts in from the team config');
@@ -63,9 +63,8 @@ test('E19: a team host with no model endpoint reaches ready and spawns no sideca
   const send = (operation, params = {}, extra = {}) => context.router.dispatch({ ...BOOT_FIELDS, operation,
     request_id: `request_${++sequence}_${crypto.randomUUID()}`, client_id: client.client_id,
     boot_epoch: context.bootEpoch, params, ...extra }, dispatchContext);
-  const created = await send('sessions.create', { title: 'No model' });
-  assert.equal(created.ok, true, JSON.stringify(created));
-  const sessionId = created.session.session_id;
+  // A General conversation seeded in the store: on a team host sessions.create makes none (E70).
+  const sessionId = composition.backend.sessionStore.createSession({ title: 'No model' }).id;
   const lease = await send('control.acquire', { takeover: false }, { session_id: sessionId });
   assert.equal(lease.ok, true, JSON.stringify(lease));
   const begun = Date.now();
@@ -82,7 +81,7 @@ test('E19: a team host with no model endpoint reaches ready and spawns no sideca
 
   parent.emit({ type: 'stop' });
   await host.stopped;
-  assert.deepEqual(parent.sentTypes(), ['ready', 'stopped']);
+  assert.deepEqual(parent.sentTypes(), ['ready', 'reach', 'stopped']);
   assert.equal(fx.lock.released, 1, 'the profile lock is released');
 });
 

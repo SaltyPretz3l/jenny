@@ -152,6 +152,8 @@
           drafter: Boolean(localGguf && localGguf.drafterGguf),
         },
       },
+      // MTP would run on llama-server: a drafter file beside the model, or the GGUF's own head.
+      mtpRunnable: Boolean(localGguf && (localGguf.drafterGguf || Number(localGguf.embeddedMtpLayers) > 0)),
       selectedEngine: selectedEngine,
       mtp: {
         eligible: eligible,
@@ -333,6 +335,7 @@
       fitSource: observed ? 'observed' : (reestimated ? 'estimated' : 'catalog'),
       fitConfidence: reestimated ? String(reestimated.fitConfidence || 'low') : 'high',
       accelerationEligible: isEligibleFamily(family),
+      mtpRunnable: engine.mtpRunnable,
       accelerationHeadroomMb: headroomMb,
       managedKey: engine.managedKey,
       engines: engine.engines,
@@ -352,6 +355,15 @@
     var engine = engineFields(tag, family, context, ollamaOnly ? null : entry, ollamaTag);
     var params = entry.params || (fitEstimate ? fitEstimate.params : '') || '';
     var quant = entry.quant || (fitEstimate ? fitEstimate.quant : '') || '';
+    // A local GGUF the estimator does not know still gets a rough need from its
+    // file: the weights plus working memory, shown as an estimate.
+    if (!fitEstimate && entry.libraryGguf === true && entry.sizeBytes > 0) {
+      var fileNeedMb = Math.round((entry.sizeBytes / 1048576) * 1.15) + 768;
+      fitEstimate = {
+        vramRequiredMb: fileNeedMb, fitSource: 'estimated', fitConfidence: 'low',
+        fitsInVram: fileNeedMb <= nonNegativeNumber(context.hardware.budgetMb),
+      };
+    }
     var hasEstimate = Boolean(fitEstimate) && context.hardware.detected;
     var fitState = 'unknown';
     var fitRatio = 0;
@@ -400,6 +412,7 @@
       fitSource: fitSource,
       fitConfidence: fitConfidence,
       accelerationEligible: isEligibleFamily(family),
+      mtpRunnable: engine.mtpRunnable,
       accelerationHeadroomMb: engine.mtp.headroomMb,
       managedKey: engine.managedKey,
       engines: engine.engines,
@@ -465,6 +478,7 @@
         fitSource: 'catalog',
         fitConfidence: 'high',
         accelerationEligible: false,
+        mtpRunnable: false,
         accelerationHeadroomMb: 0,
         managedKey: managedModelKey(tag),
         engines: {
@@ -521,39 +535,18 @@
     return isLocalEngine(card) || !card.engineType;
   }
 
-  function groupModelCards(cards) {
-    var groups = [
-      { id: 'in-use', label: jt('models.library.groups.inUse', 'In use'), cards: [] },
-      { id: 'installed', label: jt('models.library.groups.installed', 'Installed'), cards: [] },
-      { id: 'cloud', label: jt('models.library.groups.cloud', 'Cloud'), cards: [] },
-      { id: 'available', label: jt('models.library.groups.availableToDownload', 'Available to download'), cards: [] },
-    ];
-    var source = Array.isArray(cards) ? cards : [];
-    source.forEach(function (card) {
-      if (!card || typeof card !== 'object' || Array.isArray(card)) return;
-      if (card.active === true) {
-        groups[0].cards.push(card);
-      } else if (card.installed !== true) {
-        groups[3].cards.push(card);
-      } else if (isLocalOrUnknownEngine(card)) {
-        groups[1].cards.push(card);
-      } else {
-        groups[2].cards.push(card);
-      }
+  // The server's alias drops ':latest', so an own-card library GGUF ("mistral") and
+  // Ollama's "mistral:latest" match the same alias. When the library model is the one
+  // served (or parked), a card that runs on Ollama does not claim it too.
+  function disownLibraryAlias(cards) {
+    ['serving', 'servingPaused'].forEach(function (field) {
+      if (!cards.some(function (card) { return card.libraryGguf === true && card[field] === true; })) return;
+      cards.forEach(function (card) {
+        if (card.libraryGguf === true || card[field] !== true || card.selectedEngine === 'llama-server') return;
+        card[field] = false;
+        if (field === 'serving') card.servingPort = 0;
+      });
     });
-    return groups;
-  }
-
-  function filterCounts(cards) {
-    var counts = { all: 0, installed: 0, recommended: 0 };
-    var source = Array.isArray(cards) ? cards : [];
-    source.forEach(function (card) {
-      if (!card || typeof card !== 'object' || Array.isArray(card)) return;
-      counts.all += 1;
-      if (card.installed === true) counts.installed += 1;
-      if (card.recommended === true) counts.recommended += 1;
-    });
-    return counts;
   }
 
   function mergeModelLibrary(input) {
@@ -650,6 +643,7 @@
       usedKeys.add(card.key);
       cards.push(card);
     });
+    disownLibraryAlias(cards);
 
     // item 1: the failed card carries its failure. An exact key wins; only when no card matches
     // exactly does a canonical match (an own-card GGUF keyed without a tag or in another case)
@@ -680,8 +674,6 @@
     filterModelCards: filterModelCards,
     isLocalEngine: isLocalEngine,
     isLocalOrUnknownEngine: isLocalOrUnknownEngine,
-    groupModelCards: groupModelCards,
-    filterCounts: filterCounts,
     fitTone: fitUtils.fitTone,
   };
 });

@@ -75,7 +75,7 @@ def test_checkpoint_without_summarizer_preserves_legacy_output() -> None:
 
 
 def test_reasoning_summary_prompt_bounds_elided_text() -> None:
-    messages = build_reasoning_summary_messages("a" * 30_000)
+    messages = build_reasoning_summary_messages("a" * 20_000)
 
     assert messages == [
         {
@@ -86,8 +86,22 @@ def test_reasoning_summary_prompt_bounds_elided_text() -> None:
                 "300 words, no preamble."
             ),
         },
-        {"role": "user", "content": "a" * 24_000},
+        {"role": "user", "content": "a" * 20_000},
     ]
+
+
+def test_reasoning_summary_keeps_the_head_and_tail_of_long_elided_text() -> None:
+    # 2026-11-11: a 190k-char first leg was summarised from its last 24k only,
+    # so the note lost the design decisions made at the start.
+    elided = "H" * 50_000 + "m" * 100_000 + "T" * 50_000
+    content = str(build_reasoning_summary_messages(elided)[1]["content"])
+
+    head, marker, tail = content.partition(" [... ")
+    assert head == "H" * 6_000
+    assert marker
+    assert "176,000 chars of reasoning omitted ...]" in tail
+    assert tail.endswith("T" * 18_000)
+    assert len(content) < 24_100
 
 
 def test_checkpoint_no_progress_compares_bounded_carries() -> None:

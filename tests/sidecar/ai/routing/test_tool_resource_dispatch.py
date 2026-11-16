@@ -32,6 +32,7 @@ def test_a_busy_resource_asks_for_the_same_call_again() -> None:
     assert failure.retryable is True
     assert failure.failure_class == "transient"
     assert "repeat it unchanged" in str(failure)
+    assert "not a stale read" in str(failure)
 
 
 _BUILTIN = "jenny_builtin"

@@ -66,7 +66,7 @@ test('typing in the compaction custom prompt textarea survives an unrelated Sett
   const { window } = await loadRendererTestApp(t, {});
   const doc = window.document;
   await openSettings(window);
-  await openSettingsSection(window, 'context');
+  await openSettingsSection(window, 'chat');
 
   const field = doc.querySelector('[data-compaction-field="customPrompt"]');
   assert.ok(field, 'precondition: the compaction custom-prompt field is rendered');
@@ -150,7 +150,7 @@ test('a dirty-but-blurred compaction prompt draft is not clobbered by an unrelat
   const { window } = await loadRendererTestApp(t, {});
   const doc = window.document;
   await openSettings(window);
-  await openSettingsSection(window, 'context');
+  await openSettingsSection(window, 'chat');
 
   const field = doc.querySelector('[data-compaction-field="customPrompt"]');
   field.focus();
@@ -171,7 +171,7 @@ test('an unrelated re-render is a zero-DOM-write no-op for a guarded section whe
   const { window } = await loadRendererTestApp(t, {});
   const doc = window.document;
   await openSettings(window);
-  await openSettingsSection(window, 'context');
+  await openSettingsSection(window, 'chat');
 
   const fieldBefore = doc.querySelector('[data-compaction-field="customPrompt"]');
   assert.ok(fieldBefore);
@@ -195,7 +195,7 @@ test('a real upstream change to the compaction prompt patches through when nothi
   const { window } = await loadRendererTestApp(t, {});
   const doc = window.document;
   await openSettings(window);
-  await openSettingsSection(window, 'context');
+  await openSettingsSection(window, 'chat');
 
   assert.equal(doc.querySelector('[data-compaction-field="customPrompt"]').value, '');
 

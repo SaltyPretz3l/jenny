@@ -1,9 +1,14 @@
 // HB-038 H1 (dogfood, 2026-10-04): when the thinking guard cuts a think off,
 // its phase completes and the same think continues in a new phase. The
 // finished panel collapsed at once and the pinned tail dropped 1.6K-2.4K px
-// (4 of 4 large jumps came 75-142 ms after a thinking_budget_abort). While the
-// turn is live and only reasoning follows, the finished phase stays open; it
-// collapses once a tool row, the answer or the turn's end arrives.
+// (4 of 4 large jumps came 75-142 ms after a thinking_budget_abort), so the
+// finished phase was held open while only reasoning followed.
+//
+// Reversed 2026-11-11 (owner pick): since row 101 an open phase is a capped box
+// that scrolls inside itself, so each cut-off stacked another box that took the
+// wheel from the timeline (a long think read as scrolling in place). The drop
+// the hold guarded against is now absorbed by the tail cushion (row 131), so a
+// cut-off phase collapses like any other finished phase.
 'use strict';
 
 const test = require('node:test');
@@ -74,13 +79,13 @@ function cutOffPanel(rows, options) {
   return { open: panel.classList.contains('expanded') && !panel.hasAttribute('hidden') };
 }
 
-test('a cut-off phase stays open while its continuation streams', () => {
-  assert.equal(cutOffPanel([CUT_OFF, CONTINUED], LIVE).open, true);
+test('a cut-off phase collapses while its continuation streams', () => {
+  assert.equal(cutOffPanel([CUT_OFF, CONTINUED], LIVE).open, false);
   // Also in the gap before the continuation's first delta.
-  assert.equal(cutOffPanel([CUT_OFF], LIVE).open, true);
+  assert.equal(cutOffPanel([CUT_OFF], LIVE).open, false);
 });
 
-test('the cut-off phase collapses once the answer arrives', () => {
+test('the cut-off phase stays collapsed once the answer arrives', () => {
   assert.equal(cutOffPanel([CUT_OFF, CONTINUED, ANSWER], LIVE).open, false);
 });
 

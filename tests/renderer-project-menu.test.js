@@ -76,7 +76,8 @@ test('the menu is a menu: radio rows for projects, the selected row is checked a
   assert.equal(rows[0].getAttribute('aria-checked'), 'true');
   assert.equal(rows[1].getAttribute('aria-checked'), 'false');
   assert.equal(dom.window.document.activeElement, rows[0], 'focus lands on the selected row');
-  assert.match(rows[0].querySelector('.project-menu-check').textContent, /✓/);
+  assert.ok(rows[0].querySelector('.project-menu-check svg'), 'the check is drawn, not a font glyph');
+  assert.equal(rows[1].querySelector('.project-menu-check svg'), null);
   assert.equal(rows[0].querySelector('.project-menu-count').textContent, '6');
   assert.ok(rows[1].querySelector('.project-menu-name--danger'), 'a missing folder is marked in the danger colour');
   assert.equal(list.querySelectorAll('.project-menu-separator').length, 1);
@@ -329,7 +330,7 @@ test('the composer menu moves THIS chat: plain project names, the busy chat gets
   await switcher.refresh();
   state.sessions[0].active_turn = { id: 'turn_1' };
   const busy = switcher.moveRows(['s1']);
-  assert.ok(busy.every((row) => row.disabled), 'busy chat: every row disabled');
+  assert.ok(busy.filter((row) => row.kind === 'project').every((row) => row.disabled), 'busy chat: every project row disabled');
   assert.equal(busy[1].reason, 'Wait for this chat to finish first.');
   delete state.sessions[0].active_turn;
   const rows = switcher.moveRows(['s1']);
@@ -337,8 +338,9 @@ test('the composer menu moves THIS chat: plain project names, the busy chat gets
   assert.equal(rows[0].selected, true);
   assert.equal(rows[0].disabled, true, 'the chat is already here');
   assert.equal(rows[1].label, 'Budget FY27');
-  assert.equal(rows.at(-1).id, 'project_general');
-  assert.equal(rows.at(-1).label, 'General');
+  assert.equal(rows.at(-2).id, 'project_general');
+  assert.equal(rows.at(-2).label, 'General');
+  assert.equal(rows.at(-1).id, '__manage', 'Manage projects closes the list');
 
   const moved = [];
   await switcher.openMoveMenu(anchor, ['s1'], { onMoved: () => moved.push(1) });
@@ -474,4 +476,65 @@ test('the menu opened from the collapsed composer settings list covers the list'
   assert.equal(plain.style.minWidth, '');
   menu.dispose();
   dom.window.close();
+});
+
+test('long paths keep their end, a missing folder leads with its status, and the menu can carry a note and a "here" row', () => {
+  assert.equal(menuUtils.shortPath('D:\\Projects\\Ascend'), 'D:\\Projects\\Ascend', 'a short path is left whole');
+  assert.equal(menuUtils.shortPath('C:\\Users\\owner\\Documents\\Finance\\study-guides'), '…\\Finance\\study-guides');
+  assert.equal(menuUtils.shortPath('/home/owner/documents/finance/study-guides'), '…/finance/study-guides');
+  const long = menuUtils.projectRow({ id: 'p1', name: 'Guides', rootPath: 'C:\\Users\\owner\\Documents\\Finance\\study-guides', folderMissing: true });
+  assert.equal(long.detail, 'Folder missing · …\\Finance\\study-guides');
+  assert.equal(long.fullPath, 'C:\\Users\\owner\\Documents\\Finance\\study-guides', 'the whole path stays available as the tooltip');
+
+  const dom = makeDom();
+  const menu = menuUtils.createProjectMenu({ windowRef: dom.window, documentRef: dom.window.document, actionButton });
+  menu.show({
+    anchor: dom.window.document.getElementById('anchor'),
+    heading: 'Move this chat to',
+    note: 'This chat is still working. You can move it when it finishes.',
+    rows: [Object.assign(long, { selected: true, here: true, disabled: true })],
+  });
+  const element = dom.window.document.getElementById('projectMenu');
+  assert.equal(element.querySelector('.project-menu-note').textContent, 'This chat is still working. You can move it when it finishes.');
+  const row = menuRows(dom)[0];
+  assert.ok(row.classList.contains('project-menu-row--here'));
+  assert.equal(row.title, 'C:\\Users\\owner\\Documents\\Finance\\study-guides');
+  menu.dispose();
+});
+
+test('the move menu: a second click during the first list read does not race, the Workspace project is named, Manage projects opens Settings, and a busy chat says why', async (t) => {
+  const state = { ui: {}, workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [{ id: 's1', project_id: 'project_budget' }] };
+  const { dom, switcher, calls, anchor } = makeSwitcher(t, { state });
+  const first = switcher.openMoveMenu(anchor, ['s1'], {});
+  const second = switcher.openMoveMenu(anchor, ['s1'], {});
+  assert.equal(await second, null, 'the second click is ignored while the first is still opening');
+  assert.ok(await first);
+  // A click on another anchor while one menu is loading wins; the earlier open stands down.
+  switcher.menu.close();
+  const other = dom.window.document.createElement('button');
+  dom.window.document.body.appendChild(other);
+  const superseded = switcher.openMoveMenu(anchor, ['s1'], {});
+  const winner = switcher.openMoveMenu(other, ['s1'], {});
+  assert.equal(await superseded, null);
+  assert.ok(await winner);
+  switcher.menu.close();
+  assert.ok(await switcher.openMoveMenu(anchor, ['s1'], {}));
+  assert.ok(dom.window.document.getElementById('projectMenu'), 'the menu is open, not toggled shut');
+  assert.equal(calls.list, 1);
+  assert.equal(dom.window.document.querySelector('#projectMenu .project-menu-note'), null, 'an idle chat has no note');
+
+  const rows = switcher.moveRows(['s1']);
+  assert.equal(rows.find((row) => row.id === 'project_ascend').detail, 'Open in Workspace · D:\\Projects\\Ascend');
+  assert.equal(rows.find((row) => row.id === 'project_budget').here, true);
+
+  menuRows(dom).find((row) => row.textContent.includes('Manage projects')).click();
+  await settle();
+  assert.deepEqual(calls.settings, ['runtime']);
+  assert.deepEqual(calls.assign, [], 'Manage projects moves nothing');
+
+  state.sessions[0].active_turn = { id: 't' };
+  await switcher.openMoveMenu(anchor, ['s1'], {});
+  assert.equal(calls.list, 1, 'inside the 15 s window the menu opens without another read');
+  assert.equal(dom.window.document.querySelector('#projectMenu .project-menu-note').textContent,
+    'This chat is still working. You can move it when it finishes.');
 });

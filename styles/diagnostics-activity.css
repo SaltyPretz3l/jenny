@@ -176,6 +176,32 @@
   padding-block-start: var(--space-2);
 }
 
+/* Empty states. The renderer sets data-records (does the selected launch have any records) and
+   data-list (does the filtered list have rows); a launch with no records shows only its note, and a
+   filter that matches nothing keeps the toolbar. The note sits outside the listbox in #logEmpty. */
+.diagnostics-activity[data-records="none"] .diagnostics-toolbar,
+.diagnostics-activity[data-records="none"] .diagnostics-activity-scope,
+.diagnostics-activity[data-list="empty"] .diagnostics-log-header {
+  display: none;
+}
+
+.diagnostics-activity-empty {
+  padding-block-start: var(--space-8);
+}
+
+.diagnostics-activity[data-records="none"] .diagnostics-activity-empty {
+  padding-block-start: var(--space-10);
+}
+
+.diagnostics-activity-empty .inv-empty-note {
+  max-inline-size: 60ch;
+}
+
+.diagnostics-empty-action {
+  display: inline-block;
+  margin-block-start: var(--space-4);
+}
+
 .diagnostics-activity .log-entry {
   border-radius: var(--radius-sm);
   font-size: var(--font-size-footnote);

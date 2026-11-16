@@ -268,3 +268,19 @@ test('clearTerminalPostwork stays unconditional (delete/dispose teardown)', () =
     'the teardown invalidates the outstanding token'
   );
 });
+
+test('pending question cards follow the Input needed rule: live turn only, not answered, stale or withdrawn (G7)', () => {
+  const card = (extra = {}, streamId = 'live') => ({ role: 'assistant', kind: 'tool_use', tool_call: { tool_name: 'ask_user',
+    status: 'pending_user_input', parent_stream_id: streamId, call_id: 'ask-1', user_questions: [{ prompt: 'Which format?' }, { prompt: 'Why?' }], ...extra } });
+  const state = { pendingToolApprovals: new Map(), sessions: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    messagesBySession: new Map([['a', [{ role: 'user' }, card()]], ['b', [card({}, 'old'), { role: 'user' }]], ['c', [{ role: 'user' }, card({ user_questions_withdrawn: true })]]]) };
+  const controller = createMultiStreamController({ getState: () => state });
+  controller.registerStream('a', 'live');
+  controller.registerStream('c', 'live-c');
+  assert.deepEqual(controller.getPendingQuestionCards(), [{ sessionId: 'a', callId: 'ask-1', questionCount: 2, introText: 'Which format?' }]);
+  state.messagesBySession.set('a', [{ role: 'user' }, card({ user_questions_stale: true })]);
+  assert.deepEqual(controller.getPendingQuestionCards(), []);
+  state.messagesBySession.set('a', [{ role: 'user' }, card()]);
+  controller.clearStream('live');
+  assert.deepEqual(controller.getPendingQuestionCards(), [], 'a finished turn has no live card');
+});

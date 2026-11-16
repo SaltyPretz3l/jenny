@@ -141,8 +141,12 @@ function createTeamChatSearch({
     const pause = (channelId, seq) => ({ ok: true, matches, next_cursor: encodeCursor(channelId, seq, digest) });
     while (index < order.length) {
       const channelId = order[index];
-      if (!broken.has(channelId)) {
+      let open = !broken.has(channelId);
+      if (open) {
         await store.ensureLoaded(channelId);
+        open = visible(channelId, actor); // again: the load awaited, and access may have ended meanwhile
+      }
+      if (open) {
         if (deadline === null) deadline = clock() + budgetMs;
         for (;;) {
           const segment = store.segmentBefore(channelId, beforeSeq);

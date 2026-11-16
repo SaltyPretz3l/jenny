@@ -61,6 +61,7 @@
       renderSettings: (...a) => renderSettings(...a),
       renderComposerState: (...a) => renderComposerState(...a),
       syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
+      mergePreparedAttachments: (...a) => mergePreparedAttachments(...a),
       loadSessions: (...a) => loadSessions(...a),
       openSession: (...a) => openSession(...a),
       scrollMessageIntoView: (...a) => scrollMessageIntoView(...a),

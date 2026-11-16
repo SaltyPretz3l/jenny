@@ -210,8 +210,7 @@
            contributes an empty padded band to the transcript (the "dead vertical gap" defect). */
         attrs.push('data-row-visually-empty="true"');
       }
-      const nodeDotMarkup = rowHasVisibleBody ? '<span class="chat-row-node-dot" aria-hidden="true"></span>' : '';
-      return `${CHAT_ROW_OPEN_TAG}${attrs.join(' ')}>${nodeDotMarkup}${bodyMarkup}</div>`;
+      return `${CHAT_ROW_OPEN_TAG}${attrs.join(' ')}>${bodyMarkup}</div>`;
     }
 
     // One tool call = ONE timeline card (render-layer only; projector/reducer
@@ -250,7 +249,8 @@
     // preparation turn's complete_session_handoff row is not drawn while it runs or once it succeeded.
     // A failed or refused handoff keeps its ordinary row: a failure is never hidden.
     const HIDDEN_HANDOFF_TOOL = 'complete_session_handoff';
-    const FAILED_TOOL_STATES = new Set(['error', 'failed', 'denied', 'cancelled']);
+    // Both vocabularies: the wire's and the projector's (stopped, abandoned, timed out).
+    const FAILED_TOOL_STATES = new Set(['error', 'failed', 'denied', 'cancelled', 'errored', 'timed_out', 'interrupted', 'abandoned']);
     function isHiddenHandoffRow(row, resultRow) {
       const kind = normalizeId(row && row.kind);
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
@@ -353,7 +353,6 @@
         rowId: `${turnId}:tool_run:${runId}`,
         sharedStamp: `data-run-id="${escapeHtml(runId)}" data-run-expanded="${expandedText}"`,
         markup: `<div class="chat-row" data-row-id="${escapeHtml(`${turnId}:tool_run:${runId}`)}" data-row-kind="tool_run" data-run-id="${escapeHtml(runId)}" data-run-expanded="${expandedText}">`
-          + '<span class="chat-row-node-dot" aria-hidden="true"></span>'
           + `<div class="tool-run-row" data-tool-run-state="${toolCallUtils.toolRunState(summary)}">`
           + `<div class="tool-run-toggle" role="button" tabindex="0" data-tool-run-toggle="true" data-tool-run-key="${escapeHtml(runKey)}" aria-expanded="${expandedText}">${inner}</div>`
           + '</div></div>',

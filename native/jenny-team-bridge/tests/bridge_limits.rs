@@ -110,8 +110,10 @@ async fn connection_cap_turns_a_second_member_away_before_any_question() {
         .await;
 }
 
+/// The parent said nothing: the member is told the host went silent, never `host_refused`
+/// (review round two, R11-F01).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn unanswered_admit_is_refused_after_the_timeout() {
+async fn unanswered_admit_is_closed_as_a_timeout_not_a_refusal() {
     let http = FakeHttp::start().await;
     let mut limits = host_limits();
     limits["admit_timeout_ms"] = json!(300);
@@ -128,7 +130,7 @@ async fn unanswered_admit_is_refused_after_the_timeout() {
     let closed = host.expect("conn_closed").await;
     assert_eq!(closed["conn"], question["conn"]);
     let offline = member.expect_state("offline").await;
-    assert_eq!(offline["reason"], "host_refused");
+    assert_eq!(offline["reason"], "host_admit_timeout");
     // A late answer for the finished connection is ignored.
     host.send(json!({ "t": "admit_answer", "conn": question["conn"], "kind": "device" }))
         .await;

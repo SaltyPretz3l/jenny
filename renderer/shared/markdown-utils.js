@@ -67,11 +67,7 @@
     return null;
   }
 
-  function resolveSanitizePolicy() {
-    if (typeof globalThis !== 'undefined' && globalThis.markdownSanitizePolicy) return globalThis.markdownSanitizePolicy;
-    try { return require('./markdown-sanitize-policy'); } catch (_e) { /* unavailable */ }
-    return null;
-  }
+  function resolveSanitizePolicy() { if (typeof globalThis !== 'undefined' && globalThis.markdownSanitizePolicy) return globalThis.markdownSanitizePolicy; try { return require('./markdown-sanitize-policy'); } catch (_e) { return null; } }
   function resolveRawHtmlPolicy() { if (typeof globalThis !== 'undefined' && globalThis.markdownRawHtmlPolicy) return globalThis.markdownRawHtmlPolicy; try { return require('./markdown-raw-html-policy'); } catch (_e) { return null; } }
 
   function resolveMermaidTextUtils() {
@@ -165,6 +161,7 @@
     template.innerHTML = actionButton({ ...(options || {}), plain: true });
     return template.content.firstElementChild;
   }
+  function createCodeCopyButton(ownerDocument, className) { return createActionButtonNode(ownerDocument, { className, ariaLabel: jt('markdown.code.copyLabel', 'Copy code'), label: jt('common.copy', 'Copy') }); }
 
   function actionButtonMarkup(options) {
     const actionButton = resolveActionButton();
@@ -189,7 +186,8 @@
   function looksLikeMermaid(codeNode) {
     if (isMermaidCodeNode(codeNode)) return true;
     const classStr = String(codeNode?.getAttribute?.('class') || '');
-    if (classStr && !/\blanguage-(plaintext|text|none)\b/.test(classStr) && /\blanguage-/.test(classStr)) {
+    // A sketch fence whose body starts like Mermaid is the model writing Mermaid under the wrong tag.
+    if (classStr && !/\blanguage-(plaintext|text|none|sketch)\b/.test(classStr) && /\blanguage-/.test(classStr)) {
       return false;
     }
     const text = (codeNode.textContent || '').trim();
@@ -201,7 +199,7 @@
     // mermaid: 'plain' — surface opt-out (reasoning panels): mermaid fences
     // fall through to the ordinary code-block wrapper instead of the
     // diagram block, so the surface never hosts a rendered diagram.
-    const mermaidPlain = !!(options && options.mermaid === 'plain');
+    const mermaidPlain = !!(options && options.mermaid === 'plain'); const plainCode = options?.codeBlocks === 'plain';
 
     const inputIsString = typeof input === 'string';
     const template = inputIsString ? createTemplateElement() : null;
@@ -240,7 +238,7 @@
     const maxBodyLines = resolveCodeHighlight()?.MAX_BODY_LINES; let localMermaidIndex = 0; const reproducibleCodeIds = Number.isInteger(options?.codeBlockIndexOffset) || Boolean(options?.messageId); const codeIdOffset = Number(options?.codeBlockIndexOffset) || 0; const codeIdSeed = String(options?.messageId || '');
     preCodeNodes.forEach((codeNode, codeIndex) => {
       const preNode = codeNode.parentElement;
-      if (!preNode || preNode.parentElement?.classList?.contains('markdown-code-block')) {
+      if (!preNode || preNode.parentElement?.classList?.contains('markdown-code-block') || preNode.classList?.contains('thinking-code')) {
         return;
       }
 
@@ -248,8 +246,8 @@
 
       if (!mermaidPlain && looksLikeMermaid(codeNode)) {
         const source = codeNode.textContent || '';
-        mermaidBlockSequence += 1;
-        const blockId = 'md-mermaid-' + mermaidBlockSequence + '-' + (localMermaidIndex++);
+        const sourceKey = reproducibleCodeIds ? (codeIdSeed ? encodeURIComponent(codeIdSeed) + '-' : '') + (resolveStreamUnitUtils()?.fingerprintHtml?.(source) || 's').slice(5) : (mermaidBlockSequence += 1); // reproducible ids keep a streamed diagram
+        const blockId = 'md-mermaid-' + sourceKey + '-' + (reproducibleCodeIds ? codeIndex + codeIdOffset : localMermaidIndex++);
         const previewId = blockId + '-preview';
         const sourcePreId = blockId + '-source-pre';
 
@@ -299,11 +297,7 @@
         }
         const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: jt('markdown.code.wrapLongLinesLabel', 'Wrap long lines'), label: jt('markdown.code.wrap', 'Wrap'), ariaPressed: false });
         if (wrapBtn) header.appendChild(wrapBtn);
-        const copyBtn = createActionButtonNode(ownerDocument, {
-          className: 'inv-codeblock-copy',
-          ariaLabel: jt('markdown.code.copyLabel', 'Copy code'),
-          label: jt('common.copy', 'Copy'),
-        });
+        const copyBtn = createCodeCopyButton(ownerDocument, 'inv-codeblock-copy');
         if (copyBtn) header.appendChild(copyBtn);
 
         const clonedPre = preNode.cloneNode(true);
@@ -318,9 +312,15 @@
         wrapper.appendChild(codeWrapper);
         return;
       }
+      if (plainCode) { // Thinking text: one plain block, no toolbar, colouring or clamp fighting a live stream.
+        const host = ownerDocument.createElement('div'); const plainPre = ownerDocument.createElement('pre'); const plainCodeNode = ownerDocument.createElement('code');
+        host.className = 'thinking-code-host'; plainPre.className = 'thinking-code'; plainCodeNode.textContent = codeNode.textContent || '';
+        plainPre.appendChild(plainCodeNode); host.appendChild(plainPre); preNode.replaceWith(host);
+        const copyBtn = createCodeCopyButton(ownerDocument, 'inv-codeblock-copy'); if (copyBtn) { copyBtn.classList.add('thinking-code-copy'); host.appendChild(copyBtn); }
+        return;
+      }
 
       const wrapper = ownerDocument.createElement('div');
-
       const text = codeNode.textContent || '';
       const lineCount = text.split('\n').length;
       const isCollapsible = lineCount > 25;
@@ -336,11 +336,7 @@
       header.appendChild(label);
       const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: jt('markdown.code.wrapLongLinesLabel', 'Wrap long lines'), label: jt('markdown.code.wrap', 'Wrap'), ariaPressed: false });
       if (wrapBtn) header.appendChild(wrapBtn);
-      const copyBtn = createActionButtonNode(ownerDocument, {
-        className: 'inv-codeblock-copy',
-        ariaLabel: jt('markdown.code.copyLabel', 'Copy code'),
-        label: jt('common.copy', 'Copy'),
-      });
+      const copyBtn = createCodeCopyButton(ownerDocument, 'inv-codeblock-copy');
       if (copyBtn) header.appendChild(copyBtn);
 
       preNode.replaceWith(wrapper);
@@ -369,7 +365,7 @@
       }
     });
 
-    if (options?.codeHighlight !== false) resolveCodeHighlight()?.decorateCodeBlocks?.(fragment);
+    if (options?.codeHighlight !== false && !plainCode) resolveCodeHighlight()?.decorateCodeBlocks?.(fragment);
 
     const inlinePaths = resolveInlinePathUtils();
     if (inlinePaths) {
@@ -528,7 +524,7 @@
     if (!bypassCache && _markdownRenderCache) {
       const cached = _markdownRenderCache.get(cacheParts);
       if (cached.hit) {
-        let cachedDecorated = decorateCodeBlocks(cached.value, { mermaid: mermaidMode, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
+        let cachedDecorated = decorateCodeBlocks(cached.value, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
         if (mathMap) cachedDecorated = mathUtils.restoreMathPlaceholders(cachedDecorated, mathMap);
         return cachedDecorated;
       }
@@ -554,7 +550,7 @@
     if (!bypassCache && _markdownRenderCache) {
       _markdownRenderCache.set(cacheParts, sanitizedHtml);
     }
-    let decorated = decorateCodeBlocks(sanitizedHtml, { mermaid: mermaidMode, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
+    let decorated = decorateCodeBlocks(sanitizedHtml, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
     if (wantsFragment && decorated && typeof decorated.querySelectorAll === 'function') {
       let fragmentHtml = serializeFragment(decorated);
       if (mathMap) {
@@ -630,6 +626,7 @@
    * Falls back to escaped plain text if dependencies are missing.
    * options.mermaid: 'rich' (default) renders mermaid fences as diagram
    * blocks; 'plain' leaves them as ordinary code blocks (reasoning surface).
+   * options.codeBlocks: 'plain' renders every fence as a bare pre.thinking-code with a Copy button.
    * options.rawHtml: 'sanitize' preserves allowed HTML in plain mode; otherwise plain mode escapes it.
    * options.literalBackslashes: true keeps every typed backslash (user messages).
    */
@@ -838,6 +835,8 @@
    */
   function renderInlineMermaidBlocks(container, options) {
     if (!container || typeof container.querySelectorAll !== 'function') return;
+    // ```sketch fences stay ordinary code blocks here; their lazily loaded host draws them (plan 5.2).
+    try { (globalThis.rendererMermaidRuntimeLoader || require('../features/renderer-mermaid-runtime-loader')).renderSketchBlocks(container, options); } catch (_e) { /* no loader */ }
     pruneDetachedMermaidObservations();
     const renderFn = mermaidUtils && typeof mermaidUtils.renderMermaidDirect === 'function'
       ? mermaidUtils.renderMermaidDirect

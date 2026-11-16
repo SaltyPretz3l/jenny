@@ -61,8 +61,9 @@ test('Readiness is the first settings card and the content header carries no con
   assert.ok(firstCard.querySelector('#readinessBadge.settings-badge'), 'static card header carries the summary badge');
   assert.equal(doc.querySelector('#settingsView .settings-content-header'), null);
   assert.equal(doc.querySelector('.settings-nav-kicker, .settings-nav-copy'), null);
-  for (const id of ['editorBadge', 'homeBadge', 'accountBadge', 'appearanceBadge', 'contextBadge', 'offlineBadge', 'appearanceStatus']) assert.equal(doc.getElementById(id), null);
-  assert.ok(doc.getElementById('modelBadge'));
+  // Running now replaced the Models badge and status line (2026-11-12).
+  for (const id of ['editorBadge', 'homeBadge', 'accountBadge', 'appearanceBadge', 'contextBadge', 'offlineBadge', 'appearanceStatus', 'modelBadge', 'modelStatus']) assert.equal(doc.getElementById(id), null);
+  assert.ok(doc.getElementById('modelRunningHost'));
   assert.ok(doc.getElementById('memoryBadge'));
   assert.equal(doc.querySelector('[data-settings-section="tools"] .settings-badge'), null);
 
@@ -124,8 +125,14 @@ test('the rail tablist owns tabs only, and the Settings view has its page headin
     .map((el) => el.outerHTML.slice(0, 80));
   assert.deepEqual(strays, [], 'the picker, the search field and group names are not children of the tablist');
   for (const tab of tabs) {
+    // Readiness sits in the unlabelled overview group: no group name, so nothing describes it.
+    if (tab.closest('[data-settings-nav-group="overview"]')) {
+      assert.equal(tab.hasAttribute('aria-describedby'), false, `${tab.id} has no empty description`);
+      continue;
+    }
     assert.ok(doc.getElementById(tab.getAttribute('aria-describedby'))?.textContent.trim(), `${tab.id} is read with its group name`);
   }
+  assert.deepEqual(tabs.filter((tab) => !tab.hasAttribute('aria-describedby')).map((tab) => tab.dataset.settingsSection), ['readiness']);
   assert.equal(doc.querySelector('#settingsView nav.settings-nav').hasAttribute('role'), false, 'the rail stays a navigation landmark');
   assert.deepEqual([...doc.querySelectorAll('#settingsView h2')].map((heading) => heading.textContent), ['Settings']);
 });

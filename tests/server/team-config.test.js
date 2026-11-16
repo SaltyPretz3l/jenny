@@ -10,9 +10,10 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { loadHostConfig } = require('../../server/config');
+const { loadHostConfig, normalizeHostConfig } = require('../../server/config');
 const { FileSecretStore, TEAM_HOST_SECRET_FILES } = require('../../server/file-secret-store');
 const { keyPairFromSeed } = require('../../server/team/ids');
+const { linkDirectory } = require('../helpers/platform-skips');
 
 test.beforeEach((t) => {
   // CI checks out under the real home; isolate the home-containment fixture too.
@@ -140,8 +141,12 @@ test('team concurrency defaults to 64 and an explicit value is honoured up to 64
   assert.equal(reasonOf(configPath), 'invalid_host_limit');
 }));
 
-test('a team block ignores the browser fields without validating them', () => withFixture(({ configPath, teamSource, write }) => {
-  write({ ...teamSource(), canonical_origin: 'not a url', browser_access_mode: 'whatever' });
+test('a team block refuses the browser fields the way it refuses execution', () => withFixture(({ configPath, teamSource, write }) => {
+  write({ ...teamSource(), browser_access_mode: 'localhost_http' });
+  assert.equal(reasonOf(configPath), 'browser_access_mode_invalid');
+  write({ ...teamSource(), canonical_origin: 'http://127.0.0.1:8080' });
+  assert.equal(reasonOf(configPath), 'canonical_origin_invalid');
+  write({ ...teamSource(), canonical_origin: null, browser_access_mode: null });
   const config = loadHostConfig(configPath);
   assert.equal(config.canonicalOrigin, null);
   assert.equal(config.browserAccessMode, null);
@@ -232,6 +237,106 @@ test('E19: a team block with a model_endpoint still validates it exactly', () =>
   assert.equal(reasonOf(configPath), 'model_endpoint_invalid', 'present means validated; null is not absent');
 }));
 
+// Review sweeps, second run (X5b-F02). Fault: "The team server uses local engines and member nodes only" had no host
+// check: a hand-written team config could name a model Ollama sends to its hosted service. The node side's own rule
+// (isCloudModelName) refuses it at load, on either engine (an OpenAI-compatible URL may be Ollama's own /v1).
+test('a team config naming an Ollama cloud model is refused at load; a single-owner host is unchanged', () => withFixture(({ configPath, source, teamSource, write }) => {
+  for (const engine of ['ollama', 'openai-compatible']) {
+    for (const model of ['gpt-oss:120b-cloud', 'qwen3-coder:480b-cloud', 'deepseek-v3.1:671b-CLOUD', 'kimi-k2:cloud']) {
+      write({ ...teamSource(), model_endpoint: { engine, model, api_url: 'http://127.0.0.1:11434' } });
+      assert.equal(reasonOf(configPath), 'team_model_not_local', `${engine} ${model}`);
+    }
+  }
+  write({ ...teamSource(), model_endpoint: { engine: 'ollama', model: 'cloudy-llama:8b', api_url: 'http://127.0.0.1:11434' } });
+  assert.equal(loadHostConfig(configPath).modelEndpoint.model, 'cloudy-llama:8b', 'a local name that only mentions cloud loads');
+  write({ ...source, model_endpoint: { engine: 'ollama', model: 'gpt-oss:120b-cloud', api_url: 'http://127.0.0.1:11434' } });
+  assert.equal(loadHostConfig(configPath).modelEndpoint.model, 'gpt-oss:120b-cloud', 'not a team host: not this rule');
+}));
+
+// Slice 4a-4: the optional `team.pool` block. Absent means no pool; present, a closed record with
+// one required field. A pool host names no model endpoint: the pool gateway is its endpoint.
+function poolSource(teamSource, pool) {
+  const { model_endpoint: _dropped, ...noModel } = teamSource();
+  return { ...noModel, team: { ...noModel.team, ...(pool === undefined ? {} : { pool }) } };
+}
+
+test('4a-4: a team block without pool loads with no pool key', () => withFixture(({ configPath, teamSource, write }) => {
+  write(poolSource(teamSource));
+  const config = loadHostConfig(configPath);
+  assert.equal(Object.hasOwn(config.team, 'pool'), false);
+  assert.equal(config.modelEndpoint, null);
+}));
+
+test('4a-4: a valid pool loads as a frozen { contextLength } and the endpoint stays null', () => withFixture(({ configPath, teamSource, write }) => {
+  for (const contextLength of [2048, 32768, 1048576]) {
+    write(poolSource(teamSource, { context_length: contextLength }));
+    const config = loadHostConfig(configPath);
+    assert.deepEqual({ ...config.team.pool }, { contextLength });
+    assert.equal(Object.isFrozen(config.team.pool), true);
+    assert.equal(config.modelEndpoint, null);
+  }
+}));
+
+test('4a-4: every invalid pool shape is team_pool_invalid', () => withFixture(({ configPath, teamSource, write }) => {
+  const shapes = [
+    null, [], 'pool', 32768, {}, { context_length: 32768, extra: 1 }, { contextLength: 32768 },
+    { context_length: 32768.5 }, { context_length: '32768' }, { context_length: null }, { context_length: 2047 },
+    { context_length: 1048577 }, { context_length: -1 }, { context_length: Number.MAX_SAFE_INTEGER + 1 },
+  ];
+  for (const pool of shapes) {
+    write(poolSource(teamSource, pool));
+    assert.equal(reasonOf(configPath), 'team_pool_invalid', JSON.stringify(pool));
+  }
+}));
+
+test('4a-4: a pool with a model_endpoint is team_pool_endpoint_conflict', () => withFixture(({ configPath, teamSource, write }) => {
+  const base = teamSource();
+  write({ ...base, team: { ...base.team, pool: { context_length: 32768 } } });
+  assert.equal(reasonOf(configPath), 'team_pool_endpoint_conflict');
+  write({ ...base, model_endpoint: null, team: { ...base.team, pool: { context_length: 32768 } } });
+  assert.equal(reasonOf(configPath), 'team_pool_endpoint_conflict', 'a null endpoint is still present');
+}));
+
+// Slice 5-5b: the optional `team.internet` record. Absent means off; present, exactly three fields,
+// a direct port, and the invite and relay validators. Any other shape is team_internet_invalid.
+const INTERNET_ON = Object.freeze({ map_port: true, public_address: 'team.example.org', relay_url: 'https://relay.example.org' });
+
+function internetSource(teamSource, internet, directPort = 45123) {
+  const base = teamSource();
+  return { ...base, team: { ...base.team, direct_port: directPort, ...(internet === undefined ? {} : { internet }) } };
+}
+
+test('5-5b: a valid internet record loads frozen; without one the team record has no internet key', () => withFixture(({ configPath, teamSource, write }) => {
+  write(internetSource(teamSource));
+  assert.equal(Object.hasOwn(loadHostConfig(configPath).team, 'internet'), false);
+  for (const internet of [INTERNET_ON, { map_port: false, public_address: null, relay_url: null },
+    { map_port: true, public_address: '[2001:db8::1]:5000', relay_url: null },
+    { map_port: false, public_address: '203.0.113.9', relay_url: 'https://relay.example.org:8443' }]) {
+    write(internetSource(teamSource, internet));
+    const loaded = loadHostConfig(configPath).team.internet;
+    assert.deepEqual({ ...loaded }, { mapPort: internet.map_port, publicAddress: internet.public_address,
+      relayUrl: internet.relay_url }, JSON.stringify(internet));
+    assert.equal(Object.isFrozen(loaded), true);
+  }
+}));
+
+test('5-5b: every wrong internet shape, an unknown key and internet with no direct port are team_internet_invalid', () => withFixture(({ configPath, teamSource, write }) => {
+  const shapes = [null, [], 'on', true, {}, { ...INTERNET_ON, relay_token: 'abc' }, { ...INTERNET_ON, extra: 1 },
+    { map_port: true, public_address: null }, { mapPort: true, public_address: null, relay_url: null },
+    { ...INTERNET_ON, map_port: 'yes' }, { ...INTERNET_ON, map_port: null }, { ...INTERNET_ON, public_address: '' },
+    { ...INTERNET_ON, public_address: 'not an address' }, { ...INTERNET_ON, public_address: '127.0.0.1' },
+    { ...INTERNET_ON, public_address: 7 }, { ...INTERNET_ON, relay_url: 'https://Relay.example.org' },
+    { ...INTERNET_ON, relay_url: 'http://relay.example.org' }, { ...INTERNET_ON, relay_url: 'https://relay.example.org/' },
+    { ...INTERNET_ON, relay_url: '' }, { ...INTERNET_ON, relay_url: 'https://user:secret@relay.example.org' },
+    { ...INTERNET_ON, relay_url: 'https://user@relay.example.org' }];
+  for (const internet of shapes) {
+    write(internetSource(teamSource, internet));
+    assert.equal(reasonOf(configPath), 'team_internet_invalid', JSON.stringify(internet));
+  }
+  write(internetSource(teamSource, { map_port: false, public_address: null, relay_url: null }, null));
+  assert.equal(reasonOf(configPath), 'team_internet_invalid', 'internet needs a direct port');
+}));
+
 test('the loader never rewrites a team config file', () => withFixture(({ configPath, teamSource, write }) => {
   write(teamSource());
   const before = fs.readFileSync(configPath);
@@ -262,4 +367,111 @@ test('the file secret store serves team_host_key as trimmed text and null when m
   assert.equal(store.get('openai_compatible_api_key'), null, 'the host key store reads nothing else');
   // The store the backend gets as its credential reader cannot name the host key.
   assert.equal(new FileSecretStore({ directory }).get('team_host_key'), null);
+});
+
+// The optional `team.projects_root`: where a team host keeps its project folders. The home directory
+// is the mocked one above (`os.homedir` through `t.mock.method`), so nothing here touches the real home.
+function rootSource(fixture, projectsRoot, team = {}) {
+  const base = fixture.teamSource();
+  return { ...base, team: { ...base.team, ...team, ...(projectsRoot === undefined ? {} : { projects_root: projectsRoot }) } };
+}
+
+test('a team block without projects_root loads with no projectsRoot; a good one carries its real path', () => withFixture((fixture) => {
+  fixture.write(rootSource(fixture));
+  assert.equal(Object.hasOwn(loadHostConfig(fixture.configPath).team, 'projectsRoot'), false);
+  const absent = path.join(fixture.root, 'projects');
+  fixture.write(rootSource(fixture, absent));
+  const config = loadHostConfig(fixture.configPath);
+  assert.equal(config.team.projectsRoot, absent, 'an absent directory is accepted');
+  assert.equal(Object.isFrozen(config.team), true);
+  fs.mkdirSync(absent);
+  fs.mkdirSync(path.join(fixture.root, 'real'));
+  linkDirectory(path.join(fixture.root, 'real'), path.join(fixture.root, 'via'));
+  fixture.write(rootSource(fixture, path.join(fixture.root, 'via', 'projects')));
+  assert.equal(loadHostConfig(fixture.configPath).team.projectsRoot, path.join(fs.realpathSync.native(fixture.root), 'real', 'projects'),
+    'a link in a parent is resolved');
+  fixture.write(rootSource(fixture, path.join(os.homedir(), 'team-projects')));
+  assert.equal(loadHostConfig(fixture.configPath).team.projectsRoot, path.join(os.homedir(), 'team-projects'),
+    'inside the home directory is allowed');
+}));
+
+test('every projects_root refusal answers its reason word', () => withFixture((fixture) => {
+  const { root } = fixture;
+  const file = path.join(root, 'a-file');
+  fs.writeFileSync(file, 'x');
+  fs.mkdirSync(path.join(root, 'target'));
+  const link = path.join(root, 'link');
+  linkDirectory(path.join(root, 'target'), link);
+  const runtime = path.join(root, 'runtime');
+  const cases = [
+    [7, 'team_projects_root_invalid'],
+    [null, 'team_projects_root_invalid'],
+    ['', 'team_projects_root_invalid'],
+    [`/${'a'.repeat(2048)}`, 'team_projects_root_invalid'],
+    ['relative/projects', 'team_projects_root_must_be_absolute'],
+    [link, 'team_projects_root_symlink_invalid'],
+    [file, 'team_projects_root_not_directory'],
+    [os.homedir(), 'team_projects_root_home_overlap'],
+    [path.dirname(os.homedir()), 'team_projects_root_home_overlap'],
+    [path.join(root, 'profile', 'projects'), 'team_projects_root_profile_overlap'],
+    [path.join(root, 'secrets', 'projects'), 'team_projects_root_profile_overlap'],
+    [path.join(runtime, 'projects'), 'team_projects_root_profile_overlap'],
+  ];
+  for (const [value, reason] of cases) {
+    fixture.write({ ...rootSource(fixture, value), runtime_home: runtime });
+    assert.equal(reasonOf(fixture.configPath), reason, JSON.stringify(value)?.slice(0, 80));
+  }
+  // Containing the profile, the secrets or the runtime home: the folder that holds all three.
+  const holder = path.join(root, 'holder');
+  for (const field of ['user_data_path', 'secrets_dir', 'runtime_home']) {
+    const source = { ...rootSource(fixture, holder), runtime_home: runtime, [field]: path.join(holder, field) };
+    fixture.write(source);
+    assert.equal(reasonOf(fixture.configPath), 'team_projects_root_profile_overlap', field);
+  }
+}));
+
+test('projects_root outside a team block is an unknown key', () => withFixture((fixture) => {
+  fixture.write({ ...fixture.source, projects_root: path.join(fixture.root, 'projects') });
+  assert.equal(reasonOf(fixture.configPath), 'config_unknown_field');
+  fixture.write({ ...fixture.teamSource(), projects_root: path.join(fixture.root, 'projects') });
+  assert.equal(reasonOf(fixture.configPath), 'config_unknown_field');
+}));
+
+test('the desktop rule: a parent_channel host keeps its projects beside its config, a secret_file host anywhere', () => withFixture((fixture) => {
+  const desktop = { key_source: 'parent_channel' };
+  fixture.write(rootSource(fixture, path.join(fixture.root, 'projects'), desktop));
+  assert.equal(loadHostConfig(fixture.configPath).team.projectsRoot, path.join(fixture.root, 'projects'));
+  for (const other of [path.join(fixture.root, 'elsewhere'), path.join(fixture.root, 'projects', 'inner'), path.join(os.homedir(), 'projects')]) {
+    fixture.write(rootSource(fixture, other, desktop));
+    assert.equal(reasonOf(fixture.configPath), 'team_projects_root_layout_invalid', other);
+  }
+  const elsewhere = path.join(fixture.root, 'elsewhere');
+  fixture.write(rootSource(fixture, elsewhere));
+  assert.equal(loadHostConfig(fixture.configPath).team.projectsRoot, elsewhere, 'a secret_file host');
+  // A link standing at `<config dir>/projects` is refused, though its target would compare equal.
+  fs.mkdirSync(path.join(fixture.root, 'target'));
+  linkDirectory(path.join(fixture.root, 'target'), path.join(fixture.root, 'projects'));
+  fixture.write(rootSource(fixture, path.join(fixture.root, 'target'), desktop));
+  assert.equal(reasonOf(fixture.configPath), 'team_projects_root_symlink_invalid');
+  // normalizeHostConfig alone has no file, so it has no layout to hold a desktop host to.
+  assert.equal(normalizeHostConfig(rootSource(fixture, elsewhere, desktop)).team.projectsRoot, elsewhere);
+}));
+
+test('3-13/3-14: the two setup mounts in the config are optional, absolute and apart from the team volumes', async (t) => {
+  const { createMaintenanceFixture } = require('./helpers/team-maintenance-fixture');
+  const fx = createMaintenanceFixture(t);
+  const config = loadHostConfig(fx.configPath);
+  assert.equal(config.team.importDir, fx.importDir);
+  assert.equal(config.team.exchangeDir, fx.exchangeDir);
+  const reasonFor = (team) => {
+    fx.writeConfig({ team: { projects_root: fx.projects, ...team } });
+    try { loadHostConfig(fx.configPath); return 'loaded'; } catch (error) { return error.reason; }
+  };
+  assert.equal(reasonFor({}), 'loaded', 'both are optional');
+  assert.equal(reasonFor({ import_dir: 'relative/import' }), 'team_import_dir_must_be_absolute');
+  assert.equal(reasonFor({ exchange_dir: fx.profile }), 'team_mount_overlap');
+  assert.equal(reasonFor({ exchange_dir: path.join(fx.secrets, 'x') }), 'team_mount_overlap');
+  assert.equal(reasonFor({ import_dir: path.join(fx.data, 'import') }), 'team_mount_overlap');
+  assert.equal(reasonFor({ import_dir: fx.importDir, exchange_dir: path.join(fx.importDir, 'x') }), 'team_mount_overlap');
+  assert.equal(reasonFor({ import_dir: path.join(fx.root, 'not-made-yet') }), 'loaded', 'never existence-checked');
 });

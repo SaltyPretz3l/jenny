@@ -15,20 +15,57 @@
 
   const escapeStatusText = (globalThis.stringUtils || (nodeRequire ? nodeRequire('../shared/string-utils') : null)).escapeHtml;
 
-  function getStatusRowRenderer() {
-    return windowRef.inventory && typeof windowRef.inventory.statusRow === 'function'
-      ? windowRef.inventory.statusRow
-      : null;
-  }
-
-  function getActionButtonRenderer() {
-    return windowRef.inventoryActionButton
-      || (nodeRequire ? nodeRequire('../inventory/action-button') : null);
-  }
+  // The engine names a model can be blocked on (selectedManagedEngine from the main process).
+  const MANAGED_ENGINE_LABELS = { 'llama-server': 'llama-server', ninfer: 'NInfer' };
 
   function getStatusChipUtils() {
     return windowRef.rendererStatusChipUtils
       || (nodeRequire ? nodeRequire('../shell/renderer-status-chip-utils') : null);
+  }
+
+  // ---- E64: Force local also turns Team off on this PC (the hold itself is enforced in main) ----
+
+  // True when the Team feature is on and this PC has team data: only then do the sentence and the question apply.
+  function teamApplies(state) {
+    return state?.features?.featureFlags?.team === true && state?.features?.teamData !== false;
+  }
+
+  // The owner's sentence under the Force local switch; '' while Team does not apply.
+  function forceLocalTeamNote(state) {
+    return teamApplies(state) ? jt('offline.localOnly.teamNote', 'Also turns Team off on this PC: no hosting, no joined teams, no shared GPU.') : '';
+  }
+
+  function createForceLocalDialog(win) {
+    const factory = win.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+    const overlay = win.inventoryHelpOverlay?.createHelpOverlay;
+    if (typeof factory !== 'function' || typeof overlay !== 'function') return null;
+    return factory({ document: win.document, actionButton: win.inventoryActionButton, helpOverlayFactory: overlay, hostId: 'forceLocalTeamConfirmOverlay' });
+  }
+
+  // The host state the team store already holds (main pushes it), or null when it holds none.
+  function storedHostState(win) {
+    try { return win.rendererTeamStore?.getTeamStore?.().snapshot().host || null; } catch (_error) { return null; }
+  }
+
+  // Before Force local is turned on: asks only while this PC's team server runs; true to go on. The store's host state
+  // is read first, main asked only when it holds none. Team not applying, a host state that cannot be read or no dialog
+  // switches at once.
+  async function confirmForceLocal({ state = null, win = windowRef, dialog = null } = {}) {
+    if (!teamApplies(state)) return true;
+    let host = storedHostState(win);
+    if (!host) {
+      try { host = (await win.jennyShell.team.hostStatus())?.host || null; } catch (_error) { return true; }
+    }
+    if (!host || host.state !== 'running') return true;
+    const ask = dialog || createForceLocalDialog(win);
+    if (!ask || typeof ask.confirm !== 'function') return true;
+    try {
+      return (await ask.confirm({ title: jt('offline.localOnly.label', 'Force local inference'),
+        message: jt('offline.localOnly.teamConfirm', 'Turn on Force local? The team server on this PC stops and everyone is disconnected until you turn it off.'),
+        confirmLabel: jt('settings.team.net.turnOn', 'Turn on'), cancelLabel: jt('common.cancel', 'Cancel') })) === true;
+    } finally {
+      if (!dialog) ask.dispose?.();
+    }
   }
 
   // Render inventory switches into a stable .settings-toggle-list container.
@@ -45,39 +82,19 @@
     }
   }
 
-  /* Mirrors renderer/inventory/status-row.js's flat shape so a missing
-   * primitive degrades to the same DOM rather than a different one. */
-  function buildStatusRowFallbackMarkup(model) {
-    const tone = String(model?.tone || 'default').trim();
-    const label = String(model?.label || '').trim();
-    const badgeText = String(model?.badgeText || '').trim();
-    const message = String(model?.message || '').trim();
-    const toneClass = tone && tone !== 'default' ? ` inv-status-row--${escapeStatusText(tone)}` : '';
-    return ''
-      + `<div class="inv-status-row${toneClass}" data-status-tone="${escapeStatusText(tone || 'default')}">`
-      + '<span class="inv-status-row-leading" aria-hidden="true"><span class="inv-status-row-dot"></span></span>'
-      + '<div class="inv-status-row-main"><div class="inv-status-row-message">'
-      + (label ? `<span class="inv-status-row-label">${escapeStatusText(label)}</span>` : '')
-      + escapeStatusText(message)
-      + (badgeText ? `<span class="inv-status-row-badge">${escapeStatusText(badgeText)}</span>` : '')
-      + '</div></div></div>';
-  }
-
-  function renderStatusRowHost(target, model) {
-    if (!target) {
-      return;
+  // The one readiness sentence in Force local inference's help line; '' keeps the row's own baseline
+  // copy (before the first payload, or when nothing more is known).
+  function readinessSentence(offlineState) {
+    const model = offlineState.preferredLocalModel;
+    const engine = MANAGED_ENGINE_LABELS[offlineState.selectedManagedEngine];
+    if (offlineState.resolved === false) return '';
+    if (model && engine) {
+      return jt('offline.status.forceLocalEngine', 'Blocks every cloud model. Not usable with {model} yet: it runs on {engine}.', { model, engine });
     }
-    const message = String(model?.message || '').trim();
-    if (!message) {
-      target.innerHTML = '';
-      return;
-    }
-    const statusRow = getStatusRowRenderer();
-    if (statusRow) {
-      target.innerHTML = statusRow(model);
-      return;
-    }
-    target.innerHTML = buildStatusRowFallbackMarkup(model);
+    if (!model) return jt('offline.status.forceLocalNoModel', 'Blocks every cloud model. Pick an Ollama model as the local default.');
+    if (offlineState.localChatReady) return jt('offline.status.forceLocalReady', 'Blocks every cloud model. Ready with {model}.', { model });
+    const reason = offlineState.unavailableReason || offlineState.summary;
+    return reason ? jt('offline.status.forceLocalReason', 'Blocks every cloud model. {reason}', { reason }) : '';
   }
 
   /* Runtime posture is represented by the Chat panel dot and text. Module scope: the Settings chrome
@@ -182,6 +199,7 @@
           phase: String(managedSidecarSource.phase || '').trim() || 'stopped',
           ready: managedSidecarSource.ready === true,
         },
+        selectedManagedEngine: String(source.selectedManagedEngine || '').trim().toLowerCase(),
         currentEngine: String(source.currentEngine || '').trim(),
         currentModel: String(source.currentModel || '').trim(),
         engineFallback:
@@ -207,81 +225,20 @@
       return state.offline;
     }
 
-    // The Local inference model group's one line: which model, and where to
-    // change it (the Model Library button beside it).
-    function getModelStatusText(offlineState) {
-      if (offlineState.preferredLocalModel && offlineState.localChatReady) {
-        return jt('offline.status.localModelInUse', 'Local inference uses {model}. Change it in Model Library.', { model: offlineState.preferredLocalModel });
-      }
-      if (offlineState.preferredLocalModel && offlineState.selectedLocalModelInstalled) {
-        return jt('offline.status.selectedModelNotReady', 'Selected model {model} is installed, but local inference is not ready. {reason}', { model: offlineState.preferredLocalModel, reason: offlineState.unavailableReason || '' }).trim();
-      }
-      if (offlineState.preferredLocalModel) {
-        return jt('offline.status.selectedModelMissing', 'Selected model {model} is not available in the local catalog.', { model: offlineState.preferredLocalModel });
-      }
-      return jt('offline.status.noModelSelected', 'No local inference model is selected.');
-    }
-
     function renderOfflineManager() {
-      const {
-        offlineSummary,
-        offlineStatus,
-        offlineLocalOnlyList,
-        offlineModelStatus,
-        offlineModelActions,
-      } = getDomSnapshot();
+      const { offlineLocalOnlyList } = getDomSnapshot();
       const offlineState = state.offline || normalizeOfflineState({});
-      // Prefer the sidecar-curated summary when one is provided — it carries
-      // richer context than the UI fallbacks. Fall back to a UI message that
-      // matches the current mode/readiness state.
-      const offlineSummaryMessage = String(offlineState.summary || '').trim()
-        || (offlineState.mode === 'local_only'
-          ? (offlineState.localChatReady
-            ? jt('offline.status.forceLocalUsingModel', 'Force local inference is on. Jenny will use {model} for model inference.', { model: String(offlineState.preferredLocalModel || 'a local model') })
-            : jt('offline.status.forceLocalBlocked', 'Force local inference is on, but model inference is blocked: {reason}', { reason: String(offlineState.unavailableReason || 'the local runtime is not ready') }))
-          : offlineState.localChatReady
-            ? jt('offline.status.localRuntimeReadyWithModel', 'Local runtime is ready with {model}.', { model: String(offlineState.preferredLocalModel || 'a local model') })
-            : jt('offline.status.forceLocalOff', 'Force local inference is off.'));
-      if (offlineSummary) {
-        renderStatusRowHost(offlineSummary, {
-          tone: offlineState.mode === 'local_only'
-            ? (offlineState.localChatReady ? 'success' : 'warning')
-            : offlineState.localChatReady
-              ? 'default'
-              : String(offlineState.unavailableReason || '').trim()
-                ? 'warning'
-                : 'default',
-          label: jt('offline.localOnly.label', 'Force local inference'),
-          message: offlineSummaryMessage,
-          badgeText: offlineState.mode === 'local_only'
-            ? 'Forced'
-            : offlineState.localChatReady
-              ? 'Ready'
-              : 'Optional',
-          compact: true,
-          className: 'settings-inline-status-row',
-          ariaLive: 'polite',
-        });
-      }
-      if (offlineStatus) {
-        offlineStatus.textContent = '';
-      }
-      renderOfflineToggleList(offlineLocalOnlyList, [
-        { id: 'offlineLocalOnlyToggle', label: jt('offline.localOnly.label', 'Force local inference'), checked: offlineState.mode === 'local_only' },
-      ]);
-      if (offlineModelStatus) {
-        offlineModelStatus.textContent = getModelStatusText(offlineState);
-      }
-      if (offlineModelActions) {
-        const actionButton = getActionButtonRenderer();
-        offlineModelActions.innerHTML = typeof actionButton === 'function' ? actionButton({
-          plain: true,
-          className: 'settings-secondary',
-          label: offlineState.preferredLocalModel ? jt('offline.modelLibrary.manage', 'Manage in Model Library') : jt('offline.modelLibrary.choose', 'Choose in Model Library'),
-          dataset: { action: 'openOfflineModelLibrary' },
-        }) : '';
-      }
+      // E64: with Team on, the owner's sentence follows the switch's own description.
+      const teamNote = forceLocalTeamNote(state);
+      renderOfflineToggleList(offlineLocalOnlyList, [{
+        id: 'offlineLocalOnlyToggle',
+        label: jt('offline.localOnly.label', 'Force local inference'),
+        description: readinessSentence(offlineState) + (teamNote ? ' ' + teamNote : ''),
+        checked: offlineState.mode === 'local_only',
+      }]);
       renderComposerOfflineLabel(offlineState);
+      // An open Quick settings modal repaints its Force local status from the new state.
+      try { windowRef?.rendererQuickSettingsModalController?.refreshOffline?.(); } catch (_e) { /* best-effort */ }
     }
 
     async function refreshOfflineState() {
@@ -351,5 +308,5 @@
     };
   }
 
-  return { createOfflineManager, renderComposerPosture: renderComposerOfflineLabel };
+  return { createOfflineManager, renderComposerPosture: renderComposerOfflineLabel, confirmForceLocal, forceLocalTeamNote, teamApplies };
 });

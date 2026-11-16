@@ -76,13 +76,21 @@ from sidecar.runtime.diagnostics import log_event
 if TYPE_CHECKING:
     from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 
-# Diagrams are drawn from a fenced block in the reply, not from a tool. Always
-# in the prompt, with or without tools, so the model never reaches for one.
-DIAGRAM_REPLY_GUIDANCE = (
-    "## Diagrams\n"
-    "To show a diagram, put Mermaid code in a fenced code block tagged mermaid "
-    "in your reply; the chat draws it as a chart."
-)
+
+# The diagram texts (sidecar.ai.context.diagram_guidance) load with the first prompt
+# build, not at sidecar start: the server import budget counts every eager module.
+def diagram_guidance_kwargs(config: Any) -> dict[str, str]:
+    """Per-request prompt-build kwargs, passed beside request_workspace_root_kwargs."""
+    from sidecar.ai.context.diagram_guidance import diagram_guidance_kwargs as kwargs
+
+    return kwargs(config)
+
+
+def _diagram_guidance_block(variant: str) -> str:
+    from sidecar.ai.context.diagram_guidance import resolve_diagram_guidance
+
+    return resolve_diagram_guidance(variant)
+
 
 def request_workspace_root_kwargs(config: Any, execution_context: Any | None) -> dict[str, Any]:
     """Prompt-build kwargs carrying the request authority's root.
@@ -185,6 +193,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         request_workspace_root: Any = _UNSET_ROOT,
         defer_turn_context: bool = False,
         skill_authority: SkillAuthority | None = None,
+        diagram_guidance: str = "mermaid",
     ) -> str | "StructuredSystemPrompt":
         """Build the system prompt from workspace content.
 
@@ -236,7 +245,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         prompt_blocks.extend(bootstrap_blocks)
         if current_date_block:
             prompt_blocks.append(current_date_block)
-        prompt_blocks.append(DIAGRAM_REPLY_GUIDANCE)
+        prompt_blocks.append(_diagram_guidance_block(diagram_guidance))
         executable_tools_block = self._render_executable_tools(
             tool_statuses, native_tool_schemas=native_tool_schemas
         )
@@ -302,7 +311,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         ]
         if current_date_block:
             static_blocks.append(current_date_block)
-        static_blocks.append(DIAGRAM_REPLY_GUIDANCE)
+        static_blocks.append(_diagram_guidance_block(diagram_guidance))
         for block in static_blocks:
             if block:
                 sections.append(CacheSection(name="static", content=block, cacheable=True))

@@ -314,3 +314,14 @@ test('report and live children carry a normalized transcript; unknown kinds and 
   assert.equal(activity.transcript_version, 3);
   assert.equal(Object.hasOwn(modelUtils.normalizeChildActivity({ sequence: 2 }), 'transcript'), false, 'a frame without one leaves the key out');
 });
+
+test('hasDelegationData names only messages that carry something the monitor renders', () => {
+  const { hasDelegationData } = model;
+  assert.equal(hasDelegationData({ id: 'a', reasoning: { entries: [{ text: 'long thinking' }] } }), false);
+  assert.equal(hasDelegationData({ agent_status_steps: [] }), false);
+  assert.equal(hasDelegationData({ agent_status_steps: [{ id: 's' }] }), true);
+  assert.equal(hasDelegationData({ agent_progress_snapshot: [{ id: 'p' }] }), true);
+  assert.equal(hasDelegationData({ tool_result: { metadata: { subagent_report: { status: 'done' } } } }), true);
+  assert.equal(hasDelegationData({ tool_result: { metadata: { other: 1 } } }), false);
+  assert.equal(hasDelegationData(null), false);
+});

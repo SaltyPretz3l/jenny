@@ -23,6 +23,7 @@ function setup(options = {}) {
   const sent = [];
   const opened = [];
   const logs = [];
+  const toasts = [];
   const openListeners = [];
   let unsubscribed = 0;
   const bridge = options.bridge !== undefined ? options.bridge : {
@@ -51,10 +52,11 @@ function setup(options = {}) {
     callbacks: {
       activateWorkspaceSession: (sessionId) => { opened.push(sessionId); },
       appendClientLog: (level, event, data) => logs.push({ level, event, data }),
+      showToastMessage: (message) => { toasts.push(message); },
     },
   });
   return {
-    controller, state, sent, opened, logs,
+    controller, state, sent, opened, logs, toasts,
     emitOpen: (payload) => openListeners.forEach((listener) => listener(payload)),
     unsubscribedCount: () => unsubscribed,
   };
@@ -194,6 +196,9 @@ const approvalRow = (callId, sessionId = 's1') => ({
 const questionRow = (batchId, introText = 'Pick a format') => ({
   key: `question:s1:${batchId}`, kind: 'question', sessionId: 's1', sessionTitle: 'Budget review', introText,
 });
+const cardRow = (callId) => ({
+  key: `question:s1:${callId}`, kind: 'question', source: 'card', sessionId: 's1', sessionTitle: 'Budget review', introText: 'Pick',
+});
 const planRow = (callId) => ({
   key: `plan_review:${callId}`, kind: 'plan_review', sessionId: 's1', sessionTitle: 'Budget review', toolName: 'exit_plan_mode',
 });
@@ -204,6 +209,13 @@ test('the first inbox pass seeds silently: waits pending at boot were not new', 
   assert.deepEqual(sent, []);
   controller.onInboxRows([approvalRow('c1'), questionRow('b1')]);
   assert.deepEqual(sent, [], 'the seeded rows stay quiet on later passes');
+});
+
+test('a live question card row stays quiet: its toast comes from the stream listener (G7)', () => {
+  const { controller, sent } = setup();
+  controller.onInboxRows([]);
+  controller.onInboxRows([cardRow('ask-1'), questionRow('b1')]);
+  assert.deepEqual(sent.map((c) => c.key), ['inbox:question:s1:b1']);
 });
 
 test('while the app session list is not loaded every pass seeds, and so does the first loaded pass', () => {
@@ -367,6 +379,37 @@ test('a toast click opens its chat; dispose unsubscribes', () => {
   assert.deepEqual(opened, ['s1'], 'nothing opens after dispose');
 });
 
+test('row 123 2a-6c: notifyTeam sends team candidates only; a team click goes to the team opener, never a chat', () => {
+  const { controller, sent, opened, emitOpen } = setup();
+  assert.equal(controller.notifyTeam({ category: 'replies', key: 'x', sessionId: 's1', title: 't', body: 'b' }), null);
+  const team = { category: 'team', key: 'team:msg_1', teamId: 'team_B', channelId: 'chan_team', messageId: 'msg_1', title: 'Maya in #team', body: 'New message' };
+  assert.equal(controller.notifyTeam(team).key, 'team:msg_1');
+  assert.deepEqual(sent.map((c) => c.category), ['team']);
+  emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  const routed = [];
+  controller.setTeamOpenHandler((payload) => routed.push(payload.channelId));
+  emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  assert.deepEqual([routed, opened], [['chan_team'], []]);
+  controller.dispose();
+  emitOpen({ category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  assert.deepEqual(routed, ['chan_team'], 'dispose forgets the opener');
+  const noop = createDesktopNotificationsController({});
+  assert.equal(noop.notifyTeam(team), null);
+  noop.setTeamOpenHandler(() => {});
+});
+
+test('fix item 6: a team toast clicked when no team is left (no opener) says so where the person lands', () => {
+  const { controller, emitOpen, toasts, opened } = setup();
+  emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  assert.deepEqual([toasts, opened], [['You are no longer in that team.'], []]);
+  controller.setTeamOpenHandler(() => false); // the opener could not open the team: it is not there
+  emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  assert.equal(toasts.length, 2);
+  controller.setTeamOpenHandler(() => true);
+  emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
+  assert.equal(toasts.length, 2, 'an opened team says nothing more');
+});
+
 test('a missing or broken bridge never throws; a failing send is logged once per message', () => {
   const absent = setup({ bridge: null });
   assert.doesNotThrow(() => {
@@ -396,11 +439,11 @@ test('a missing or broken bridge never throws; a failing send is logged once per
 });
 
 test('normalizeNotificationSettings is total and fills every default', () => {
-  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny']);
+  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team']);
   const defaults = normalizeNotificationSettings(undefined);
   assert.deepEqual(defaults, {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true },
   });
   assert.deepEqual(normalizeNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS), defaults);
   const partial = normalizeNotificationSettings({ enabled: false, sound: 'yes', categories: { failures: false, bogus: true } });

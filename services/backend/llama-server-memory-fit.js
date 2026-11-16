@@ -15,7 +15,14 @@
  *  - the server gets `--fit-target` without the acceleration headroom: its
  *    own fit already counts the MTP draft context (`llama-fit-params` rejects
  *    the speculative flags, so only the dry run needs the estimate). Charging
- *    it twice moved 8 of 66 Qwen3.8 layers back to the CPU.
+ *    it twice moved 8 of 66 Qwen3.8 layers back to the CPU;
+ *  - when the dry run puts every layer on the GPU, the server also gets
+ *    `-ngl all`, so its own fit has no placement left to second-guess. Its
+ *    draft estimate is more cautious than the real use: 2026-11-12 with a
+ *    projector beside Qwen3.8-27B UD-Q6_K at 154K it asked for 3041 MiB free,
+ *    dropped 4 of 66 layers to the CPU and decoded 62 tok/s on ~20 CPU cores;
+ *    pinned, the same launch used 30.9 of 32.6 GB and decoded 119 tok/s. A
+ *    spill keeps the server's fit, which then picks the partial placement.
  * A profile that places layers or turns `--fit` off owns placement. Every
  * failure keeps the requested context: the plan never blocks a launch.
  */
@@ -207,7 +214,11 @@ async function planLaunchMemory({
     }
     return {
       contextSize,
-      extraArgs: [...defaults, '--fit-target', String(serverMarginMb)],
+      extraArgs: [
+        ...defaults,
+        ...(allOnGpu ? ['-ngl', 'all'] : []),
+        '--fit-target', String(serverMarginMb),
+      ],
       reason,
       fittedContext: fitted.contextSize,
       gpuLayers: fitted.gpuLayers,

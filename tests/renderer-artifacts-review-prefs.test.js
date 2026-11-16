@@ -465,6 +465,21 @@ describe('the subagents rail mode is renderer-local', () => {
   });
 });
 
+describe('the background tasks panel mode is renderer-local', () => {
+  const prefsUtils = require('../renderer/features/renderer-artifact-review-prefs');
+
+  test('the normalizer accepts the mode; the loader and the saver never carry it', () => {
+    assert.equal(prefsUtils.normalizeArtifactReviewMode('background_tasks'), 'background_tasks');
+    assert.equal(prefsUtils.normalizeArtifactReviewMode(' Background_Tasks '), 'background_tasks');
+    const windowRef = { localStorage: { getItem: () => JSON.stringify({ enabled: true, mode: 'background_tasks' }) } };
+    assert.equal(prefsUtils.loadArtifactReviewPreferences(windowRef, 'k').mode, 'artifact');
+    const written = [];
+    prefsUtils.saveArtifactReviewPreferences({ localStorage: { setItem: (key, value) => written.push(value) } }, 'k', { enabled: true, mode: 'background_tasks' });
+    assert.equal(written.length, 1);
+    assert.doesNotMatch(written[0], /background_tasks|"mode"/);
+  });
+});
+
 describe('the notes rail mode is renderer-local', () => {
   const prefsUtils = require('../renderer/features/renderer-artifact-review-prefs');
 

@@ -8,6 +8,8 @@ const {
 } = require('../services/main-window-navigation-guard');
 
 const APP_URL = 'file:///C:/Projects/jenny/index.html';
+// What main loads: index.html with its launch query (services/main/main-window-composition.js).
+const LAUNCH_URL = `${APP_URL}?jennyAppearance=%7B%22paletteId%22%3A%22default%22%7D&jennyUiLanguage=en&jennyStartupAnimation=off`;
 
 function createFakeWebContents(currentUrl = APP_URL) {
   const listeners = new Map();
@@ -63,11 +65,17 @@ test('isHttpUrl / isSameDocumentNavigation classify targets correctly', () => {
   assert.equal(isHttpUrl('file:///C:/x/index.html'), false);
   assert.equal(isHttpUrl('mailto:a@b.com'), false);
 
-  // Same document: exact reload, hash routing, query-only change.
+  // Same document: exact reload and hash routing. A query change is a new load of the page
+  // with someone else's query (R13-F01), so it is not "same document".
   assert.equal(isSameDocumentNavigation(APP_URL, APP_URL), true);
   assert.equal(isSameDocumentNavigation('file:///C:/Projects/jenny/index.html#x', APP_URL), true);
-  assert.equal(isSameDocumentNavigation('file:///C:/Projects/jenny/index.html?v=1', APP_URL), true);
+  assert.equal(isSameDocumentNavigation('file:///C:/Projects/jenny/index.html?v=1', APP_URL), false);
   assert.equal(isSameDocumentNavigation('', APP_URL), true);
+  assert.equal(isSameDocumentNavigation(LAUNCH_URL, LAUNCH_URL), true, 'the app reloading its own URL');
+  assert.equal(isSameDocumentNavigation(`${LAUNCH_URL}#a`, LAUNCH_URL), true, 'a hash on the launch URL');
+  assert.equal(isSameDocumentNavigation(`${LAUNCH_URL}#b`, `${LAUNCH_URL}#a`), true, 'hash to hash');
+  assert.equal(isSameDocumentNavigation(APP_URL, LAUNCH_URL), false, 'dropping the launch query reloads');
+  assert.equal(isSameDocumentNavigation(`${APP_URL}#a`, LAUNCH_URL), false, 'a hash link that also drops the query');
 
   // External schemes leave.
   assert.equal(isSameDocumentNavigation('https://example.com', APP_URL), false);
@@ -182,7 +190,7 @@ test('will-navigate to a different local file is blocked and not opened external
   assert.equal(blocked.details.external, false, 'local-file navigation is not "external"');
 });
 
-test('hash-only and query-only same-document navigations are still allowed', () => {
+test('hash-only same-document navigations and the app reloading its own URL are still allowed', () => {
   const webContents = createFakeWebContents();
   const shell = createCaptureShell();
   attachMainWindowNavigationGuards({ windowRef: createFakeWindow(webContents), shell });
@@ -190,13 +198,40 @@ test('hash-only and query-only same-document navigations are still allowed', () 
   for (const url of [
     APP_URL,
     'file:///C:/Projects/jenny/index.html#settings',
-    'file:///C:/Projects/jenny/index.html?v=2',
   ]) {
     const event = createNavEvent();
     webContents.emit('will-navigate', event, url);
     assert.equal(event.prevented, false, `in-document navigation must not be blocked: ${url}`);
   }
   assert.deepEqual(shell.opened, []);
+});
+
+// Team review R13-F01: a link in rendered markdown (`[x](?jennyUiLanguage=qps-ploc)`) resolves to the
+// app's own page with another query. Main's own launch and reloads are programmatic (loadFile,
+// reloadIgnoringCache: no will-navigate) or go to exactly the current URL (location.reload()), so a
+// query-changing navigation that reaches this guard came from the page and is refused.
+test('a page-started navigation that changes the query of the app page is blocked', () => {
+  const webContents = createFakeWebContents(LAUNCH_URL);
+  const shell = createCaptureShell();
+  const logs = [];
+  attachMainWindowNavigationGuards({
+    windowRef: createFakeWindow(webContents),
+    shell,
+    log: (level, event, details) => logs.push({ level, event, details }),
+  });
+  const navigate = (url) => { const event = createNavEvent(); webContents.emit('will-navigate', event, url); return event.prevented; };
+  for (const href of ['?lang=xx', 'index.html?x', './?x', '?', 'index.html', `${APP_URL}?jennyUiLanguage=ar`, 'index.html#a']) {
+    const url = new URL(href, LAUNCH_URL).href;
+    assert.equal(navigate(url), true, `blocked: ${href}`);
+  }
+  assert.deepEqual(shell.opened, [], 'nothing local is handed to the OS browser');
+  assert.ok(logs.every((entry) => entry.details.scheme === 'file' && entry.details.external === false));
+  assert.equal(JSON.stringify(logs).includes('jennyUiLanguage'), false, 'the query is never logged');
+
+  assert.equal(navigate(LAUNCH_URL), false, 'location.reload() of the launch URL passes');
+  assert.equal(navigate(new URL('#a', LAUNCH_URL).href), false, 'a hash-only link passes');
+  assert.equal(navigate('https://example.com/x'), true, 'a web link is stopped in the window');
+  assert.deepEqual(shell.opened, ['https://example.com/x'], 'and opened in the OS browser as before');
 });
 
 test('guard fails closed (returns false, no throw) on malformed window refs', () => {

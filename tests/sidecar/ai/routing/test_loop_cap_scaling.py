@@ -1,6 +1,7 @@
 """TR-005 follow-up: the local task step limit scales with measured model speed.
 
-Owner decision 2026-09-28: at the default local task cap (30), reaching the cap
+Owner decision 2026-09-28: at the default local task cap (30 then, 300 since
+2026-11-11; these tests pin the base to 30), reaching the cap
 re-evaluates it from the mean model-generation wall time of this run:
 ``min(4 x base, base x ceil(mean_s / 30))`` when the mean is >= 30 s (TR-013:
 the mean, not the median, so a model that answers most tool steps in seconds but
@@ -20,6 +21,7 @@ from typing import Any
 import pytest
 
 from sidecar.ai.config import RuntimeConfig
+from sidecar.ai.routing import iteration_limits
 from sidecar.ai.routing.iteration_limits import (
     LoopCapScaler,
     resume_iteration_ceiling,
@@ -36,6 +38,27 @@ from .test_tool_loop import (
     _ToolLoopEngine,
     _ToolPlan,
 )
+
+# The rule is exercised at a base cap of 30 (the default when it was written): the
+# real default (300) times four exceeds the 500-call tool budget these runs use.
+_BASE = 30
+
+
+@pytest.fixture(autouse=True)
+def _base_cap_of_thirty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(iteration_limits, "DEFAULT_LOCAL_TASK_LOOP_ITERATIONS", _BASE)
+
+
+def _local_config(engine_type: str = "llama-server", model: str = "bonsai") -> RuntimeConfig:
+    return RuntimeConfig(engine_type=engine_type, model=model, max_task_loop_iterations=_BASE)
+
+
+def test_the_real_default_task_cap_is_the_scaling_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()
+    config = RuntimeConfig(engine_type="llama-server", model="bonsai")
+    assert iteration_limits.DEFAULT_LOCAL_TASK_LOOP_ITERATIONS == 300
+    assert config.max_task_loop_iterations == 300
+    assert scalable_task_loop_base(config, mode="assist", agent_surface="main") == 300
 
 
 class _FakeClock:
@@ -90,7 +113,7 @@ def _run_turn(  # noqa: PLR0913 - compact scenario builder.
     seconds: float | Sequence[float],
     tool_steps: int,
     engine_type: str = "ollama",
-    task_cap: int | None = None,
+    task_cap: int = _BASE,
     max_iterations: int = 30,
     deadline_seconds: float | None = None,
 ) -> tuple[_TimedToolEngine, _StubMCPClient, Any]:
@@ -103,8 +126,7 @@ def _run_turn(  # noqa: PLR0913 - compact scenario builder.
         max_tools_per_turn=500,
         engine_type=engine_type,
     )
-    if task_cap is not None:
-        router._config = replace(router._config, max_task_loop_iterations=task_cap)
+    router._config = replace(router._config, max_task_loop_iterations=task_cap)
     runtime = LoopRuntime(
         request_id="req_loop_cap",
         max_iterations=max_iterations,
@@ -154,7 +176,7 @@ _G2_LIKE_STEP_SECONDS = (5.0,) * 13 + (250.0,) + (5.0,) * 7 + (1_350.0,) + (4.7,
 
 def _scaler(iteration_base: int = 0, max_iterations: int = 30) -> LoopCapScaler:
     return LoopCapScaler.for_run(
-        RuntimeConfig(engine_type="llama-server", model="bonsai"),
+        _local_config(),
         request_context=SimpleNamespace(mode="assist", agent_surface="main"),
         iteration_base=iteration_base,
         max_iterations=max_iterations,
@@ -185,7 +207,7 @@ def test_uniformly_fast_steps_below_the_mean_threshold_never_extend() -> None:
 
 
 def test_only_a_local_default_task_cap_may_scale() -> None:
-    local = RuntimeConfig(engine_type="llama-server", model="bonsai")
+    local = _local_config()
     assert scalable_task_loop_base(local, mode="assist", agent_surface="main") == 30
     assert scalable_task_loop_base(local, mode="task", agent_surface=None) == 30
     # Chat mode, sub-agents, cloud engines and explicit values keep a hard cap.
@@ -200,7 +222,7 @@ def test_only_a_local_default_task_cap_may_scale() -> None:
 
 
 def test_resumed_run_counts_the_previous_legs_budget() -> None:
-    config = RuntimeConfig(engine_type="ollama", model="qwen")
+    config = _local_config("ollama", "qwen")
     request_context = SimpleNamespace(mode="assist", agent_surface="main")
     scaler = LoopCapScaler.for_run(
         config,
@@ -232,7 +254,7 @@ def test_plan_build_leg_scales_from_its_fresh_step_budget() -> None:
 
 
 def test_fast_model_never_extends_a_smaller_caller_budget() -> None:
-    config = RuntimeConfig(engine_type="ollama", model="qwen")
+    config = _local_config("ollama", "qwen")
     request_context = SimpleNamespace(mode="assist", agent_surface="main")
     scaler = LoopCapScaler.for_run(
         config,
@@ -395,7 +417,7 @@ def test_resume_accepts_the_remaining_steps_of_an_extended_cap() -> None:
     """A slow model earned 120 steps and paused at 45: resume keeps its 75."""
     from sidecar.runtime import chat_continuation_resume as resume
 
-    config = RuntimeConfig(engine_type="llama-server", model="bonsai")
+    config = _local_config()
     request_context = SimpleNamespace(mode="assist", agent_surface="main")
     runtime = _fresh_runtime()
     ceiling = resume_iteration_ceiling(runtime, config, request_context)
@@ -411,7 +433,7 @@ def test_resume_accepts_the_remaining_steps_of_an_extended_cap() -> None:
     [
         (RuntimeConfig(engine_type="llama-server", model="bonsai", max_task_loop_iterations=40), "assist"),
         (RuntimeConfig(engine_type="chatgpt", model="gpt"), "assist"),
-        (RuntimeConfig(engine_type="llama-server", model="bonsai"), "chat"),
+        (_local_config(), "chat"),
     ],
 )
 def test_resume_still_refuses_more_steps_than_a_non_scaling_run_allows(config, mode) -> None:
@@ -430,7 +452,7 @@ def test_resume_refuses_beyond_the_scaler_ceiling() -> None:
     from sidecar.ai.tools.contracts import ToolExecutionFailure
     from sidecar.runtime import chat_continuation_resume as resume
 
-    config = RuntimeConfig(engine_type="llama-server", model="bonsai")
+    config = _local_config()
     runtime = _fresh_runtime()
     ceiling = resume_iteration_ceiling(
         runtime, config, SimpleNamespace(mode="assist", agent_surface="main")
@@ -449,7 +471,7 @@ def test_durable_decision_resume_keeps_the_saved_step_budget() -> None:
     """
     from sidecar.runtime import chat_continuation_resume as resume
 
-    config = RuntimeConfig(engine_type="llama-server", model="bonsai")
+    config = _local_config()
     request_context = SimpleNamespace(mode="assist", agent_surface="main")
     runtime = _fresh_runtime()
     checkpoint = _paused_checkpoint(12)

@@ -145,3 +145,65 @@ test('the guard fails open when the catalog cannot vouch for the engine family',
   await resolveModel(cloud.service, 'gpt-5.5', 'chatgpt');
   assert.equal(cloud.calls.lists, 0, 'a cloud engine keeps its own catalog');
 });
+
+// 2026-11-13 live incident: a fresh profile with no model chosen started a multi-GB Ollama pull of the
+// built-in default at startup, while other models were already installed. A turn with no model of its
+// own now loads only an installed default (Settings default first) and never pulls one.
+const BUILT_IN = 'hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M';
+const OLLAMA_CATALOG = [{ id: 'ornith15:9b-q6-256k', engine_type: 'ollama' }, { id: 'qwen3:8b', engine_type: 'ollama' }];
+function defaultTurnService({ settingsDefault = '', listing = { primary_available: true, data: OLLAMA_CATALOG }, flags = {}, lifecycle = 'unloaded' } = {}) {
+  const { service, calls } = guardService({ listing, flags });
+  Object.assign(service, {
+    currentModel: '', currentEngineType: 'ollama', defaultModel: BUILT_IN,
+    _modelLifecycle: { state: lifecycle },
+    offlineIntelligenceService: { getPreferredLocalModel: () => settingsDefault },
+    async refreshStatusSnapshot() { return null; },
+  });
+  return { service, calls };
+}
+
+test('a Default turn never loads (so never pulls) a default the catalog does not carry', async () => {
+  for (const lifecycle of ['unloaded', 'unavailable']) {
+    const { service, calls } = defaultTurnService({ lifecycle });
+    await assert.rejects(resolveModel(service, ''), (error) => {
+      assert.match(error.message, /default model "hf\.co\/ornith-ai\/Ornith-1\.5-9B-GGUF:Q4_K_M" is not installed/u);
+      assert.match(error.message, /Pick an installed model for this chat/u);
+      assert.equal(error.category, 'model_unavailable');
+      assert.equal(error.retryable, false);
+      return true;
+    });
+    assert.deepEqual(calls.loads, [], `${lifecycle}: nothing was loaded`);
+    assert.ok(calls.logs.some((entry) => entry.event === 'backend.default_model_not_installed'));
+  }
+});
+
+test('a Default turn loads the installed Settings default first, then an installed built-in default', async () => {
+  const settings = defaultTurnService({ settingsDefault: 'qwen3:8b' });
+  assert.equal(await resolveModel(settings.service, ''), 'qwen3:8b');
+  assert.deepEqual(settings.calls.loads, ['qwen3:8b']);
+
+  const builtIn = defaultTurnService({
+    settingsDefault: 'gone:1b',
+    listing: { primary_available: true, data: [...OLLAMA_CATALOG, { id: BUILT_IN, engine_type: 'ollama' }] },
+  });
+  assert.equal(await resolveModel(builtIn.service, ''), BUILT_IN);
+  assert.deepEqual(builtIn.calls.loads, [BUILT_IN]);
+
+  const missingSettings = defaultTurnService({ settingsDefault: 'gone:1b' });
+  await assert.rejects(resolveModel(missingSettings.service, ''), /default model "gone:1b" is not installed/u);
+  assert.deepEqual(missingSettings.calls.loads, [], 'the message names the Settings default');
+});
+
+test('a Default turn the catalog cannot vouch for loads nothing; the kill switch restores the old load', async () => {
+  const down = defaultTurnService({ listing: new Error('sidecar down') });
+  await assert.rejects(resolveModel(down.service, ''), (error) => {
+    assert.match(error.message, /could not confirm the default model/u);
+    assert.equal(error.retryable, true);
+    return true;
+  });
+  assert.deepEqual(down.calls.loads, []);
+
+  const off = defaultTurnService({ flags: { no_silent_model_pull: false } });
+  assert.equal(await resolveModel(off.service, ''), BUILT_IN);
+  assert.deepEqual(off.calls.loads, [BUILT_IN]);
+});

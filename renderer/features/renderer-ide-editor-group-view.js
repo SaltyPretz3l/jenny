@@ -170,6 +170,8 @@
       applying = true;
       try {
         editor.setModel(model);
+        // An outside file in a legacy encoding (row 137) is read-only here too, as in the primary editor.
+        editor.updateOptions?.({ readOnly: globalThis.rendererIdeOutsideFiles?.describe?.(path)?.readOnly === true });
         // No state of this view's own: fall back to the document-level state the
         // primary editor stashed, so a tab moved in keeps its cursor and scroll.
         const state = model ? viewStates.get(path) || editorHost.getViewState?.(path) : null;

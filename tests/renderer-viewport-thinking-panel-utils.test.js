@@ -484,3 +484,43 @@ test('clearThinkingPanelSettle cancels a settle armed by any owner, and re-armin
   assert.equal(panel.style.maxHeight, '');
   dom.window.close();
 });
+
+// Review 2026-11-12 (scroll-away-nav 8): each expanded, rebuilt panel wrote,
+// read, wrote and read again, two forced layouts per panel in one frame.
+test('a full sync over freshly rebuilt expanded panels batches its layout reads', () => {
+  const dom = new JSDOM(`<div id="timeline">${Array.from({ length: 10 }, () =>
+    '<div class="reasoning-row-block" data-reasoning-status="complete"><div class="reasoning-row-panel expanded"><div class="reasoning-row-panel-body">body</div></div></div>').join('')}</div>`);
+  let dirty = false;
+  let forcedLayouts = 0;
+  const read = () => { if (dirty) { forcedLayouts += 1; dirty = false; } return 120; };
+  for (const el of dom.window.document.querySelectorAll('.reasoning-row-panel, .reasoning-row-panel-body')) {
+    for (const property of ['scrollHeight', 'offsetHeight']) {
+      Object.defineProperty(el, property, { configurable: true, get: read });
+    }
+    if (!el.classList.contains('reasoning-row-panel')) continue;
+    let hidden = false;
+    Object.defineProperty(el, 'hidden', { configurable: true, get: () => hidden, set(value) { hidden = value; dirty = true; } });
+    const style = el.style;
+    const values = {};
+    for (const property of ['maxHeight', 'transition']) {
+      Object.defineProperty(style, property, {
+        configurable: true,
+        get: () => values[property] || '',
+        set(value) { values[property] = value; dirty = true; },
+      });
+    }
+  }
+  const controller = createViewportThinkingPanelUtils({ state: { ui: {} },
+    dom: { chatTimeline: dom.window.document.getElementById('timeline') },
+    controllers: { thinkingController: {}, reducedMotionQuery: { matches: true } },
+    callbacks: {}, scheduling: {} });
+  try {
+    controller.syncRenderedThinkingPanels();
+    assert.ok(forcedLayouts <= 2, `${forcedLayouts} forced layouts for 10 panels`);
+    for (const panel of dom.window.document.querySelectorAll('.reasoning-row-panel')) {
+      assert.equal(panel.hidden, false);
+      assert.equal(panel.style.maxHeight, 'none');
+      assert.equal(panel.style.transition, '');
+    }
+  } finally { controller.disposeThinkingPanelWork(); dom.window.close(); }
+});

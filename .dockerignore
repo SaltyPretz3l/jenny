@@ -31,6 +31,7 @@
 !scripts/build-browser.js
 !config
 !config/host.example.json
+!config/team-host.example.json
 !config/chat-lifecycle-v2.schema.json
 !config/workspace-mutation-journal-v1.schema.json
 !config/model-recommendation-catalog.json
@@ -41,6 +42,8 @@
 !config/llama-server-profiles/**
 !config/plugins
 !config/plugins/**
+# The prebuilt team bridge, for Dockerfile.team only (built by npm run build:team-bridge).
+!build/sidecar/jenny-team-bridge
 # Denials after inclusions also cover accidentally copied local material.
 **/secrets
 **/.env

@@ -44,7 +44,7 @@ function makeStage(t, { files = {}, buffers = {}, watchActive = false, fileOpera
   const hostEl = dom.window.document.getElementById('idePreviewHost');
   const ide = ideState.createIdeUiState();
   const timers = makeTimers(dom.window);
-  const state = { watchActive, frames: [], frameDisposals: 0, markdownRenders: 0 };
+  const state = { watchActive, frames: [], frameDisposals: 0, markdownRenders: 0, activations: [] };
   globalThis.markdownUtils = {
     renderMarkdown: (source) => { state.markdownRenders += 1; return `<p>${escapeHtml(source)}</p>`; },
     renderInlineMermaidBlocks: () => {},
@@ -59,16 +59,18 @@ function makeStage(t, { files = {}, buffers = {}, watchActive = false, fileOpera
     delete globalThis.markdownUtils;
     delete globalThis.rendererHtmlArtifactFrameUtils;
   });
+  const editorHost = {
+    hasDocument: (path) => path in buffers,
+    getValue: (path) => buffers[path] || '',
+    getAltVersionId: () => 1,
+  };
   const stage = createIdePreviewStage({
     getDom: () => ({ idePreviewHost: hostEl }),
     getIde: () => ide,
     ideStateUtils: ideState,
     escapeHtml,
-    editorHost: {
-      hasDocument: (path) => path in buffers,
-      getValue: (path) => buffers[path] || '',
-      getAltVersionId: () => 1,
-    },
+    editorHost,
+    activateStage: (surface) => state.activations.push(surface),
     getWorkspaceFsApi: () => ({
       readText: async (payload) => (payload.path in files
         ? {
@@ -82,7 +84,7 @@ function makeStage(t, { files = {}, buffers = {}, watchActive = false, fileOpera
     windowRef: timers.windowRef,
   });
   t.after(() => stage.dispose());
-  return { stage, ide, hostEl, timers, state, window: dom.window };
+  return { stage, ide, hostEl, timers, state, editorHost, window: dom.window };
 }
 
 async function show(h, path) {
@@ -528,4 +530,39 @@ test('a new workspace root does not inherit the old scroll position', async (t) 
   h.stage.handleWorkspaceRootCommitted();
   await show(h, 'a.html');
   assert.equal(lastFrame(h).options.restoreScrollY, undefined);
+});
+
+test('the Preview button shows the file the user is on, not the last previewed one', async (t) => {
+  const h = makeStage(t, { files: { 'a.md': 'FILE-A', 'b.md': 'FILE-B' } });
+  h.ide.activeTabPath = 'a.md';
+  assert.equal(h.stage.openActiveFile({ toggle: true }), 'a.md');
+  ideState.setStageSurface(h.ide, 'preview');
+  h.stage.sync(true);
+  await settle();
+  assert.match(h.hostEl.textContent, /FILE-A/);
+
+  // Back to the editor, switch to b.md, press Preview again: b.md, not the stale a.md pin.
+  ideState.setStageSurface(h.ide, 'editor');
+  h.ide.activeTabPath = 'b.md';
+  assert.equal(h.stage.openActiveFile({ toggle: true }), 'b.md');
+  ideState.setStageSurface(h.ide, 'preview');
+  h.stage.sync(true);
+  await settle();
+  assert.match(h.hostEl.textContent, /FILE-B/);
+
+  // Pressed while on stage, the toolbar toggle returns to the editor.
+  h.state.activations.length = 0;
+  h.stage.openActiveFile({ toggle: true });
+  assert.deepEqual(h.state.activations, ['editor']);
+
+  // A CSS/JS active file keeps the pin (Ctrl+Shift+V and the palette share this path).
+  ideState.setStageSurface(h.ide, 'editor');
+  h.ide.activeTabPath = 'style.css';
+  assert.equal(h.stage.openActiveFile(), 'b.md');
+  assert.equal(h.ide.previewPath, 'b.md', 'the pin is not replaced by a path that cannot render');
+
+  // A file focused in a split editor group wins over the primary group's active tab.
+  h.editorHost.getFocusedPath = () => 'a.md';
+  assert.equal(h.stage.openActiveFile(), 'a.md');
+  assert.equal(h.ide.previewPath, 'a.md');
 });

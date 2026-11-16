@@ -13,6 +13,7 @@ const path = require('path');
 const {
   getCodebaseContext,
   extractKeywords,
+  isGroundableChatQuery,
 } = require('../services/backend/codebase-context-utils');
 const { linkDirectory } = require('./helpers/platform-skips');
 
@@ -64,6 +65,27 @@ describe('extractKeywords', () => {
     assert.deepEqual(extractKeywords(null), []);
     assert.deepEqual(extractKeywords(''), []);
     assert.deepEqual(extractKeywords('is the a of'), []);
+  });
+});
+
+describe('isGroundableChatQuery', () => {
+  test('greetings and one-word chat prompts do not ground', () => {
+    for (const query of ['hello', 'whats this?', 'thanks!', '', null, 'is the a of']) {
+      assert.equal(isGroundableChatQuery(query), false, String(query));
+    }
+  });
+
+  test('two or more search terms ground', () => {
+    assert.equal(isGroundableChatQuery('where is widget defined'), true);
+    assert.equal(isGroundableChatQuery('login session timeout'), true);
+  });
+
+  test('one identifier-shaped term grounds', () => {
+    for (const query of ['where is authToken?', 'login_session', 'lightbox.js', 'lib/x', 'init()']) {
+      assert.equal(extractKeywords(query).length, 1, query);
+      assert.equal(isGroundableChatQuery(query), true, query);
+    }
+    assert.equal(isGroundableChatQuery('where is auth?'), false);
   });
 });
 

@@ -3,25 +3,27 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { ROOT, waitFor, createBackend } = require('../helpers/session-runtime-stdio-fixture');
-for (const [kind, publicationFailure] of [['user_questions', null], ['approval', null],
-  ['user_questions', 'write'], ['user_questions', 'cancel']]) {
-  test(`real Python child wait -> ${kind} -> reconstruction -> child wait (${publicationFailure || 'complete'})`, { timeout: 55_000 }, async t => {
-    const root = fs.mkdtempSync(path.join(ROOT, 'artifacts', 'mixed-stdio-'));
+const { ROOT, waitFor, createBackend, createPhaseCache } = require('../helpers/session-runtime-stdio-fixture');
+
+// The cases of one decision kind share the same first phase (child wait, decision pause, stop). It
+// is built once per kind, frozen, and every case restores its own copy of the stopped directory
+// before the restart; the cases differ only in what happens after it.
+const cache = createPhaseCache('mixed-stdio-');
+test.after(() => cache.cleanup());
+const sidecarArgs = [path.join(ROOT, 'tests/helpers/session-runtime-mixed-sidecar.py')];
+const pendingFor = (backend, kind) => (kind === 'approval' ? backend.pendingToolApprovals : backend.pendingUserQuestions);
+const answerFor = (backend, kind, reference) => (kind === 'approval' ? backend.approveToolCall(reference)
+  : backend.answerUserQuestions(reference, { answers: [{ id: 'choice', value: 'Continue' }] }));
+
+function buildFirstPhase(kind) {
+  return async root => {
     const profile = path.join(root, 'profile'); fs.mkdirSync(profile);
     const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
     fs.writeFileSync(path.join(workspace, 'fixture.txt'), 'Mixed approved read.');
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const seen = []; const logs = [];
-    const create = () => createBackend(profile, workspace, seen, logs, kind,
-      [path.join(ROOT, 'tests/helpers/session-runtime-mixed-sidecar.py')]);
-    let backend = create(); let workId; let sessionId;
-    const pending = () => kind === 'approval' ? backend.pendingToolApprovals : backend.pendingUserQuestions;
-    const answer = reference => kind === 'approval' ? backend.approveToolCall(reference)
-      : backend.answerUserQuestions(reference, { answers: [{ id: 'choice', value: 'Continue' }] });
+    const backend = createBackend(profile, workspace, [], [], kind, sidecarArgs);
     try {
       await backend.start();
-      sessionId = (await backend.createSession({ title: 'Mixed continuation' })).data.id;
+      const sessionId = (await backend.createSession({ title: 'Mixed continuation' })).data.id;
       const projects = backend.projectApplicationService;
       // The Workspace folder is already a project (provisioned by createSession);
       // bindRoot refuses a second owner, so the fixture uses that project.
@@ -32,11 +34,11 @@ for (const [kind, publicationFailure] of [['user_questions', null], ['approval',
         prompt: kind === 'approval' ? 'MIXED_APPROVAL' : 'MIXED_QUESTION',
         purpose: 'Exercise bounded child and decision cycles', idempotency_key: 'mixed_cycle',
         limits: { inference_requests: 10, input_tokens: 1_000_000, output_tokens: 1_000_000 } });
-      assert.equal(sent.ok, true, JSON.stringify(sent)); workId = sent.work_id;
+      assert.equal(sent.ok, true, JSON.stringify(sent)); const workId = sent.work_id;
       const [oldReference, oldWaiter] = await waitFor(() => {
         const work = backend.sessionRuntime.store.get(workId);
         if (['failed', 'completed', 'needs_attention'].includes(work.status)) throw new Error(JSON.stringify(work));
-        return [...pending().entries()][0];
+        return [...pendingFor(backend, kind).entries()][0];
       });
       assert.equal(oldWaiter.requireExactRef, true);
       let work = backend.sessionRuntime.store.get(workId);
@@ -48,11 +50,28 @@ for (const [kind, publicationFailure] of [['user_questions', null], ['approval',
       assert.deepEqual(checkpoint.completed_effect_refs.map(row => row.tool_id), ['session_spawn', 'session_wait']);
       assert.ok(checkpoint.prior_checkpoint_ref);
       const before = backend.sessionRuntime.budgetStore.get(sent.root_run_id);
-      assert.equal(answer(oldReference), false);
-      await backend.stop(); backend.dispose(); backend = create(); await backend.start();
-      work = backend.sessionRuntime.store.get(workId);
+      assert.equal(answerFor(backend, kind, oldReference), false);
+      return { sessionId, workId, rootRunId: sent.root_run_id, oldReference, checkpoint, before };
+    } finally { await backend.stop(); backend.dispose(); }
+  };
+}
+
+for (const [kind, publicationFailure] of [['user_questions', null], ['approval', null],
+  ['user_questions', 'write'], ['user_questions', 'cancel']]) {
+  test(`real Python child wait -> ${kind} -> reconstruction -> child wait (${publicationFailure || 'complete'})`, { timeout: 55_000 }, async t => {
+    const { dir, state } = await cache.open(kind, buildFirstPhase(kind));
+    const { sessionId, workId, rootRunId, oldReference, checkpoint, before } = state;
+    const profile = path.join(dir, 'profile'); const workspace = path.join(dir, 'workspace');
+    const seen = []; const logs = [];
+    let backend = createBackend(profile, workspace, seen, logs, kind, sidecarArgs);
+    const pending = () => pendingFor(backend, kind);
+    const answer = reference => answerFor(backend, kind, reference);
+    try {
+      // The first phase was stopped before it was frozen; this backend is the restart.
+      await backend.start();
+      const work = backend.sessionRuntime.store.get(workId);
       assert.equal(work.status, 'paused');
-      assert.deepEqual(backend.sessionRuntime.budgetStore.get(sent.root_run_id).charged, before.charged);
+      assert.deepEqual(backend.sessionRuntime.budgetStore.get(rootRunId).charged, before.charged);
       assert.equal(backend.runtimeApplicationService.resume({ work_id: workId, expected_revision: work.revision }).ok, true);
       const [reference] = await waitFor(() => [...pending().entries()][0]);
       assert.notEqual(reference, oldReference); assert.equal(answer(oldReference), false);
@@ -90,7 +109,7 @@ for (const [kind, publicationFailure] of [['user_questions', null], ['approval',
         kind === 'approval' ? 'read_file' : 'ask_user', 'session_spawn', 'session_wait']);
       assert.equal(new Set(results.map(row => row.tool_call_id)).size, 5);
       assert.equal(results.every(row => row.payload.success), true);
-      assert.equal(backend.sessionRuntime.lineageStore.get(sent.root_run_id).children.length, 2);
+      assert.equal(backend.sessionRuntime.lineageStore.get(rootRunId).children.length, 2);
       const finalWork = backend.sessionRuntime.store.get(workId);
       const finalCheckpoint = backend.sessionRuntime.checkpointStore.readHistorical(finalWork.checkpoint_ref,
         { ...finalWork, attempt: finalWork.checkpoint_ref.source_attempt });
@@ -102,12 +121,12 @@ for (const [kind, publicationFailure] of [['user_questions', null], ['approval',
       assert.equal(finalCheckpoint.quota_state.session_baseline, checkpoint.quota_state.session_baseline);
       assert.equal(finalCheckpoint.completed_effect_refs.length, 4);
       assert.equal(finalCheckpoint.position.tool_calls_consumed, 5);
-      const budget = backend.sessionRuntime.budgetStore.get(sent.root_run_id);
+      const budget = backend.sessionRuntime.budgetStore.get(rootRunId);
       assert.deepEqual(budget.limits, before.limits);
       assert.equal(budget.charged.inference_requests, 8);
     } catch (error) {
       t.diagnostic(JSON.stringify({ works: backend.sessionRuntime.store.listSummaries({ limit: 10 }),
-        results: sessionId ? backend.sessionStore.getSession(sessionId).turn_events.filter(row => row.kind === 'tool_result') : [],
+        results: backend.sessionStore.getSession(sessionId).turn_events.filter(row => row.kind === 'tool_result'),
         errors: seen.filter(row => row.type === 'error'), logs: logs.slice(-12) }));
       throw error;
     } finally { await backend.stop(); backend.dispose(); }

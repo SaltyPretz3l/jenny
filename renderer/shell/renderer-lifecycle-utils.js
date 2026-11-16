@@ -167,21 +167,6 @@
       }
     }
 
-    async function loadChatUiState() {
-      try {
-        const payload = await window.jennyShell?.chatUi?.getState?.();
-        return {
-          zoomPercent: normalizeChatZoomPercent(
-            payload?.zoomPercent ?? getDefaultChatZoomPercent()
-          ),
-        };
-      } catch (_error) {
-        return {
-          zoomPercent: getDefaultChatZoomPercent(),
-        };
-      }
-    }
-
     // Mirrors renderer-originated entries into the on-disk shell.log (the
     // forwarder ignores electron-sourced entries arriving via pushIncomingLog).
     const clientLogForwarder = typeof logForwarderUtils?.createClientLogForwarder === 'function'
@@ -541,7 +526,7 @@
     }) || null;
     window.rendererComposerSessionStateController = composerSessionStateController;
 
-    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
+    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
   }
 
   return { createLifecycleController };

@@ -107,6 +107,8 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   session_status: 'auto',
   session_transcript: 'auto',
   session_stop: 'ask',
+  // Row 136: the order chats use the model in. Undoable, and the person's own pick stands, so no card.
+  session_prioritize: 'auto',
   // Row 88: reading the allowlisted settings is free; every change shows the user a card.
   settings_get: 'auto',
   settings_change: 'ask',

@@ -205,3 +205,31 @@ test('resolveTurnErrorDedupe is a no-op when only one assistant_error row exists
   assert.equal(result.suppress, false);
   assert.deepEqual(result.suppressedErrors, []);
 });
+
+// The live reducer folds a failed result onto its call row AND emits the result
+// row: one failed tool is still one entry in the error card's details.
+test('resolveTurnErrorDedupe lists a failed tool once when the call and result rows both carry it', () => {
+  const callRow = { turn_id: 'turn_live', kind: 'tool_call', tool_call_id: 'call_1',
+    payload: { tool_call_id: 'call_1', tool_name: 'read_file', result_is_error: true, error_code: 'CMP-TOOL-0002', result_summary: 'not found' } };
+  const resultRow = { turn_id: 'turn_live', kind: 'tool_result', tool_call_id: 'call_1',
+    payload: { tool_call_id: 'call_1', tool_name: 'read_file', is_error: true, error_code: 'CMP-TOOL-0002', summary: 'not found' } };
+  const errorRow = { turn_id: 'turn_live', kind: 'system_notice',
+    payload: { subkind: 'assistant_error', stream_error: 'Turn failed', error_code: 'CMP-SIDECAR-0003' } };
+  const result = dedupeUtils.resolveTurnErrorDedupe(errorRow, { siblingRows: [callRow, resultRow, errorRow] });
+  assert.equal(result.suppress, false);
+  assert.deepEqual(result.suppressedErrors.map((entry) => entry.code), ['CMP-TOOL-0002']);
+});
+
+// The terminal row has only a plain stream_error (no code, no recovery data),
+// so it takes the plain failure-notice path: the coded error folded into it
+// must still be listed there.
+test('a terminal error with no code of its own still lists the coded error it absorbed', () => {
+  const renderer = createRenderer();
+  const codedRow = { row_id: 'row:coded', turn_id: 'turn_plain', kind: 'system_notice', primary_message_id: 'assistant_err_a',
+    payload: { subkind: 'assistant_error', stream_error: '', error_code: 'CMP-TOOL-0007', message: 'first failure' } };
+  const plainRow = { row_id: 'row:plain', turn_id: 'turn_plain', kind: 'system_notice', primary_message_id: 'assistant_err_b',
+    payload: { subkind: 'assistant_error', stream_error: 'The turn stopped' } };
+  const html = renderer.buildTurnRowListMarkup([codedRow, plainRow], []);
+  assert.equal((html.match(/class="chat-error-card chat-error-card--/g) || []).length, 1);
+  assert.match(html, /Also: CMP-TOOL-0007/);
+});

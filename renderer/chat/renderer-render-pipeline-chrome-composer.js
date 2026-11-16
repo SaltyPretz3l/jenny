@@ -67,6 +67,7 @@
       setComposerStatusNotice = () => {},
       clearComposerStatusNotice = () => {},
       getVisibleSessionMessages = () => [],
+      getSessionMessages = null,
       isSendBusy = () => false,
       isSessionStreaming = () => false,
       hasPendingToolApprovalForSession = () => false,
@@ -120,9 +121,20 @@
       }
     }
 
+    // The jump control renders every scroll frame: re-filter the visible list
+    // only when the session's message list changed.
+    let visibleProbe = { sessionId: null, list: null, length: -1, has: false };
+    function hasVisibleSessionMessages(sessionId) {
+      const list = typeof getSessionMessages === 'function' ? getSessionMessages(sessionId) : null;
+      if (!Array.isArray(list) || list !== visibleProbe.list || list.length !== visibleProbe.length || sessionId !== visibleProbe.sessionId) {
+        const has = getVisibleSessionMessages(sessionId).length > 0;
+        visibleProbe = { sessionId, list: Array.isArray(list) ? list : null, length: Array.isArray(list) ? list.length : -1, has };
+      }
+      return visibleProbe.has;
+    }
+
     function renderComposerJumpControls() {
-      const messages = getVisibleSessionMessages(getPaneSessionId());
-      const hasMessages = messages.length > 0;
+      const hasMessages = hasVisibleSessionMessages(getPaneSessionId());
       const anyJumpButton = jumpToTopButton || jumpToBottomButton;
       const jumpTools = anyJumpButton?.closest('.composer-jump-tools') || null;
       const awayFromLatest = hasMessages && !isFollowingLatest();
@@ -265,8 +277,7 @@
       // the Workspace dock is the live chat surface, a typed send during a
       // pending approval becomes queue-eligible one-deep. Elsewhere Send waits.
       const dockApprovalSteer = activeApprovalPending
-        && state.ui.activeView === 'ide'
-        && (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) === true;
+        && (globalThis.rendererChatSurfaceLiveUtils || {}).isDockedChatLive?.(state) === true;
       const currentQueuedSend = state.queuedSendBySession?.get(currentSessionId) || null;
       // Durable Send owns its own pending list; the composer must read as
       // "queued" from either model, never only the legacy one-deep queue.
@@ -313,6 +324,12 @@
         || backendComposerOffline
         || !state.auth.authenticated
         || (sendBusy && !queueEligible && !activeApprovalPending); // the draft stays editable while deciding
+      // Row 157: while an ask_user card waits, a typed send answers it (renderer-send-utils.js).
+      const sendFlowHelpers = globalRef.rendererSendFlowHelpers;
+      const questionsWaiting = ownsActiveStream && Boolean(sendFlowHelpers?.findPendingUserQuestionRef?.(
+        (getSessionMessages || ((id) => state.messagesBySession?.get?.(id)))(currentSessionId),
+        globalRef.rendererMultiStreamController?.getStreamIdForSession?.(currentSessionId)));
+      sendFlowHelpers?.syncQuestionReplyPlaceholder?.(chatInput, questionsWaiting);
       sendButton.disabled =
         interactiveBatchActive
         || isSendPreflightPending()
@@ -338,7 +355,7 @@
         reasonNode: documentRef?.getElementById?.('composerSendDisabledReason'),
         syncDisabledReason, setComposerStatusNotice, clearComposerStatusNotice,
       }) || null;
-      if (queueEligible) {
+      if (queueEligible && !questionsWaiting) { // a typed send answers the card, it does not queue
         const queued = !hasComposerDraft && (currentQueuedSend || durablePending.length > 0);
         sendButton.textContent = queued ? jt('chat.pipelineChrome.queuedRunsIn', 'Queued — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueRunsIn', 'Queue — runs in {runMode}', { runMode: runModeLabel });
         sendButton.setAttribute(
@@ -349,7 +366,7 @@
         sendButton.textContent = '\u2191';
         sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.send', 'Send'));
       }
-      sendButton.classList.toggle('composer-send-queue', queueEligible);
+      sendButton.classList.toggle('composer-send-queue', queueEligible && !questionsWaiting);
       sendButton.classList.toggle('composer-stop', false);
       chatInput.classList.toggle('hidden', interactiveBatchActive);
       sendButton.classList.toggle('hidden', interactiveBatchActive && !sendBusy);

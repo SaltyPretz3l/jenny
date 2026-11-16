@@ -6,7 +6,7 @@
      column when the artifact review rail was open (UIUX-004). */
 
   :root {
-    --chat-sprite-size: 30px;
+    --chat-sprite-size: 40px;
     --chat-sprite-rail-offset: 52px;
   }
 }
@@ -43,31 +43,20 @@
 
 @media (max-width: 700px) {
   .chat-view {
-    --chat-sprite-size: clamp(22px, 5vw, 24px);
+    --chat-sprite-size: 28px;
+    --chat-sprite-scale: calc(28 / 30);
     --chat-sprite-rail-offset: clamp(24px, 7vw, 32px);
     --chat-user-bubble-max-width: 100%;
     --context-panel-width: 0px;
     --thread-node-gap: 12px;
   }
 
+  .chat-assistant-sprite-glyph {
+    font-size: var(--font-size-heading);
+  }
+
   .chat-view .hero-stack {
     width: min(440px, calc(100vw - 48px));
-    gap: var(--space-6);
-  }
-
-  .chat-view .hero-avatar {
-    width: 44px;
-    height: 44px;
-    font-size: var(--font-size-5xl);
-  }
-
-  .chat-view .hero-title {
-    margin-top: var(--space-2);
-    font-size: clamp(
-      calc(24px * var(--font-scale, 1)),
-      calc(7vw * var(--font-scale, 1)),
-      calc(32px * var(--font-scale, 1))
-    );
   }
 
   .chat-view .hero-subtitle {

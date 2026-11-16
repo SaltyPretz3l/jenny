@@ -273,6 +273,7 @@
           tone: 'success',
           source: TOAST_SOURCE.memory,
           dedupeKey: undoDedupeKey,
+          countdown: Boolean(deleteOperationId),
           actions: !deleteOperationId ? [] : [
             {
               id: 'undo-delete',

@@ -125,6 +125,8 @@
       settleToolLiveOutput = () => {},
       // The session whose timeline the tail patches (pane 0 in split view).
       isToolLiveOutputSession = isCurrentSession,
+      // A chat on screen in any pane shows its own Allow/Deny card: it is not a background chat.
+      isVisibleChatSession = isCurrentSession,
     } = options;
 
     function normalizeApprovalId(payload, callId) {
@@ -473,6 +475,9 @@
         ...(payload.alwaysAllowScope && typeof payload.alwaysAllowScope === 'object' && !Array.isArray(payload.alwaysAllowScope)
           ? { alwaysAllowScope: payload.alwaysAllowScope } : {}),
         ...(payload.rememberOffer === 'linked_children' ? { rememberOffer: 'linked_children' } : {}), // row 87 C1
+        // The same step's later edits this card may allow with its own (row 166 D10): live only, like the exact text.
+        ...(payload.round_approval && typeof payload.round_approval === 'object' && !Array.isArray(payload.round_approval)
+          ? { roundApproval: payload.round_approval } : {}),
       });
       const activeMessages = [...getSessionMessages(payload.sessionId)];
       const toolUseIndex = findToolMessageIndex(activeMessages, {
@@ -552,7 +557,7 @@
       }
       // One store write for the tool row and its plan document.
       setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
-      if (!isCurrentSession(payload.sessionId)) {
+      if (!isCurrentSession(payload.sessionId) && !isVisibleChatSession(payload.sessionId)) {
         showApprovalToast(payload.sessionId);
       }
       // A pending tool_use can already have projected an approval-shaped row

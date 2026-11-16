@@ -112,6 +112,19 @@
               "detail": { "$ref": "#/definitions/text" }
             }
           }
+        },
+        "manual": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "detail"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 64 },
+              "detail": { "$ref": "#/definitions/text" }
+            }
+          }
         }
       }
     },

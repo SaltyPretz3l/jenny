@@ -182,49 +182,25 @@
       });
       if (typeof cleanup === 'function') thinkingPanelCleanupByPanel.set(panel, cleanup);
     }
+    // Writes, then one batch of reads, then the writes that depend on them: a
+    // read after each panel's own write forced two layouts per panel (2026-11-12).
     function syncRenderedThinkingPanels(rootNode = chatTimeline) {
       if (isDisposed() || !rootNode) {
         return;
       }
       const panels = Array.from(rootNode.querySelectorAll?.('.reasoning-row-panel') || []);
       if (rootNode.matches?.('.reasoning-row-panel')) panels.unshift(rootNode);
+      const toMeasure = [];
       panels.forEach((panel) => {
         if (panel.dataset?.collapsing === 'true') return;
-        const isExpanded = panel.classList.contains('expanded');
-        if (isExpanded) {
+        if (panel.classList.contains('expanded')) {
           panel.hidden = false;
           if (panel.closest?.('.reasoning-row-block')?.getAttribute?.('data-reasoning-status') === 'streaming') {
             if (panel.style.maxHeight !== 'none') panel.style.maxHeight = 'none';
             return;
           }
           if (panel.classList.contains(SETTLED_CLASS) && !panel.style.maxHeight && !thinkingPanelGrowthPending.get(panel)) return;
-          const expandedHeight = resolveThinkingPanelExpandedHeight(panel);
-          const newMaxHeight = reducedMotionQuery.matches
-            ? 'none'
-            : `${expandedHeight}px`;
-          const currentMaxHeight = panel.style.maxHeight;
-          // Growth is judged on the measured height, not the inline string: a
-          // settled panel carries an empty inline (CSS max-height:none rules),
-          // so `'' !== px` would read as growth on every sync and the settle's
-          // follow re-drive would schedule the next sync forever.
-          const heightChanged = thinkingPanelLastHeight.get(panel) !== expandedHeight;
-          thinkingPanelLastHeight.set(panel, expandedHeight);
-
-          if ((!currentMaxHeight || currentMaxHeight === '0px') && !panel.classList.contains(SETTLED_CLASS)) {
-            // Panel just created via full innerHTML — skip transition to
-            // avoid a collapse-then-expand flash.
-            panel.style.transition = 'none';
-            panel.style.maxHeight = newMaxHeight;
-            void panel.offsetHeight;
-            panel.style.transition = '';
-            settleThinkingPanelNow(panel, reducedMotionQuery.matches);
-          } else if (panel.classList.contains(SETTLED_CLASS) && !heightChanged) {
-            // Settled at rest: leave the CSS max-height:none rule in charge.
-          } else {
-            // Panel survived a targeted patch — smoothly grow to new height.
-            panel.style.maxHeight = newMaxHeight;
-            armThinkingPanelSettle(panel, heightChanged);
-          }
+          toMeasure.push(panel);
           return;
         }
         panel.hidden = true;
@@ -232,6 +208,41 @@
         thinkingPanelLastHeight.delete(panel);
         thinkingPanelGrowthPending.delete(panel);
         clearThinkingPanelSettle(panel);
+      });
+      const expandedHeights = toMeasure.map(resolveThinkingPanelExpandedHeight);
+      const freshPanels = [];
+      toMeasure.forEach((panel, index) => {
+        const expandedHeight = expandedHeights[index];
+        const newMaxHeight = reducedMotionQuery.matches
+          ? 'none'
+          : `${expandedHeight}px`;
+        const currentMaxHeight = panel.style.maxHeight;
+        // Growth is judged on the measured height, not the inline string: a
+        // settled panel carries an empty inline (CSS max-height:none rules),
+        // so `'' !== px` would read as growth on every sync and the settle's
+        // follow re-drive would schedule the next sync forever.
+        const heightChanged = thinkingPanelLastHeight.get(panel) !== expandedHeight;
+        thinkingPanelLastHeight.set(panel, expandedHeight);
+
+        if ((!currentMaxHeight || currentMaxHeight === '0px') && !panel.classList.contains(SETTLED_CLASS)) {
+          // Panel just created via full innerHTML — skip transition to
+          // avoid a collapse-then-expand flash (one reflow commits them all).
+          panel.style.transition = 'none';
+          panel.style.maxHeight = newMaxHeight;
+          freshPanels.push(panel);
+        } else if (panel.classList.contains(SETTLED_CLASS) && !heightChanged) {
+          // Settled at rest: leave the CSS max-height:none rule in charge.
+        } else {
+          // Panel survived a targeted patch — smoothly grow to new height.
+          panel.style.maxHeight = newMaxHeight;
+          armThinkingPanelSettle(panel, heightChanged);
+        }
+      });
+      if (!freshPanels.length) return;
+      void freshPanels[0].offsetHeight;
+      freshPanels.forEach((panel) => {
+        panel.style.transition = '';
+        settleThinkingPanelNow(panel, reducedMotionQuery.matches);
       });
     }
 

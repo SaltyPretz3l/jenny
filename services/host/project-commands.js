@@ -13,6 +13,8 @@ const PROJECT_MUTATIONS = new Set([
   'projects.assignSession', 'permissionReview.resolve',
 ]);
 
+const TEAM_LIST_ROLES = new Set(['owner', 'admin', 'writer', 'reader']);
+
 function projectRow(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const id = typeof value.id === 'string' ? value.id : '';
@@ -118,18 +120,47 @@ function createProjectCommandDispatcher({
   authorization = {},
   transaction = {},
   result = {},
+  team = {},
 } = {}) {
-  const { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority } = authorization;
+  // `allows` (slice 3-2) is the router's per-row check through the one authorize
+  // function; a dispatcher built without it lists nothing. The assign target is
+  // the action's second resource, which `identity` checks on every call.
+  const { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority,
+    allows = () => false } = authorization;
   const { runReceipt } = transaction;
-  const { safeSession, bumpRevision, publish } = result;
+  const { safeSession, bumpRevision, publish, captureScope = () => undefined } = result;
   const commands = createProjectCommands({ applicationService });
+  // Slice 3-9: on a team host every row drops the host's folder path and authority key and gains the caller's
+  // stored role; the answer gains `files_supported`, read once per call. The single-owner host is unchanged.
+  function teamList(listed, command, context) {
+    const attempt = (read) => { try { return read(); } catch { return null; } };
+    const extras = typeof team.listExtras === 'function' ? attempt(() => team.listExtras(context)) : null;
+    const roleOf = typeof extras?.roleOf === 'function' ? extras.roleOf : () => null;
+    const projects = [];
+    for (const project of listed.projects) {
+      if (!allows(command, context, 'project.read', { kind: 'project', id: project.id })) continue;
+      const role = attempt(() => roleOf(project.id));
+      projects.push({ id: project.id, name: project.name, root_revision: project.root_revision,
+        role: TEAM_LIST_ROLES.has(role) ? role : null });
+    }
+    return { ...listed, projects, files_supported: extras?.filesSupported === true };
+  }
   async function dispatch(command, context) {
     const initialAuthFailure = identity(command, context);
     if (initialAuthFailure) return initialAuthFailure;
+    if (command.operation === 'projects.list') {
+      const listed = commands.execute(command.operation, command.params, { requestId: command.request_id });
+      if (!listed?.ok) return listed;
+      if (team.teamHost === true) return teamList(listed, command, context);
+      return { ...listed, projects: listed.projects.filter((project) => allows(command, context, 'project.read',
+        { kind: 'project', id: project.id })) };
+    }
     if (command.operation === 'projects.assignSession') {
       const failure = mutationGuard(command, context); if (failure) return failure;
       return runReceipt(command, context, async () => {
         assertMutationAuthority(command, context);
+        // On a team host, the old project's audience, taken before the move (3-4b): its members are told too.
+        const before = captureScope(command.session_id);
         const value = commands.execute(command.operation, command.params, {
           sessionId: command.session_id, requestId: command.request_id,
         });
@@ -140,9 +171,9 @@ function createProjectCommandDispatcher({
           return hostFailure('persistence', 'session_project_assignment_failed', command.request_id);
         }
         const revision = bumpRevision(command.session_id);
-        publish('session_changed', {
-          session_id: command.session_id, revision, reason: 'project_assigned',
-        });
+        const moved = { session_id: command.session_id, revision, reason: 'project_assigned' };
+        publish('session_changed', moved);
+        if (before !== undefined) publish('session_changed', moved, before);
         return { ...value, session, revision };
       });
     }

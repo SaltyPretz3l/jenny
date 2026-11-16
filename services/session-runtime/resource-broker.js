@@ -218,7 +218,7 @@ class ResourceBroker {
         : record.resources.some((held) => held.type === 'capacity' && held.key === resourceClass);
       if (inTheWay) {
         holders.push(Object.freeze({ session_id: record.sessionId || null, status: record.status,
-          quarantined_at: record.quarantinedAt }));
+          quarantined_at: record.quarantinedAt, owner_id: record.owner }));
       }
     }
     return Object.freeze({ resource_class: resourceClass, holders: Object.freeze(holders) });

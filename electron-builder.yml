@@ -32,8 +32,11 @@ win:
   # overlay config (scripts/packaging/windows_signing.py); local builds stay
   # unsigned. build/afterPack.js re-records the signed sidecar.exe hash.
   # Vendor-signed executables keep their signature (CPython: PSF; node-pty's
-  # ConPTY host: Microsoft); every other .exe is signed as Jenny.
+  # ConPTY host: Microsoft); every other .exe is signed as Jenny. Jenny's own
+  # file-access library is the one .dll signed as Jenny (a file name, not ".dll":
+  # Electron's and the runtime's libraries keep their vendors' signatures).
   signExts:
+    - "jenny_file_access.dll"
     - "!python.exe"
     - "!pythonw.exe"
     - "!OpenConsole.exe"
@@ -103,6 +106,72 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # "Open with Jenny" (row 137): listed in Finder's Open With, never the default
+  # (rank Alternate). Same extension list as build/installer.nsh JennyOpenWithTypes;
+  # declared here and under linux only, never top level, so the NSIS build never
+  # runs electron-builder's association macro (it writes the `.<ext>` default).
+  fileAssociations:
+    - name: Text and code
+      role: Editor
+      rank: Alternate
+      ext:
+        - md
+        - markdown
+        - mdx
+        - txt
+        - text
+        - log
+        - json
+        - jsonc
+        - yaml
+        - yml
+        - toml
+        - ini
+        - cfg
+        - conf
+        - csv
+        - tsv
+        - xml
+        - html
+        - htm
+        - css
+        - scss
+        - less
+        - js
+        - mjs
+        - cjs
+        - ts
+        - tsx
+        - jsx
+        - mts
+        - cts
+        - py
+        - pyi
+        - rs
+        - go
+        - java
+        - kt
+        - kts
+        - c
+        - h
+        - cc
+        - cpp
+        - hpp
+        - cs
+        - rb
+        - php
+        - lua
+        - sh
+        - bash
+        - zsh
+        - ps1
+        - psm1
+        - sql
+        - mmd
+        - mermaid
+        - graphql
+        - gql
+        - proto
   target:
     - target: dmg
       arch:
@@ -144,6 +213,45 @@ linux:
   synopsis: Local-first desktop AI companion
   description: Jenny is a local-first desktop AI companion for chat, coding, and data visualization.
   category: Development
+  # "Open with Jenny" (row 137): only the .desktop MimeType= line, so file
+  # managers list Jenny; no fileAssociations entry, because that would also ship a
+  # shared-mime-info XML redefining standard types system-wide.
+  mimeTypes:
+    - text/plain
+    - text/markdown
+    - text/x-markdown
+    - application/json
+    - application/x-yaml
+    - application/toml
+    - text/csv
+    - text/tab-separated-values
+    - application/xml
+    - text/xml
+    - text/html
+    - text/css
+    - text/x-scss
+    - text/x-less
+    - text/javascript
+    - application/javascript
+    - application/x-typescript
+    - text/x-python
+    - text/rust
+    - text/x-go
+    - text/x-java
+    - text/x-kotlin
+    - text/x-csrc
+    - text/x-chdr
+    - text/x-c++src
+    - text/x-c++hdr
+    - text/x-csharp
+    - application/x-ruby
+    - application/x-php
+    - text/x-lua
+    - application/x-shellscript
+    - application/sql
+    - application/graphql
+    - text/x-log
+    - text/x-ini
   # fpm refuses to build the .deb without a Maintainer; package.json's author carries no
   # email, so the identity already on every public commit is used here.
   maintainer: "Gosh <goshcomplexmusic@gmail.com>"
@@ -223,6 +331,8 @@ files:
   # var, because npm uses cmd.exe on Windows but sh elsewhere) so a stale or
   # racy stamp never ships a dead bundle to a user. Do NOT rely on preload.js source at
   # runtime under sandbox:true (see main-window-composition.js).
+  # The same glob ships sketch-frame.bundle.js (built by `npm run build:sketch` / build:sketch:force).
+  # sketch-core.bundle.cjs is the Node test twin: the `.cjs` extension keeps it out of "*.js" on purpose.
   - "*.js"
   # Dev/test-only root entrypoints -- never loaded by the packaged app
   # (capture-*.js and smoke-shell-ui.js now live under scripts/dev/, which
@@ -275,6 +385,9 @@ files:
   - "!node_modules/cytoscape/**"
   - "!node_modules/cytoscape-*/**"
   - "!node_modules/elkjs/**"
+  # Mermaid keeps its own elkjs 0.9.3 once the root installs elkjs 0.12.1 for the sketch bundle (which is
+  # bundled into sketch-frame.bundle.js at build time). Neither copy loads at runtime.
+  - "!node_modules/mermaid/node_modules/elkjs/**"
   - "!node_modules/es-toolkit/**"
   - "!node_modules/chevrotain/**"
   - "!node_modules/@chevrotain/**"

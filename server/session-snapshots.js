@@ -184,7 +184,9 @@ function readPage(messages, options = {}) {
   };
 }
 
-function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId, revision, options = {} } = {}) {
+// `prompterOf(sessionId)` (team host only, slice 3-6b) names each pending decision's prompter; without it
+// the entries are as before.
+function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId, revision, options = {}, prompterOf } = {}) {
   const normalizedSessionId = String(sessionId || '').trim();
   const session = canonicalSession(backend, normalizedSessionId);
   if (!normalizedSessionId || !session) return null;
@@ -194,8 +196,13 @@ function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId
   // synchronous projection boundary, so use the canonical store's persisted
   // active turn here; the live event projection carries in-flight detail.
   const activeTurn = session.active_turn;
-  const approvals = decisionAdapter?.listApprovals?.(normalizedSessionId) || [];
-  const questions = decisionAdapter?.listQuestions?.(normalizedSessionId) || [];
+  let approvals = decisionAdapter?.listApprovals?.(normalizedSessionId) || [];
+  let questions = decisionAdapter?.listQuestions?.(normalizedSessionId) || [];
+  if (typeof prompterOf === 'function' && (approvals.length || questions.length)) {
+    const prompter = prompterOf(normalizedSessionId) ?? null;
+    approvals = approvals.map((entry) => ({ ...entry, prompter_member_id: prompter }));
+    questions = questions.map((entry) => ({ ...entry, prompter_member_id: prompter }));
+  }
   let liveProjection;
   try {
     const raw = eventStream?.snapshot?.(normalizedSessionId);

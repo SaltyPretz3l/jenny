@@ -31,9 +31,9 @@ LOCAL_ENGINE_TYPES = ("ollama", "vllm", "openai-compatible", "mock", "replay")
 def test_max_iterations_for_mode_uses_q38_chat_and_task_defaults() -> None:
     config = parse_runtime_config({})
 
-    assert max_iterations_for_mode(config, mode="chat") == 8
-    assert max_iterations_for_mode(config, mode="assist") == 30
-    assert max_iterations_for_mode(config, mode="autonomous") == 30
+    assert max_iterations_for_mode(config, mode="chat") == 40
+    assert max_iterations_for_mode(config, mode="assist") == 300
+    assert max_iterations_for_mode(config, mode="autonomous") == 300
 
 
 def test_wind_down_threshold_uses_floor_75_percent_q38_defaults() -> None:
@@ -106,8 +106,8 @@ def test_max_iterations_for_mode_handles_malformed_config_values() -> None:
         max_loop_iterations="bad",
     )
 
-    assert max_iterations_for_mode(config, mode="chat") == 8
-    assert max_iterations_for_mode(config, mode="task") == 30
+    assert max_iterations_for_mode(config, mode="chat") == 40
+    assert max_iterations_for_mode(config, mode="task") == 300
 
 
 # ── Engine-keyed cloud loop profile ──────────────────────────────────────────
@@ -138,21 +138,22 @@ def test_stale_cloud_loop_profile_key_is_ignored(engine_type: str) -> None:
 
 
 @pytest.mark.parametrize("engine_type", LOCAL_ENGINE_TYPES)
-def test_local_engines_keep_todays_iteration_caps(engine_type: str) -> None:
+def test_local_engines_get_the_local_iteration_caps(engine_type: str) -> None:
     config = parse_runtime_config({"engine_type": engine_type})
 
     assert loop_profile_name(config) == "local"
-    assert max_iterations_for_mode(config, mode="chat") == 8
-    assert max_iterations_for_mode(config, mode="task") == 30
+    assert max_iterations_for_mode(config, mode="chat") == 40
+    assert max_iterations_for_mode(config, mode="task") == 300
 
 
 def test_cloud_engine_that_fell_back_to_mock_degrades_to_the_local_profile() -> None:
     # engine_type is the POST-FALLBACK engine: a signed-out chatgpt boot lands
-    # on "mock", which must not carry the widened budgets.
+    # on "mock", which must resolve the local profile and its values.
     config = parse_runtime_config({"engine_type": "mock", "chatgpt_access_token": None})
 
     assert loop_profile_name(config) == "local"
-    assert max_iterations_for_mode(config, mode="task") == 30
+    assert max_iterations_for_mode(config, mode="task") == 300
+    assert effective_max_loop_wall_seconds(config) == 7_200.0
 
 
 def test_cloud_values_are_config_overridable() -> None:
@@ -218,17 +219,17 @@ def test_effective_helpers_select_local_versus_cloud_values() -> None:
     local = parse_runtime_config({})
     cloud = parse_runtime_config({"engine_type": "chatgpt"})
 
-    assert effective_max_loop_wall_seconds(local) == 3_600.0
+    assert effective_max_loop_wall_seconds(local) == 7_200.0
     assert effective_max_loop_wall_seconds(cloud) == 28_800.0
     assert effective_tools_execution_timeout_seconds(local) == 120.0
     assert effective_tools_execution_timeout_seconds(cloud) == 1_800.0
     assert effective_chunk_inactivity_seconds(local) == 120.0
     assert effective_chunk_inactivity_seconds(cloud) == 300.0
-    assert effective_max_tools_per_turn(local) == 20
+    assert effective_max_tools_per_turn(local) == 200
     assert effective_max_tools_per_turn(cloud) == 200
     assert effective_max_tool_calls_per_session(local) == 2_000
     assert effective_max_tool_calls_per_session(cloud) == 2_000
-    assert effective_max_web_tool_calls_per_turn(local) == 10
+    assert effective_max_web_tool_calls_per_turn(local) == 30
     assert effective_max_web_tool_calls_per_turn(cloud) == 30
     assert effective_sub_agent_concurrency_budget(local) == 1
     assert effective_sub_agent_concurrency_budget(cloud) == 3
@@ -256,17 +257,17 @@ def test_effective_helpers_fail_open_on_malformed_and_missing_attributes() -> No
     )
 
     assert effective_max_loop_wall_seconds(malformed) == 28_800.0
-    # The local fallback matches the RuntimeConfig default (3600s).
+    # The local fallback matches the RuntimeConfig default (7200s).
     local_malformed = SimpleNamespace(
         engine_type="ollama", feature_flags={}, max_loop_wall_seconds="not-a-float"
     )
-    assert effective_max_loop_wall_seconds(local_malformed) == 3_600.0
+    assert effective_max_loop_wall_seconds(local_malformed) == 7_200.0
     assert effective_tools_execution_timeout_seconds(malformed) == 1_800.0
     assert effective_chunk_inactivity_seconds(malformed) == 300.0
     assert effective_max_tools_per_turn(malformed) == 200
     # Attributes missing entirely (pre-field config objects) fall back too.
     assert effective_max_tool_calls_per_session(malformed) == 2_000
-    assert effective_max_web_tool_calls_per_turn(SimpleNamespace()) == 10
+    assert effective_max_web_tool_calls_per_turn(SimpleNamespace()) == 30
 
 
 @pytest.mark.parametrize("host_mode,version,requested,expected", [

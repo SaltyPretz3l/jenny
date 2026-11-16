@@ -240,7 +240,7 @@ def test_fallback_after_mock_boot_uses_the_local_loop_profile() -> None:
     fell_back = parse_runtime_config({"engine_type": selection.engine_type})
 
     assert loop_profile_name(fell_back) == "local"
-    assert max_iterations_for_mode(fell_back, mode="task") == 30
+    assert max_iterations_for_mode(fell_back, mode="task") == fell_back.max_task_loop_iterations
 
 
 def test_the_key_is_registered_for_exact_redaction_after_a_build() -> None:

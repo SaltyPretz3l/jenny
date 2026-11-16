@@ -2,8 +2,8 @@
    Self-contained on purpose: the nav owns its own markup, click handling, and
    horizontal keyboard navigation (it is the sole view-switch nav; the legacy
    sidebar nav it replaced has been removed). Top chrome, one row: Home / Chat /
-   Workspace / Diagnostics are text tabs in the title bar, and Settings is the
-   gear in the right cluster (#titlebarSettingsSlot), not a tab. */
+   Workspace / Team are text tabs in the title bar; Diagnostics and Settings are
+   glyph buttons in the right cluster (#titlebarSettingsSlot), not tabs. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -15,17 +15,43 @@
   // Single source of truth for rail order and numbered view shortcuts.
   // Memory management lives under Settings rather than as a primary view.
   var VIEW_TAB_ORDER = ['home', 'chat', 'ide', 'logs', 'settings'];
-  // The view reached through the gear rather than a tab (Ctrl+5 still maps
-  // here through VIEW_TAB_ORDER).
-  var GEAR_VIEW_ID = 'settings';
+  // The rail's own order. Board (row 150, slice B4) and Team (row 123, slice 1g-2)
+  // follow Workspace and are not in VIEW_TAB_ORDER: each exists only while its
+  // model entry's `isAvailable()` says so, and Ctrl+1..5 keep their views. A tab
+  // with `getBadge()` carries one count, patched in place so a new number never
+  // rebuilds the rail.
+  var RAIL_TAB_ORDER = ['home', 'chat', 'ide', 'board', 'team'];
 
   // 12-tooth cog, 1.6px stroke (the old glyph read as a sun).
   var GEAR_PATH = 'M10 2.5l1.1 1.9 2.1-.5.6 2.1 2.1.6-.5 2.1 1.9 1.1-1.9 1.1.5 2.1-2.1.6-.6 2.1-2.1-.5L10 17.5l-1.1-1.9-2.1.5-.6-2.1-2.1-.6.5-2.1L2.5 10l1.9-1.1-.5-2.1 2.1-.6.6-2.1 2.1.5z';
+  // A pulse trace: the Diagnostics glyph.
+  var PULSE_PATH = 'M2.5 10.5h3.2l2-5.5 3.6 10 2.2-4.5h4';
 
-  function getSettingsGearMarkup(className) {
-    return '<svg class="' + (className || 'titlebar-icon') + '" viewBox="0 0 20 20" aria-hidden="true">'
-      + '<circle cx="10" cy="10" r="2.6"/><path d="' + GEAR_PATH + '"/></svg>';
+  function glyphMarkup(inner) {
+    return '<svg class="titlebar-icon" viewBox="0 0 20 20" aria-hidden="true">' + inner + '</svg>';
   }
+
+  // Views reached through a glyph button in the right cluster rather than a
+  // tab, in drawn order (Ctrl+4 and Ctrl+5 still map here through
+  // VIEW_TAB_ORDER). Each keeps its "<view>TopRailTab" id.
+  var ICON_VIEWS = [
+    {
+      id: 'logs',
+      className: 'titlebar-diagnostics-button',
+      fallbackLabel: 'Diagnostics',
+      domId: 'logsTopRailTab',
+      title: function (label) { return jt('shell.topNav.diagnosticsTitle', '{label} (Ctrl+4)', { label: label }); },
+      glyph: glyphMarkup('<path d="' + PULSE_PATH + '"/>'),
+    },
+    {
+      id: 'settings',
+      className: 'titlebar-settings-button',
+      fallbackLabel: 'Settings',
+      domId: 'settingsTopRailTab',
+      title: function (label) { return jt('shell.topNav.settingsTitle', '{label} (Ctrl+5)', { label: label }); },
+      glyph: glyphMarkup('<circle cx="10" cy="10" r="2.6"/><path d="' + GEAR_PATH + '"/>'),
+    },
+  ];
 
   function resolveActionButton() {
     if (typeof globalThis !== 'undefined' && typeof globalThis.inventoryActionButton === 'function') {
@@ -48,12 +74,17 @@
       || topRail?.ownerDocument?.getElementById?.('titlebarSettingsSlot')
       || null;
 
-    const railTabs = VIEW_TAB_ORDER
-      .filter((id) => id !== GEAR_VIEW_ID)
+    const allRailTabs = RAIL_TAB_ORDER
       .map((id) => (staticModel.tabs || []).find((tab) => tab.id === id))
       .filter(Boolean);
-    const gearTab = (staticModel.tabs || []).find((tab) => tab.id === GEAR_VIEW_ID) || null;
-    let gearButton = null;
+    function currentRailTabs() {
+      return allRailTabs.filter((tab) => typeof tab.isAvailable !== 'function' || tab.isAvailable() === true);
+    }
+    const iconViews = ICON_VIEWS
+      .map((view) => ({ view, tab: (staticModel.tabs || []).find((tab) => tab.id === view.id) }))
+      .filter((entry) => entry.tab);
+    // view id -> its live button in the slot.
+    const iconButtons = new Map();
 
     let _lastRailMarkup = null;
     // Remeasure the indicator on rail/tab resize and scroller movement.
@@ -87,11 +118,34 @@
             aria-controls="${escapeHtml(`${tab.id}View`)}"
             tabindex="${isTabbableIndex(tabs, index) ? '0' : '-1'}"
           >
-            <span class="toprail-tab__label">${escapeHtml(tab.label)}</span>
+            <span class="toprail-tab__label">${escapeHtml(tab.label)}</span>${typeof tab.getBadge === 'function' ? '<span class="toprail-tab__count" aria-hidden="true" hidden></span>' : ''}
           </button>
         `
         )
         .join('');
+    }
+
+    // The count is drawn for sighted users and said through the tab's label and
+    // tooltip ("Team: 1 person wants to join"); all are patched on the existing node.
+    function syncBadges() {
+      if (!topRailTabs) {
+        return;
+      }
+      for (const tab of allRailTabs) {
+        if (typeof tab.getBadge !== 'function') continue;
+        const element = topRailTabs.querySelector(`.toprail-tab[data-tab-id="${tab.id}"]`);
+        const countEl = element?.querySelector('.toprail-tab__count');
+        if (!countEl) continue;
+        const badge = tab.getBadge() || null;
+        const count = badge && badge.count > 0 ? String(badge.count) : '';
+        if (countEl.textContent !== count) countEl.textContent = count;
+        countEl.hidden = !count;
+        // The same words as the tooltip, for a pointer (plan row E39: the tooltip says what the number counts).
+        if (count && badge.label) { element.setAttribute('aria-label', String(badge.label)); element.setAttribute('title', String(badge.label)); } else {
+          element.removeAttribute('aria-label');
+          element.removeAttribute('title');
+        }
+      }
     }
 
     function getRailTabElements() {
@@ -106,7 +160,7 @@
       const width = activeTab ? activeTab.offsetWidth : 0;
       if (!activeTab || !width) {
         // Layout not measurable (hidden rail, jsdom) — keep the CSS ::after fallback.
-        // A tabless view (Settings is the gear) must not leave the slider
+        // A tabless view (Diagnostics, Settings) must not leave the slider
         // under the last tab either.
         topRail.removeAttribute('data-indicator-ready');
         topRailIndicator.hidden = true;
@@ -160,50 +214,76 @@
       }
     }
 
-    // The Settings gear: an inventory button in the right cluster, marked
-    // aria-current while Settings is the active view.
-    function renderGear() {
-      if (!settingsSlot || !gearTab) {
+    // The Diagnostics and Settings glyphs: inventory buttons in the right
+    // cluster, each marked aria-current while its view is the active one.
+    function renderIconButtons() {
+      if (!settingsSlot || !iconViews.length) {
         return;
       }
-      if (!gearButton || !settingsSlot.contains(gearButton)) {
+      const live = iconViews.every(({ view }) => settingsSlot.contains(iconButtons.get(view.id) || null));
+      if (!live) {
         const actionButton = resolveActionButton();
         if (!actionButton) {
           return;
         }
-        const label = String(gearTab.label || 'Settings');
-        settingsSlot.innerHTML = actionButton({
-          plain: true,
-          domId: 'settingsTopRailTab',
-          className: 'titlebar-icon-button titlebar-settings-button',
-          ariaLabel: label,
-          title: jt('shell.topNav.settingsTitle', '{label} (Ctrl+5)', { label }),
-          dataset: { 'tab-id': GEAR_VIEW_ID },
-          trustedHtml: getSettingsGearMarkup('titlebar-icon'),
-        });
-        gearButton = settingsSlot.querySelector('#settingsTopRailTab');
-        gearButton?.addEventListener('click', handleGearClick);
+        unbindIconButtons();
+        settingsSlot.innerHTML = iconViews.map(({ view, tab }) => {
+          const label = String(tab.label || view.fallbackLabel);
+          return actionButton({
+            plain: true,
+            domId: view.domId,
+            className: `titlebar-icon-button ${view.className}`,
+            ariaLabel: label,
+            title: view.title(label),
+            dataset: { 'tab-id': view.id },
+            trustedHtml: view.glyph,
+          });
+        }).join('');
+        for (const { view } of iconViews) {
+          const button = settingsSlot.querySelector(`#${view.domId}`);
+          if (!button) continue;
+          button.addEventListener('click', handleIconClick);
+          iconButtons.set(view.id, button);
+        }
       }
-      if (state.ui.activeView === GEAR_VIEW_ID) {
-        gearButton?.setAttribute('aria-current', 'page');
-      } else {
-        gearButton?.removeAttribute('aria-current');
+      for (const [viewId, button] of iconButtons) {
+        if (state.ui.activeView === viewId) {
+          button.setAttribute('aria-current', 'page');
+        } else {
+          button.removeAttribute('aria-current');
+        }
       }
     }
 
-    function handleGearClick() {
-      activateRailTab(GEAR_VIEW_ID);
+    function handleIconClick(event) {
+      activateRailTab(event.currentTarget.dataset.tabId);
+    }
+
+    function unbindIconButtons() {
+      for (const button of iconButtons.values()) {
+        button.removeEventListener('click', handleIconClick);
+      }
+      iconButtons.clear();
     }
 
     function renderTopRail() {
-      renderGear();
+      renderIconButtons();
       if (!topRailTabs) {
         return;
       }
-      const markup = buildRailTabMarkup(railTabs);
+      const markup = buildRailTabMarkup(currentRailTabs());
       if (markup !== _lastRailMarkup) {
+        // A rebuild (a tab came or went) keeps keyboard focus on the tab that had it.
+        const doc = topRailTabs.ownerDocument;
+        const focused = doc && topRailTabs.contains(doc.activeElement) ? doc.activeElement : null;
+        const focusedId = focused ? focused.id : '';
         topRailTabs.innerHTML = markup;
         _lastRailMarkup = markup;
+        if (focused) {
+          const again = (focusedId && doc.getElementById(focusedId))
+            || getRailTabElements().find((tab) => tab.tabIndex === 0) || null;
+          again?.focus?.();
+        }
         observeRailLayout(); // rebuilt nodes — re-observe the new tab elements
       } else {
         // Cheap sync when only the active view changed; resolveTabbable()
@@ -217,6 +297,7 @@
           tab.tabIndex = resolveTabbable(hasMatch, isActive, index) ? 0 : -1;
         });
       }
+      syncBadges();
       updateIndicator();
     }
 
@@ -226,9 +307,8 @@
       if (!targetId) {
         return false;
       }
-      const target = targetId === GEAR_VIEW_ID && gearButton
-        ? gearButton
-        : getRailTabElements().find((tab) => tab.dataset.tabId === targetId);
+      const target = iconButtons.get(targetId)
+        || getRailTabElements().find((tab) => tab.dataset.tabId === targetId);
       if (!target) {
         return false;
       }
@@ -318,8 +398,7 @@
       topRailTabs.removeEventListener('click', handleRailClick);
       topRailTabs.removeEventListener('keydown', handleRailKeydown);
       topRailTabs.removeEventListener('scroll', syncIndicatorToLayout);
-      gearButton?.removeEventListener('click', handleGearClick);
-      gearButton = null;
+      unbindIconButtons();
       if (_resizeObserver) {
         _resizeObserver.disconnect();
         _resizeObserver = null;
@@ -334,11 +413,12 @@
       renderTopRail,
       setTopRailVisible,
       focusRailTab,
+      syncBadges,
       updateIndicator,
       bind,
       dispose,
     };
   }
 
-  return { createTopRailController, VIEW_TAB_ORDER };
+  return { createTopRailController, VIEW_TAB_ORDER, RAIL_TAB_ORDER };
 });

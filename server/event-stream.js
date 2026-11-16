@@ -3,6 +3,9 @@
 const { requireBoundedInteger } = require('./resource-limits');
 const { ID_PATTERNS } = require('./team/ids');
 
+// The bucket of an event published with neither a bucket nor a valid `stream_id`.
+const DEFAULT_BUCKET = 'host';
+
 const MAX_FRAME_BYTES = 512 * 1024;
 const MAX_CLIENT_BYTES = 1024 * 1024;
 // Hard maximum for `maxClients`. Single-owner hosts keep the default of 32; a team host passes 64.
@@ -128,7 +131,7 @@ class EventStream {
       frame = this._frame('resync_required', { reason: 'event_size_limit' }, cursor);
     }
     const stream = bucket || (typeof payload.stream_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(payload.stream_id)
-      ? payload.stream_id : 'host');
+      ? payload.stream_id : DEFAULT_BUCKET);
     // An oversized event's resync frame keeps the event's audience.
     const entry = { cursor, frame, bytes: 0, stream, type: eventType, audience, at: this.now() };
     if (!ephemeral) {
@@ -188,4 +191,4 @@ class EventStream {
   }
 }
 
-module.exports = { EventStream, MAX_STREAM_CLIENTS };
+module.exports = { DEFAULT_BUCKET, EventStream, MAX_STREAM_CLIENTS };

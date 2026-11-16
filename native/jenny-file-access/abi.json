@@ -1,0 +1,206 @@
+{
+  "abi_version": 1,
+  "doc": "Frozen interface of the jenny-file-access library (docs/plans/TEAM_WINDOWS_FILE_ACCESS_SPEC.md, Interface). The Rust constants and the Python ctypes table are both tested against this file. Changing it after slice 3b-1 goes through the orchestrator.",
+  "calling_convention": "C, little-endian, no padding in listing records",
+  "argument_kinds": {
+    "u32": "unsigned 32-bit value",
+    "u64": "unsigned 64-bit value",
+    "usize": "pointer-sized unsigned length",
+    "ptr_utf16": "pointer to UTF-16 code units, read only",
+    "ptr_bytes": "pointer to bytes, read only",
+    "ptr_bytes_mut": "pointer to a caller-owned writable byte buffer",
+    "out_u32": "pointer to a u32 the library writes",
+    "out_u64": "pointer to a u64 the library writes",
+    "out_handle": "pointer to a pointer-sized value the library writes",
+    "out_detail": "pointer to two u32 values: reason number, then the system's own code (NTSTATUS or Win32 error)"
+  },
+  "no_raw_handle_in": "No argument kind takes a raw handle value. Pins and file tokens are library-issued, generation-checked u64 tokens; the only handle that crosses the boundary is the out_handle written by jfa_file_take.",
+  "segments": {
+    "doc": "Path below the root as UTF-16 code units. Every segment ends with U+0000; the total number of code units, terminators included, is passed as segments_units. An empty list names the root itself and is accepted only by jfa_list. Rust splits and validates; Python never joins segments into a path string for an open below the root.",
+    "terminator": 0,
+    "max_segment_units": 255,
+    "max_depth": 64
+  },
+  "status": [
+    {"name": "ok", "value": 0},
+    {"name": "path_refused", "value": 1},
+    {"name": "not_found", "value": 2},
+    {"name": "io_failed", "value": 3},
+    {"name": "busy", "value": 4},
+    {"name": "durability_uncertain", "value": 5},
+    {"name": "buffer_too_small", "value": 6},
+    {"name": "invalid_argument", "value": 7},
+    {"name": "internal", "value": 8},
+    {"name": "platform_unsupported", "value": 9},
+    {"name": "api_missing", "value": 20, "root_open_only": true},
+    {"name": "elevated", "value": 21, "root_open_only": true},
+    {"name": "backup_privilege", "value": 22, "root_open_only": true},
+    {"name": "volume_unsupported", "value": 23, "root_open_only": true},
+    {"name": "root_invalid", "value": 24, "root_open_only": true},
+    {"name": "root_identity", "value": 25, "root_open_only": true},
+    {"name": "selfcheck_failed", "value": 26, "root_open_only": true}
+  ],
+  "detail": {
+    "doc": "The out_detail pair. The first u32 is a reason number, meaningful with status path_refused and 0 otherwise; the second is the system's own code and carries no path.",
+    "reasons": [
+      {"name": "none", "value": 0},
+      {"name": "name_invalid", "value": 1},
+      {"name": "reparse_point", "value": 2},
+      {"name": "not_regular", "value": 3},
+      {"name": "alias_mismatch", "value": 4},
+      {"name": "missing_directory", "value": 5},
+      {"name": "too_deep", "value": 6},
+      {"name": "target_read_only", "value": 7},
+      {"name": "root_changed", "value": 8}
+    ]
+  },
+  "build_flags": [
+    {"name": "test_seams", "bit": 0}
+  ],
+  "expectation_kinds": [
+    {"name": "must_not_exist", "value": 0},
+    {"name": "no_expectation", "value": 1},
+    {"name": "bytes", "value": 2}
+  ],
+  "write_outcomes": [
+    {"name": "not_matched", "value": 0},
+    {"name": "replaced", "value": 1}
+  ],
+  "limits": {
+    "pin_table_entries": 32,
+    "file_table_entries": 256,
+    "max_write_bytes": 2147483647,
+    "max_listing_buffer_bytes": 16777216
+  },
+  "exports": [
+    {
+      "name": "jfa_abi_version",
+      "returns": "u32",
+      "returns_doc": "the ABI version, 1",
+      "args": []
+    },
+    {
+      "name": "jfa_build_flags",
+      "returns": "u32",
+      "returns_doc": "bit 0 set means the test-seams build",
+      "args": []
+    },
+    {
+      "name": "jfa_root_open",
+      "returns": "status",
+      "args": [
+        {"name": "root", "kind": "ptr_utf16"},
+        {"name": "root_units", "kind": "u32"},
+        {"name": "expected_device", "kind": "u64"},
+        {"name": "expected_inode", "kind": "u64"},
+        {"name": "out_pin", "kind": "out_u64"},
+        {"name": "out_detail", "kind": "out_detail"}
+      ]
+    },
+    {
+      "name": "jfa_pin_identity",
+      "returns": "status",
+      "args": [
+        {"name": "pin", "kind": "u64"},
+        {"name": "out_device", "kind": "out_u64"},
+        {"name": "out_inode", "kind": "out_u64"}
+      ]
+    },
+    {
+      "name": "jfa_pin_close",
+      "returns": "status",
+      "args": [
+        {"name": "pin", "kind": "u64"}
+      ]
+    },
+    {
+      "name": "jfa_open_file",
+      "returns": "status",
+      "args": [
+        {"name": "pin", "kind": "u64"},
+        {"name": "segments", "kind": "ptr_utf16"},
+        {"name": "segments_units", "kind": "u32"},
+        {"name": "out_token", "kind": "out_u64"},
+        {"name": "out_detail", "kind": "out_detail"}
+      ]
+    },
+    {
+      "name": "jfa_file_take",
+      "returns": "status",
+      "args": [
+        {"name": "token", "kind": "u64"},
+        {"name": "out_handle", "kind": "out_handle"}
+      ]
+    },
+    {
+      "name": "jfa_file_check",
+      "returns": "status",
+      "args": [
+        {"name": "token", "kind": "u64"}
+      ]
+    },
+    {
+      "name": "jfa_file_close",
+      "returns": "status",
+      "args": [
+        {"name": "token", "kind": "u64"},
+        {"name": "reclaim", "kind": "u32"}
+      ]
+    },
+    {
+      "name": "jfa_list",
+      "returns": "status",
+      "returns_doc": "buffer_too_small leaves the size needed in out_bytes_used",
+      "args": [
+        {"name": "pin", "kind": "u64"},
+        {"name": "segments", "kind": "ptr_utf16"},
+        {"name": "segments_units", "kind": "u32"},
+        {"name": "max_entries", "kind": "u32"},
+        {"name": "buffer", "kind": "ptr_bytes_mut"},
+        {"name": "capacity", "kind": "u32"},
+        {"name": "out_bytes_used", "kind": "out_u32"},
+        {"name": "out_entry_count", "kind": "out_u32"},
+        {"name": "out_detail", "kind": "out_detail"}
+      ]
+    },
+    {
+      "name": "jfa_write_atomic",
+      "returns": "status",
+      "args": [
+        {"name": "pin", "kind": "u64"},
+        {"name": "segments", "kind": "ptr_utf16"},
+        {"name": "segments_units", "kind": "u32"},
+        {"name": "content", "kind": "ptr_bytes"},
+        {"name": "content_len", "kind": "usize"},
+        {"name": "expectation_kind", "kind": "u32"},
+        {"name": "expected", "kind": "ptr_bytes"},
+        {"name": "expected_len", "kind": "usize"},
+        {"name": "out_outcome", "kind": "out_u32"},
+        {"name": "out_detail", "kind": "out_detail"}
+      ]
+    },
+    {
+      "name": "jfa_test_set_token_state",
+      "returns": "status",
+      "test_seams_only": true,
+      "args": [
+        {"name": "state", "kind": "u32"}
+      ]
+    }
+  ],
+  "listing_record": {
+    "doc": "Little-endian and unpadded: flags, size, name length in UTF-16 code units, then the name's code units.",
+    "fields": [
+      {"name": "flags", "kind": "u32", "bytes": 4},
+      {"name": "size", "kind": "u64", "bytes": 8},
+      {"name": "name_units", "kind": "u16", "bytes": 2},
+      {"name": "name", "kind": "utf16le", "bytes": "2 * name_units"}
+    ],
+    "fixed_header_bytes": 14,
+    "flags": [
+      {"name": "directory", "bit": 0},
+      {"name": "reparse_point", "bit": 1},
+      {"name": "size_known", "bit": 2}
+    ]
+  }
+}

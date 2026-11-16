@@ -59,6 +59,9 @@ class LoopRuntime:
     # paused turn's numbering (not restart at 1) because streamed thinking/phase
     # identities embed ``current_iteration`` and must stay unique per turn.
     iteration_base: int = 0
+    # The highest ``web:N`` citation given in this turn (web_citation_numbering). None until
+    # the first web result, which seeds it from the turn's earlier tool messages (a resume).
+    web_citation_high: int | None = None
     wall_clock_deadline: float | None = None
     chunk_inactivity_seconds: float = 120.0
     # Longer grace governing the wait for the FIRST streamed chunk only (which

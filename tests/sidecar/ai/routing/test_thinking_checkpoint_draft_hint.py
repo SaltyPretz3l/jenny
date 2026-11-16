@@ -8,6 +8,7 @@ tools now gets a conditional hint; a turn without them keeps the decisive nudge.
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -64,3 +65,44 @@ def test_write_tools_available_needs_write_tools_outside_plan_and_read_only() ->
     assert write_progress.write_tools_available(_loop(read_only=True)) is False
     assert write_progress.write_tools_available(_loop(names=("read_file",))) is False
     assert write_progress.nudge_applies(_loop()) is False, "the plan-only nudge still needs an approved plan"
+
+
+_JS_ARROW_DRAFT = (
+    "const makeIsland = (radius, segments) => {\n"
+    "  return new THREE.Mesh(geometry, material);\n"
+    "};\n"
+    "export const animate = async () => {\n"
+    "  renderer.render(scene, camera);\n"
+    "};\n"
+)
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [_JS_ARROW_DRAFT, "let tick = function () {};\nvar step = t => t + 1;\n"],
+)
+def test_javascript_function_expressions_count_as_a_draft(reasoning: str) -> None:
+    nudge = _last(build_checkpoint_messages(reasoning, write_tools_available=True))
+
+    assert nudge.startswith("If the user asked you to create or change files")
+
+
+def test_one_arrow_or_plain_constants_are_not_a_draft() -> None:
+    for reasoning in (
+        "const f = () => 1; then I place the dock at the island edge.",
+        "const RADIUS = 40;\nconst HEIGHT = 12;\nThe palm trees ring the beach.",
+    ):
+        assert _last(build_checkpoint_messages(
+            reasoning, write_tools_available=True,
+        )).startswith("You hit a thinking-budget checkpoint.")
+
+
+def test_a_whitespace_only_carry_is_checked_in_linear_time() -> None:
+    # A degenerate think of blank lines took ~4 s here when the line anchor was
+    # `^\s*` (it crossed newlines and backtracked quadratically).
+    started = time.perf_counter()
+    carry = "\n" * 11_990 + "Thinking."  # non-blank, so the draft detector runs
+    nudge = _last(build_checkpoint_messages(carry, write_tools_available=True))
+
+    assert time.perf_counter() - started < 0.5
+    assert nudge.startswith("You hit a thinking-budget checkpoint. Your reasoning")

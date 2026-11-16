@@ -164,7 +164,8 @@ class SidecarManager extends EventEmitter {
     this.killProcessTreeImpl = killProcessTreeImpl || killProcessTree;
     this.findFrozenInterpreterImpl = findFrozenInterpreterImpl || frozenInterpreter;
     this.getProcessCommandLineImpl = getProcessCommandLineImpl || getProcessCommandLine;
-    // startupSoftTimeoutMs is the managed startup watchdog used for exit grace and the ready deadline.
+    // startupSoftTimeoutMs only bounds the spawn-settle grace below (clamped to 200-500 ms).
+    // There is no ready deadline here: the initialize flight owns its own timers.
     this.startupSoftTimeoutMs = Math.max(Number(startupSoftTimeoutMs) || 0, 0);
     this.gracefulStopTimeoutMs = Math.min(
       Math.max(Number(gracefulStopTimeoutMs) || 0, 1),

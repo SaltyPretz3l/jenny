@@ -21,6 +21,9 @@
   function formatMessageTerminalTimestamp(value) {
     return formatDate(value, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }, '');
   }
+  function formatMessageClockTime(value) {
+    return formatDate(value, { hour: 'numeric', minute: '2-digit' }, '');
+  }
   function resolveModule(globalName, requirePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
       return globalThis[globalName];
@@ -68,7 +71,7 @@
       homeView, chatView, ideView, artifactsView, logsView, settingsView, homeNavButton,
       chatTimeline, chatThreadScroll,
       chatThreadColumn, chatSpriteLayer, chatAssistantSprite,
-      heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, chatInput,
+      heroTitle, heroSubtitle, heroRuntimeHint, chatInput,
       stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
       jumpToTopButton, jumpToBottomButton,
       composerModelSelectShell, composerEffortSelectShell,
@@ -111,6 +114,7 @@
       refreshActiveSurfaceEffect: _refreshActiveSurfaceEffect,
       appendClientLog: _appendClientLog,
       renderHeader: _renderHeader,
+      getSessionProject, onProjectsChanged,
     } = deps.callbacks;
     const appendClientLog = typeof _appendClientLog === 'function' ? _appendClientLog : function noop() {};
     const timelineVisibilityTracker = typeof timelineVisibilityUtils?.getTimelineVisibilityTracker === 'function'
@@ -350,7 +354,6 @@
         composerWrap,
         chatOriginChip,
         chatOriginLabel,
-        heroAvatar,
         heroTitle,
         heroSubtitle,
         heroRuntimeHint,
@@ -397,6 +400,7 @@
         getPaneSessionId,
         isFollowingLatest,
         getVisibleSessionMessages,
+        getSessionMessages,
         getCurrentRuntimePreferences,
         getRuntimePreferencesFromSession,
         isSendBusy,
@@ -419,6 +423,8 @@
         syncStableChatSurfaceState,
         isSendPreflightPending,
         syncTurnElapsedClock,
+        getSessionProject,
+        onProjectsChanged,
       },
     }) || {};
 
@@ -491,7 +497,9 @@
         renderProactiveSuggestionBlock,
         renderSlashCommandOutput,
         formatMessageTerminalTimestamp,
+        formatMessageClockTime,
         isArtifactReviewVisible,
+        isFollowingLatest,
       },
     });
     const {
@@ -598,6 +606,7 @@
         scheduleMessageViewportSync,
         appendClientLog,
         recordChatTimelineRolloutSignal,
+        isFollowingLatest,
         // B5 virtualizer integration — see virtualizer construction above.
         virtualizerFacade,
       },

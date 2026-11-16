@@ -507,3 +507,23 @@ test('a root that hydrates after the provider was set is picked up the next time
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(chips(dom).length, 1);
 });
+
+// 4th-checkpoint cost: a live delta inside a streaming article does not walk
+// that article for bubbles; the settle re-runs the pass and links the cite.
+test('a streaming article delta skips the cite walk until the article settles', async () => {
+  const dom = buildDom(assistantBubble('Thinking about a/b.js:1', 'streaming'));
+  const controller = makeController(dom);
+  controller.attach();
+  const article = dom.window.document.querySelector('.chat-entry');
+  const bubble = article.querySelector('.chat-bubble-markdown');
+  const walks = { count: 0 };
+  const queryAll = article.querySelectorAll.bind(article);
+  article.querySelectorAll = (selector) => { walks.count += 1; return queryAll(selector); };
+  bubble.appendChild(dom.window.document.createTextNode(' and c/d.js:2'));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(walks.count, 0, 'no walk of the streaming article per delta');
+  article.setAttribute('data-message-status', 'complete');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(bubble.querySelectorAll('a.codebase-cite-link').length, 2, 'the settle links both cites');
+  controller.dispose();
+});

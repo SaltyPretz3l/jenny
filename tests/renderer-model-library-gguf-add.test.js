@@ -361,6 +361,8 @@ test('removeLibraryModel fails unless the returned perModel has lost the key', a
   }
 });
 
+// Slice 6-7: model sharing's item leads every ⋯ menu (renderer-model-library-share.test.js pins it); these pins are the rest.
+const shareFirst = (items) => { assert.equal(items[0]?.label, 'Send to someone in your team…'); return items.slice(1); };
 function sectionHarness(t, options = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <nav class="settings-nav"><button data-settings-section="models">Models</button></nav>
@@ -368,12 +370,14 @@ function sectionHarness(t, options = {}) {
       <div id="modelLibrarySectionToolbarHost"></div>
       <div class="settings-note model-library-section-status" aria-live="polite"></div>
       <div id="modelLibrarySectionHost"></div>
+      <div id="modelLibraryFoldersHost"></div>
     </section>
   </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
+  // The llama-server drawer mounts the folders host; this host stands in for it.
   const windowRef = dom.window;
   const calls = [];
   const state = {
-    features: { featureFlags: { llama_server_acceleration: true } },
+    features: { featureFlags: { llama_server_acceleration: true, team: true } }, // E72: the share item is drawn with Team on
     localEngines: normalizeLocalEngines({ openaiCompatible: { managed: {
       enabled: true, perModel: options.perModel || { [OWNER_KEY]: libraryEntry(OWNER_TAG, OWNER_FILE) },
     } } }),
@@ -433,7 +437,7 @@ function sectionHarness(t, options = {}) {
   const click = (element) => element.dispatchEvent(new windowRef.MouseEvent('click', { bubbles: true }));
   const menuFor = (key) => {
     click(row(key).querySelector('[data-model-card-action="menu"]'));
-    return calls.filter((entry) => entry[0] === 'menu').pop()[1].items;
+    return shareFirst(calls.filter((entry) => entry[0] === 'menu').pop()[1].items);
   };
   const statusLine = () => card.querySelector('.model-library-section-status').textContent;
   // Every write to the section status line, and the GGUF folders row's own span.
@@ -469,17 +473,16 @@ test('a Local GGUF card menu leads with Remove from library, which drops only th
   assert.ok(h.row('installed:1b'));
 });
 
-test('Remove from library is disabled while the model is active or serving', async (t) => {
+test('Remove from library is disabled while the model is serving; the active model is no library row', async (t) => {
   const active = sectionHarness(t, { activeModel: OWNER_TAG });
   const serving = sectionHarness(t, { status: { state: 'ready', alias: OWNER_TAG, port: 8093 } });
   active.controller.bind();
   serving.controller.bind();
   await flush();
-  for (const h of [active, serving]) {
-    const items = h.menuFor(OWNER_CARD);
-    assert.deepEqual(items.map((item) => item.label), ['Remove from library', 'Copy tag']);
-    assert.equal(items[0].disabled, true);
-  }
+  assert.equal(active.row(OWNER_CARD), undefined, 'Running now owns the active model');
+  const items = serving.menuFor(OWNER_CARD);
+  assert.deepEqual(items.map((item) => item.label), ['Remove from library', 'Copy tag']);
+  assert.equal(items[0].disabled, true);
 });
 
 test('every other card keeps Remove… and never offers Remove from library', async (t) => {
@@ -518,7 +521,7 @@ test('Add GGUF model… in the section lands the card and reports beside its but
   await flush();
   assert.equal(h.foldersLine(), 'Added ternary-bonsai-2-27b-pq2_0.');
   assert.deepEqual(h.lineWrites.filter(Boolean), [], 'the section line never carries an Add outcome');
-  assert.match(h.row(OWNER_CARD).querySelector('.model-row-meta').textContent, /^Local GGUF · /);
+  assert.match(h.row(OWNER_CARD).querySelector('.mrow-meta').textContent, /^llama-server · Local GGUF · /);
 
   const taken = sectionHarness(t, { perModel: {}, pick: pickOf(QWEN_FILE), ollamaTags: [{ name: 'qwen3:8b' }] });
   taken.controller.bind();
@@ -539,7 +542,7 @@ test('a file outside every GGUF folder shows its size right after Add, and the s
   h.click(h.card.querySelector('[data-model-library-folder-action="add-model"]'));
   await flush();
   assert.equal(lists() - before, 1, 'exactly one refresh re-lists local GGUFs');
-  assert.equal(h.row(OWNER_CARD).querySelector('.model-row-meta').textContent, 'Local GGUF · 6.7 GB');
+  assert.equal(h.row(OWNER_CARD).querySelector('.mrow-meta').textContent, 'llama-server · Local GGUF · 6.7 GB on disk');
   // The refresh rewrites only the section line, so the announcement beside the
   // buttons still stands, and the section line never carried it.
   assert.equal(h.foldersLine(), 'Added ternary-bonsai-2-27b-pq2_0.');

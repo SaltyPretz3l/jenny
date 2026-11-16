@@ -137,7 +137,7 @@
       clearSessionComposerNotice = () => {},
       queueSessionRender = () => {},
       isCurrentSession = () => false,
-      isVisibleChatSession = () => false,
+      isVisibleChatSession = () => false, isComposerSession = isVisibleChatSession,
       normalizeId = (value) => String(value || '').trim(),
       showToastMessage = () => {},
       isRowModelEnabled = () => false,
@@ -148,17 +148,15 @@
       isStreamGenerationCurrent = () => true,
     } = options;
 
+    // The composer here is pane 0's: focus it only for pane 0's chat, and never take the
+    // caret from another field (a second pane's composer, an editor, a search box).
     function focusChatInput(sessionId) {
-      if (!isVisibleChatSession(sessionId)) {
-        return;
-      }
-      requestFrame(() => {
-        try {
-          if (isVisibleChatSession(sessionId) && chatInput && typeof chatInput.focus === 'function') {
-            chatInput.focus();
-          }
-        } catch (_) { /* focus best-effort */ }
-      });
+      const canFocus = () => {
+        const active = chatInput?.ownerDocument?.activeElement;
+        return isComposerSession(sessionId) && typeof chatInput?.focus === 'function'
+          && !(active && active !== chatInput && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')));
+      };
+      if (canFocus()) requestFrame(() => { try { if (canFocus()) chatInput.focus(); } catch (_) { /* focus best-effort */ } });
     }
 
     const terminalStateUtils = createTerminalStateUtils({ MESSAGE_STATUS, normalizeId, appendClientLog });
@@ -591,8 +589,7 @@
           activeMessages = [...getSessionMessages(payload.sessionId)];
           messageIndex = activeMessages.findIndex((message) => normalizeId(message?.id) === messageId);
           if (messageIndex === -1 && fetchedMessage) {
-            activeMessages.push({ ...fetchedMessage });
-            messageIndex = activeMessages.length - 1;
+            messageIndex = terminalMergeUtils.insertAtStoredPosition(activeMessages, refreshedMessages, fetchedMessage);
           }
           const refreshedTurnState = readHydratedTurnEventState(refreshedSessionMessages);
           const currentTurnVersion = Number(
@@ -629,7 +626,7 @@
     }
 
     async function handleComplete(payload, callOptions = {}) {
-      completeThinkingIndicator(payload.sessionId);
+      completeThinkingIndicator(payload.sessionId, payload.streamId);
       const durability = normalizeUnsavedDurability(payload.durability);
       const draftCount = Number.isInteger(payload.discardedDrafts?.count) ? payload.discardedDrafts.count : 0;
       const liveStamps = {
@@ -690,10 +687,9 @@
         return { buffered: false, terminal: true };
       }
       clearStreamThinkingStatus(payload.streamId);
-      const fullTerminalContent = String(payload.content || '');
-      const existingSegmentContent = String(activeMessages[index]?.content || '');
-      // Terminal content replaces the live aggregate; hydration owns splitting.
-      const completeContent = fullTerminalContent || existingSegmentContent;
+      // Terminal content replaces the live aggregate, minus the earlier segments' own bubbles.
+      const completeContent = terminalMergeUtils.resolveFinalSegmentContent(activeMessages, index, payload.streamId,
+        String(payload.content || ''), String(activeMessages[index]?.content || ''));
       const progressSnapshot = buildAgentProgressSnapshot(
         activeMessages[index], activeMessages, state?.features?.featureFlags?.agent_progress_durable === true
       );
@@ -805,7 +801,7 @@
     }
 
     async function handleError(payload, callOptions = {}) {
-      resetThinkingIndicator(payload.sessionId);
+      resetThinkingIndicator(payload.sessionId, payload.streamId);
       const durability = normalizeUnsavedDurability(payload.durability);
       let index = ensurePendingStreamEntry(payload);
       let activeMessages = [...getSessionMessages(payload.sessionId)];

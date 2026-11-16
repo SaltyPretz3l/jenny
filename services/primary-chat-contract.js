@@ -10,7 +10,9 @@
 
 const { PRIMARY_ERROR_CODES: CODES } = require('./backend/error-codes');
 const { CHANGE_ID } = require('./primary-settings-contract');
-const { PRIMARY_ACTION_RULE_SHAPES, isRuleId, normalizeRuleTarget } = require('./shell-config-primary-chat');
+const {
+  MODEL_PIN_MAX_CHARS, PRIMARY_ACTION_RULE_SHAPES, isRuleId, normalizeRuleTarget,
+} = require('./shell-config-primary-chat');
 
 const SCHEMA_VERSION = 1;
 const ACTIVITY_DEFAULT_LIMIT = 60;
@@ -143,6 +145,21 @@ function validateRevokeRuleRequest(raw) {
   return ok({ rule_id: raw.rule_id });
 }
 
+// Model pins: `{ schema_version: 1, model?, check_model? }`, at least one key, each a string of at most 200 characters ('' clears).
+function validateSetModelsRequest(raw) {
+  if (!closed(raw, ['model', 'check_model'])) return INVALID;
+  const keys = ['model', 'check_model'].filter((key) => has(raw, key));
+  if (!keys.length || !keys.every((key) => typeof raw[key] === 'string' && raw[key].length <= MODEL_PIN_MAX_CHARS)) return INVALID;
+  return ok(Object.fromEntries(keys.map((key) => [key, raw[key]])));
+}
+
+// Row 144: `{ schema_version: 1, reminder_id }` for Run anyway / Skip on a held scheduled check.
+function validateHeldCheckRequest(raw) {
+  if (!closed(raw, ['reminder_id'])) return INVALID;
+  const id = raw.reminder_id;
+  return typeof id === 'string' && id.length >= 1 && id.length <= 128 && !hasControlChar(id) ? ok({ reminder_id: id }) : INVALID;
+}
+
 function validateResetRequest(raw) {
   if (!closed(raw, ['forget', 'keep_copy', 'memory_opt_out'])) return INVALID;
   const flag = (key, fallback) => (has(raw, key) ? raw[key] : fallback);
@@ -186,6 +203,8 @@ module.exports = {
   validateAddRuleRequest,
   validateRevokeRuleRequest,
   validateResetRequest,
+  validateSetModelsRequest,
+  validateHeldCheckRequest,
   validateUndoSettingChangeRequest,
   validateUndoChatChangeRequest,
   sessionsChangedPayload,

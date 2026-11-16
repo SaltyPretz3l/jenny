@@ -39,7 +39,7 @@
   }
 
   // tab = { id, label, count, active }
-  function tabMarkup(actionButton, tab, jt) {
+  function tabMarkup(actionButton, tab, jt, idPrefix) {
     const name = nameWithCount(jt, tab.label, tab.count, tab.unread);
     return actionButton({
       plain: true,
@@ -47,9 +47,9 @@
       title: name,
       className: 'wb-tab' + (tab.active ? ' wb-tab--active' : ''),
       role: 'tab',
-      domId: 'wbTab-' + tab.id,
+      domId: (idPrefix || '') + 'wbTab-' + tab.id,
       ariaSelected: tab.active === true,
-      ariaControls: 'wbView-' + tab.id,
+      ariaControls: (idPrefix || '') + 'wbView-' + tab.id,
       tabIndex: tab.active ? 0 : -1,
       dataset: { 'wb-tab': tab.id },
       trustedHtml: '<span class="wb-tab-label">' + escapeHtml(tab.label) + '</span>' + countMarkup(tab.count, tab.unread),
@@ -67,10 +67,10 @@
     }, extra || {}));
   }
 
-  // o = { actionButton, jt, tabs: [{ id, label, count, active }], tablistLabel,
+  // o = { actionButton, jt, idPrefix?, tabs: [{ id, label, count, active }], tablistLabel,
   //       showMaximize, maximized, showCollapse, bound? { n, label } }. Returns the header's inner HTML.
   function headerMarkup(o) {
-    const tabs = o.tabs.map(function (tab) { return tabMarkup(o.actionButton, tab, o.jt); }).join('');
+    const tabs = o.tabs.map(function (tab) { return tabMarkup(o.actionButton, tab, o.jt, o.idPrefix); }).join('');
     // W7c: a view in the stack is bound to editor group n; the badge opens the stack menu.
     const bound = o.bound ? iconButton(o.actionButton, 'bind', o.bound.label, String(Math.floor(o.bound.n)), {
       className: 'wb-action wb-bound', ariaHaspopup: 'menu',

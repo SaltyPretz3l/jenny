@@ -193,8 +193,12 @@ function setField(host, selector, value) {
   field.dispatchEvent(new field.ownerDocument.defaultView.Event('input', { bubbles: true }));
 }
 
+// One turn of the event loop. A zero-delay timer is a 15 ms wait on Windows, so the turns that let a pending
+// promise chain settle are taken with setImmediate: the same ordering, without the timer's resolution.
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+
 async function flush() {
-  for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let index = 0; index < 8; index += 1) await turn();
 }
 
 async function click(host, action) {
@@ -204,8 +208,9 @@ async function click(host, action) {
 
 async function apply(host) {
   button(host, 'save-model-tuning').click();
-  for (let attempt = 0; attempt < 100 && /Applying|Restarting/.test(statusText(host)); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  // Fast turns first; a slower apply falls back to timer turns, for more waiting than the old 100 timers gave.
+  for (let attempt = 0; attempt < 200 && /Applying|Restarting/.test(statusText(host)); attempt += 1) {
+    await (attempt < 50 ? turn() : new Promise((resolve) => setTimeout(resolve, 0)));
   }
   await flush();
 }

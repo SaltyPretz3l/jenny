@@ -25,7 +25,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 86);
+  assert.equal(manifestNames.length, 87);
   // Row 94 P4: the export and the terminal read touch no network; terminal_run types into a real shell.
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_export, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.terminal_read, 'none');
@@ -44,7 +44,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_recent, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversation_open, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_search, 'none');
-  for (const name of ['sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
+  for (const name of ['sessions_list', 'session_status', 'session_transcript', 'session_stop', 'session_prioritize', 'jenny_help',
     'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'schedule_list', 'schedule_change', 'away_digest']) assert.equal(TOOL_NETWORK_CLASSIFICATION[name], 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_spawn, 'possible');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_wait, 'none');
@@ -318,5 +318,48 @@ test('the getState fallback still reads the snake_case local_engines spelling un
   assert.throws(
     () => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: '', requestedModel: 'qwen2.5-coder:14b' }, null),
     (error) => error?.code === LOCKDOWN_REMOTE_ENGINE
+  );
+});
+
+test('4b member wiring: a team model is a remote engine for a locked conversation, before and after the switch', () => {
+  const { isLocalEngine, openAiCompatibleUrlFromService } = require('../services/backend/session-lockdown-gate');
+  const service = {
+    currentEngineType: 'ollama',
+    featureFlags: { session_offline_lockdown: true, team: true },
+    _modelEngineHints: new Map([['team/team_alpha1/alpha', 'openai-compatible']]),
+    configService: { getState: () => ({ preferredEngineType: 'ollama', localEngines: { openaiCompatible: { apiUrl: 'http://127.0.0.1:8080' } } }) },
+  };
+  const isRefusal = (error) => error?.code === LOCKDOWN_REMOTE_ENGINE;
+  // The port is loopback and the configured endpoint local: the id alone refuses, well formed or not.
+  for (const requestedModel of ['team/team_alpha1/alpha', 'team/../x', 'team/']) {
+    assert.throws(() => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: '', requestedModel }, null),
+      isRefusal, requestedModel);
+    assert.doesNotThrow(() => resolveSessionLockdownRequest(service, { lockdown: false }, { requestedEngine: '', requestedModel }, null));
+  }
+  // A conversation with no pick admitted on Ollama, then the resolver switched to a team model.
+  const admitted = resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: '', requestedModel: '' }, null);
+  service.currentEngineType = 'openai-compatible';
+  service._teamEngineSelection = { id: 'team/team_alpha1/alpha', teamId: 'team_alpha1', modelId: 'alpha' };
+  assert.throws(() => admitted.assertResolvedEngine(), isRefusal);
+  assert.equal(isLocalEngine('openai-compatible', openAiCompatibleUrlFromService(service)), false,
+    'memory reflection and chat naming see a team model as remote too');
+  // The selection only counts while its engine runs.
+  service.currentEngineType = 'ollama';
+  assert.equal(openAiCompatibleUrlFromService(service), 'http://127.0.0.1:8080');
+});
+
+test('E71: with the team flag off a `team/` id is judged like any local id by a locked conversation', () => {
+  const service = {
+    currentEngineType: 'ollama',
+    featureFlags: { session_offline_lockdown: true, team: false },
+    configService: { getState: () => ({ preferredEngineType: 'ollama', localEngines: { openaiCompatible: { apiUrl: 'http://127.0.0.1:8080' } } }) },
+  };
+  for (const requestedModel of ['team/llama3:8b', 'team/team_alpha1/alpha', 'team/']) {
+    assert.doesNotThrow(() => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: '', requestedModel }, null), requestedModel);
+  }
+  service.configService = { getState: () => ({ preferredEngineType: 'ollama', localEngines: { openaiCompatible: { apiUrl: 'https://api.openai.com/v1' } } }) };
+  assert.throws(
+    () => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: 'openai-compatible', requestedModel: 'team/llama3:8b' }, null),
+    (error) => error?.code === LOCKDOWN_REMOTE_ENGINE, 'a remote endpoint is still refused by its URL, not by the prefix'
   );
 });

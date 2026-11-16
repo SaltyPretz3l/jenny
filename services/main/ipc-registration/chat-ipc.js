@@ -100,6 +100,11 @@ function registerChatStreamIpcHandlers(ipcMainLike, {
         : ''
     ),
     'chat.compactNow': (_, sessionId) => backendService.compactContextNow(sessionId),
+    // Row 136: reads which chat goes first on the model; `set` and `clear` are the person's pick.
+    'chat.firstSession': (_, request) => backendService.firstChatSession({
+      action: ['set', 'clear'].includes(request?.action) ? request.action : 'get',
+      sessionId: typeof request?.sessionId === 'string' ? request.sessionId.slice(0, 256) : '',
+    }),
     // Only a bounded project id (row 73) and the closed read-only intent cross.
     'handoff.generateNote': (_, sessionId, options) => backendService.generateHandoffNote(sessionId, {
       projectId: typeof options?.projectId === 'string' ? options.projectId.slice(0, 128) : undefined,

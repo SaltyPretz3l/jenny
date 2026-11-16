@@ -238,3 +238,46 @@ test('viewport controller still honours forceBottom on the sync that resolves an
     harness.restore();
   }
 });
+
+// Review 2026-11-12 (scroll-follow 6): a small wheel nudge while reading the
+// prompt left the reader-intent flag set, so the first chunk after Allow read it
+// as a scroll-away and released follow.
+test('viewport controller keeps following after Allow when the reader nudged inside the follow zone', (t) => {
+  t.mock.method(Date, 'now', () => 1_000_000);
+  const harness = createViewportControllerHarness({
+    deferAnimationFrame: true,
+    autoScrollThread: true,
+    deriveFollowLatestFromScroll(metrics) {
+      return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) <= 48;
+    },
+  });
+  spendOpenLanding(harness);
+
+  try {
+    harness.state.ui.followLatest = true;
+    harness.setThinkingAutoScroll(true);
+    harness.setPendingApprovalVisible(true);
+    harness.setScrollMetrics({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+
+    harness.setScrollMetrics({ scrollTop: 570 });
+    harness.controller.syncThreadScrollState({
+      scrollTop: 570, scrollHeight: 1000, clientHeight: 400, userInitiated: true, direction: 'up',
+    });
+    assert.equal(harness.state.ui.followLatest, true, 'a 30 px nudge stays inside the follow zone');
+
+    harness.setPendingApprovalVisible(false); // Allow
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.chatThreadScroll.scrollTop, 570, 'the resolving sync holds position');
+
+    harness.setScrollMetrics({ scrollHeight: 1200 }); // the tool output grows the page
+    harness.controller.scheduleMessageViewportSync([{ id: 'assistant-1' }]);
+    harness.flushAnimationFrame();
+    assert.equal(harness.state.ui.followLatest, true, 'the first chunk after Allow keeps following');
+    assert.ok(harness.chatThreadScroll.scrollTop > 570, 'follow moves toward the tool output');
+  } finally {
+    harness.restore();
+  }
+});

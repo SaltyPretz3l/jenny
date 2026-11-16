@@ -273,10 +273,10 @@ def test_parse_runtime_config_reads_max_tools_per_turn() -> None:
 
 
 def test_parse_runtime_config_clamps_max_tools_per_turn_to_bounds() -> None:
-    assert parse_runtime_config({"max_tools_per_turn": 0}).max_tools_per_turn == 20
+    assert parse_runtime_config({"max_tools_per_turn": 0}).max_tools_per_turn == 200
     assert parse_runtime_config({"max_tools_per_turn": 200}).max_tools_per_turn == 200
     assert parse_runtime_config({"max_tools_per_turn": 500}).max_tools_per_turn == 500
-    assert parse_runtime_config({"max_tools_per_turn": 501}).max_tools_per_turn == 20
+    assert parse_runtime_config({"max_tools_per_turn": 501}).max_tools_per_turn == 200
 
 
 @pytest.mark.parametrize(
@@ -291,14 +291,14 @@ def test_parse_runtime_config_rejects_nonfinite_or_non_integral_integer_fields(
         {"tool_policy_snapshot": {"version": invalid_value, "rules": []}}
     )
 
-    assert config.max_tools_per_turn == 20
+    assert config.max_tools_per_turn == 200
     assert snapshot_config.tool_policy_snapshot is not None
     assert snapshot_config.tool_policy_snapshot.version == 1
 
 
 def test_parse_runtime_config_defaults_max_tools_per_turn() -> None:
     config = parse_runtime_config({})
-    assert config.max_tools_per_turn == 20
+    assert config.max_tools_per_turn == 200
 
 
 def test_parse_runtime_config_reads_loop_caps() -> None:
@@ -323,8 +323,8 @@ def test_parse_runtime_config_defaults_loop_caps() -> None:
     config = parse_runtime_config({})
 
     assert config.max_loop_iterations == 8
-    assert config.max_chat_loop_iterations == 8
-    assert config.max_task_loop_iterations == 30
+    assert config.max_chat_loop_iterations == 40
+    assert config.max_task_loop_iterations == 300
     assert config.max_sub_agent_loop_iterations == 10
     assert config.max_sub_agent_concurrency == 1
     assert config.max_cloud_sub_agent_concurrency == 3
@@ -333,12 +333,12 @@ def test_parse_runtime_config_defaults_loop_caps() -> None:
 def test_parse_runtime_config_clamps_loop_caps() -> None:
     assert parse_runtime_config({"max_loop_iterations": 0}).max_loop_iterations == 8
     assert parse_runtime_config({"max_loop_iterations": 99}).max_loop_iterations == 8
-    assert parse_runtime_config({"max_chat_loop_iterations": 0}).max_chat_loop_iterations == 8
-    assert parse_runtime_config({"max_chat_loop_iterations": 99}).max_chat_loop_iterations == 8
-    assert parse_runtime_config({"max_task_loop_iterations": 0}).max_task_loop_iterations == 30
+    assert parse_runtime_config({"max_chat_loop_iterations": 0}).max_chat_loop_iterations == 40
+    assert parse_runtime_config({"max_chat_loop_iterations": 251}).max_chat_loop_iterations == 40
+    assert parse_runtime_config({"max_task_loop_iterations": 0}).max_task_loop_iterations == 300
     assert parse_runtime_config({"max_task_loop_iterations": 99}).max_task_loop_iterations == 99
-    assert parse_runtime_config({"max_task_loop_iterations": 250}).max_task_loop_iterations == 250
-    assert parse_runtime_config({"max_task_loop_iterations": 251}).max_task_loop_iterations == 30
+    assert parse_runtime_config({"max_task_loop_iterations": 1000}).max_task_loop_iterations == 1000
+    assert parse_runtime_config({"max_task_loop_iterations": 1001}).max_task_loop_iterations == 300
     assert (
         parse_runtime_config({"max_sub_agent_loop_iterations": 0}).max_sub_agent_loop_iterations
         == 10
@@ -374,7 +374,7 @@ def test_parse_runtime_config_reads_phase10_tool_budget_caps() -> None:
 def test_parse_runtime_config_defaults_phase10_tool_budget_caps() -> None:
     config = parse_runtime_config({})
 
-    assert config.max_web_tool_calls_per_turn == 10
+    assert config.max_web_tool_calls_per_turn == 30
     assert config.max_tool_calls_per_session == 2_000
 
 
@@ -456,35 +456,36 @@ def test_parse_runtime_config_clamps_cloud_loop_profile_caps() -> None:
 
 def test_parse_runtime_config_local_working_time_default_and_ceiling() -> None:
     # Out-of-range values fall back to the default; a stored old default stays.
-    assert RuntimeConfig().max_loop_wall_seconds == 3_600.0
-    assert parse_runtime_config({"max_loop_wall_seconds": 7_200.0}).max_loop_wall_seconds == 7_200.0
-    assert parse_runtime_config({"max_loop_wall_seconds": 1_800.0}).max_loop_wall_seconds == 1_800.0
-    assert parse_runtime_config({"max_loop_wall_seconds": 7_230.0}).max_loop_wall_seconds == 3_600.0
-    assert parse_runtime_config({"max_loop_wall_seconds": 29.0}).max_loop_wall_seconds == 3_600.0
+    assert RuntimeConfig().max_loop_wall_seconds == 7_200.0
+    assert parse_runtime_config({}).max_loop_wall_seconds == 7_200.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 28_800.0}).max_loop_wall_seconds == 28_800.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 3_600.0}).max_loop_wall_seconds == 3_600.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 28_830.0}).max_loop_wall_seconds == 7_200.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 29.0}).max_loop_wall_seconds == 7_200.0
 
 
 def test_parse_runtime_config_cloud_bounds_admit_values_the_local_bounds_reject() -> None:
-    # The local keys cap wall clock at 7200s / tool timeout at 600s / tools per
+    # The local keys cap wall clock at 28800s / tool timeout at 600s / tools per
     # turn at 500; cloud wall keys accept more. Session calls share 2000 (TR-008).
     config = parse_runtime_config(
         {
-            "max_loop_wall_seconds": 28_800.0,
+            "max_loop_wall_seconds": 43_200.0,
             "tools_execution_timeout_seconds": 1_800.0,
             "max_tools_per_turn": 200,
             "max_tool_calls_per_session": 2_000,
-            "cloud_max_loop_wall_seconds": 28_800.0,
+            "cloud_max_loop_wall_seconds": 43_200.0,
             "cloud_tools_execution_timeout_seconds": 1_800.0,
             "cloud_max_tools_per_turn": 200,
             "cloud_max_tool_calls_per_session": 2_000,
         }
     )
 
-    assert config.max_loop_wall_seconds == 3_600.0
+    assert config.max_loop_wall_seconds == 7_200.0
     assert config.tools_execution_timeout_seconds == 120.0
     assert config.max_tools_per_turn == 200
     # TR-008: the local per-chat budget now shares the cloud ceiling.
     assert config.max_tool_calls_per_session == 2_000
-    assert config.cloud_max_loop_wall_seconds == 28_800.0
+    assert config.cloud_max_loop_wall_seconds == 43_200.0
     assert config.cloud_tools_execution_timeout_seconds == 1_800.0
     assert config.cloud_max_tools_per_turn == 200
     assert config.cloud_max_tool_calls_per_session == 2_000
@@ -1149,15 +1150,23 @@ def test_parse_runtime_config_validates_24_hour_time() -> None:
         assert parse_runtime_config({"use_24_hour_time": value}).use_24_hour_time is False
 
 
+def test_parse_runtime_config_normalizes_drawing_instructions() -> None:
+    assert parse_runtime_config({}).drawing_instructions == "short"
+    for value in ("short", "full", "mermaid"):
+        assert parse_runtime_config({"drawing_instructions": value}).drawing_instructions == value
+    for value in ("bogus", "", None, 3, True, {}):
+        assert parse_runtime_config({"drawing_instructions": value}).drawing_instructions == "short"
+
+
 def test_parse_runtime_config_normalizes_auto_approve_streak_cap() -> None:
-    assert parse_runtime_config({}).auto_approve_streak_cap == 50
+    assert parse_runtime_config({}).auto_approve_streak_cap == 250
     assert parse_runtime_config({"auto_approve_streak_cap": 0}).auto_approve_streak_cap == 0
     assert parse_runtime_config({"auto_approve_streak_cap": -10}).auto_approve_streak_cap == 0
     assert parse_runtime_config({"auto_approve_streak_cap": 0.5}).auto_approve_streak_cap == 0
     assert parse_runtime_config({"auto_approve_streak_cap": 250.9}).auto_approve_streak_cap == 250
     assert parse_runtime_config({"auto_approve_streak_cap": 900}).auto_approve_streak_cap == 500
     for value in (None, "50", "", float("nan"), {}):
-        assert parse_runtime_config({"auto_approve_streak_cap": value}).auto_approve_streak_cap == 50
+        assert parse_runtime_config({"auto_approve_streak_cap": value}).auto_approve_streak_cap == 250
 
 
 

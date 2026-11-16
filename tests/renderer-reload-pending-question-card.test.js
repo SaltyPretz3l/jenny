@@ -96,3 +96,53 @@ for (const [label, messageCount] of [['reasoning', 2], ['reasoning and the ask_u
     assert.match(doc.getElementById('chatTimeline').textContent, /The user wants me to use the ask_user tool/);
   });
 }
+
+// mixed-states #4: a chat whose live stream waits on ask_user, left for
+// another chat and opened again, keeps one interactive card and its stream's
+// own text; the switch replays nothing into the live stream.
+test('a live question card survives a chat switch away and back without a replay', async (t) => {
+  const live = 'session-ask-live';
+  const other = 'session-ask-other';
+  const streamId = 'stream-ask-live';
+  const questions = [{ id: 'season', prompt: 'Which season do you prefer?', options: ['summer', 'winter'] }];
+  const app = await loadRendererApp({ shell: { chat: {
+    async startStream(_payload, { state }) {
+      state.sessions = [{ ...SUMMARY, id: live, title: 'Live' }, { ...SUMMARY, id: other, title: 'Other' }];
+      state.messagesBySession.set(live, []);
+      state.messagesBySession.set(other, []);
+      return { sessionId: live, streamId };
+    },
+    async getActiveTurnState(sessionId) {
+      return sessionId === live ? { stream_id: streamId, turn_id: streamId, state: 'streaming',
+        pending_user_questions: [{ question_id: 'q1', question_ref: 'ref_q', call_id: 'call_q', tool_name: 'ask_user', questions }] } : null;
+    },
+  } } });
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  const doc = window.document;
+  doc.getElementById('chatInput').value = 'ask me';
+  doc.getElementById('chatInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+  const emit = (payload) => shell.__emitChat({ sessionId: live, streamId, ...payload });
+  await emit({ type: 'started' });
+  await emit({ type: 'delta', content: 'Let me ask. ', aggregate: 'Let me ask. ' });
+  await emit({ type: 'user_questions_requested', callId: 'call_q', questionId: 'q1', questionRef: 'ref_q', toolName: 'ask_user',
+    questions, input: { questions }, status: 'pending_user_input', resultKind: 'user_questions' });
+  await waitForUi(window, 120);
+  assert.equal(doc.querySelectorAll('#chatTimeline .user-questions-block').length, 1, 'the live card shows');
+  shell.sessions.getMessages = async (id) => (id === live ? {
+    data: structuredClone(window.__rendererState.messagesBySession.get(live) || []).filter((message) => message.status !== 'streaming'),
+    turn_events: [], turn_event_log_version: 4, active_turn: { stream_id: streamId, turn_id: streamId },
+  } : { data: [] });
+  const openChat = async (id) => {
+    doc.querySelector(`.conversation-item[data-session-id="${id}"] [data-session-open]`).click();
+    await waitForUi(window, 150);
+  };
+  await openChat(other);
+  await openChat(live);
+  const cards = doc.querySelectorAll('#chatTimeline .user-questions-block');
+  assert.equal(cards.length, 1, 'one card after switching back');
+  assert.ok(cards[0].querySelector('button:not([disabled])'), 'the card is interactive');
+  assert.equal(doc.getElementById('chatTimeline').textContent.split('Let me ask.').length - 1, 1, 'the stream text shows once');
+});

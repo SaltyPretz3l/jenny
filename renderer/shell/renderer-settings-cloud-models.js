@@ -1,10 +1,12 @@
 /* renderer/shell/renderer-settings-cloud-models.js
  *
- * Settings > Models "Cloud models" group (plugin platform retirement, stage 2).
- * The main process owns sign-in, tokens and the persisted choice
- * (services/main/cloud-models-registration.js); this controller owns the view
- * model of one host, the bridge subscription and the row actions. It never
- * sees token material.
+ * Settings > Models > Engines and providers: the ChatGPT and Codex CLI rows
+ * (plugin platform retirement, stage 2). The main process owns sign-in, tokens
+ * and the persisted choice (services/main/cloud-models-registration.js); this
+ * controller registers the two rows on the services table
+ * (model-library/model-library-services.js), renders their controls into the
+ * Manage drawers, and owns the bridge subscription and the row actions. It
+ * never sees token material.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -17,16 +19,14 @@
 
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t)
-    || globalThis.jennyI18nFallback
-    || function (key, fallback, params) {
-      if (!params) return fallback;
-      return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
-        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
-      ));
-    };
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback
+    || ((key, fallback, params) => (params ? String(fallback).replace(/\{(\w+)\}/g, (m, name) => (Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : m)) : fallback));
 
   const AUTH_STATES = new Set(['signed_out', 'connecting', 'signed_in', 'error']);
+  const SERVICES_READY_EVENT = 'model-library-services-ready';
+  // The drawer bodies the controls render into; looked up at render time (a drawer is a fresh node per open).
+  const HOST_IDS = { chatgpt: 'cloudModelsChatgptHost', codex: 'cloudModelsCodexHost' };
+  const PASTE_ACTIONS = { cloudModelsChatgptPasteOpen: 'open', cloudModelsChatgptPasteSubmit: 'submit', cloudModelsChatgptCopyLink: 'copy' };
 
   function text(value, max) {
     return String(value == null ? '' : value).trim().slice(0, max);
@@ -68,7 +68,6 @@
   function createCloudModelsController(options = {}) {
     const windowRef = options.windowRef || (typeof globalThis !== 'undefined' ? globalThis.window || globalThis : null);
     const documentRef = options.documentRef || windowRef?.document || null;
-    const host = options.host || documentRef?.getElementById?.('cloudModelsHost') || null;
     const inventory = options.inventory || windowRef?.inventory || globalThis.inventory || {};
     const getBridge = typeof options.getBridge === 'function'
       ? options.getBridge : () => windowRef?.jennyShell?.cloudModels || null;
@@ -87,6 +86,7 @@
     let disposed = false;
     let bound = false;
     let unsubscribe = null;
+    let loaded = false;
     let visibilityKey = '';
     let codexSeeded = false;
     const now = () => (windowRef?.Date || Date).now();
@@ -97,24 +97,77 @@
     let ticker = null;
     let codexRecheck = null;
     let codexRechecks = 0;
-    // What the last repaint showed, so the ticker knows when a repaint is due.
-    let slowShown = false;
+    let slowShown = false; // what the last repaint showed, so the ticker knows when a repaint is due
     let copiedShown = false;
+    const slots = { chatgpt: { node: null, cleanups: [] }, codex: { node: null, cleanups: [] } };
     const listeners = [];
+    const listen = (list, target, type, handler, listenerOptions) => {
+      target.addEventListener(type, handler, listenerOptions);
+      list.push(() => target.removeEventListener(type, handler, listenerOptions));
+    };
 
-    function fieldBinding() {
-      return globalThis.rendererSettingsFieldBinding
-        || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
+    function services() {
+      if (typeof options.services === 'function') return options.services() || null;
+      const module = windowRef?.modelLibraryServices;
+      return module && typeof module.shared === 'function' ? module.shared({ documentRef, windowRef }) : null;
     }
 
-    function button(id, label, variant, disabled) {
-      return typeof inventory.actionButton === 'function'
-        ? inventory.actionButton({ id, label, variant, size: 'sm', disabled: disabled === true }) : '';
+    const st = (text, tone, set = false) => ({ text, tone, set });
+    const checking = () => st(jt('settings.models.services.checking', 'Checking…'), 'busy');
+
+    function chatgptStatus() {
+      const auth = state.chatgpt.auth;
+      const reason = auth.error || failure;
+      const plan = planLabel(auth.planType);
+      if (!loaded) return checking();
+      if (auth.state === 'signed_in') {
+        return st(plan ? jt('settings.models.services.chatgpt.connectedPlan', 'Connected · {plan}', { plan }) : jt('settings.cloudModels.connected', 'Connected'), 'ready', true);
+      }
+      if (auth.state === 'connecting') {
+        return st(paste.busy ? jt('settings.cloudModels.finishingSignIn', 'Finishing sign-in…') : jt('settings.cloudModels.waitingForBrowser', 'Waiting for browser'), 'busy');
+      }
+      if (auth.state === 'error' || reason) {
+        return st(reason && reason.length <= 60 ? reason : jt('settings.models.services.chatgpt.failed', 'Sign-in failed'), 'warn');
+      }
+      return st(jt('settings.models.services.chatgpt.notConnected', 'Not connected'), 'off');
     }
 
-    function status(tone, label) {
-      return typeof inventory.badge === 'function' ? inventory.badge({ tone, size: 'sm', text: label }) : '';
+    function codexStatus() {
+      if (pending === 'codex' || codexRecheck !== null || !codexSeeded) return checking();
+      if (codex.status === 'ready') return st(jt('settings.models.services.codex.ready', 'Ready'), 'ready', true);
+      return st(codex.status === 'signed_out' ? jt('settings.cloudModels.notSignedIn', 'Not signed in') : jt('settings.models.services.codex.notFound', 'Not found'), 'off');
     }
+
+    // A Manage drawer: one quiet line, then the host its controls render into.
+    const drawerBody = (kind, line) => (body) => {
+      body.innerHTML = `<p class="mp-quiet">${escapeHtml(line)}</p><div id="${HOST_IDS[kind]}"></div>`;
+      render();
+    };
+    const rows = [
+      {
+        id: 'chatgpt', kind: 'cloud', order: 10, name: 'ChatGPT', getStatus: chatgptStatus,
+        what: jt('settings.models.services.chatgpt.what', 'Your ChatGPT subscription'), actionLabel: jt('settings.cloudModels.signInShort', 'Sign in'),
+        renderDrawer: drawerBody('chatgpt', jt('settings.models.services.chatgpt.description', "Uses your ChatGPT subscription. Signing in opens your browser; the sign-in is kept in this device's secure store.")),
+      },
+      {
+        id: 'codex', kind: 'cloud', order: 20, name: jt('composer.modelPicker.codexCliGroup', 'Codex CLI'), getStatus: codexStatus,
+        what: jt('settings.models.services.codex.what', 'The codex command and its own login'), actionLabel: jt('settings.cloudModels.checkAgain', 'Check again'),
+        renderDrawer: drawerBody('codex', jt('settings.models.services.codex.description', 'Uses the codex command and its own login. Jenny never reads that login. Run codex login in a terminal, then check again.')),
+      },
+    ];
+
+    // Registered as soon as the (lazily loaded) services module exists; every render retries until then.
+    function syncRows() {
+      const svc = services();
+      if (svc) for (const entry of rows) if (!svc.has(entry.id)) svc.register(entry);
+      return svc;
+    }
+
+    const fieldBinding = () => globalThis.rendererSettingsFieldBinding
+      || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
+    const button = (id, label, variant, disabled) => (typeof inventory.actionButton === 'function'
+      ? inventory.actionButton({ id, label, variant, size: 'sm', disabled: disabled === true }) : '');
+    const status = (tone, label) => (typeof inventory.badge === 'function' ? inventory.badge({ tone, size: 'sm', text: label }) : '');
 
     function chatgptAccountRow() {
       const auth = state.chatgpt.auth;
@@ -146,7 +199,7 @@
           : jt('settings.cloudModels.signIn', 'Sign in with ChatGPT'), 'primary', busy);
       }
       if (state.localOnly && auth.state === 'signed_in') {
-        help = jt('settings.cloudModels.localOnly', 'Force local inference is on, so ChatGPT will not run. Turn it off in Offline.');
+        help = jt('settings.cloudModels.localOnlyUse', 'Force local inference is on, so ChatGPT will not run. Turn it off under Local use.');
       }
       return inventory.settingsField({
         id: 'cloudModelsChatgptAccount', variant: 'row', label: 'ChatGPT', help, error,
@@ -166,22 +219,14 @@
       });
     }
 
+    // The status itself is the table row's; this row keeps the action and what is wrong.
     function codexRow() {
-      let help;
-      let badge;
-      if (codex.status === 'ready') {
-        help = jt('settings.cloudModels.codexReady', 'Uses the codex command and its own login. Jenny never reads that login.');
-        badge = status('success', jt('settings.cloudModels.connected', 'Connected'));
-      } else if (codex.status === 'signed_out') {
-        help = jt('settings.cloudModels.codexSignedOut', 'Run codex login in a terminal, then check again.');
-        badge = status('muted', jt('settings.cloudModels.notSignedIn', 'Not signed in'));
-      } else {
-        help = codex.message || jt('settings.cloudModels.codexUnavailable', 'The codex command was not found or is not set up.');
-        badge = status('muted', jt('settings.cloudModels.unavailable', 'Unavailable'));
-      }
+      const help = codex.status === 'ready' ? ''
+        : codex.status === 'signed_out' ? jt('settings.cloudModels.codexSignedOut', 'Run codex login in a terminal, then check again.')
+          : codex.message || jt('settings.cloudModels.codexUnavailable', 'The codex command was not found or is not set up.');
       return inventory.settingsField({
         id: 'cloudModelsCodexCli', variant: 'row', label: jt('composer.modelPicker.codexCliGroup', 'Codex CLI'), help,
-        controlHtml: badge + button('cloudModelsCodexRefresh', jt('settings.cloudModels.checkAgain', 'Check again'), 'ghost', pending === 'codex'),
+        controlHtml: button('cloudModelsCodexRefresh', jt('settings.cloudModels.checkAgain', 'Check again'), 'ghost', pending === 'codex'),
         dataset: { 'cloud-codex-state': codex.status },
       });
     }
@@ -230,28 +275,23 @@
       ticker = null;
     }
 
-    // Once a second while connecting. A full repaint replaces every node in the
-    // host (focus, a click in flight, the alert paragraph), so the tick only
-    // writes the countdown text; it repaints when a rendered state flips (the
-    // 20 s slow-help line, the 2 s "Copied" label).
+    // Once a second while connecting. A repaint replaces every node (focus, a click in flight), so the
+    // tick only writes the countdown; it repaints when a rendered state flips (20 s slow help, 2 s "Copied").
     function tick() {
       if (disposed) return;
-      const slowNow = now() - paste.connectingSince >= 20000;
-      const copiedNow = copiedUntil > now();
-      if (slowNow !== slowShown || copiedNow !== copiedShown) {
+      if (!slots.chatgpt.node?.isConnected) { stopTicker(); return; } // the drawer closed; its next render restarts it
+      if ((now() - paste.connectingSince >= 20000) !== slowShown || (copiedUntil > now()) !== copiedShown) {
         render();
         return;
       }
-      const countdown = host?.querySelector('[data-paste-countdown]');
+      const countdown = slots.chatgpt.node.querySelector('[data-paste-countdown]');
       if (countdown) countdown.textContent = waitingText();
     }
 
     function syncPaste() {
       if (state.chatgpt.auth.state === 'connecting') {
-        if (ticker === null) {
-          paste.connectingSince = now();
-          ticker = windowRef?.setInterval?.(tick, 1000) ?? null;
-        }
+        if (!paste.connectingSince) paste.connectingSince = now();
+        if (ticker === null) ticker = windowRef?.setInterval?.(tick, 1000) ?? null;
       } else {
         stopTicker();
         paste = emptyPaste();
@@ -261,19 +301,25 @@
     }
 
     function render() {
-      if (disposed || !host || typeof inventory.settingsField !== 'function') return;
-      const focused = host.querySelector('[data-paste-field]') === documentRef?.activeElement;
-      host.innerHTML = chatgptAccountRow() + pasteBlock() + chatgptSwitchRow() + codexRow();
-      const input = host.querySelector('[data-paste-field]');
-      if (input) {
-        input.value = paste.value;
-        if (focused && !input.disabled) input.focus();
+      if (disposed || typeof inventory.settingsField !== 'function') return;
+      const svc = syncRows();
+      const host = syncHost('chatgpt');
+      if (host) {
+        const focused = host.querySelector('[data-paste-field]') === documentRef?.activeElement;
+        host.innerHTML = chatgptAccountRow() + pasteBlock() + chatgptSwitchRow();
+        const input = host.querySelector('[data-paste-field]');
+        if (input) {
+          input.value = paste.value;
+          if (focused && !input.disabled) input.focus();
+        }
+        if (ticker === null && state.chatgpt.auth.state === 'connecting') syncPaste();
       }
+      const codexHost = syncHost('codex');
+      if (codexHost) codexHost.innerHTML = codexRow();
+      if (svc) for (const entry of rows) svc.refresh(entry.id);
     }
 
-    function refreshComposerSoon() {
-      if (!disposed) Promise.resolve().then(refreshComposerModels).catch(() => {});
-    }
+    const refreshComposerSoon = () => { if (!disposed) Promise.resolve().then(refreshComposerModels).catch(() => {}); };
 
     // True when the reply carried a state to show.
     function adopt(result) {
@@ -281,8 +327,7 @@
       if (!next || typeof next !== 'object' || !next.chatgpt) return false;
       state = normalizeState(next);
       syncPaste();
-      // ChatGPT models are listed only while signed in with the switch on; the
-      // first read seeds the key, a later change refreshes Composer once.
+      // ChatGPT models are listed only while signed in with the switch on: the first read seeds, a later change refreshes Composer once.
       const key = `${state.chatgpt.enabled}|${state.chatgpt.auth.state === 'signed_in'}`;
       const changed = visibilityKey !== '' && key !== visibilityKey;
       visibilityKey = key;
@@ -290,9 +335,7 @@
       return true;
     }
 
-    // Codex CLI models are listed only while its login is ready, and no push
-    // exists for that route: the first read seeds the status, a later change
-    // refreshes Composer once.
+    // Codex CLI models are listed only while its login is ready (no push for it): the first read seeds, a later change refreshes Composer once.
     function adoptCodex(raw) {
       const next = normalizeCodexState(raw);
       const changed = codexSeeded && next.status !== codex.status;
@@ -303,10 +346,8 @@
       scheduleCodexRecheck(raw?.code === 'auth_unchecked');
     }
 
-    // The main process answers auth_unchecked and runs the real check in the
-    // background; nothing pushes the result, so the row re-reads a bounded few
-    // times (1.5 s, 3 s, ... ~30 s in all). A checked answer refreshes the
-    // Composer through adoptCodex when the status changed.
+    // The main process answers auth_unchecked and checks in the background; nothing pushes the
+    // result, so the row re-reads a bounded few times (1.5 s, 3 s, ... ~30 s in all).
     function scheduleCodexRecheck(unchecked) {
       if (codexRecheck !== null) windowRef?.clearTimeout?.(codexRecheck);
       codexRecheck = null;
@@ -335,7 +376,8 @@
       try {
         const codexState = await getCodexBridge()?.getState?.();
         if (!disposed) adoptCodex(codexState);
-      } catch (_error) { /* the row keeps "Unavailable" */ }
+      } catch (_error) { /* the row keeps "Not found" */ }
+      loaded = true;
       render();
     }
 
@@ -412,7 +454,7 @@
     function onInput(event) {
       if (!event.target?.matches?.('[data-paste-field]') || paste.busy) return;
       paste.value = event.target.value;
-      const submit = host.querySelector('[data-action="cloudModelsChatgptPasteSubmit"]');
+      const submit = slots.chatgpt.node?.querySelector('[data-action="cloudModelsChatgptPasteSubmit"]');
       if (submit) submit.disabled = !paste.value.trim();
     }
 
@@ -425,18 +467,16 @@
 
     function onClick(event) {
       const target = event?.target?.closest?.('[data-action]');
-      if (!target || target.disabled || !host?.contains?.(target)) return;
+      if (!target || target.disabled) return;
       const bridge = getBridge();
       const action = target.getAttribute('data-action');
       if (action === 'cloudModelsChatgptSignIn') {
-        // Sign-in stays open until the browser flow ends; pushes repaint meanwhile.
         void run('sign-in', async () => {
           const previous = state.chatgpt.auth;
           state.chatgpt.auth = { ...previous, state: 'connecting', error: '' };
           syncPaste();
           render();
-          // A rejected call or a reply without a state ends the attempt: the
-          // optimistic "connecting" row (and its countdown) goes back.
+          // A rejected call or a reply without a state ends the attempt: the optimistic row goes back.
           const revert = () => {
             if (disposed || state.chatgpt.auth.state !== 'connecting') return;
             state.chatgpt.auth = previous;
@@ -459,12 +499,8 @@
         });
       } else if (action === 'cloudModelsChatgptSignOut') {
         void run('sign-out', async () => adopt(await bridge.chatgptSignOut()));
-      } else if (action === 'cloudModelsChatgptPasteOpen') {
-        void pasteAction('open');
-      } else if (action === 'cloudModelsChatgptPasteSubmit') {
-        void pasteAction('submit');
-      } else if (action === 'cloudModelsChatgptCopyLink') {
-        void pasteAction('copy');
+      } else if (PASTE_ACTIONS[action]) {
+        void pasteAction(PASTE_ACTIONS[action]);
       } else if (action === 'cloudModelsCodexRefresh') {
         void run('codex', async () => { adoptCodex(await getCodexBridge()?.refresh?.()); });
       }
@@ -477,7 +513,7 @@
       render();
     }
 
-    function bindSwitch(registerListener) {
+    function bindSwitch(registerListener, host) {
       const binding = fieldBinding();
       if (typeof binding?.bindSettingFields !== 'function') return;
       const registry = binding.createSettingsAdapterRegistry();
@@ -499,20 +535,29 @@
       binding.bindSettingFields({ container: host, ids: ['chatgptModelsEnabledToggle'], registry, registerListener, inventory });
     }
 
+    // A drawer host is a fresh node on every open: listeners follow the node the page has now.
+    function syncHost(kind) {
+      const slot = slots[kind];
+      const node = documentRef?.getElementById?.(HOST_IDS[kind]) || null;
+      if (slot.node === node) return node;
+      for (const cleanup of slot.cleanups.splice(0)) cleanup();
+      slot.node = node;
+      if (!node?.addEventListener) return node;
+      const registerListener = (target, type, handler, listenerOptions) => listen(slot.cleanups, target, type, handler, listenerOptions);
+      registerListener(node, 'click', onClick);
+      if (kind === 'chatgpt') {
+        registerListener(node, 'input', onInput);
+        registerListener(node, 'keydown', onKeyDown);
+        bindSwitch(registerListener, node);
+      }
+      return node;
+    }
+
     function bind() {
       if (bound || disposed) return;
       bound = true;
-      if (host?.addEventListener) {
-        const registerListener = (target, type, handler, listenerOptions) => {
-          target.addEventListener(type, handler, listenerOptions);
-          listeners.push(() => target.removeEventListener(type, handler, listenerOptions));
-        };
-        registerListener(host, 'click', onClick);
-        registerListener(host, 'input', onInput);
-        registerListener(host, 'keydown', onKeyDown);
-        if (windowRef?.addEventListener) registerListener(windowRef, 'pagehide', stopTicker);
-        bindSwitch(registerListener);
-      }
+      if (windowRef?.addEventListener) listen(listeners, windowRef, 'pagehide', stopTicker);
+      if (documentRef?.addEventListener) listen(listeners, documentRef, SERVICES_READY_EVENT, render);
       try {
         const maybe = getBridge()?.onChanged?.(onChanged);
         if (typeof maybe === 'function') unsubscribe = maybe;
@@ -529,6 +574,11 @@
       generation += 1;
       try { unsubscribe?.(); } catch (_error) { /* best effort */ }
       for (const cleanup of listeners.splice(0)) cleanup();
+      for (const slot of Object.values(slots)) {
+        for (const cleanup of slot.cleanups.splice(0)) cleanup();
+        slot.node = null;
+      }
+      for (const entry of rows) services()?.unregister(entry.id);
     }
 
     return { bind, dispose, refresh, render, getState: () => normalizeState(state) };

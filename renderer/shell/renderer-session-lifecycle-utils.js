@@ -118,10 +118,14 @@
         // A live ask_user request has no approval record, but still owns a
         // stream. Restore that identity so current-turn attention can be read.
         const streamId = String(snapshot?.stream_id || snapshot?.request_id || '').trim();
+        // A switch back to a chat whose stream this renderer still holds: the
+        // stream's own state is intact, and replaying 'started' would reset it.
+        const alreadyLive = Boolean(streamId)
+          && String(getMultiStreamController()?.getStreamIdForSession?.(normalizedSessionId) || '').trim() === streamId;
         if (streamId) getMultiStreamController()?.registerStream?.(normalizedSessionId, streamId);
         // A reload dropped the live user_questions_requested event; replay the
         // questions main still waits on so their card comes back.
-        const pendingQuestions = streamId && Array.isArray(snapshot?.pending_user_questions)
+        const pendingQuestions = streamId && !alreadyLive && Array.isArray(snapshot?.pending_user_questions)
           ? snapshot.pending_user_questions : [];
         const turnId = String(snapshot?.turn_id || streamId).trim();
         if (pendingQuestions.length) {
@@ -218,6 +222,9 @@
           && !Array.isArray(pendingApproval.always_allow_scope)
           ? { alwaysAllowScope: pendingApproval.always_allow_scope } : {}),
         ...(pendingApproval.remember_offer === 'linked_children' ? { rememberOffer: 'linked_children' } : {}), // row 87 C1
+        // The same step's later edits this card may allow with its own (row 166 D10): live only, like the exact text.
+        ...(pendingApproval.round_approval && typeof pendingApproval.round_approval === 'object' && !Array.isArray(pendingApproval.round_approval)
+          ? { roundApproval: pendingApproval.round_approval } : {}),
       });
       const multiStreamController = getMultiStreamController();
       if (streamId) {
@@ -432,13 +439,16 @@
       });
 
       const skipOpenCurrent = Boolean(options.skipOpenCurrent);
+      let openedCurrent = false;
       if (state.currentSessionId && !skipOpenCurrent && !state.messagesBySession.has(state.currentSessionId)) {
         // The list is ready before the conversation: paint it first.
         renderSessions();
         globalThis.__jennyStartupAudit?.markOnce?.('session-list-painted', { sessionCount: state.sessions.length });
         await openSession(state.currentSessionId, { silent: true });
+        openedCurrent = true;
       }
-      if (state.currentSessionId && state.messagesBySession.has(state.currentSessionId)) {
+      // openSession already cleared the stale batch and rehydrated the active turn; only a cached chat needs it here.
+      if (!openedCurrent && state.currentSessionId && state.messagesBySession.has(state.currentSessionId)) {
         await clearStalePendingQuestionBatch(state.currentSessionId);
         await rehydrateActiveTurnState(state.currentSessionId);
       }
@@ -475,6 +485,8 @@
       state.sessionMessageAccessOrder?.delete(sessionId);
       state.sessionMessageAccessOrder?.set(sessionId, Date.now());
       clearComposerStatusNotice();
+      // A failed save belonged to the chat that was open.
+      if (outgoingSessionId !== incomingSessionId) globalThis.activityUtils?.clearFailedActivities?.(['composer.', 'settings.']);
       syncRuntimeDraftFromActiveSession();
       // A session another pane already shows lands there (the layout moves
       // focus to it after this runs), even while pane 0 is still focused.

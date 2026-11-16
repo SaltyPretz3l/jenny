@@ -398,7 +398,8 @@ test('unavailable lifecycle retries the configured default on the next chat turn
     currentModel: '',
     _emitServiceLog() {},
     async loadModel(model) { loadCalls.push(model); },
-    async listModels() { throw new Error('should not probe models while unavailable'); },
+    // The retry loads only a default the catalog lists, so a missing tag is never pulled silently.
+    async listModels() { return { active_model: '', data: [{ id: 'ornith:9b', engine_type: 'ollama' }] }; },
   };
 
   const model = await resolveModel(service, '');

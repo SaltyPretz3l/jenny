@@ -40,18 +40,20 @@ function setup({ withManager = true, flagOn = true, seedConfig = null } = {}) {
   }
   const service = new ShellConfigService({ userDataPath, env: {} });
   const runtimePicks = createRuntimePickRegistry();
+  const runtimeFolderPicks = createRuntimePickRegistry();
   const logs = [];
   const handlers = new Map();
   registerAuxiliaryIpcHandlers({
     ipcMainLike: { handle(channel, handler) { handlers.set(channel, handler); } },
-    backendService: withManager ? { options: { getLlamaServerManager: () => ({ runtimePicks }) } } : {},
+    backendService: withManager ? { options: { getLlamaServerManager: () => ({ runtimePicks, runtimeFolderPicks }) } } : {},
     shellConfigService: service,
     processRef: { env: { JENNY_ENABLE_LLAMA_SERVER_ACCELERATION: flagOn ? '1' : '0' } },
     log: (level, event, details) => logs.push({ level, event, details }),
   });
   const updateSettings = (payload) => handlers.get('engines:update-settings')({}, payload);
   const saved = () => service.getLocalEngines().openaiCompatible.managed.perModel[KEY];
-  return { service, runtimePicks, logs, updateSettings, saved };
+  const roots = () => service.getLocalEngines().openaiCompatible.managed.runtimeRoots;
+  return { service, runtimePicks, runtimeFolderPicks, logs, updateSettings, saved, roots };
 }
 
 // The drawer's own Apply payload for the Bonsai card, as W4 will send it.
@@ -187,4 +189,43 @@ test('a same-path re-pick whose write is blocked keeps the pick and claims nothi
   assert.equal(saved().runtimeBuild, 10683, 'the blocked write changed nothing');
   assert.equal(runtimePicks.has(FORK), true, 'so the pick survives for the next Apply');
   assert.equal(logs.some((item) => item.event === 'engines.managed_runtime_accepted'), false);
+});
+
+// Row 142: a runtime folder is a place main will run programs from.
+const RUNTIMES = WIN32 ? 'G:\\llmmodels\\runtimes' : '/opt/llama-runtimes';
+const OTHER_RUNTIMES = WIN32 ? 'D:\\builds' : '/srv/builds';
+
+test('a runtime folder the dialog never returned is dropped, counted, and logs no path', () => {
+  const { logs, updateSettings, roots } = setup();
+  updateSettings({ managed: { runtimeRoots: [INJECTED.replace(/[\\/][^\\/]+$/, '')] } });
+  assert.deepEqual(roots(), []);
+  const rejected = logs.find((entry) => entry.event === 'engines.managed_runtime_root_rejected');
+  assert.deepEqual(rejected?.details, { count: 1 });
+  assert.equal(JSON.stringify(logs).includes('evil'), false);
+});
+
+test('a picked runtime folder is saved once, the pick is spent, and a saved folder can stay or go', () => {
+  const { runtimeFolderPicks, updateSettings, roots, logs } = setup();
+  runtimeFolderPicks.record(RUNTIMES);
+  updateSettings({ managed: { runtimeRoots: [RUNTIMES] } });
+  assert.deepEqual(roots(), [RUNTIMES]);
+  assert.equal(runtimeFolderPicks.has(RUNTIMES), false);
+  assert.deepEqual(logs.find((entry) => entry.event === 'engines.managed_runtime_root_accepted')?.details, { count: 1 });
+  // Echoing the saved list keeps it with no pick; a new folder still needs one.
+  updateSettings({ managed: { runtimeRoots: [RUNTIMES, OTHER_RUNTIMES] } });
+  assert.deepEqual(roots(), [RUNTIMES]);
+  updateSettings({ managed: { runtimeRoots: [] } });
+  assert.deepEqual(roots(), []);
+  // A spent pick cannot add the folder back.
+  updateSettings({ managed: { runtimeRoots: [RUNTIMES] } });
+  assert.deepEqual(roots(), []);
+});
+
+test('an Apply that does not name runtime folders keeps them', () => {
+  const { runtimeFolderPicks, updateSettings, roots, service } = setup();
+  runtimeFolderPicks.record(RUNTIMES);
+  updateSettings({ managed: { runtimeRoots: [RUNTIMES] } });
+  updateSettings(drawerPayload(service).payload);
+  updateSettings({ managed: { libraryRoots: [] } });
+  assert.deepEqual(roots(), [RUNTIMES]);
 });

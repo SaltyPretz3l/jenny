@@ -33,6 +33,7 @@ from sidecar.protocol import CHAT_THINKING_KIND_REASONING, CHAT_THINKING_KIND_ST
 from sidecar.runtime.local_engine.request_context import (
     current_app_profile_behavior,
     current_diagnostics_store,
+    set_thinking_budget_scale,
 )
 
 # Emit under the generation-runtime hub's logger name (not this module's) so
@@ -391,6 +392,9 @@ def _stream_generate_with_tools(
     )
     current_phase: dict[str, Any] | None = None
     phase_index = 0
+    # One-shot like the phase summary below: a checkpoint leg's reduced budget.
+    set_thinking_budget_scale(kernel._engine, getattr(runtime, "next_thinking_budget_scale", None))
+    runtime.next_thinking_budget_scale = None
     thinking_budget_chars = resolve_thinking_budget_chars(kernel._engine, max_tokens)
     thinking_guard = ThinkingRepetitionGuard(max_chars=thinking_budget_chars)
     # One-shot phase summary staged by the checkpoint rung for THIS generation

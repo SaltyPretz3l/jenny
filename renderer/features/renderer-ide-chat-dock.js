@@ -14,14 +14,20 @@
  * workbench (hasUnread).
  *
  * Flag-off (ide_chat_dock=false) is byte-identical: reconcile resolves the
- * desired host to #chatView and the open entry points are inert. */
+ * desired host to #chatView and the open entry points are inert.
+ *
+ * Hosts (row 150): the dock serves a list of pages whose workbench can hold the
+ * chat. The Workspace is the first; the Board adds itself with registerHost. At
+ * most one page is on screen, so at most one holds the transcript. A page says
+ * when it is active, whether it is switched on, and whether its chat stack is open.
+ * With `shared: true` every page of one app state gets the same controller. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-ide-chat-session-picker'), require('../chat/chat-scroll-utils'));
+    module.exports = factory(require('./renderer-ide-chat-session-picker'), require('../chat/chat-scroll-utils'), require('./renderer-ide-chat-dock-anchors'));
     return;
   }
-  root.rendererIdeChatDock = factory(root.rendererIdeChatSessionPicker, root.chatScrollUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (chatSessionPickerModule, scrollUtils) {
+  root.rendererIdeChatDock = factory(root.rendererIdeChatSessionPicker, root.chatScrollUtils, root.rendererIdeChatDockAnchors);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (chatSessionPickerModule, scrollUtils, anchorsModule) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
@@ -45,77 +51,112 @@
     return null;
   }
 
-  function createIdeChatDock(deps) {
+  function callable(value, fallback) {
+    return typeof value === 'function' ? value : fallback;
+  }
+
+  // One page the chat can dock in. Row 40 W3: the chat is a workbench view. The page's
+  // workbench owns the open state (the chat stack), the Chat | Changes views, collapse and
+  // width; this module keeps the session row and the transcript relocation.
+  function normalizeHost(spec) {
+    const source = spec || {};
+    return {
+      id: String(source.id || 'workspace'), // also the name of its scroll-anchor surface
+      isActive: callable(source.isActive, () => false), // the page is the view on screen
+      isEnabled: callable(source.isEnabled, () => true), // its feature gate
+      isOpen: callable(source.isOpen, () => false), // its chat stack is open
+      mirrorOpen: callable(source.mirrorOpen, noop), // told (enabled && open) on every reconcile
+      workbench: source.workbench && typeof source.workbench.setOpen === 'function' ? source.workbench : null,
+      layout: callable(source.layout, noop), // after the page gains or loses the transcript
+      focusEditor: callable(source.focusEditor, noop),
+      onSelectSession: callable(source.onSelectSession, noop),
+      getRoot: callable(source.getRoot, () => null), // the page's workbench element: the focus fallback looks inside it
+      preferredProjectId: callable(source.preferredProjectId, () => ''), // its chats lead the session picker
+      revealSecondChanges: callable(source.revealSecondChanges, null),
+      changesView: source.changesView || null,
+      changesTabs: null,
+    };
+  }
+
+  // The Workspace as a host, from the deps its controller has always passed.
+  function workspaceHostFromDeps(deps) {
+    const state = deps?.state || {};
+    const getIde = callable(deps?.getIde, () => ({}));
+    return {
+      id: 'workspace',
+      isActive: () => state.ui?.activeView === 'ide',
+      isEnabled: () => ((state.features && state.features.featureFlags) || {}).ide_chat_dock === true,
+      isOpen: () => getIde().chatDockOpen === true,
+      mirrorOpen: (open) => {
+        if (state.ui && typeof state.ui === 'object' && state.ui.ideChatDockOpen !== open) state.ui.ideChatDockOpen = open;
+      },
+      workbench: deps?.workbench,
+      layout: deps?.layoutIdeEditor, // Monaco relayout after the grid gains/loses the dock column
+      focusEditor: deps?.focusEditor,
+      onSelectSession: deps?.onSelectSession,
+      revealSecondChanges: deps?.revealSecondChanges,
+      changesView: deps?.changesView,
+    };
+  }
+
+  function createDockCore(deps) {
     const state = deps?.state || {};
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
-    const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
-    // Monaco relayout after the grid gains/loses the dock column.
-    const layoutIdeEditor = typeof deps?.layoutIdeEditor === 'function' ? deps.layoutIdeEditor : noop;
     // Chat-side effects that must follow a host move; the render pipeline owns
     // virtualizer rebuilds and threads this callback in.
     const onHostChanged = typeof deps?.onHostChanged === 'function' ? deps.onHostChanged : noop;
     const onNewChat = typeof deps?.onNewChat === 'function' ? deps.onNewChat : noop;
-    const onSelectSession = typeof deps?.onSelectSession === 'function' ? deps.onSelectSession : noop;
     const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const noteProgrammaticWrite = typeof deps?.noteProgrammaticWrite === 'function' ? deps.noteProgrammaticWrite : noop;
-    const focusEditor = typeof deps?.focusEditor === 'function' ? deps.focusEditor : noop;
-    // Row 40 W3: the chat is a workbench view. The workbench owns the open state
-    // (the chat stack), the Chat | Changes views, collapse and width; this module
-    // keeps the session row and the transcript relocation.
-    const workbench = deps?.workbench && typeof deps.workbench.setOpen === 'function' ? deps.workbench : null;
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const windowRef = deps?.windowRef || globalRef.window || globalRef;
+    const hosts = [];
+    // The page whose chat stack holds the transcript now; null while it sits in the Chat view.
+    let dockedHost = null;
+    const activeHost = () => hosts.find((host) => host.isActive()) || null;
+    const hostIsOpen = (host) => Boolean(host) && host.isEnabled() && host.isOpen();
     const createSessionPicker = chatSessionPickerModule?.createIdeChatSessionPicker;
     const sessionPicker = typeof createSessionPicker === 'function'
       ? createSessionPicker({
         state,
         getHeader: () => getDom().ideChatDockHeader || null,
-        onSelectSession,
+        onSelectSession: (sessionId) => (activeHost() || hosts[0])?.onSelectSession(sessionId),
+        getPreferredProjectId: () => activeHost()?.preferredProjectId() || '',
         showShellErrorToast,
         appendClientLog,
       })
       : null;
-    // The Changes view host and the chat unread signal; deps.changesView carries the view deps.
-    const changesTabsModule = deps?.changesView && workbench ? resolveModule('rendererIdeChatDockChanges', './renderer-ide-chat-dock-changes') : null;
-    const changesTabs = changesTabsModule?.createChatDockChanges?.({
-      getDom, appendClientLog, focusChatInput: () => resolveChatNodes().chatInput?.focus?.(), workbench, ...deps.changesView,
-      // Outside the Workspace the chat is on screen in the Chat view: nothing there is unread.
-      isChatOnScreen: () => state.ui?.activeView !== 'ide' || workbench?.isVisible('chat') === true,
-      isActive: () => state.ui?.activeView === 'ide',
-    }) || null;
-    const anchorRegistry = typeof scrollUtils?.createLogicalScrollAnchorRegistry === 'function'
-      ? scrollUtils.createLogicalScrollAnchorRegistry({ cap: 32 })
-      : null;
+    // A page's Changes view host and its chat unread signal; host.changesView carries the view deps.
+    function createChangesTabs(host) {
+      if (!host.changesView || !host.workbench) return null;
+      const changesTabsModule = resolveModule('rendererIdeChatDockChanges', './renderer-ide-chat-dock-changes');
+      return changesTabsModule?.createChatDockChanges?.({
+        getDom, appendClientLog, focusChatInput: () => resolveChatNodes().chatInput?.focus?.(), workbench: host.workbench, ...host.changesView,
+        // Outside a host page the chat is on screen in the Chat view: nothing there is unread.
+        isChatOnScreen: () => { const active = activeHost(); return !active || active.workbench?.isVisible('chat') === true; },
+        isActive: () => host.isActive(),
+      }) || null;
+    }
+    // Where the reader was, per session and per place the transcript sits (the Chat view or a page).
+    const anchors = anchorsModule.createChatDockAnchors({
+      state, windowRef, scrollUtils, appendClientLog, noteProgrammaticWrite,
+      resolveChatNodes: () => resolveChatNodes(),
+      getDockBody: () => getDom().ideChatDockBody || null,
+      resolveMountedSurface: (nodes, dockBody) => resolveMountedSurface(nodes, dockBody),
+    });
+    const { prepareSessionTransition, prepareAnchorTransition, scheduleAnchorRestore } = anchors;
 
     let boundHeader = null;
     let focusComposerOnDock = false;
-    let anchorSessionId = '';
-    let anchorSurface = '';
-    let preparedSessionTransition = null;
-    let pendingAnchorRestore = null;
     let disposed = false;
     // Split view W1-4c: the pane root the transcript and composer were taken
     // from, remembered at dock time so the restore puts them back THERE.
     let restoreHost = null;
 
-    function isFlagOn() {
-      const flags = (state.features && state.features.featureFlags) || {};
-      return flags.ide_chat_dock === true;
-    }
-
-    function isDockOpen() {
-      return isFlagOn() && getIde().chatDockOpen === true;
-    }
-
+    // Each page keeps its own open mirror (the Workspace's is state.ui.ideChatDockOpen).
     function syncUiMirror() {
-      if (!state.ui || typeof state.ui !== 'object') {
-        return;
-      }
-      const open = isDockOpen();
-      if (state.ui.ideChatDockOpen !== open) {
-        state.ui.ideChatDockOpen = open;
-      }
+      hosts.forEach((host) => host.mirrorOpen(hostIsOpen(host)));
     }
 
     function resolveChatNodes() {
@@ -139,21 +180,18 @@
       };
     }
 
-    // Hide the aside while the chat stack is closed (the workbench host hides it too).
-    function applyHidden() {
-      const open = isDockOpen();
+    // Hide the aside while the page's chat stack is closed (the workbench host hides it too).
+    function applyHidden(host) {
+      const open = hostIsOpen(host);
       getDom().ideChatDock?.classList.toggle('hidden', !open);
       return open;
     }
 
     // ---- The idempotent host reconcile -------------------------------------
-    // Desired host from activeView + flag + open only (NOT session id): the
-    // dock body while Workspace is active and the dock is open, else #chatView
+    // Desired host from the active page + its flag + open only (NOT session id): the
+    // dock body while a host page is active and its chat stack is open, else #chatView
     // (restored via insertBefore the artifact-review resizer, the node that
     // directly follows the moved pair in the static markup).
-    function shouldDock() {
-      return isFlagOn() && state.ui?.activeView === 'ide' && getIde().chatDockOpen === true;
-    }
 
     // The remembered pane root; else the pane root the nodes still sit in (never
     // docked: nothing to move); else the focused pane's root; else #chatView.
@@ -170,158 +208,8 @@
         .filter((node) => Boolean(node && typeof node.parentNode !== 'undefined'));
     }
 
-    function anchorKey(sessionId, surface) {
-      const normalizedSessionId = String(sessionId || '').trim();
-      const normalizedSurface = surface === 'workspace' ? 'workspace' : 'chat';
-      return normalizedSessionId ? `${normalizedSessionId}\x1f${normalizedSurface}` : '';
-    }
-
     function resolveMountedSurface(nodes, dockBody) {
-      return nodes.chatThreadStage?.parentNode === dockBody ? 'workspace' : 'chat';
-    }
-
-    function cancelPendingAnchorRestore() {
-      if (!pendingAnchorRestore) return;
-      if (pendingAnchorRestore.kind === 'frame') {
-        windowRef.cancelAnimationFrame?.(pendingAnchorRestore.id);
-      } else {
-        windowRef.clearTimeout?.(pendingAnchorRestore.id);
-      }
-      pendingAnchorRestore = null;
-    }
-
-    // The element whose rows the logical scroll anchor is measured against.
-    function anchorTarget(nodes) {
-      return nodes.chatTimeline || nodes.chatThreadScroll;
-    }
-
-    function captureAnchor(sessionId, surface, nodes) {
-      const key = anchorKey(sessionId, surface);
-      if (disposed || !key || !anchorRegistry || !nodes.chatThreadScroll) return false;
-      try {
-        return anchorRegistry.capture(key, nodes.chatThreadScroll, anchorTarget(nodes));
-      } catch (error) {
-        appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', {
-          surface,
-          message: String(error?.message || error).slice(0, 160),
-        });
-        return false;
-      }
-    }
-
-    // `transition`: prepareAnchorTransition()'s result, or null for no move.
-    function scheduleAnchorRestore(transition) {
-      if (!transition) return;
-      const { sessionId, surface, fallbackSessionId, fallbackSurface } = transition;
-      const key = anchorKey(sessionId, surface);
-      const fallbackKey = anchorKey(fallbackSessionId, fallbackSurface);
-      if (disposed || !key || !anchorRegistry) return;
-      cancelPendingAnchorRestore();
-      const restore = function restoreDockAnchor() {
-        pendingAnchorRestore = null;
-        if (disposed) return;
-        const nodes = resolveChatNodes();
-        if (!nodes.chatThreadScroll) return;
-        const dockBody = getDom().ideChatDockBody || null;
-        if (String(state.currentSessionId || '').trim() !== String(sessionId || '').trim()
-          || resolveMountedSurface(nodes, dockBody) !== surface) {
-          return;
-        }
-        try {
-          // Arm attribution only for outcomes that actually wrote scrollTop:
-          // a missing/unavailable/skipped restore must not leave a live marker
-          // that mislabels the reader's next genuine scroll as anchor_restore.
-          // Scroll events dispatch after this task, so arming after the call
-          // still precedes the coordinator frame that observes the movement.
-          const armIfRestored = (outcome) => {
-            if (outcome !== 'missing' && outcome !== 'unavailable' && outcome !== 'skipped') {
-              noteProgrammaticWrite('anchor_restore');
-            }
-            return outcome;
-          };
-          let outcome = armIfRestored(
-            anchorRegistry.restore(key, nodes.chatThreadScroll, anchorTarget(nodes))
-          );
-          // The first visit to a surface has no surface-specific snapshot yet.
-          // Reuse the just-captured source anchor so responsive reparenting does
-          // not move the reader; later visits continue to restore independently.
-          if (
-            (outcome === 'missing' || outcome === 'unavailable')
-            && fallbackKey
-            && fallbackKey !== key
-          ) {
-            outcome = armIfRestored(
-              anchorRegistry.restore(fallbackKey, nodes.chatThreadScroll, anchorTarget(nodes))
-            );
-          }
-          if (outcome !== 'missing' && outcome !== 'unavailable' && state.ui) {
-            state.ui.followLatest = outcome === 'near_bottom';
-          }
-        } catch (error) {
-          appendClientLog('WARN', 'ide_chat_dock.anchor_restore_failed', {
-            surface,
-            message: String(error?.message || error).slice(0, 160),
-          });
-        }
-      };
-      if (typeof windowRef.requestAnimationFrame === 'function') {
-        pendingAnchorRestore = {
-          kind: 'frame',
-          id: windowRef.requestAnimationFrame(function waitForVirtualizerRebuild() {
-            if (disposed) {
-              pendingAnchorRestore = null;
-              return;
-            }
-            pendingAnchorRestore = {
-              kind: 'frame',
-              id: windowRef.requestAnimationFrame(restore),
-            };
-          }),
-        };
-      } else {
-        pendingAnchorRestore = { kind: 'timer', id: windowRef.setTimeout?.(restore, 0) };
-      }
-    }
-
-    function prepareSessionTransition(outgoingSessionId, incomingSessionId) {
-      const outgoingId = String(outgoingSessionId || '').trim();
-      const incomingId = String(incomingSessionId || '').trim();
-      if (disposed || !outgoingId || !incomingId || outgoingId === incomingId) return false;
-      const nodes = resolveChatNodes();
-      const dockBody = getDom().ideChatDockBody || null;
-      if (!nodes.chatThreadScroll) return false;
-      const mountedSurface = resolveMountedSurface(nodes, dockBody);
-      if (!anchorSessionId) anchorSessionId = outgoingId;
-      if (!anchorSurface) anchorSurface = mountedSurface;
-      cancelPendingAnchorRestore();
-      if (anchorSessionId === outgoingId) {
-        captureAnchor(outgoingId, mountedSurface, nodes);
-      }
-      preparedSessionTransition = { sessionId: incomingId };
-      return true;
-    }
-
-    function prepareAnchorTransition(nodes, dockBody, targetSurface) {
-      const currentSessionId = String(state.currentSessionId || '').trim();
-      const mountedSurface = resolveMountedSurface(nodes, dockBody);
-      if (!anchorSessionId) anchorSessionId = currentSessionId;
-      if (!anchorSurface) anchorSurface = mountedSurface;
-      if (preparedSessionTransition?.sessionId === currentSessionId) {
-        preparedSessionTransition = null;
-        anchorSessionId = currentSessionId;
-        anchorSurface = targetSurface;
-        return { sessionId: currentSessionId, surface: targetSurface };
-      }
-      preparedSessionTransition = null;
-      if (anchorSessionId === currentSessionId && anchorSurface === targetSurface) {
-        return null;
-      }
-      const fallbackSessionId = anchorSessionId;
-      const fallbackSurface = anchorSurface;
-      captureAnchor(anchorSessionId, anchorSurface, nodes);
-      anchorSessionId = currentSessionId;
-      anchorSurface = targetSurface;
-      return { sessionId: currentSessionId, surface: targetSurface, fallbackSessionId, fallbackSurface };
+      return nodes.chatThreadStage?.parentNode === dockBody ? ((dockedHost || hosts[0])?.id || 'workspace') : 'chat';
     }
 
     function focusIsInside(node, doc) {
@@ -357,28 +245,38 @@
     function reconcile() {
       if (disposed) return false;
       syncUiMirror();
+      const page = activeHost();
       // Flag-off is byte-identical: no chrome is ever written; only the (no-op)
-      // restore-path host check runs.
-      if (isFlagOn()) {
-        if (applyHidden()) renderHeader();
-        changesTabs?.sync(); // open or not: Changes may sit in another, open stack
-      }
+      // restore-path host check runs. With no host page on screen the first host
+      // keeps the aside's hidden state, as the Workspace always has.
+      const chromeHost = page || hosts[0] || null;
+      if (chromeHost && chromeHost.isEnabled() && applyHidden(chromeHost)) renderHeader();
+      // Open or not: Changes may sit in another, open stack.
+      hosts.forEach((host) => { if (host.isEnabled()) host.changesTabs?.sync(); });
       const dom = getDom();
       const nodes = resolveChatNodes();
       const movable = movableNodes(nodes);
       if (movable.length === 0) {
         return false;
       }
-      const docked = shouldDock();
+      const docked = hostIsOpen(page);
       if (!docked) sessionPicker?.close(false);
       const dockBody = dom.ideChatDockBody || null;
       const doc = dockBody?.ownerDocument || movable[0].ownerDocument || null;
-      const targetSurface = docked && dockBody ? 'workspace' : 'chat';
+      const targetSurface = docked && dockBody ? page.id : 'chat';
       const anchorTransition = prepareAnchorTransition(nodes, dockBody, targetSurface);
       if (docked && dockBody) {
         if (movable.every((node) => node.parentNode === dockBody)) {
+          // The same aside, now inside another page's workbench: nothing moves, that page lays out.
+          const switched = Boolean(dockedHost) && dockedHost !== page;
+          dockedHost = page;
+          if (switched) {
+            page.layout();
+            notifySubagentMonitorRehost();
+            notifyComposerRehost(page.id);
+          }
           scheduleAnchorRestore(anchorTransition);
-          return false;
+          return switched;
         }
         const focusedBeforeMove = captureMovableFocus(movable, doc);
         const origin = movable[0].parentNode;
@@ -386,10 +284,11 @@
         for (const node of movable) {
           dockBody.appendChild(node); // fixed order: transcript | composer
         }
-        layoutIdeEditor();
+        dockedHost = page;
+        page.layout();
         onHostChanged(true);
         notifySubagentMonitorRehost();
-        notifyComposerRehost('workspace');
+        notifyComposerRehost(page.id);
         const wantsComposerFocus = focusComposerOnDock;
         focusComposerOnDock = false;
         if (wantsComposerFocus) {
@@ -411,6 +310,9 @@
       if (!host) {
         return false;
       }
+      // The page the transcript is leaving lays out and takes focus back.
+      const leaving = dockedHost || hosts[0] || null;
+      dockedHost = null;
       if (movable.every((node) => node.parentNode === host)) {
         scheduleAnchorRestore(anchorTransition);
         return false;
@@ -422,13 +324,13 @@
         if (paneRoot && node === nodes.composerWrap) host.appendChild(node);
         else host.insertBefore(node, anchor && anchor.parentNode === host ? anchor : null);
       }
-      layoutIdeEditor();
+      leaving?.layout();
       if (focusedBeforeMove?.isConnected) {
         focusedBeforeMove.focus?.();
       } else if (shouldRestoreEditorFocus) {
-        focusEditor();
+        leaving?.focusEditor();
         // Focus did not land (still on <body> or in the dock being closed): use the chat's strip button or tab.
-        if (!doc?.activeElement || doc.activeElement === doc.body || focusIsInside(dom.ideChatDock, doc)) doc?.querySelector?.('[data-wb-strip="chat"], [data-wb-tab="chat"]')?.focus?.();
+        if (!doc?.activeElement || doc.activeElement === doc.body || focusIsInside(dom.ideChatDock, doc)) (leaving?.getRoot() || doc)?.querySelector?.('[data-wb-strip="chat"], [data-wb-tab="chat"]')?.focus?.();
       }
       // After the focus restore: split view hands pane focus back from here.
       onHostChanged(false);
@@ -478,27 +380,67 @@
       reconcile();
     }
 
-    function open() {
-      if (!isFlagOn() || !workbench) {
-        return;
-      }
-      focusComposerOnDock = true;
-      workbench.setOpen(true);
+    function removeHost(host) {
+      const index = hosts.indexOf(host);
+      if (index < 0) return;
+      hosts.splice(index, 1);
+      host.changesTabs?.dispose();
+      host.changesTabs = null;
+      if (dockedHost === host) dockedHost = null;
     }
 
-    function close() {
-      sessionPicker?.close(false);
-      focusComposerOnDock = false;
-      workbench?.setOpen(false);
+    /* Adds a page the chat can dock in and returns that page's controls. Registering an id
+     * again replaces the earlier page. See normalizeHost for the fields. */
+    function registerHost(spec) {
+      const host = normalizeHost(spec);
+      removeHost(hosts.find((entry) => entry.id === host.id));
+      host.changesTabs = createChangesTabs(host);
+      hosts.push(host);
+
+      function open() {
+        if (!host.isEnabled() || !host.workbench) {
+          return;
+        }
+        focusComposerOnDock = true;
+        host.workbench.setOpen(true);
+      }
+
+      function close() {
+        sessionPicker?.close(false);
+        focusComposerOnDock = false;
+        host.workbench?.setOpen(false);
+      }
+
+      function toggle() {
+        // A folded chat stack shows as a strip: toggle on what is seen.
+        if (host.workbench?.isVisible('chat') === true) {
+          close();
+        } else {
+          open();
+        }
+      }
+
+      return {
+        close,
+        open,
+        toggle,
+        // Reveals the Changes view where it sits; the chat stack stays as it is.
+        openChanges: (target) => (host.changesTabs && host.isEnabled() && host.isActive() ? host.changesTabs.reveal(target || {}) : false),
+        toggleChangesTab: () => host.changesTabs?.toggle() || false,
+        getChangesWaitingCount: () => host.changesTabs?.waitingCount?.() || 0,
+        // New chat activity while the workbench chat view was hidden (cleared once it shows).
+        hasUnread: () => host.changesTabs?.hasUnread?.() || false,
+        unregister: () => removeHost(host),
+      };
     }
 
-    function toggle() {
-      // A folded chat stack shows as a strip: toggle on what is seen.
-      if (workbench?.isVisible('chat') === true) {
-        close();
-      } else {
-        open();
-      }
+    // Only while the chat is docked: otherwise the side panel shows the review.
+    // A review asked for from Chat 2 (the Workspace's second chat) opens its own Changes 2.
+    function revealChanges(target) {
+      const host = activeHost() || hosts[0] || null;
+      if (!host) return false;
+      if (target?.secondChat === true) return host.revealSecondChanges?.(target) === true;
+      return host.changesTabs && host.isActive() && hostIsOpen(host) ? host.changesTabs.reveal(target) : false;
     }
 
     // ---- Header events -----------------------------------------------------
@@ -525,11 +467,9 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
-      cancelPendingAnchorRestore();
-      anchorRegistry?.dispose?.();
-      preparedSessionTransition = null;
+      anchors.dispose();
       sessionPicker?.dispose();
-      changesTabs?.dispose();
+      hosts.slice().forEach(removeHost);
       if (boundHeader) {
         boundHeader.removeEventListener('click', handleHeaderClick);
         boundHeader = null;
@@ -538,27 +478,65 @@
 
     return {
       bindEvents,
-      close,
       dispose,
-      open,
       reconcile,
       prepareSessionTransition,
       render,
-      // Only while the chat is docked: otherwise the side panel shows the review.
-      // A review asked for from Chat 2 (the Workspace's second chat) opens its own Changes 2.
-      revealChanges: (target) => (target?.secondChat === true ? deps?.revealSecondChanges?.(target) === true
-        : changesTabs && shouldDock() ? changesTabs.reveal(target) : false),
-      // Reveals the Changes view where it sits; the chat stack stays as it is.
-      openChanges: (target) => (changesTabs && isFlagOn() && state.ui?.activeView === 'ide' ? changesTabs.reveal(target || {}) : false),
-      toggle,
-      toggleChangesTab: () => changesTabs?.toggle() || false,
-      getChangesWaitingCount: () => changesTabs?.waitingCount?.() || 0,
-      // New chat activity while the workbench chat view was hidden (cleared once it shows).
-      hasUnread: () => changesTabs?.hasUnread?.() || false,
+      registerHost,
+      revealChanges,
+      hostCount: () => hosts.length,
     };
+  }
+
+  // App state -> the one dock core every page of that app shares.
+  const sharedByState = new WeakMap();
+
+  /* The dock for one page: the shared controls plus that page's own (open, close, toggle and
+   * its Changes tab). deps.host names the page (see normalizeHost); without it the page is the
+   * Workspace, built from the deps its controller passes. By default the caller owns a
+   * controller of its own. With `shared: true` every caller holding the same deps.state gets
+   * one controller and adds its page to it: the transcript and composer are one subtree, so one
+   * controller moves them. The first caller's shell deps (getDom, onHostChanged...) are kept. */
+  function createIdeChatDock(deps) {
+    const key = deps?.shared === true && deps.state && typeof deps.state === 'object' ? deps.state : null;
+    let core = key ? sharedByState.get(key) || null : null;
+    if (!core) {
+      core = createDockCore(deps);
+      if (key) sharedByState.set(key, core);
+    }
+    const page = core.registerHost(deps?.host || workspaceHostFromDeps(deps));
+    return {
+      bindEvents: core.bindEvents,
+      reconcile: core.reconcile,
+      prepareSessionTransition: core.prepareSessionTransition,
+      render: core.render,
+      registerHost: core.registerHost,
+      revealChanges: core.revealChanges,
+      close: page.close,
+      open: page.open,
+      toggle: page.toggle,
+      openChanges: page.openChanges,
+      toggleChangesTab: page.toggleChangesTab,
+      getChangesWaitingCount: page.getChangesWaitingCount,
+      hasUnread: page.hasUnread,
+      // A shared controller lives until its last page leaves.
+      dispose() {
+        page.unregister();
+        if (key && core.hostCount() > 0) return;
+        core.dispose();
+        if (key && sharedByState.get(key) === core) sharedByState.delete(key);
+      },
+    };
+  }
+
+  // The shared controller of an app state, or null: the shell drives reconcile through it
+  // whichever page created it.
+  function getSharedChatDock(state) {
+    return (state && typeof state === 'object' && sharedByState.get(state)) || null;
   }
 
   return {
     createIdeChatDock,
+    getSharedChatDock,
   };
 });

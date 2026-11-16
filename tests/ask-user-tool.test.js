@@ -167,7 +167,7 @@ test('multi_select answers remain arrays while single-select arrays collapse', a
   ]);
 });
 
-test('unanswered questions render as (no answer) without changing normalized metadata', async () => {
+test('unanswered questions render as (skipped) without changing normalized metadata', async () => {
   const { context, backendService } = buildContext();
   const pendingResult = tool.execute({
     questions: [
@@ -188,14 +188,55 @@ test('unanswered questions render as (no answer) without changing normalized met
 
   const result = await pendingResult;
   assert.equal(result.content, [
-    'Q: Missing entry?\nA: (no answer)',
-    'Q: Empty string?\nA: (no answer)',
-    'Q: Empty multi-select?\nA: (no answer)',
+    'Q: Missing entry?\nA: (skipped)',
+    'Q: Empty string?\nA: (skipped)',
+    'Q: Empty multi-select?\nA: (skipped)',
   ].join('\n\n'));
   assert.deepEqual(result.metadata.answers, [
     { id: 'empty', value: '' },
     { id: 'many', value: [] },
   ]);
+});
+
+test('an Other answer with no option picked reads as the Other text alone', async () => {
+  const { context, backendService } = buildContext();
+  const pendingResult = tool.execute({
+    questions: [{ id: 'dest', prompt: 'Where?', options: ['E:'], allow_other: true }],
+  }, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  const [questionRef] = backendService.pendingUserQuestions.keys();
+  answerUserQuestions(backendService, questionRef, { answers: [{ id: 'dest', value: '', other: 'NAS share' }] });
+  const result = await pendingResult;
+  assert.equal(result.content, 'Q: Where?\nA: (Other: NAS share)');
+});
+
+test('a reply typed in the composer answers the questions in the user\'s own words', async () => {
+  const { context, backendService } = buildContext();
+  const pendingResult = tool.execute({
+    questions: [{ id: 'dest', prompt: 'Where?', options: ['E:', 'OneDrive'] }],
+  }, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  const [questionRef] = backendService.pendingUserQuestions.keys();
+  assert.equal(answerUserQuestions(backendService, questionRef, { reply: `  Neither, use the NAS.${'x'.repeat(2500)}  ` }), true);
+  const result = await pendingResult;
+  assert.equal(result.isError, false);
+  assert.match(result.content, /^The user replied in their own words instead of using the answer form:\nNeither, use the NAS\./);
+  assert.equal(result.metadata.result_kind, 'user_questions_answered');
+  assert.deepEqual(result.metadata.answers, []);
+  assert.equal(result.metadata.reply.length, tool.LIMITS.reply);
+  assert.ok(result.metadata.reply.startsWith('Neither, use the NAS.'));
+  assert.equal(backendService.pendingUserQuestions.size, 0);
+});
+
+test('a blank reply falls back to the answers it came with', async () => {
+  const { context, backendService } = buildContext();
+  const pendingResult = tool.execute({ questions: [{ id: 'one', prompt: 'One?' }] }, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  const [questionRef] = backendService.pendingUserQuestions.keys();
+  answerUserQuestions(backendService, questionRef, { reply: '   ', answers: [{ id: 'one', value: 'yes' }] });
+  const result = await pendingResult;
+  assert.equal(result.metadata.reply, undefined);
+  assert.deepEqual(result.metadata.answers, [{ id: 'one', value: 'yes' }]);
 });
 
 test('summaries pluralise the question count', () => {

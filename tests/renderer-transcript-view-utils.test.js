@@ -74,8 +74,8 @@ const CLUSTER_MARKUP = '<div class="chat-view"><div class="chat-pane" id="pane">
   + '</div><div id="chatTimeline"></div></div></div>';
 
 /* A pane whose width the test controls; ResizeObserver is a recorder the test fires by hand. */
-function mountControl(t, { markup = CLUSTER_MARKUP, paneClass = '', width = 900, signal, chatWidth, promptJump } = {}) {
-  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`);
+function mountControl(t, { markup = CLUSTER_MARKUP, paneClass = '', width = 900, signal, chatWidth, promptJump, panels, prepare } = {}) {
+  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`, { url: 'https://jenny.test/' });
   const { window } = dom;
   const doc = window.document;
   if (chatWidth) doc.documentElement.dataset.chatWidth = chatWidth;
@@ -99,8 +99,9 @@ function mountControl(t, { markup = CLUSTER_MARKUP, paneClass = '', width = 900,
   });
   const { mountTranscriptViewControl } = require('../renderer/chat/renderer-transcript-view-utils.js');
   const cluster = doc.getElementById('cluster');
+  prepare?.({ window, doc });
   const control = mountTranscriptViewControl({
-    cluster, getSessionId: () => 's1', signal, promptJump,
+    cluster, getSessionId: () => 's1', signal, promptJump, panels,
     registerListener: (target, name, handler, options) => target.addEventListener(name, handler, options),
   });
   const menuEl = () => doc.querySelector('.inv-context-menu');
@@ -109,6 +110,17 @@ function mountControl(t, { markup = CLUSTER_MARKUP, paneClass = '', width = 900,
   const fit = (next) => { size.width = next; observers.forEach((observer) => observer.callback()); };
   return { window, doc, cluster, button: control.button, control, menuEl, rows, setViewCalls, observers, fit };
 }
+
+test('the More menu lists Background tasks as a ticked toggle while its panel is open', (t) => {
+  const saved = globalThis.rendererBackgroundTasksPanel;
+  globalThis.rendererBackgroundTasksPanel = { isOpen: () => true, toggle() {} };
+  t.after(() => { globalThis.rendererBackgroundTasksPanel = saved; });
+  const { button, menuEl, rows } = mountControl(t);
+  button.click();
+  assert.ok(rows().includes('Background tasks'));
+  const item = [...menuEl().querySelectorAll('[role="menuitemcheckbox"]')].find((row) => row.textContent.includes('Background tasks'));
+  assert.equal(item.getAttribute('aria-checked'), 'true');
+});
 
 test('Back to prompt leads the More menu and jumps to this pane\'s latest prompt', (t) => {
   const jumps = [];
@@ -230,8 +242,8 @@ test('Activity joins the menu only while its button is shown, and the row clicks
   assert.ok(!rows().includes('Activity'), 'hidden (the feature flag is off)');
   activity.hidden = false;
   button.click();
-  assert.deepEqual(rows(), ['Answers', 'Thinking', 'Everything', '---', 'Wide transcript', 'Activity']);
-  [...menuEl().querySelectorAll('[role="menuitem"]')].find((row) => row.textContent === 'Activity').click();
+  assert.deepEqual(rows(), ['Activity', '---', 'Answers', 'Thinking', 'Everything', '---', 'Wide transcript']);
+  [...menuEl().querySelectorAll('[role="menuitemcheckbox"]')].find((row) => row.textContent === 'Activity').click();
   assert.deepEqual(clicks, ['activity']);
 });
 
@@ -246,7 +258,7 @@ test('a short bar moves Tasks and Notes into More, above the views, and each row
   const clicks = [];
   doc.getElementById('chatTimelineNotesToggle').addEventListener('click', () => clicks.push('notes'));
   doc.getElementById('chatTimelineTasksToggle').addEventListener('click', () => clicks.push('tasks'));
-  menuEl().querySelectorAll('[role="menuitem"]')[1].click();
+  menuEl().querySelectorAll('[role="menuitemcheckbox"]')[1].click();
   assert.deepEqual(clicks, ['notes']);
   fit(560);
   assert.equal(cluster.hasAttribute('data-session-bar-compact'), false, '560px and up is roomy');
@@ -306,6 +318,172 @@ test('the IDE dock pane keeps its floating column: no Wide item and no compact m
   assert.equal(cluster.hasAttribute('data-session-bar-compact'), false);
   button.click();
   assert.deepEqual(rows(), ['Answers', 'Thinking', 'Everything']);
+});
+
+/* Row 138: the panel group. One ticked toggle per panel without an always-visible button. */
+
+const PANEL_MARKUP = '<div class="chat-view"><div class="chat-pane" id="pane"><div class="cluster" id="cluster" data-chat-node="chatTimelineUtilityCluster">'
+  + '<button data-chat-node="artifactSplitViewToggle" id="artifacts" aria-pressed="true"></button>'
+  + '<button id="chatTimelineTasksToggle" aria-pressed="false"></button><button id="chatTimelineNotesToggle" aria-pressed="false"></button>'
+  + '<button data-activity-open id="activity" aria-pressed="true"></button><button data-session-bar-diff id="diff" hidden></button>'
+  + '</div><div id="chatTimeline"><button data-subagent-open="k1" id="card1"></button><button data-subagent-open="k2" id="card2"></button></div></div>'
+  + '<div class="chat-pane" id="pane2"><button data-subagent-open="other" id="card3"></button></div>'
+  + '<div id="artifactReviewPanel"><div class="subagent-monitor-shell"><button data-subagent-close id="subClose"></button></div></div></div>';
+const GROUP = ['Artifacts', 'Tasks', 'Notes', 'Background tasks', 'Subagents', 'Changes', 'Change pictures', 'Activity'];
+const HIDDEN_KEY = 'jenny.changesPictures.hidden.v1';
+
+/* A compact bar with fakes for the rail, the Background tasks panel and the Changes opener. */
+function mountPanels(t, { flags = {}, bg = true, detailCloses = true, withPanels = true, ...rest } = {}) {
+  const rail = { mode: '' };
+  const calls = { bg: [], open: [], close: 0, closeRail: 0, flag: [] };
+  const saved = { bg: globalThis.rendererBackgroundTasksPanel, detail: globalThis.rendererChatWorkspaceDetail };
+  globalThis.rendererBackgroundTasksPanel = bg ? { isOpen: () => rail.mode === 'bg', toggle: (arg) => calls.bg.push(arg) } : undefined;
+  globalThis.rendererChatWorkspaceDetail = {
+    open: (arg) => { calls.open.push(arg); rail.mode = 'code_review'; return true; },
+    close: () => { calls.close += 1; if (detailCloses) rail.mode = ''; },
+  };
+  t.after(() => { globalThis.rendererBackgroundTasksPanel = saved.bg; globalThis.rendererChatWorkspaceDetail = saved.detail; });
+  const panels = withPanels ? {
+    railMode: () => rail.mode,
+    closeRail: () => { calls.closeRail += 1; rail.mode = ''; },
+    featureEnabled: (key) => { calls.flag.push(key); return flags[key] !== false; },
+  } : undefined;
+  const ctx = mountControl(t, { markup: PANEL_MARKUP, width: 400, panels, ...rest });
+  const menuItem = (label) => [...ctx.menuEl().querySelectorAll('[role="menuitemcheckbox"]')].find((row) => row.textContent.includes(label));
+  const open = () => { ctx.button.click(); };
+  return { ...ctx, rail, calls, menuItem, open };
+}
+
+test('the panel group leads the menu as ticked toggles in order, after Back to prompt', (t) => {
+  const { menuEl, rows, open, doc } = mountPanels(t, { promptJump: { targetId: () => 'u1', jump() {} } });
+  open();
+  assert.deepEqual(rows(), ['Back to prompt', '---', ...GROUP, '---', 'Answers', 'Thinking', 'Everything', '---', 'Wide transcript']);
+  const checkboxes = [...menuEl().querySelectorAll('[role="menuitemcheckbox"]')];
+  assert.equal(checkboxes.length, GROUP.length + 1, 'the group and Wide transcript');
+  for (const row of checkboxes) assert.ok(['true', 'false'].includes(row.getAttribute('aria-checked')), 'a boolean tick');
+  const ticked = (label) => checkboxes.find((row) => row.textContent.includes(label)).getAttribute('aria-checked');
+  assert.equal(ticked('Artifacts'), 'true', 'the real button is pressed');
+  assert.equal(ticked('Tasks'), 'false');
+  assert.equal(ticked('Activity'), 'true', 'ticked from aria-pressed');
+  assert.equal(doc.querySelectorAll('.inv-context-menu-item[role="menuitem"]').length, 1, 'only Back to prompt is a plain item');
+});
+
+test('each panel item is listed only when its panel can open', (t) => {
+  const { cluster, doc, open, rows, fit, calls } = mountPanels(t, { flags: { change_pictures: false } });
+  open();
+  assert.ok(!rows().includes('Change pictures') && rows().includes('Changes'), 'the feature flag off hides only Change pictures');
+  assert.deepEqual(calls.flag, ['change_pictures']);
+  const without = (label, change) => { change(); open(); assert.ok(!rows().includes(label), `no ${label}`); };
+  without('Activity', () => { doc.getElementById('activity').hidden = true; });
+  without('Subagents', () => { doc.getElementById('card1').remove(); doc.getElementById('card2').remove(); }); // pane 2's card does not count
+  without('Changes', () => { doc.getElementById('diff').remove(); });
+  without('Notes', () => { doc.getElementById('chatTimelineNotesToggle').hidden = true; });
+  without('Tasks', () => { doc.getElementById('chatTimelineTasksToggle').remove(); });
+  without('Artifacts', () => { doc.getElementById('artifacts').remove(); });
+  fit(900);
+  doc.getElementById('chatTimelineNotesToggle').hidden = false;
+  open();
+  assert.equal(cluster.hasAttribute('data-session-bar-compact'), false);
+  assert.deepEqual(rows(), ['Background tasks', '---', 'Answers', 'Thinking', 'Everything', '---', 'Wide transcript'], 'a roomy bar keeps Artifacts, Tasks and Notes on the bar');
+});
+
+test('Background tasks is absent without the panel object', (t) => {
+  const { open, rows } = mountPanels(t, { bg: false });
+  open();
+  assert.ok(!rows().includes('Background tasks'));
+});
+
+test('Background tasks toggles the panel for this pane with the button as opener', (t) => {
+  const { open, menuItem, calls, button } = mountPanels(t);
+  open();
+  assert.equal(menuItem('Background tasks').getAttribute('aria-checked'), 'false');
+  menuItem('Background tasks').click();
+  assert.deepEqual(calls.bg, [{ sessionId: 's1', opener: button }]);
+});
+
+test('Subagents opens this pane\'s last card, and a ticked row closes the panel', (t) => {
+  const { doc, open, menuItem, rail, calls } = mountPanels(t);
+  const clicked = [];
+  for (const id of ['card1', 'card2', 'card3', 'subClose']) doc.getElementById(id).addEventListener('click', () => clicked.push(id));
+  open();
+  assert.equal(menuItem('Subagents').getAttribute('aria-checked'), 'false');
+  menuItem('Subagents').click();
+  assert.deepEqual(clicked, ['card2'], 'the last card of this pane only');
+  rail.mode = 'subagents';
+  open();
+  assert.equal(menuItem('Subagents').getAttribute('aria-checked'), 'true');
+  menuItem('Subagents').click();
+  assert.deepEqual(clicked, ['card2', 'subClose'], 'the monitor\'s own Close control');
+  assert.equal(calls.closeRail, 0);
+  doc.getElementById('subClose').remove();
+  open();
+  menuItem('Subagents').click();
+  assert.equal(calls.closeRail, 1, 'no Close control in the DOM: the rail closes');
+});
+
+test('Changes opens through the workspace detail and a ticked row closes it', (t) => {
+  const { open, menuItem, rail, calls, button } = mountPanels(t);
+  open();
+  assert.equal(menuItem('Changes').getAttribute('aria-checked'), 'false');
+  menuItem('Changes').click();
+  assert.deepEqual(calls.open, [{ surface: 'changes', ownerSessionId: 's1', opener: button }]);
+  assert.equal(rail.mode, 'code_review');
+  open();
+  assert.equal(menuItem('Changes').getAttribute('aria-checked'), 'true');
+  menuItem('Changes').click();
+  assert.deepEqual([calls.close, calls.closeRail, rail.mode], [1, 0, ''], 'the detail close was enough');
+});
+
+test('Changes closes the rail itself when the detail close leaves its panel showing', (t) => {
+  const { open, menuItem, rail, calls } = mountPanels(t, { detailCloses: false });
+  rail.mode = 'code_review';
+  open();
+  menuItem('Changes').click();
+  assert.deepEqual([calls.close, calls.closeRail, rail.mode], [1, 1, '']);
+});
+
+test('Change pictures opens Changes with the pictures on, or flips the view preference while Changes is open', (t) => {
+  const { window, doc, open, menuItem, rail, calls } = mountPanels(t, {
+    prepare: ({ window: win }) => win.localStorage.setItem(HIDDEN_KEY, '1'),
+  });
+  const root = doc.documentElement;
+  assert.equal(root.hasAttribute('data-change-pictures-hidden'), true, 'applied at mount from storage');
+  open();
+  assert.equal(menuItem('Change pictures').getAttribute('aria-checked'), 'false');
+  menuItem('Change pictures').click();
+  assert.equal(window.localStorage.getItem(HIDDEN_KEY), null, 'closed Changes: the bit is cleared');
+  assert.equal(root.hasAttribute('data-change-pictures-hidden'), false);
+  assert.equal(calls.open.length, 1);
+  assert.equal(rail.mode, 'code_review');
+  open();
+  assert.equal(menuItem('Change pictures').getAttribute('aria-checked'), 'true');
+  menuItem('Change pictures').click();
+  assert.equal(window.localStorage.getItem(HIDDEN_KEY), '1', 'open Changes: the bit flips on');
+  assert.equal(root.hasAttribute('data-change-pictures-hidden'), true);
+  assert.equal(calls.open.length, 1, 'Changes stays as it is');
+  open();
+  assert.equal(menuItem('Change pictures').getAttribute('aria-checked'), 'false');
+  menuItem('Change pictures').click();
+  assert.equal(window.localStorage.getItem(HIDDEN_KEY), null, 'and back off');
+  assert.equal(root.hasAttribute('data-change-pictures-hidden'), false);
+});
+
+test('storage that throws does not break the menu or the Change pictures toggle', (t) => {
+  const { doc, open, menuItem, rail, rows } = mountPanels(t, {
+    prepare: ({ window: win }) => Object.defineProperty(win, 'localStorage', { configurable: true, get() { throw new Error('denied'); } }),
+  });
+  open();
+  assert.ok(rows().includes('Change pictures'));
+  rail.mode = 'code_review';
+  open();
+  menuItem('Change pictures').click();
+  assert.equal(doc.documentElement.hasAttribute('data-change-pictures-hidden'), true, 'the attribute still follows the click');
+});
+
+test('mounting without panels still builds the menu, minus the rail-backed items', (t) => {
+  const { open, rows } = mountPanels(t, { withPanels: false });
+  open();
+  assert.deepEqual(rows(), ['Artifacts', 'Tasks', 'Notes', 'Background tasks', 'Activity', '---', 'Answers', 'Thinking', 'Everything', '---', 'Wide transcript']);
 });
 
 /* Row 92: the Wide transcript toggle (Chat width `full`). */

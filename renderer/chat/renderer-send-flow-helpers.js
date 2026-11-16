@@ -263,7 +263,13 @@
     return String(failureMessage?.stream_error || '').trim().slice(0, 160);
   }
 
-  function resolveMessageCopyText(message) {
+  // Flag on: copied text drops the model's [web:N] markers (copying numbers and sources is deferred).
+  function stripCopyMarkers(text, featureFlags, role) {
+    if (featureFlags?.source_citations !== true || role !== 'assistant') return text;
+    return (globalThis.rendererCitationChipsUtils || require('./renderer-citation-chips-utils')).stripCitationMarkers(text);
+  }
+
+  function resolveMessageCopyText(message, featureFlags) {
     if (!message) return '';
     const segments = Array.isArray(message.visible_segments) ? message.visible_segments : [];
     if (segments.length) {
@@ -272,10 +278,10 @@
         .filter((text) => text.length > 0)
         .join('');
       if (joined) {
-        return joined;
+        return stripCopyMarkers(joined, featureFlags, message.role);
       }
     }
-    return String(message.content || '');
+    return stripCopyMarkers(String(message.content || ''), featureFlags, message.role);
   }
 
   // isDockApprovalSteerActive is injected because send admission and queued dispatch must use the same predicate.
@@ -436,6 +442,54 @@
     return true;
   }
 
+  // ask_user (row 157): the question card waiting in this session's live turn,
+  // read like the session list's "Input needed" (renderer-multi-stream-utils.js).
+  function findPendingUserQuestionRef(messages, activeStreamId) {
+    const streamId = String(activeStreamId || '').trim();
+    if (!streamId || !Array.isArray(messages)) return '';
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === 'user') break;
+      const tool = message?.kind === 'tool_use' ? message.tool_call : null;
+      if (tool?.tool_name === 'ask_user' && tool.status === 'pending_user_input'
+        && tool.parent_stream_id === streamId && !tool.user_questions_stale && !tool.user_questions_withdrawn) {
+        const questionRef = String(tool.question_ref || '').trim();
+        if (questionRef) return questionRef;
+      }
+    }
+    return '';
+  }
+
+  // A message typed while the card waits answers it in the user's own words.
+  // Resolves true only when the waiter took it; otherwise the send goes on as usual.
+  const QUESTION_REPLY_MAX_CHARS = 2000; // ask-user-tool.js LIMITS.reply
+  async function replyToPendingUserQuestions({ questionRef, reply, chat }) {
+    const text = String(reply || '').trim();
+    if (!String(questionRef || '').trim() || !text || text.length > QUESTION_REPLY_MAX_CHARS
+      || typeof chat?.answerUserQuestions !== 'function') return false;
+    try {
+      return (await chat.answerUserQuestions(questionRef, { reply: text })) === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // The default placeholder is kept while swapped out; anything that rewrites it
+  // meanwhile (a locale or mode change) wins on restore.
+  function syncQuestionReplyPlaceholder(input, waiting) {
+    if (!input?.dataset) return;
+    const text = jt('chat.questions.composerPlaceholder', 'Or answer in your own words…');
+    const swapped = Object.prototype.hasOwnProperty.call(input.dataset, 'questionReplyDefault');
+    if (waiting) {
+      if (!swapped) input.dataset.questionReplyDefault = input.placeholder || '';
+      else if (input.placeholder !== text) input.dataset.questionReplyDefault = input.placeholder || '';
+      if (input.placeholder !== text) input.placeholder = text;
+    } else if (swapped) {
+      if (input.placeholder === text) input.placeholder = input.dataset.questionReplyDefault || '';
+      delete input.dataset.questionReplyDefault;
+    }
+  }
+
   return {
     adoptPersistedUserMessageId,
     annotateUserSendFailureInStore,
@@ -449,11 +503,15 @@
     createOptimisticSessionId,
     createSendQueueGuards,
     createTraceToken,
+    findPendingUserQuestionRef,
     getQueuedSendFromState,
     getOrCreateSendOutbox,
+    QUESTION_REPLY_MAX_CHARS,
     reconcileAcceptedRegenerate,
+    replyToPendingUserQuestions,
     resolveMessageCopyText,
     stashQueuedSendInState,
     summarizeDurableFailurePreview,
+    syncQuestionReplyPlaceholder,
   };
 });

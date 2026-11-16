@@ -236,3 +236,135 @@ test('row 100 P2: waitersForJob lists the chats waiting behind a job, and only w
   noteEvent(row, 'runtime_waiting', { workId: 'work-1', waitState: 'ended' });
   assert.deepEqual(row.waitersForJob('job-1'), ['session-2']);
 });
+
+// Row 136: the reply runs, but its next model request waits behind another chat.
+function noteModelWait(row, extra = {}) {
+  noteEvent(row, 'model_waiting', { waitState: 'waiting', blockingSessionId: 'session-a', heldForFirst: false,
+    firstSetBy: '', ...extra });
+}
+
+test('row 136: a reply waiting for the model names the chat that has it and offers to finish this one first', (t) => {
+  const picks = [];
+  let first = false;
+  const { timeline, clock, row } = makeWaitHarness(t, {
+    isFirstChat: () => first,
+    onFinishFirst: (sessionId) => picks.push(sessionId),
+  });
+  noteEvent(row, 'delta');
+  clock.nowMs = 200;
+  noteModelWait(row);
+  const node = findRow(timeline);
+  assert.ok(node, 'the wait is known, not guessed from silence');
+  assert.equal(node.getAttribute('data-turn-activity-kind'), 'waiting');
+  assert.equal(rowText(timeline),
+    'Waiting for the model while "G5 fix attempt 4" uses it. Continues on its own. Finish this first');
+  // The reply is running, not paused: Pause stays and the queue strip shows no row for it.
+  assert.equal(row.isWaitingStream('stream-1'), false);
+  assert.equal(row.getTypedActivity('stream-1').waitState, 'model');
+  node.querySelector('.turn-activity-wait-action').click();
+  assert.deepEqual(picks, ['session-1']);
+
+  noteModelWait(row, { heldForFirst: true, firstSetBy: 'user' });
+  assert.equal(rowText(timeline),
+    'Waiting for "G5 fix attempt 4", which goes first. Continues when it is done. Finish this first');
+  noteModelWait(row, { heldForFirst: true, firstSetBy: 'primary' });
+  assert.equal(rowText(timeline),
+    'Waiting for "G5 fix attempt 4". Jenny put it first. Continues when it is done. Finish this first');
+  noteModelWait(row, { heldForFirst: true, firstSetBy: 'user', blockingSessionId: '' });
+  assert.equal(rowText(timeline), 'Waiting for the chat that goes first. Continues when it is done. Finish this first');
+  noteModelWait(row, { blockingSessionId: '' });
+  assert.equal(rowText(timeline),
+    'Waiting for the model while another chat uses it. Continues on its own. Finish this first');
+
+  // Another event on the stream (a helper's tool finishing) does not end a wait main has not ended.
+  noteEvent(row, 'tool_result');
+  row.tick();
+  assert.equal(rowText(timeline),
+    'Waiting for the model while another chat uses it. Continues on its own. Finish this first');
+
+  // This chat was put first: only the other chat's running step is in the way, and nothing is left to pick.
+  first = true;
+  row.tick();
+  assert.equal(rowText(timeline), 'Waiting for the model while another chat uses it. This chat goes next.');
+  assert.equal(findRow(timeline).querySelector('.turn-activity-wait-action'), null);
+
+  // Granted: the line goes, and the reply is an ordinary running one again.
+  noteEvent(row, 'model_waiting', { waitState: 'granted' });
+  assert.equal(findRow(timeline), null);
+  assert.equal(row.getTypedActivity('stream-1'), null);
+
+  // A reply that has paused keeps its own line: a late model-wait notice neither replaces nor removes it.
+  noteWaiting(row);
+  noteModelWait(row);
+  noteEvent(row, 'model_waiting', { waitState: 'granted' });
+  assert.equal(row.isWaitingStream('stream-1'), true);
+  assert.equal(rowText(timeline), 'Waiting for "G5 fix attempt 4" to finish a command in this folder. Continues on its own.');
+});
+
+test('row 136: a chat still on its placeholder title is not named, and the real title replaces the sentence when it arrives', (t) => {
+  const { timeline, titles, row } = makeWaitHarness(t);
+  noteEvent(row, 'delta');
+  titles['session-a'] = 'New Chat';
+  noteModelWait(row);
+  assert.equal(rowText(timeline),
+    'Waiting for the model while another chat uses it. Continues on its own. Finish this first');
+  noteModelWait(row, { heldForFirst: true, firstSetBy: 'user' });
+  assert.equal(rowText(timeline), 'Waiting for the chat that goes first. Continues when it is done. Finish this first');
+  titles['session-a'] = 'Fix the login flow';
+  row.tick();
+  assert.equal(rowText(timeline),
+    'Waiting for "Fix the login flow", which goes first. Continues when it is done. Finish this first');
+});
+
+test('row 136: the first-chat copy reads through the bridge, tells listeners once per change and re-reads while a pick shows', async () => {
+  const { createFirstChat, firstChatMenuItems, firstChatRowTag } = require('../renderer/chat/renderer-stream-waiting-line');
+  const calls = [];
+  const timers = [];
+  let answer = { status: 'ok', first: null };
+  const store = createFirstChat({
+    api: () => ({ firstSession: async (request) => { calls.push(request); return answer; } }),
+    setTimer: (callback, delay) => { const handle = { callback, delay }; timers.push(handle); return handle; },
+    clearTimer: (handle) => { handle.cleared = true; },
+  });
+  const heard = [];
+  store.subscribe((first) => heard.push(first && first.sessionId));
+
+  assert.deepEqual(firstChatMenuItems('chat-a', false, store), [], 'an idle chat offers nothing');
+  const [finish] = firstChatMenuItems('chat-a', true, store);
+  assert.equal(finish.label, 'Finish this first');
+  answer = { status: 'set', first: { sessionId: 'chat-a', setBy: 'user', setAt: 1 } };
+  await finish.action();
+  assert.deepEqual(calls.at(-1), { action: 'set', sessionId: 'chat-a' });
+  assert.equal(store.isFirst('chat-a'), true);
+  assert.equal(firstChatRowTag('chat-a', store).label, 'First');
+  assert.match(firstChatRowTag('chat-a', store).title, /^This chat goes first\./);
+  assert.equal(firstChatRowTag('chat-b', store), null);
+  await store.refresh();
+  assert.deepEqual(heard, ['chat-a'], 'the same answer is not announced twice');
+  // Main ends the pick without an event: each answer that shows a pick books one next read.
+  assert.deepEqual(timers.map((handle) => [handle.delay, handle.cleared === true]), [[15_000, true], [15_000, false]]);
+
+  // The first chat between two replies still offers to lift the pick.
+  const [lift] = firstChatMenuItems('chat-a', false, store);
+  assert.equal(lift.label, 'Take turns again');
+
+  answer = { status: 'ok', first: null };
+  timers[1].callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(store.get(), null);
+  assert.deepEqual(heard, ['chat-a', null]);
+  await store.refresh();
+  assert.equal(timers.length, 2, 'nobody first: nothing more to read');
+
+  answer = { status: 'ok', first: { sessionId: 'chat-b', setBy: 'primary', setAt: 2 } };
+  await store.refresh();
+  assert.match(firstChatRowTag('chat-b', store).title, /^Jenny put this chat first\./);
+  await lift.action();
+  assert.deepEqual(calls.at(-1), { action: 'clear', sessionId: 'chat-a' });
+
+  // A bridge without the method, or one that fails, changes nothing.
+  assert.equal(await createFirstChat({ api: () => ({}) }).refresh(), null);
+  const failing = createFirstChat({ api: () => ({ firstSession: async () => { throw new Error('bridge gone'); } }) });
+  assert.equal(await failing.set('chat-a'), null);
+  assert.equal(failing.get(), null);
+});

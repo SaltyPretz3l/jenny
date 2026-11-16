@@ -18,7 +18,6 @@
   function createSettingsEventBindings(deps) {
     const {
       // DOM
-      toastViewport,
       composerModelSelect,
       composerEffortSelect,
       // state + constants
@@ -26,11 +25,8 @@
       TOAST_SOURCE,
       ACTIVITY_SCOPE,
       // callbacks
-      dismissToast,
       appendClientLog,
-      showShellErrorToast,
       showToastMessage,
-      toErrorMessage,
       getRuntimePreferenceSnapshot,
       runRuntimePreferenceActivity,
       getCurrentRuntimePreferences,
@@ -39,8 +35,6 @@
       showComposerActionError,
       setComposerStatusNotice,
       clearComposerStatusNotice,
-      // controllers
-      toastActionHandlers,
       getAutoRunWarningStorage = () => globalThis.localStorage,
     } = deps || {};
 
@@ -259,34 +253,8 @@
       });
     }
 
+    // Toast clicks are handled by the toast controller.
     function bindSettingsEvents(registerListener, listenerOptions) {
-      registerListener(toastViewport, 'click', (event) => {
-        const dismissButton = event.target.closest('[data-toast-dismiss]');
-        if (dismissButton) {
-          event.preventDefault();
-          dismissToast(dismissButton.dataset.toastDismiss);
-          return;
-        }
-        const actionButton = event.target.closest('[data-toast-action-id]');
-        if (!actionButton) {
-          return;
-        }
-        event.preventDefault();
-        const toastId = String(actionButton.dataset.toastId || '').trim();
-        const actionId = String(actionButton.dataset.toastActionId || '').trim();
-        const handlers = toastActionHandlers.get(toastId);
-        const handler = handlers ? handlers.get(actionId) : null;
-        if (typeof handler === 'function') {
-          Promise.resolve(handler()).catch((error) => {
-            showShellErrorToast(toErrorMessage(error, jt('toast.actionFailedMessage', 'Toast action failed.')), {
-              title: jt('chat.settings.actionFailedTitle', 'Action Failed'),
-              source: TOAST_SOURCE.memory,
-              dedupeKey: `${TOAST_SOURCE.memory}:action:error`,
-            });
-          });
-        }
-      }, listenerOptions);
-
       // The rail listeners (model, effort, run-mode chip) at today's point and
       // in today's order; the gear keeps its slot between effort and run mode.
       bindComposerRailEvents({
@@ -373,7 +341,7 @@
         title: jt('runMode.autoConfirm.title', 'Turn on Auto run?'),
         message: jt('runMode.autoConfirm.bodyWithIdle', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused.') + ' ' + (Number(state.unattendedGuardMinutes) > 0
           ? jt('runMode.autoConfirm.idleOn', 'Inactivity pause is enabled after {minutes} minutes without keyboard or mouse input.', { minutes: state.unattendedGuardMinutes })
-          : jt('runMode.autoConfirm.idleOff', 'Inactivity pause is off: Auto continues while you are away.')) + ' ' + jt('runMode.autoConfirm.idleSettings', 'Change this in Settings > Tools > Pause Auto when you are away.'),
+          : jt('runMode.autoConfirm.idleOff', 'Inactivity pause is off: Auto continues while you are away.')) + ' ' + jt('runMode.autoConfirm.idleSettingsPermissions', 'Change this in Settings > Permissions > Pause Auto when you are away.'),
         confirmLabel: jt('runMode.autoConfirm.confirm', 'Turn on Auto'),
         cancelLabel: jt('common.cancel', 'Cancel'),
         variant: 'danger',
@@ -409,7 +377,7 @@
         patch: { runMode: next },
         scopes: [ACTIVITY_SCOPE.composerRunMode],
         previousValue,
-        failureMessage: () => jt('composer.settings.runModeSaveFailed', 'Could not save run mode.'),
+        failureMessage: () => jt('composer.settings.runModeSaveFailedRestored', 'Could not save run mode. Your previous setting was restored.'),
         successMessage: '',
       }, sessionId)).then((result) => {
         if (!runModeActivityGate.isCurrent(activityToken)) return false;

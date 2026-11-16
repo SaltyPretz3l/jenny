@@ -562,3 +562,25 @@ test('the live turn predicts no height while the reader follows the latest messa
   ui.followLatest = false;
   assert.ok(buildAnswersTurnArticle(pipeline, 'thinking', 'turn-1').predictedHeight > 0, 'live, reader scrolled away');
 });
+
+// Split panes (scroll-away-nav 4): the live turn's prediction reads THIS pane's
+// follow state; state.ui.followLatest is pane 0's.
+test('the live turn prediction reads the pane’s own follow state', (t) => {
+  const { dom } = installPretextStubs(t);
+  global.rendererTurnPhase = { deriveTurnPhase() { return 'done'; } };
+  const ui = { followLatest: false };
+  let paneFollows = true;
+  const pipeline = createArticleMarkupPipeline({
+    state: { currentSessionId: 'session-42', ui, features: { featureFlags: { pretext_layout: true } } },
+    dom: { chatThreadColumn: dom.window.document.getElementById('thread-column') },
+    callbacks: {
+      isFollowingLatest: () => paneFollows,
+      buildTurnRowListMarkup: () => '<div class="turn-row-list" data-turn-row-list="true"><p>row</p></div>',
+      buildMessageShellArticle({ innerHtml, predictedHeight }) { return { innerHtml, predictedHeight }; },
+    },
+  });
+  assert.equal(buildAnswersTurnArticle(pipeline, 'thinking', 'turn-1').predictedHeight, null, 'this pane follows, pane 0 scrolled away');
+  paneFollows = false;
+  ui.followLatest = true;
+  assert.ok(buildAnswersTurnArticle(pipeline, 'thinking', 'turn-1').predictedHeight > 0, 'this pane scrolled away, pane 0 follows');
+});

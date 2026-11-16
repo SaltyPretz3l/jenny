@@ -649,6 +649,12 @@ class SessionRuntimeChatAdapter {
       gateway.close({ producerSettled: providerSettled });
       // Row 112: after the close, which gives back the inference slot the naming call needs.
       if (managed.status === 'completed' && providerSettled) void maybeGenerateSessionTitle(this.service, work.session_id);
+      // Row 150: a completed turn sent from a board has its reply read once for `board` blocks; any other turn is inert there.
+      // Its additions apply at once only under Full auto, judged on this turn's captured authority while it is still open.
+      // The module (and the board model behind it) is loaded here, never at startup, and only while boards are on.
+      if (managed.status === 'completed' && (this.service.featureFlags?.project_boards === true || this.service.boardTurnsEnabled === true)) {
+        void require('../boards/board-proposal-turn').readBoardReply(this.service, { sessionId: work.session_id, streamId: started.streamId, executionAuthority: context.binding });
+      }
       if (toolCleanupPending) {
         turnSettledWithToolCleanupPending = true;
         this.service._emitServiceLog?.('WARN', 'session_runtime.tool_cleanup_pending', {

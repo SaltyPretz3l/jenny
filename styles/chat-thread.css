@@ -52,7 +52,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-7);
+  gap: var(--space-4);
   width: min(560px, calc(100vw - 120px));
   max-width: 100%;
   text-align: center;
@@ -62,37 +62,15 @@
     transform var(--thread-transition-duration) var(--motion-ease-standard);
 }
 
-.hero-avatar {
-  display: grid;
-  place-items: center;
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  background: var(--widget-hero-avatar-bg);
-  color: color-mix(in srgb, var(--bg-base) 88%, black);
-  font-size: var(--font-size-6xl);
-  /* Anastasia ships a single 400 weight; anything heavier would be synthesized
-     (faux bold), which distorts display faces. */
-  font-weight: 400;
-  /* Tight line-height keeps the glyph's line box close to its ink so
-     `place-items: center` on the circle centers the visible J, not the
-     font's default leading — conservative, unverified without a GUI pass. */
-  line-height: 1;
-  font-family: var(--font-family-brand);
-  box-shadow: var(--shadow-accent);
-}
-
-.hero-avatar.hidden {
-  display: none;
-}
-
+/* One title size for every hero state (direction A, 2026-11-15). */
 .hero-title {
-  margin: var(--space-4) 0 0;
-  font-size: var(--font-size-display-3);
+  margin: 0;
+  font-size: var(--font-size-title);
   font-family: var(--font-family-display);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1.05;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .hero-subtitle {
@@ -103,16 +81,15 @@
   line-height: 1.55;
 }
 
+/* The facts line: the project's folder and the model note, plain text. */
 .hero-runtime-hint {
-  display: inline-flex;
-  align-items: center;
+  display: block;
+  max-width: 100%;
   margin: 0;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
-  border-radius: var(--radius-pill);
   color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .chat-thread-stage {
@@ -306,7 +283,8 @@
 .chat-assistant-sprite {
   position: absolute;
   top: 0;
-  inset-inline-start: 2px;
+  /* Centred on the thread axis, --_dot-offset before the row column. */
+  inset-inline-start: calc(var(--chat-sprite-rail-offset) - var(--_dot-offset) - var(--chat-sprite-size) / 2);
   z-index: 1;
   display: grid;
   place-items: center;
@@ -324,10 +302,9 @@
   position: relative;
   z-index: var(--z-content);
   /* Anastasia is a lighter-optical-weight display face than Fraunces bold;
-     16px (up from the previous 14px bold) restores comparable visual weight
-     without crowding the smallest sprite breakpoint (22px slot, see
-     --chat-sprite-size in chat-media-queries.css). */
-  font-size: var(--font-size-heading);
+     the title size suits the 40px sprite, and the 28px breakpoint steps
+     down to the heading size (chat-media-queries.css). */
+  font-size: var(--font-size-title);
   font-family: var(--font-family-brand);
   letter-spacing: 0.02em;
   text-transform: uppercase;

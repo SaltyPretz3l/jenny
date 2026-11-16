@@ -11,6 +11,7 @@ function buildDom() {
   const dom = new JSDOM(
     `<!doctype html><html><body>
       <section class="settings-card" data-settings-section="appearance">
+        <h3>Appearance</h3>
         <div class="settings-field-row">
           <div class="settings-field-row-text"><label for="appearancePaletteSelect">Palette</label></div>
           <label class="select-shell">
@@ -77,6 +78,7 @@ function createHarness(dom, documentRef, options) {
     onAfterReset: () => onAfterResetCalls.push(true),
     log: (message) => logs.push(message),
     resetActions,
+    confirmLabels: opts.confirmLabels,
     armTimeoutMs: 5000,
     setTimeoutFn: timers.setTimeoutFn,
     clearTimeoutFn: timers.clearTimeoutFn,
@@ -158,6 +160,71 @@ test('Cancel disarms without invoking the reset action', () => {
   assert.equal(harness.resetActionCalls.appearance, 0);
   assert.equal(container.classList.contains('settings-reset-confirm'), false);
   assert.equal(trigger.hidden, false);
+
+  dom.window.close();
+});
+
+test('arming moves a focused trigger to Cancel; Escape cancels and focus returns to the trigger', () => {
+  const { dom, documentRef } = buildDom();
+  const harness = createHarness(dom, documentRef, { confirmLabels: { appearance: 'Reset Appearance to its defaults?' } });
+  harness.fieldReset.mount();
+
+  const trigger = documentRef.getElementById('appearanceResetButton');
+  const container = trigger.closest('.settings-actions');
+  trigger.focus();
+  trigger.click();
+  const cancel = container.querySelector('[data-action="cancel"]');
+  assert.equal(documentRef.activeElement, cancel, 'focus does not fall to the page when the trigger hides');
+  assert.equal(container.querySelector('.settings-reset-confirm-label').textContent, 'Reset Appearance to its defaults?');
+
+  cancel.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(container.getAttribute('data-armed'), null, 'Escape disarms');
+  assert.equal(harness.resetActionCalls.appearance, 0);
+  assert.equal(documentRef.activeElement, trigger, 'focus returns to the trigger');
+
+  dom.window.close();
+});
+
+test('a confirmed reset that leaves the trigger disabled hands focus to the page heading', async () => {
+  const { dom, documentRef } = buildDom();
+  const trigger = documentRef.getElementById('appearanceResetButton');
+  const harness = createHarness(dom, documentRef);
+  harness.fieldReset.mount();
+
+  trigger.focus();
+  trigger.click();
+  const confirm = trigger.closest('.settings-actions').querySelector('[data-action="confirm"]');
+  confirm.focus();
+  confirm.click();
+  // What the app's repaint does once the page is back at its defaults.
+  trigger.disabled = true;
+  await flushAsync();
+
+  assert.equal(harness.resetActionCalls.appearance, 1);
+  assert.equal(trigger.hidden, false);
+  assert.equal(documentRef.activeElement, documentRef.querySelector('.settings-card h3'), 'focus does not fall to the page body');
+
+  dom.window.close();
+});
+
+test('the timeout returns focus to the trigger; a click elsewhere does not pull focus back', () => {
+  const { dom, documentRef } = buildDom();
+  const harness = createHarness(dom, documentRef);
+  harness.fieldReset.mount();
+
+  const trigger = documentRef.getElementById('appearanceResetButton');
+  trigger.focus();
+  trigger.click();
+  harness.timers.fireAll();
+  assert.equal(trigger.hidden, false);
+  assert.equal(documentRef.activeElement, trigger);
+
+  trigger.click();
+  const palette = documentRef.getElementById('appearancePaletteSelect');
+  palette.focus();
+  palette.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(trigger.hidden, false, 'the outside click disarmed');
+  assert.equal(documentRef.activeElement, palette, 'and left focus where the person put it');
 
   dom.window.close();
 });

@@ -161,7 +161,7 @@
     });
     const {
       liveFollowRuntime,
-      noteUserScrollIntent,
+      noteUserScrollIntent, spendReaderIntent, releaseIfReaderScrolledAway,
       isReaderAwayFromFollow,
       isReaderReleaseHeld,
       clearReaderRelease, relatchFollowAtBottom,
@@ -236,7 +236,7 @@
         cancelLiveStreamingFollow,
         updateComposerSafeOffset,
         updateAssistantSpritePosition,
-        getSessionId, isReaderReleaseHeld, getComposerSafeOffset,
+        getSessionId, isReaderReleaseHeld, getComposerSafeOffset, releaseIfReaderScrolledAway, relatchFollowAtBottom,
         appendClientLog,
       },
     });
@@ -304,16 +304,14 @@
       };
     }
 
-    /* Sole smooth-scroll entry point.  Returns 'auto' (instant) when the
-       user prefers reduced motion, 'smooth' otherwise.  Callers must not
-       apply scroll-behavior globally via CSS — the viewport controller
-       decides per-call based on motion preference, streaming state, and
-       follow-latest semantics. */
+    /* Sole smooth-scroll entry point: 'auto' (instant) under reduced motion,
+       'smooth' otherwise. Callers must not apply scroll-behavior globally via
+       CSS; the viewport controller decides per call (motion, streaming, follow). */
     function getScrollBehavior() {
       return reducedMotionQuery.matches ? 'auto' : 'smooth';
     }
 
-    function setFollowLatest(value) {
+    function writeFollowLatest(value) {
       if (viewportDisposed) return;
       followState.set(Boolean(value));
       if (!followState.get()) {
@@ -321,10 +319,14 @@
       }
     }
 
-    function noteScrollInputIntent() {
+    // The public latch (Send, open, reveal) spends the reader's earlier gesture (review 2026-11-12).
+    function setFollowLatest(value) { if (!viewportDisposed && value) spendReaderIntent?.(); writeFollowLatest(value); }
+
+    // A downward reader-tagged frame is no scroll-away (often the animator's own write).
+    function noteScrollInputIntent(direction) {
       if (viewportDisposed) return;
       schedulingController?.noteReaderIntent?.();
-      noteUserScrollIntent?.();
+      if (direction !== 'down') noteUserScrollIntent?.();
     }
 
     function syncThreadScrollState(snapshot) {
@@ -334,23 +336,20 @@
       }
       const metrics = getScrollMetrics(snapshot);
       const userInitiated = snapshot ? snapshot.userInitiated === true : true;
-      if (userInitiated) noteScrollInputIntent();
+      if (userInitiated) noteScrollInputIntent(snapshot?.direction);
       const maximumScrollTop = Math.max(0,
         (Number(metrics.scrollHeight) || 0) - (Number(metrics.clientHeight) || 0));
       if (isReaderAwayFromFollow(Number(metrics.scrollTop) || 0, maximumScrollTop)) {
-        /* Reader input since the animator's last write, and the viewport is
-           above where the animator placed (or left) it: a scroll-away, even on
-           this snapshot-less post-render sync and even after long frames. */
+        /* Reader input since the animator's last write, viewport above where it placed
+           (or left) it: a scroll-away, even snapshot-less and after long frames. */
         releaseFollowForUserScrollAway();
         return Boolean(thinkingController.handleScroll(metrics));
       } else if (liveFollowRuntime.active) {
-        /* The live-follow animator deliberately trails the growing bottom; that
-           lag must not be re-derived as a user scroll-away, which would disable
-           follow and strand streaming content below the fold (the streaming-
-           not-visible regression). Keep following until the viewport moves up
-           past where the animator last placed it. */
+        /* The animator deliberately trails the growing bottom; that lag is not a
+           scroll-away (the streaming-not-visible regression). Keep following until
+           the viewport moves up past where the animator last placed it. */
         thinkingController.resumeAutoScroll(READER_AWAY_PAUSE_REASON);
-        setFollowLatest(true);
+        writeFollowLatest(true);
         return true;
       }
       const nearBottom = Boolean(deriveFollowLatestFromScroll(metrics));
@@ -373,7 +372,7 @@
       }
       const wasFollowing = followState.get() !== false;
       const thinkingNearBottom = Boolean(thinkingController.handleScroll(metrics));
-      setFollowLatest(nearBottom);
+      writeFollowLatest(nearBottom);
       if (nearBottom && !wasFollowing && userInitiated) relatchFollowAtBottom?.(Number(metrics.scrollTop) || 0);
       return thinkingNearBottom;
     }

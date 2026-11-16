@@ -1,10 +1,10 @@
 /* renderer/shell/renderer-settings-api-providers-view.js
  *
- * Markup for the Settings > Models API-key provider rows (row 78, variant A):
- * one row per provider inside the Cloud models group, the editor in place under
- * its row, and the "Add a provider" row. Pure render functions over the main
- * process's state plus the controller's UI state; no key material ever reaches
- * this module (the state carries a hasKey boolean only).
+ * Markup for the Settings > Models API-key providers (row 78): the status each
+ * provider row shows in Engines and providers, the editor in a provider's
+ * Manage drawer, and the "Add a provider" drawer. Pure render functions over
+ * the main process's state plus the controller's UI state; no key material
+ * ever reaches this module (the state carries a hasKey boolean only).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -126,37 +126,21 @@
       return instance.models.filter((model) => model.enabled).length;
     }
 
-    function keyBadge(instance) {
-      if (instance.authProfile === 'none') return badge('muted', jt('settings.apiProviders.noKeyNeeded', 'No key needed'));
-      return instance.hasKey
-        ? badge('success', jt('settings.apiProviders.keySaved', 'Key saved'))
-        : badge('warning', jt('settings.apiProviders.noKey', 'No key'));
-    }
-
     function usable(instance) {
       return instance.authProfile === 'none' || instance.hasKey;
     }
 
-    function providerRow(instance, ui, localOnly) {
-      const open = ui.editing === instance.id;
+    // What the provider's row in Engines and providers says; every provider row is a set-up row.
+    function rowStatus(instance, localOnly) {
       const count = enabledCount(instance);
-      let help = usable(instance)
-        ? jtn('settings.apiProviders.modelsInComposer', count, {}, '{count} model in Composer', '{count} models in Composer')
-        : jt('settings.apiProviders.addKeyToUse', 'Add a key to use it.');
-      if (localOnly && usable(instance)) {
-        help = jt('settings.apiProviders.localOnly', 'Force local inference is on, so this provider will not run. Turn it off in Offline.');
-      }
-      const label = open
-        ? jt('settings.apiProviders.done', 'Done')
-        : (usable(instance) ? jt('settings.apiProviders.edit', 'Edit') : jt('settings.apiProviders.addKey', 'Add key'));
-      return row({
-        id: `apiProvider-${instance.id}`,
-        label: instance.label,
-        help: `${help} · ${hostOf(instance.endpoint)}`,
-        controlHtml: keyBadge(instance)
-          + button('apiProvidersToggleEditor', label, open ? 'secondary' : 'ghost', { dataset: { instance: instance.id } }),
-        dataset: { 'api-provider': instance.id },
-      }) + (open ? `<div class="api-providers-editor" data-api-provider-editor="${escapeHtml(instance.id)}">${editor(instance, ui)}</div>` : '');
+      const warn = (text) => ({ text, tone: 'warn', set: true });
+      if (!usable(instance)) return warn(jt('settings.apiProviders.statusAddKey', 'Add a key to use it'));
+      if (localOnly) return warn(jt('settings.apiProviders.statusBlocked', 'Blocked by Force local inference'));
+      if (instance.discovery.error) return warn(errorText(instance.discovery.error.code, instance.label, instance.discovery.error.status));
+      return {
+        text: jtn('settings.apiProviders.statusConnected', count, { count }, 'Connected · {count} model', 'Connected · {count} models'),
+        tone: 'ready', set: true,
+      };
     }
 
     function keyRow(instance, ui) {
@@ -346,7 +330,6 @@
     }
 
     function addRow(state, ui) {
-      if (state.instances.length >= state.maxInstances) return '';
       const options = state.presets.map((preset) => ({ value: preset.id, label: preset.label }))
         .concat([{ value: CUSTOM_PRESET_ID, label: jt('settings.apiProviders.customEndpoint', 'Custom endpoint') }]);
       const busy = ui.busy === 'add';
@@ -361,12 +344,31 @@
       }) + (ui.customDraft ? customForm(ui) : '');
     }
 
-    function render(state, ui) {
-      if (!state.enabled) return '';
-      return state.instances.map((instance) => providerRow(instance, ui, state.localOnly)).join('') + addRow(state, ui);
+    const note = (text) => `<p class="mp-quiet">${escapeHtml(text)}</p>`;
+
+    // A provider's Manage drawer body.
+    function instanceDrawer(instance, ui, localOnly) {
+      return (localOnly && usable(instance)
+        ? note(jt('settings.apiProviders.localOnlyUse', 'Force local inference is on, so this provider will not run. Turn it off under Local use.'))
+        : '') + editor(instance, ui);
     }
 
-    return { render };
+    // The "Add a provider" drawer body.
+    function addDrawer(state, ui) {
+      return state.instances.length >= state.maxInstances
+        ? note(jt('settings.apiProviders.addLimit', 'That is the most providers Jenny can hold. Remove one to add another.'))
+        : addRow(state, ui);
+    }
+
+    // The add row is not a provider: it only says how many there are.
+    function addStatus(count) {
+      return {
+        text: count ? jt('settings.apiProviders.statusAdded', '{count} added', { count }) : jt('settings.apiProviders.statusNone', 'None added'),
+        tone: 'off', set: false,
+      };
+    }
+
+    return { rowStatus, addStatus, instanceDrawer, addDrawer };
   }
 
   return { createView, errorText, formatTokens, formatUsd, hostOf, CUSTOM_PRESET_ID, TRANSPORT_AUTH };

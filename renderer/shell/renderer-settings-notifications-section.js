@@ -42,10 +42,25 @@
     return normalizeNotificationSettings(state?.ui?.notifications);
   }
 
+  /* A descriptor's `enabledWhen` (slice 2a-6c). `team`: this Jenny has joined or hosts a team, which is when the
+   * Team tab exists; with the `team` flag off the tab never does. */
+  function conditionHolds(condition, state) {
+    if (condition !== 'team') return true;
+    const shell = globalThis.rendererTopNavShellController;
+    return state?.features?.featureFlags?.team === true && typeof shell?.isTeamTabAvailable === 'function' && shell.isTeamTabAvailable() === true;
+  }
+
+  /* A setting that cannot be used yet keeps its place (owner, 2026-11-12): greyed out, switched off, not operable
+   * (`disabled` and `aria-disabled` on the switch) and saying what makes it available; Settings search still finds it. */
+  function unavailableRow(binding, descriptor, toggleSwitch) {
+    return binding.renderSettingRow(descriptor, false, { inventory: { toggleSwitch }, disabled: true, rowClassName: 'settings-field--unavailable',
+      description: jt('settings.notifications.teamUnavailable', 'Available once this Jenny has joined or hosts a team.') });
+  }
+
   /* `container` is the card; the three lists are found inside it so the
    * markup keeps its headings in index.html with data-i18n like every card.
    * Every dependent switch is disabled while the master switch is off, and
-   * the reply preview also while neither replies nor Jenny's own turns notify. */
+   * the reply preview also while neither replies, Jenny's own turns nor (in a team) team messages notify. */
   function renderNotificationsSection({ container, state } = {}) {
     if (!container || typeof container.querySelector !== 'function') return;
     const toggleSwitch = globalThis.inventory?.toggleSwitch || globalThis.inventoryToggleSwitch?.toggleSwitch;
@@ -54,10 +69,12 @@
     const settings = readSettings(state);
     const off = settings.enabled !== true;
     const lists = { '#notificationsGeneralList': [], '#notificationsCategoryList': [], '#notificationsContentList': [] };
-    const previewUnused = settings.categories.replies !== true && settings.categories.jenny !== true;
+    // The preview governs reply, Jenny and team toasts; team counts only while its row can be used.
+    const previewUnused = settings.categories.replies !== true && settings.categories.jenny !== true && !(settings.categories.team === true && conditionHolds('team', state));
     descriptors.listSettingDescriptors({ adapterId: ADAPTER_ID }).forEach((descriptor) => {
       const reply = descriptor.key === 'replyPreview';
       const list = descriptor.key.startsWith('categories.') ? '#notificationsCategoryList' : (reply ? '#notificationsContentList' : '#notificationsGeneralList');
+      if (descriptor.enabledWhen && !conditionHolds(descriptor.enabledWhen, state)) { lists[list].push(unavailableRow(binding, descriptor, toggleSwitch)); return; }
       const disabled = descriptor.key !== 'enabled' && (off || (reply && previewUnused));
       lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled }));
     });

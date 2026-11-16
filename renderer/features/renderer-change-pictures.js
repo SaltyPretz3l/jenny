@@ -3,8 +3,8 @@
  *  - attachPanel fills the empty `.cp-slot` elements the Changes view leaves in
  *    each history turn and on the Working tree page with one block per page
  *    (a compare slider, or a single picture with a sentence), and
- *  - decorateChat adds two small pictures under the last reply that changed
- *    page files.
+ *  - captureForChat draws nothing: it asks for the pictures of the last reply
+ *    that changed page files, so the Changes view has them.
  * Both read one shared cache (renderer-change-pictures-model.js) so the panel and
  * the chat never ask twice. Everything from the bridge is untrusted: strings are
  * escaped, only file: picture URLs are drawn, and no selector is built from an id.
@@ -37,10 +37,8 @@
   const ARTICLE_SELECTOR = 'article.chat-entry.assistant[data-turn-id]';
   const PANE_SELECTOR = '.chat-timeline, [data-chat-timeline]';
   const MAX_AUTO_TURNS = 5;
-  const MAX_PAGES = 3;
   const MAX_REMEMBERED = 200;
   const ASK_AGAIN_MS = 6000;
-  const CHAT_PIC_WIDTH = 168;
   const CHEVRON_GLYPH = '<svg class="file-diff-chevron icon-mirror-rtl" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
   const DESKTOP_GLYPH = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="2.8" width="12.4" height="8.2" rx="1.2"/><path d="M5.5 13.6h5M8 11v2.6"/></svg>';
   const PHONE_GLYPH = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.6" y="1.8" width="6.8" height="12.4" rx="1.4"/><path d="M7.3 12.2h1.4"/></svg>';
@@ -50,12 +48,6 @@
     map.delete(key);
     map.set(key, value);
     if (map.size > MAX_REMEMBERED) map.delete(map.keys().next().value);
-  }
-
-  function pagesOf(record) {
-    return record && Array.isArray(record.pages)
-      ? record.pages.filter((pg) => pg && typeof pg === 'object' && typeof pg.path === 'string' && pg.path).slice(0, MAX_PAGES)
-      : [];
   }
 
   function createChangePictures(deps) {
@@ -163,7 +155,9 @@
       });
       const tools = expanded ? sizeTool('desktop', viewportOf(record.viewport)) + sizeTool('phone', viewportOf(record.viewport)) : '';
       const retake = view.retakeFailed ? caps(`<span>${esc(jt('changePictures.cantRetake', "These pictures can't be retaken: the files have changed since."))}</span>`) : '';
-      const body = expanded ? `<div class="cp-body">${bodyHtml(isWorkingTree, record, pg, position)}${retake}</div>` : '';
+      const hosts = model.blockedHostsOf(pg).join(', ');
+      const blocked = hosts ? caps(`<span data-cp-blocked>${esc(jt('changePictures.blockedHosts', 'blocked: {hosts}', { hosts }))}</span>`) : '';
+      const body = expanded ? `<div class="cp-body">${bodyHtml(isWorkingTree, record, pg, position)}${blocked}${retake}</div>` : '';
       return `<section class="cp" data-cp-page="${esc(pg.path)}" data-cp-state="${esc(pg.state)}" data-expanded="${expanded}" aria-label="${esc(jt('changePictures.blockLabel', '{page}, before and after', { page: pg.path }))}">`
         + `<div class="cp-head">${toggle}${tools}</div>${body}</section>`;
     }
@@ -198,7 +192,7 @@
 
       function writeSlot(slot, sid, turnId, isWorkingTree, isNewest) {
         const view = cache.peek(sid, turnId);
-        const pages = pagesOf(view.record);
+        const pages = model.pagesOf(view.record);
         const open = pages.map((pg) => {
           const stored = expandedState.get(pageKey(sid, turnId, pg.path));
           return stored === undefined ? isWorkingTree || isNewest : stored;
@@ -230,10 +224,6 @@
         queued = false;
         if (panelDisposed || disposed) return;
         const sid = sessionId();
-        // An undone turn's pictures leave the chat as well, and come back on Redo.
-        for (const block of sid ? rootEl.querySelectorAll('[data-changes-turn-block]') : []) {
-          setUndone(sid, block.getAttribute('data-changes-turn-block'), block.classList.contains('changes-history-turn--undone'));
-        }
         const slots = Array.from(rootEl.querySelectorAll('.cp-slot'));
         if (!slots.length) { wtAsked = null; return; }
         if (!sid || cache.isDisabled() || safeCall(pd.isEnabled) === false) {
@@ -383,43 +373,12 @@
       };
     }
 
-    /* ── Chat pictures ── */
+    /* ── Chat: ask for the last turn's pictures ── */
 
-    const decorations = new Map();
     // Session id -> whether its stored pictures have been listed yet.
     const chatList = new Map();
     // Session and turn -> when its pictures were last asked for.
     const asked = new Map();
-    const pageNames = new Map();
-    // Session id -> its getTurns, for every chat pane that has been decorated.
-    const chatTurns = new Map();
-    // Session and turn the Changes view shows as undone.
-    const undone = new Map();
-    let chatUnsubscribe = null;
-    let lastDoc = null;
-
-    function removeAllDecorations() {
-      for (const entry of decorations.values()) entry.el.remove();
-      decorations.clear();
-      // After the pause the last turn may ask once more.
-      asked.clear();
-    }
-
-    // Turn ids are unique across sessions, so the turn alone finds its settled article in any pane.
-    function repaint(sid, turnId) {
-      if (!lastDoc || !chatTurns.has(sid)) return;
-      for (const article of lastDoc.querySelectorAll(ARTICLE_SELECTOR)) {
-        if (article.getAttribute('data-turn-id') !== turnId || article.classList.contains('pending') || !article.querySelector('[data-jenny-code-review]')) continue;
-        paint(article, sid, turnId, cache.peek(sid, turnId, 'desktop'));
-      }
-    }
-
-    function setUndone(sid, turnId, on) {
-      const key = sid + SEP + turnId;
-      if (!turnId || undone.has(key) === on) return;
-      if (on) remember(undone, key, true); else undone.delete(key);
-      repaint(sid, turnId);
-    }
 
     // Settled replies that show a change, found from their change controls in one pass over the tree.
     function liveArticles(node) {
@@ -437,152 +396,52 @@
       return node.matches && node.matches(ARTICLE_SELECTOR) ? node : null;
     }
 
-    const nameOf = (path) => model.splitPath(path).name;
-
-    function pendingName(sid, turnId) {
-      const key = sid + SEP + turnId;
-      if (!pageNames.has(key) && chatTurns.has(sid)) {
-        const files = model.turnFiles(ledgerChanges(sid, safeCall(chatTurns.get(sid)), ''), turnId);
-        pageNames.set(key, nameOf(model.firstPagePath(files)));
-      }
-      return pageNames.get(key) || '';
-    }
-
-    function figure(url, caption, pg) {
-      const w = model.positiveInt(pg.width);
-      const h = model.positiveInt(pg.height);
-      const height = w && h ? ` height="${Math.max(1, Math.round((CHAT_PIC_WIDTH * h) / w))}"` : '';
-      return `<figure><img class="chat-pic" src="${esc(url)}" alt="" decoding="sync" width="${CHAT_PIC_WIDTH}"${height}><figcaption>${esc(caption)}</figcaption></figure>`;
-    }
-
-    function pics(turnId, figures) {
-      return actionButton({
-        plain: true,
-        className: 'chat-pics',
-        title: jt('changePictures.chat.openTitle', 'Open in Changes'),
-        dataset: { 'jenny-code-review': '', scope: 'turn', 'turn-id': turnId },
-        trustedHtml: figures,
-      });
-    }
-
-    function chatSpec(sid, turnId, view) {
-      const record = view.record;
-      const pg = pagesOf(record)[0];
-      if (pg) {
-        const name = nameOf(pg.path);
-        const key = [record.capturedAt, pg.state, view.pending ? 1 : 0, pg.path].join('|');
-        if (pg.state === 'ready' && model.isFileUrl(pg.beforeUrl) && model.isFileUrl(pg.afterUrl)) {
-          return { key, html: pics(turnId, figure(pg.beforeUrl, jt('changePictures.chat.before', 'Before'), pg) + figure(pg.afterUrl, jt('changePictures.chat.after', 'After · {page}', { page: name }), pg)) };
-        }
-        if (pg.state === 'new' && model.isFileUrl(pg.afterUrl)) {
-          return { key, html: pics(turnId, figure(pg.afterUrl, jt('changePictures.chat.newPage', '{page} · new page', { page: name }), pg)) };
-        }
-        if (pg.state === 'same') return { key, html: `<p class="chat-line">${esc(jt('changePictures.chat.same', '{page} looks the same before and after.', { page: name }))}</p>` };
-        if (pg.state === 'after_failed') return { key, html: `<p class="chat-line">${esc(jt('changePictures.chat.afterFailed', "Couldn't take the After picture of {page}.", { page: name }))}</p>` };
-        return null;
-      }
-      if (!record && view.pending) {
-        const name = pendingName(sid, turnId);
-        if (name) return { key: 'pending|' + name, html: `<p class="chat-line">${esc(jt('changePictures.chat.taking', 'Taking pictures of {page}…', { page: name }))}</p>` };
-      }
-      return null;
-    }
-
-    // Put the turn's element where it belongs: inside the message content,
-    // right before the hover row (or last). Moves only when it is misplaced.
-    function place(content, el) {
-      let hover = null;
-      for (let node = content.lastElementChild; node; node = node.previousElementSibling) {
-        if (node.classList.contains('chat-hover-row')) { hover = node; break; }
-      }
-      const inPlace = el.parentNode === content && (hover ? el.nextElementSibling === hover : content.lastElementChild === el);
-      if (!inPlace) content.insertBefore(el, hover);
-    }
-
-    function paint(article, sid, turnId, view) {
-      const content = article.querySelector('.chat-message-content');
-      const mapKey = sid + SEP + turnId;
-      let entry = decorations.get(mapKey);
-      const spec = content && !undone.has(mapKey) ? chatSpec(sid, turnId, view) : null;
-      if (!spec) {
-        if (entry) { entry.el.remove(); decorations.delete(mapKey); }
-        return;
-      }
-      if (!entry) {
-        const el = article.ownerDocument.createElement('div');
-        el.className = 'chat-pics-row';
-        el.setAttribute('data-cp-chat', turnId);
-        entry = { el, key: '' };
-        decorations.set(mapKey, entry);
-        if (decorations.size > MAX_REMEMBERED) {
-          for (const [k, v] of decorations) if (!v.el.isConnected && k !== mapKey) decorations.delete(k);
-        }
-      }
-      if (entry.key !== spec.key) {
-        entry.el.innerHTML = spec.html;
-        entry.key = spec.key;
-      }
-      place(content, entry.el);
-    }
-
-    function onCacheChange(event) {
-      if (!lastDoc || disposed) return;
-      if (cache.isDisabled()) { removeAllDecorations(); return; }
-      if (event && event.turnId && event.turnId !== WORKING_TREE) repaint(event.sessionId, event.turnId);
-    }
-
-    function askForTurn(sid, turnId, getTurns, workspaceId) {
-      const files = model.turnFiles(ledgerChanges(sid, safeCall(getTurns), workspaceId), turnId);
-      remember(pageNames, sid + SEP + turnId, nameOf(model.firstPagePath(files)));
-      remember(asked, sid + SEP + turnId, now());
-      cache.request(sid, turnId, files);
-    }
-
-    function decorateChat(options) {
+    // The chat draws no pictures (owner, 2026-11-12): they are in Changes. A
+    // turn can only be pictured while its files still match the disk, so the
+    // last reply's pictures are asked for here and are ready when Changes opens.
+    function captureForChat(options) {
       const o = options || {};
       const rootEl = o.root;
       const sid = idOf(o.sessionId);
       if (disposed || !rootEl || typeof rootEl.querySelectorAll !== 'function' || !sid) return;
       // This runs after every timeline write, streaming included: when there is nothing to do it costs one query.
-      if (cache.isDisabled() || o.enabled === false) { removeAllDecorations(); return; }
+      // After a pause the last turn may ask once more.
+      if (cache.isDisabled() || o.enabled === false) { asked.clear(); return; }
       const live = liveArticles(rootEl);
       if (!live.length) return;
 
-      lastDoc = rootEl.ownerDocument;
-      remember(chatTurns, sid, o.getTurns);
-      if (!chatUnsubscribe) chatUnsubscribe = cache.subscribe(onCacheChange);
       if (!chatList.has(sid)) {
         remember(chatList, sid, false);
         cache.ensureListed(sid).then(() => {
           remember(chatList, sid, true);
-          if (rootEl.isConnected !== false) decorateChat(o);
+          if (rootEl.isConnected !== false) captureForChat(o);
         });
       }
+      if (!chatList.get(sid)) return;
       let last;
       for (const article of live) {
         const turnId = article.getAttribute('data-turn-id');
         const view = cache.peek(sid, turnId, 'desktop');
         // Only the last reply is asked for: again when a later edit adds a file, else not until a "busy" answer has cleared.
         const countKey = sid + SEP + turnId + '#', edits = article.querySelectorAll('[data-jenny-code-review]').length, grew = asked.has(countKey) && asked.get(countKey) !== edits;
-        if (chatList.get(sid) && (grew || (!view.record && !view.answered && !view.pending && !(asked.get(sid + SEP + turnId) > now() - ASK_AGAIN_MS)))) {
+        if (grew || (!view.record && !view.answered && !view.pending && !(asked.get(sid + SEP + turnId) > now() - ASK_AGAIN_MS))) {
           if (last === undefined) last = lastArticle(rootEl);
-          if (article === last) askForTurn(sid, turnId, o.getTurns, o.workspaceId);
+          if (article === last) {
+            remember(asked, sid + SEP + turnId, now());
+            cache.request(sid, turnId, model.turnFiles(ledgerChanges(sid, safeCall(o.getTurns), o.workspaceId), turnId));
+          }
         }
-        if (chatList.get(sid)) remember(asked, countKey, edits);
-        paint(article, sid, turnId, cache.peek(sid, turnId, 'desktop'));
+        remember(asked, countKey, edits);
       }
     }
 
     function dispose() {
       if (disposed) return;
       Array.from(disposers).forEach((fn) => fn());
-      if (chatUnsubscribe) chatUnsubscribe();
-      chatUnsubscribe = null;
-      removeAllDecorations();
       disposed = true;
     }
 
-    return { cache, attachPanel, decorateChat, dispose };
+    return { cache, attachPanel, captureForChat, dispose };
   }
 
   let shared = null;
@@ -595,6 +454,6 @@
     createChangePictures,
     getShared,
     attachPanel(rootEl, panelDeps) { return getShared().attachPanel(rootEl, panelDeps); },
-    decorateChat(options) { return getShared().decorateChat(options); },
+    captureForChat(options) { return getShared().captureForChat(options); },
   };
 });

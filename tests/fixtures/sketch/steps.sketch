@@ -1,0 +1,9 @@
+title One request
+a Client
+b Server
+c Disk
+a -> b ask
+b -> c read
+step Ask: The client sends a request | a a->b
+step Look up: The server reads the disk | b b->c
+step Answer: The data goes back | c a

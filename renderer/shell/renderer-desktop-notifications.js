@@ -34,13 +34,13 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny']);
+  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team']);
   var DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
     enabled: true,
     onlyWhenUnfocused: true,
     sound: true,
     replyPreview: false,
-    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true }),
+    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true }),
   });
   /* App-started turns that are the Jenny chat's own work; an auto-resume
    * continues the person's turn and stays an ordinary reply. */
@@ -156,6 +156,8 @@
       onTerminal: function onTerminal() { return null; },
       onInboxRows: function onInboxRows() { return []; },
       onStreamPayload: function onStreamPayload() { return null; },
+      notifyTeam: function notifyTeam() { return null; },
+      setTeamOpenHandler: function setTeamOpenHandler() {},
       drain: function drain() { return []; },
       dispose: function dispose() {},
     };
@@ -184,6 +186,7 @@
     var loggedFailures = new Set();
     var lastDrainedEntry = null;
     var unsubscribeOpen = null;
+    var teamOpenHandler = null;
     var disposed = false;
 
     if (!Array.isArray(state.desktopNotificationLog)) state.desktopNotificationLog = [];
@@ -345,6 +348,8 @@
           body: toolName ? toolName + SEPARATOR + sessionTitle : sessionTitle,
         };
       }
+      // A live question card's toast comes from the stream listener below (onStreamPayload).
+      if (row.kind === 'question' && row.source === 'card') return null;
       if (row.kind === 'question') {
         var intro = clip(row.introText, DETAIL_MAX_CHARS);
         return {
@@ -413,9 +418,9 @@
       return sent;
     }
 
-    /* A live ask_user request never settles a terminal and never becomes a
-     * "Needs you" row (those come from the structured question batch), so the
-     * stream listener hands every admitted payload here. A withdrawn request
+    /* A live ask_user request never settles a terminal, and its "Needs you"
+     * row (source 'card') stays quiet in onInboxRows, so the stream listener
+     * hands every admitted payload here. A withdrawn request
      * frees its key so a re-ask notifies again; a reload never replays the
      * event (the persisted turn restores the card without it). */
     var questionKeys = new Set();
@@ -489,8 +494,27 @@
       return fresh;
     }
 
+    /* A team message (slice 2a-6c): the team subscriber builds the candidate; it goes through the same ring
+     * and bridge. Only `team` candidates pass here. */
+    function notifyTeam(candidate) {
+      if (!isObject(candidate) || candidate.category !== 'team') return null;
+      return emit(candidate);
+    }
+
+    /* A team toast's click opens the Team tab at its message; the team subscriber registers the opener. */
+    function setTeamOpenHandler(handler) {
+      teamOpenHandler = typeof handler === 'function' ? handler : null;
+    }
+
     function handleOpen(payload) {
       if (disposed) return;
+      if (payload && payload.category === 'team') {
+        // No opener (no team is left, so the notifier stopped) or one that found no team: say so where the person lands.
+        var opened;
+        try { opened = teamOpenHandler ? teamOpenHandler(payload) !== false : false; } catch (error) { opened = true; logOnce('desktop_notifications.team_open_failed', error); }
+        if (!opened && typeof callbacks.showToastMessage === 'function') callbacks.showToastMessage(jt('team.notify.gone', 'You are no longer in that team.'));
+        return;
+      }
       var sessionId = text(payload && payload.sessionId);
       if (!sessionId || typeof callbacks.activateWorkspaceSession !== 'function') return;
       try {
@@ -519,11 +543,13 @@
         try { unsubscribeOpen(); } catch (_error) { /* the bridge is going away with the window */ }
       }
       unsubscribeOpen = null;
+      teamOpenHandler = null;
       seenKeys.clear();
       questionKeys.clear();
     }
 
-    return { onTerminal: onTerminal, onInboxRows: onInboxRows, onStreamPayload: onStreamPayload, drain: drain, dispose: dispose };
+    return { onTerminal: onTerminal, onInboxRows: onInboxRows, onStreamPayload: onStreamPayload, notifyTeam: notifyTeam, setTeamOpenHandler: setTeamOpenHandler,
+      drain: drain, dispose: dispose };
   }
 
   return {

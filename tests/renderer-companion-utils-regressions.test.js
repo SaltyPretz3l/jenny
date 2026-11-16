@@ -357,6 +357,7 @@ test('a pending delete hides the row and its count, and a failed commit brings b
   const deleteCalls = [];
   const errorToasts = [];
   const dismissed = [];
+  const toastOptions = [];
   installGlobals(t, {
     companion: {
       deleteFollowUp: async (followUpId) => {
@@ -370,7 +371,7 @@ test('a pending delete hides the row and its count, and a failed commit brings b
   }), {
     rerender: true,
     callbacks: {
-      showToastMessage: () => 'undo-toast',
+      showToastMessage: (_message, options) => { toastOptions.push(options); return 'undo-toast'; },
       dismissToast: (id) => dismissed.push(id),
       showShellErrorToast: (message, options) => errorToasts.push({ message, options }),
     },
@@ -391,10 +392,13 @@ test('a pending delete hides the row and its count, and a failed commit brings b
   assert.deepEqual(state.ui.pendingLoopDeleteIds, ['loop-1']);
   assert.deepEqual(deleteCalls, [], 'the IPC call waits out the undo window');
 
-  t.mock.timers.tick(5999);
+  // Row 162: the toast's own clock owns the undo window; the commit runs from its onExpire.
+  const undoToast = toastOptions.find((options) => typeof options?.onExpire === 'function');
+  assert.ok(undoToast, 'the Undo toast carries onExpire');
+  t.mock.timers.tick(6000);
   await settle();
-  assert.deepEqual(deleteCalls, []);
-  t.mock.timers.tick(1);
+  assert.deepEqual(deleteCalls, [], 'no second clock commits the delete');
+  undoToast.onExpire();
   await settle();
 
   assert.deepEqual(deleteCalls, ['loop-1']);

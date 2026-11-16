@@ -1,6 +1,7 @@
 'use strict';
 
 const { EventStream } = require('./event-stream');
+const { createEventScope } = require('./team/event-scope');
 const { MAX_FAILURES, MAX_GRID_CELLS, MAX_LABEL_CHARS } = require('../services/backend/chat-stream-test-progress');
 
 const LIVE_CHAR_LIMIT = 262_144;
@@ -114,6 +115,8 @@ function withdrawalDto(event) {
 const TEST_PROGRESS_INTERVAL_MS = 1000;
 function createTestProgressThrottle(now) {
   const calls = new Map();
+  // Every branch that stores an entry trims the table to its bound.
+  const trim = () => { while (calls.size > MAX_ACTIVE_IDENTITIES) calls.delete(calls.keys().next().value); };
   return (dto) => {
     if (dto.type !== 'tool_test_progress') return dto;
     const key = `${dto.stream_id}:${dto.call_id}`;
@@ -129,38 +132,56 @@ function createTestProgressThrottle(now) {
       if (dto.labels.length && entry.labelsFrom === null) Object.assign(entry, { labelsFrom: dto.labels_from ?? 0, labels: dto.labels, stage: dto.stage });
       calls.delete(key);
       calls.set(key, entry);
-      while (calls.size > MAX_ACTIVE_IDENTITIES) calls.delete(calls.keys().next().value);
+      trim();
       return null;
     }
-    if (dto.final) calls.delete(key);
-    else calls.set(key, { at: now(), labelsFrom: null, labels: [] });
+    calls.delete(key);
+    if (!dto.final) {
+      calls.set(key, { at: now(), labelsFrom: null, labels: [] });
+      trim();
+    }
     return dto;
   };
 }
 
 class BackendEvents {
-  constructor({ backend, bootEpoch, now = Date.now, maxClients }) {
+  // `sessionScope` (team host only, slice 3-3): every publish then passes the
+  // team event scope (server/team/event-scope.js), and each publish and each
+  // subscription's replay runs in one scope pass (one project lookup per
+  // conversation); without it, as before. `prompterOf(sessionId)` (team host only, slice 3-6b) names
+  // the prompter on a withdrawal's `decision_changed`; without it the event gains no key.
+  constructor({ backend, bootEpoch, now = Date.now, maxClients, sessionScope = null, logger, prompterOf = null }) {
     this.backend = backend;
     this.events = new EventStream({ bootEpoch, now, maxClients });
+    this.sessionScope = sessionScope;
+    this.scope = sessionScope ? createEventScope({ sessionScope, logger }) : null;
     this.live = new Map();
     this.active = new Map();
     const throttleTestProgress = createTestProgressThrottle(now);
     this.onStream = (event) => {
       const withdrawal = withdrawalDto(event);
       if (withdrawal) {
-        this.events.publish('decision_changed', withdrawal);
+        if (typeof prompterOf === 'function') {
+          let prompter;
+          try { prompter = prompterOf(withdrawal.session_id) ?? null; } catch { prompter = null; }
+          withdrawal.prompter_member_id = prompter;
+        }
+        this.publish('decision_changed', withdrawal);
         return;
       }
       const wire = streamEventDto(event);
       const dto = wire && throttleTestProgress(wire);
       if (!dto) return;
       if (dto.type === 'started') {
-        if (!this.active.has(dto.session_id) && this.active.size >= MAX_ACTIVE_IDENTITIES) return;
+        // A turn that ends on questions or a plan proposal leaves its entry, so a full
+        // table evicts its oldest entry rather than refusing the newest conversation.
+        this.active.delete(dto.session_id);
+        if (this.active.size >= MAX_ACTIVE_IDENTITIES) this.active.delete(this.active.keys().next().value);
         this.active.set(dto.session_id, dto.stream_id);
       } else if (this.active.get(dto.session_id) !== dto.stream_id) return;
       if (dto.type === 'complete' || dto.type === 'error') this.active.delete(dto.session_id);
       this._updateLive(dto);
-      this.events.publish('chat_stream', { session_id: dto.session_id, stream_id: dto.stream_id, event: dto });
+      this.publish('chat_stream', { session_id: dto.session_id, stream_id: dto.stream_id, event: dto });
     };
     backend.on('chat-stream', this.onStream);
   }
@@ -205,9 +226,26 @@ class BackendEvents {
   }
 
   snapshot(sessionId) { return structuredClone(this.live.get(sessionId) || null); }
-  // Options (audience, bucket, ephemeral) and the subscription identity pass straight through.
-  publish(type, payload, options) { this.events.publish(type, payload, options); }
-  subscribe(options) { return this.events.subscribe(options); }
+  // The one publish path. A single-owner host passes the options (audience, bucket,
+  // ephemeral) straight to the event stream; on a team host the scope sets or checks
+  // them, or drops the event.
+  publish(type, payload, options) {
+    if (!this.scope) { this.events.publish(type, payload, options); return; }
+    this.sessionScope.pass(() => {
+      const scoped = this.scope(type, payload, options);
+      if (scoped) this.events.publish(type, payload, scoped);
+    });
+  }
+
+  // On a team host, the conversation's project now, for an event published after it
+  // is gone (deleteSession); undefined on a single-owner host.
+  captureScope(sessionId) { return this.sessionScope ? this.sessionScope.capture(sessionId) : undefined; }
+  // Drops so far, `{ '<type>:<reason>': count }` (team host only).
+  droppedEvents() { return this.scope ? this.scope.dropCounts() : {}; }
+  // The subscription identity passes straight through; its replay runs in one scope pass.
+  subscribe(options) {
+    return this.sessionScope ? this.sessionScope.pass(() => this.events.subscribe(options)) : this.events.subscribe(options);
+  }
   heartbeat() { this.events.heartbeat(); }
   revokeDevice(deviceId) { this.events.revokeDevice(deviceId); }
 

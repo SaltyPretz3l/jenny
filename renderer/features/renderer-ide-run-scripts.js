@@ -34,6 +34,8 @@
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
+  // Outside-Workspace documents (row 137) have no Workspace path to run.
+  const isOutsideKey = (key) => typeof key === 'string' && key.startsWith('outside://');
 
   const TOAST_KEY = 'ide:run';
   const RUN_MARKUP_SENTINEL = '__jenny-ide-run__';
@@ -633,6 +635,10 @@
       }
       if (isDiffTabId(path)) {
         toast(jt('ide.runScripts.openFileToRun', 'Open the file itself (not a diff or preview tab) to run it.'));
+        return;
+      }
+      if (isOutsideKey(path)) {
+        toast(jt('ide.outside.notRunnable', 'Files outside the Workspace can’t be run or debugged from Jenny.'));
         return;
       }
       const runner = runnerFor(path);

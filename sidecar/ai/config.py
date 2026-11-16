@@ -112,9 +112,9 @@ def _parse_ui_language(raw_config: dict[str, Any]) -> str:
 def _parse_auto_approve_streak_cap(raw_config: dict[str, Any]) -> int:
     value = raw_config.get("auto_approve_streak_cap")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 50
+        return 250
     if not math.isfinite(value):
-        return 50
+        return 250
     return min(500, max(0, int(value)))
 
 
@@ -162,9 +162,9 @@ def _parse_limit_fields(raw_config: dict[str, Any]) -> dict[str, Any]:
         raw_config.get("max_loop_wall_seconds"),
         # Lockstep with renderer/shared/engine-tuning-schema.js, config_models.py
         # and iteration_limits.effective_max_loop_wall_seconds.
-        default=3600.0,
+        default=7200.0,
         min_value=30.0,
-        max_value=7200.0,
+        max_value=28_800.0,
     )
     max_loop_iterations = _as_bounded_int(
         raw_config.get("max_loop_iterations"),
@@ -174,15 +174,18 @@ def _parse_limit_fields(raw_config: dict[str, Any]) -> dict[str, Any]:
     )
     max_chat_loop_iterations = _as_bounded_int(
         raw_config.get("max_chat_loop_iterations"),
-        default=max_loop_iterations,
+        # Owner 2026-11-11: the local chat, task, tool and web defaults match the
+        # cloud profile so a capable local model can work a full turn. Lockstep
+        # with config_models.py, iteration_limits.py and the engine-tuning schema.
+        default=40,
         min_value=1,
-        max_value=32,
+        max_value=250,
     )
     max_task_loop_iterations = _as_bounded_int(
         raw_config.get("max_task_loop_iterations"),
-        default=30,
+        default=300,
         min_value=1,
-        max_value=250,
+        max_value=1000,
     )
     max_sub_agent_loop_iterations = _as_bounded_int(
         raw_config.get("max_sub_agent_loop_iterations"),
@@ -263,13 +266,13 @@ def _parse_limit_fields(raw_config: dict[str, Any]) -> dict[str, Any]:
     )
     max_tools_per_turn = _as_bounded_int(
         raw_config.get("max_tools_per_turn"),
-        default=20,
+        default=200,
         min_value=1,
         max_value=500,
     )
     max_web_tool_calls_per_turn = _as_bounded_int(
         raw_config.get("max_web_tool_calls_per_turn"),
-        default=10,
+        default=30,
         min_value=1,
         max_value=100,
     )

@@ -131,12 +131,16 @@ test('user-question selections and drafts restore across a rebuilt matching bloc
   root.querySelector('[data-user-question-id="multi"] [value="Two"]').checked = true;
   const otherToggle = root.querySelector('[data-user-question-id="multi"] [data-user-question-other-toggle]');
   const otherInput = root.querySelector('[data-user-question-id="multi"] [data-user-question-other-input]');
-  otherToggle.checked = true; otherInput.disabled = false; otherInput.value = 'Three';
+  otherToggle.checked = true; otherInput.value = 'Three';
   root.querySelector('[data-user-question-free-text]').value = 'Keep this draft';
   const snapshot = registry.capture(root);
 
   root.innerHTML = renderQuestions();
+  assert.equal(root.querySelector('.user-questions-submit-btn').disabled, true, 'a fresh card starts with Submit off');
   registry.restore(root, snapshot);
+  assert.equal(root.querySelector('.user-questions-submit-btn').disabled, false, 'restored answers re-enable Submit');
+  assert.match(root.querySelector('.user-questions-progress').textContent, /^\d+ of \d+ answered$/);
+  assert.doesNotMatch(root.querySelector('.user-questions-progress').textContent, /^0 of/);
 
   assert.equal(root.querySelector('[data-user-question-id="single"] [value="Beta"]').checked, true);
   assert.deepEqual(
@@ -313,4 +317,21 @@ test('restore errors isolate one registered component and dispose drops registry
   assert.deepEqual(restored, ['good']);
   registry.dispose();
   assert.equal(registry.capture(root), null);
+});
+
+// stale-dup-decor 3: the capture budget is per definition, so 70 tool rows do
+// not spend it before a Show more clamp later in the timeline is captured.
+test('a Show more expansion after 70 tool rows survives a whole-timeline capture and restore', () => {
+  const rows = Array.from({ length: 70 }, (_, i) => `<div class="tool-call-row" data-tool-call-id="call-${i}" data-expanded="false"><button aria-expanded="false"></button></div>`).join('');
+  const clamp = (clamped) => `<article data-message-id="m9"><div data-tool-detail-section><button data-tool-detail-toggle data-copy-id="copy-1" aria-expanded="${clamped ? 'false' : 'true'}"></button>`
+    + `<pre data-detail-clamped="${clamped ? 'true' : 'false'}"><code>output</code></pre></div></article>`;
+  const dom = new JSDOM(`<!doctype html><body><div id="root"><article data-message-id="m1">${rows}</article>${clamp(false)}</div></body>`);
+  const root = dom.window.document.getElementById('root');
+  const registry = createComponentPreservationRegistry();
+  const snapshot = registry.capture(root);
+  root.innerHTML = `<article data-message-id="m1">${rows}</article>${clamp(true)}`;
+  registry.restore(root, snapshot);
+  assert.equal(root.querySelector('[data-detail-clamped]').getAttribute('data-detail-clamped'), 'false', 'the reader’s Show more is kept');
+  assert.equal(root.querySelectorAll('.tool-call-row').length, 70);
+  dom.window.close();
 });

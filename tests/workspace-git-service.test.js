@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -18,6 +18,7 @@ const {
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
 const { linkDirectory } = require('./helpers/platform-skips');
+const { buildCommittedRepo, createGitTemplates } = require('./helpers/git-template-repo');
 
 const execFileAsync = promisify(execFile);
 
@@ -25,20 +26,12 @@ function git(cwd, args) {
   return execFileAsync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
 }
 
-async function createGitRepo(prefix = 'jenny-workspace-git-') {
-  const repoRoot = createTrackedTempDir(prefix);
-  await git(repoRoot, ['init']);
-  // Deterministic default branch name without relying on `git init -b` support.
-  await git(repoRoot, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-  await git(repoRoot, ['config', 'user.email', 'jenny@example.invalid']);
-  await git(repoRoot, ['config', 'user.name', 'Jenny Tests']);
-  await git(repoRoot, ['config', 'commit.gpgsign', 'false']);
-  // Deterministic LF round-trips regardless of the host's global autocrlf.
-  await git(repoRoot, ['config', 'core.autocrlf', 'false']);
-  await fs.writeFile(path.join(repoRoot, 'README.md'), 'line1\nline2\nline3\n', 'utf8');
-  await git(repoRoot, ['add', 'README.md']);
-  await git(repoRoot, ['commit', '-m', 'initial']);
-  return repoRoot;
+// Built once per file, copied per case (see helpers/git-template-repo.js).
+const templates = createGitTemplates();
+after(() => templates.dispose());
+
+function createGitRepo(prefix = 'jenny-workspace-git-') {
+  return templates.copy('standard', (dir) => buildCommittedRepo(dir, { 'README.md': 'line1\nline2\nline3\n' }), prefix);
 }
 
 function createService(root, { flag = true, exec, rootContextProvider = null, trashItemImpl = null } = {}) {

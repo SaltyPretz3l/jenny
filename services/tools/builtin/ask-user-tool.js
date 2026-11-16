@@ -13,6 +13,7 @@ const LIMITS = Object.freeze({
   option: 120,
   id: 64,
   answer: 500,
+  reply: 2000,
 });
 
 function uniqueQuestionId(value, index, seen) {
@@ -160,8 +161,8 @@ function buildTranscript(questions, answers) {
     const renderedValue = Array.isArray(answer?.value)
       ? answer.value.join(', ')
       : answer?.value;
-    const renderedOther = answer?.other ? ` (Other: ${answer.other})` : '';
-    lines.push(`Q: ${question.prompt}\nA: ${renderedValue || '(no answer)'}${renderedOther}`);
+    const parts = [renderedValue, answer?.other ? `(Other: ${answer.other})` : ''].filter(Boolean);
+    lines.push(`Q: ${question.prompt}\nA: ${parts.length ? parts.join(' ') : '(skipped)'}`);
   }
   return lines.length ? lines.join('\n\n') : 'The user submitted no answers.';
 }
@@ -291,6 +292,17 @@ module.exports = {
     }
     if (resolution.failed === true) {
       return failure('User questions could not be shown.');
+    }
+    // A message typed in the composer while the questions wait answers them in
+    // the user's own words (renderer-send-flow-helpers.js replyToPendingUserQuestions).
+    const reply = boundedString(resolution.reply, LIMITS.reply);
+    if (reply) {
+      return {
+        content: `The user replied in their own words instead of using the answer form:\n${reply}`,
+        summary: 'User replied to questions',
+        isError: false,
+        metadata: { result_kind: 'user_questions_answered', answers: [], reply },
+      };
     }
     const answers = normalizeAnswers(questions, resolution);
     return {

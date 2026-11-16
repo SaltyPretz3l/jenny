@@ -12,6 +12,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   if (!model || typeof model.createContextUsageStore !== 'function') {
     throw new Error('renderer-context-usage-utils requires renderer-context-usage-model');
   }
@@ -45,6 +46,13 @@
     if (messageTokens > 0) parts.push(jt('chat.contextUsage.messageTokenEstimate', '~{count} tokens est.', { count: formatTokenCount(messageTokens) }));
     if (cumulativeTokens > 0) parts.push(jt('chat.contextUsage.cumulativeTextEstimate', '~{count} cumulative text tokens est.', { count: formatTokenCount(cumulativeTokens) }));
     return parts.join(' · ');
+  }
+
+  // The hover row's plain token count (formatMessageTokenMeta is its tooltip).
+  function formatMessageTokenMetaShort(meta) {
+    var count = model.normalizePositiveInteger((meta || {}).messageTokens);
+    if (count <= 0) return '';
+    return jtn('chat.contextUsage.messageTokensShort', count, { count: formatTokenCount(count) }, '{count} token', '{count} tokens');
   }
 
   function combineMessageMetaLabels(primaryLabel, tokenLabel) {
@@ -408,6 +416,7 @@
     selectContextEstimateMessages: model.selectContextEstimateMessages,
     buildMessageTokenMeta: model.buildMessageTokenMeta,
     formatMessageTokenMeta: formatMessageTokenMeta,
+    formatMessageTokenMetaShort: formatMessageTokenMetaShort,
     combineMessageMetaLabels: combineMessageMetaLabels,
     buildContextUsageEstimate: buildContextUsageEstimate,
     buildCachedContextUsageEstimate: buildCachedContextUsageEstimate,

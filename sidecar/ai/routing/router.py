@@ -70,6 +70,9 @@ class ApprovalRequest:
     policy_scope: str | None = None
     policy_consequence: str | None = None
     one_off_only: bool = False
+    # The later calls of the same round that use this tool (approval_round_carry.py).
+    # A hint for the card only: each of them is still asked for on its own.
+    round_calls: tuple[dict[str, object], ...] = ()
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -88,6 +91,8 @@ class ApprovalRequest:
             payload["policy_consequence"] = self.policy_consequence
         if self.one_off_only:
             payload["one_off_only"] = True
+        if self.round_calls:
+            payload["round_calls"] = [dict(item) for item in self.round_calls]
         return payload
 
 

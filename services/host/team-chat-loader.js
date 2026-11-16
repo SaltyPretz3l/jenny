@@ -24,6 +24,7 @@
 // No persisted index and no segment cache: the measurement did not call for them.
 
 const channels = require('./team-chat-channel');
+const { logChannel } = require('./team-chat-files');
 
 const LOAD_FAILURE_TTL_MS = 5_000;
 
@@ -89,7 +90,7 @@ const loaderMethods = {
     if (!this._loadCurrent(channelId, state, doc)) return;
     const outcome = channels.finishLoad(state, load, this._io);
     if (outcome.strays > 0 || outcome.rolledForward > 0) {
-      this._log('WARN', 'team_chat.reconciled', { channel_id: channelId, strays: outcome.strays,
+      this._log('WARN', 'team_chat.reconciled', { channel_id: logChannel(channelId), strays: outcome.strays,
         rolled_forward: outcome.rolledForward });
     }
   },

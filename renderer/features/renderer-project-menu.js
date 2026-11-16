@@ -169,17 +169,31 @@
     return jtn('settings.projects.chatCount', n, { count: n }, '{count} chat', '{count} chats');
   }
 
+  // A long path keeps its end, the part that tells two folders apart:
+  // ".../Documents/Finance/guides" reads as its last two folders.
+  const SHORT_PATH_MAX = 34;
+  function shortPath(rootPath) {
+    const path = String(rootPath || '');
+    if (path.length <= SHORT_PATH_MAX) return path;
+    const separator = path.indexOf('\\') >= 0 ? '\\' : '/';
+    const parts = path.split(/[\\/]+/).filter(Boolean);
+    return parts.length > 3 ? '…' + separator + parts.slice(-2).join(separator) : path;
+  }
+
   // A project row for the switcher / filter / move menus.
   function projectRow(project, options) {
     const o = options || {};
+    const path = shortPath(project.rootPath);
     return {
       id: project.id,
       label: o.label || project.name,
+      // The status leads, so an ellipsis can only ever cut the path.
       detail: project.rootPath
         ? (project.folderMissing
-          ? project.rootPath + ' · ' + jt('projects.switcher.folderMissing', 'folder missing')
-          : project.rootPath)
+          ? jt('projects.switcher.folderMissingDetail', 'Folder missing · {path}', { path })
+          : path)
         : '',
+      fullPath: path !== project.rootPath ? project.rootPath : '',
       danger: project.folderMissing,
       count: typeof o.count === 'number' ? o.count : null,
       selected: o.selected === true,
@@ -190,8 +204,10 @@
     };
   }
 
+  const CHECK_SVG = '<svg viewBox="0 0 14 14" focusable="false"><path d="M2.5 7.5l3 3 6-7"/></svg>';
+
   function rowHtml(actionButton, row, index) {
-    const check = '<span class="project-menu-check" aria-hidden="true">' + (row.selected ? '✓' : '') + '</span>';
+    const check = '<span class="project-menu-check" aria-hidden="true">' + (row.selected ? CHECK_SVG : '') + '</span>';
     const name = '<span class="project-menu-name' + (row.danger ? ' project-menu-name--danger' : '') + '">' + escapeHtml(row.label) + '</span>';
     const detail = row.detail
       ? '<span class="project-menu-detail' + (row.danger ? ' project-menu-detail--danger' : '') + '">' + escapeHtml(row.detail) + '</span>'
@@ -208,8 +224,9 @@
     return (row.separatorBefore ? '<div class="project-menu-separator" role="separator"></div>' : '')
       + actionButton({
         plain: true,
-        className: 'project-menu-row' + (row.kind === 'action' ? ' project-menu-row--action' : ''),
-        title: row.title || undefined,
+        className: 'project-menu-row' + (row.kind === 'action' ? ' project-menu-row--action' : '')
+          + (row.here === true ? ' project-menu-row--here' : ''),
+        title: row.title || row.fullPath || undefined,
         dataset: { 'project-menu-item': String(index) },
         trustedHtml: check + '<span class="project-menu-main">' + name + detail + '</span>' + count + reason,
       });
@@ -342,6 +359,7 @@
         (row.kind === 'action' ? commandHtml : listHtml).push(rowHtml(actionButton, row, index));
       });
       return (o.heading ? '<div class="project-menu-heading" id="' + MENU_ID + 'Heading">' + escapeHtml(o.heading) + '</div>' : '')
+        + (o.note ? '<div class="project-menu-note">' + escapeHtml(o.note) + '</div>' : '')
         + (listHtml.length ? '<div class="project-menu-list" role="group">' + listHtml.join('') + '</div>' : '')
         + commandHtml.join('')
         + (o.footnote ? '<div class="project-menu-footnote">' + escapeHtml(o.footnote) + '</div>' : '');
@@ -363,8 +381,9 @@
     }
 
     // rows: [{ id, label, detail?, count?, selected?, disabled?, reason?,
-    // danger?, title?, kind: 'project'|'action', radio?, separatorBefore? }]
+    // danger?, title?, here?, kind: 'project'|'action', radio?, separatorBefore? }]
     // heading / footnote: optional strings (what picking does, and its effect).
+    // note: optional line under the heading (why nothing can be picked now).
     function show(options) {
       const o = options || {};
       if (!documentRef || !documentRef.body || typeof actionButton !== 'function') return null;
@@ -420,6 +439,7 @@
     displayNames,
     parentFolderName,
     generalName,
+    shortPath,
     projectRow,
     chatCountLabel,
   };

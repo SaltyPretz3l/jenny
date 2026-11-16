@@ -124,3 +124,124 @@ def test_grep_search_worker_starts_while_builtin_stdin_pump_is_blocked(
         except subprocess.TimeoutExpired:
             server.kill()
             server.wait(timeout=5)
+
+
+def test_a_worker_request_carries_the_scope_identity_and_the_worker_pins_with_it(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Any OS: the parent sends its scope's pair and switch; the worker pins with them."""
+    from contextlib import contextmanager
+
+    from sidecar.ai.tools import hosted_file_io
+    from sidecar.ai.tools.builtins import grep_search_worker as worker
+
+    class Pin:
+        closed = 0
+
+        def close(self) -> None:
+            Pin.closed += 1
+
+    class Backend:
+        pinned: list[tuple] = []
+
+        def open_root(self, root, device, inode):
+            self.pinned.append((root, device, inode))
+            return Pin()
+
+    monkeypatch.setattr(hosted_file_io, "select_backend", lambda platform: Backend())
+    with hosted_file_io.scoped_hosted_file_io(
+        str(tmp_path), enabled=True, expected_device_id="7", expected_inode="9"
+    ):
+        fields = worker.hosted_request_fields()
+    assert fields == {"hosted_file_io": True, "hosted_win32_files": False,
+                      "workspace_device_id": "7", "workspace_inode": "9"}
+    assert Pin.closed == 1, "the scope closed its pin"
+
+    seen: list[tuple] = []
+
+    @contextmanager
+    def recording_scope(root, *, enabled, expected_device_id, expected_inode):
+        seen.append((root, enabled, expected_device_id, expected_inode,
+                     hosted_file_io.hosted_win32_files_enabled()))
+        yield
+
+    monkeypatch.setattr(worker, "scoped_hosted_file_io", recording_scope)
+    request = {"workspace_root": str(tmp_path), **fields, "hosted_win32_files": True}
+    try:
+        with worker._request_root(request) as root:
+            assert root == tmp_path
+    finally:
+        hosted_file_io.set_hosted_win32_files(False)
+    assert seen == [(str(tmp_path), True, "7", "9", True)]
+
+
+def test_both_request_senders_put_the_hosted_fields_on_the_wire(monkeypatch, tmp_path: Path) -> None:
+    """Any OS, through the real senders: without these fields a hosted worker would
+    pin nothing and its reads would have no pair (review item 8)."""
+    import re
+
+    from sidecar.ai.tools import hosted_file_io
+    from sidecar.ai.tools.builtins import grep_search_client, grep_search_worker
+    from sidecar.ai.tools.builtins.grep_search_file import worker_ok_response
+
+    class Pin:
+        def close(self) -> None:
+            pass
+
+    class Backend:
+        def open_root(self, root, device, inode):
+            return Pin()
+
+    empty = grep_search_worker._EMPTY_RESULT
+    wire: list[dict[str, object]] = []
+
+    class Wire:
+        def send(self, request, *, expected_responses=1):
+            wire.append(dict(request))
+
+        def receive(self, timeout_seconds):
+            return worker_ok_response(empty)
+
+    monkeypatch.setattr(hosted_file_io, "select_backend", lambda platform: Backend())
+    client = grep_search_client._RegexSearchWorker()
+    monkeypatch.setattr(client, "send", Wire().send)
+    monkeypatch.setattr(client, "receive", Wire().receive)
+    hosted_file_io.set_hosted_win32_files(True)
+    try:
+        with hosted_file_io.scoped_hosted_file_io(
+            str(tmp_path), enabled=True, expected_device_id="7", expected_inode="9"
+        ):
+            client.search(path=tmp_path / "a.txt", compiled=re.compile("x"), workspace_root=tmp_path,
+                          context_lines=0, max_output_matches=1, max_output_bytes=100,
+                          timeout_seconds=5)
+            list(grep_search_worker.scan_text_batches(
+                Wire(), [tmp_path / "a.txt"], re.compile("x"), workspace_root=tmp_path,
+                context_lines=0, max_output_matches=1, max_output_bytes=100, max_file_bytes=100,
+                timeout_seconds=5))
+    finally:
+        hosted_file_io.set_hosted_win32_files(False)
+    assert len(wire) == 2
+    for request in wire:
+        assert {key: request[key] for key in ("hosted_file_io", "hosted_win32_files",
+                                              "workspace_device_id", "workspace_inode")} == {
+            "hosted_file_io": True, "hosted_win32_files": True,
+            "workspace_device_id": "7", "workspace_inode": "9"}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX only: the descriptor backend")
+def test_posix_grep_worker_pins_per_request_and_a_stale_pair_fails_the_request(tmp_path: Path) -> None:
+    """Since 3b-4b the POSIX grep worker pins per request with the parent's pair."""
+    from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
+    from sidecar.ai.tools.builtins import grep_search_worker as worker
+
+    root = tmp_path.resolve()
+    (root / "a.txt").write_text("needle\n", encoding="utf-8")
+    status = root.stat()
+    request = {"path": str(root / "a.txt"), "pattern": "needle", "flags": 0,
+               "workspace_root": str(root), "hosted_file_io": True, "hosted_win32_files": False,
+               "workspace_device_id": str(status.st_dev), "workspace_inode": str(status.st_ino),
+               "context_lines": 0, "max_output_matches": 10, "max_output_bytes": 4096}
+
+    assert worker.run_worker_request(request).get("status") == "ok"
+    stale = worker.run_worker_request({**request, "workspace_inode": str(status.st_ino + 1)})
+    assert stale.get("status") == "error" and stale.get("error_code") == CMP_TOOL_INVALID_PATH

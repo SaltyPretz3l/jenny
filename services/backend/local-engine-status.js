@@ -16,6 +16,7 @@ function stampManagedServer(service, failure) {
 }
 const { resolveManagedConfiguredModel, resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config');
 const { sameLocalOrigin } = require('../local-origin');
+const { CLOUD_ENGINE_TYPES } = require('../model-size-class');
 const { clearManagedInitializeStall, markManagedInitializeStalled } = require('./managed-sidecar-chat-reconnect');
 const {
   MANAGED_ENGINE_TYPE,
@@ -648,9 +649,12 @@ function buildLocalEngineStatusSnapshot(service, overrides = {}) {
 // The sidecar initialize talks only to the configured engine. With llama-server
 // as that engine, startup still waited ~8.8 s on Ollama's GPU discovery
 // (2026-09-22 diagnostics). An openai-compatible endpoint may be Ollama's own
-// /v1, so only an endpoint that is known and not Ollama skips the wait.
+// /v1, so only an endpoint that is known and not Ollama skips the wait. A cloud
+// engine never reaches Ollama during initialize either.
 function initializeNeedsOllama(service) {
-  if (service.currentEngineType !== 'openai-compatible') return true;
+  const engineType = String(service.currentEngineType || '').trim().toLowerCase();
+  if (CLOUD_ENGINE_TYPES.has(engineType)) return false;
+  if (engineType !== 'openai-compatible') return true;
   const ollama = service.ollamaManager || {};
   const ollamaUrl = `http://${ollama._host || '127.0.0.1'}:${Number(ollama._port) || 11434}`;
   const apiUrl = resolveOpenAICompatibleApiUrl(service);

@@ -34,18 +34,25 @@ def _read_only_call(descriptor: Any | None, call: Any) -> bool:
     )
 
 
-def _runs_without_approval(
+GATE_BLOCKED = "blocked"
+GATE_ASKS = "asks"
+GATE_RUNS = "runs"
+
+
+def approval_gate_for_call(
     plan: ApprovalPlan,
     call: Any,
     *,
     kernel: Any,
     tool_contract: Any | None,
-) -> bool:
-    """True when the turn's full approval policy would run *call* unprompted.
+) -> tuple[str, Any | None]:
+    """What the turn's full approval policy says about *call*, run on its own.
 
     The same gate the paused iteration used: route mode, tool policy rules
-    (deny and ASK), paranoid mode, auto-run and the live run mode. Anything it
-    cannot evaluate keeps the call out of the window.
+    (deny and ASK), paranoid mode, auto-run and the live run mode. Returns
+    ``(GATE_RUNS, None)`` for a call that would run unprompted,
+    ``(GATE_ASKS, request)`` for one that would ask, and ``(GATE_BLOCKED, None)``
+    for a denied call or anything the gate cannot evaluate.
     """
     from sidecar.ai.mode_policy import policy_for_mode
 
@@ -70,7 +77,7 @@ def _runs_without_approval(
             **gate,
         )
         if policy.denied or tuple(policy.allowed) != (call,):
-            return False
+            return GATE_BLOCKED, None
         approval = kernel._approval_if_needed(
             (call,),
             require_approval=mode_policy.require_approval_for_side_effecting,
@@ -81,8 +88,22 @@ def _runs_without_approval(
             **gate,
         )
     except Exception:  # noqa: BLE001 - fail closed: the call is re-issued instead.
-        return False
-    return approval is None
+        return GATE_BLOCKED, None
+    return (GATE_RUNS, None) if approval is None else (GATE_ASKS, approval)
+
+
+def _runs_without_approval(
+    plan: ApprovalPlan,
+    call: Any,
+    *,
+    kernel: Any,
+    tool_contract: Any | None,
+) -> bool:
+    """True when the turn's full approval policy would run *call* unprompted."""
+    state, _approval = approval_gate_for_call(
+        plan, call, kernel=kernel, tool_contract=tool_contract
+    )
+    return state == GATE_RUNS
 
 
 def _approval_resume_call_window(

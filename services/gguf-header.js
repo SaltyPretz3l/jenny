@@ -17,6 +17,9 @@ const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 const defaultCache = new Map();
 // Private mode keeps architecture lookup on the same bounded reader/parser.
 const ARCHITECTURE_ONLY = Symbol('architectureOnly');
+// Row 144: stop at the first tokenizer key. The general.* keys come first, and the tokenizer arrays can run
+// past the read prefix of a real model.
+const GENERAL_ONLY = Symbol('generalOnly');
 
 class GgufHeaderError extends Error {
   constructor(reason, message = reason.replaceAll('_', ' ')) {
@@ -47,7 +50,7 @@ function readPrefix(filePath, maxBytes, fsImpl) {
   }
 }
 
-function parseHeader(buffer, { maxKv, maxString, architectureOnly }) {
+function parseHeader(buffer, { maxKv, maxString, architectureOnly, generalOnly }) {
   let offset = 0;
   function requireBytes(count) {
     if (count > buffer.length - offset) throw new GgufHeaderError('truncated', 'Incomplete GGUF header');
@@ -103,6 +106,7 @@ function parseHeader(buffer, { maxKv, maxString, architectureOnly }) {
   const kv = {};
   for (let index = 0; index < Number(count); index += 1) {
     const key = string();
+    if (generalOnly && key.startsWith('tokenizer.')) break;
     const type = readNumber(4, 'readUInt32LE');
     if (type === GGUF_KV_TYPES.ARRAY) skipArray();
     else Object.defineProperty(kv, key, { value: scalar(type), enumerable: true, writable: true, configurable: true });
@@ -117,7 +121,7 @@ function readGgufHeader(filePath, options = {}) {
     throw new GgufHeaderError('invalid_limits');
   }
   return parseHeader(readPrefix(filePath, maxBytes, fsImpl), {
-    maxKv, maxString, architectureOnly: options[ARCHITECTURE_ONLY] === true,
+    maxKv, maxString, architectureOnly: options[ARCHITECTURE_ONLY] === true, generalOnly: options[GENERAL_ONLY] === true,
   });
 }
 
@@ -140,4 +144,4 @@ function readGgufArchitecture(filePath, { fsImpl = fs, cache = defaultCache } = 
   }
 }
 
-module.exports = { GgufHeaderError, readGgufHeader, readGgufArchitecture, GGUF_KV_TYPES };
+module.exports = { GgufHeaderError, readGgufHeader, readGgufArchitecture, GGUF_KV_TYPES, GENERAL_ONLY };

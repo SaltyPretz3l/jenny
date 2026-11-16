@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const test = require('node:test');
 
 const { createFixture, assertOwnerInvariant } = require('./helpers/team-store-fixture');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 function failureOf(result) {
   assert.equal(result.ok, false, 'expected a failure');
@@ -37,7 +38,7 @@ test('the first owner is created active by the owner invite on an empty store', 
     member_id: owner.member_id, device_id: owner.device_id, role: 'owner', state: 'active',
   });
   const onDisk = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
-  assert.equal(onDisk.schema_version, 2);
+  assert.equal(onDisk.schema_version, 4);
   assert.equal(onDisk.rev, store.rev());
   assert.equal(onDisk.members.length, 1);
 });
@@ -63,7 +64,7 @@ test('an owner invite for a new member is valid only while the store holds zero 
   const fx = createFixture(t);
   const store = fx.openStore();
   const early = await store.createInvite({
-    kind: 'owner_first', actorMemberId: null, invitePublicKey: fx.nextKey(),
+    kind: 'owner_first', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey(),
   });
   assert.equal(early.ok, true);
   const owner = await fx.bootstrapOwner(store);
@@ -73,7 +74,7 @@ test('an owner invite for a new member is valid only while the store holds zero 
   });
   assert.equal(failureOf(redeem).reason, 'invite_not_valid');
   const second = await store.createInvite({
-    kind: 'owner_first', actorMemberId: null, invitePublicKey: fx.nextKey(),
+    kind: 'owner_first', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey(),
   });
   assert.equal(failureOf(second).reason, 'team_member_state_invalid');
   assertOwnerInvariant(assert, store);
@@ -201,6 +202,33 @@ test('revokeMember rejects a pending member and revokes an active one with all k
   assert.equal(member.revoked_by, owner.member_id);
   assert.deepEqual(events.map((event) => event.kind), ['member_revoked', 'member_revoked']);
   assert.deepEqual([...events[1].device_ids].sort(), [active.device_id, second.device_id].sort());
+  assertOwnerInvariant(assert, store);
+});
+
+// Two-PC run 3: a removed person comes back on a new invite, as a new member under their old name.
+test('a removed member rejoins with a new invite and a new device key as a new pending member', async (t) => {
+  const fx = createFixture(t);
+  const store = fx.openStore();
+  const owner = await fx.bootstrapOwner(store);
+  const gone = await fx.joinMember(store, owner.member_id, { displayName: 'Mika' });
+  assert.equal((await store.revokeMember({ actorMemberId: owner.member_id, memberId: gone.member_id })).ok, true);
+  const invite = () => store.createInvite({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member',
+    invitePublicKey: fx.nextKey('invite') });
+  // The revoked device's key is refused, so the removed PC must bring a new one.
+  const first = await invite();
+  const oldKey = await store.redeem({ inviteId: first.invite_id, devicePublicKey: gone.key, displayName: 'Mika', label: 'Laptop' });
+  assert.equal(oldKey.ok, false);
+  const key = fx.nextKey('device');
+  const second = await invite();
+  const back = await store.redeem({ inviteId: second.invite_id, devicePublicKey: key, displayName: 'Mika', label: 'Laptop' });
+  assert.equal(back.ok, true, JSON.stringify(back));
+  assert.notEqual(back.member_id, gone.member_id);
+  assert.equal(store.getMember(back.member_id).state, 'pending');
+  assert.equal(store.getMember(gone.member_id).state, 'revoked', 'the old record stays revoked');
+  assert.equal(store.directory.admitKind(gone.key), null, 'the revoked key still cannot connect');
+  assert.equal((await store.admit({ actorMemberId: owner.member_id, memberId: back.member_id })).ok, true);
+  assert.equal(store.directory.admitKind(key), 'device');
+  assert.equal(store.directory.resolveActor(key).state, 'active');
   assertOwnerInvariant(assert, store);
 });
 
@@ -338,7 +366,7 @@ test('recovery redeem revokes the owner other devices and adds the new one', asy
   const events = [];
   store.onMembershipChange((event) => events.push(event));
   const minted = await store.createInvite({
-    kind: 'recovery', actorMemberId: null, invitePublicKey: fx.nextKey(),
+    kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey(),
   });
   assert.equal(minted.ok, true);
   const newKey = fx.nextKey();
@@ -362,7 +390,7 @@ test('recovery invite needs an existing active owner; an add-device invite needs
   const fx = createFixture(t);
   const store = fx.openStore();
   assert.equal(failureOf(await store.createInvite({
-    kind: 'recovery', actorMemberId: null, invitePublicKey: fx.nextKey(),
+    kind: 'recovery', actorMemberId: LOCAL_COMMAND, invitePublicKey: fx.nextKey(),
   })).reason, 'team_member_state_invalid');
   const owner = await fx.bootstrapOwner(store);
   const pending = await fx.joinMember(store, owner.member_id, { admit: false });
@@ -410,5 +438,149 @@ test('an unknown, used, expired or revoked invite all answer invite_not_valid', 
   fx.advance(25 * 60 * 60 * 1000);
   for (const inviteId of [used.invite_id, revoked.invite_id, expiring.invite_id, 'invite_unknown']) {
     assert.equal(failureOf(await redeem(inviteId)).reason, 'invite_not_valid');
+  }
+});
+
+// ---------------------------------------------------------------- memberActor (slice 3-3)
+
+test('memberActor answers a member id with a fresh role and state that follow each commit', async (t) => {
+  const fx = createFixture(t);
+  const store = fx.openStore();
+  const owner = await fx.bootstrapOwner(store);
+  const active = await fx.joinMember(store, owner.member_id);
+  const pending = await fx.joinMember(store, owner.member_id, { admit: false });
+  const { directory } = store;
+  assert.deepEqual(directory.memberActor(owner.member_id), { member_id: owner.member_id, role: 'owner', state: 'active' });
+  assert.deepEqual(directory.memberActor(active.member_id), { member_id: active.member_id, role: 'member', state: 'active' });
+  assert.deepEqual(directory.memberActor(pending.member_id),
+    { member_id: pending.member_id, role: 'member', state: 'pending' }, 'pending is returned; the caller decides');
+  const answer = directory.memberActor(active.member_id);
+  answer.role = 'owner';
+  answer.state = 'revoked';
+  assert.deepEqual(directory.memberActor(active.member_id).role, 'member', 'a fresh object on every call');
+  assert.equal((await store.setRole({ actorMemberId: owner.member_id, memberId: active.member_id, role: 'read_only' })).ok, true);
+  assert.equal(directory.memberActor(active.member_id).role, 'read_only', 'follows a role change');
+  assert.equal((await store.admit({ actorMemberId: owner.member_id, memberId: pending.member_id })).ok, true);
+  assert.equal(directory.memberActor(pending.member_id).state, 'active', 'follows a state change');
+  assert.equal((await store.revokeMember({ actorMemberId: owner.member_id, memberId: active.member_id })).ok, true);
+  assert.equal(directory.memberActor(active.member_id), null, 'a revoked member is null');
+  for (const id of ['member_unknown', undefined, null, 42, {}]) assert.equal(directory.memberActor(id), null);
+});
+
+
+// ---------------------------------------------------- ended invite keys (review sweeps, second run)
+
+test('X3b-F01: onInviteKeysEnded hears every invite a commit ends other than by a redeem, once', async (t) => {
+  const fx = createFixture(t);
+  const store = fx.openStore();
+  const owner = await fx.bootstrapOwner(store);
+  const mel = await fx.joinMember(store, owner.member_id, { role: 'read_only' });
+  const heard = [];
+  const stop = store.onInviteKeysEnded((keys) => heard.push([...keys]));
+  const mint = async (actor, kind = 'add_device', ttlMs = undefined) => {
+    const invitePublicKey = fx.nextKey('invite');
+    const created = await store.createInvite({ kind, actorMemberId: actor, invitePublicKey, ttlMs,
+      ...(kind === 'new_member' ? { role: 'member' } : {}) });
+    assert.equal(created.ok, true);
+    return { ...created, key: invitePublicKey };
+  };
+  // A revoke by the member who minted it, and by the owner.
+  const own = await mint(mel.member_id);
+  assert.deepEqual(heard, [], 'a mint ends nothing');
+  assert.equal((await store.revokeInvite({ actorMemberId: mel.member_id, inviteId: own.invite_id })).ok, true);
+  const owners = await mint(owner.member_id, 'new_member');
+  assert.equal((await store.revokeInvite({ actorMemberId: owner.member_id, inviteId: owners.invite_id })).ok, true);
+  assert.deepEqual(heard, [[own.key], [owners.key]]);
+  // A redeem is not heard: the join route ends that connection after its answer.
+  const spent = await mint(owner.member_id, 'new_member');
+  assert.equal((await store.redeem({ inviteId: spent.invite_id, devicePublicKey: fx.nextKey(), displayName: 'Rae',
+    label: 'Desk' })).ok, true);
+  assert.equal(heard.length, 2);
+  // An expired invite is heard at the next commit (its prune), and only then.
+  const expiring = await mint(owner.member_id, 'new_member', 1000);
+  fx.advance(2000);
+  // The member revoke cascade: both of Mel's live invites go with Mel, in one call.
+  const [first, second] = [await mint(mel.member_id), await mint(mel.member_id)];
+  assert.deepEqual(heard.at(-1), [expiring.key]);
+  assert.equal((await store.revokeMember({ actorMemberId: owner.member_id, memberId: mel.member_id })).ok, true);
+  assert.deepEqual(heard.at(-1).sort(), [first.key, second.key].sort());
+  assert.equal(heard.length, 4);
+  // A listener that throws is logged without a key and the commit stands; an unsubscribed one hears nothing more.
+  stop();
+  store.onInviteKeysEnded(() => { throw new Error('boom'); });
+  const later = await mint(owner.member_id, 'new_member');
+  assert.equal((await store.revokeInvite({ actorMemberId: owner.member_id, inviteId: later.invite_id })).ok, true);
+  assert.equal(heard.length, 4);
+  assert.equal(store.isInviteLive(later.invite_id), false);
+  const failed = fx.logs.filter((entry) => entry.event === 'team_store.invite_listener_failed');
+  assert.equal(failed.length, 1);
+  assert.equal(JSON.stringify(fx.logs).includes(later.key), false);
+});
+
+// ------------------------------------------------------------- schema upgrades
+
+// A store file as an older Jenny wrote it: `edit` turns the current document into that version's.
+async function storedDoc(t, edit) {
+  const fx = createFixture(t);
+  const store = fx.openStore();
+  const owner = await fx.bootstrapOwner(store);
+  const live = await store.createInvite({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member', invitePublicKey: fx.nextKey('i') });
+  const doc = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
+  edit(doc);
+  fs.writeFileSync(fx.memberFile, JSON.stringify(doc, null, 2));
+  return { fx, doc, owner, live };
+}
+
+const backupsIn = (dir) => fs.readdirSync(dir).filter((name) => name.endsWith('.bak'));
+// What schema 4 adds to an older file's invites.
+const withRefusals = (doc) => doc.invites.map((invite) => ({ ...invite, name_refusals: 0 }));
+const older = (version) => (d) => {
+  if (version < 2) delete d.projects;
+  if (version < 3) delete d.team.model;
+  for (const invite of d.invites) delete invite.name_refusals;
+  d.schema_version = version;
+};
+
+// Schema 3 (row 123 slice 4e): `team.model`, null for Automatic, gained by an explicit upgrade from 1 or 2.
+test('D3: a schema 2 file opens as schema 4 with team.model null and keeps every other field; one v2 backup', async (t) => {
+  const { fx, doc } = await storedDoc(t, older(2));
+  const store = fx.openStore();
+  const { model, ...team } = store.snapshot().team;
+  assert.equal(model, null);
+  assert.deepEqual({ ...store.snapshot(), team }, { ...doc, schema_version: 4, invites: withRefusals(doc) }, 'nothing else changed');
+  assert.deepEqual(backupsIn(fx.dir), ['team-members.json.v2.bak']);
+  assert.equal((await store.setTeamModel({ actorMemberId: doc.members[0].member_id, model: 'qwen3.8-27b' })).ok, true);
+  const written = JSON.parse(fs.readFileSync(fx.memberFile, 'utf8'));
+  assert.deepEqual([written.schema_version, written.team.model], [4, 'qwen3.8-27b'], 'written as schema 4 by the commit');
+  const one = (await storedDoc(t, older(1))).fx.openStore().snapshot(); // a schema 1 file still upgrades, straight to 4
+  assert.deepEqual([one.schema_version, one.team.model, one.projects], [4, null, []]);
+});
+
+test('D3: a bad team.model is a broken file; a schema 5 file is an unsupported schema', async (t) => {
+  for (const bad of ['', ' edge', 'edge ', 'x'.repeat(129), 'tab\there', 7, undefined]) {
+    const { fx } = await storedDoc(t, (d) => { d.team.model = bad; });
+    assert.equal(failureOf(fx.newStore().open()).reason, 'team_unavailable', JSON.stringify(bad));
+  }
+  const { fx: two } = await storedDoc(t, (d) => { older(2)(d); d.team.model = null; }); // a v2 file that already has a model
+  assert.equal(failureOf(two.newStore().open()).reason, 'team_unavailable');
+  const { fx: five } = await storedDoc(t, (d) => { d.schema_version = 5; });
+  assert.equal(failureOf(five.newStore().open()).reason, 'team_store_schema_unsupported');
+  assert.deepEqual(backupsIn(five.dir), [], 'nothing written for a newer file');
+});
+
+// Schema 4 (owner decision E79): each invite carries `name_refusals`, the host's count of taken-name refusals.
+test('E79: a schema 3 file opens as schema 4, every invite gains name_refusals 0, nothing else changes; one v3 backup', async (t) => {
+  const { fx, doc, owner, live } = await storedDoc(t, older(3));
+  const store = fx.openStore();
+  assert.deepEqual(store.snapshot(), { ...doc, schema_version: 4, invites: withRefusals(doc) }, 'nothing else changed');
+  assert.deepEqual(backupsIn(fx.dir), ['team-members.json.v3.bak']);
+  assert.equal(store.isInviteLive(live.invite_id), true, 'the live invite is kept');
+  assert.equal((await store.rename({ actorMemberId: owner.member_id, name: 'Studio' })).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(fx.memberFile, 'utf8')).schema_version, 4, 'written as schema 4 by the commit');
+  const { fx: early } = await storedDoc(t, (d) => { d.schema_version = 3; }); // a v3 file whose invites hold a count
+  assert.equal(failureOf(early.newStore().open()).reason, 'team_unavailable');
+  for (const count of [-1, 6, 1.5, '1', null]) {
+    const { fx: bad } = await storedDoc(t, (d) => { d.invites[0].name_refusals = count; });
+    assert.equal(failureOf(bad.newStore().open()).reason, 'team_unavailable', JSON.stringify(count));
   }
 });

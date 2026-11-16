@@ -64,6 +64,7 @@ def _release_workflow_yaml(*, build_preload: bool, build_bridge: bool = True) ->
         "      - name: Install Node dependencies\n"
         "        run: npm ci\n"
         f"{preload_step}"
+        "      - name: Build sketch bundles\n        run: npm run build:sketch\n"
         f"{bridge_step}"
         "      - name: Build & publish installer\n"
         "        run: npm exec -- electron-builder --win --publish never\n"
@@ -91,10 +92,13 @@ def _write_release_policy_fixture(root: Path, *, package_version: str = "0.1.0")
             '    "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",\n'
             '    "build:launcher": "python scripts/packaging/build_native_launcher.py",\n'
             '    "build:team-bridge": "python scripts/packaging/build_team_bridge.py",\n'
-            '    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
-            '    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
-            '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",\n'
-            '    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
+            '    "build:file-access": "python scripts/packaging/build_file_access.py",\n'
+            '    "build:sketch": "node scripts/build/build-sketch.js",\n'
+            '    "build:sketch:force": "node scripts/build/build-sketch.js --force",\n'
+            '    "pack:dir": "npm run build:preload && npm run build:sketch && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:file-access && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
+            '    "pack:release": "npm run build:preload:force && npm run build:sketch:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:file-access && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
+            '    "release:windows": "npm run build:preload:force && npm run build:sketch:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:file-access && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",\n'
+            '    "pack:linux": "npm run build:preload:force && npm run build:sketch:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
             '    "release:smoke": "python scripts/packaging/smoke_packaged_flow.py"\n'
             "  },\n"
             '  "dependencies": {"electron-updater": "^6.6.2"}\n'

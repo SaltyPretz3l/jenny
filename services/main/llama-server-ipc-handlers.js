@@ -14,8 +14,10 @@ const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { t } = require('../i18n-main');
 const { filterDiffusionGgufs, pairProjector, splitGgufFiles } = require('../llama-server-gguf-files');
 const { readGgufArchitecture } = require('../gguf-header');
+const { pickDrafter } = require('../backend/llama-server-acceleration');
 const { createGgufImportService } = require('../llama-server-gguf-import');
 const { isLocalAbsolutePath, isManagedModelPath, managedModelKey } = require('../shell-config-engines');
+const { createEmbeddedMtpReader } = require('./gguf-embedded-mtp-cache');
 const { normalizeSpec } = require('./llama-server-manager');
 const { validateRuntimeExecutable } = require('./llama-server-runtime');
 
@@ -53,6 +55,8 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   validateRuntimeExecutableImpl = validateRuntimeExecutable,
   // The bundled llama-server a newly added model would launch with.
   resolveBundledRuntime = () => '',
+  // Row 142 S3: (architecture) => { build, sizeBytes } | null, from the download service.
+  runtimeDownloadOffer = () => null,
 } = {}) {
   if (typeof getManager !== 'function') {
     return [];
@@ -60,6 +64,8 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   const logEvent = typeof log === 'function' ? log : () => {};
   const ggufImport = createGgufImportService({
     fsImpl, platform, userDataPath, repoRoot, getLibraryRoots, resolveBundledRuntime, log: logEvent,
+    chooseRuntimeForArchitecture: (architecture) => getManager()?.runtimeChooser?.chooseForArchitecture?.(architecture) || null,
+    runtimeDownloadOffer,
   });
   const reasonFor = (error) => String((error && error.message) || error);
   // One log line per call; never the key, never a status blob.
@@ -205,13 +211,17 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     return (parts.length > 0 ? parts : [main])
       .reduce((total, name) => total + (fileSize(path.join(dir, name)) ?? 0), 0);
   };
+  // The header's MTP-head verdict per model file, read once per file version.
+  const readEmbeddedMtp = createEmbeddedMtpReader({ repoRoot, fsImpl });
   const describeGgufDir = (tag, dir, source, mainGguf = '', files = readGgufs(dir)) => {
     const resolvedMain = mainGguf || files.main[0] || '';
     return {
       tag,
       dir,
       mainGguf: resolvedMain,
-      drafterGguf: files.drafters[0] || '',
+      // The drafter that names this model, never another family's in a shared folder.
+      drafterGguf: pickDrafter(files.drafters, resolvedMain),
+      ...readEmbeddedMtp(tag, dir, resolvedMain),
       // Per model, exactly as the launch pairs it, never "the folder has one".
       mmproj: Boolean(resolvedMain && pairProjector(dir, resolvedMain, files)),
       sizeBytes: resolvedMain ? modelBytes(dir, resolvedMain, files.main) : 0,
@@ -317,8 +327,11 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       if (mains.length <= 1) return [{ tag: folder, main: files.chat[0] }];
       return mains.map((main) => ({ tag: main.replace(/(-00001-of-\d{5})?\.gguf$/i, ''), main }));
     };
+    // A root's `.jenny-*` sub-folder is Jenny's own working space (the team
+    // receiver stages parts in `.jenny-incoming`): never a model, never sized.
+    const isModelFolder = (entry) => entry.isDirectory() && !entry.name.startsWith('.jenny-');
     const scanRoot = async (root, { perFile = false } = {}) => {
-      for (const tagEntry of readDir(root).filter((entry) => entry.isDirectory())) {
+      for (const tagEntry of readDir(root).filter(isModelFolder)) {
         const dir = path.join(root, tagEntry.name);
         const files = await readScannedGgufs(dir);
         if (files.diffusion.length > 0 && files.chat.length === 0) continue;
@@ -366,14 +379,14 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       }
     };
     for (const root of libraryRoots) {
-      const tagDirs = readDir(root).filter((entry) => entry.isDirectory());
+      const tagDirs = readDir(root).filter(isModelFolder);
       await scanRoot(root, { perFile: true });
       await indexLibraryDir(root);
       for (const tagEntry of tagDirs) await indexLibraryDir(path.join(root, tagEntry.name));
     }
     for (const root of builtInRoots) {
       await indexLibraryDir(root);
-      for (const tagEntry of readDir(root).filter((entry) => entry.isDirectory())) {
+      for (const tagEntry of readDir(root).filter(isModelFolder)) {
         await indexLibraryDir(path.join(root, tagEntry.name));
       }
     }
@@ -524,14 +537,17 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     },
     // Row 107 Move and add: main moves only files and into folders its own
     // pickers returned (see llama-server-gguf-import.js).
-    'llamaServer.planGgufImport': async (_event, payload) => guarded('plan_gguf_import', () => ggufImport.plan(payload?.path)),
+    'llamaServer.planGgufImport': async (_event, payload) => guarded('plan_gguf_import', async () => {
+      await getManager()?.runtimeChooser?.prepare?.();
+      return ggufImport.plan(payload?.path);
+    }),
     'llamaServer.importGguf': async (_event, payload) => guarded('import_gguf', () => ggufImport.start(payload || {})),
     'llamaServer.ggufImportStatus': async () => guarded('gguf_import_status', () => ggufImport.status(), { quiet: true }),
     'llamaServer.cancelGgufImport': async () => guarded('cancel_gguf_import', () => ggufImport.cancel()),
   }, authorization || {});
   return Object.assign(channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.chooseRuntime': chooseRuntime,
-  }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false })), { listLocalDiffusionGgufs });
+  }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false })), { listLocalDiffusionGgufs, listLocalGgufs });
 }
 
 module.exports = {

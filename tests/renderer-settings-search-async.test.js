@@ -18,7 +18,7 @@ function deferred() {
 function createHarness(getSectionRefreshPromise) {
   const dom = new JSDOM(`
     <nav class="settings-nav"><div class="settings-nav-header"></div></nav>
-    <section class="settings-card" data-settings-section="context">
+    <section class="settings-card" data-settings-section="chat">
       <div data-settings-field="contextHistoryScopeSelect"></div>
     </section>
   `, { pretendToBeVisual: true });
@@ -54,7 +54,8 @@ test('rejected lazy refresh uses a handled continuation and still flashes the hi
     derived.catch(() => {});
     return derived;
   };
-  const harness = createHarness(() => pending);
+  // Only the host (Chat) has a refresh in flight, so the flash waits on this one promise.
+  const harness = createHarness((sectionId) => (sectionId === 'chat' ? pending : null));
   t.after(() => harness.dom.window.close());
   harness.dom.window.requestAnimationFrame = (callback) => { callback(); return 1; };
 
@@ -119,7 +120,7 @@ test('dispose cancels an animation frame already queued for a search hit', (t) =
 function createFlashHarness(options = {}) {
   const dom = new JSDOM(`
     <nav class="settings-nav"><div class="settings-nav-header"></div></nav>
-    <section class="settings-card" data-settings-section="context">
+    <section class="settings-card" data-settings-section="chat">
       <div data-settings-field="contextHistoryScopeSelect"></div>
     </section>
     <section class="settings-card" data-settings-section="extensions">

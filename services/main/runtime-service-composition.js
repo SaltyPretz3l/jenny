@@ -73,7 +73,7 @@ function createStatsWatchCadence(monitor, {
 // it with one immediate tick so the title-bar read-out catches up. start() and
 // stop() keep their meaning: a stopped monitor stays stopped whatever the
 // window does, and a start while hidden waits for the window to come back.
-function createStatsVisibilityPause(monitor) {
+function createStatsVisibilityPause(monitor, onVisibilityChange = null) {
   const startTimer = monitor.start.bind(monitor);
   const stopTimer = monitor.stop.bind(monitor);
   let running = false;
@@ -91,6 +91,7 @@ function createStatsVisibilityPause(monitor) {
       const nextVisible = next !== false;
       if (nextVisible === visible) return;
       visible = nextVisible;
+      try { onVisibilityChange?.(visible); } catch (_error) { /* the skills poll follows; never blocks this pause */ }
       if (!running) return;
       if (!visible) {
         stopTimer();
@@ -237,11 +238,14 @@ function createRuntimeServicesWithDeps({
     manifest: require('../../config/rea-install-manifest.json'),
     userDataPath, discovery: mcpDiscoveryService, skillsService, logger: log,
   });
-  try {
-    reaInstallService.reconcile();
-  } catch (_error) {
-    log('WARN', 'rea_install.reconcile_failed', { reason: 'staging_cleanup_failed' });
-  }
+  // Repairs an install killed part-way; installs start from a user action, so this waits for the window.
+  setImmediate(() => {
+    try {
+      reaInstallService.reconcile();
+    } catch (_error) {
+      log('WARN', 'rea_install.reconcile_failed', { reason: 'staging_cleanup_failed' });
+    }
+  });
   reaInstallService.on('install-progress', (payload) => {
     sendBridgeEvent('mcpDiscovery.onReaInstallProgress', payload);
   });
@@ -434,7 +438,7 @@ function createRuntimeServicesWithDeps({
   });
   // Nothing on screen, nothing sampled: main.js hands the window's visibility
   // (main-window-composition's hide/minimize/show/restore) to this pause.
-  systemStats.visibilityPause = createStatsVisibilityPause(systemStats);
+  systemStats.visibilityPause = createStatsVisibilityPause(systemStats, (visible) => skillsService.setWindowVisible(visible));
   // Renderer watchers (system.setStatsWatch) pick the tick rate.
   systemStats.watchCadence = createStatsWatchCadence(systemStats);
 
@@ -456,39 +460,36 @@ function createRuntimeServicesWithDeps({
     }
   }
 
-  function isWorktreeToolEnabledFromConfig(configService = shellConfigService) {
-    const state = configService && typeof configService.getState === 'function'
-      ? configService.getState()
-      : {};
-    return isToolsWorktreeEnabled(state);
-  }
-
-  function createToolRegistryForCurrentConfig({
-    toolsWorktreeEnabled = isWorktreeToolEnabledFromConfig(),
-    toolsAutomationsEnabled = buildEffectiveFeatureFlags().tools_automations_enabled === true,
-    toolsWorkspacePresentEnabled = buildEffectiveFeatureFlags().tools_workspace_present_enabled === true,
-    toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true,
-    toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true, toolsBrowserUseEnabled = buildEffectiveFeatureFlags().tools_browser_use_enabled === true,
-    toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true,
-    toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true, toolsNextStepEnabled = buildEffectiveFeatureFlags().tools_next_step_enabled === true,
-    toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
-    toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true,
-    toolsConversationsEnabled = buildEffectiveFeatureFlags().memory_v2_enabled === true,
-    // Rows 69 / 88 / 94 / 85: declared in feature-flags.js, default on; JENNY_ENABLE_TOOLS_SESSION_DIRECTORY_ENABLED=0 / JENNY_ENABLE_PRIMARY_SETTINGS_WRITES=0 / JENNY_ENABLE_PRIMARY_CHAT_MANAGE=0 / JENNY_ENABLE_PRIMARY_CHAT_PLACEMENT=0 / JENNY_ENABLE_PRIMARY_SCHEDULED_CHECKS=0 turn them off.
-    toolsSessionDirectoryEnabled = buildEffectiveFeatureFlags().tools_session_directory_enabled !== false, toolsPrimarySettingsEnabled = buildEffectiveFeatureFlags().primary_settings_writes !== false, toolsPrimaryChatManageEnabled = buildEffectiveFeatureFlags().primary_chat_manage !== false, toolsPrimaryChatPlacementEnabled = buildEffectiveFeatureFlags().primary_chat_placement !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryAppViewEnabled = buildEffectiveFeatureFlags().primary_app_view !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryChatExportEnabled = buildEffectiveFeatureFlags().primary_chat_export !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsTerminalEnabled = buildEffectiveFeatureFlags().terminal_tools !== false, toolsTerminalRunEnabled = toolsTerminalEnabled && buildEffectiveFeatureFlags().primary_chat !== false,toolsPrimarySchedulesEnabled = buildEffectiveFeatureFlags().primary_scheduled_checks !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryDigestsEnabled = buildEffectiveFeatureFlags().primary_digests === true && buildEffectiveFeatureFlags().primary_chat !== false, // row 86: default off
-  } = {}) {
+  // One state read and one flag build per registry: this runs before the
+  // window on every launch and again on each feature or worktree toggle.
+  function createToolRegistryForCurrentConfig() {
+    const flags = buildEffectiveFeatureFlags();
+    const primaryChat = flags.primary_chat !== false;
+    const toolsTerminalEnabled = flags.terminal_tools !== false;
     return createDefaultRegistry({
-      toolsWorktreeEnabled,
-      toolsAutomationsEnabled,
-      toolsWorkspacePresentEnabled,
-      toolsPreviewTestEnabled,
-      toolsVerifyEnabled, toolsBrowserUseEnabled,
-      toolsImageGenerateEnabled,
-      toolsHomeEnabled, toolsNextStepEnabled,
-      toolsTaskBoardEnabled,
-      toolsProjectNotesEnabled,
-      toolsConversationsEnabled,
-      toolsSessionDirectoryEnabled, toolsPrimarySettingsEnabled, toolsPrimaryChatManageEnabled, toolsPrimaryChatPlacementEnabled, toolsPrimaryAppViewEnabled, toolsPrimaryChatExportEnabled, toolsTerminalEnabled, toolsTerminalRunEnabled, toolsPrimarySchedulesEnabled, toolsPrimaryDigestsEnabled,
+      toolsWorktreeEnabled: isToolsWorktreeEnabled(shellConfigService.getState()),
+      toolsAutomationsEnabled: flags.tools_automations_enabled === true,
+      toolsWorkspacePresentEnabled: flags.tools_workspace_present_enabled === true,
+      toolsPreviewTestEnabled: flags.tools_preview_test_enabled === true,
+      toolsVerifyEnabled: flags.tools_verify_enabled === true,
+      toolsBrowserUseEnabled: flags.tools_browser_use_enabled === true,
+      toolsImageGenerateEnabled: flags.tools_image_generate_enabled === true,
+      toolsHomeEnabled: flags.tools_home_enabled === true,
+      toolsNextStepEnabled: flags.tools_next_step_enabled === true,
+      toolsTaskBoardEnabled: flags.tools_task_board_enabled === true,
+      toolsProjectNotesEnabled: flags.tools_project_notes_enabled === true,
+      toolsConversationsEnabled: flags.memory_v2_enabled === true,
+      // Rows 69 / 88 / 94 / 85: declared in feature-flags.js, default on; JENNY_ENABLE_TOOLS_SESSION_DIRECTORY_ENABLED=0 / JENNY_ENABLE_PRIMARY_SETTINGS_WRITES=0 / JENNY_ENABLE_PRIMARY_CHAT_MANAGE=0 / JENNY_ENABLE_PRIMARY_CHAT_PLACEMENT=0 / JENNY_ENABLE_PRIMARY_SCHEDULED_CHECKS=0 turn them off.
+      toolsSessionDirectoryEnabled: flags.tools_session_directory_enabled !== false,
+      toolsPrimarySettingsEnabled: flags.primary_settings_writes !== false,
+      toolsPrimaryChatManageEnabled: flags.primary_chat_manage !== false,
+      toolsPrimaryChatPlacementEnabled: flags.primary_chat_placement !== false && primaryChat,
+      toolsPrimaryAppViewEnabled: flags.primary_app_view !== false && primaryChat,
+      toolsPrimaryChatExportEnabled: flags.primary_chat_export !== false && primaryChat,
+      toolsTerminalEnabled,
+      toolsTerminalRunEnabled: toolsTerminalEnabled && primaryChat,
+      toolsPrimarySchedulesEnabled: flags.primary_scheduled_checks !== false && primaryChat,
+      toolsPrimaryDigestsEnabled: flags.primary_digests === true && primaryChat, // row 86: default off
     });
   }
 

@@ -112,6 +112,8 @@
       : (typeof actionButtonResolved === 'function' ? actionButtonResolved : null);
 
     const fileNameOf = (path) => ideStateUtils.fileNameOf?.(path) || String(path || '');
+    // Outside-Workspace documents (row 137) are read through the registry, never by path.
+    const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
     const diffPrefix = () => ideStateUtils.DIFF_TAB_PREFIX || 'diff://';
     const changeDiffId = (change) => `${diffPrefix()}change/${change.changeId}`;
 
@@ -354,25 +356,27 @@
     // the live (unsaved) buffer. Entry points: tab context menu + the
     // unsaved-files section of the changes panel.
     async function openUnsavedCompare(path) {
-      const normalized = ideStateUtils.normalizeIdeRelativePath?.(path) || '';
+      const outside = outsideDocs()?.isOutsideKey(path) === true;
+      const normalized = outside ? path : ideStateUtils.normalizeIdeRelativePath?.(path) || '';
       if (disposed || !normalized || !editorHost?.hasDocument(normalized)) {
         return false;
       }
       const epoch = rootEpoch;
       const api = getWorkspaceFsApi();
-      if (!getFileOperations() && !api?.readFile) {
+      if (!outside && !getFileOperations() && !api?.readFile) {
         return false;
       }
       let diskContent;
       try {
-        const payload = await readCurrent(normalized);
+        const payload = outside ? await outsideDocs().readDisk(normalized) : await readCurrent(normalized);
         if (!isCurrent(epoch)) {
           return false;
         }
+        if (outside && payload?.ok === false) throw new Error('outside_read_failed');
         diskContent = normalizeDiffText(payload?.content);
       } catch (error) {
         if (!isCurrent(epoch)) return false;
-        showShellErrorToast(jt('ide.diff.savedCopyReadFailed', 'Could not read the saved copy of {path}.', { path: normalized }), {
+        showShellErrorToast(jt('ide.diff.savedCopyReadFailed', 'Could not read the saved copy of {path}.', { path: outside ? outsideDocs().displayPathFor(normalized) : normalized }), {
           title: jt('ide.diff.compareWithSaved', 'Compare with Saved'),
           dedupeKey: `ide:diff:${normalized}`,
         });

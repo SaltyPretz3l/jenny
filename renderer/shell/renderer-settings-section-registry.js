@@ -24,57 +24,73 @@
     plugins: 'extensions',
   });
 
-  /* Top-level nav groups, in render order. */
+  /* Top-level nav groups, in render order (row 133). `overview` has no label: the
+   * rail renders no group heading for it and the picker lists its page ungrouped. */
   const SETTINGS_GROUP_DEFINITIONS = Object.freeze([
-    { id: 'modelTools', label: jt('settings.sections.modelTools.title', 'Model & tools'), order: 0 },
-    { id: 'work', label: jt('settings.sections.work.title', 'Work'), order: 1 },
-    { id: 'context', label: jt('settings.sections.contextMemory.title', 'Context & memory'), order: 2 },
-    { id: 'app', label: jt('settings.sections.app.title', 'App'), order: 3 },
+    { id: 'overview', label: '', order: 0 },
+    { id: 'jenny', label: jt('settings.sections.jenny.title', 'Jenny'), order: 1 },
+    { id: 'app', label: jt('settings.sections.app.title', 'App'), order: 2 },
+    { id: 'work', label: jt('settings.sections.work.title', 'Work'), order: 3 },
     { id: 'system', label: jt('settings.sections.system.title', 'System'), order: 4 },
-    { id: 'developer', label: jt('settings.sections.developer.title', 'Developer'), order: 5 },
   ].map((group) => Object.freeze(group)));
 
   const SETTINGS_SECTION_DEFINITIONS = Object.freeze([
-    // --- Model & tools: readiness overview first. Status-only (never dirty); the
-    // control-tower utils paint its nav-rail count badge from the same model
-    // that renders the card, so the rail says when the page has something to say.
+    // --- Overview: readiness reports on every group, so it sits above them. Status-only
+    // (never dirty); the control-tower utils paint its nav-rail count badge from the
+    // same model that renders the card, so the rail says when the page has something to say.
     {
       id: 'readiness',
-      group: 'modelTools',
+      group: 'overview',
       order: -1,
       label: jt('settings.sections.readiness.title', 'Readiness'),
     },
     // Runs moved to Diagnostics › Runs (owner, 2026-10-03); a stored `runs`
     // section falls back to the default like any unknown id.
-    // --- Model & tools: per-conversation AI runtime ---
+    // --- Jenny: what the model is, can use and remembers ---
     {
       id: 'models',
-      group: 'modelTools',
+      group: 'jenny',
       label: jt('settings.sections.models.title', 'Models'),
       default: true,
-      // The Model library grid lives in this card since 2026-09-21; keep its
-      // old name (and what people pull/add there) reachable from search.
-      keywords: [jt('settings.sections.models.keywords.modelLibrary', 'model library'), 'library', 'pull', 'gguf'],
+      // The Model library grid lives in this card since 2026-09-21 and the Offline page
+      // since row 133; keep their old names (and what people pull/add there) reachable from search.
+      keywords: [jt('settings.sections.models.keywords.modelLibrary', 'model library'), 'library', 'pull', 'gguf',
+        jt('settings.sections.models.keywords.offline', 'offline'), jt('settings.sections.models.keywords.localOnly', 'local only')],
     },
     {
+      // Row 133: the Offline page is the "Local only" group of Models. It keeps its lazy
+      // lifecycle; the Models host readies + refreshes it as a companion.
       id: 'offline',
-      group: 'modelTools',
+      group: 'jenny',
       label: jt('settings.sections.offline.title', 'Offline'),
       lazy: true,
+      hidden: true,
+      mergedInto: 'models',
     },
     {
-      id: 'context',
-      group: 'context',
-      label: jt('settings.sections.context.title', 'Context'),
+      // Row 133: what Jenny may do without asking (run mode default, safety mode, Auto limits,
+      // saved approval rules), split out of Tools.
+      id: 'permissions',
+      group: 'jenny',
+      label: jt('settings.sections.permissions.title', 'Permissions'),
+      keywords: [jt('settings.sections.permissions.keywords.approval', 'approval'), jt('settings.sections.permissions.keywords.safetyMode', 'safety mode'),
+        jt('settings.sections.permissions.keywords.runMode', 'run mode'), jt('settings.sections.permissions.keywords.auto', 'auto'),
+        jt('settings.sections.permissions.keywords.alwaysAllow', 'always allow')],
     },
     {
       id: 'tools',
-      group: 'modelTools',
+      group: 'jenny',
       label: jt('settings.sections.tools.title', 'Tools'),
     },
     {
+      // Skill folders (the merged skills section) and standalone MCP servers.
+      id: 'extensions',
+      group: 'jenny',
+      label: jt('settings.sections.extensions.title', 'Extensions'),
+    },
+    {
       id: 'skills',
-      group: 'modelTools',
+      group: 'jenny',
       label: jt('settings.sections.skills.title', 'Skills'),
       navItemId: 'skillsSettingsNavItem',
       lazy: true,
@@ -84,60 +100,86 @@
       hidden: true,
       mergedInto: 'extensions',
     },
-    // --- Context & memory: Jenny's identity and memories ---
     {
       id: 'memories',
-      group: 'context',
+      group: 'jenny',
       label: jt('settings.sections.memories.title', 'Memory'),
       lazy: true,
     },
     {
       id: 'personality',
-      group: 'context',
+      group: 'jenny',
       label: jt('settings.sections.personality.title', 'Personality'),
       lazy: true,
+    },
+    // --- App: how the application behaves and looks ---
+    {
+      // Row 133: app-wide behaviour. Holds the Home page's Quick capture group for now.
+      id: 'general',
+      group: 'app',
+      label: jt('settings.sections.general.title', 'General'),
+      keywords: [jt('settings.sections.general.keywords.home', 'home'), jt('settings.sections.general.keywords.quickCapture', 'quick capture'),
+        jt('settings.sections.general.keywords.profile', 'profile')],
+    },
+    {
+      id: 'home',
+      group: 'app',
+      label: jt('settings.sections.home.title', 'Home'),
+      hidden: true,
+      mergedInto: 'general',
     },
     {
       id: 'appearance',
       group: 'app',
       label: jt('settings.sections.appearance.title', 'Appearance'),
     },
-    // --- App: the application surfaces & your account ---
+    {
+      // Row 133: how chats behave. Takes in the Context, Jenny chat (row 86) and
+      // Dictation (row 84) pages, which stay known as hidden companions.
+      id: 'chat',
+      group: 'app',
+      label: jt('settings.sections.chat.title', 'Chat'),
+      keywords: [jt('settings.sections.jennyChat.keywords.digest', 'digest'), jt('settings.sections.jennyChat.keywords.away', 'away'),
+        jt('settings.sections.jennyChat.keywords.summary', 'summary'),
+        jt('settings.sections.dictation.keywords.voice', 'voice'), jt('settings.sections.dictation.keywords.microphone', 'microphone'),
+        jt('settings.sections.dictation.keywords.speech', 'speech'), jt('settings.sections.dictation.keywords.talk', 'talk')],
+    },
+    {
+      id: 'context',
+      group: 'app',
+      label: jt('settings.sections.context.title', 'Context'),
+      hidden: true,
+      mergedInto: 'chat',
+    },
+    {
+      id: 'jennyChat',
+      group: 'app',
+      label: jt('settings.sections.jennyChat.title', 'Jenny chat'),
+      hidden: true,
+      mergedInto: 'chat',
+    },
+    {
+      id: 'dictation',
+      group: 'app',
+      label: jt('settings.sections.dictation.title', 'Dictation'),
+      hidden: true,
+      mergedInto: 'chat',
+    },
     {
       id: 'editor',
       group: 'app',
       label: jt('settings.sections.editor.title', 'Editor'),
     },
-    {
-      id: 'home',
-      group: 'app',
-      label: jt('settings.sections.home.title', 'Home'),
-    },
     // --- App: Notifications (owner-approved 2026-09-27, placement A): desktop
-    // toasts while Jenny is in the background, one switch per category.
+    // toasts while Jenny is in the background, one switch per category. Quiet hours
+    // moved here from Jenny chat in row 133.
     {
       id: 'notifications',
       group: 'app',
       label: jt('settings.sections.notifications.title', 'Notifications'),
       keywords: [jt('settings.sections.notifications.keywords.toast', 'toast'), jt('settings.sections.notifications.keywords.desktop', 'desktop'),
         jt('settings.sections.notifications.keywords.alerts', 'alerts'), jt('settings.sections.notifications.keywords.sound', 'sound'),
-        jt('settings.sections.notifications.keywords.background', 'background')],
-    },
-    // --- App: Jenny chat (row 86, owner pick S1): how the Jenny chat behaves while you are away.
-    {
-      id: 'jennyChat',
-      group: 'app',
-      label: jt('settings.sections.jennyChat.title', 'Jenny chat'),
-      keywords: [jt('settings.sections.jennyChat.keywords.digest', 'digest'), jt('settings.sections.jennyChat.keywords.away', 'away'),
-        jt('settings.sections.jennyChat.keywords.quietHours', 'quiet hours'), jt('settings.sections.jennyChat.keywords.summary', 'summary')],
-    },
-    // --- App: Dictation (row 84): push-to-talk into the message box.
-    {
-      id: 'dictation',
-      group: 'app',
-      label: jt('settings.sections.dictation.title', 'Dictation'),
-      keywords: [jt('settings.sections.dictation.keywords.voice', 'voice'), jt('settings.sections.dictation.keywords.microphone', 'microphone'),
-        jt('settings.sections.dictation.keywords.speech', 'speech'), jt('settings.sections.dictation.keywords.talk', 'talk')],
+        jt('settings.sections.notifications.keywords.background', 'background'), jt('settings.sections.jennyChat.keywords.quietHours', 'quiet hours')],
     },
     {
       // Owner-approved 2026-09-20 (Projects v2): this section is the project list.
@@ -166,15 +208,13 @@
       lazy: true,
     },
     {
-      // Skill folders (the merged skills section) and standalone MCP servers.
-      id: 'extensions',
-      group: 'system',
-      label: jt('settings.sections.extensions.title', 'Extensions'),
-    },
-    {
+      // Row 133: the Profile page became Data & privacy (the profile name moved to General,
+      // setup to Readiness, About to its own page). The id stays `account`.
       id: 'account',
       group: 'system',
-      label: jt('settings.sections.account.title', 'Profile, data & updates'),
+      label: jt('settings.sections.dataAndPrivacy.title', 'Data & privacy'),
+      keywords: [jt('settings.sections.dataAndPrivacy.keywords.backup', 'backup'), jt('settings.sections.dataAndPrivacy.keywords.restore', 'restore'),
+        jt('settings.sections.dataAndPrivacy.keywords.archive', 'archive'), jt('settings.sections.dataAndPrivacy.keywords.uninstall', 'uninstall')],
     },
     {
       id: 'dataPrivacy',
@@ -184,17 +224,17 @@
       mergedInto: 'account',
     },
     {
+      // Row 133: version, updates and the command-line tool, its own page again.
       id: 'aboutUpdates',
       group: 'system',
-      label: jt('settings.sections.aboutUpdates.title', 'About & Updates'),
-      hidden: true,
-      mergedInto: 'account',
+      label: jt('settings.sections.about.title', 'About'),
+      keywords: [jt('settings.sections.about.keywords.version', 'version'), jt('settings.sections.about.keywords.updates', 'updates')],
     },
-    // --- Developer: expert engine tuning ---
+    // --- System: expert engine tuning (the Developer group until row 133) ---
     {
       id: 'advanced',
-      group: 'developer',
-      label: jt('settings.sections.advanced.title', 'Limits & budgets'),
+      group: 'system',
+      label: jt('settings.sections.limits.title', 'Limits'),
       // ~28 numeric fields have no business on the boot path.
       lazy: true,
     },
@@ -203,7 +243,7 @@
       // moved to Session › Runs 2026-09-27). Its scripts load lazily on first
       // bind, so this section spends no startup script slot.
       id: 'runtimeLimits',
-      group: 'developer',
+      group: 'system',
       label: jt('settings.sections.runtimeLimits.title', 'Runtime limits'),
       hidden: true,
       mergedInto: 'advanced',
@@ -250,7 +290,8 @@
     }
     return Object.freeze({
       id,
-      label: String(group.label || id),
+      // An empty label stays empty: that group renders no heading in the rail.
+      label: group.label === '' ? '' : String(group.label || id),
       order: normalizeOrder(group.order, index),
     });
   }

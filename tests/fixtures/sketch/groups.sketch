@@ -1,0 +1,14 @@
+title Services
+dir down
+group edge Edge
+group core Core services
+group data Data in core
+gw Gateway in edge
+auth Auth in core
+orders Orders in core
+store Orders store in data
+cache Cache in data
+gw -> auth
+gw -> orders
+orders -> store
+orders -> cache

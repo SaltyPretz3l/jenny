@@ -76,8 +76,15 @@ class BackendHarness extends EventEmitter {
     return { object: 'list', data, total: data.length };
   }
 
-  async createSession({ title }) {
-    return { object: 'session', data: this.sessionStore.createSession({ title }) };
+  // As the real backend: a named project that does not exist throws project_not_found
+  // (services/projects/application-project-scope.js), when the test sets `knownProject`.
+  async createSession({ title, projectId }) {
+    if (projectId !== undefined && this.knownProject && !this.knownProject(projectId)) {
+      throw Object.assign(new Error('Project was not found.'), { code: 'CMP-PROJECT-0002', reason: 'project_not_found' });
+    }
+    const created = this.sessionStore.createSession({ title });
+    return { object: 'session', data: projectId === undefined ? created
+      : this.sessionStore.updateSession(created.id, { project_id: projectId }) };
   }
 
   async renameSession(sessionId, title) {

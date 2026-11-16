@@ -154,10 +154,13 @@
   padding-inline: 8px;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--line);
+  /* A container, so the shared bar's narrow rule (chat-search-v2.css) sheds the case/word toggles in a thin column. */
+  container-type: inline-size;
 }
 
 .ide-tree-filter .chat-search-bar {
   animation: none;
+  block-size: auto;
   gap: 2px;
   padding: 0;
   border: 0;
@@ -168,10 +171,20 @@
 }
 
 .ide-tree-filter .chat-search-bar-input {
+  min-inline-size: 5rem;
   padding: 3px 6px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--bg-base);
+}
+
+.ide-tree-filter .chat-search-bar:focus-within {
+  box-shadow: none;
+}
+
+/* Row 156: the chat find field's leading magnifier is not the tree filter's. */
+.ide-tree-filter .chat-search-bar-glyph {
+  display: none;
 }
 
 .ide-tree-filter .chat-search-bar-input:focus-visible {
@@ -182,6 +195,7 @@
 }
 
 .ide-tree-filter .chat-search-bar-button {
+  inline-size: auto;
   min-width: 20px;
   height: 20px;
   padding: 0 3px;

@@ -7,6 +7,11 @@ const {
   buildEffectiveFeatureFlags: buildEffectiveFeatureFlagsWithDeps,
   buildFeatureStatePayload: buildFeatureStatePayloadWithDeps,
 } = require('../feature-settings-service');
+const { createTeamDataProbe } = require('./team-data-probe');
+
+function userDataPath() {
+  return require('electron').app.getPath('userData');
+}
 
 function createFeatureSettingsFacade({
   env = process.env,
@@ -14,6 +19,8 @@ function createFeatureSettingsFacade({
   getShellConfigService = () => null,
   getBackendService = () => null,
   sendToWindow = () => {},
+  // Row 123, E50: whether team data is on disk, for the payload's `teamData` (asked only with the team flag on).
+  hasTeamData = createTeamDataProbe(userDataPath),
 } = {}) {
   function buildEffectiveFeatureFlags() {
     return buildEffectiveFeatureFlagsWithDeps({
@@ -28,6 +35,7 @@ function createFeatureSettingsFacade({
       backendService: getBackendService(),
       env,
       platform,
+      hasTeamData,
     });
   }
 
@@ -39,6 +47,7 @@ function createFeatureSettingsFacade({
       sendToWindow,
       env,
       platform,
+      hasTeamData,
     });
   }
 

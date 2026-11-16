@@ -118,6 +118,8 @@
         id: 'quit',
         label: jt('models.ollama.tray.quitApp', 'Quit tray app'),
         kind: 'primary',
+        // Quit and Disable are separate fixes; one does not close the other.
+        keepOpen: true,
         onClick: function onQuitClick() {
           return safeCall(
             bridge && bridge.quitTrayApp ? function () { return bridge.quitTrayApp(); } : null,
@@ -139,6 +141,7 @@
         id: 'disable',
         label: jt('models.ollama.tray.disableStartupShortcut', 'Disable Startup shortcut'),
         kind: 'default',
+        keepOpen: true,
         onClick: function onDisableClick() {
           return safeCall(
             bridge && bridge.disableStartupShortcut ? function () { return bridge.disableStartupShortcut(); } : null,

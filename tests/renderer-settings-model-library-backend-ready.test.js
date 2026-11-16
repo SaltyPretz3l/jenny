@@ -86,8 +86,9 @@ function harness(t, options = {}) {
     state,
     count: (name) => calls.filter((entry) => entry === name).length,
     statusText: () => card.querySelector('.model-library-section-status').textContent,
-    hardwareText: () => card.querySelector('.model-library-hardware-summary').textContent,
-    rows: () => card.querySelectorAll('.model-row').length,
+    // The card line is Running now's; this one speaks only while there is no verdict (null once hardware is detected).
+    hardwareText: () => card.querySelector('.model-library-hardware-summary')?.textContent ?? null,
+    rows: () => card.querySelectorAll('.mrow').length,
     markAppReady() {
       backend.ready = true;
       state.backend = { phase: 'ready' };
@@ -116,7 +117,7 @@ test('a read taken before the sidecar was ready reports its reason once and clea
 
   assert.equal(h.count('list'), before + 1, 'the tick re-read the sources once the app read ready');
   assert.equal(h.statusText(), '');
-  assert.equal(h.hardwareText(), 'Test GPU · 11.7 GB VRAM · 23.4 GB RAM available');
+  assert.equal(h.hardwareText(), null, 'a detected card needs no line here');
   assert.equal(h.rows(), 1);
 
   // Caught up: later ticks go back to re-merging only.

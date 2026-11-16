@@ -1,0 +1,2 @@
+molecule m CCO : Ethanol
+step OH: the hydroxyl group | m[3]

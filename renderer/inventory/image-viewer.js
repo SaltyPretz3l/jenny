@@ -33,7 +33,11 @@
     send: '<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>',
     prev: '<path d="m14 6-6 6 6 6"/>',
     next: '<path d="m10 6 6 6-6 6"/>',
+    chat: '<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',
   };
+  // Keyboard shortcuts as aria-keyshortcuts values; the visible key names come in through labels.tips (translated).
+  const SHORTCUTS = { in: '+', out: '-', actual: '1', fit: '0', 'rotate-right': 'r', details: 'i', prev: 'ArrowLeft', next: 'ArrowRight',
+    copy: 'Control+C', 'save-as': 'Control+S', close: 'Escape' };
   const svg = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
 
   function createView(documentRef, labels) {
@@ -43,14 +47,16 @@
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-modal', 'true');
     root.setAttribute('aria-labelledby', 'imageViewerTitle');
-    const icon = (action, name, label, extra = '') => `<button type="button" class="image-viewer-icon" data-image-viewer-action="${action}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"${extra}>${svg(name)}</button>`;
+    const tips = labels.tips || {};
+    const keys = (action) => (SHORTCUTS[action] ? ` aria-keyshortcuts="${escapeHtml(SHORTCUTS[action])}"` : '');
+    const icon = (action, name, label, extra = '', tip = tips[action] || label) => `<button type="button" class="image-viewer-icon" data-image-viewer-action="${action}" title="${escapeHtml(tip)}" aria-label="${escapeHtml(label)}"${keys(action)}${extra}>${svg(name)}</button>`;
     const text = (action, label, name, className = 'image-viewer-text') => `<button type="button" class="${className}" data-image-viewer-action="${action}">${name ? svg(name) : ''}${escapeHtml(label)}</button>`;
     const item = (action, name, label) => `<button type="button" role="menuitem" data-image-viewer-action="${action}">${svg(name)}${escapeHtml(label)}</button>`;
     const rule = '<span class="image-viewer-rule" aria-hidden="true"></span>';
     root.innerHTML = '<header class="image-viewer-header"><div class="image-viewer-heading">'
       + `<h2 id="imageViewerTitle">${escapeHtml(labels.title)}</h2><p class="image-viewer-meta"></p></div>`
       + '<div class="image-viewer-actions">'
-      + icon('copy', 'copy', labels.copy) + icon('save-as', 'save', labels.saveAs) + icon('open', 'external', labels.open)
+      + icon('show-in-chat', 'chat', labels.showInChat) + icon('copy', 'copy', labels.copy) + icon('save-as', 'save', labels.saveAs) + icon('open', 'external', labels.open)
       + icon('reveal', 'folder', labels.reveal)
       + '<span class="image-viewer-more-anchor">' + icon('more', 'more', labels.more, ' aria-haspopup="menu" aria-expanded="false"')
       + '<div class="image-viewer-more" role="menu" hidden>'
@@ -77,6 +83,7 @@
       + text('edit-cancel', labels.editCancel) + text('send-edit', labels.sendEdit, 'send', 'image-viewer-text image-viewer-text--primary')
       + '</div></div>'
       + '<div class="image-viewer-menu" role="menu" hidden><button type="button" role="menuitem" data-image-viewer-action="menu-send-edit">' + escapeHtml(labels.sendEdit) + '</button></div></div>'
+      + '<div class="image-viewer-strip" role="group" hidden></div>'
       + `<aside class="image-viewer-details" aria-label="${escapeHtml(labels.details)}" hidden>`
       + `<div class="image-viewer-prompt-block"><h3>${escapeHtml(labels.promptLabel)}</h3><p class="image-viewer-prompt"></p>`
       + text('copy-prompt', labels.copyPrompt, '', 'image-viewer-link') + '</div>'
@@ -84,9 +91,11 @@
       + '<dl class="image-viewer-facts"></dl></aside>';
     const stage = root.querySelector('.image-viewer-stage');
     stage.setAttribute('aria-label', labels.stage);
+    const strip = root.querySelector('.image-viewer-strip');
+    strip.setAttribute('aria-label', labels.strip);
     const placeholder = root.querySelector('.image-viewer-placeholder');
     const details = root.querySelector('.image-viewer-details');
-    return { root, stage, menu: root.querySelector('.image-viewer-menu'), more: root.querySelector('.image-viewer-more'),
+    return { root, stage, strip, menu: root.querySelector('.image-viewer-menu'), more: root.querySelector('.image-viewer-more'),
       buttons: [...root.querySelectorAll('[data-image-viewer-action]')], image: root.querySelector('img'),
       percent: root.querySelector('input'), status: root.querySelector('.image-viewer-status'),
       title: root.querySelector('h2'), meta: root.querySelector('.image-viewer-meta'), selectionCanvas: root.querySelector('canvas'),
@@ -112,5 +121,20 @@
     view.facts.hidden = !rows.length;
   }
 
-  return { createView, fillDetails };
+  // One filmstrip thumb: a button holding an empty picture the strip fills later.
+  function createStripThumb(documentRef, { index, title, label }) {
+    const button = documentRef.createElement('button');
+    button.type = 'button';
+    button.dataset.imageViewerIndex = String(index);
+    button.setAttribute('aria-label', label);
+    button.title = title;
+    const image = documentRef.createElement('img');
+    image.alt = '';
+    image.setAttribute('decoding', 'async');
+    image.addEventListener('error', () => image.remove());
+    button.appendChild(image);
+    return { button, image };
+  }
+
+  return { createView, fillDetails, createStripThumb };
 });

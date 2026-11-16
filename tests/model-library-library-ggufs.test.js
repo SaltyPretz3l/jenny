@@ -282,6 +282,24 @@ test('a clash on the card only gives the library entry a card of its own', () =>
   assert.deepEqual(project({ installed: [{ id: 'org/mistral', engine_type: 'vllm' }] }), []);
 });
 
+test('a local GGUF the estimator does not know gets a rough VRAM need from its file size', () => {
+  const row = (size) => ({ id: 'solo', size, engine_type: 'openai-compatible', available: true, libraryGguf: true, ownCardKey: 'solo' });
+  const solo = (size, hardware) => merge.mergeModelLibrary({
+    installed: [row(size)], hardware, managed: managedWith([libraryEntry('solo', 'D:\\gguf\\Solo.gguf')]),
+  }).cards.find((card) => card.key === 'solo');
+  const gpu = { detected: true, vramMb: 32768, budgetMb: 32768 };
+  const fits = solo(20 * 1024 * 1048576, gpu);
+  assert.equal(fits.vramRequiredMb, Math.round(20 * 1024 * 1.15) + 768);
+  assert.equal(fits.fitSource, 'estimated');
+  assert.equal(fits.fitConfidence, 'low');
+  assert.equal(fits.fitState, 'fits');
+  assert.equal(solo(40 * 1024 * 1048576, gpu).fitState, 'over');
+  // No file size, or no detected card: still unknown, never a made-up number.
+  assert.equal(solo(0, gpu).fitState, 'unknown');
+  assert.equal(solo(0, gpu).vramRequiredMb, 0);
+  assert.equal(solo(20 * 1024 * 1048576, { detected: false }).fitState, 'unknown');
+});
+
 test('the merge keeps an own-card library row apart from the card it would share', () => {
   const row = { id: 'mistral', size: 5, engine_type: 'openai-compatible', available: true, libraryGguf: true, ownCardKey: 'mistral' };
   const cards = merge.mergeModelLibrary({

@@ -102,6 +102,8 @@
     }
 
     const toolErrorEntries = [];
+    // One entry per call: the live reducer's call row and its result row both carry the failure.
+    const failedCallIds = new Set();
     const assistantErrorRows = [];
     for (let i = 0; i < siblingRows.length; i += 1) {
       const candidate = siblingRows[i];
@@ -113,7 +115,9 @@
         continue;
       }
       const toolEntry = extractToolErrorEntry(candidate, norm);
-      if (toolEntry) {
+      const callId = norm(candidate.tool_call_id || (candidate.payload && candidate.payload.tool_call_id));
+      if (toolEntry && !(callId && failedCallIds.has(callId))) {
+        if (callId) failedCallIds.add(callId);
         toolErrorEntries.push(toolEntry);
       }
     }

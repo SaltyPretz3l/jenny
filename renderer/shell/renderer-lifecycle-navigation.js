@@ -43,6 +43,9 @@
         const config = await diagnostics.getStartupAuditConfig();
         if (config?.enabled === true) {
           globalThis.__jennyStartupAudit?.enable?.(config);
+        } else if (globalThis.__jennyStartupAudit) {
+          // The auto-send step reads this instead of asking again on every launch.
+          globalThis.__jennyStartupAudit.disabledConfig = config || {};
         }
         return config || null;
       } catch (_error) {

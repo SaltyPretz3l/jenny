@@ -390,6 +390,8 @@
   const SETTLED_PROVISIONAL_TOOL_STATES = new Set([
     'completed', 'errored', 'failed', 'denied', 'timed_out', 'cancelled',
   ]);
+  const SEALED_STATE_BY_ROW_KIND = Object.freeze({ approval_gap: 'interrupted', plan_document: 'abandoned' });
+  const PENDING_ROW_STATES = new Set(['', 'pending', 'awaiting_approval', 'pending_approval']);
 
   // Adopting the provisional row_id keeps the already-painted DOM node keyed
   // alive across the live->canonical handoff. Canonical payloads win, except a
@@ -414,6 +416,14 @@
       && SETTLED_PROVISIONAL_TOOL_STATES.has(provisionalState)
     ) {
       merged.payload = { ...hydratedPayload, state: provisionalRow.payload.state };
+    }
+    // The terminal fold seals a pending approval to 'interrupted' and a pending
+    // plan to 'abandoned'. A live row that already holds the decision keeps it:
+    // the log lagging that decision is the same gap as the tool_result above.
+    const sealedState = SEALED_STATE_BY_ROW_KIND[normalizeId(hydratedRow && hydratedRow.kind)] || '';
+    if (sealedState && hydratedPayload && normalizeId(hydratedPayload.state) === sealedState
+      && !PENDING_ROW_STATES.has(provisionalState) && provisionalState !== sealedState) {
+      merged.payload = { ...hydratedPayload, ...provisionalRow.payload };
     }
     return merged;
   }

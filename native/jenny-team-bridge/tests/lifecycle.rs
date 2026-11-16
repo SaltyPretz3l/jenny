@@ -16,16 +16,7 @@ async fn stop_closes_everything_and_stopped_is_last() {
     client.write_all(b"GET /").await.expect("client write");
     let mut socket = pair.http.next_socket().await;
 
-    pair.host.send(json!({ "t": "stop" })).await;
-    let mut lines = Vec::new();
-    loop {
-        let line = pair.host.next().await;
-        let done = line["t"] == "stopped";
-        lines.push(line);
-        if done {
-            break;
-        }
-    }
+    let lines = pair.host.stop_until_stopped().await;
     let (code, rest) = pair.host.finish().await;
     assert_eq!(code, 0);
     assert!(rest.is_empty(), "stopped is the last host line: {rest:?}");
@@ -101,6 +92,7 @@ async fn missing_start_times_out() {
     let options = RunOptions {
         start_timeout: Duration::from_millis(100),
         loopback_only: true,
+        ..RunOptions::default()
     };
     let mut bridge = Bridge::host_with(options.clone());
     assert_eq!(
@@ -122,9 +114,7 @@ async fn unreachable_host_reports_offline() {
     let mut limits = member_limits();
     limits["connect_timeout_ms"] = json!(300);
     // A loopback port with nothing listening on it.
-    let unused = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind");
-    let address = unused.local_addr().expect("addr").to_string();
-    drop(unused);
+    let address = format!("127.0.0.1:{}", free_udp_port());
     let mut member = Bridge::member();
     member
         .send(member_start(
@@ -139,4 +129,12 @@ async fn unreachable_host_reports_offline() {
     let offline = member.expect_state("offline").await;
     assert_eq!(offline["reason"], "host_unreachable");
     assert_eq!(member.finish().await.0, 0);
+}
+
+/// The binary runs with the default options: the relay's certificate is checked against the
+/// embedded roots, never the test relay's trust (check_team_transport_boundary.py keeps the
+/// seam out of src/main.rs).
+#[test]
+fn the_default_options_carry_no_test_relay_trust() {
+    assert!(RunOptions::default().relay_tls.is_none());
 }

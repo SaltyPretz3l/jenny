@@ -56,6 +56,7 @@ The rail has six groups.
 - Make memory more or less active: Settings > Memory > How Jenny remembers.
 - Keep everything on this computer: Settings > Offline > Force local inference.
 - Make the text larger: Settings > Appearance > Text size, or Ctrl + and Ctrl - to zoom the window.
+- Change how Jenny draws diagrams, or go back to Mermaid: Settings > Chat > Drawing instructions (Short, Full or Mermaid). See drawing.
 - Run first-run setup again: Settings > Profile, data and updates > Setup > Run setup again.
 - Back up or remove your data: Settings > Profile, data and updates > Data and removal.
 

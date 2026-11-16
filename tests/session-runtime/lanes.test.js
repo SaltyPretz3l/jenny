@@ -222,3 +222,202 @@ test('the inference queue ignores unqueued callers, expired waiters and forgotte
   lanes.forgetInferenceWaiter('f');
   assert.equal(acquire('g').status, 'granted');
 });
+
+// Row 136 "Finish this first": one chat's task is put first on its lane.
+function firstFixture(options = {}) {
+  const clock = { now: 1_000 };
+  const lanes = new RuntimeLaneAdmission({ now: () => clock.now, ...options });
+  const local = route();
+  const infer = (sessionId, ownerId = `req_${sessionId}`, queue = true) => (
+    lanes.tryAcquireInference({ ownerId, sessionId, route: local, queue }));
+  const done = (admission) => lanes.release(admission.lease, { producerSettled: true });
+  return { clock, lanes, local, infer, done };
+}
+
+test('a first chat keeps the model through its tool gaps and others name it as the blocker', () => {
+  const { clock, lanes, local, infer, done } = firstFixture();
+  assert.deepEqual(lanes.setFirstSession('first'), { status: 'rejected', reason: 'session_not_running' });
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'first', route: local }).status, 'granted');
+  const set = lanes.setFirstSession('first');
+  assert.equal(set.status, 'set');
+  assert.deepEqual(lanes.firstSession(), { session_id: 'first', set_by: 'user', set_at: 1_000 });
+  assert.equal(lanes.snapshot().first.session_id, 'first');
+  const running = infer('first');
+  assert.equal(running.status, 'granted');
+  done(running);
+  // The first chat is running a quick tool: the lane is free, but the other chat is held.
+  clock.now += 5_000;
+  const held = infer('other');
+  assert.equal(held.status, 'waiting');
+  assert.equal(held.reason, 'lane_capacity');
+  assert.equal(held.held_for_first, true);
+  assert.deepEqual(held.blockers, [{ session_id: 'first', quarantined_at: null }]);
+  // A request with no chat (a title, a suggestion) waits too.
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'aux', route: local }).held_for_first, true);
+  const next = infer('first', 'req_first_2');
+  assert.equal(next.status, 'granted', 'the first chat is not queued behind the waiter');
+  done(next);
+});
+
+test('the hold lapses when the first chat stays away, and it still goes next when it returns', () => {
+  const { clock, lanes, local, infer, done } = firstFixture();
+  lanes.tryAcquireTurn({ sessionId: 'first', route: local });
+  lanes.setFirstSession('first', { setBy: 'primary' });
+  assert.equal(lanes.firstSession().set_by, 'primary');
+  done(infer('first'));
+  // A long command or an approval: past the grace the other chat may use the model.
+  clock.now += 60_001;
+  const other = infer('other');
+  assert.equal(other.status, 'granted');
+  // A third chat queues, then the first chat asks again: it is ahead of the older waiter.
+  assert.equal(infer('third').status, 'waiting');
+  clock.now += 500;
+  assert.equal(infer('first', 'req_first_2').status, 'waiting', 'a running request is never cut off');
+  done(other);
+  assert.equal(infer('third').held_for_first, true);
+  const back = infer('first', 'req_first_2');
+  assert.equal(back.status, 'granted');
+  // While its own request runs past the grace, a second local slot is still not handed out.
+  lanes.setLimits({ local: { inference_requests: 2 } });
+  clock.now += 120_000;
+  assert.equal(infer('third').held_for_first, true);
+  done(back);
+});
+
+test('first status follows helper chats, ends with the task and is replaced by a newer pick', () => {
+  const sameTask = (firstId, sessionId) => firstId === 'first' && sessionId === 'helper';
+  let lookups = 0;
+  const counted = (firstId, sessionId) => { lookups += 1; return sameTask(firstId, sessionId); };
+  const { clock, lanes, local, infer, done } = firstFixture({ sameTask: counted,
+    limits: { local: { runnable_turns: 3 } } });
+  const turn = lanes.tryAcquireTurn({ sessionId: 'first', route: local });
+  lanes.setFirstSession('first');
+  const helper = infer('helper');
+  assert.equal(helper.status, 'granted', 'a helper of the first chat is part of its task');
+  assert.equal(infer('other').held_for_first, true);
+  done(helper);
+  // The first chat suspends behind its helper: the helper's turn keeps the task alive.
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'helper', route: local }).status, 'granted');
+  lanes.release(turn.lease, { producerSettled: true });
+  clock.now += 30_000;
+  done(infer('helper', 'req_helper_2'));
+  assert.equal(infer('other').held_for_first, true);
+  assert.equal(lanes.firstSession().session_id, 'first');
+  assert.equal(lookups, 2, 'one lookup per chat for the life of the pick: helper and other');
+  // Another chat is picked instead: the newer pick wins.
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'other', route: local }).status, 'granted');
+  assert.equal(lanes.setFirstSession('other').status, 'set');
+  assert.equal(infer('helper', 'req_helper_3').held_for_first, true);
+  assert.equal(lanes.clearFirstSession('first'), false, 'a stale clear does not drop the newer pick');
+  assert.equal(lanes.clearFirstSession('other'), true);
+  assert.equal(lanes.firstSession(), null);
+});
+
+test('first status ends once the chat has had nothing running for the idle window', () => {
+  const { clock, lanes, local, infer, done } = firstFixture();
+  const turn = lanes.tryAcquireTurn({ sessionId: 'first', route: local });
+  lanes.setFirstSession('first');
+  done(infer('first'));
+  lanes.release(turn.lease, { producerSettled: true });
+  // The task is over: nothing is held for it, though a quick follow-up would still be first.
+  assert.equal(infer('other', 'req_other', false).status, 'granted');
+  assert.equal(lanes.firstSession().session_id, 'first');
+  clock.now += 60_001;
+  assert.equal(lanes.firstSession(), null);
+  // The window starts when the last reply ends, not when somebody next looks.
+  const quiet = firstFixture();
+  const quietTurn = quiet.lanes.tryAcquireTurn({ sessionId: 'first', route: quiet.local });
+  quiet.lanes.setFirstSession('first');
+  quiet.lanes.release(quietTurn.lease, { producerSettled: true });
+  quiet.clock.now += 60_001;
+  assert.equal(quiet.lanes.firstSession(), null);
+});
+
+test('the person\'s pick stands against Jenny\'s, and bad input never becomes a pick', () => {
+  const { lanes, local } = firstFixture({ limits: { local: { runnable_turns: 2 } } });
+  lanes.tryAcquireTurn({ sessionId: 'mine', route: local });
+  lanes.tryAcquireTurn({ sessionId: 'other', route: local });
+  assert.equal(lanes.setFirstSession('other', { setBy: 'primary' }).status, 'set');
+  assert.equal(lanes.setFirstSession('mine').status, 'set', 'the person replaces Jenny\'s pick');
+  assert.deepEqual(lanes.setFirstSession('other', { setBy: 'primary' }), { status: 'rejected', reason: 'user_pick_active' });
+  assert.equal(lanes.firstSession().session_id, 'mine');
+  assert.throws(() => lanes.setFirstSession('bad id!'), /runtime_session_identity_invalid/);
+  // A sameTask predicate that throws never grants membership.
+  const broken = firstFixture({ sameTask: () => { throw new Error('store unavailable'); } });
+  broken.lanes.tryAcquireTurn({ sessionId: 'first', route: broken.local });
+  broken.lanes.setFirstSession('first');
+  assert.equal(broken.infer('helper').held_for_first, true);
+});
+
+test('a held request that does not poll is announced again when the grace can have ended', () => {
+  const timers = [];
+  let changes = 0;
+  const { clock, lanes, local, infer, done } = firstFixture({ onChange: () => { changes += 1; },
+    setTimer: (callback, delay) => { timers.push({ callback, delay }); return { unref() {} }; } });
+  lanes.tryAcquireTurn({ sessionId: 'first', route: local });
+  lanes.setFirstSession('first');
+  const running = infer('first');
+  // While the first chat's request runs, its release is the announcement: no timer.
+  assert.equal(infer('other', 'start_other', false).held_for_first, true);
+  assert.equal(timers.length, 0);
+  done(running);
+  clock.now += 10_000;
+  // In the grace a reply's first request (unqueued) is held; one wake is set for the grace's end.
+  assert.equal(infer('other', 'start_other', false).held_for_first, true);
+  assert.equal(infer('third', 'start_third', false).held_for_first, true);
+  assert.deepEqual(timers.map((timer) => timer.delay), [50_001]);
+  // A polling request needs no wake.
+  assert.equal(infer('fourth').held_for_first, true);
+  assert.equal(timers.length, 1);
+  clock.now += 50_001;
+  const before = changes;
+  timers[0].callback();
+  assert.equal(changes, before + 1);
+  assert.equal(infer('other', 'start_other', false).status, 'granted');
+});
+
+test('the chat.firstSession command sets, reads and lifts the pick of the person over the lanes (row 136)', () => {
+  const { chatMethods } = require('../../services/backend/backend-service-chat-methods');
+  const { lanes, local } = firstFixture();
+  const call = (request) => chatMethods.firstChatSession.call({ sessionRuntime: { lanes } }, request);
+  assert.deepEqual(chatMethods.firstChatSession.call({}, { action: 'set', sessionId: 'chat_a' }),
+    { status: 'unavailable', first: null });
+  assert.deepEqual(call({ action: 'get' }), { status: 'ok', first: null });
+  assert.deepEqual(call({ action: 'set', sessionId: 'chat_a' }),
+    { status: 'rejected', reason: 'session_not_running', first: null });
+  assert.deepEqual(call({ action: 'set', sessionId: '' }), { status: 'rejected', reason: 'session_invalid', first: null });
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'chat_a', route: local }).status, 'granted');
+  assert.deepEqual(call({ action: 'set', sessionId: 'chat_a' }),
+    { status: 'set', first: { sessionId: 'chat_a', setBy: 'user' } });
+  // A clear for another chat leaves the pick; the picked chat's own clear lifts it.
+  assert.equal(call({ action: 'clear', sessionId: 'chat_b' }).first.sessionId, 'chat_a');
+  assert.deepEqual(call({ action: 'clear', sessionId: 'chat_a' }), { status: 'ok', first: null });
+});
+
+test('a pick made before the chat starts waits for that chat\'s own turn and starts with it (row 136 slice 3)', () => {
+  const options = { limits: { local: { runnable_turns: 4 } }, sameTask: (first, id) => first === 'first' && id === 'helper' };
+  const { clock, lanes, local, infer, done } = firstFixture(options);
+  // A helper chat of the idle chat is still running: it does not start the pick.
+  const helper = lanes.tryAcquireTurn({ sessionId: 'helper', route: local });
+  assert.deepEqual(lanes.setFirstSession('first', { setBy: 'primary', picker: 'jenny', whenStarted: true }),
+    { status: 'set', session_id: 'first', set_by: 'primary', set_at: 1_000, started: false });
+  done(infer('other'));
+  lanes.release(helper.lease, { producerSettled: true });
+  clock.now += 5 * 60_000;
+  assert.equal(lanes.firstSession().session_id, 'first', 'still inside the start window');
+  // Its own turn starts the pick at once, before any model request of that turn.
+  const turn = lanes.tryAcquireTurn({ sessionId: 'first', route: local });
+  assert.equal(infer('other').held_for_first, true);
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'aux', route: local }).held_for_first, true, 'a request with no chat is not the picker');
+  assert.equal(infer('jenny').status, 'granted');
+  // A started pick ends 60 s after its last turn, like any other.
+  const short = firstFixture();
+  short.lanes.setFirstSession('first', { setBy: 'primary', whenStarted: true });
+  const brief = short.lanes.tryAcquireTurn({ sessionId: 'first', route: short.local });
+  short.lanes.release(brief.lease, { producerSettled: true });
+  short.clock.now += 60_001;
+  assert.equal(short.lanes.firstSession(), null, 'a turn that made no model request still started the pick');
+  // A pick on a running chat reports that it started, and the person's button path is unchanged.
+  assert.equal(lanes.setFirstSession('first').started, true);
+  lanes.release(turn.lease, { producerSettled: true });
+});

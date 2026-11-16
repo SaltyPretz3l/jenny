@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const { capture, PNG } = require('./helpers/preview-capture-fixture');
 const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
 const { encodePreviewImage, MAX_PREVIEW_IMAGE_BYTES } = require('../services/preview-vision-image');
+const { MAX_SESSION_CAPTURES } = require('../services/preview-screenshot-store');
 const { sanitizeBridgeMetadata, executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
 
 test.afterEach(cleanupTrackedResources);
@@ -42,7 +43,7 @@ test('partial capture/save failures and screenshot=false are honest', async () =
 });
 test('full screenshot storage still supplies fresh pixels through the bridge', async () => {
   const root = await workspace();
-  for (let i = 0; i < 4; i += 1) await capture(root);
+  for (let i = 0; i < MAX_SESSION_CAPTURES; i += 1) await capture(root);
   const { result, calls } = await capture(root);
   assert.deepEqual(calls, ['open', 'click', 'capture', 'close']);
   assert.deepEqual(Buffer.from(result.preview_image.data_base64, 'base64'), PNG);

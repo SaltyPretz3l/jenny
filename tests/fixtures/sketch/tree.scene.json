@@ -1,0 +1,71 @@
+{
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [
+    {
+      "id": "t",
+      "title": "Binary search tree",
+      "spec": {
+        "kind": "tree",
+        "root": {
+          "value": "8",
+          "children": [
+            {
+              "value": "3",
+              "children": [
+                {
+                  "value": "1",
+                  "children": []
+                },
+                {
+                  "value": "6",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "10",
+              "children": [
+                null,
+                {
+                  "value": "14",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "st",
+      "title": "Call stack",
+      "spec": {
+        "kind": "stack",
+        "values": [
+          "main",
+          "parse",
+          "lex"
+        ],
+        "pointers": []
+      }
+    }
+  ],
+  "steps": [
+    {
+      "title": "Find 6",
+      "text": "left, then right",
+      "highlight": [
+        "t[8]",
+        "t[3]",
+        "t[6]"
+      ]
+    }
+  ],
+  "title": "Search tree"
+}

@@ -36,6 +36,10 @@ const METHODS = Object.freeze({
   'primaryChat.getFullAuto': 'getFullAuto',
   'primaryChat.armFullAuto': 'armFullAuto',
   'primaryChat.disarmFullAuto': 'disarmFullAuto',
+  'primaryChat.setModels': 'setModels', // Jenny's model pin and the scheduled-check model
+  'primaryChat.heldChecks': 'heldChecks', // row 144: checks waiting for a big enough model
+  'primaryChat.runHeldCheck': 'runHeldCheck',
+  'primaryChat.skipHeldCheck': 'skipHeldCheck',
 });
 
 const APP_VIEW_METHODS = Object.freeze({ 'appView.reportOutcome': 'recordOutcome', 'appView.reportLayout': 'reportLayout' });
@@ -72,12 +76,28 @@ const armFullAuto = async (backend) => {
 
 const control = (method) => (backend, value) => backend?.primaryChatControls?.[method]?.(value);
 
+// Row 144: a held check that did not run or skip (`not_held`, `still_waiting`, `not_run`) is a normal outcome the
+// renderer words, so it rides the success envelope with the flag false, like Full auto's refusals.
+const heldCheck = (method, flag) => async (backend, value) => {
+  const answer = await backend?.primaryScheduledChecks?.[method]?.(value.reminder_id);
+  if (!answer || typeof answer.ok !== 'boolean') return null;
+  return answer.ok ? { ...answer, [flag]: true } : { ok: true, [flag]: false, reason: answer.reason };
+};
+const heldChecks = (backend) => {
+  const list = backend?.primaryScheduledChecks?.listHeld?.();
+  return Array.isArray(list) ? { ok: true, held: list } : null;
+};
+
 // handler key -> { validate, call(backendService, value, loadReset) }
 const OPERATIONS = Object.freeze({
   getState: { validate: contract.validateEmptyRequest, call: control('getState') },
   pause: { validate: contract.validateEmptyRequest, call: control('pause') },
   resume: { validate: contract.validateEmptyRequest, call: control('resume') },
   grantLaunch: { validate: contract.validateGrantLaunchRequest, call: control('grantLaunch') },
+  setModels: { validate: contract.validateSetModelsRequest, call: control('setModels') },
+  heldChecks: { validate: contract.validateEmptyRequest, call: heldChecks },
+  runHeldCheck: { validate: contract.validateHeldCheckRequest, call: heldCheck('runHeld', 'ran') },
+  skipHeldCheck: { validate: contract.validateHeldCheckRequest, call: heldCheck('skipHeld', 'skipped') },
   revokeLaunch: { validate: contract.validateRevokeLaunchRequest, call: control('revokeLaunch') },
   addActionRule: { validate: contract.validateAddRuleRequest, call: control('addActionRule') },
   revokeActionRule: { validate: contract.validateRevokeRuleRequest, call: control('revokeActionRule') },

@@ -1,8 +1,8 @@
 'use strict';
 
 // The Workspace folder is the project. Choosing a folder provisions (or finds)
-// the project bound to it, so chats get file authority the way Claude Code and
-// Codex treat their launch directory. General stays the folderless home, and
+// the project bound to it, so chats get file authority over the folder they
+// were started in. General stays the folderless home, and
 // existing chats are never retargeted: they adopt the workspace project only
 // through an explicit, idle-only assignment (docs/operations/session-runtime.md).
 

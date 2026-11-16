@@ -1,0 +1,7 @@
+title Trains
+map m europe: Trains
+Germany !accent ~ Start
+France hatch=blue
+place berlin 52.52,13.40 Berlin !accent
+place paris 48.86,2.35 Paris
+route r: berlin -> paris --dashed ~ 8 h

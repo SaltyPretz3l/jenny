@@ -404,3 +404,23 @@ test('a newer model-inclusive refresh still wins over an older slow catalog read
   await older;
   assert.equal(state.modelList, ORNITH_CATALOG, 'the late, older read cannot overwrite the newer catalog');
 });
+
+test('row 123: with the Team feature on a picker open re-reads an available list (a team model comes and goes)', async () => {
+  const timers = fakeTimers();
+  const { shell, calls } = sidecarShell([READY, READY, READY]);
+  const state = { backend: { phase: 'ready' }, auth: { authenticated: true }, features: { featureFlags: { team: true } } };
+  const refresher = createSnapshotRefresh({ state, getShell: () => shell, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout });
+  await refresher.refreshSnapshots();
+  assert.equal(await refresher.refreshModelsIfUnavailable(), true);
+  assert.equal(calls.list, 2);
+  state.features.teamData = false;
+  assert.equal(await refresher.refreshModelsIfUnavailable(), false, 'no team held: the picker opens as before');
+  assert.equal(calls.list, 2);
+  state.modelList = { available: true, data: [{ id: 'team/t1/m', team_id: 't1' }] };
+  assert.equal(await refresher.refreshModelsIfUnavailable(), true, 'a team row already listed: re-read');
+  assert.equal(calls.list, 3);
+  state.features.featureFlags.team = false;
+  assert.equal(await refresher.refreshModelsIfUnavailable(), false, 'Team off: an available list is not re-read');
+  assert.equal(calls.list, 3);
+  refresher.dispose();
+});

@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const test = require('node:test');
 
 const { createFixture } = require('./helpers/team-store-fixture');
+const { LOCAL_COMMAND } = require('../../server/team/member-schema');
+const { mintOwnerInvite, mintRecoveryInvite } = require('../../server/team/owner-bootstrap');
 const {
   MAX_INVITE_CHARS, SLOT_MS, createInviteService, encodeInvite, keyPairFromSeed, parseInvite,
 } = require('../../server/team/invites');
@@ -20,7 +22,7 @@ function setup(t) {
 
 async function ownerWithService(t) {
   const context = setup(t);
-  const created = await context.invites.create({ kind: 'owner_first' });
+  const created = await context.invites.create({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND });
   assert.equal(created.ok, true);
   const revealed = context.invites.reveal(created.invite_id);
   assert.equal(revealed.ok, true);
@@ -264,9 +266,9 @@ test('an invite key is admitted while live and refused once used, revoked or exp
 
 test('the first owner joins through the service and the owner invite is then dead', async (t) => {
   const { fx, store, invites } = setup(t);
-  const first = await invites.create({ kind: 'owner_first' });
+  const first = await invites.create({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND });
   assert.equal(first.expires_at, fx.clock() + 15 * 60 * 1000);
-  const second = await invites.create({ kind: 'owner_first' });
+  const second = await invites.create({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND });
   assert.equal(second.ok, true);
   const redeemed = await invites.redeem({
     inviteId: first.invite_id, devicePublicKey: fx.nextKey(), displayName: 'Olive Owner', label: 'Owner laptop',
@@ -275,7 +277,71 @@ test('the first owner joins through the service and the owner invite is then dea
   assert.equal(redeemed.state, 'active');
   assert.equal(store.getMember(redeemed.member_id).admitted_by, null);
   assert.deepEqual(invites.reveal(second.invite_id), NOT_VALID, 'the second owner invite died with the first owner');
-  assert.equal((await invites.create({ kind: 'owner_first' })).error.reason, 'team_member_state_invalid');
+  assert.equal((await invites.create({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND })).error.reason, 'team_member_state_invalid');
+});
+
+// Review round two (R10-F03).
+test('a recovery redeem leaves no other recovery invite live, whoever minted it', async (t) => {
+  const { fx, store, invites, owner } = await ownerWithService(t);
+  const first = await invites.create({ kind: 'recovery', actorMemberId: LOCAL_COMMAND });
+  const second = await invites.create({ kind: 'recovery', actorMemberId: LOCAL_COMMAND });
+  const used = await invites.redeem({
+    inviteId: second.invite_id, devicePublicKey: fx.nextKey(), displayName: 'Olive Owner', label: 'Owner new desk',
+  });
+  assert.equal(used.ok, true, JSON.stringify(used));
+  assert.equal(store.isInviteLive(first.invite_id), false, 'the other recovery invite died with the recovery');
+  assert.deepEqual(await invites.redeem({
+    inviteId: first.invite_id, devicePublicKey: fx.nextKey(), displayName: 'x', label: 'Someone else',
+  }), NOT_VALID);
+  const active = store.snapshot().devices.filter((device) => device.member_id === owner.member_id && device.state === 'active');
+  assert.deepEqual(active.map((device) => device.label), ['Owner new desk']);
+});
+
+const TAKEN = { ok: false, error: { code: 'CMP-HOST-0004', reason: 'team_display_name_taken', retryable: false } };
+const auditTail = (fx, n) => JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).entries.slice(-n);
+
+// Owner decision E79 (reverses the round-two fix for R10-F04): a taken name keeps the invite live, the holder types
+// another name. A refusal that keeps an invite live for another reason still says nothing of who is in the team.
+test('E79: a taken display name is refused with its own reason, keeps the invite live, and another name joins on it', async (t) => {
+  const { fx, store, invites, owner } = await ownerWithService(t);
+  const attempt = (inviteId, name) => invites.redeem({ inviteId, devicePublicKey: fx.nextKey(), displayName: name, label: 'Probe' });
+  const probe = await invites.create({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member' });
+  assert.deepEqual(await attempt(probe.invite_id, 'olive owner'), TAKEN);
+  assert.equal(store.isInviteLive(probe.invite_id), true, 'the taken name did not spend the invite');
+  const [entry] = auditTail(fx, 1);
+  assert.deepEqual([entry.kind, entry.actor_member_id, entry.name, entry.detail],
+    ['invite_name_taken', null, null, `invite=${probe.invite_id},refusals=1`], 'one entry: the invite id, never the name');
+  const joined = await attempt(probe.invite_id, 'Nobody Here');
+  assert.equal(joined.ok, true, 'the same invite joins under a free name');
+  assert.equal(store.isInviteLive(probe.invite_id), false);
+  for (let i = 1; i < 7; i += 1) await fx.joinMember(store, owner.member_id, { displayName: `Person ${i}` });
+  const full = await invites.create({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member' });
+  const answers = [await attempt(full.invite_id, 'Olive Owner'), await attempt(full.invite_id, 'Free Name')];
+  assert.deepEqual(answers[0], answers[1], 'a full team answers a taken and a free name byte for byte alike');
+  assert.equal(answers[0].error.reason, 'team_member_limit');
+  assert.equal(store.isInviteLive(full.invite_id), true);
+});
+
+// E79 keeps R10-F04 bounded: five taken-name refusals per invite, counted on the host and kept across a restart.
+test('E79: five taken names per invite; the sixth spends it and answers invite_not_valid; the count survives a restart', async (t) => {
+  const { fx, invites, owner } = await ownerWithService(t);
+  const probe = await invites.create({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member' });
+  // A count the caller sends is ignored: only the host's own record counts.
+  const attempt = (service, name) => service.redeem({ inviteId: probe.invite_id, devicePublicKey: fx.nextKey(), displayName: name,
+    label: 'Probe', nameRefusals: 0, name_refusals: 0 });
+  for (let i = 1; i <= 3; i += 1) assert.deepEqual(await attempt(invites, 'OLIVE OWNER'), TAKEN, `refusal ${i}`);
+  const restarted = fx.openStore(); // a host restart: the count is read back from the invite on disk
+  assert.equal(restarted.getInvite(probe.invite_id).name_refusals, 3);
+  const again = createInviteService({ store: restarted, clock: fx.clock, randomBytes: fx.randomBytes, logger: fx.logger });
+  for (let i = 4; i <= 5; i += 1) assert.deepEqual(await attempt(again, 'Olive Owner'), TAKEN, `refusal ${i}`);
+  assert.equal(restarted.isInviteLive(probe.invite_id), true, 'five refusals keep the invite');
+  assert.deepEqual(await attempt(again, 'Olive Owner'), NOT_VALID, 'the sixth spends it and reads like an invalid invite');
+  assert.equal(restarted.isInviteLive(probe.invite_id), false);
+  assert.deepEqual(await attempt(again, 'Free Name'), NOT_VALID, 'a spent invite joins no one');
+  const entries = auditTail(fx, 6).filter((entry) => entry.kind === 'invite_name_taken');
+  assert.deepEqual(entries.map((entry) => entry.detail), [1, 2, 3, 4, 5, 6].map((n) => `invite=${probe.invite_id},refusals=${n}`
+    + (n === 6 ? ',spent' : '')));
+  assert.equal(JSON.stringify(entries).toLowerCase().includes('olive'), false, 'no name tried is kept');
 });
 
 // ----------------------------------------------------------- redaction
@@ -335,4 +401,88 @@ test('seeded random bytes make the whole invite reproducible', async (t) => {
   const publicKeys = (context) => context.store.snapshot().invites.map((invite) => invite.invite_public_key);
   assert.deepEqual(publicKeys(first), publicKeys(second));
   assert.equal(first.owner.member_id, second.owner.member_id);
+});
+
+// Slice 5-3. Fault: a malformed version 2 part kept in the slot (and only failing at reveal). A valid part
+// revealed as version 2 is covered by team-invite-v2.test.js (team commands).
+test('create refuses a malformed version 2 part before anything is stored', async (t) => {
+  const { store, invites } = await ownerWithService(t);
+  const actorMemberId = store.snapshot().members[0].member_id;
+  const before = store.snapshot().invites.length;
+  for (const internet of [
+    { hostName: null, relayUrl: null }, { hostName: 'team.example.net', relayUrl: null, relayToken: null },
+    { hostName: null, relayUrl: 'http://relay.example.net', relayToken: null },
+    { hostName: null, relayUrl: null, relayToken: 'orphan' }, 'on',
+  ]) {
+    const created = await invites.create({ kind: 'new_member', actorMemberId, role: 'member', internet });
+    assert.equal(created.error.reason, 'team_invite_malformed', JSON.stringify(internet));
+  }
+  assert.equal(store.snapshot().invites.length, before, 'nothing stored');
+});
+
+// Slice 5-3 review item 11 (independent review X1-F01). Fault: a created slot that is never revealed
+// keeping its secret in memory until the next create or reveal, or a slot timer left behind.
+test('an unrevealed slot is cleared after SLOT_MS with no other call; no timer outlives a slot', async (t) => {
+  const fx = createFixture(t);
+  const live = new Map();
+  let next = 0;
+  const timers = {
+    setTimeout(fn, ms) { next += 1; const id = next; live.set(id, { fn, ms }); return id; },
+    clearTimeout(id) { live.delete(id); },
+  };
+  const invites = createInviteService({ store: fx.openStore(), clock: fx.clock, randomBytes: fx.randomBytes, timers });
+  const first = await invites.create({ kind: 'owner_first', actorMemberId: LOCAL_COMMAND });
+  assert.equal(invites.pendingSlots(), 1);
+  assert.deepEqual([...live.values()].map((entry) => entry.ms), [SLOT_MS]);
+  const [[id, { fn }]] = [...live.entries()];
+  live.delete(id);
+  fn();
+  assert.equal(invites.pendingSlots(), 0, 'gone with no create or reveal');
+  assert.equal(invites.reveal(first.invite_id).ok, false);
+  const owner = await invites.redeem({ inviteId: first.invite_id, devicePublicKey: fx.nextKey('owner-device'),
+    displayName: 'Olive Owner', label: 'Owner laptop' });
+  assert.equal(owner.ok, true);
+  const add = () => invites.create({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member' });
+  const redeemed = await add();
+  assert.equal((await invites.redeem({ inviteId: redeemed.invite_id, devicePublicKey: fx.nextKey('mika-device'),
+    displayName: 'Mika Member', label: 'Phone' })).ok, true);
+  assert.equal(live.size, 0, 'redeem cleared its timer');
+  const revoked = await add();
+  assert.equal((await invites.revoke({ actorMemberId: owner.member_id, inviteId: revoked.invite_id })).ok, true);
+  assert.equal(live.size, 0, 'revoke cleared its timer');
+  const revealed = await add();
+  assert.equal(invites.reveal(revealed.invite_id).ok, true);
+  assert.equal(live.size, 0, 'reveal cleared its timer');
+  await add();
+  await add();
+  assert.equal(live.size, 2);
+  invites.dispose();
+  assert.deepEqual([live.size, invites.pendingSlots()], [0, 0], 'dispose clears every slot and timer');
+});
+
+// ------------------------------------------------------ the local command
+
+test('create has no default actor: an owner invite needs the local command marker', async (t) => {
+  const { store, invites } = setup(t);
+  assert.equal((await invites.create({ kind: 'owner_first' })).error.reason, 'role_forbidden');
+  assert.equal((await invites.create({ kind: 'recovery' })).error.reason, 'role_forbidden');
+  const owner = await mintOwnerInvite({ store, invites });
+  assert.equal(owner.minted, true, 'the local command still mints the first owner invite');
+  assert.equal(store.isInviteLive(owner.invite_id), true);
+});
+
+test('a live invite principal, forwarded as the team commands forward it, is not the local command', async (t) => {
+  const { store, invites, owner } = await ownerWithService(t);
+  const recovery = await mintRecoveryInvite({ invites });
+  assert.equal(recovery.minted, true, 'the local command still mints a recovery invite');
+  const pending = await invites.create({ kind: 'new_member', actorMemberId: owner.member_id, role: 'member' });
+  const actor = store.directory.liveActor(pending.invite_id);
+  assert.deepEqual([actor.role, actor.member_id], ['invite', null], 'the real directory actor of a live invite');
+  const revoked = await invites.revoke({ actorMemberId: actor.member_id, inviteId: recovery.invite_id });
+  assert.equal(revoked.error.reason, 'team_not_found');
+  assert.equal(store.isInviteLive(recovery.invite_id), true, 'the recovery invite is still live');
+  for (const kind of ['owner_first', 'recovery']) {
+    assert.equal((await invites.create({ kind, actorMemberId: actor.member_id })).ok, false, kind);
+  }
+  assert.equal((await invites.revoke({ actorMemberId: LOCAL_COMMAND, inviteId: recovery.invite_id })).ok, true);
 });

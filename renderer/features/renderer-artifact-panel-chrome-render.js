@@ -9,6 +9,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var ICONS = {
     'file-code': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M5 3h9l5 5v13H5z"></path><path d="m10 13-2 2 2 2"></path><path d="m14 13 2 2-2 2"></path></svg>',
     'file-text': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M5 3h9l5 5v13H5z"></path><path d="M9 13h6M9 17h6"></path></svg>',
@@ -83,7 +84,7 @@
     var switchLabel = jt('artifacts.review.switchArtifact', '{title}, switch artifact', { title: title });
     var titleNode = input?.artifactCount >= 2
       ? actionButton({ plain: true, domId: 'artifactReviewDetailTitle', className: 'artifact-panel-title', ariaLabel: switchLabel, title: switchLabel, ariaHaspopup: 'listbox', ariaExpanded: input.switcherOpen === true, ariaControls: 'artifactPanelSwitcher', dataset: { 'artifact-switcher-trigger': '' }, trustedHtml: titleContent + '<span class="artifact-panel-title-chevron">' + ICONS['chevron-down'] + '</span>' })
-      : '<span class="artifact-panel-title" id="artifactReviewDetailTitle" tabindex="-1" title="' + escapeHtml(title) + '">' + titleContent + '</span>';
+      : '<span class="artifact-panel-title" id="artifactReviewDetailTitle" tabindex="-1" title="' + escapeHtml(input?.tooltip || title) + '">' + titleContent + '</span>';
     var failed = artifact?.status === 'error'
       ? '<span class="artifact-panel-title-status">' + escapeHtml(jt('runtime.runs.state.failed', 'failed')) + '</span>'
       : '';
@@ -216,5 +217,20 @@
     return segments.join(' · ');
   }
 
-  return { buildPanelHtml: buildPanelHtml, buildOpenIdeButtonHtml: buildOpenIdeButtonHtml, buildTitleHtml: buildTitleHtml, buildViewControlHtml: buildViewControlHtml, kindCaptionText: kindCaptionText, buildWrapButtonHtml: buildWrapButtonHtml, buildStatusMetaText: buildStatusMetaText, formatByteSize: formatByteSize, formatFooterTimestamp: formatFooterTimestamp, kindGlyphHtml: kindGlyphHtml, titleForArtifact: titleForArtifact };
+  // Footer meta for a file preview (state.ui.filePreview): line count and size
+  // of a loaded file, nothing while it loads or after it failed. A read cut
+  // short by size has no true line count, so it shows the size alone.
+  function buildFilePreviewMetaText(filePreview) {
+    var payload = filePreview?.status === 'ready' ? filePreview.payload : null;
+    if (!payload) return '';
+    var segments = [];
+    var lines = Number(payload.totalLines);
+    if (payload.kind !== 'image' && payload.byteTruncated !== true && Number.isInteger(lines) && lines > 0) {
+      segments.push(jtn('artifacts.filePreview.lineCount', lines, { count: lines }, '{count} line', '{count} lines'));
+    }
+    if (Number(payload.byteSize) > 0) segments.push(formatByteSize(payload.byteSize));
+    return segments.join(' · ');
+  }
+
+  return { buildPanelHtml: buildPanelHtml, buildOpenIdeButtonHtml: buildOpenIdeButtonHtml, buildTitleHtml: buildTitleHtml, buildViewControlHtml: buildViewControlHtml, kindCaptionText: kindCaptionText, buildWrapButtonHtml: buildWrapButtonHtml, buildStatusMetaText: buildStatusMetaText, buildFilePreviewMetaText: buildFilePreviewMetaText, formatByteSize: formatByteSize, formatFooterTimestamp: formatFooterTimestamp, kindGlyphHtml: kindGlyphHtml, titleForArtifact: titleForArtifact };
 });

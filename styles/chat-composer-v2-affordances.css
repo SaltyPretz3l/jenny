@@ -91,26 +91,6 @@
   color: color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 78%, var(--text-primary));
 }
 
-/* ── Composer V2 — attachment preview pill ── */
-.attachment-preview-pill {
-  display: none;
-}
-
-.attachment-preview-pill[data-composer-v2="on"]:not(.hidden) {
-  display: inline-flex;
-  align-self: flex-end;
-  align-items: center;
-  min-height: var(--composer-secondary-meta-height);
-  padding: 0 var(--space-4);
-  margin: 0 0 var(--space-2) auto;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--accent, var(--text-primary)) 14%, var(--composer-secondary-control-bg));
-  border: 1px solid color-mix(in srgb, var(--accent, var(--text-primary)) 38%, var(--composer-secondary-control-border));
-  color: var(--text-primary);
-  font-size: var(--font-size-caption);
-  box-shadow: var(--composer-secondary-control-shadow);
-}
-
 /* ── Composer V2 — meta row below the card ── */
 /* Composer meta row below the card: the model-loading line and the turn
  * timer. Without either it takes no height (the live announcer inside stays

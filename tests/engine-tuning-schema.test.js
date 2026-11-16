@@ -18,10 +18,10 @@ const ENGINE_TUNING_KEYS = ENGINE_TUNING_FIELDS.map((field) => field.key);
 const CONFIG_PY_PATH = path.join(__dirname, '..', 'sidecar', 'ai', 'config.py');
 const CONFIG_PY_SOURCE = fs.readFileSync(CONFIG_PY_PATH, 'utf8');
 
-/* Identifiers the sidecar uses as a `default=` instead of a numeric literal.
- * `max_chat_loop_iterations` defaults to whatever `max_loop_iterations` parsed
- * to, which is itself 8 - so the effective default the UI must show is 8. */
-const SYMBOLIC_DEFAULTS = Object.freeze({ max_loop_iterations: 8 });
+/* Identifiers the sidecar uses as a `default=` instead of a numeric literal,
+ * mapped to the value the UI must show. None today: the chat limit stopped
+ * defaulting to `max_loop_iterations` on 2026-11-11. */
+const SYMBOLIC_DEFAULTS = Object.freeze({});
 
 /* Bounds the schema INTENTIONALLY narrows relative to config.py. Each entry needs
  * a reason: the guard's whole value is that an unexplained divergence fails. */
@@ -246,10 +246,10 @@ test('local turn working-time limit is schema-owned and user configurable', () =
   const field = getFieldDefinition('maxLoopWallSeconds');
 
   assert.equal(field.rawKey, 'max_loop_wall_seconds');
-  assert.equal(field.default, 3_600);
+  assert.equal(field.default, 7_200);
   assert.equal(field.min, 30);
-  assert.equal(field.max, 7_200);
-  assert.deepEqual(field.presets.map((preset) => preset.value), [1_800, 3_600, 7_200]);
+  assert.equal(field.max, 28_800);
+  assert.deepEqual(field.presets.map((preset) => preset.value), [3_600, 7_200, 14_400]);
   assert.match(field.help, /approval.*does not count/i);
   assert.equal(
     ENGINE_TUNING_KEYS.some((key) => getFieldDefinition(key).rawKey === 'cloud_max_loop_wall_seconds'),

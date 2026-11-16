@@ -66,6 +66,7 @@
     var pickFailure = ''; // the status copy a failed pick put up
     var pickingGguf = null; // the drawer generation whose pick (dialog, then probe) is in flight
     var pickingRuntime = null;
+    var buildRemedies = null; // row 142: "Use build N" beside a failed restart's status line
     var advancedOpen = null; // Advanced sampling fold: null until the first render decides
     var getStreamingSessionIds = typeof d.getStreamingSessionIds === 'function'
       ? d.getStreamingSessionIds
@@ -144,6 +145,10 @@
         engineSettings: engineSettings, localGgufs: localGgufs, serverStatus: serverStatus, engineHints: engineHints,
       });
       engineDraft = engineView.draft;
+      var requestGeneration = generation, requestModelId = activeModelId;
+      engineUtils.loadRuntimeAuto(windowRef, activeModelId, engineDraft, function () {
+        return disposed || !visible || generation !== requestGeneration || activeModelId !== requestModelId;
+      }, function () { engineUtils.paintRuntimeValue(boundActionsHost, engineDraft); });
     }
 
     function api() {
@@ -263,7 +268,7 @@
         + engineSection + sections
         + '</div>'
         + '<div class="model-tuning-drawer-footer">'
-        + '<p class="model-tuning-drawer-status" aria-live="polite">' + escapeHtml(statusMessage) + '</p>'
+        + '<p class="model-tuning-drawer-status" aria-live="polite">' + statusHtml() + '</p>'
         + '<div class="model-tuning-drawer-actions">'
         + actionButton({ id: 'save-model-tuning', label: pending ? jt('models.tuning.applying', 'Applying…') : jt('models.tuning.noChanges', 'No changes'), variant: 'primary', disabled: true })
         + rows.hiddenHtml(actionButton({ id: 'discard-model-tuning', label: jt('models.tuning.discard', 'Discard'), variant: 'secondary', disabled: pending }))
@@ -272,6 +277,16 @@
           disabled: controlsDisabled || !savedAnything() })
         + '</div></div>'
         + '</div>';
+    }
+
+    function statusHtml() {
+      var shown = buildRemedies && buildRemedies.view(activeModelId, statusMessage);
+      return shown ? escapeHtml(shown.text) + shown.actionsHtml : escapeHtml(statusMessage);
+    }
+
+    function paintStatus() {
+      var status = visible && !disposed && boundActionsHost?.querySelector?.('.model-tuning-drawer-status');
+      if (status) status.innerHTML = statusHtml();
     }
 
     function recheckEngine() {
@@ -360,6 +375,7 @@
     }
 
     function revertField(event) {
+      buildRemedies?.handleClick(event?.target); // row 142: the "Use build N" buttons share this host click
       var key = event?.target?.closest?.('[data-model-tuning-revert]')?.dataset?.modelTuningRevert;
       var input = key && boundActionsHost?.querySelector?.('[data-model-tuning-field="' + key + '"]');
       if (!input || input.disabled || pending) return;
@@ -461,11 +477,7 @@
     // inputs survive). Hiding a focused "Use bundled" hands focus to Choose….
     function syncRuntimeRow() {
       clearPickFailure();
-      var code = boundActionsHost?.querySelector?.('[data-model-tuning-runtime]');
-      if (code) {
-        code.textContent = engineUtils.runtimeValueText(engineDraft); code.title = engineDraft.runtimePath;
-        code.classList?.toggle?.('model-tuning-gguf-path--plain', !engineDraft.runtimePath);
-      }
+      engineUtils.paintRuntimeValue(boundActionsHost, engineDraft);
       var useBundled = boundActionsHost?.querySelector?.('[data-action="use-bundled-llama-server"]');
       if (useBundled) {
         if (!engineDraft.runtimePath && documentRef?.activeElement === useBundled) {
@@ -531,6 +543,8 @@
       host?.querySelector?.('[data-action="choose-llama-server-runtime"]')?.addEventListener('click', chooseRuntime);
       host?.querySelector?.('[data-action="use-bundled-llama-server"]')?.addEventListener('click', useBundledRuntime);
       host?.querySelector?.('[data-action="apply-ninfer-tuning"]')?.addEventListener('click', applyNinfer);
+      (root.rendererModelTuningCompanions || (typeof require === 'function' ? require('./renderer-model-tuning-companions') : null))
+        ?.mount?.(host, { tag: activeModelId, modelPath: engineView?.effectiveModelPath, serving: Boolean(engineView?.serving), restart: function () { return restartManagedServer('engine'); } });
       updateDirtyState(host);
     }
 
@@ -652,36 +666,13 @@
         : statusMessage;
     }
 
-    // Success copy: 'context' keeps its own; 'engine' names the build it now runs
-    // when the build changed (runtimeLabel is main's bounded token, never shown raw).
-    function restartSucceededText(reason, opts) {
-      var label = String(serverStatus?.runtimeLabel || '');
-      // A reused server Jenny did not launch ('unknown') was not relaunched: it
-      // never took the new -c or engine settings.
-      if (label === 'unknown') return savedNextRestartText(reason);
-      if (reason !== 'engine') return jt('models.tuning.restartSucceeded', 'Restarted llama-server. The new context window is live.');
-      var build = /^build ([1-9]\d{0,8})$/.exec(label);
-      if (opts?.runtimeChanged && build) return jt('models.tuning.restartSucceededBuild', 'Restarted llama-server. It now runs build {build}.', { build: build[1] });
-      if (opts?.runtimeChanged && label === 'bundled') return jt('models.tuning.restartSucceededBundled', 'Restarted llama-server. It now runs the bundled build.');
-      return jt('models.tuning.restartSucceededEngine', 'Restarted llama-server. The new engine settings are live.');
-    }
-
     function streamingCount() {
       var ids = getStreamingSessionIds();
       return Array.isArray(ids) ? ids.filter(Boolean).length : 0;
     }
 
-    // The llama-server launch serving this model now, from a fresh status: its
-    // pid (0 for a reused server) and the time it became ready, which any
-    // relaunch changes. '' when the model is not served, null when the status
-    // could not be read.
-    async function servedLaunch(modelId) {
-      try {
-        var status = await windowRef.jennyShell.llamaServer.getStatus();
-        return engineUtils.servesModel(status, modelId) ? (Number(status.pid) || 0) + '@' + (Number(status.changedAt) || 0) : '';
-      } catch (_error) {
-        return null;
-      }
+    function servedLaunch(modelId) {
+      return engineUtils.servedLaunch(windowRef, modelId);
     }
 
     function dropOwedRestart(key) {
@@ -746,7 +737,7 @@
         // main's last spec, which may be another model by now, and a model
         // served since open() needs the restart too. A failed fetch is not
         // served; the drawer closed meanwhile: nothing. No Engine section: no restart.
-        var served = engineView && (opts?.launch || await servedLaunch(operationModelId));
+        var served = engineView && (opts?.launch || opts?.retry || await servedLaunch(operationModelId));
         if (stale()) return false;
         if (!served) {
           statusMessage = notServedText(reason);
@@ -776,12 +767,12 @@
           // owed restart still needs its own launch, and drops silently otherwise.
           served = await servedLaunch(operationModelId);
           if (stale()) return false;
-          if (!served || (opts?.launch && served !== opts.launch)) {
+          if ((!served && !opts?.retry) || (opts?.launch && served !== opts.launch)) {
             if (!opts?.launch) statusMessage = notServedText(reason);
             return false;
           }
         }
-        statusMessage = jt('models.tuning.restartingLlamaServer', 'Restarting llama-server…');
+        statusMessage = opts?.status || jt('models.tuning.restartingLlamaServer', 'Restarting llama-server…');
         render();
         var restartResult = null;
         var restartFailed = false;
@@ -805,14 +796,25 @@
         var restarted = !restartFailed && serverStatus?.ok !== false && engineView?.serving;
         // A launch code (missing build, unreadable file) names its fix instead.
         statusMessage = restarted
-          ? restartSucceededText(reason, opts)
+          ? engineUtils.restartSucceededText(serverStatus, reason, opts, savedNextRestartText)
           : formatUtils?.llamaServerFailureText?.(serverStatus?.lastError, activeModelId)
             || jt('models.tuning.restartFailedSettingSaved', 'llama-server restart failed. The setting was saved and is not live yet.');
+        if (!restarted && formatUtils?.isBuildFailure?.(serverStatus?.lastError)) void (buildRemedies ||= engineUtils.createBuildRemedies(root, windowRef, { onChange: paintStatus, onSwitched: restartOnBuild }))?.begin(activeModelId, statusMessage);
         return restarted;
       } finally {
         pending = false;
         if (!disposed && visible) render();
       }
+    }
+
+    // A "Use build N" click saved that build for this model: re-read the saved entry, then run the usual restart.
+    async function restartOnBuild(tag, build) {
+      if (disposed || !visible || tag !== activeModelId) return;
+      statusMessage = engineUtils.usingBuildText(build); paintStatus();
+      try { engineSettings = await windowRef.jennyShell.engines.getSettings(); } catch (_error) { /* the saved build applies at the next launch */ }
+      if (disposed || !visible || tag !== activeModelId) return; deriveEngineState();
+      if (await engineUtils.otherModelServed(windowRef, tag)) { statusMessage = savedNextRestartText('engine'); return render(); }
+      await restartManagedServer('engine', { runtimeChanged: true, retry: true, status: statusMessage });
     }
 
     async function save() {
@@ -988,7 +990,7 @@
       visible = false;
       generation += 1;
       if (ninferSection) ninferSection.close();
-      drawer?.close?.();
+      buildRemedies?.clear(); drawer?.close?.();
     }
 
     function dispose() {
@@ -1001,7 +1003,7 @@
       boundActionsHost?.removeEventListener?.('inv-toggle-change', handleMtpChange);
       boundActionsHost?.removeEventListener?.('click', revertField);
       boundActionsHost = null;
-      confirmDialog?.dispose?.();
+      confirmDialog?.dispose?.(); buildRemedies?.dispose();
       drawer?.dispose?.();
       returnFocusTarget = null;
     }

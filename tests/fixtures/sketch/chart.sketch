@@ -1,0 +1,11 @@
+title Quarterly results
+dir down
+chart rev bar: Revenue
+  series 2025, 2026
+  Q1 12 15
+  Q2 18 24 !accent
+  Q3 9 14
+chart share pie: Market share
+  Us 38 !accent
+  Rival 27
+  Others 35

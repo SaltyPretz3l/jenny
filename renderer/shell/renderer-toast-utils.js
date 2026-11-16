@@ -20,6 +20,10 @@
   // Render-key field separator; never appears in a rendered string.
   var SEP = '\u001f';
   var SVG_NS = 'http://www.w3.org/2000/svg';
+  var MARK_ATTRIBUTES = {
+    class: 'inv-toast__mark', viewBox: '0 0 16 16', 'aria-hidden': 'true', focusable: 'false', fill: 'none',
+    stroke: 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+  };
   // Shape-distinct marks so the tone does not depend on colour alone.
   var TONE_MARK_PATHS = {
     info: ['M8 1.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 0 0 0-12.5', 'M8 7.4v3.9', 'M8 4.8v.7'],
@@ -52,6 +56,8 @@
     // being destroyed every time an unrelated toast arrives or leaves.
     const nodesById = new Map();
     const toastIdsByDedupeKey = new Map();
+    // Toast id -> action ids that keep their toast open.
+    const keepOpenByToastId = new Map();
     let overflowNode = null;
 
     function enqueueToast(input) {
@@ -63,31 +69,27 @@
         return;
       }
       const nextHandlers = new Map();
+      const keepOpen = new Set();
       (Array.isArray(actions) ? actions : []).forEach((action) => {
-        if (!action || typeof action !== 'object') {
-          return;
-        }
-        const actionId = String(action.id || '').trim();
-        if (!actionId || typeof action.onClick !== 'function') {
-          return;
-        }
+        const actionId = String(action?.id || '').trim();
+        if (!actionId || typeof action.onClick !== 'function') return;
         nextHandlers.set(actionId, action.onClick);
+        if (action.keepOpen === true) keepOpen.add(actionId);
       });
-      if (nextHandlers.size) {
-        toastActionHandlers.set(toastId, nextHandlers);
-        return;
-      }
-      toastActionHandlers.delete(toastId);
+      if (keepOpen.size) keepOpenByToastId.set(toastId, keepOpen);
+      else keepOpenByToastId.delete(toastId);
+      if (nextHandlers.size) toastActionHandlers.set(toastId, nextHandlers);
+      else toastActionHandlers.delete(toastId);
     }
 
     function pruneToastActionHandlers(toasts) {
       const activeToastIds = new Set(
         (Array.isArray(toasts) ? toasts : []).map((toast) => String(toast?.id || '').trim()).filter(Boolean)
       );
-      [...toastActionHandlers.keys()].forEach((toastId) => {
-        if (!activeToastIds.has(toastId)) {
-          toastActionHandlers.delete(toastId);
-        }
+      [toastActionHandlers, keepOpenByToastId].forEach((byToastId) => {
+        [...byToastId.keys()].forEach((toastId) => {
+          if (!activeToastIds.has(toastId)) byToastId.delete(toastId);
+        });
       });
     }
 
@@ -126,15 +128,7 @@
 
     function createToneMark(tone) {
       const svg = document.createElementNS(SVG_NS, 'svg');
-      svg.setAttribute('class', 'inv-toast__mark');
-      svg.setAttribute('viewBox', '0 0 16 16');
-      svg.setAttribute('aria-hidden', 'true');
-      svg.setAttribute('focusable', 'false');
-      svg.setAttribute('fill', 'none');
-      svg.setAttribute('stroke', 'currentColor');
-      svg.setAttribute('stroke-width', '1.4');
-      svg.setAttribute('stroke-linecap', 'round');
-      svg.setAttribute('stroke-linejoin', 'round');
+      Object.keys(MARK_ATTRIBUTES).forEach((name) => svg.setAttribute(name, MARK_ATTRIBUTES[name]));
       (TONE_MARK_PATHS[tone] || TONE_MARK_PATHS.info).forEach((definition) => {
         const path = document.createElementNS(SVG_NS, 'path');
         path.setAttribute('d', definition);
@@ -152,6 +146,25 @@
       dismiss.title = jt('toast.dismissNotification', 'Dismiss notification');
       dismiss.textContent = '×';
       return dismiss;
+    }
+
+    // Drains in CSS, paused while the stack is held, as the store's clock is.
+    function syncCountdown(node, toast) {
+      const existing = node.querySelector(':scope > .inv-toast__countdown');
+      const countdownMs = Number(toast.countdownMs) || 0;
+      const key = countdownMs > 0 ? `${toast.createdAt}:${countdownMs}` : '';
+      if (existing && existing.dataset.countdownKey === key) return;
+      if (existing) existing.remove();
+      if (!key) return;
+      // A promoted toast gets a new node: start from the time left.
+      const remainingMs = Math.min(countdownMs, Number(toastStore.getRemainingMs?.(toast.id)) || countdownMs);
+      const line = document.createElement('div');
+      line.className = 'inv-toast__countdown';
+      line.setAttribute('aria-hidden', 'true');
+      line.dataset.countdownKey = key;
+      line.style.setProperty('--toast-countdown-ms', `${Math.round(remainingMs)}ms`);
+      line.style.setProperty('--toast-countdown-from', String(Math.round((remainingMs / countdownMs) * 1000) / 1000));
+      node.appendChild(line);
     }
 
     function syncToastStructure(node, toast) {
@@ -215,20 +228,26 @@
       actionRow.className = 'inv-toast__actions';
       actions.forEach((action) => {
         const kind = String(action.kind || 'secondary');
-        const button = document.createElement('button');
-        button.className = `inv-toast__action inv-toast__action--${kind}`;
-        button.type = 'button';
+        const button = createTextAction(`inv-toast__action inv-toast__action--${kind}`, String(action.label || 'Action'));
         button.dataset.toastId = toast.id;
         button.dataset.toastActionId = String(action.id || '');
-        button.textContent = String(action.label || 'Action');
         actionRow.appendChild(button);
       });
       body.appendChild(actionRow);
     }
 
+    function createTextAction(className, label) {
+      const button = document.createElement('button');
+      button.className = className;
+      button.type = 'button';
+      button.textContent = label;
+      return button;
+    }
+
     function detachToastNode(toastId, node) {
       nodesById.delete(toastId);
       toastActionHandlers.delete(toastId);
+      keepOpenByToastId.delete(toastId);
       if (node && node.parentNode) {
         node.parentNode.removeChild(node);
       }
@@ -254,44 +273,62 @@
       node.classList.add('toast-exiting');
       let fallbackTimer = null;
       let cleaned = false;
-      const cleanup = () => {
-        if (cleaned) {
-          return;
-        }
+      const cleanup = (event) => {
+        if (cleaned || (event && event.target !== node)) return;
         cleaned = true;
-        if (fallbackTimer !== null) {
-          clearTimeout(fallbackTimer);
-        }
+        clearTimeout(fallbackTimer);
+        node.removeEventListener('animationend', cleanup);
         detachToastNode(toastId, node);
       };
-      node.addEventListener('animationend', cleanup, { once: true });
+      // animationend bubbles; only the toast's own exit counts, not its countdown line.
+      node.addEventListener('animationend', cleanup);
       // Derived from the live exit animation so preset-scaled durations (e.g.
       // calm 180ms) never race the timer into a mid-animation removal; the
       // buffer covers event-delivery slop.
       const exitSeconds = parseFloat(view.getComputedStyle(node).animationDuration);
-      fallbackTimer = setTimeout(cleanup, Number.isFinite(exitSeconds) ? exitSeconds * 1000 + 60 : 150);
+      fallbackTimer = setTimeout(() => cleanup(), Number.isFinite(exitSeconds) ? exitSeconds * 1000 + 60 : 150);
     }
 
-    function renderOverflowLine(count) {
-      if (count <= 0) {
+    // Queued count, plus Clear all once sticky toasts can pile up. Rebuilt
+    // only on a content change, so a focused Clear all keeps focus.
+    function renderOverflowLine(count, canClearAll) {
+      if (count <= 0 && !canClearAll) {
         if (overflowNode && overflowNode.parentNode) {
           overflowNode.parentNode.removeChild(overflowNode);
         }
         overflowNode = null;
         return;
       }
-      if (!overflowNode) {
-        overflowNode = document.createElement('p');
-        overflowNode.className = 'toast-viewport__overflow';
-        // The queued toasts announce themselves as they promote into view;
-        // announcing the count as well is noise.
-        overflowNode.setAttribute('aria-hidden', 'true');
+      const label = count > 0
+        ? jtn('toast.moreNotifications', count, { count }, '1 more notification', '{count} more notifications')
+        : '';
+      const key = `${label}${SEP}${canClearAll ? '1' : '0'}`;
+      overflowNode = overflowNode || document.createElement('p');
+      if (overflowNode.dataset.renderKey !== key) {
+        overflowNode.dataset.renderKey = key;
+        overflowNode.className = `toast-viewport__overflow${canClearAll ? ' toast-viewport__overflow--actions' : ''}`;
+        // Promoted toasts announce themselves; the count would be noise.
+        if (canClearAll) overflowNode.removeAttribute('aria-hidden');
+        else overflowNode.setAttribute('aria-hidden', 'true');
+        overflowNode.textContent = '';
+        const countNode = canClearAll ? document.createElement('span') : overflowNode;
+        if (canClearAll) countNode.setAttribute('aria-hidden', 'true');
+        countNode.textContent = label;
+        if (canClearAll) {
+          if (label) overflowNode.appendChild(countNode);
+          const clearAll = createTextAction('inv-toast__action', jt('toast.clearAll', 'Clear all'));
+          clearAll.dataset.toastClearAll = '';
+          overflowNode.appendChild(clearAll);
+        }
       }
-      const label = jtn('toast.moreNotifications', count, { count }, '1 more notification', '{count} more notifications');
-      if (overflowNode.textContent !== label) {
-        overflowNode.textContent = label;
-      }
-      toastViewport.appendChild(overflowNode);
+      if (toastViewport.lastChild !== overflowNode) toastViewport.appendChild(overflowNode);
+    }
+
+    // Like each ×: an Undo toast's work goes through.
+    function clearAllToasts() {
+      toastIdsByDedupeKey.clear();
+      toastStore.dismissAll?.();
+      renderToastViewport();
     }
 
     // Split view (gate D14, 2026-09-26): with two panes on the chat view the stack starts below
@@ -337,6 +374,7 @@
           paintToastBody(node, toast);
           node.dataset.renderKey = renderKey;
         }
+        syncCountdown(node, toast);
         if (cursor === node) {
           cursor = node.nextSibling;
           return;
@@ -344,7 +382,10 @@
         toastViewport.insertBefore(node, cursor);
       });
 
-      renderOverflowLine(getOverflowCount());
+      const overflowCount = getOverflowCount();
+      const canClearAll = toasts.length + overflowCount >= 2
+        && typeof toastStore.hasSticky === 'function' && toastStore.hasSticky();
+      renderOverflowLine(overflowCount, canClearAll);
     }
 
     function dismissToast(ref, options = {}) {
@@ -370,23 +411,17 @@
       if (!nextMessage) {
         return '';
       }
-      const actions = Array.isArray(options.actions)
-        ? options.actions
-            .map((action, index) => {
-              const source = action && typeof action === 'object' ? action : {};
-              const label = String(source.label || '').trim();
-              if (!label) {
-                return null;
-              }
-              return {
-                id: String(source.id || `toast_action_${index + 1}`).trim() || `toast_action_${index + 1}`,
-                label,
-                kind: String(source.kind || '').trim() === 'primary' ? 'primary' : 'secondary',
-                onClick: typeof source.onClick === 'function' ? source.onClick : null,
-              };
-            })
-            .filter(Boolean)
-        : [];
+      const actions = (Array.isArray(options.actions) ? options.actions : []).map((action, index) => {
+        const source = action && typeof action === 'object' ? action : {};
+        const label = String(source.label || '').trim();
+        return label ? {
+          id: String(source.id || `toast_action_${index + 1}`).trim() || `toast_action_${index + 1}`,
+          label,
+          kind: String(source.kind || '').trim() === 'primary' ? 'primary' : 'secondary',
+          onClick: typeof source.onClick === 'function' ? source.onClick : null,
+          keepOpen: source.keepOpen === true,
+        } : null;
+      }).filter(Boolean);
       const payload = {
         message: nextMessage,
         title: String(options.title || '').trim(),
@@ -410,6 +445,8 @@
       if (Object.prototype.hasOwnProperty.call(options, 'durationMs')) {
         payload.durationMs = options.durationMs;
       }
+      if (options.countdown === true) payload.countdown = true;
+      if (typeof options.onExpire === 'function') payload.onExpire = options.onExpire;
       const toastId = enqueueToast(payload);
       if (payload.dedupeKey) {
         toastIdsByDedupeKey.set(payload.dedupeKey, { id: toastId, shownAt: Date.now() });
@@ -455,12 +492,44 @@
       });
     }
 
+    // Handler first, then the toast closes (unless keepOpen). An Undo must
+    // cancel the onExpire work synchronously, before this dismissal.
+    function runToastAction(toastId, actionId, reportActionError) {
+      const handler = toastActionHandlers.get(toastId)?.get(actionId);
+      if (typeof handler !== 'function') return;
+      const source = String(toastStore.getSnapshot().find((toast) => toast.id === toastId)?.source || '').trim();
+      const keepOpen = keepOpenByToastId.get(toastId)?.has(actionId) === true;
+      let result;
+      try { result = handler(); } catch (error) { result = Promise.reject(error); }
+      if (!keepOpen) dismissToast(toastId);
+      Promise.resolve(result).catch((error) => {
+        const report = typeof reportActionError === 'function' ? reportActionError : showShellErrorToast;
+        report(toErrorMessage(error, jt('toast.actionFailedMessage', 'Toast action failed.')), {
+          title: jt('chat.settings.actionFailedTitle', 'Action Failed'),
+          ...(source ? { source } : {}),
+        });
+      });
+    }
+
     // Hovering or tabbing into the stack holds every countdown, so a toast can
     // actually be read (and its actions clicked) before it expires.
-    function installToastViewportListeners() {
+    // options.reportActionError: where a failed action is reported.
+    function installToastViewportListeners(options = {}) {
       if (!toastViewport || typeof toastViewport.addEventListener !== 'function') {
         return function noopDispose() {};
       }
+      const onClick = (event) => {
+        const target = typeof event.target?.closest === 'function' ? event.target : null;
+        const dismissButton = target?.closest('[data-toast-dismiss]');
+        const actionButton = target?.closest('[data-toast-action-id]');
+        const clearAll = target?.closest('[data-toast-clear-all]');
+        if (!dismissButton && !actionButton && !clearAll) return;
+        event.preventDefault();
+        if (dismissButton) dismissToast(dismissButton.dataset.toastDismiss);
+        else if (clearAll) clearAllToasts();
+        else runToastAction(String(actionButton.dataset.toastId || '').trim(),
+          String(actionButton.dataset.toastActionId || '').trim(), options.reportActionError);
+      };
       const pause = () => { toastStore.pauseAll?.(); };
       const resume = () => { toastStore.resumeAll?.(); };
       const onKeyDown = (event) => {
@@ -477,24 +546,21 @@
         event.stopPropagation();
         dismissToast(host.dataset.toastId);
       };
-      toastViewport.addEventListener('pointerenter', pause);
-      toastViewport.addEventListener('pointerleave', resume);
-      toastViewport.addEventListener('focusin', pause);
-      toastViewport.addEventListener('focusout', resume);
-      toastViewport.addEventListener('keydown', onKeyDown);
+      const listeners = [
+        ['pointerenter', pause], ['pointerleave', resume], ['focusin', pause], ['focusout', resume],
+        ['keydown', onKeyDown], ['click', onClick],
+      ];
+      listeners.forEach(([type, listener]) => toastViewport.addEventListener(type, listener));
       return function disposeToastViewportListeners() {
-        toastViewport.removeEventListener('pointerenter', pause);
-        toastViewport.removeEventListener('pointerleave', resume);
-        toastViewport.removeEventListener('focusin', pause);
-        toastViewport.removeEventListener('focusout', resume);
-        toastViewport.removeEventListener('keydown', onKeyDown);
+        listeners.forEach(([type, listener]) => toastViewport.removeEventListener(type, listener));
       };
     }
 
     return {
       enqueueToast,
-      registerToastActions,
       dismissToast,
+      clearAllToasts,
+      runToastAction,
       renderToastViewport,
       installToastViewportListeners,
       showToastMessage,

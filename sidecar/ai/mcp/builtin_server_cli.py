@@ -339,6 +339,8 @@ def _add_host_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_workspace_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", dest="workspace_root", default=None)
+    # Windows hosted file tools (W14, E9): absent means off. Nothing passes it yet.
+    parser.add_argument("--hosted-win32-files", dest="hosted_win32_files", action="store_true")
     parser.add_argument("--owned-process-ledger-path", default="")
     parser.add_argument("--owned-process-owner-pid", type=int, default=0)
     parser.add_argument(

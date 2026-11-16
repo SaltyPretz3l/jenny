@@ -202,6 +202,13 @@
           label: selection ? jt('panelCode.askJenny', 'Ask Jenny') : jt('panelCode.askAboutFile', 'Ask Jenny about this file'),
           action: () => askJenny(adapter, selection, anchorEl),
         });
+        // Pin to board (row 150 slice C5): the selected text becomes a note, through the chat's one pin entry.
+        const pinWindow = documentRef.defaultView;
+        const pinLabel = jt('panelCode.pinSelection', 'Pin selection to board');
+        const pinItem = selection && pinWindow && pinWindow.rendererChatMessageActionBindings?.pinMenuItem?.({
+          windowRef: pinWindow, anchorEl, rootEl: documentRef.body, item: { kind: 'note', text: selection.text }, label: pinLabel, heading: pinLabel,
+        });
+        if (pinItem) items.push(pinItem);
         if (adapter.openInIde) {
           items.push({
             label: line ? jt('panelCode.openInIdeAtLine', 'Open in IDE at line {line}', { line }) : jt('panelCode.openInIde', 'Open in IDE'),

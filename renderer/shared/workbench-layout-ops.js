@@ -242,7 +242,7 @@
   }
 
   function finishMove(original, rootNode) {
-    var result = model.normalizeLayout({ v: 1, root: rootNode, bind: original.bind });
+    var result = model.normalizeLayout({ v: 1, root: rootNode, bind: original.bind }, original.profile);
     if (!result) return original;
     return isLayoutEqual(result, original) ? original : result;
   }
@@ -299,7 +299,7 @@
       if (ref) ref.parent.children[ref.index].node = wrap;
       else rootNode = wrap;
     }
-    var result = model.normalizeLayout({ v: 1, root: rootNode, bind: layout.bind });
+    var result = model.normalizeLayout({ v: 1, root: rootNode, bind: layout.bind }, layout.profile);
     return result && listEditorGroups(result).indexOf(newId) >= 0 ? result : layout;
   }
 
@@ -490,7 +490,10 @@
     if (typeof isAvailable !== 'function' || !isLayout(layout)) return layout;
     var pruned = pruneNode(layout.root, isAvailable);
     if (!pruned) return layout;
-    return isObj(layout.bind) ? { v: 1, root: pruned, bind: layout.bind } : { v: 1, root: pruned };
+    var out = { v: 1, root: pruned };
+    if (isObj(layout.bind)) out.bind = layout.bind;
+    if (layout.profile) out.profile = layout.profile;
+    return out;
   }
 
   /* ------------------------------------------------------------------ equality + signature */
@@ -514,7 +517,7 @@
   function isLayoutEqual(a, b) {
     if (a === b) return true;
     if (!isLayout(a) || !isLayout(b)) return false;
-    return bindKey(a) === bindKey(b) && nodesEqual(a.root, b.root);
+    return (a.profile || null) === (b.profile || null) && bindKey(a) === bindKey(b) && nodesEqual(a.root, b.root);
   }
 
   function signatureOf(node) {

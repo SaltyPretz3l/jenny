@@ -90,10 +90,41 @@ test('write then read round-trips the record and the picture bytes', async () =>
 
   const dir = turnDir(rootDir, 'sess-1', 'turn-1');
   const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
-  assert.equal(meta.version, 1);
+  assert.equal(meta.version, 2);
   assert.match(meta.pages[0].before, /^p0-before-[0-9a-f]{12}\.png$/);
   assert.match(meta.pages[0].after, /^p0-after-[0-9a-f]{12}\.png$/);
   assert.deepEqual(fs.readdirSync(dir).sort(), [meta.pages[0].after, meta.pages[0].before, 'meta.json'].sort());
+});
+
+test('blocked hosts round-trip when present; a record without them loads unchanged; tampered ones are bounded', async () => {
+  const { store, rootDir } = makeStore();
+  const ids = { workspaceId: WORKSPACE, sessionId: 'sess-1', turnId: 'turn-1' };
+  const page = (extra) => ({ path: 'index.html', state: 'ready', before: png(64, 1), after: png(64, 2), width: 1280, height: 800, ...extra });
+
+  const withHosts = await store.write(turnArgs('turn-1', { pages: [page({ blockedHosts: ['cdn.jsdelivr.net', 'fonts.example'] })] }));
+  assert.deepEqual(withHosts.pages[0].blockedHosts, ['cdn.jsdelivr.net', 'fonts.example']);
+  assert.deepEqual(await store.read(ids), withHosts);
+
+  const without = await store.write(turnArgs('turn-2', { pages: [page({})] }));
+  assert.equal('blockedHosts' in without.pages[0], false);
+  const emptyList = await store.write(turnArgs('turn-3', { pages: [page({ blockedHosts: [] })] }));
+  assert.equal('blockedHosts' in emptyList.pages[0], false);
+
+  // An older meta.json has no such field at all.
+  const metaPath = path.join(turnDir(rootDir, 'sess-1', 'turn-2'), 'meta.json');
+  const old = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  assert.equal('blockedHosts' in old.pages[0], false);
+  assert.deepEqual(await store.read({ ...ids, turnId: 'turn-2' }), without);
+
+  // A tampered meta.json keeps only short strings, four at most.
+  const hostsPath = path.join(turnDir(rootDir, 'sess-1', 'turn-1'), 'meta.json');
+  const meta = JSON.parse(fs.readFileSync(hostsPath, 'utf8'));
+  meta.pages[0].blockedHosts = ['a.example', 7, null, 'x'.repeat(300), 'b.example', 'c.example', 'd.example', 'e.example'];
+  fs.writeFileSync(hostsPath, JSON.stringify(meta));
+  assert.deepEqual((await store.read(ids)).pages[0].blockedHosts, ['a.example', 'b.example', 'c.example', 'd.example']);
+  meta.pages[0].blockedHosts = 'cdn.jsdelivr.net';
+  fs.writeFileSync(hostsPath, JSON.stringify(meta));
+  assert.equal('blockedHosts' in (await store.read(ids)).pages[0], false);
 });
 
 test('bad buffers become null and bad pages, viewports and extra pages are cleaned up', async () => {
@@ -313,7 +344,7 @@ test('a tampered meta.json is handled without trusting its names', async () => {
   assert.equal(await store.read(ids), null);
   assert.deepEqual(await store.list({ workspaceId: WORKSPACE, sessionId: 'sess-1' }), []);
 
-  writeMeta({ ...good, version: 2 });
+  writeMeta({ ...good, version: 1 });
   assert.equal(await store.read(ids), null);
 
   writeMeta({ ...good, turnId: 'someone-else' });

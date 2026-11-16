@@ -38,13 +38,6 @@ test('conversation index and embed-step RPCs have bounded timeouts (row 58 W4)',
   });
 });
 
-test('retired active-turn RPC has no transport-specific timeout policy', () => {
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(REQUEST_TIMEOUT_MS_BY_METHOD, 'chat.get_active_turn_state'),
-    false
-  );
-});
-
 test('workspace recovery RPCs have operation-sized timeout budgets', () => {
   assert.deepEqual(
     Object.fromEntries(Object.entries(REQUEST_TIMEOUT_MS_BY_METHOD)

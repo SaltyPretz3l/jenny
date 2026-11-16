@@ -85,6 +85,9 @@ function initializeSessionExecutionAuthority(service) {
       const steps = {
         tasks: () => service.configService?.restampAgentTasksForProject?.(projectId, GENERAL_PROJECT_ID),
         notes: () => service.projectNotesService?.deleteProjectNotes?.(projectId),
+        // Row 150 D13: its boards move to General. The move is queued behind each board's work and settles
+        // after this returns; it logs its own failures and never rejects. Absent while project_boards is off.
+        boards: () => { void service.getBoardService?.()?.moveProjectBoards?.(projectId); },
       };
       for (const [step, run] of Object.entries(steps)) {
         try {

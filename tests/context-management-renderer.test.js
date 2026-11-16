@@ -461,22 +461,49 @@ test('renderer disables context controls when the backend is external', async (t
   assert.equal(window.document.getElementById('contextPreview'), null);
 });
 
-test('context card shows what is sent and summaries as standard rows', async (t) => {
+test('Chat page shows Long chats and This chat as standard rows (row 133: the Context card folded into Chat)', async (t) => {
   const patches = [];
   const { window } = await loadRendererTestApp(t, { shell: { features: { async updateSettings(patch) { patches.push(patch); } } } });
   const doc = window.document;
-  const card = doc.querySelector('section.settings-card[data-settings-section="context"]');
+  assert.equal(doc.querySelector('section.settings-card[data-settings-section="context"]'), null, 'no Context card');
+  const chat = doc.querySelector('section.settings-card[data-settings-section="chat"]');
+  assert.deepEqual([...chat.querySelectorAll('.settings-group-heading')].map((heading) => heading.textContent),
+    ['Layout', 'Side panel', 'Long chats', 'This chat', 'Dictation', 'Jenny chat', 'While you are away']);
+  // The History scope row mounts card-scoped into this wrapper: it must render here, not nowhere.
+  const card = chat.querySelector('[data-settings-merged-section="context"]');
   const groups = [...card.querySelectorAll('.settings-group')];
-  assert.deepEqual(groups.map((group) => group.querySelector('.settings-group-heading').textContent), ['What is sent', 'Summaries']);
+  assert.ok(card.querySelector('[data-setting-mount="contextHistoryScopeSelect"] .settings-field'), 'the History scope row renders in Chat');
   const titles = (group) => [...group.querySelectorAll('.settings-field-title')].map((title) => title.textContent);
-  assert.deepEqual(titles(groups[0]), ['History scope', 'Personality and notes', 'Approved memories', "Don't remember this chat"]);
-  assert.deepEqual(titles(groups[1]), ['Automatic summarization', 'Summary guidance']);
+  assert.deepEqual(titles(groups[0]), ['Automatic summarization', 'Summary guidance']);
+  assert.deepEqual(titles(groups[1]), ['History scope', 'Personality and notes', 'Use memory in this chat', "Don't remember this chat"]);
   assert.equal(card.querySelectorAll('input[type="checkbox"]').length, 0);
   assert.equal(card.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]'), null);
   assert.equal(card.querySelector('[data-inv-toggle="contextCompactionToggle"]').getAttribute('role'), 'switch');
   card.querySelector('[data-inv-toggle="contextCompactionToggle"]').click();
   await waitForUi(window, 20);
   assert.equal(JSON.stringify(patches), JSON.stringify([{ featureOverrides: { context_compaction: false } }]));
+  // The Dictation and Jenny chat hosts are looked up by id and skip silently when missing:
+  // their rows render inside Chat's wrappers, and Quiet hours on Notifications.
+  assert.ok(chat.querySelector('#dictationSettingsSection #dictationGeneralList .settings-field'), 'Dictation rows render in Chat');
+  assert.ok(chat.querySelector('#jennyChatSettingsSection [data-inv-toggle="primaryDigestsToggle"]'), 'the digest switch renders in Chat');
+  const notifications = doc.querySelector('section.settings-card[data-settings-section="notifications"]');
+  assert.ok(notifications.querySelector('#jennyChatQuietList #digestQuietStartSelect'), 'Quiet hours renders on Notifications');
+  chat.querySelector('[data-inv-toggle="primaryDigestsToggle"]').click();
+  await waitForUi(window, 20);
+  assert.deepEqual(JSON.parse(JSON.stringify(patches.at(-1))), { featureOverrides: { primary_digests: true } }, 'the digest switch binds through its wrapper');
+});
+
+test('Chat › This chat says whose rows they are: the next chat, then the open chat by name', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  const doc = window.document;
+  const note = doc.getElementById('contextScopeNote');
+  assert.equal(note.closest('.settings-card').dataset.settingsSection, 'chat');
+  assert.equal(note.textContent, 'No chat is open. These apply to the next chat you start.');
+  doc.getElementById('newChatButton').click();
+  await waitForUi(window, 30);
+  await openSettingsView(window);
+  assert.equal(note.textContent, 'These change only the chat you have open: New Chat.');
+  assert.equal(note.children.length, 0, 'the title is written as text, never as markup');
 });
 
 test('Settings keeps only additive custom summarization guidance', async (t) => {

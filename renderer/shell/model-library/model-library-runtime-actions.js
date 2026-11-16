@@ -1,14 +1,15 @@
 /* Runtime activate/unload machinery for the Model Library card grid: single-flight
  * activation state, timeout-fenced models.load/unload, preferred-local persistence
  * after a confirmed load, and snapshot-before-list refresh ordering (the card's
- * active flag derives from state.status, which only a snapshot refresh updates). */
+ * active flag derives from state.status, which only a snapshot refresh updates).
+ * Also the recovery clicks for the library's classified model-load failure. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../renderer-model-library-format-utils'));
+    module.exports = factory(require('../renderer-model-library-format-utils'), require('../../shared/model-load-failure'));
     return;
   }
-  root.modelLibraryRuntimeActions = factory(root.rendererModelLibraryFormatUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils) {
+  root.modelLibraryRuntimeActions = factory(root.rendererModelLibraryFormatUtils, root.jennyModelLoadFailure);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils, defaultReader) {
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -53,6 +54,44 @@
     var runtimeOperationId = 0;
     var runtimeSoftTimeoutId = null;
     var runtimeHardTimeoutId = null;
+    // Row 142: "Use build N" under a failed llama-server Use. The shared module loads with the
+    // Settings scripts, so it is made on the first failure that needs it; until then nothing shows.
+    var remedies = null;
+    var failedTag = '';
+
+    function resolveBuilds() {
+      return globalThis.modelLibraryRuntimeBuilds
+        || (typeof require === 'function' ? require('./model-library-runtime-builds') : null);
+    }
+
+    function remediesFor() {
+      var builds = remedies || disposed ? null : resolveBuilds();
+      if (builds && typeof builds.createRemedies === 'function') {
+        remedies = builds.createRemedies({
+          windowRef: windowRef,
+          scope: 'row',
+          allowDownload: true,
+          onChange: function () { if (!disposed) render(); },
+          onSwitched: function (tag, build) { handleUse(tag, { note: builds.rowStartingText(build) }); },
+          onSettings: function (localEngines) { if (localEngines) state.localEngines = localEngines; },
+          noneText: function (base) { return base + ' ' + builds.noOtherBuildRowText(); },
+        });
+        // The row buttons are re-rendered with the grid, so one document-level click reaches them.
+        if (windowRef.document && typeof windowRef.document.addEventListener === 'function') {
+          windowRef.document.addEventListener('click', onRemedyClick);
+        }
+      }
+      return remedies;
+    }
+
+    function onRemedyClick(event) {
+      if (remedies && event) remedies.handleClick(event.target);
+    }
+
+    function clearRemedies() {
+      if (remedies) remedies.clear();
+      failedTag = '';
+    }
 
     function clearRuntimeTimers() {
       if (runtimeSoftTimeoutId != null) {
@@ -114,6 +153,13 @@
       setStatusMessage(message);
       appendClientLog('WARN', eventName, { model: modelId, message: message });
       render();
+      var buildFailure = formatUtils.isBuildFailure && formatUtils.isBuildFailure(error && error.message ? error.message : error);
+      var failedModel = eventName === 'model_library.activate_failed' && buildFailure ? findModel(modelId) : null;
+      var asker = failedModel && failedModel.selectedEngine === 'llama-server' ? remediesFor() : null;
+      if (asker) {
+        failedTag = modelId;
+        void asker.begin(modelId, message);
+      }
       void resyncThen(operationId, message).catch(function () {});
     }
 
@@ -141,7 +187,7 @@
       });
     }
 
-    function handleUse(tag) {
+    function handleUse(tag, useOptions) {
       var modelId = String(tag || '').trim();
       if (!modelId) return;
       if (activation.status === 'running') {
@@ -156,7 +202,9 @@
       var model = findModel(modelId);
       var key = model ? model.key : canonicalOllamaTag(modelId);
       var operationId = ++runtimeOperationId;
+      clearRemedies();
       activation = { status: 'running', key: key, message: '' };
+      if (useOptions && useOptions.note) activation.pendingNote = String(useOptions.note);
       var engineHint = model && model.selectedEngine === 'llama-server' ? 'openai-compatible'
         : model && model.selectedEngine === 'ollama' && model.engines && model.engines.ollama
           && model.engines.ollama.available === true ? 'ollama'
@@ -250,12 +298,14 @@
     }
 
     function activationState() {
-      return activation;
+      var shown = failedTag && activation.status === 'idle' ? remedies.view(failedTag, activation.message) : null;
+      return shown ? Object.assign({}, activation, { message: shown.text, actionsHtml: shown.actionsHtml }) : activation;
     }
 
     function clearActivationMessage() {
       if (activation.status === 'idle' && activation.message) {
         activation = { status: 'idle', key: '', message: '' };
+        clearRemedies();
       }
     }
 
@@ -264,6 +314,12 @@
       disposed = true;
       runtimeOperationId += 1;
       clearRuntimeTimers();
+      if (remedies) {
+        if (windowRef.document && typeof windowRef.document.removeEventListener === 'function') {
+          windowRef.document.removeEventListener('click', onRemedyClick);
+        }
+        remedies.dispose();
+      }
     }
 
     return {
@@ -275,5 +331,61 @@
     };
   }
 
-  return { createModelLibraryRuntimeActions: createModelLibraryRuntimeActions };
+  // ---- Recovery clicks for the library's classified model-load failure ----
+  function tuningWording(result) {
+    var utils = globalThis.rendererModelTuningEngineUtils
+      || (typeof require === 'function' ? require('../renderer-model-tuning-engine-utils') : null);
+    return typeof utils?.applyStatusMessage === 'function' ? utils.applyStatusMessage(result) : '';
+  }
+
+  function createModelLibraryRecoveryActions(deps) {
+    var d = deps || {};
+    var reader = d.reader || defaultReader;
+    var inFlight = false;
+
+    function controlsUnavailable() {
+      d.setStatusMessage(jt('models.library.runtime.controlsUnavailable', 'Model lifecycle controls are unavailable right now.'));
+    }
+
+    async function handle(action, tag) {
+      var failure = reader.readModelLoadFailure(d.state.backend);
+      if (!failure || formatUtils.canonicalOllamaTag(failure.model) !== formatUtils.canonicalOllamaTag(tag)) return;
+      switch (action) {
+        case 'retry': return d.runtimeActions.handleUse(tag);
+        case 'showFits': return d.showCatalog();
+        case 'diagnostics': return d.openDiagnostics?.();
+        case 'loadSmaller': {
+          var tuning = d.windowRef.jennyShell?.modelTuning;
+          if (typeof tuning?.update !== 'function') return controlsUnavailable();
+          if (inFlight) return;
+          inFlight = true;
+          try {
+            var result = await tuning.update({ modelId: tag, contextLength: reader.retryContext(failure) });
+            // A refused or rolled-back change reads as the Tune drawer would say it.
+            if (result?.status !== 'applied') return d.setStatusMessage(tuningWording(result) || jt('models.library.tuning.notApplied', 'Not applied: {reason}.', { reason: String(result?.reason || 'validation failed').replaceAll('_', ' ') }));
+            return d.runtimeActions.handleUse(tag);
+          } catch (error) {
+            return d.setStatusMessage(formatUtils.boundedErrorMessage(error, jt('models.library.runtime.controlsUnavailable', 'Model lifecycle controls are unavailable right now.')));
+          } finally { inFlight = false; }
+        }
+        case 'copyDetails': {
+          var clipboard = d.windowRef.navigator?.clipboard;
+          if (typeof clipboard?.writeText !== 'function') {
+            d.setStatusMessage(jt('settings.modelLibrary.clipboardUnavailable', 'Clipboard access is unavailable right now.'));
+            return;
+          }
+          try {
+            await clipboard.writeText(reader.failureDetails(failure));
+            d.setStatusMessage('Copied ' + tag);
+          } catch (_error) {
+            d.setStatusMessage(jt('settings.modelLibrary.copyFailed', 'Could not copy {tag} to the clipboard.', { tag: tag }));
+          }
+          return;
+        }
+        default: return;
+      }
+    }
+    return { handle: handle };
+  }
+  return { createModelLibraryRuntimeActions: createModelLibraryRuntimeActions, createModelLibraryRecoveryActions: createModelLibraryRecoveryActions };
 });

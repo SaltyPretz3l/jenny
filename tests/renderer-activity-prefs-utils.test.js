@@ -216,6 +216,20 @@ test('a failed run-mode save surfaces the composer activity notice (composer.run
   assert.equal(notices[0].message, 'Could not save run mode.');
 });
 
+test('only a run-mode change re-syncs the composer notice; a model or effort save leaves it alone', () => {
+  const notices = [];
+  const { controller } = makeController({
+    setComposerStatusNotice: (message) => notices.push(message),
+    getMostRecentActivity: () => ({ scope: 'composer.runMode', state: 'error', message: 'Could not save run mode.', startedAt: 7 }),
+  });
+
+  controller.handleActivityChange('composer.preferredModel:sess-1');
+  controller.handleActivityChange('composer.reasoningEffort');
+  assert.equal(notices.length, 0, 'an old run-mode failure is not put back by another control');
+  controller.handleActivityChange('composer.runMode');
+  assert.deepEqual(notices, ['Could not save run mode.']);
+});
+
 test('preference persistence never touches the retired sticky plan-mode key', async (t) => {
   // The Wave-G 'jenny.composer.planMode' sticky boot default is retired:
   // S4's config defaultRunMode owns new-chat defaults, and a stale sticky key
@@ -496,4 +510,26 @@ test('neither pane\'s host carries compaction: the inline activity row tells it'
   assert.equal(paneZeroHost.classes.has('hidden'), true);
   assert.equal(paneOneHost.classes.has('hidden'), true);
   assert.doesNotMatch(paneZeroHost.innerHTML + paneOneHost.innerHTML, /Compact/);
+});
+
+test('a failed save notice is the tone dot and its sentence: no lead-in, no badge', () => {
+  const previousInventory = global.inventory;
+  global.inventory = { statusRow: require('../renderer/inventory/status-row.js') };
+  const host = fakeNoticeHost();
+  const state = {
+    currentSessionId: 'sess-1', runtimeDraft: {},
+    ui: { activeView: 'chat', composerStatusNotice: 'Could not save run mode.', composerStatusNoticeOwner: 'activity:composer.runMode' },
+  };
+  try {
+    const { controller } = makeController({
+      getActivitySnapshot: () => ({ scope: 'composer.runMode', state: 'error', message: 'Could not save run mode.' }),
+    }, { state, composerStatusNotice: host });
+    controller.renderComposerStatusNotice();
+    assert.equal(host.classes.has('hidden'), false);
+    assert.match(host.innerHTML, /inv-status-row--danger/);
+    assert.match(host.innerHTML, /Could not save run mode\./);
+    assert.doesNotMatch(host.innerHTML, /inv-status-row-label|inv-status-row-badge/);
+  } finally {
+    global.inventory = previousInventory;
+  }
 });

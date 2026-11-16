@@ -10,7 +10,6 @@ const {
   buildContextToggleListsMarkup,
   buildWebSearchSectionMarkup,
   resolveToolConfigToggleEvent,
-  resolveModelBadge,
   buildUiLanguageFieldMarkup,
 } = require('../renderer/shell/renderer-settings-support');
 const supportExports = require('../renderer/shell/renderer-settings-support');
@@ -107,15 +106,6 @@ test('web search provider markup nests a bounded connection test in Web tools', 
   const doc = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
   assert.equal(doc.querySelector('[data-web-search-test]')?.textContent.trim(), 'Test');
   assert.ok(doc.querySelector('[data-web-search-test-status][aria-live="polite"]'));
-});
-
-test('resolveModelBadge derives state + text from runtime signals', () => {
-  assert.deepEqual(resolveModelBadge({ busy: true, loadingModel: true }), { state: 'busy', text: 'Switching' });
-  assert.deepEqual(resolveModelBadge({ busy: true, loadingModel: false }), { state: 'busy', text: 'Unloading' });
-  assert.deepEqual(resolveModelBadge({ errored: true }), { state: 'error', text: 'Error' });
-  assert.deepEqual(resolveModelBadge({ catalogUnavailable: true, activeModel: '' }), { state: 'warn', text: 'Unavailable' });
-  assert.deepEqual(resolveModelBadge({ catalogUnavailable: true, activeModel: 'gpt-4o' }), { state: 'live', text: 'gpt-4o' });
-  assert.deepEqual(resolveModelBadge({}), { state: 'info', text: 'Default backend' });
 });
 
 test('normalizeFeatureState preserves sanitized tool config metadata', () => {
@@ -501,10 +491,15 @@ test('dependent rows follow their parent in place and match what a fresh render 
 
 test('the dependent sync leaves a write lock in place and the release reads the parent again', () => {
   const binding = require('../renderer/shell/renderer-settings-field-binding');
-  const descriptor = require('../renderer/shell/renderer-settings-field-descriptors').getSettingDescriptor('settings-tool-config-richFiles');
+  const toolSwitch = require('../renderer/shell/renderer-settings-field-descriptors').getSettingDescriptor('settings-tool-config-richFiles');
+  // Tools switches stay usable while saving (lockWhileSaving false); a locking field keeps this contract.
+  const descriptor = { ...toolSwitch, lockWhileSaving: true };
   const root = renderToolsRoot({ fileTools: true, web: true });
   const track = root.querySelector('[data-inv-toggle="settings-tool-config-richFiles"]');
   const testButton = root.querySelector('[data-web-search-test]');
+  binding.setRowBusy(root, toolSwitch, true);
+  assert.equal(track.disabled, false, 'a Tools switch takes another click while it saves');
+  binding.setRowBusy(root, toolSwitch, false);
   binding.setRowBusy(root, descriptor, true);
   testButton.setAttribute('data-setting-busy', '');
   testButton.disabled = true;

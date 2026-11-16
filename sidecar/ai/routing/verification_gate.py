@@ -14,7 +14,7 @@ model's own response. A failing gate is never a terminal error, never a
 it exists to stop false "done" claims, not to withhold work.
 
 Retry capacity comes from a **carve-out**, not the model's working budget. The
-local chat loop is only 8 iterations (``iteration_limits._MODE_DEFAULTS``); the
+chat loop is bounded (``iteration_limits._MODE_DEFAULTS``) and a user may lower it; the
 gate grants itself at most ``GATE_MAX_RETRIES`` extra iterations via
 ``_ToolLoopRun.grant_gate_iteration()`` and never depends on the model having
 left one spare. Exhausting that cap is not a terminal state -- the turn proceeds

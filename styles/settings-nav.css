@@ -118,6 +118,8 @@
   font-size: var(--font-size-caption);
 }
 
+/* The item's own display would outrank the hidden attribute (a page whose feature is off, such as Team). */
+.settings-nav-item[hidden],
 .settings-nav-item-search-hidden {
   display: none !important;
 }
@@ -150,9 +152,10 @@
 
 .settings-nav-label {
   padding: 0 var(--space-4) var(--space-2);
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
-  font-weight: 700;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
   line-height: 1.4;
   user-select: none;
 }
@@ -162,7 +165,7 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 24px;
+  min-height: 28px;
   padding-block: 0;
   padding-inline: calc(var(--space-4) + var(--space-7)) var(--space-4);
   border-radius: var(--radius-sm);
@@ -198,6 +201,7 @@
 .settings-nav-item.active {
   background: var(--settings-shell-nav-item-active-bg);
   color: var(--text-primary);
+  font-weight: 600;
   border-color: transparent;
   box-shadow: none;
 }

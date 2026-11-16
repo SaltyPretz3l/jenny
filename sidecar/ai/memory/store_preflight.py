@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import struct
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -234,6 +235,14 @@ def _wal_checksum(
     initial: tuple[int, int] = (0, 0),
 ) -> tuple[int, int]:
     first, second = initial
+    if len(data) % 8 == 0:
+        # Frames and the header are whole 8-byte groups: unpack every word at
+        # once instead of two slices and two int.from_bytes per group.
+        words = struct.unpack(f"{'<' if byteorder == 'little' else '>'}{len(data) // 4}I", data)
+        for low, high in zip(words[0::2], words[1::2], strict=True):
+            first = (first + low + second) & 0xFFFFFFFF
+            second = (second + high + first) & 0xFFFFFFFF
+        return first, second
     for offset in range(0, len(data), 8):
         first = (
             first + int.from_bytes(data[offset : offset + 4], byteorder) + second

@@ -44,7 +44,7 @@ const sameModes = (left, right) => (left === null || right === null
 
 function createPrimaryChatControls({
   configService = () => null, sessionStore = () => null, featureFlags = () => ({}), projectService = () => null,
-  resumeWake = null, createId = () => `lp_${randomBytes(16).toString('hex')}`,
+  resumeWake = null, setSessionPreferences = null, createId = () => `lp_${randomBytes(16).toString('hex')}`,
   createRuleId = () => `ar_${randomBytes(16).toString('hex')}`, now = () => new Date(), log = () => {}, emit = () => {},
 } = {}) {
   const flags = () => read(featureFlags) || {};
@@ -391,6 +391,35 @@ function createPrimaryChatControls({
     return written.ok === true && written.block.history.some((row) => row.kind === 'digest_skipped' && row.at === stamp);
   }
 
+  // Model pins: `{ model?, check_model? }` (the contract bounds them). `model` is Jenny's own model and is written
+  // through to the primary session's preferred_model; clearing it keeps whatever the session has. `check_model` is
+  // the model scheduled checks run on. The write-through never undoes the config write; ids never reach a log.
+  async function setModels(input) {
+    if (!controlsEnabled()) return refusal('disabled');
+    const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    const wanted = {};
+    for (const [key, field] of [['model', 'model'], ['check_model', 'checkModel']]) {
+      if (!Object.hasOwn(source, key)) continue;
+      const raw = source[key];
+      const value = typeof raw === 'string' ? normalizePrimaryChat({ [field]: raw })[field] : null;
+      if (value === null || (value === '' && raw.trim() !== '')) return refusal('invalid_request');
+      wanted[field] = value;
+    }
+    if (!Object.keys(wanted).length) return refusal('invalid_request');
+    const written = write((block) => (Object.entries(wanted).every(([field, value]) => block[field] === value) ? null : wanted));
+    if (!written.ok) return written;
+    const sessionId = primarySessionId();
+    if (wanted.model && sessionId && typeof setSessionPreferences === 'function') { // also repairs a failed earlier write
+      try {
+        if (!(await setSessionPreferences(sessionId, { preferred_model: wanted.model }))) throw Object.assign(new Error('refused'), { reason: 'refused' });
+      } catch (error) {
+        const token = typeof error?.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(error.reason) ? error.reason : 'write_failed';
+        attempt(() => log('WARN', 'primary_chat.model_pin_writethrough_failed', { reason: token }), null);
+      }
+    }
+    return { ...getState(), changed: written.changed };
+  }
+
   function getState() {
     const block = currentBlock();
     if (!block) return refusal('unavailable');
@@ -401,6 +430,8 @@ function createPrimaryChatControls({
       session_id: primarySessionId(),
       paused: isPausedBlock(block),
       paused_at: block.pausedAt,
+      model: typeof block.model === 'string' ? block.model : '', // a newer build's block is passed through unread
+      check_model: typeof block.checkModel === 'string' ? block.checkModel : '',
       permissions: permissionsOf(block).map(withProject),
       rules: isReadOnlyPrimaryChat(block) ? [] : rulesOf(block),
       history: Array.isArray(block.history) ? block.history : [],
@@ -415,7 +446,7 @@ function createPrimaryChatControls({
     actionRulesEnabled, addActionRule, controlsEnabled, findChatChange, findSettingChange, getDigest, getState, grantLaunch, isPaused, isPrimary,
     launchPermissionEnabled, listActionRules, listPermissions, matchLaunchPermission, pause, primarySessionId, recordChatChange,
     recordChatChangeUndone, recordDigestSkipped, recordHistory, recordRuleDenied, recordScheduleEvent, recordSettingChange,
-    recordSettingUndone, resume, revokeActionRule, revokeLaunch, updateDigest,
+    recordSettingUndone, resume, revokeActionRule, revokeLaunch, setModels, updateDigest,
   };
 }
 

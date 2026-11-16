@@ -175,27 +175,39 @@
     return resolveDateCore().parseLocalDateTime?.(value) || null;
   }
 
-  function formatDayHeading(dayKey, now) {
+  // One Intl formatter per locale and option set: toLocaleDateString builds a new one per call,
+  // and a 40-row block formats a heading per day.
+  const dateFormatters = new Map();
+  function formatDate(date, options) {
+    const tag = globalThis.jennyI18n?.tag?.();
+    const key = `${tag || ''}|${JSON.stringify(options)}`;
+    let formatter = dateFormatters.get(key);
+    if (!formatter) {
+      if (dateFormatters.size >= 16) dateFormatters.clear();
+      formatter = new Intl.DateTimeFormat(tag, options);
+      dateFormatters.set(key, formatter);
+    }
+    return formatter.format(date);
+  }
+
+  function formatDayHeading(dayKey, now, plain = false) {
     const day = parseDateKey(dayKey);
     if (!day || !(now instanceof Date) || Number.isNaN(now.getTime())) return '';
     const core = resolveDateCore();
     const todayKey = core.formatLocalDate(now);
     const tomorrowKey = core.formatLocalDate(core.addLocalDays(now, 1));
-    const datePart = day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), {
-      weekday: 'short', month: 'short', day: 'numeric',
-    });
+    const datePart = formatDate(day, { weekday: 'short', month: 'short', day: 'numeric' });
     const withYear = day.getFullYear() === now.getFullYear()
       ? datePart
       : `${datePart}, ${day.getFullYear()}`;
+    if (plain) return withYear;
     if (dayKey === todayKey) return jt("calendarChatBlock.todayValue", "Today · {value1}", { value1: String(withYear) });
     if (dayKey === tomorrowKey) return jt("calendarChatBlock.tomorrowValue", "Tomorrow · {value1}", { value1: String(withYear) });
     return withYear;
   }
 
   function formatRangePart(date, includeYear) {
-    return date.toLocaleDateString(globalThis.jennyI18n?.tag?.(), {
-      month: 'short', day: 'numeric', ...(includeYear ? { year: 'numeric' } : {}),
-    });
+    return formatDate(date, { month: 'short', day: 'numeric', ...(includeYear ? { year: 'numeric' } : {}) });
   }
 
   function lastIncludedDate(rangeEnd, wholeDaysOnly = false) {
@@ -231,16 +243,14 @@
   }
 
   function weekdayShort(dayKey) {
-    return parseDateKey(dayKey)?.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'short' }) || '';
+    const day = parseDateKey(dayKey);
+    return day ? formatDate(day, { weekday: 'short' }) : '';
   }
 
-  function buildTail(lastDayKey, rangeEndKey) {
-    const lastDay = parseDateKey(lastDayKey);
+  function buildTail(firstKey, rangeEndKey) {
+    const first = parseDateKey(firstKey);
     const rangeEnd = parseDateKey(rangeEndKey);
-    if (!lastDay || !rangeEnd || rangeEnd <= lastDay) return '';
-    const core = resolveDateCore();
-    const firstSkipped = core.addLocalDays(lastDay, 1);
-    const firstKey = core.formatLocalDate(firstSkipped);
+    if (!first || !rangeEnd || rangeEnd < first) return '';
     const firstLabel = weekdayShort(firstKey);
     const endLabel = weekdayShort(rangeEndKey);
     return firstKey === rangeEndKey
@@ -254,58 +264,82 @@
     return Boolean(end && end < now);
   }
 
+  function buildDayPlan(dayKey, entries, ctx, forcePast) {
+    const rows = entries.slice().sort(compareForAgenda).map((entry) => ({
+      ...entry, isPast: forcePast || isPastRow(entry, dayKey, ctx.todayKey, ctx.now), hidden: forcePast,
+    }));
+    const reminderCount = rows.filter((entry) => entry.kind === 'reminder').length;
+    return {
+      dayKey,
+      heading: formatDayHeading(dayKey, ctx.now, ctx.snapshot),
+      eventCount: rows.length - reminderCount,
+      reminderCount,
+      rows,
+    };
+  }
+
+  function groupInstancesByDay(entries) {
+    const groups = new Map();
+    for (const entry of entries) {
+      const dayKey = entry.start.slice(0, 10);
+      if (!groups.has(dayKey)) groups.set(dayKey, []);
+      groups.get(dayKey).push(entry);
+    }
+    return groups;
+  }
+
   function planVisibleRows(calendar, now) {
     const normalized = normalizeCalendarMetadata(calendar);
     const current = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
     if (!normalized) {
-      return { earlierCount: 0, days: [], remaining: 0, tail: '', empty: true, firstDayKey: '', rangeLabel: '' };
+      return {
+        earlierCount: 0, earlierDays: [], days: [], hiddenCount: 0, tail: '', empty: true,
+        firstDayKey: '', rangeLabel: '', snapshot: false, asOf: '',
+      };
     }
     const core = resolveDateCore();
     const todayKey = core.formatLocalDate(current);
-    const groups = new Map();
-    let earlierCount = 0;
+    const midnight = new Date(current.getFullYear(), current.getMonth(), current.getDate());
+    const snapshot = parseLocalDateTime(normalized.range_end) <= midnight;
+    const ctx = { now: current, todayKey, snapshot };
+    const live = [];
+    const earlier = [];
     for (const entry of normalized.instances) {
-      const dayKey = entry.start.slice(0, 10);
-      if (dayKey < todayKey) {
-        earlierCount += 1;
-        continue;
+      (!snapshot && entry.start.slice(0, 10) < todayKey ? earlier : live).push(entry);
+    }
+    const earlierDays = [...groupInstancesByDay(earlier)].sort(([left], [right]) => (left < right ? -1 : 1))
+      .map(([dayKey, entries]) => buildDayPlan(dayKey, entries, ctx, true));
+    const days = [...groupInstancesByDay(live)].sort(([left], [right]) => (left < right ? -1 : 1))
+      .map(([dayKey, entries]) => buildDayPlan(dayKey, entries, ctx, false));
+    let visibleCount = 0;
+    let hiddenCount = earlier.length;
+    for (const row of days.flatMap((day) => day.rows)) {
+      if (visibleCount >= MAX_VISIBLE_ROWS) {
+        row.hidden = true;
+        hiddenCount += 1;
+      } else {
+        visibleCount += 1;
       }
-      if (!groups.has(dayKey)) groups.set(dayKey, []);
-      groups.get(dayKey).push(entry);
     }
-    const eligibleCount = [...groups.values()].reduce((total, entries) => total + entries.length, 0);
-    const days = [];
-    let renderedCount = 0;
-    for (const dayKey of [...groups.keys()].sort()) {
-      if (renderedCount >= MAX_VISIBLE_ROWS) break;
-      const available = MAX_VISIBLE_ROWS - renderedCount;
-      const rows = groups.get(dayKey).sort(compareForAgenda).slice(0, available)
-        .map((entry) => ({ ...entry, isPast: isPastRow(entry, dayKey, todayKey, current) }));
-      const reminderCount = rows.filter((entry) => entry.kind === 'reminder').length;
-      days.push({
-        dayKey,
-        heading: formatDayHeading(dayKey, current),
-        eventCount: rows.length - reminderCount,
-        reminderCount,
-        rows,
-      });
-      renderedCount += rows.length;
-    }
-    const remaining = eligibleCount - renderedCount + normalized.omitted_count;
     const rangeStartKey = normalized.range_start.slice(0, 10);
-    const rangeEndKey = core.formatLocalDate(lastIncludedDate(normalized.range_end));
     const tailEndKey = core.formatLocalDate(lastIncludedDate(normalized.range_end, true));
-    const firstDayKey = days[0]?.dayKey || rangeStartKey;
-    const lastRenderedKey = days.at(-1)?.dayKey
-      || (rangeStartKey <= todayKey && rangeEndKey >= todayKey ? todayKey : rangeStartKey);
+    const lastDay = days.at(-1);
+    const tailStartKey = lastDay
+      ? core.formatLocalDate(core.addLocalDays(parseDateKey(lastDay.dayKey), 1))
+      : (todayKey > rangeStartKey ? todayKey : rangeStartKey);
+    const generatedAt = parseLocalDateTime(normalized.generated_at);
     return {
-      earlierCount,
+      earlierCount: earlier.length,
+      earlierDays,
       days,
-      remaining,
-      tail: remaining === 0 ? buildTail(lastRenderedKey, tailEndKey) : '',
-      empty: renderedCount === 0 && earlierCount === 0,
-      firstDayKey,
+      hiddenCount,
+      omittedCount: normalized.omitted_count,
+      tail: normalized.omitted_count === 0 && !snapshot ? buildTail(tailStartKey, tailEndKey) : '',
+      empty: normalized.instances.length === 0,
+      firstDayKey: days[0]?.dayKey || rangeStartKey,
       rangeLabel: formatRangeLabel(normalized.range_start, normalized.range_end, current),
+      snapshot,
+      asOf: generatedAt ? formatReceiptDay(generatedAt, current) : '',
     };
   }
 
@@ -329,6 +363,13 @@
       hasLiveJournalEntry: typeof options.hasLiveJournalEntry === 'function'
         ? options.hasLiveJournalEntry
         : () => undefined,
+      isExpanded: (key) => {
+        try {
+          return typeof options.isExpanded === 'function' && Boolean(options.isExpanded(key));
+        } catch (_error) {
+          return false;
+        }
+      },
     };
   }
 
@@ -367,6 +408,11 @@
     return jt("calendarChatBlock.overlapsValueValueValue", "overlaps {value1}{value2}{value3}", { value1: String(title), value2: String(time ? ` (${time})` : ''), value3: String(additional) });
   }
 
+  function recentLabel(recent) {
+    if (recent === 'created') return jt("calendarChatBlock.recentNew", "new");
+    return recent === 'updated' ? jt("calendarChatBlock.recentUpdated", "updated") : '';
+  }
+
   function buildRowMeta(entry, escapeHtml) {
     const parts = [];
     const duration = formatDuration(entry);
@@ -374,15 +420,14 @@
     if (entry.kind === 'reminder') {
       parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderAutomatic", "Reminder fires automatically while Jenny is running."))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
     } else {
-      if (entry.source === 'feed') parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.subscribedFeedEvent", "Subscribed feed event"))}">${escapeHtml(jt("calendarChatBlock.feedBadge", "feed"))}</span>`);
-      if (entry.tz_approx) parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.approximateFeedTime", "Approximate time (unrecognized feed time zone)"))}">~tz</span>`);
-      if (entry.recurrence_unsupported) parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.partialRecurrence", "Recurrence only partially supported"))}">↻</span>`);
+      if (entry.source === 'feed') parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.subscribedFeedEvent", "Subscribed feed event"))}">${escapeHtml(jt("calendarChatBlock.subscribedBadge", "subscribed"))}</span>`);
+      if (entry.tz_approx) parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.approximateFeedTime", "Approximate time (unrecognized feed time zone)"))}">${escapeHtml(jt("calendarChatBlock.approxTimeBadge", "approx. time"))}</span>`);
+      if (entry.recurrence_unsupported) parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.partialRecurrence", "Recurrence only partially supported"))}">${escapeHtml(jt("calendarChatBlock.repeatsBadge", "repeats"))}</span>`);
     }
-    if (entry.source_kind === 'assistant') {
-      parts.push(`<span class="cal-chat__jenny" title="${escapeHtml(jt("dashboard.calendar.agenda.addedByJenny", "Added by jenny"))}">${escapeHtml(jt("calendarChatBlock.jennyBadge", "jenny"))}</span>`);
-    }
-    if (entry.recent === 'created' || entry.recent === 'updated') {
-      parts.push(`<span class="cal-chat__new">${entry.recent === 'created' ? 'new' : 'updated'}</span>`);
+    const recentWord = recentLabel(entry.recent);
+    if (recentWord) parts.push(`<span class="cal-chat__new">${escapeHtml(recentWord)}</span>`);
+    if (recentWord || entry.source_kind === 'assistant') {
+      parts.push(`<span class="cal-chat__by">${escapeHtml(jt("calendarChatBlock.byJenny", "by Jenny"))}</span>`);
     }
     const overlap = overlapText(entry);
     if (overlap) parts.push(`<span class="cal-chat__overlap">${escapeHtml(overlap)}</span>`);
@@ -413,16 +458,20 @@
     });
   }
 
+  function moreRowAttrs(isHeld, expanded) {
+    if (!isHeld) return '';
+    return ` data-cal-more-row${expanded ? '' : ' hidden'}`;
+  }
+
   function buildCalendarRow(entry, day, options) {
     const { actionButton, escapeHtml, hasLiveJournalEntry } = options;
     const title = entry.title || jt("dashboard.calendar.agenda.noTitle", "(no title)");
     const time = entry.all_day ? jt("dashboard.calendar.agenda.allDay", "All day") : formatTime(entry.start);
     const overlap = overlapText(entry);
-    const state = entry.recent === 'created' ? 'new' : entry.recent;
     const ariaParts = [title, day.heading, entry.all_day ? jt("calendarChatBlock.allDay2", "all day") : time];
-    if (state === 'new' || state === 'updated') ariaParts.push(state);
+    if (recentLabel(entry.recent)) ariaParts.push(recentLabel(entry.recent));
     if (overlap) ariaParts.push(overlap);
-    if (entry.readonly) ariaParts.push('read-only');
+    if (entry.readonly) ariaParts.push(jt("calendarChatBlock.readOnly", "read-only"));
     const classes = [
       'cal-chat__row',
       `cal-event--${categoryClass(entry.category)}`,
@@ -447,7 +496,7 @@
         + `<span class="cal-chat__title">${escapeHtml(title)}</span>`
         + `<span class="cal-chat__meta">${buildRowMeta(entry, escapeHtml)}</span>`,
     });
-    return `<div class="cal-chat__row-wrap">${row}${buildUndo(actionButton, entry, hasLiveJournalEntry)}</div>`;
+    return `<div class="cal-chat__row-wrap"${moreRowAttrs(entry.hidden, options.expanded)}>${row}${buildUndo(actionButton, entry, hasLiveJournalEntry)}</div>`;
   }
 
   function buildDayMarkup(day, todayKey, options) {
@@ -456,7 +505,8 @@
       : '';
     const count = `${eventCount(day.eventCount)}${reminderSuffix}`;
     const headingClass = day.dayKey === todayKey ? ' cal-chat__day--today' : '';
-    return `<div class="cal-chat__day${headingClass}" role="heading" aria-level="4">`
+    const hideAttrs = moreRowAttrs(day.rows.every((entry) => entry.hidden), options.expanded);
+    return `<div class="cal-chat__day${headingClass}" role="heading" aria-level="4"${hideAttrs}>`
       + `<span class="cal-chat__day-label">${options.escapeHtml(day.heading)}</span>`
       + '<span class="cal-chat__day-rule" aria-hidden="true"></span>'
       + `<span class="cal-chat__day-count">${options.escapeHtml(count)}</span>`
@@ -464,9 +514,24 @@
       + day.rows.map((entry) => buildCalendarRow(entry, day, options)).join('');
   }
 
-  function buildFooter(plan, options) {
-    const more = plan.remaining > 0
-      ? `<span class="cal-chat__more">${options.escapeHtml(jt("calendarChatBlock.valueMore", "{value1} more", { value1: String(plan.remaining) }))}</span>`
+  function buildFooter(plan, options, blockId) {
+    const hasToggle = plan.hiddenCount > 0;
+    const labelMore = jtn('calendarChatBlock.showMore', plan.hiddenCount, { count: plan.hiddenCount }, 'Show {count} more', 'Show {count} more');
+    const labelLess = jt('calendarChatBlock.showLess', 'Show less');
+    const toggle = hasToggle
+      ? options.actionButton({
+        plain: true,
+        className: 'cal-chat__more-toggle',
+        label: options.expanded ? labelLess : labelMore,
+        title: jt('calendarChatBlock.showMoreTitle', 'Show or hide the other events in this answer'),
+        ariaExpanded: options.expanded,
+        ariaControls: blockId,
+        dataset: { 'cal-more-toggle': '', 'label-more': labelMore, 'label-less': labelLess },
+      })
+      : '';
+    const omittedText = jtn('calendarChatBlock.moreInHome', plan.omittedCount, { count: plan.omittedCount }, '{count} more in Home', '{count} more in Home');
+    const omitted = plan.omittedCount > 0
+      ? `<span class="cal-chat__omitted"${moreRowAttrs(hasToggle, options.expanded)}>${options.escapeHtml(omittedText)}</span>`
       : '';
     const openHome = options.actionButton({
       plain: true,
@@ -476,33 +541,45 @@
       ariaLabel: jt("scratchpad.pin.openInHome", "Open in Home"),
       dataset: { 'cal-open-day': plan.firstDayKey },
     });
-    return `<div class="cal-chat__foot">${more}${openHome}</div>`;
+    return `<div class="cal-chat__foot">${toggle}${omitted}${openHome}</div>`;
   }
 
   function buildCalendarBlockMarkup(calendar, deps) {
     const normalized = normalizeCalendarMetadata(calendar);
-    const options = resolveDeps(deps);
-    if (!normalized || typeof options.actionButton !== 'function') return '';
-    const plan = planVisibleRows(normalized, options.now);
-    const todayKey = resolveDateCore().formatLocalDate(options.now);
+    const base = resolveDeps(deps);
+    if (!normalized || typeof base.actionButton !== 'function') return '';
+    const plan = planVisibleRows(normalized, base.now);
+    const todayKey = resolveDateCore().formatLocalDate(base.now);
+    const key = `${normalized.range_start}|${normalized.range_end}|${normalized.generated_at}`;
+    const blockId = `cal-chat-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+    const options = { ...base, expanded: plan.hiddenCount > 0 && base.isExpanded(key) };
     const body = [];
+    if (plan.snapshot) {
+      const asOf = plan.asOf
+        ? jt('calendarChatBlock.asOf', '{range} · as of {date}', { range: plan.rangeLabel, date: plan.asOf })
+        : plan.rangeLabel;
+      body.push(`<div class="cal-chat__asof">${options.escapeHtml(asOf)}</div>`);
+    }
     if (plan.earlierCount > 0) {
-      body.push(`<div class="cal-chat__quiet">${options.escapeHtml(jt('calendarChatBlock.earlierEvents', 'Earlier · {events}', { events: eventCount(plan.earlierCount) }))}</div>`);
+      body.push(`<div class="cal-chat__quiet" data-cal-earlier-line${options.expanded ? ' hidden' : ''}>${options.escapeHtml(jt('calendarChatBlock.earlierEvents', 'Earlier · {events}', { events: eventCount(plan.earlierCount) }))}</div>`);
     }
     if (plan.empty) {
       body.push(`<div class="cal-chat__quiet">${options.escapeHtml(jt('calendarChatBlock.noEventsInRange', 'No events {range}.', { range: plan.rangeLabel }))}</div>`);
     } else {
-      body.push(...plan.days.map((day) => buildDayMarkup(day, todayKey, options)));
-      if (plan.tail) body.push(`<div class="cal-chat__quiet">${options.escapeHtml(plan.tail)}</div>`);
+      body.push(...[...plan.earlierDays, ...plan.days].map((day) => buildDayMarkup(day, todayKey, options)));
+      // The empty-days tail follows the last held day, so it waits with the rows the cap hides.
+      const tailHeld = plan.hiddenCount > plan.earlierCount;
+      if (plan.tail) body.push(`<div class="cal-chat__quiet"${moreRowAttrs(tailHeld, options.expanded)}>${options.escapeHtml(plan.tail)}</div>`);
     }
-    body.push(buildFooter(plan, options));
+    body.push(buildFooter(plan, options, blockId));
     const aria = jt("calendarChatBlock.calendarValueValue", "Calendar, {value1}, {value2}", { value1: String(plan.rangeLabel), value2: String(eventCount(normalized.instance_count)) });
-    return `<div class="cal-chat" role="group" aria-label="${options.escapeHtml(aria)}" data-cal-chat="list"`
-      + ` data-cal-range-start="${options.escapeHtml(normalized.range_start.slice(0, 10))}">${body.join('')}</div>`;
+    return `<div class="cal-chat" id="${options.escapeHtml(blockId)}" role="group" aria-label="${options.escapeHtml(aria)}" data-cal-chat="list"`
+      + ` data-cal-range-start="${options.escapeHtml(normalized.range_start.slice(0, 10))}"`
+      + ` data-cal-block-key="${options.escapeHtml(key)}">${body.join('')}</div>`;
   }
 
   function formatReceiptDay(date, now) {
-    const base = date.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'short', month: 'short', day: 'numeric' });
+    const base = formatDate(date, { weekday: 'short', month: 'short', day: 'numeric' });
     return date.getFullYear() === now.getFullYear() ? base : `${base}, ${date.getFullYear()}`;
   }
 
@@ -530,8 +607,6 @@
     return `${day} · ${startTime}${endTime}`;
   }
 
-  const RECEIPT_VERBS = { create: 'Added', update: 'Updated', delete: 'Deleted' };
-
   function receiptDayKey(receipt) {
     if (receipt.kind === 'reminder') {
       return receipt.schedule_type === 'once_at' ? receipt.when.slice(0, 10) : '';
@@ -539,17 +614,15 @@
     return receipt.start.slice(0, 10);
   }
 
-  function buildReceiptMeta(receipt, escapeHtml) {
-    const parts = [];
-    if (receipt.kind !== 'reminder' && receipt.category !== 'default') {
-      parts.push(`<span class="cal-chat__badge">${escapeHtml(receipt.category)}</span>`);
+  function receiptVerb(receipt) {
+    const reminder = receipt.kind === 'reminder';
+    if (receipt.op === 'create') {
+      return reminder ? jt("calendarChatBlock.verbReminderSet", "Reminder set") : jt("calendarChatBlock.verbAdded", "Added");
     }
-    if (receipt.kind === 'reminder') {
-      parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderAutomatic", "Reminder fires automatically while Jenny is running."))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
+    if (receipt.op === 'update') {
+      return reminder ? jt("calendarChatBlock.verbReminderUpdated", "Reminder updated") : jt("calendarChatBlock.verbUpdated", "Updated");
     }
-    if (receipt.op === 'delete') parts.push('<span class="cal-chat__badge">deleted</span>');
-    parts.push(`<span class="cal-chat__jenny" title="${escapeHtml(jt("dashboard.calendar.agenda.addedByJenny", "Added by jenny"))}">${escapeHtml(jt("calendarChatBlock.jennyBadge", "jenny"))}</span>`);
-    return parts.join('');
+    return reminder ? jt("calendarChatBlock.verbReminderDeleted", "Reminder deleted") : jt("calendarChatBlock.verbDeleted", "Deleted");
   }
 
   function buildReceiptMarkup(receipt, deps) {
@@ -558,25 +631,27 @@
     if (!normalized || typeof options.actionButton !== 'function') return '';
     const title = normalized.title || jt("dashboard.calendar.agenda.noTitle", "(no title)");
     const when = formatReceiptWhen(normalized, options.now);
+    const verb = receiptVerb(normalized);
     const dayKey = receiptDayKey(normalized);
     const classes = [
       'cal-chat__row',
-      'cal-chat__row--receipt',
       `cal-event--${categoryClass(normalized.category)}`,
       normalized.kind === 'reminder' ? 'cal-chat__row--reminder' : '',
       normalized.op === 'delete' ? 'cal-chat__row--deleted' : '',
     ].filter(Boolean).join(' ');
     const dataset = dayKey ? { 'cal-open-day': dayKey } : {};
+    const tooltip = [title, normalized.category !== 'default' ? normalized.category : '',
+      jt("calendarChatBlock.addedByJennyTooltip", "added by Jenny")].filter(Boolean).join(' · ');
     const row = options.actionButton({
       plain: true,
       className: classes,
-      ariaLabel: `${RECEIPT_VERBS[normalized.op]} ${normalized.kind}: ${title}${when ? `, ${when}` : ''}`,
-      title,
+      ariaLabel: `${verb}: ${title}${when ? `, ${when}` : ''}`,
+      title: tooltip,
       dataset,
       trustedHtml: '<span class="cal-chat__dot" aria-hidden="true"></span>'
+        + `<span class="cal-chat__verb">${options.escapeHtml(verb)}</span>`
         + `<span class="cal-chat__title">${options.escapeHtml(title)}</span>`
-        + `<span class="cal-chat__when">${options.escapeHtml(when)}</span>`
-        + `<span class="cal-chat__meta">${buildReceiptMeta(normalized, options.escapeHtml)}</span>`,
+        + (when ? `<span class="cal-chat__when">${options.escapeHtml(when)}</span>` : ''),
     });
     const undo = normalized.journaled
       ? buildUndo(options.actionButton, normalized, options.hasLiveJournalEntry)

@@ -15,10 +15,12 @@ const { HOST_KEY_NAME } = require('../services/team/host/host-key-store');
 const { deviceKeyName } = require('../services/team/device-key-store');
 const { clientFilePath } = require('../services/team/client-file');
 const { TEAM_ERROR_CODES } = require('../services/backend/error-codes');
+const { keyPairFromSeed } = require('../server/team/ids');
 const { parseInvite } = require('../server/team/invites');
+const { parseReconnectCode } = require('../services/team/reconnect-code');
 const { HOST_SEED } = require('./server/helpers/team-host-fixture');
-const { BOUNDS, createFakeFork, createTestHostController } = require('./helpers/team-host-fakes');
-const { createTeamClientHost } = require('./helpers/team-client-host');
+const { BOUNDS, createFakeFork, createTestHostController, healthyHostScript } = require('./helpers/team-host-fakes');
+const { createMemorySecureStore, createTeamClientHost, tempProfile } = require('./helpers/team-client-host');
 
 
 // A fake host child: on start, ready; then the invite the test chose for this start (or an error).
@@ -38,16 +40,19 @@ function scriptedHost(teamId, plan) {
   };
 }
 
-async function deployedOwner(t) {
+async function deployedOwner(t, controllerOptions = {}) {
   const host = await createTeamClientHost(t);
   const service = host.createService();
   const first = await host.invite({ kind: 'owner_first' });
   const teamId = parseInvite(first.invite).team_id;
   host.secureStore.values.set(HOST_KEY_NAME, Buffer.from(HOST_SEED).toString('base64url'));
+  // A team deployed here before (a saved config), so Deploy keeps that key (E75: with none, it would make a fresh one).
+  fs.mkdirSync(path.join(host.userData, 'team-host'), { recursive: true });
+  fs.writeFileSync(path.join(host.userData, 'team-host', 'host-config.json'), JSON.stringify({ schema_version: 3, team: { name: 'Studio' } }));
   const plans = { next: { invite: first.invite } };
   const fake = createFakeFork({ script: scriptedHost(teamId, () => plans.next) });
   const { controller, logs } = createTestHostController(t, { userDataPath: host.userData, secureStore: host.secureStore,
-    service, fork: fake.fork });
+    service, fork: fake.fork, ...controllerOptions });
   const deployed = await controller.handle('hostDeploy', { name: 'Studio', display_name: 'Olive Owner', label: 'Desk' });
   assert.equal(deployed.owner.state, 'joined', JSON.stringify(deployed));
   await host.waitForState(teamId, 'online');
@@ -174,4 +179,93 @@ test('recovery needs a deployed host: no stored key is refused before anything i
   const answer = await controller.handle('hostRecover', { display_name: 'Olive Owner', label: 'Desk' });
   assert.deepEqual(answer, { ok: false, error: { code: TEAM_ERROR_CODES.HOST_UNAVAILABLE, reason: 'team_host_not_deployed' } });
   assert.equal(fake.calls.length, 0);
+});
+
+// Slice 5-3 fence extension (written red first). Fault: a host method with no branch of its own in
+// `handle` falling through to Recover (a restart with --team-recover), or the owner's code reaching
+// a log line, writing a file or taking the Deploy and Recover lock.
+test('hostReconnectCode never runs Recover: it answers the running host\'s code and changes nothing', async (t) => {
+  const { controller, fake, teamId, logs, old, snapshotOld } = await deployedOwner(t);
+  const starts = fake.calls.length;
+  const answer = await controller.handle('hostReconnectCode');
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.equal(fake.calls.length, starts, 'no host restarted');
+  const parsed = parseReconnectCode(answer.code);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.team_id, teamId);
+  assert.equal(parsed.host_public_key, keyPairFromSeed(Buffer.from(HOST_SEED)).publicKey);
+  assert.deepEqual(parsed.hints, ['192.0.2.7:4242']);
+  assert.deepEqual(snapshotOld(), old, 'device key and client file unchanged');
+  const lines = JSON.stringify(logs);
+  assert.equal(lines.includes(answer.code) || lines.includes('192.0.2.7'), false, 'no code or address in a log line');
+  assert.equal((await controller.handle('hostStatus')).host.state, 'running');
+  await controller.handle('hostStop');
+  assert.equal((await controller.handle('hostReconnectCode')).error?.reason, 'team_host_stopped');
+  assert.equal(fake.calls.length, starts, 'still no host started');
+});
+
+// Slice 5-3 review items 5 and 15. Fault: an internet setting that throws, or a getter with no return,
+// read as "off" (a code with no name), or the setting's name not reaching the code.
+test('hostReconnectCode: an unreadable or undefined setting is team_internet_invalid; a valid one carries its name', async (t) => {
+  let setting = () => null;
+  const { controller, logs } = await deployedOwner(t, { internet: () => setting() });
+  for (const next of [() => { throw new Error('203.0.113.9'); }, () => undefined, () => ({ direct_port: 1 })]) {
+    setting = next;
+    const answer = await controller.handle('hostReconnectCode');
+    assert.deepEqual([answer.ok, answer.error?.reason, answer.code], [false, 'team_internet_invalid', undefined]);
+  }
+  setting = () => ({ direct_port: 4242, mapped: null, public_address: 'team.example.net', relay_url: null, relay_token: null });
+  const parsed = parseReconnectCode((await controller.handle('hostReconnectCode')).code);
+  assert.deepEqual([parsed.host_name, parsed.hints], [{ name: 'team.example.net', port: 4242 }, ['192.0.2.7:4242']]);
+  assert.equal(JSON.stringify(logs).includes('team.example.net') || JSON.stringify(logs).includes('203.0.113.9'), false);
+});
+
+// Every name under a folder with its size, so "nothing was written" covers the whole user data folder.
+function folderListing(root) {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, entry.name);
+      out.push(entry.isDirectory() ? `${full}/` : `${full} ${fs.statSync(full).size}`);
+      if (entry.isDirectory()) walk(full);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+test('a lost host key: Recover with a saved config and no stored key is refused team_host_key_missing or team_host_key_set_aside', async (t) => {
+  for (const [corrupt, reason] of [[false, 'team_host_key_missing'], [true, 'team_host_key_set_aside']]) {
+    const host = await createTeamClientHost(t, { startBridge: false });
+    const root = path.join(host.userData, 'team-host');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'host-config.json'), JSON.stringify({ schema_version: 3, team: { name: 'Studio', direct_port: 45123 } }));
+    if (corrupt) fs.writeFileSync(path.join(host.userData, 'secure-state.json.corrupt-1731300000000'), '{');
+    const fake = createFakeFork({});
+    const { controller, logs } = createTestHostController(t, { userDataPath: host.userData, secureStore: host.secureStore,
+      service: host.createService(), fork: fake.fork });
+    const before = folderListing(host.userData);
+    const answer = await controller.handle('hostRecover', { display_name: 'Olive Owner', label: 'Desk' });
+    assert.deepEqual(answer, { ok: false, error: { code: TEAM_ERROR_CODES.DEVICE_KEY_UNAVAILABLE, reason } });
+    assert.deepEqual(folderListing(host.userData), before, 'nothing in the user data folder was created or changed');
+    assert.equal(fake.calls.length, 0);
+    assert.deepEqual(host.secureStore.sets, [], 'no key was made');
+    assert.equal(JSON.stringify(logs).includes(host.userData), false, 'no path in a log line');
+  }
+});
+
+test('a lost host key: a Recover refused while a host runs leaves that host running and its snapshot unchanged', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-lost-');
+  const secureStore = createMemorySecureStore();
+  const { controller, fake } = createTestHostController(t, { userDataPath, secureStore,
+    script: healthyHostScript({ teamId: 'team_x' }) });
+  assert.equal((await controller.handle('hostDeploy', { name: 'Studio', display_name: 'Olive Owner', label: 'Desk' })).ok, true);
+  const running = controller.snapshot();
+  assert.equal(running.state, 'running');
+  secureStore.values.delete(HOST_KEY_NAME);
+  const answer = await controller.handle('hostRecover', { display_name: 'Olive Owner', label: 'Desk' });
+  assert.equal(answer.error.reason, 'team_host_key_missing');
+  assert.deepEqual(controller.snapshot(), running, 'the running host and its snapshot are untouched');
+  assert.equal(fake.calls.length, 1, 'no second host started');
+  assert.equal(fake.calls[0].child.posted.some((message) => message.type === 'stop'), false, 'the host was not asked to stop');
 });

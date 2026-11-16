@@ -12,7 +12,8 @@
       require('../inventory/text-field'),
       require('../inventory/step-modal'),
       require('../inventory/context-menu'),
-      require('./renderer-model-library-format-utils')
+      require('./renderer-model-library-format-utils'),
+      require('../inventory/segmented-control')
     );
     return;
   }
@@ -27,7 +28,8 @@
     root.inventoryTextField,
     root.inventoryStepModal,
     root.inventoryContextMenu,
-    root.rendererModelLibraryFormatUtils
+    root.rendererModelLibraryFormatUtils,
+    root.inventorySegmentedControl
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   root,
@@ -40,11 +42,11 @@
   inventoryTextField,
   inventoryStepModal,
   inventoryContextMenu,
-  formatUtils
+  formatUtils,
+  segmentedControl
 ) {
   'use strict';
   var loadFailureReader = root.jennyModelLoadFailure || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
-  var recoveryModule = root.rendererModelLibraryRecoveryActions || (typeof require === 'function' ? require('./model-library/model-library-recovery-actions') : null);
   var sectionMergeModule = root.modelLibrarySectionMerge || (typeof require === 'function' ? require('./model-library/model-library-section-merge') : null);
   var sectionRenderModule = root.modelLibrarySectionRender || (typeof require === 'function' ? require('./model-library/model-library-section-render') : null);
   var sectionMenuModule = root.modelLibrarySectionMenu || (typeof require === 'function' ? require('./model-library/model-library-section-menu') : null);
@@ -55,7 +57,6 @@
   var CARD_SELECTOR = '.settings-card[data-settings-section="models"]';
   var TOOLBAR_HOST_ID = 'modelLibrarySectionToolbarHost';
   var HOST_ID = 'modelLibrarySectionHost';
-  var EXTRAS_HOST_ID = 'modelLibrarySectionExtrasHost'; // folders + image engine under the grid (else in the toolbar)
   var RECOVERY_ACTIONS = ['retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'];
   var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu'].concat(RECOVERY_ACTIONS);
 
@@ -66,10 +67,11 @@
     || !runtimeActionsModule
     || typeof runtimeActionsModule.createModelLibraryRuntimeActions !== 'function'
     || !mergeModule || typeof mergeModule.mergeModelLibrary !== 'function'
-    || typeof mergeModule.filterCounts !== 'function'
-    || !viewModule || typeof viewModule.buildModelGrid !== 'function'
-    || typeof viewModule.buildFilterChips !== 'function'
+    || !viewModule || typeof viewModule.buildLibraryItems !== 'function'
+    || typeof viewModule.libraryRowsModel !== 'function'
+    || typeof viewModule.buildScopeChips !== 'function'
     || typeof viewModule.buildHardwareSummaryLine !== 'function'
+    || !segmentedControl || typeof segmentedControl.initSegmentedHandlers !== 'function'
     || typeof inventoryActionButton !== 'function'
     || typeof inventoryTextField !== 'function'
     || !inventoryStepModal || typeof inventoryStepModal.renderStepModal !== 'function'
@@ -132,7 +134,7 @@
     var disposed = false;
     var boundCard = null;
     var unsubscribeFeatures = null;
-    var view = { filter: 'all', pullTag: '', statusMessage: '' };
+    var view = { query: '', scope: 'all', sort: 'name', showAllCatalog: false, statusMessage: '' };
     // The status a load wrote; a later load clears only that, never an action's result ("removed").
     var loadStatusMessage = '';
 
@@ -146,7 +148,6 @@
     }
     function host() { return byId(HOST_ID); }
     function toolbarHost() { return byId(TOOLBAR_HOST_ID); }
-    function extrasHost() { return byId(EXTRAS_HOST_ID); }
     function isDisposed() { return disposed; }
     function getSourceData() { return sourceData; }
     function getMerged() { return merged; }
@@ -155,7 +156,7 @@
     // Flag readers and the merged card list (model-library-section-merge.js).
     var mergeInputs = sectionMergeModule.createModelLibrarySectionMerge({
       state: state, windowRef: windowRef, sourcesModule: sourcesModule, mergeModule: mergeModule,
-      loadFailureReader: loadFailureReader, getSourceData: getSourceData, getEngineBlocks: getEngineBlocks,
+      loadFailureReader: loadFailureReader, getSourceData: getSourceData, getEngineBlocks: getEngineBlocks, getMerged: getMerged,
     });
     var activeModel = mergeInputs.activeModel;
     var accelerationFlagEnabled = mergeInputs.accelerationFlagEnabled;
@@ -171,7 +172,16 @@
       var module = resolveEngineBlocksModule();
       if (typeof module?.createModelLibraryEngineBlocks !== 'function') return null;
       return module.createModelLibraryEngineBlocks({ windowRef: windowRef, documentRef: documentRef, imageEngineEnabled: mergeInputs.imageEngineFlagEnabled,
-        ninferEnabled: mergeInputs.ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } } });
+        ninferEnabled: mergeInputs.ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } },
+        llamaServerEnabled: accelerationFlagEnabled, llamaServer: mergeInputs.llamaServerInfo, folders: folders });
+    }
+
+    // Add GGUF file… opens the llama-server drawer, where the add flow shows its progress, and starts it.
+    function addGguf(button) {
+      var services = root.modelLibraryServices?.shared?.({ documentRef: documentRef, windowRef: windowRef });
+      // The add flow reports into the drawer; without it the progress would go nowhere.
+      if (!services?.has('llama-server') || !services.open('llama-server', button)) return null;
+      return folders()?.addModel();
     }
 
     function folders() {
@@ -238,24 +248,30 @@
       refreshModelPickers: function () { refreshModelPickers(); }, appendClientLog: appendClientLog,
     });
 
+    var shareCtl = null; // slice 6-7: model sharing in the rows and the ⋯ menu (model-library-share-section.js), once loaded
+    var shareDeps = { documentRef: documentRef, state: state, getSourceData: getSourceData, card: card, host: host, setStatusMessage: setStatusMessage,
+      renderRows: function () { renderRows(); }, queueRow: function (key) { renderer.queueRow(key); }, refresh: function () { return refresh({ force: true }); } };
+    function share() { var mod = root.modelLibraryShareSection; if (!shareCtl && !disposed && mod) shareCtl = mod.createModelLibraryShare(shareDeps); return shareCtl; }
+
     // A card's ⋯ menu and Tune options (model-library-section-menu.js).
     var menu = sectionMenuModule.createModelLibrarySectionMenu({
       windowRef: windowRef, documentRef: documentRef, state: state, contextMenu: contextMenu,
       isLibraryTag: sourcesModule.isLibraryTag, focusQuietly: sectionRenderModule.focusQuietly,
       card: card, host: host, toolbarHost: toolbarHost, folders: folders, isDisposed: isDisposed,
       setStatusMessage: setStatusMessage, ninferLibraryInput: mergeInputs.ninferLibraryInput,
-      getSourceData: getSourceData, requestRemove: deleteFlow.requestConfirm,
+      getSourceData: getSourceData, requestRemove: deleteFlow.requestConfirm, share: share,
     });
 
-    // Toolbar and card grid rendering (model-library-section-render.js).
+    // Toolbar, card grid and Running now rendering (model-library-section-render.js).
     var renderer = sectionRenderModule.createModelLibrarySectionRender({
-      documentRef: documentRef, view: view, actions: ACTIONS, viewModule: viewModule, mergeModule: mergeModule,
-      inventoryTextField: inventoryTextField, inventoryActionButton: inventoryActionButton,
-      host: host, toolbarHost: toolbarHost, extrasHost: extrasHost, isDisposed: isDisposed,
+      documentRef: documentRef, windowRef: windowRef, view: view, actions: ACTIONS, viewModule: viewModule,
+      inventoryTextField: inventoryTextField, inventoryActionButton: inventoryActionButton, segmentedControl: segmentedControl,
+      host: host, toolbarHost: toolbarHost, card: card, isDisposed: isDisposed,
       getMerged: getMerged, hardwarePending: hardwarePending, accelerationFlagEnabled: accelerationFlagEnabled,
       getEngineBlocks: getEngineBlocks, renderFolders: renderFolders, hideMenu: menu.hide,
       currentPulls: currentPulls, activationState: function () { return runtimeActions.activationState(); },
       renderConfirmModal: deleteFlow.renderConfirmModal, findModel: findModel,
+      runningHost: function () { return byId('modelRunningHost'); }, activeModel: activeModel, preferredModel: mergeInputs.preferredLocalModel, share: share,
     });
     var renderRows = renderer.renderRows;
 
@@ -288,6 +304,7 @@
         if (nextLoadStatus || view.statusMessage === loadStatusMessage) setStatusMessage(nextLoadStatus);
         loadStatusMessage = nextLoadStatus;
         render();
+        if (share()) share().libraryLoaded();
         return result;
       }).catch(function (error) {
         if (!disposed) {
@@ -317,13 +334,18 @@
       if (disposed) return;
       var pull = currentPulls()[key];
       if (!pull) return;
-      // Ollama progress events are unthrottled. A running tick never changes
-      // row membership, so the missing-row fallback below must only fire on a
-      // status TRANSITION - otherwise pulling a tag that has no row in the
-      // current DOM (filter = Installed, or a tag outside the catalog) rebuilds
-      // the whole list several times a second.
+      // A running tick never changes row membership, so the missing-row
+      // fallback below must only fire on a status TRANSITION - otherwise
+      // pulling a tag that has no row in the current DOM (a scope that hides
+      // it, or a tag outside the catalog) rebuilds the whole list several
+      // times a second.
       var previousPullStatus = pullRenderStatus[key] || '';
       pullRenderStatus[key] = String(pull.status || '');
+      // Ollama progress events are unthrottled: a running tick waits for the next animation frame.
+      if (pull.status === 'running' && previousPullStatus === 'running' && pull.cancelFailed !== true) {
+        renderer.queueRow(key);
+        return;
+      }
       if (pull.status === 'done') {
         setStatusMessage(jt('settings.modelLibrary.pullComplete', 'Pull complete: {tag}.', { tag: pull.tag }));
         void refresh({ force: true }).then(function () { refreshModelPickers(); });
@@ -361,9 +383,9 @@
       appendClientLog: appendClientLog,
     });
 
-    var recovery = recoveryModule.createModelLibraryRecoveryActions({
+    var recovery = runtimeActionsModule.createModelLibraryRecoveryActions({
       windowRef: windowRef, state: state, runtimeActions: runtimeActions, setStatusMessage: setStatusMessage,
-      setFilter: function (filter) { view.filter = filter; render(); }, openDiagnostics: d.openDiagnostics, reader: loadFailureReader,
+      showCatalog: function () { view.scope = 'get'; render(); }, openDiagnostics: d.openDiagnostics, reader: loadFailureReader,
     });
 
     function startPull(tag) {
@@ -372,7 +394,6 @@
         setStatusMessage(jt('settings.modelLibrary.enterTagFirst', 'Enter a model tag first.'));
         return;
       }
-      view.pullTag = model;
       setStatusMessage(jt('settings.modelLibrary.startingPull', 'Starting Ollama pull.'));
       void ensurePullController().start(model);
     }
@@ -380,12 +401,13 @@
     function handleClick(event) {
       var target = event && event.target;
       if (!target || typeof target.closest !== 'function') return;
+      if (share() && share().handleClick(event)) return;
       var chip = target.closest('[data-inv-chip]');
       if (chip && card()?.contains(chip)) {
-        var filter = chip.getAttribute('data-inv-chip');
-        if (['all', 'installed', 'recommended'].includes(filter)) {
-          view.filter = filter;
-          render();
+        var scope = String(chip.getAttribute('data-inv-chip') || '').replace(/^scope-/, '');
+        if (['all', 'mine', 'get'].includes(scope)) {
+          view.scope = scope;
+          renderRows();
         }
         return;
       }
@@ -417,18 +439,52 @@
           runtimeActions.clearActivationMessage();
           void refresh({ force: true });
         }
-        else if (sectionActionId === 'pull-tag') startPull(view.pullTag);
+        else if (sectionActionId === 'pull-tag') startPull(view.query);
+        else if (sectionActionId === 'add-gguf') addGguf(sectionAction);
+        else if (sectionActionId === 'show-catalog' || sectionActionId === 'hide-catalog') {
+          view.showAllCatalog = sectionActionId === 'show-catalog';
+          renderRows();
+        } else if (sectionActionId === 'clear-search') {
+          view.query = '';
+          var search = toolbarHost()?.querySelector('[data-model-library-section-input="search"]');
+          if (search) {
+            search.value = '';
+            sectionRenderModule.focusQuietly(search);
+          }
+          renderRows();
+        }
         return;
       }
       deleteFlow.handleClick(target);
     }
 
+    // Typing filters in place: only the chip counts and the rows are rebuilt, never the field.
     function handleInput(event) {
       var target = event && event.target;
       if (target && target.getAttribute
-        && target.getAttribute('data-model-library-section-input') === 'pull-tag') {
-        view.pullTag = String(target.value || '');
+        && target.getAttribute('data-model-library-section-input') === 'search') {
+        view.query = String(target.value || '');
+        renderRows();
       }
+    }
+
+    // Enter on a pasted tag pulls it, like the Pull row's button.
+    function handleSearchKeydown(event) {
+      var target = event && event.target;
+      if (!event || event.key !== 'Enter' || event.isComposing || !target || !target.getAttribute
+        || target.getAttribute('data-model-library-section-input') !== 'search') return;
+      view.query = String(target.value || '');
+      var tag = viewModule.libraryRowsModel(merged || { cards: [] }, { query: view.query, scope: view.scope }).pullRow;
+      if (!tag) return;
+      event.preventDefault();
+      startPull(tag);
+    }
+
+    function handleSortChange(event) {
+      var detail = event && event.detail;
+      if (!detail || detail.id !== 'modelLibrarySort' || !['name', 'size'].includes(detail.value)) return;
+      view.sort = detail.value;
+      renderRows();
     }
     function handleKeydown(event) { deleteFlow.handleKeydown(event); }
 
@@ -483,6 +539,11 @@
       if (boundCard) {
         boundCard.addEventListener('click', handleClick);
         boundCard.addEventListener('input', handleInput);
+        boundCard.addEventListener('keydown', handleSearchKeydown);
+        boundCard.addEventListener('inv-segmented-change', handleSortChange);
+        // The document may already carry the delegated sort handlers (the Tune drawer installs them).
+        if (!documentRef.__invSegmentedHandlersInstalled) segmentedControl.initSegmentedHandlers(boundCard);
+        renderer.bindPreview();
       }
       documentRef.addEventListener('keydown', handleKeydown);
       var features = windowRef.jennyShell && windowRef.jennyShell.features;
@@ -500,7 +561,10 @@
       if (boundCard) {
         boundCard.removeEventListener('click', handleClick);
         boundCard.removeEventListener('input', handleInput);
+        boundCard.removeEventListener('keydown', handleSearchKeydown);
+        boundCard.removeEventListener('inv-segmented-change', handleSortChange);
       }
+      renderer.dispose();
       documentRef.removeEventListener('keydown', handleKeydown);
       boundCard = null;
       if (typeof unsubscribeFeatures === 'function') {
@@ -515,6 +579,7 @@
       engineBlocks = null;
       menu.hide();
       deleteFlow.removeConfirmModal();
+      if (shareCtl) shareCtl.dispose();
     }
 
     return {

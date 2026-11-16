@@ -208,7 +208,13 @@ def test_default_mcp_servers_forward_shell_security_and_git_tracking_flags(
 
 @pytest.mark.parametrize(
     "flag",
-    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks", "test_progress"],
+    [
+        "shell_noninteractive_env",
+        "shell_head_tail_output",
+        "edit_match_fallbacks",
+        "test_progress",
+        "background_live_output",
+    ],
 )
 def test_default_mcp_servers_forward_row60_default_on_flags(tmp_path: Path, flag: str) -> None:
     option = f"--{flag.replace('_', '-')}-enabled"

@@ -172,3 +172,24 @@ test('generic picker reads reject revoked catalogs while merging local models', 
   assert.equal(service._modelEngineHints, undefined);
   assert.equal(service._modelListLastResult, undefined);
 });
+
+test('4b member wiring: team rows join the cache key and survive the normaliser; force local lists none', async (t) => {
+  const now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  let teams = [];
+  let reads = 0;
+  const service = {
+    currentEngineType: 'ollama', currentModel: 'alpha', defaultModel: 'alpha', providerIntegrationRegistry: null,
+    options: { getTeamEngine: () => ({ listTeams: () => teams }) },
+    listModelsForEngine() { reads += 1; return Promise.resolve({ object: 'list', available: true, data: [{ id: 'alpha' }] }); },
+  };
+  assert.deepEqual((await listModels(service)).data.map((row) => row.id), ['alpha']);
+  teams = [{ teamId: 'team_alpha1', name: 'Alpha crew', models: ['alpha'] }];
+  const withTeam = await listModels(service);
+  assert.equal(reads, 2, 'a team that came online inside the TTL is not served the cached list');
+  assert.deepEqual(withTeam.data.at(-1), { id: 'team/team_alpha1/alpha', engine_type: 'openai-compatible', available: true,
+    team_id: 'team_alpha1', team_name: 'Alpha crew' });
+  assert.equal(service._modelEngineHints.get('team/team_alpha1/alpha'), 'openai-compatible');
+  service.offlineIntelligenceService = { getMode: () => 'local_only' };
+  assert.deepEqual((await listModels(service)).data.map((row) => row.id), ['alpha']);
+});

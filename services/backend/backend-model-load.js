@@ -18,6 +18,16 @@ const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const {
   assertApiProviderUsable, persistApiProviderLoad,
 } = require('./api-provider-runtime');
+const { assertTeamModelUsable, isReservedTeamModelId, liveTeamSelection } = require('./team-engine-models');
+const { pickInstalledDefaultModel } = require('./backend-chat-model-resolution');
+const { checkOllamaLoad, refusalMessageForStatus, vramRefusalError } = require('./vram-load-preflight');
+
+// A managed launch the VRAM check refused carries its user copy in the preflight.
+function managedLaunchError(service, kind, model, status) {
+  const refusal = refusalMessageForStatus(service, status) ? service.vramLoadPreflight.getLastRefusal() : null;
+  if (refusal) return vramRefusalError(refusal, { error_code: AI_ERROR_CODES.ENGINE_CONNECTION });
+  return new Error(`Could not start ${kind} for "${model}": ${status?.lastError || status?.state}`);
+}
 
 
 function refreshSetupReadinessAfterModelLoad(service) {
@@ -57,7 +67,19 @@ function countActiveStreamsExcluding(activeStreams, excludedStreamId) {
   return count;
 }
 
+// A load that fails leaves the team selection as it was before it (TEAM_NODE_PROTOCOL_SPEC "4b member
+// wiring as built"): the selection never names a model the engine did not switch to.
 async function loadModel(service, model, options = {}) {
+  const previousSelection = service._teamEngineSelection || null;
+  try {
+    return await switchModel(service, model, options);
+  } catch (error) {
+    service._teamEngineSelection = previousSelection;
+    throw error;
+  }
+}
+
+async function switchModel(service, model, options = {}) {
   const loadRequest = normalizeModelLoadRequest(service, model);
     const requestedModelName = loadRequest.model;
     const availability = service.providerIntegrationRegistry?.resolveModelAvailability?.(requestedModelName) || { available: true, reason: '' };
@@ -105,6 +127,9 @@ async function loadModel(service, model, options = {}) {
     }
     // Refuse before anything is switched or stopped: a missing key must not cost a running engine.
     if (requestedEngineType === 'api-provider') assertApiProviderUsable(service, requestedModelName);
+    // A team model (team-engine-models.js) runs on its team's engine port, an openai-compatible endpoint.
+    const teamSelection = isReservedTeamModelId(service, requestedModelName) ? assertTeamModelUsable(service, requestedModelName) : null;
+    if (teamSelection) requestedEngineType = 'openai-compatible';
     const manager = service.options?.getLlamaServerManager?.() || null;
     const managed = manager
       ? service.configService?.getLocalEngines?.()?.openaiCompatible?.managed || null
@@ -156,7 +181,9 @@ async function loadModel(service, model, options = {}) {
         }
       );
     }
-    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer) && otherActiveStreams > 0) {
+    // A team load, or one that leaves a team model, re-initialises the sidecar under any other live stream.
+    const teamSwitch = Boolean(teamSelection || liveTeamSelection(service));
+    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer || teamSwitch) && otherActiveStreams > 0) {
       service._emitServiceLog?.('WARN', 'backend.engine_switch_refused_stream_active', {
         active_stream_count: otherActiveStreams,
         model: requestedModelName,
@@ -170,6 +197,16 @@ async function loadModel(service, model, options = {}) {
         }
       );
     }
+    if (requestedEngineType === 'ollama' && !teamSelection) {
+      // Checked before anything is stopped: the managed servers this load stops count as free.
+      const verdict = await checkOllamaLoad(service, requestedModelName, {
+        reclaimPids: [stopsManagedServer && llamaServerStatus?.pid, stopsNinfer && ninferManager?.getStatus?.()?.pid],
+      });
+      if (!verdict.ok) throw vramRefusalError(verdict, { error_code: AI_ERROR_CODES.ENGINE_CONNECTION });
+    }
+    // The team selection follows this load from here, before anything is switched: every refusal above
+    // left it, and the running engine, as they were.
+    service._teamEngineSelection = teamSelection;
     if (managedLoad || ninferLoad) {
       const previousModel = String(service.currentModel || '').trim();
       if (service.currentEngineType === 'ollama' && previousModel) {
@@ -216,10 +253,8 @@ async function loadModel(service, model, options = {}) {
       if (ninferLoad) {
         const ninferStatus = await ninferManager.ensureRunning({ artifactId: ninferArtifact.id });
         if (ninferStatus?.state !== 'ready') {
-          throw Object.assign(
-            new Error(`Could not start NInfer for "${requestedModelName}": ${ninferStatus?.lastError || ninferStatus?.state}`),
-            { ninfer_status: ninferStatus || null }
-          );
+          throw Object.assign(managedLaunchError(service, 'NInfer', requestedModelName, ninferStatus),
+            { ninfer_status: ninferStatus || null });
         }
       } else {
         // llama-server's launch gate refuses while NInfer is up: stop it with proof first.
@@ -231,9 +266,7 @@ async function loadModel(service, model, options = {}) {
           mtp: perModel.mtp,
         });
         if (llamaStatus?.state !== 'ready') {
-          throw new Error(
-            `Could not start llama-server for "${requestedModelName}": ${llamaStatus?.lastError || llamaStatus?.state}`
-          );
+          throw managedLaunchError(service, 'llama-server', requestedModelName, llamaStatus);
         }
       }
     } else {
@@ -272,7 +305,7 @@ async function loadModel(service, model, options = {}) {
       service.configService?.updatePreferredEngineType?.('openai-compatible');
       service.configService?.updateNinferSettings?.({ lastUsedArtifactId: ninferArtifact.id });
       if (managed?.lastUsedTag) service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
-    } else if (ninferSettings?.lastUsedArtifactId) {
+    } else if (ninferSettings?.lastUsedArtifactId && !teamSelection) {
       service.configService?.updateNinferSettings?.({ lastUsedArtifactId: '' });
     }
     if (managedLoad) {
@@ -294,7 +327,8 @@ async function loadModel(service, model, options = {}) {
         // one initialized) recorded its own target, and keeps it.
         service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
       }
-    } else if (manager && managed && !ninferLoad) {
+    } else if (manager && managed && !ninferLoad && !teamSelection) {
+      // A team load leaves both managed boot targets alone: it never changes what starts at boot.
       if (managed.lastUsedTag) {
         // Forget the boot autostart target so the next launch cannot reverse this.
         service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
@@ -355,13 +389,24 @@ function autoLoadDefaultModel(service) {
   ).trim().toLowerCase() || 'mock';
   const startupModelLoad = service.configService?.getLocalEngines?.()?.startupModelLoad !== false;
   if (startupModelLoad && requestedEngine === 'ollama') {
-    service._emitServiceLog('INFO', 'backend.default_model_startup_load', {
-      model: configuredDefaultModel,
-      engine: requestedEngine,
-    });
-    service.loadModel(configuredDefaultModel).catch((error) => {
+    // Only an installed default loads at startup: Ollama pulls a missing tag, and a fresh profile
+    // started a multi-GB download of the built-in default nobody asked for (2026-11-13).
+    let startedModel = configuredDefaultModel;
+    pickInstalledDefaultModel(service).then(({ model, missing, unconfirmed }) => {
+      if (!model) {
+        service._emitServiceLog('INFO', 'backend.default_model_startup_skipped', {
+          model: missing || configuredDefaultModel,
+          engine: requestedEngine,
+          reason: unconfirmed ? 'unconfirmed' : 'not_installed',
+        });
+        return null;
+      }
+      startedModel = model;
+      service._emitServiceLog('INFO', 'backend.default_model_startup_load', { model, engine: requestedEngine });
+      return service.loadModel(model);
+    }).catch((error) => {
       service._emitServiceLog('WARN', 'backend.default_model_startup_load_failed', {
-        model: configuredDefaultModel,
+        model: startedModel,
         engine: requestedEngine,
         message: String(error?.message || error),
       });

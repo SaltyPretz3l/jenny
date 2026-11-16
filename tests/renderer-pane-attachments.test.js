@@ -126,7 +126,7 @@ test('an image pasted into pane 1 lands in pane 1\'s queue and tray; pane 0\'s q
   assert.equal(doc.getElementById('attachmentTray').innerHTML, pane0TrayHtml, 'pane 0\'s tray is byte-identical');
   const tray = paneTray(pane1);
   assert.equal(tray.classList.contains('hidden'), false, 'pane 1\'s tray shows');
-  assert.equal(tray.querySelectorAll('.attachment-chip-image').length, 1);
+  assert.equal(tray.querySelectorAll('.composer-attachment--image').length, 1);
   assert.equal(pane1.dom.chatInput.value, '', 'precondition: the draft is empty');
   assert.equal(pane1.sendButton.disabled, false, 'a queued attachment alone enables pane 1\'s Send (pane 0\'s rule)');
 });
@@ -155,7 +155,7 @@ test('pane 1\'s attach button opens the picker for pane 1\'s session and the fil
   assert.equal(doc.getElementById('composerAttachShortcut') === doc.activeElement, false);
   assert.deepEqual(plain(queueOf(state, 'session-b').map((entry) => entry.id)), ['file-1']);
   assert.equal(state.attachments.queued.length, 0);
-  assert.equal(paneTray(pane1).querySelector('[data-attachment-id="file-1"] .attachment-chip-name').textContent, 'notes.txt');
+  assert.equal(paneTray(pane1).querySelector('[data-attachment-id="file-1"] .composer-attachment-name').textContent, 'notes.txt');
 });
 
 test('a drop on pane 1 marks only pane 1 chat-drop-active and queues into pane 1', async (t) => {
@@ -224,7 +224,7 @@ test('a send from pane 1 carries pane 1\'s attachments and clears pane 1\'s queu
   assert.deepEqual(plain(chatCalls[0].attachments.map((entry) => entry.displayName)), ['one.png']);
   assert.equal(queueOf(state, 'session-b').length, 0, 'pane 1\'s queue cleared');
   assert.equal(paneTray(pane1).classList.contains('hidden'), true, 'pane 1\'s tray re-rendered empty');
-  assert.equal(paneTray(pane1).querySelectorAll('.attachment-chip').length, 0);
+  assert.equal(paneTray(pane1).querySelectorAll('[data-attachment-id]').length, 0);
   assert.equal(state.attachments.queued, pane0Queue, 'pane 0\'s queue keeps its identity');
   assert.deepEqual(plain(pane0Queue.map((entry) => entry.displayName)), ['zero.png']);
   assert.equal(doc.getElementById('attachmentTray').innerHTML, pane0TrayHtml, 'pane 0\'s tray is untouched');
@@ -250,7 +250,7 @@ test('a rail tab switch in pane 0 restores pane 0\'s record and leaves pane 1\'s
   assert.equal(state.attachments.queued.length, 0, 'pane 0 shows session-c\'s empty queue');
   assert.equal(queueOf(state, 'session-a'), pane0Queue, 'session-a\'s queue was captured by reference');
   assert.equal(queueOf(state, 'session-b'), pane1Queue, 'pane 1\'s queue is the same array');
-  assert.equal(paneTray(pane1).querySelectorAll('.attachment-chip').length, 1);
+  assert.equal(paneTray(pane1).querySelectorAll('[data-attachment-id]').length, 1);
 
   await state.harness.agentActions.openSession('session-a');
   await waitForUi(window, 100);
@@ -275,8 +275,8 @@ test('a rail tab switch while pane 1 is focused lands in pane 1 and leaves pane 
   assert.equal(state.panes.panes[0].sessionId, 'session-a', 'pane 0 kept its session');
   assert.equal(state.attachments.queued, pane0Queue, 'the live queue is still pane 0\'s array');
   assert.equal(input0.value, 'pane zero draft', 'pane 0\'s textarea was not restored over');
-  assert.equal(doc.getElementById('attachmentTray').querySelectorAll('.attachment-chip').length, 1, 'pane 0\'s tray still shows its file');
-  assert.equal(paneTray(pane1).querySelectorAll('.attachment-chip').length, 0, 'pane 1 shows session-c\'s empty queue');
+  assert.equal(doc.getElementById('attachmentTray').querySelectorAll('[data-attachment-id]').length, 1, 'pane 0\'s tray still shows its file');
+  assert.equal(paneTray(pane1).querySelectorAll('[data-attachment-id]').length, 0, 'pane 1 shows session-c\'s empty queue');
 });
 
 test('unmounting pane 1 removes its attachment listeners; pane 0\'s bindings and the drop suppression stay', async (t) => {
@@ -320,7 +320,7 @@ test('one pane: a paste keeps today\'s live queue (captured by reference, the he
   await waitForUi(window, 60);
   const live = state.attachments.queued;
   assert.deepEqual(plain(live.map((entry) => entry.displayName)), ['solo.png']);
-  assert.equal(doc.getElementById('attachmentTray').querySelectorAll('.attachment-chip-image').length, 1);
+  assert.equal(doc.getElementById('attachmentTray').querySelectorAll('.composer-attachment--image').length, 1);
   input.value = 'hello';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.equal(queueOf(state, 'session-a'), live, 'the input capture moves the live array by reference');
@@ -416,9 +416,7 @@ test('a second pane\'s attachment bindings bind only its own nodes and key every
   bindings.dispose();
 });
 
-/* ── unit: pane 0's tray markup is today's byte for byte; a pane target renders its own ── */
-const TODAY_TRAY_HTML = '\n          <div class="attachment-chip attachment-chip-image" data-attachment-id="img-1">\n            <img class="attachment-chip-preview" src="file:///C:/attachments/shot.png" alt="Shot.png">\n            <span class="attachment-chip-copy">\n              <span class="attachment-chip-name" title="Shot.png">Shot.png</span>\n              <span class="attachment-chip-meta">paste - 320x200</span>\n            </span>\n            <button class="attachment-chip-remove" type="button" data-attachment-remove="img-1" aria-label="Remove Shot.png" title="Remove attachment">x</button>\n          </div>\n          <div class="attachment-chip" data-attachment-id="file-1">\n            \n            <span class="attachment-chip-copy">\n              <span class="attachment-chip-name" title="notes.txt">notes.txt</span>\n              <span class="attachment-chip-meta">2 KB</span>\n            </span>\n            <button class="attachment-chip-remove" type="button" data-attachment-remove="file-1" aria-label="Remove notes.txt" title="Remove attachment">x</button>\n          </div><button class="attachment-chip attachment-chip-clear" type="button" data-attachment-clear="true" title="Remove all attachments" aria-label="Clear all attachments">Clear all</button>';
-
+/* ── unit: the tray markup (row 153): pane 0 and a pane target render the same items from their own queues ── */
 function trayEntries() {
   return [
     { id: 'img-1', kind: 'image', displayName: 'Shot.png', assetPath: 'C:/attachments/shot.png', sourceKind: 'clipboard', width: 320, height: 200 },
@@ -426,7 +424,7 @@ function trayEntries() {
   ];
 }
 
-test('pane 0\'s tray render is today\'s markup; a pane target renders its own queue and skips an unchanged rebuild', () => {
+test('pane 0\'s tray renders the row 153 items; a pane target renders its own queue and skips an unchanged rebuild', () => {
   const dom = new JSDOM('<div id="v"><div id="t" class="attachment-tray hidden"></div><div id="n"></div></div>'
     + '<div id="p1" class="chat-pane"><div id="t1" class="attachment-tray hidden"></div></div>');
   const d = dom.window.document;
@@ -435,8 +433,22 @@ test('pane 0\'s tray render is today\'s markup; a pane target renders its own qu
   const state = { attachments: { queued: live, dragDepth: 0 } };
   const controller = createSidebarController({ state, dom: { chatView: d.getElementById('v'), attachmentTray: d.getElementById('t'), attachmentNotice: d.getElementById('n') }, callbacks: { escapeHtml: esc } });
   controller.renderAttachmentTray();
-  assert.equal(d.getElementById('t').innerHTML, TODAY_TRAY_HTML);
-  assert.equal(d.getElementById('t').className, 'attachment-tray');
+  const tray0 = d.getElementById('t');
+  const paneZeroHtml = tray0.innerHTML;
+  assert.equal(tray0.className, 'attachment-tray');
+  const thumb = tray0.querySelector('[data-attachment-id="img-1"] .composer-attachment-thumb');
+  assert.equal(thumb.getAttribute('aria-label'), 'Open Shot.png');
+  assert.equal(thumb.getAttribute('title'), 'Shot.png · Pasted · 320 × 200');
+  assert.equal(thumb.dataset.attachmentCaption, 'Pasted · 320 × 200');
+  assert.equal(thumb.querySelector('img').getAttribute('src'), 'file:///C:/attachments/shot.png');
+  const file = tray0.querySelector('[data-attachment-id="file-1"]');
+  assert.equal(file.className, 'composer-attachment composer-attachment--file');
+  assert.equal(file.querySelector('.composer-attachment-name').textContent, 'notes.txt');
+  assert.equal(file.querySelector('.composer-attachment-meta').textContent, 'TXT · 2 KB');
+  assert.equal(file.querySelector('.composer-attachment-icon text').textContent, 'TXT');
+  assert.equal(file.querySelector('[data-attachment-remove="file-1"]').getAttribute('aria-label'), 'Remove notes.txt');
+  assert.equal(tray0.querySelector('[data-attachment-clear]'), null, 'no Clear all below three items');
+  assert.equal(tray0.querySelector('.attachment-chip'), null, 'the Team tab\'s chip classes are not used here');
 
   const paneQueue = [trayEntries()[1]];
   const target = { tray: d.getElementById('t1'), notice: null, chatView: d.getElementById('p1'), queued: paneQueue, dragDepth: 1 };
@@ -446,7 +458,8 @@ test('pane 0\'s tray render is today\'s markup; a pane target renders its own qu
   assert.deepEqual([...tray1.querySelectorAll('[data-attachment-id]')].map((node) => node.dataset.attachmentId), ['file-1']);
   assert.equal(d.getElementById('p1').classList.contains('chat-drop-active'), true);
   assert.equal(d.getElementById('v').classList.contains('chat-drop-active'), false, 'pane 0\'s view untouched');
-  assert.equal(d.getElementById('t').innerHTML, TODAY_TRAY_HTML, 'pane 0\'s tray untouched');
+  assert.equal(tray0.innerHTML, paneZeroHtml, 'pane 0\'s tray untouched');
+  assert.equal(tray1.querySelector('.composer-attachment-drop'), null, 'a drag adds nothing to the tray: the drop hint is CSS');
   const chip = tray1.firstElementChild;
   controller.renderAttachmentTray({ ...target, queued: paneQueue.slice() });
   assert.equal(tray1.firstElementChild, chip, 'the same ids and drag depth keep the tray nodes');
@@ -483,5 +496,84 @@ test('a second pane showing no session never opens an op on the live queue', (t)
   doc.getElementById('attach').click();
   assert.equal(calls.some((call) => call[0] === 'beginAttachmentToken'), false, 'no token for a blank pane');
   assert.deepEqual(calls.filter((call) => call[0] === 'handleAttachmentPicker').map((call) => call[1]), [null], 'the picker op carries no session');
+  bindings.dispose();
+});
+
+/* ── unit (row 153): focus after a remove, the thumbnail opens the viewer, Clear all renders once ── */
+const ROW153_TRAY = '<div class="composer-attachment" data-attachment-id="a"><button data-attachment-remove="a">x</button></div>'
+  + '<div class="composer-attachment composer-attachment--image" data-attachment-id="b"><button data-attachment-open="b" data-attachment-title="b.png" data-attachment-caption="Pasted · 4 × 3"><img src="file:///C:/b.png" alt=""></button><button data-attachment-remove="b">x</button></div>'
+  + '<div class="composer-attachment" data-attachment-id="c"><button data-attachment-remove="c">x</button></div>'
+  + '<button data-attachment-clear="true">Clear all</button>';
+
+test('row 153: removing an item focuses the next item, else the one before, else the message box', (t) => {
+  const { doc } = withDom(t);
+  const calls = [];
+  const deps = bindingDeps(doc, calls);
+  const tray = doc.getElementById('tray');
+  // The tray re-renders without the removed item, as the queue controller does.
+  deps.callbacks.removeQueuedAttachment = (id) => { calls.push(['remove', id]); tray.querySelector(`[data-attachment-id="${id}"]`)?.remove(); };
+  const bindings = createAttachmentEventBindings(deps);
+  bindings.bind();
+  tray.innerHTML = ROW153_TRAY;
+  tray.querySelector('[data-attachment-remove="b"]').click();
+  assert.equal(doc.activeElement, tray.querySelector('[data-attachment-remove="c"]'), 'the next item');
+  tray.querySelector('[data-attachment-remove="c"]').click();
+  assert.equal(doc.activeElement, tray.querySelector('[data-attachment-remove="a"]'), 'the one before');
+  tray.querySelector('[data-attachment-remove="a"]').click();
+  assert.equal(doc.activeElement, doc.getElementById('input'), 'the message box once the tray is empty');
+  bindings.dispose();
+});
+
+test('row 153: Delete on a thumbnail removes its image; a thumbnail click opens the viewer view-only on the tray images', (t) => {
+  const { dom, doc } = withDom(t);
+  const calls = [];
+  const opened = [];
+  dom.window.rendererImageViewerController = { open: (request) => { opened.push(request); return Promise.resolve(true); } };
+  const previous = globalThis.rendererImageViewerController;
+  globalThis.rendererImageViewerController = dom.window.rendererImageViewerController;
+  t.after(() => { globalThis.rendererImageViewerController = previous; });
+  const bindings = createAttachmentEventBindings(bindingDeps(doc, calls));
+  bindings.bind();
+  const tray = doc.getElementById('tray');
+  tray.innerHTML = ROW153_TRAY;
+  const thumb = tray.querySelector('[data-attachment-open="b"]');
+  thumb.click();
+  assert.equal(opened.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(opened[0].items)), [{ kind: 'source', src: 'file:///C:/b.png', title: 'b.png', caption: 'Pasted · 4 × 3' }]);
+  assert.equal(opened[0].index, 0);
+  assert.equal(opened[0].contextNode, thumb);
+  assert.equal(opened[0].items[0].actions, undefined, 'no file actions: copy, save and reveal stay hidden');
+  thumb.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+  assert.deepEqual(calls.filter((call) => call[0] === 'removeQueuedAttachment'), [['removeQueuedAttachment', 'b']]);
+  bindings.dispose();
+});
+
+test('row 153: Clear all resets this pane\'s queue and renders nothing else itself', (t) => {
+  const { doc } = withDom(t);
+  const calls = [];
+  const bindings = createAttachmentEventBindings(bindingDeps(doc, calls, { pane: true }));
+  bindings.bind();
+  doc.getElementById('tray').innerHTML = ROW153_TRAY;
+  doc.querySelector('[data-attachment-clear]').click();
+  assert.deepEqual(calls, [['resetAttachmentQueue', 'session-b']]);
+  assert.equal(doc.activeElement, doc.getElementById('input'));
+  bindings.dispose();
+});
+
+test('row 153: a held Delete removes one item, not the whole tray', (t) => {
+  const { dom, doc } = withDom(t);
+  const calls = [];
+  const deps = bindingDeps(doc, calls);
+  const tray = doc.getElementById('tray');
+  deps.callbacks.removeQueuedAttachment = (id) => { calls.push(['remove', id]); tray.querySelector(`[data-attachment-id="${id}"]`)?.remove(); };
+  const bindings = createAttachmentEventBindings(deps);
+  bindings.bind();
+  tray.innerHTML = ROW153_TRAY;
+  const press = (repeat) => doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Delete', repeat, bubbles: true, cancelable: true }));
+  tray.querySelector('[data-attachment-remove="a"]').focus();
+  press(false);
+  press(true);
+  press(true);
+  assert.deepEqual(calls.filter((call) => call[0] === 'remove'), [['remove', 'a']]);
   bindings.dispose();
 });

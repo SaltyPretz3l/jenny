@@ -34,16 +34,23 @@ pub fn bounded_transport() -> iroh::endpoint::QuicTransportConfigBuilder {
         .datagram_receive_buffer_size(None)
 }
 
-/// Connection close codes on the wire, shared by both modes.
+/// Connection close codes on the wire, shared by both modes. Only `CODE_REFUSED` means the
+/// host application said no (a `null` answer, or a `drop`). The bridge's own refused-key
+/// cooldown and an admit question nobody answered have codes of their own, which a member
+/// built before them reads as an unknown code: unreachable or closed, never refused or admitted.
+/// (Stream reset code 2 is the host's stream refusal, a separate space.)
 pub const CODE_CLOSED: u32 = 0;
 pub const CODE_REFUSED: u32 = 1;
+pub const CODE_COOLDOWN: u32 = 3;
+pub const CODE_ADMIT_TIMEOUT: u32 = 4;
 
-/// Closes a connection with `code` (`CODE_REFUSED` or `CODE_CLOSED`) and its fixed reason.
+/// Closes a connection with one of the codes above and its fixed reason.
 pub fn close_connection(conn: &Connection, code: u32) {
-    let reason: &[u8] = if code == CODE_REFUSED {
-        b"refused"
-    } else {
-        b"closed"
+    let reason: &[u8] = match code {
+        CODE_REFUSED => b"refused",
+        CODE_COOLDOWN => b"cooldown",
+        CODE_ADMIT_TIMEOUT => b"admit_timeout",
+        _ => b"closed",
     };
     conn.close(VarInt::from_u32(code), reason);
 }

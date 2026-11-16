@@ -16,6 +16,7 @@
 //   only as a project admin, with two audited ways in: adding themself to a
 //   project they are not in, and making themself admin of an active project
 //   that has no admin left (a cascade can leave one so);
+// - any member holding a row leaves the project themself (E29);
 // - a project admin, or the team owner, marks a project deleting and removes it;
 // - an active project keeps at least one admin through every project transition;
 // - a read-only team member is only ever a reader; only an active member is added.
@@ -223,10 +224,13 @@ function setProjectRole(doc, input, ctx) {
   };
 }
 
+// A project admin removes a member; any member holding a row removes themself (E29,
+// the same audit kind with actor and subject the same member). The last admin stays.
 function removeProjectMember(doc, input, ctx) {
   const access = memberChangeAccess(doc, input);
   if (!access.ok) return access;
-  const found = authorizeAdminChange(doc, access, input);
+  const leaving = access.entry !== null && input.memberId === access.actor.member_id;
+  const found = leaving ? { ok: true, target: access.actor, entry: access.entry } : authorizeAdminChange(doc, access, input);
   if (!found.ok) return found;
   const { target, entry } = found;
   const { actor, project } = access;
@@ -253,13 +257,18 @@ function deleteAccess(doc, input) {
 }
 
 // The audit detail of a delete: `{ ok: true, detail }` with the conversation and
-// file counts when given, or `{ ok: false }` for counts that are not two
-// non-negative integers.
+// file counts when given, or `{ ok: false }` for counts that are not
+// non-negative integers. `files: null` is a folder that could not be counted
+// (`files=unknown`); `filesAtLeast: true` is a count stopped at its cap
+// (`files_at_least=<n>`).
 function countDetail(counts) {
   if (counts === undefined) return { ok: true, detail: null };
   const valid = (value) => Number.isSafeInteger(value) && value >= 0;
-  if (!counts || !valid(counts.conversations) || !valid(counts.files)) return { ok: false };
-  return { ok: true, detail: `conversations=${counts.conversations},files=${counts.files}` };
+  if (!counts || !valid(counts.conversations)) return { ok: false };
+  const conversations = `conversations=${counts.conversations}`;
+  if (counts.files === null && counts.filesAtLeast === undefined) return { ok: true, detail: `${conversations},files=unknown` };
+  if (!valid(counts.files) || (counts.filesAtLeast !== undefined && counts.filesAtLeast !== true)) return { ok: false };
+  return { ok: true, detail: `${conversations},files${counts.filesAtLeast ? '_at_least' : ''}=${counts.files}` };
 }
 
 // Step 1 of a delete (spec "Delete"): the row turns `deleting`, every member
@@ -290,6 +299,31 @@ function deleteProject(doc, input, ctx) {
   return {
     ok: true,
     audit: [projectAudit('project_deleted', actor, project, { detail: `members=${project.members.length}` })],
+    projectEvent: changeEvent('deleted', project, project.members.map((entry) => entry.member_id), ctx.now),
+    result: { project_id: project.project_id },
+  };
+}
+
+// --------------------------------------------------------------- reconcile
+
+// What the start-up reconcile (slice 3-4b) repaired: `removed` takes a row out in any state (a delete
+// that stopped part way); the others only record a repair made outside the store (a channel made, a
+// folder bound, an orphan record removed). The actor is the host itself, so null, as E46's
+// `audit_log_reset`; no member can reach this transition.
+const RECONCILE_STEPS = Object.freeze(['removed', 'channel', 'folder', 'record']);
+
+function reconcileProject(doc, input, ctx) {
+  if (!isProjectId(input.projectId)) return refuse('invalid', 'team_project_id_invalid');
+  if (!RECONCILE_STEPS.includes(input.step)) return refuse('invalid', 'team_project_reconcile_invalid');
+  const project = findProject(doc, input.projectId);
+  const audit = [{ kind: 'project_reconciled', actor_member_id: null, project_id: input.projectId,
+    detail: `step=${input.step}` }];
+  if (input.step !== 'removed') return { ok: true, audit, result: { project_id: input.projectId } };
+  if (!project) return refuse('forbidden', 'team_not_found');
+  doc.projects = doc.projects.filter((entry) => entry !== project);
+  return {
+    ok: true,
+    audit,
     projectEvent: changeEvent('deleted', project, project.members.map((entry) => entry.member_id), ctx.now),
     result: { project_id: project.project_id },
   };
@@ -340,6 +374,7 @@ module.exports = {
   removeProjectMember,
   markProjectDeleting,
   deleteProject,
+  reconcileProject,
   leaveAllProjects,
   capToReader,
   cascadeDetail,

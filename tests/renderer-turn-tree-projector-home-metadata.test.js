@@ -156,6 +156,11 @@ test('cloneSubagentReportMetadata keeps non-home and user question behavior unch
     result_kind: 'user_questions_answered',
     answers: answers.slice(0, 8),
   });
+  assert.deepEqual(cloneSubagentReportMetadata({
+    result_kind: 'user_questions_answered',
+    answers: [],
+    reply: `  In my own words ${'r'.repeat(2100)}`,
+  }).reply.length, 2000, 'a composer reply is kept, trimmed and bounded');
 });
 
 test('cloneSubagentReportMetadata keeps exactly the memory chip fields after a cold reopen', () => {

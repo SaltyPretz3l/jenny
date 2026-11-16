@@ -25,6 +25,8 @@ const { createTeamPresence } = require('./team-presence');
 
 const TEAM_CHANNEL = 'chan_team';
 const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Slice 2c host: staged uploads expire after an hour; the sweep looks every five minutes.
+const UPLOAD_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 // Start retries: 1, 2, 4, 8, then 16 s, five at most.
 const START_RETRY_DELAYS_MS = Object.freeze([1_000, 2_000, 4_000, 8_000, 16_000]);
 const DEFAULT_TIMERS = Object.freeze({ setInterval, clearInterval, setTimeout, clearTimeout });
@@ -40,7 +42,7 @@ function createTeamChatHost({
   profileDir, directory, logger = null, clock = Date.now, randomBytes, assertSafePath = assertSafeFile,
   maxResponseBytes = DEFAULT_RESOURCE_LIMITS.maxResponseBytes, publish = null, storeLimits,
   retentionIntervalMs = RETENTION_INTERVAL_MS, timers: timerOptions = {}, roster = null, searchOptions = {},
-  storeYield, startRetryDelaysMs = START_RETRY_DELAYS_MS,
+  storeYield, startRetryDelaysMs = START_RETRY_DELAYS_MS, uploadSweepIntervalMs = UPLOAD_SWEEP_INTERVAL_MS,
 } = {}) {
   const timers = { ...DEFAULT_TIMERS, ...timerOptions };
   if (!directory || typeof directory.liveActor !== 'function' || typeof directory.activeMemberIds !== 'function') {
@@ -57,12 +59,14 @@ function createTeamChatHost({
     failure = hostFailure('persistence', 'team_chat_store_failed');
   }
   let timer = null;
+  let uploadTimer = null;
   let retryTimer = null;
   let retries = 0;
   let disposed = false;
   let retention = null;
-  // The one audience rule (server/team/authorize.js), for every chat event.
-  const channelAudience = (channelId) => channelMembers(directory, channelId);
+  // The one audience rule (server/team/authorize.js), for every chat event; a direct conversation's participants
+  // come from this host's own store.
+  const channelAudience = (channelId) => channelMembers(directory, channelId, (id) => store?.participantsOf(id));
   // Retention and presence run outside any command; their events go straight to the host stream.
   const emit = (type, payload, options) => {
     try { publish?.(type, payload, options); } catch (_error) { /* transport is best effort */ }
@@ -89,6 +93,29 @@ function createTeamChatHost({
     if (!retention) retention = sweep().finally(() => { retention = null; });
     return retention;
   }
+
+  // Staged uploads past their hour (team-chat-blobs.js); never throws.
+  function sweepUploads() {
+    try { store.sweepStagedAttachments(); } catch (_error) { log('WARN', 'team_chat.upload_sweep_failed', {}); }
+  }
+
+  // The attachment routes' store calls: unavailable like a chat command, and a prune an upload needed is announced.
+  const announced = (result) => {
+    if (!Array.isArray(result?.pruned)) return result;
+    const { pruned, ...answer } = result;
+    publishPruned(emit, channelAudience, pruned);
+    return answer;
+  };
+  const down = () => (disposed ? hostFailure('unavailable', 'team_unavailable', '', true)
+    : failure || (store ? null : hostFailure('persistence', 'team_chat_store_failed')));
+  const attachments = Object.freeze({
+    unavailable: down,
+    channelHeader: (channelId) => store.channelHeader(channelId),
+    precheck: (channelId, memberId) => store.uploadPrecheck(channelId, memberId),
+    stage: async (input) => announced(await store.stageAttachment(input)),
+    discard: (id) => store.discardAttachment(id),
+    read: (channelId, id) => store.readAttachment(channelId, id),
+  });
 
   // Opens the store and creates the team channel (an existing one is not an error).
   async function openTeamChannel() {
@@ -135,6 +162,10 @@ function createTeamChatHost({
       timer = timers.setInterval(() => { void runRetention(); }, retentionIntervalMs);
       timer?.unref?.();
     }
+    if (!disposed && uploadSweepIntervalMs > 0) {
+      uploadTimer = timers.setInterval(sweepUploads, uploadSweepIntervalMs);
+      uploadTimer?.unref?.();
+    }
     return { ok: true };
   }
 
@@ -154,6 +185,8 @@ function createTeamChatHost({
     disposed = true;
     if (timer) timers.clearInterval(timer);
     timer = null;
+    if (uploadTimer) timers.clearInterval(uploadTimer);
+    uploadTimer = null;
     if (retryTimer) timers.clearTimeout(retryTimer);
     retryTimer = null;
     presence.dispose();
@@ -166,7 +199,7 @@ function createTeamChatHost({
   const onMemberStream = (memberId, deviceId, change) => presence.streamChanged(memberId, deviceId, change);
 
   return Object.freeze({
-    commands, channelAudience, start, dispose, runRetention, presence, onMemberStream,
+    commands, channelAudience, start, dispose, runRetention, presence, onMemberStream, attachments, sweepUploads,
     failure: () => failure,
     get store() { return store; },
   });

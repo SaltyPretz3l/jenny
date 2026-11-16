@@ -1,0 +1,445 @@
+/* renderer/inventory/inventory-board.css
+   The board canvas primitives: canvasSurface, boardCard and connectorLayer.
+   Tokens only, so every shipped palette reads. A proposed (ghost) card is drawn
+   with a dashed outline and full-contrast text, never by lowering opacity. There
+   are no side accent bars. */
+
+/* ---- Canvas -------------------------------------------------------------- */
+
+.inv-board-canvas {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  /* The board is a fixed geometric plane: east is always the right edge. */
+  direction: ltr;
+  background-color: var(--bg-base);
+  touch-action: none;
+  user-select: none;
+  cursor: default;
+}
+
+.inv-board-canvas:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.inv-board-canvas[data-space],
+.inv-board-canvas[data-panning] {
+  cursor: grab;
+}
+
+.inv-board-canvas[data-panning] {
+  cursor: grabbing;
+}
+
+/* The dot grid. It has no children: the view's custom properties are set here on every pan
+   frame, and on the canvas they would restyle every card. Zoomed out, the surface raises
+   --inv-board-grid-scale (2, 4, 8) so the dots never stand closer than 16px on screen. */
+.inv-board-grid {
+  --inv-board-x: 0px;
+  --inv-board-y: 0px;
+  --inv-board-zoom: 1;
+  --inv-board-grid-step: 24px;
+  --inv-board-grid-scale: 1;
+  --inv-board-grid-gap: calc(var(--inv-board-grid-step) * var(--inv-board-zoom) * var(--inv-board-grid-scale));
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--text-muted) 30%, transparent) 1px, transparent 1px);
+  background-size: var(--inv-board-grid-gap) var(--inv-board-grid-gap);
+  background-position: var(--inv-board-x) var(--inv-board-y);
+  pointer-events: none;
+}
+
+.inv-board-underlay,
+.inv-board-layer {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+/* Promoted only during a drag-pan. A layer promoted for good keeps the pixels it was first
+   drawn at, and text goes soft when zoomed in. */
+.inv-board-canvas[data-panning] > .inv-board-underlay,
+.inv-board-canvas[data-panning] > .inv-board-layer {
+  will-change: transform;
+}
+
+.inv-board-underlay {
+  pointer-events: none;
+}
+
+.inv-board-layer {
+  pointer-events: none;
+}
+
+.inv-board-layer > * {
+  pointer-events: auto;
+}
+
+.inv-board-marquee {
+  position: absolute;
+  z-index: var(--z-raised);
+  border: 1px dashed var(--focus-ring-color);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.inv-board-marquee[hidden] {
+  display: none;
+}
+
+/* ---- Cards ---------------------------------------------------------------- */
+
+.inv-board-card {
+  --inv-board-card-bg: var(--bg-surface);
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: visible;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--inv-board-card-bg);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.4;
+  text-align: start;
+  touch-action: none;
+  user-select: none;
+}
+
+.inv-board-card[data-tone="amber"] {
+  --inv-board-card-bg: color-mix(in srgb, var(--accent-amber) 14%, var(--bg-surface));
+}
+
+.inv-board-card[data-tone="blue"] {
+  --inv-board-card-bg: color-mix(in srgb, var(--state-info) 14%, var(--bg-surface));
+}
+
+.inv-board-card[data-tone="green"] {
+  --inv-board-card-bg: color-mix(in srgb, var(--state-success) 14%, var(--bg-surface));
+}
+
+.inv-board-card[data-tone="red"] {
+  --inv-board-card-bg: color-mix(in srgb, var(--state-danger) 14%, var(--bg-surface));
+}
+
+.inv-board-card[data-selected] {
+  outline: 1.5px solid var(--focus-ring-color);
+}
+
+.inv-board-card:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* A proposed card: dashed outline, the same text colour as any other card. */
+.inv-board-card[data-ghost] {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
+.inv-board-card[data-locked] {
+  cursor: default;
+}
+
+.inv-board-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.inv-board-card-kind {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.inv-board-card-glyph {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.inv-board-card-title,
+.inv-board-card-text {
+  unicode-bidi: plaintext;
+}
+
+.inv-board-card-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.inv-board-card-title[hidden],
+.inv-board-card-text[hidden],
+.inv-board-card-meta[hidden],
+.inv-board-card-missing[hidden] {
+  display: none;
+}
+
+.inv-board-card-missing {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.inv-board-card[data-missing] .inv-board-card-title {
+  color: var(--text-secondary);
+}
+
+.inv-board-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A card kind's picture (boardCard.media): it takes the room the text leaves and never grows the card. */
+.inv-board-card-media {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.inv-board-card-media:empty {
+  display: none;
+}
+
+.inv-board-card-media > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.inv-board-card-text {
+  margin: 0;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* What note-markup.js builds inside a note: lists, code and web links. Bold and italics need nothing. */
+.inv-note-list {
+  margin: 0;
+  padding-inline-start: 1.3em;
+}
+
+.inv-note-list > li[data-depth='1'] {
+  margin-inline-start: 1.3em;
+}
+
+.inv-note-list > li[data-depth='2'] {
+  margin-inline-start: 2.6em;
+}
+
+.inv-note-code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  font-family: var(--font-family-mono);
+  font-size: 0.92em;
+}
+
+.inv-note-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inv-board-card-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+/* A group is a titled region behind the other cards. */
+.inv-board-card[data-card-kind="group"] {
+  gap: 0;
+  border-style: dashed;
+  border-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
+}
+
+.inv-board-card[data-card-kind="group"] .inv-board-card-title {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+/* ---- Handles -------------------------------------------------------------- */
+
+.inv-board-card-grip,
+.inv-board-card-port {
+  position: absolute;
+  z-index: var(--z-raised);
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface-2);
+  touch-action: none;
+}
+
+.inv-board-card-grip {
+  inset-block-end: calc(-1 * var(--space-2));
+  inset-inline-end: calc(-1 * var(--space-2));
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-xs);
+  cursor: nwse-resize;
+}
+
+.inv-board-card-port {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  cursor: crosshair;
+}
+
+.inv-board-card-port[data-card-connect="n"],
+.inv-board-card-port[data-card-connect="s"] {
+  inset-inline-start: calc(50% - 6px);
+}
+
+.inv-board-card-port[data-card-connect="e"],
+.inv-board-card-port[data-card-connect="w"] {
+  inset-block-start: calc(50% - 6px);
+}
+
+.inv-board-card-port[data-card-connect="n"] { inset-block-start: -6px; }
+.inv-board-card-port[data-card-connect="s"] { inset-block-end: -6px; }
+.inv-board-card-port[data-card-connect="e"] { inset-inline-start: calc(100% - 6px); }
+.inv-board-card-port[data-card-connect="w"] { inset-inline-start: -6px; }
+
+/* Shown on hover and on focus; they stay focusable while hidden so a keyboard reaches them. */
+.inv-board-card-grip,
+.inv-board-card-port {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.inv-board-card:is(:hover, :focus-within) .inv-board-card-grip,
+.inv-board-card:is(:hover, :focus-within) .inv-board-card-port,
+.inv-board-card-grip:focus-visible,
+.inv-board-card-port:focus-visible {
+  opacity: 1;
+}
+
+.inv-board-card-grip:focus-visible,
+.inv-board-card-port:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.inv-board-card-port:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.inv-board-card[data-locked] .inv-board-card-grip,
+.inv-board-card[data-locked] .inv-board-card-port,
+.inv-board-card[data-ghost] .inv-board-card-grip,
+.inv-board-card[data-ghost] .inv-board-card-port {
+  display: none;
+}
+
+/* ---- Connectors ----------------------------------------------------------- */
+
+.inv-board-connectors {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.inv-board-conn {
+  color: var(--text-muted);
+}
+
+.inv-board-conn[data-tone="amber"] { color: var(--accent-amber); }
+.inv-board-conn[data-tone="blue"] { color: var(--state-info); }
+.inv-board-conn[data-tone="green"] { color: var(--state-success); }
+.inv-board-conn[data-tone="red"] { color: var(--state-danger); }
+
+.inv-board-conn[data-selected] {
+  color: var(--focus-ring-color);
+}
+
+.inv-board-conn-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.inv-board-conn[data-style="dashed"] .inv-board-conn-line {
+  stroke-dasharray: 5 4;
+}
+
+/* A proposed connector keeps full contrast: the accent colour and a finer dash. */
+.inv-board-conn[data-ghost] {
+  color: var(--accent);
+}
+
+.inv-board-conn[data-ghost] .inv-board-conn-line {
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+
+.inv-board-conn-arrow {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.inv-board-conn-label {
+  fill: var(--text-secondary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-caption);
+  paint-order: stroke;
+  stroke: var(--bg-base);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-board-card-grip,
+  .inv-board-card-port {
+    transition: none;
+  }
+}
+
+/* ---- Find and connect (board slice B6) ------------------------------------ */
+
+/* A card the find box does not match steps back; the match keeps full contrast. */
+.inv-board-card[data-board-dim] {
+  opacity: 0.4;
+}
+
+/* The card a connector would end on while it is dragged out of a port. */
+.inv-board-card[data-board-connect-target] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

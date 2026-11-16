@@ -1,0 +1,70 @@
+{
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "parts": [],
+  "wires": [],
+  "labels": [],
+  "images": [],
+  "figures": [
+    {
+      "id": "s",
+      "spec": {
+        "kind": "seq",
+        "actors": [
+          {
+            "id": "u",
+            "label": "You",
+            "person": true
+          },
+          {
+            "id": "app",
+            "label": "App"
+          },
+          {
+            "id": "auth",
+            "label": "Auth server"
+          }
+        ],
+        "items": [
+          {
+            "t": "msg",
+            "from": "u",
+            "to": "app",
+            "text": "click sign in"
+          },
+          {
+            "t": "msg",
+            "from": "app",
+            "to": "auth",
+            "text": "redirect"
+          },
+          {
+            "t": "msg",
+            "from": "auth",
+            "to": "app",
+            "text": "code",
+            "dashed": true
+          },
+          {
+            "t": "note",
+            "over": [
+              "app"
+            ],
+            "text": "keeps the token server-side"
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "title": "Redirect",
+      "text": "the app hands over",
+      "highlight": [
+        "s[2]"
+      ]
+    }
+  ],
+  "title": "Logging in"
+}

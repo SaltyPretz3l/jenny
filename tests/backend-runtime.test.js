@@ -45,11 +45,16 @@ function makeDefaultModelFallbackService() {
   });
 }
 
-function makeStartupModelService({ startupModelLoad = true, engine = 'ollama', loadError = null } = {}) {
+function makeStartupModelService({ startupModelLoad = true, engine = 'ollama', loadError = null, installed = ['qwen3:8b'], settingsDefault = '' } = {}) {
   const loadCalls = [];
   const logs = [];
   return {
     defaultModel: 'qwen3:8b',
+    _modelEngineHints: new Map(),
+    offlineIntelligenceService: { getPreferredLocalModel: () => settingsDefault },
+    async listModels() {
+      return { primary_available: true, data: [...installed, 'other:1b'].map((id) => ({ id, engine_type: 'ollama' })) };
+    },
     currentModel: '',
     currentEngineType: engine,
     currentStatus: {},
@@ -65,10 +70,13 @@ function makeStartupModelService({ startupModelLoad = true, engine = 'ollama', l
   };
 }
 
-test('autoLoadDefaultModel starts an Ollama default when startup loading is on', () => {
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('autoLoadDefaultModel starts an installed Ollama default when startup loading is on', async () => {
   const service = makeStartupModelService();
 
   autoLoadDefaultModel(service);
+  await settle();
 
   assert.deepEqual(service.loadCalls, ['qwen3:8b']);
   assert.deepEqual(service.logs[0], {
@@ -91,12 +99,36 @@ test('autoLoadDefaultModel logs a rejected startup load without throwing', async
   const service = makeStartupModelService({ loadError: new Error('load failed') });
 
   autoLoadDefaultModel(service);
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
 
   assert.equal(service.logs[1].event, 'backend.default_model_startup_load_failed');
   assert.deepEqual(service.logs[1].details, {
     model: 'qwen3:8b', engine: 'ollama', message: 'load failed',
   });
+});
+
+// 2026-11-13: a fresh profile started a multi-GB pull of the built-in default at startup.
+test('autoLoadDefaultModel never starts (so never pulls) a default that is not installed', async () => {
+  const service = makeStartupModelService({ installed: [] });
+
+  autoLoadDefaultModel(service);
+  await settle();
+
+  assert.deepEqual(service.loadCalls, []);
+  assert.deepEqual(service.logs, [{
+    level: 'INFO',
+    event: 'backend.default_model_startup_skipped',
+    details: { model: 'qwen3:8b', engine: 'ollama', reason: 'not_installed' },
+  }]);
+});
+
+test('autoLoadDefaultModel prefers the installed Settings default', async () => {
+  const service = makeStartupModelService({ installed: ['qwen3:8b', 'mine:4b'], settingsDefault: 'mine:4b' });
+
+  autoLoadDefaultModel(service);
+  await settle();
+
+  assert.deepEqual(service.loadCalls, ['mine:4b']);
 });
 
 test('autoLoadDefaultModel never starts a mock default', () => {

@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { JSDOM } = require('jsdom');
 const {
   createThreadDomPipeline,
+  firstTextLineCenter,
 } = require('../renderer/chat/renderer-render-pipeline-thread-dom');
 
 // Phase 10 Track A3 — async lifecycle safety for the rail ResizeObserver
@@ -134,25 +136,64 @@ function buildEnvironment() {
   };
 }
 
+// A thread root holding one centre-aligned toggle on a 20px landmark. The
+// toggle's `top` style write is what updateThreadRailExtents still produces
+// (24px = landmark centre 30 - row top 0 - half the 12px toggle), so it is the
+// probe for "did it run". `reads` counts row measurements, `writes` toggle
+// style writes; readError / writeError make that phase throw.
+function buildFakeToggleRoot({ id = 'root', readError = null, writeError = null } = {}) {
+  const root = { id, reads: 0, writes: 0 };
+  const toggle = {
+    offsetParent: {},
+    offsetHeight: 12,
+    style: {
+      _props: new Map(),
+      setProperty(name, value) {
+        if (writeError) throw writeError;
+        root.writes += 1;
+        this._props.set(name, value);
+      },
+      removeProperty(name) { this._props.delete(name); },
+    },
+    closest(selector) {
+      if (selector === '.chat-thread-node') return { dataset: { threadNodeKind: 'tool' } };
+      if (selector !== '.chat-thread-node-row') return null;
+      return {
+        getBoundingClientRect() {
+          if (readError) throw readError;
+          root.reads += 1;
+          return { top: 0, left: 0, right: 100, bottom: 200, width: 100, height: 200 };
+        },
+        querySelector(s) {
+          if (s !== '.chat-thread-node-article') return null;
+          return {
+            querySelector() {
+              return {
+                getBoundingClientRect() {
+                  return { top: 20, left: 0, right: 100, bottom: 40, width: 100, height: 20 };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+  return Object.assign(root, {
+    toggle,
+    style: {
+      _props: new Map(),
+      setProperty(name, value) { this._props.set(name, value); },
+      removeProperty(name) { this._props.delete(name); },
+    },
+    querySelectorAll(selector) { return selector === '.chat-thread-toggle' ? [toggle] : []; },
+  });
+}
+
 function buildFakeChatTimeline(rootCount = 1) {
   const roots = [];
   for (let index = 0; index < rootCount; index += 1) {
-    const root = {
-      id: `root-${index}`,
-      style: {
-        _props: new Map(),
-        setProperty(name, value) { this._props.set(name, value); },
-        removeProperty(name) { this._props.delete(name); },
-      },
-      _selectorReturns: new Map(),
-      getBoundingClientRect() {
-        return { top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100 };
-      },
-      querySelectorAll(selector) {
-        return this._selectorReturns.get(selector) || [];
-      },
-    };
-    roots.push(root);
+    roots.push(buildFakeToggleRoot({ id: `root-${index}` }));
   }
   const attrs = new Map();
   return {
@@ -209,10 +250,10 @@ test('dispose cancels a pending rail-resize rAF and prevents subsequent DOM muta
 
   // Even if a rogue tick still fires (e.g. queued via a different path),
   // the rail extents update must short-circuit because _disposed = true.
-  const styleWritesBefore = chatTimeline._rootSelectorReturns[0].style._props.size;
+  const root = chatTimeline._rootSelectorReturns[0];
   pipeline.updateThreadRailExtents();
-  const styleWritesAfter = chatTimeline._rootSelectorReturns[0].style._props.size;
-  assert.equal(styleWritesAfter, styleWritesBefore, 'updateThreadRailExtents must no-op after dispose');
+  assert.equal(root.writes, 0, 'updateThreadRailExtents must no-op after dispose');
+  assert.equal(root.reads, 0, 'updateThreadRailExtents must not measure after dispose');
 });
 
 test('attachRailResizeObserver cancels any pending rAF before wiring a fresh observer', (t) => {
@@ -283,10 +324,9 @@ test('updateThreadRailExtents reads all DOM measurements before any DOM writes',
   t.after(() => env.restore());
 
   // We build a richer fake here than the default helper: we need a
-  // root with toggle dots whose Phase 1 path runs both the response
-  // branch (top-align) and the centre-align branch, plus a Phase 2
-  // row-dot pass. Every DOM read and every DOM write is tagged into a
-  // shared call log so we can assert ordering.
+  // root with toggle dots whose path runs both the response branch
+  // (top-align) and the centre-align branch. Every DOM read and every
+  // DOM write is tagged into a shared call log so we can assert ordering.
   const callLog = [];
 
   function makeDot({ kind, landmarkTop, landmarkHeight }) {
@@ -345,28 +385,10 @@ test('updateThreadRailExtents reads all DOM measurements before any DOM writes',
     return dot;
   }
 
-  function makeRowDot(offset) {
-    return {
-      offsetParent: {},
-      getBoundingClientRect() {
-        callLog.push({ kind: 'read', target: 'rowDot.getBoundingClientRect' });
-        return {
-          top: offset,
-          left: 0,
-          right: 6,
-          bottom: offset + 6,
-          width: 6,
-          height: 6,
-        };
-      },
-    };
-  }
-
   const toggleDots = [
     makeDot({ kind: 'response', landmarkTop: 10, landmarkHeight: 20 }),
     makeDot({ kind: 'tool', landmarkTop: 80, landmarkHeight: 30 }),
   ];
-  const rowDots = [makeRowDot(160), makeRowDot(220)];
 
   const root = {
     style: {
@@ -386,12 +408,6 @@ test('updateThreadRailExtents reads all DOM measurements before any DOM writes',
     },
     querySelectorAll(selector) {
       if (selector === '.chat-thread-toggle') return toggleDots;
-      if (
-        selector ===
-        '.chat-thread-node-nested .chat-thread-node-article .chat-row .chat-row-node-dot'
-      ) {
-        return rowDots;
-      }
       return [];
     },
   };
@@ -426,8 +442,12 @@ test('updateThreadRailExtents reads all DOM measurements before any DOM writes',
   );
 
   // Spot-check that the function still produced the expected outputs.
-  assert.ok(root.style._props.has('--_rail-top'), 'rail-top property must be set');
-  assert.ok(root.style._props.has('--_rail-height'), 'rail-height property must be set');
+  assert.deepEqual(
+    toggleDots.map((dot) => dot.style._top),
+    ['10px', '89px'],
+    'each toggle must be placed: response top-aligned, tool centre-aligned',
+  );
+  assert.equal(root.style._props.size, 0, 'the rail line custom properties are no longer written');
 });
 
 // Phase 10 Track B2 — debounce coalesces rapid resize bursts.
@@ -453,17 +473,13 @@ test('rapid resize events collapse to a single update via the debounce', (t) => 
   assert.equal(env.pendingTimerCount(), 0, 'debounce timer must be consumed');
   assert.equal(env.rafCallbacks.size, 1, 'expired debounce must queue exactly one rAF');
 
-  // Flush the rAF; updateThreadRailExtents runs once.
-  const styleWritesBefore = chatTimeline._rootSelectorReturns[0].style._props.size;
+  // Flush the rAF; updateThreadRailExtents runs once and places the toggle.
+  const root = chatTimeline._rootSelectorReturns[0];
+  assert.equal(root.reads, 0, 'nothing is measured before the rAF runs');
   env.flushRaf();
-  const styleWritesAfter = chatTimeline._rootSelectorReturns[0].style._props.size;
-  // The default fake root has no dots, so dotCenters.length < 2 — the
-  // function writes --_rail-height=0 and removes --_rail-top. Both are
-  // mutations against root.style; net Map size moves by at most one.
-  assert.ok(
-    styleWritesAfter >= styleWritesBefore,
-    'updateThreadRailExtents ran exactly once and produced its expected style mutations',
-  );
+  assert.equal(root.reads, 1, 'updateThreadRailExtents measured the root exactly once');
+  assert.equal(root.writes, 1, 'updateThreadRailExtents placed the toggle exactly once');
+  assert.equal(root.toggle.style._props.get('top'), '24px');
 
   pipeline.dispose();
 });
@@ -490,11 +506,9 @@ test('dispose cancels a pending debounce timer', (t) => {
   );
 
   // Flushing should be a no-op (no callbacks are left).
-  const styleWritesBefore = chatTimeline._rootSelectorReturns[0].style._props.size;
   env.flushTimers();
   env.flushRaf();
-  const styleWritesAfter = chatTimeline._rootSelectorReturns[0].style._props.size;
-  assert.equal(styleWritesAfter, styleWritesBefore, 'no style mutations after disposed debounce');
+  assert.equal(chatTimeline._rootSelectorReturns[0].writes, 0, 'no style mutations after disposed debounce');
 });
 
 test('attachRailResizeObserver cancels a pending debounce timer before wiring a fresh observer', (t) => {
@@ -577,63 +591,27 @@ test('syncTimelineBusyState can be called directly to refresh aria-busy mid-stre
   pipeline.dispose();
 });
 
-// Finding 2 — synchronous first-paint rail measurement. performFullMessageRender
-// needs a rail-tick that runs with no debounce and no rAF so --_rail-top/
-// --_rail-height are set before the browser paints. This must NOT depend on
-// flushing fake timers or rAF — it has to be synchronous end-to-end.
-test('measureThreadRailExtentsNow sets --_rail-top/--_rail-height synchronously (no timer/rAF advance)', (t) => {
+// Finding 2 — synchronous first-paint measurement. performFullMessageRender
+// needs a tick that runs with no debounce and no rAF so each toggle is placed
+// before the browser paints. This must NOT depend on flushing fake timers or
+// rAF — it has to be synchronous end-to-end.
+test('measureThreadRailExtentsNow places the toggles synchronously (no timer/rAF advance)', (t) => {
   const env = buildEnvironment();
   t.after(() => env.restore());
 
-  function makeDot(top, height) {
-    return {
-      offsetParent: {},
-      offsetHeight: height,
-      getBoundingClientRect() {
-        return { top, left: 0, right: 6, bottom: top + height, width: 6, height };
-      },
-    };
-  }
-
-  const rowDots = [makeDot(10, 12), makeDot(90, 12)];
-  const root = {
-    style: {
-      _props: new Map(),
-      setProperty(name, value) { this._props.set(name, value); },
-      removeProperty(name) { this._props.delete(name); },
-    },
-    getBoundingClientRect() {
-      return { top: 0, left: 0, right: 100, bottom: 300, width: 100, height: 300 };
-    },
-    querySelectorAll(selector) {
-      if (selector === '.chat-thread-toggle') return [];
-      if (
-        selector ===
-        '.chat-thread-node-nested .chat-thread-node-article .chat-row .chat-row-node-dot'
-      ) {
-        return rowDots;
-      }
-      return [];
-    },
-  };
-  const chatTimeline = {
-    querySelectorAll(selector) {
-      if (selector === '.chat-thread-root') return [root];
-      return [];
-    },
-  };
-
+  const chatTimeline = buildFakeChatTimeline(1);
+  const root = chatTimeline._rootSelectorReturns[0];
   const pipeline = createThreadDomPipeline({ dom: { chatTimeline } });
 
   // No env.flushTimers() / env.flushRaf() call anywhere — if the
   // implementation routes through the debounce or rAF, these assertions
-  // fail because the style props are never written without a flush.
+  // fail because the toggle is never placed without a flush.
   pipeline.measureThreadRailExtentsNow();
 
   assert.equal(env.pendingTimerCount(), 0, 'must not schedule any debounce timer');
   assert.equal(env.rafCallbacks.size, 0, 'must not schedule any rAF');
-  assert.equal(root.style._props.get('--_rail-top'), '16px', 'rail-top must match the first dot center synchronously');
-  assert.equal(root.style._props.get('--_rail-height'), '80px', 'rail-height must match the dot spread synchronously');
+  assert.equal(root.toggle.style._props.get('top'), '24px', 'the toggle must be placed on its landmark synchronously');
+  assert.equal(root.style._props.size, 0, 'the rail line custom properties are no longer written');
 
   pipeline.dispose();
 });
@@ -647,10 +625,10 @@ test('measureThreadRailExtentsNow is a no-op after dispose', (t) => {
 
   pipeline.dispose();
 
-  const styleWritesBefore = chatTimeline._rootSelectorReturns[0].style._props.size;
+  const root = chatTimeline._rootSelectorReturns[0];
   pipeline.measureThreadRailExtentsNow();
-  const styleWritesAfter = chatTimeline._rootSelectorReturns[0].style._props.size;
-  assert.equal(styleWritesAfter, styleWritesBefore, 'measureThreadRailExtentsNow must no-op after dispose');
+  assert.equal(root.writes, 0, 'measureThreadRailExtentsNow must no-op after dispose');
+  assert.equal(root.reads, 0, 'measureThreadRailExtentsNow must not measure after dispose');
 });
 
 test('the thread toggle dot aligns with the first landmark that has a box, skipping a hidden one', (t) => {
@@ -925,19 +903,6 @@ test('resize observer measures only dirty roots and suppresses unchanged writes'
   t.after(() => env.restore());
   const chatTimeline = buildFakeChatTimeline(2);
   const [firstRoot, secondRoot] = chatTimeline._rootSelectorReturns;
-  const reads = new Map([[firstRoot, 0], [secondRoot, 0]]);
-  const writes = new Map([[firstRoot, 0], [secondRoot, 0]]);
-  for (const root of [firstRoot, secondRoot]) {
-    root.getBoundingClientRect = () => {
-      reads.set(root, reads.get(root) + 1);
-      return { top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100 };
-    };
-    const originalSetProperty = root.style.setProperty.bind(root.style);
-    root.style.setProperty = (name, value) => {
-      writes.set(root, writes.get(root) + 1);
-      originalSetProperty(name, value);
-    };
-  }
   const pipeline = createThreadDomPipeline({ dom: { chatTimeline } });
 
   pipeline.attachRailResizeObserver();
@@ -945,23 +910,21 @@ test('resize observer measures only dirty roots and suppresses unchanged writes'
   env.flushTimers();
   env.flushRaf();
 
-  assert.equal(reads.get(firstRoot), 1);
-  assert.equal(reads.get(secondRoot), 0);
-  assert.equal(writes.get(firstRoot), 1);
+  assert.equal(firstRoot.reads, 1);
+  assert.equal(secondRoot.reads, 0);
+  assert.equal(firstRoot.writes, 1);
   pipeline.updateThreadRailExtents([firstRoot]);
-  assert.equal(writes.get(firstRoot), 1, 'same geometry should not rewrite rail variables');
+  assert.equal(firstRoot.writes, 1, 'same geometry should not rewrite the toggle position');
   pipeline.dispose();
 });
 
 test('one malformed rail root cannot suppress later valid roots', () => {
-  const chatTimeline = buildFakeChatTimeline(3);
-  const [badReadRoot, badWriteRoot, goodRoot] = chatTimeline._rootSelectorReturns;
-  badReadRoot.getBoundingClientRect = () => {
-    const error = new Error('layout read failed at C:\\private\\thread');
-    error.name = 'Layout Read/Error';
-    throw error;
-  };
-  badWriteRoot.style.setProperty = () => { throw new Error('style write failed'); };
+  const layoutError = new Error('layout read failed at C:\\private\\thread');
+  layoutError.name = 'Layout Read/Error';
+  const badReadRoot = buildFakeToggleRoot({ id: 'bad-read', readError: layoutError });
+  const badWriteRoot = buildFakeToggleRoot({ id: 'bad-write', writeError: new Error('style write failed') });
+  const goodRoot = buildFakeToggleRoot({ id: 'good' });
+  const chatTimeline = buildFakeChatTimeline(0);
   const warnings = [];
   const pipeline = createThreadDomPipeline({
     dom: { chatTimeline },
@@ -970,7 +933,7 @@ test('one malformed rail root cannot suppress later valid roots', () => {
 
   pipeline.updateThreadRailExtents([badReadRoot, badWriteRoot, goodRoot]);
 
-  assert.equal(goodRoot.style._props.get('--_rail-height'), '0px');
+  assert.equal(goodRoot.toggle.style._props.get('top'), '24px');
   assert.equal(warnings.length, 2);
   assert.equal(warnings[0][1], 'chat.thread_rail_measurement_failed');
   assert.deepEqual(
@@ -983,17 +946,18 @@ test('one malformed rail root cannot suppress later valid roots', () => {
 });
 
 test('rail measurement warnings are capped after three redacted failures', () => {
-  const chatTimeline = buildFakeChatTimeline(5);
+  const roots = Array.from({ length: 5 }, (_, index) => buildFakeToggleRoot({
+    id: `bad-${index}`,
+    readError: new Error('sensitive failure detail'),
+  }));
+  const chatTimeline = buildFakeChatTimeline(0);
   const warnings = [];
-  for (const root of chatTimeline._rootSelectorReturns) {
-    root.getBoundingClientRect = () => { throw new Error('sensitive failure detail'); };
-  }
   const pipeline = createThreadDomPipeline({
     dom: { chatTimeline },
     callbacks: { appendClientLog: (...args) => warnings.push(args) },
   });
 
-  pipeline.updateThreadRailExtents(chatTimeline._rootSelectorReturns);
+  pipeline.updateThreadRailExtents(roots);
 
   assert.equal(warnings.length, 3);
   assert.equal(warnings[2][2].suppressed, true);
@@ -1002,4 +966,25 @@ test('rail measurement warnings are capped after three redacted failures', () =>
     assert.equal(warning[2].errorName, 'Error');
     assert.equal(Object.prototype.hasOwnProperty.call(warning[2], 'message'), false);
   });
+});
+
+test('firstTextLineCenter is null without layout and skips sr-only and hidden text', () => {
+  assert.equal(firstTextLineCenter(null), null);
+  assert.equal(firstTextLineCenter({}), null, 'no ownerDocument means no layout');
+  const { document } = new JSDOM(
+    '<div id="row"><span class="sr-only">kicker</span><p hidden>gone</p><div hidden><b>deep</b></div><p> </p><p>Hello</p></div>',
+  ).window;
+  const row = document.getElementById('row');
+  assert.equal(firstTextLineCenter(row), null, 'plain jsdom reports no line boxes');
+  // Every text node reports a box, so only the skip rules keep the kicker and hidden text out.
+  const measured = [];
+  document.createRange = () => {
+    let text = '';
+    return {
+      selectNodeContents(node) { text = node.nodeValue; measured.push(text); },
+      getClientRects() { return [{ top: text === 'Hello' ? 100 : 5, height: text === 'Hello' ? 20 : 10, width: 40 }]; },
+    };
+  };
+  assert.equal(firstTextLineCenter(row), 110);
+  assert.deepEqual(measured, ['Hello'], 'sr-only, hidden and whitespace-only text are never measured');
 });

@@ -29,7 +29,7 @@
       const {
         isEditRegenerate, isOutboxDispatch, queueUntilBackendReady, normalizedPrompt, attachmentBudget,
         requestedSessionId, requestedSession, preserveComposerDraft, prompt, runtimePreferences,
-        skillInvocation, imageEditDraft, promptBlock, imagePromptPin, settings, sessionQueue,
+        skillInvocation, imageEditDraft, promptBlock, imagePromptPin, boardId, settings, sessionQueue,
       } = c;
       if (isEditRegenerate) {
         appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_busy_edit' });
@@ -70,7 +70,7 @@
           meta: {
             mentionContentsSnapshot: [],
             activeFileContextSnapshot: queuedActiveFileContext, skillInvocation, imageEditSnapshot: imageEditDraft, promptBlock,
-            ...(imagePromptPin ? { imagePromptPin } : {}),
+            ...(imagePromptPin ? { imagePromptPin } : {}), ...(boardId ? { boardId } : {}),
           },
         });
         if (!queuedEntry) {
@@ -134,7 +134,7 @@
       const {
         interactiveGuardrailFallback, pendingBatchSnapshot, createdOptimisticSession, optimisticSessionId,
         optimisticTitleSource, visiblePrompt, acceptedAttachments, runtimePreferences, runModeProjection,
-        shouldAnimateActivation, isEditRegenerate, editedMessageId, skillInvocation, imagePromptPin,
+        shouldAnimateActivation, isEditRegenerate, editedMessageId, skillInvocation, imagePromptPin, boardId,
         operationState, preflightState,
       } = c;
       const sequenceState = interactiveGuardrailFallback ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED : INTERACTIVE_SEQUENCE_IDLE;
@@ -186,7 +186,7 @@
             id: operationState.optimisticUserMessageId,
             attachments: buildOptimisticAttachmentMetadata(acceptedAttachments),
             ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
-            ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}),
+            ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}), ...(boardId ? { board_id: boardId } : {}),
           });
         }
         onUserSendStarted({
@@ -219,7 +219,7 @@
       runtimePreferences, acceptedAttachments, activeFileContext, mentionContents,
       normalizedInteractiveResponse, interactiveRoundCount, runModeProjection, toolPreferences,
       approvalMode, preflightState, optimisticRenderedAtMs, localRenderLatencyMs, skillInvocation,
-      imagePromptPin,
+      imagePromptPin, boardId,
     } = c;
     return {
       sessionId: targetSessionId,
@@ -248,7 +248,7 @@
         local_render_latency_ms: localRenderLatencyMs,
       },
       ...(skillInvocation?.id ? { skillInvocation: { id: skillInvocation.id } } : {}),
-      ...(imagePromptPin ? { imagePromptPin } : {}),
+      ...(imagePromptPin ? { imagePromptPin } : {}), ...(boardId ? { boardId } : {}),
     };
   }
 
