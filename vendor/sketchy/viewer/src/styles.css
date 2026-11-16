@@ -1,0 +1,415 @@
+:root {
+  --ink: #1d1d1f;
+  --ink-soft: #5c5f66;
+  --paper: #fffdf7;
+  --line: #e7e2d6;
+  --accent: #e8452c;
+  --font: Kalam, "Comic Sans MS", cursive;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--font);
+  color: var(--ink);
+}
+
+.frame {
+  position: relative;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.canvas {
+  overflow: auto;
+  max-height: var(--max-height, none);
+}
+
+.canvas > svg {
+  display: block;
+  margin: 0 auto;
+  width: 100%;
+  height: auto;
+}
+
+.element,
+.layer-overlay {
+  transition: opacity 0.25s ease;
+}
+
+.element.dim {
+  opacity: 0.14;
+}
+
+.element.clickable,
+.attribution {
+  cursor: pointer;
+}
+
+.element.clickable:hover text {
+  text-decoration: underline;
+}
+
+.toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 2;
+}
+
+.frame:hover .toolbar,
+.toolbar:focus-within {
+  opacity: 1;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px 10px 7px 9px;
+  padding: 1px 10px;
+  cursor: pointer;
+  box-shadow: 1.5px 1.5px 0 var(--ink);
+}
+
+button:hover:not(:disabled) {
+  background: #fff4c2;
+}
+
+button:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: 0.5px 0.5px 0 var(--ink);
+}
+
+button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border-top: 1.5px dashed var(--line);
+}
+
+.stepper > button {
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 12px 6px;
+}
+
+.step-body {
+  min-height: 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.step-body p {
+  margin: 2px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.step-title {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.step-count {
+  color: var(--accent);
+  margin-right: 8px;
+}
+
+.step-body .start {
+  align-self: flex-start;
+}
+
+.step-dots {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.step-dots .dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border-radius: 50%;
+  border-width: 1.5px;
+  box-shadow: none;
+}
+
+.step-dots .dot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 3;
+  max-width: 280px;
+  padding: 7px 10px;
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px 8px 11px 9px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.12);
+  font-size: 15px;
+  line-height: 1.3;
+  pointer-events: none;
+}
+
+.tooltip .file {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.notice {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 4;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px 8px 11px 9px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.12);
+  overflow-wrap: anywhere;
+}
+
+.message {
+  padding: 18px;
+  color: var(--ink-soft);
+}
+
+.picker {
+  padding: 18px 20px 20px;
+}
+
+.picker h2 {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+
+.picker .lead {
+  margin: 0 0 14px;
+  color: var(--ink-soft);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  border-radius: 12px 10px 13px 9px;
+}
+
+.card.unavailable {
+  opacity: 0.55;
+}
+
+.card.active {
+  box-shadow: 3px 3px 0 #ffe58a;
+}
+
+.card-title {
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.card .tag {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--accent);
+}
+
+.card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 10px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.card dt {
+  color: var(--ink-soft);
+}
+
+.card dd {
+  margin: 0;
+}
+
+.card p {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin-top: 14px;
+}
+
+.bar {
+  flex: 1;
+  height: 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  background: repeating-linear-gradient(-45deg, #ffe58a 0 6px, #f5c518 6px 12px);
+  transition: width 0.4s ease;
+}
+
+.error {
+  color: var(--accent);
+}
+
+/* Drawing mode */
+.layer-annotations .mark {
+  pointer-events: none;
+}
+
+.drawbar {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-bottom: 1.5px dashed var(--line);
+}
+
+.frame.drawing .drawbar {
+  display: flex;
+}
+
+.frame.drawing .toolbar {
+  display: none;
+}
+
+.drawbar-tools,
+.drawbar-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.drawbar-ask {
+  flex: 1 1 260px;
+}
+
+.drawbar button[aria-pressed="true"] {
+  background: #fff4c2;
+}
+
+.drawbar-ask input,
+.note-input {
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px 10px 7px 9px;
+  padding: 1px 8px;
+}
+
+.drawbar-ask input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.note-input {
+  position: absolute;
+  z-index: 3;
+  width: 180px;
+  color: var(--accent);
+}
+
+.frame.drawing .canvas > svg {
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.frame.drawing[data-tool="text"] .canvas > svg {
+  cursor: text;
+}
+
+.frame.drawing[data-tool="eraser"] .canvas > svg {
+  cursor: cell;
+}
+
+.frame.drawing[data-tool="eraser"] .layer-annotations .mark {
+  pointer-events: visiblePainted;
+}
+
+/* Plot sliders: one row per parameter under the drawing. */
+.sliders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  padding: 8px 14px 4px;
+  font-family: Kalam, "Comic Sans MS", cursive;
+  font-size: 17px;
+  color: #1a5fb4;
+}
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.slider-name {
+  font-weight: 700;
+  min-width: 1ch;
+}
+.slider input[type="range"] {
+  width: 170px;
+  accent-color: #1a5fb4;
+}
+.slider-value {
+  min-width: 3.5ch;
+  font-variant-numeric: tabular-nums;
+}
+.inline-math {
+  overflow: visible;
+}
+
+/* Phones: the drawing is fitted to the width; a tap opens it fullscreen. */
+.frame.tap-zoom .canvas > svg {
+  cursor: zoom-in;
+}
