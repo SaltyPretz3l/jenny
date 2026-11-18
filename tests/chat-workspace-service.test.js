@@ -362,7 +362,7 @@ test('background jobs become task items: live first, finished history newest fir
   assert.deepEqual(section.data.items.map((item) => item.job_id), ['aaaaaaaaaaa4', 'aaaaaaaaaaa2', 'aaaaaaaaaaa3', 'aaaaaaaaaaa1']);
   assert.deepEqual(section.data.items[2], {
     source_kind: 'background_job', operation_id: 'job:aaaaaaaaaaa3', session_id: SESSION, job_id: 'aaaaaaaaaaa3',
-    command: 'cmd aaaaaaaaaaa3', state: 'failed', started_at_ms: 1_000, ended_at_ms: 9_000, exit_code: -1, stop_requested: true,
+    command: 'cmd aaaaaaaaaaa3', state: 'failed', started_at_ms: 1_000, ended_at_ms: 9_000, exit_code: -1, stop_requested: true, serving_url: null, serving_port: null, serving_since_ms: null,
   });
   assert.deepEqual([section.data.items[1].ended_at_ms, section.data.items[1].exit_code, section.data.items[1].stop_requested], [null, null, false]);
 
@@ -379,6 +379,8 @@ test('background jobs become task items: live first, finished history newest fir
   assert.deepEqual([byId.aaaaaaaaaaa7.progress_percent, byId.aaaaaaaaaaa7.progress_failed, byId.aaaaaaaaaaa7.progress_marks], [100, 2, [0.2, 1, 0]]);
   assert.deepEqual([byId.aaaaaaaaaaa8.progress_percent, byId.aaaaaaaaaaa8.progress_marks], [null, []]);
   assert.equal('progress_percent' in byId.aaaaaaaaaaa9, false);
+  const servingItems = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [], jobRows: ['running', 'completed'].map((state, i) => jobSnapshot(`aaaaaaaaaab${i}`, state, { serving: { url: 'http://localhost:5173', host: '127.0.0.1', port: 5173, sinceMs: 7_000 } })) }).data.items; // row 176: only a live job carries it
+  assert.deepEqual(servingItems.map((item) => [item.serving_url, item.serving_port, item.serving_since_ms]), [['http://localhost:5173', 5173, 7_000], [null, null, null]]);
 
   const hostile = buildBackgroundTasksSection({
     sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [],

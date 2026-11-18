@@ -24,6 +24,7 @@ const path = require('path');
 const { isProcessAlive, killProcessTree, getProcessStartTime } = require('../backend/process-utils');
 const { readBoundedTextFile, readJobProgress } = require('./background-job-progress');
 const { MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS, readJobOutput, readLiveOutput } = require('./background-job-output'); // row 138: output view
+const { createServingWatcher } = require('./background-job-serving'); // row 176: loopback address that answers a probe
 
 const { BACKGROUND_JOB_ID_PATTERN: JOB_ID_PATTERN } = require('../backend/chat-stream-background-jobs'); // shell_background.py's uuid4().hex[:12]; anything else is refused before a path join (WIDE-011)
 // Mirrors sidecar shell_background_status.MAX_STATUS_FILE_BYTES: bounds the read before JSON.parse so an
@@ -97,6 +98,7 @@ function createBackgroundJobTracker({
   readStatusFileImpl = defaultReadStatusFile,
   readProgressFileImpl = readJobProgress, // row 96: progress.json beside status.json
   readLiveOutputImpl = readLiveOutput, // row 138: live-output.json beside status.json
+  probePortImpl, // row 176: TCP connect probe of a loopback address the job printed (the watcher defaults to isPortOpen)
   isPidAliveImpl = isProcessAlive,
   killPidTreeImpl = defaultKillPidTree,
   getProcessStartTimeImpl = getProcessStartTime,
@@ -112,6 +114,10 @@ function createBackgroundJobTracker({
   let pollTimer = null;
   let disposed = false;
   let registrationSeq = 0;
+  const servingWatcher = createServingWatcher({
+    probeImpl: probePortImpl, readLiveOutputImpl, nowImpl, log,
+    onChange: (job) => { if (!disposed) emitChanged([job.sessionId]); },
+  });
 
   function snapshotJob(job) {
     return {
@@ -128,6 +134,7 @@ function createBackgroundJobTracker({
       outputTruncated: job.outputTruncated === true,
       stopRequested: job.stopRequested === true,
       progress: isLive(job) ? job.progress : null,
+      serving: isLive(job) && job.serving ? { ...job.serving } : null,
     };
   }
 
@@ -246,6 +253,8 @@ function createBackgroundJobTracker({
     for (const job of jobs.values()) {
       if (!job.settleReported && !isLive(job)) {
         job.settleReported = true;
+        job.serving = null;
+        servingWatcher.forget(job.jobId);
         settled.push(snapshotJob(job));
         affected.add(job.sessionId);
       }
@@ -376,6 +385,7 @@ function createBackgroundJobTracker({
       } else if (JSON.stringify(job.progress) !== beforeProgress) {
         progressMoved = true;
       }
+      if (isLive(job)) servingWatcher.check(job);
     }
     commit(affected, progressMoved);
   }
@@ -535,6 +545,7 @@ function createBackgroundJobTracker({
   function dispose() {
     disposed = true;
     stopPolling();
+    servingWatcher.dispose();
     jobs.clear();
     changeListeners.clear();
     settleListeners.clear();

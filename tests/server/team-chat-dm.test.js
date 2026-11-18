@@ -298,14 +298,15 @@ test('fail closed: no lookup, a lookup that throws, an unknown id and no stored 
 
 // ---------------------------------------------------------------- the stored field and its migration
 
-test('migration: a version 1 store loads, a conversation is opened, the channel documents are version 2 and load again', async (t) => {
+test('migration: a version 1 store loads, a conversation is opened, the channel documents are current and load again', async (t) => {
   const fx = createChatFixture(t);
   const first = fx.openStore();
   await fx.createChannel(first, 'chan_team');
   await fx.postOk(first);
   // Put the team channel back as version 1 wrote it: no participants key.
   const old = fx.readDoc('chan_team/channel.json');
-  delete old.participants;
+  // Row 173's profile keys came with version 3; version 1 had none of them either.
+  for (const key of ['participants', 'name', 'topic', 'created_by', 'changes', 'profile_rev']) delete old[key];
   old.schema_version = 1;
   fx.writeDoc('chan_team/channel.json', old);
   const store = fx.openStore();
@@ -335,7 +336,7 @@ test('a channel document of a newer version, or with participants it may not car
   const original = Object.fromEntries([dm, 'chan_team', 'chan_project_p1'].map((id) => [id, fx.readDoc(`${id}/channel.json`)]));
   const both = ['member_alice', 'member_bob'];
   const cases = [
-    ['a newer version', dm, { schema_version: 3 }, 'team_chat_schema_unsupported'],
+    ['a newer version', dm, { schema_version: 4 }, 'team_chat_schema_unsupported'],
     ['a participant who is not in the id', dm, { participants: ['member_alice', 'member_carol'] }, 'team_chat_store_failed'],
     ['participants out of order', dm, { participants: ['member_bob', 'member_alice'] }, 'team_chat_store_failed'],
     ['one participant', dm, { participants: ['member_alice'] }, 'team_chat_store_failed'],

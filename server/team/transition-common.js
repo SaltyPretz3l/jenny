@@ -5,6 +5,7 @@
 // from each other without a cycle; both take these from here.
 
 const { hostFailure } = require('../api-contract');
+const { displayNameKey } = require('./member-schema');
 
 function refuse(kind, reason) {
   return { ok: false, failure: hostFailure(kind, reason) };
@@ -25,4 +26,12 @@ function activeActor(doc, actorMemberId) {
   return { ok: true, actor };
 }
 
-module.exports = { refuse, findMember, activeActor };
+// The owner admits a person by reading the name, so no two members who are pending or active share one (R01-F04).
+// `exceptMemberId`: the member who is renaming themselves, who may keep their own name in another case or spacing.
+function nameIsFree(doc, displayName, exceptMemberId = null) {
+  const key = displayNameKey(displayName);
+  return !doc.members.some((member) => member.member_id !== exceptMemberId && member.state !== 'revoked'
+    && displayNameKey(member.display_name) === key);
+}
+
+module.exports = { refuse, findMember, activeActor, nameIsFree };

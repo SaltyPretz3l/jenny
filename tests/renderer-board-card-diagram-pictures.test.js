@@ -115,6 +115,25 @@ test('a theme change in the middle of a draw gives the draw up and draws the sce
   assert.deepEqual(seen, ['ready']);
 });
 
+test('a theme change while hidden clears and draws nothing; showing runs one sweep', async (t) => {
+  const h = setup(t);
+  h.pictures.hold('a', 'one', () => {});
+  await h.sketch.drain();
+  assert.equal(h.pictures.sizes().cached, 1);
+  const drawn = h.sketch.requests.length;
+  h.pictures.shown(false);
+  h.doc.documentElement.setAttribute('data-theme', 'dark');
+  await flush();
+  assert.equal(h.pictures.sizes().cached, 1, 'the cache is kept');
+  assert.equal(h.sketch.requests.length, drawn, 'no frame work while hidden');
+  h.pictures.shown(true);
+  await h.sketch.drain();
+  assert.equal(h.sketch.requests.length, drawn + 1, 'one new draw with the new palette');
+  h.pictures.shown(true);
+  await h.sketch.drain();
+  assert.equal(h.sketch.requests.length, drawn + 1, 'showing again with nothing owed does nothing');
+});
+
 test('with the real frame host: one frame draws the scene, its export answer becomes the picture, and the frame is given back', async (t) => {
   const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'https://jenny.invalid/', pretendToBeVisual: true });
   dom.window.HTMLCanvasElement.prototype.getContext = () => null; // jsdom has no canvas and says so loudly

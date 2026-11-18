@@ -45,6 +45,8 @@
   const POLL_MAX_MS = 300_000;
   const POLL_FAILS_BEFORE_BACKOFF = 3;
   const PUSH_SETTLE_MS = 250;
+  // After a push-driven list read, the next one waits this long: main pushes on every bridge, node and GPU step.
+  const PUSH_GAP_MS = 5000;
   const CALL_TIMEOUT_MS = 10_000;
   // Starting or stopping a server, joining and leaving wait on a child process or the network for
   // longer than a read does (a stop alone may take 10 s), so they get a longer bound.
@@ -56,13 +58,15 @@
   const LONG_CALLS = Object.freeze({ hostInternet: 180_000, hostDelete: 1_800_000, hostStartNew: 180_000, hostOldDelete: 1_800_000,
     hostExport: 1_800_000, hostRestorePick: 1_800_000, hostRestore: 1_800_000,
     // Slice 2c renderer: a file of up to 4 MiB each way (the client's part timeout is 60 s), and the file and save dialogs.
-    chatUpload: 90_000, chatAttachmentImage: 90_000, chatAttachmentCopy: 90_000, chatAttachPick: 1_800_000, chatAttachmentSave: 1_800_000,
+    chatUpload: 90_000, chatAttachmentImage: 90_000, chatAttachmentText: 90_000, chatAttachmentCopy: 90_000, chatAttachPick: 1_800_000, chatAttachmentSave: 1_800_000,
     // Slice 3-10: an upload or a download first waits on the native folder dialog in main.
-    uploadFolder: 1_800_000, downloadProject: 1_800_000 });
+    uploadFolder: 1_800_000, downloadProject: 1_800_000,
+    // Row 175 (D13): a project file read (up to a 4 MiB picture) and a list page; main's own limits are 45 s and 60 s.
+    projectFileRead: 60_000, projectFiles: 75_000 });
   const NO_ANSWER = Object.freeze({ code: 'CMP-TEAM-0001', reason: '' });
   // Pinned to hostStatus on an empty profile by tests/team-off.test.js.
   const EMPTY_HOST = Object.freeze({ state: 'stopped', team_id: null, team_name: null, deployed: false, reason: null, since: 0, reach: null, direct_port: null,
-    internet: null, internet_draft: null, key: null, old_teams: Object.freeze([]), operation: null, owner: null });
+    internet: null, internet_draft: null, autostart: false, key: null, old_teams: Object.freeze([]), operation: null, owner: null });
   // needs_repair: a saved team whose file does not load (nothing is read for it). force_local (E64): Force local holds it.
   const LOCKED_OUT = new Set(['revoked', 'pending', 'needs_repair', 'force_local']);
 
@@ -85,6 +89,8 @@
     let pollFails = 0;
     let ownedWaitMs = 0;
     let pushTimer = null;
+    let pushGap = null;
+    let pushOwed = false;
     let visibilityDoc = null;
     let epoch = 0;
     // Quiet (E50): main says there is no team data, so nothing is subscribed until wake().
@@ -138,6 +144,11 @@
 
     // ----------------------------------------------------------------- state
 
+    // Read before setHost: whether this host state differs from the held one where a list depends on it.
+    function hostMoved(host) {
+      const was = data.host;
+      return !was || !host || was.state !== host.state || was.team_id !== host.team_id;
+    }
     function setHost(host) {
       if (!host || typeof host !== 'object') return false;
       data.host = host;
@@ -171,8 +182,9 @@
       if (gpu) pushes.gpu += 1;
       const teams = payload && payload.teams;
       // A push that changed only the GPUs notifies; any other push keeps the teams path (and its list re-read).
-      if (gpu && Array.isArray(teams) && JSON.stringify(teams) === JSON.stringify(data.teams)) { notify(); return; }
-      onPush('teams', setTeams(teams));
+      const same = Array.isArray(teams) && JSON.stringify(teams) === JSON.stringify(data.teams);
+      if (gpu && same) { notify(); return; }
+      onPush('teams', setTeams(teams), !same);
     }
 
     // ----------------------------------------------------------------- reads
@@ -313,28 +325,41 @@
 
     // ------------------------------------------------------------- consumers
 
-    // Several pushes in a row (a reconnect sends a burst) start one list read, after the last of them.
-    function listsAfterPush() {
+    // Several pushes in a row (a reconnect sends a burst) start one list read, after the last of them. A push that
+    // moved nothing here (`moved` false: the same teams, the same host state) inside the gap that follows a read is
+    // owed one read with the others, when the gap ends: a list read for each such push used up the host's limit and
+    // refused the next change. A push that moved a team or the host is read for after the settle time, gap or not.
+    function listsAfterPush(moved) {
+      if (pushGap !== null && !moved) { pushOwed = true; return; }
       if (pushTimer !== null) clearTimeout(pushTimer);
-      pushTimer = setTimeout(() => { pushTimer = null; void refreshLists(); }, PUSH_SETTLE_MS);
+      pushTimer = setTimeout(() => {
+        pushTimer = null;
+        if (pushGap !== null) clearTimeout(pushGap);
+        pushOwed = false;
+        pushGap = setTimeout(() => { pushGap = null; if (pushOwed) listsAfterPush(false); }, PUSH_GAP_MS);
+        void refreshLists();
+      }, PUSH_SETTLE_MS);
     }
     function dropPushTimer() {
       if (pushTimer !== null) clearTimeout(pushTimer);
+      if (pushGap !== null) clearTimeout(pushGap);
       pushTimer = null;
+      pushGap = null;
+      pushOwed = false;
     }
-    function onPush(kind, changed) {
+    function onPush(kind, changed, moved) {
       if (!changed) return;
       pushes[kind] += 1;
       syncTimer();
       notify();
-      listsAfterPush();
+      listsAfterPush(moved);
     }
 
     function subscribePushes() {
       const api = bridge();
       const keep = (off) => { if (typeof off === 'function') unsubscribers.push(off); };
       if (api && typeof api.onState === 'function') keep(api.onState(onStatePush));
-      if (api && typeof api.onHostState === 'function') keep(api.onHostState((host) => onPush('host', setHost(host))));
+      if (api && typeof api.onHostState === 'function') keep(api.onHostState((host) => { const moved = hostMoved(host); onPush('host', setHost(host), moved); }));
       visibilityDoc = documentRef();
       if (visibilityDoc && typeof visibilityDoc.addEventListener === 'function') visibilityDoc.addEventListener('visibilitychange', onVisibility);
     }
@@ -443,5 +468,20 @@
     return shared;
   }
 
-  return { createTeamStore, getTeamStore, MAX_TEAMS, MAX_MEMBERS, NO_ANSWER, EMPTY_HOST };
+  // With no team data on disk (E50) the first answered Join, Deploy or Recover ends the quiet state, ok or not and
+  // whether the page that asked still shows: main loaded its team service for it and may have written a team or a
+  // host config before answering (or after a timeout). The store follows the pushes and reads once; the shell loads
+  // the gate when the answer was ok or that read finds a team, a deployed host or one that is not stopped. Settings >
+  // Team and the Team tab's start page both end a quiet start through here.
+  function afterFirstAct(store, answer) {
+    if (!store.wake()) return;
+    const note = () => globalThis.rendererTopNavShellController?.noteTeamData?.();
+    if (answer && answer.ok === true) note();
+    void store.refreshAll().then(() => {
+      const { teams, host } = store.snapshot();
+      if (teams.length || (host && (host.deployed === true || host.state !== 'stopped'))) note();
+    });
+  }
+
+  return { createTeamStore, getTeamStore, afterFirstAct, MAX_TEAMS, MAX_MEMBERS, NO_ANSWER, EMPTY_HOST };
 });

@@ -272,8 +272,10 @@
       const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml, stopTarget && stopTarget.title
         ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : settingsSubject);
       const decisionAttr = ` data-approval-status="resolved" data-approval-decision="${receiptDecision(source.decision)}"`;
+      // Row 178: an allowed terminal_run's receipt links to its terminal (trusted markup built by the gap renderer).
+      const afterHtml = receiptDecision(source.decision) === 'allowed' && typeof source.receiptActionHtml === 'string' ? source.receiptActionHtml : '';
       return mode === 'inline'
-        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}</div>`
+        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}${afterHtml}</div>`
         : `<div class="tool-approval-block"${rowIdentity}${decisionAttr}>${receipt}</div>`;
     }
     if (cardState === 'inactive') {

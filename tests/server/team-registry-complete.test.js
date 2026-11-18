@@ -23,7 +23,7 @@ function operationActions(operation) {
 test('PARAM_SCHEMAS is exported and enumerates the closed operation vocabulary', () => {
   assert.ok(PARAM_SCHEMAS && typeof PARAM_SCHEMAS === 'object');
   assert.equal(Object.isFrozen(PARAM_SCHEMAS), true);
-  assert.equal(Object.keys(PARAM_SCHEMAS).length, 126); // row 151 T9: team.board.history; 3-4b: team.project.delete; 4e: team.pool.usage, team.pool.model.set; 3-6b: session.view, team.project.audit.read; 3-8b: five file operations; 3-12: four rules operations; 6-3: ten model operations; row 151 T2: seven board operations; T3: team.board.sync; T4: five presence operations; T5: three proposal operations, team.board.revert
+  assert.equal(Object.keys(PARAM_SCHEMAS).length, 138); // row 175 item 6, F13, F18: five team.project conversation operations; row 175 wave 5: team.project.files.list and .read; row 173: four team.chat.channel_* operations; row 170: team.member.profile; row 151 T9: team.board.history; 3-4b: team.project.delete; 4e: team.pool.usage, team.pool.model.set; 3-6b: session.view, team.project.audit.read; 3-8b: five file operations; 3-12: four rules operations; 6-3: ten model operations; row 151 T2: seven board operations; T3: team.board.sync; T4: five presence operations; T5: three proposal operations, team.board.revert
 });
 
 test('slice 3-12 rows: the rules list on project.rules.read, the three changes on project.rules, no owner-any', () => {
@@ -69,9 +69,22 @@ test('row 151 T2 rows: every board operation and the snapshot route on a board r
     assert.deepEqual(COLUMNS.filter((column) => ACTIONS[action][column]), who, action);
     assert.deepEqual([ACTIONS[action].resource, ACTIONS[action].project, ACTIONS[action].ownerAny], ['project', role, false], action);
   }
-  // The board rows, and only they, exist in an active project of the team alone (the row 151 review).
-  assert.deepEqual(Object.keys(ACTIONS).filter((action) => ACTIONS[action].teamProject === true).sort(), Object.keys(rows).sort());
+  // The board rows, the reader view (row 175 wave 5) and the conversation rows of item 6, F13 and F18, and only they,
+  // exist in an active project of the team alone.
+  assert.deepEqual(Object.keys(ACTIONS).filter((action) => ACTIONS[action].teamProject === true).sort(),
+    [...Object.keys(rows), 'project.files.read', 'project.redo', 'project.conversation'].sort());
   assert.equal(registry.actionForOperation('team.board.planted', {}), null);
+});
+
+test('row 175 item 6, F13, F18 rows: redo on project.redo (its admin check project.write), the rest project.conversation', () => {
+  for (const [operation, action] of [['team.project.regenerate', 'project.redo'], ['team.project.edit_resend', 'project.redo'],
+    ['team.project.branch', 'project.conversation'], ['team.project.ask', 'project.conversation'],
+    ['team.project.hand_driver', 'project.conversation']]) assert.equal(registry.actionForOperation(operation, {}), action, operation);
+  for (const [action, role] of [['project.redo', 'writer'], ['project.write', 'admin'], ['project.conversation', 'writer']]) {
+    assert.deepEqual(COLUMNS.filter((column) => ACTIONS[action][column]), ['owner', 'member'], action);
+    assert.deepEqual([ACTIONS[action].resource, ACTIONS[action].project, ACTIONS[action].ownerAny, ACTIONS[action].ownerSeen],
+      ['project', role, false, false], action);
+  }
 });
 
 test('slice 6-3 rows: every model operation and both part routes on a model row, owner and member only, on the team', () => {
@@ -148,6 +161,9 @@ test('slice 3-8b rows: the upload operations and part route on project.files.upl
   for (const operation of ['team.project.upload.begin', 'team.project.upload.status', 'team.project.upload.commit',
     'team.project.upload.discard']) assert.equal(registry.actionForOperation(operation, {}), 'project.files.upload', operation);
   assert.equal(registry.actionForOperation('team.project.download.manifest', {}), 'project.files.download');
+  for (const operation of ['team.project.files.list', 'team.project.files.read']) {
+    assert.equal(registry.actionForOperation(operation, {}), 'project.files.read', operation);
+  }
   assert.equal(registry.actionForRoute('PUT /api/v1/projects/:project_id/uploads/:upload_id/files/:index/parts/:n'),
     'project.files.upload');
   assert.equal(registry.actionForRoute('GET /api/v1/projects/:project_id/downloads/:manifest_id/files/:index/parts/:n'),

@@ -106,6 +106,10 @@ const {
 } = require('./backend-conversation-storage');
 const { backfillTaskBoardProjects } = require('./task-board-project-backfill');
 const { createServiceLogBuffer } = require('./service-log-buffer');
+const {
+  getLocalSubagentEngineStatus: _getLocalSubagentEngineStatus,
+  syncLocalSubagentEngine: _syncLocalSubagentEngine,
+} = require('./local-subagent-engine');
 class BackendService extends EventEmitter {
   constructor(options) {
     super();
@@ -137,6 +141,7 @@ class BackendService extends EventEmitter {
       || inferEngineTypeFromModel(options.defaultModel || '');
     this.currentStatus = null;
     this._lastEngineFallback = null;
+    this._startupIdleByChoice = false;
     this._modelEngineHints = new Map();
     this._managedPendingModel = '';
     this._managedInitializeFlight = null;
@@ -627,6 +632,15 @@ class BackendService extends EventEmitter {
 
   async refreshManagedConfig(reason = 'config_updated', options = {}) {
     return _refreshManagedConfig(this, reason, options);
+  }
+
+  // Row 179: the local subagent engine kept running under a cloud primary.
+  getLocalSubagentEngineStatus() {
+    return _getLocalSubagentEngineStatus(this);
+  }
+
+  async syncLocalSubagentEngine(reason = 'local_subagent_engine') {
+    return _syncLocalSubagentEngine(this, reason);
   }
 
 }

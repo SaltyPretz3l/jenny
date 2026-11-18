@@ -126,7 +126,7 @@ test('completed segmented turns coalesce into one turn article while rowless sib
   );
 });
 
-test('completed coalesced assistant turns keep branch toggles working through compat-only child nodes', async (t) => {
+test('completed coalesced assistant turns over compat-only child nodes render no branch toggle', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -210,32 +210,11 @@ test('completed coalesced assistant turns keep branch toggles working through co
   });
   await waitForUi(window, 80);
 
-  let toggle = timeline.querySelector('[data-thread-toggle="assistant_turn_toggle"]');
-  let childContainer = timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_turn_toggle"]');
-  assert.ok(toggle, 'assistant turns with multiple tool children should still expose a branch toggle');
+  // ef75503fb: the turn article's row list already shows both tool rows, so
+  // a node whose children are all envelope compat anchors renders no toggle.
+  const toggle = timeline.querySelector('[data-thread-toggle="assistant_turn_toggle"]');
+  const childContainer = timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_turn_toggle"]');
+  assert.equal(toggle, null, 'a turn whose tool children are all compat anchors should not render a branch toggle');
   assert.ok(childContainer, 'the compat-only child container should remain in the thread tree');
-  const initialExpanded = String(toggle.getAttribute('aria-expanded') || '');
-  const initialHidden = childContainer.hasAttribute('hidden');
-
-  toggle.click();
-  await waitForUi(window, 40);
-  toggle = timeline.querySelector('[data-thread-toggle="assistant_turn_toggle"]');
-  childContainer = timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_turn_toggle"]');
-  assert.notEqual(
-    String(toggle?.getAttribute('aria-expanded') || ''),
-    initialExpanded,
-    'the branch toggle should still flip its expanded state when compat-only children are present'
-  );
-  assert.notEqual(
-    childContainer?.hasAttribute('hidden'),
-    initialHidden,
-    'the compat-only child container visibility should change when the toggle is used'
-  );
-
-  toggle.click();
-  await waitForUi(window, 40);
-  toggle = timeline.querySelector('[data-thread-toggle="assistant_turn_toggle"]');
-  childContainer = timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_turn_toggle"]');
-  assert.equal(String(toggle?.getAttribute('aria-expanded') || ''), initialExpanded);
-  assert.equal(childContainer?.hasAttribute('hidden'), initialHidden);
+  assert.equal(childContainer.hasAttribute('hidden'), false, 'the compat-only children stay expanded');
 });

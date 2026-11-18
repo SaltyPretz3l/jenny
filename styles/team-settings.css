@@ -23,6 +23,76 @@
   font-weight: 400;
 }
 
+/* A text field in a settings row (Team name) takes the Settings control height, so it lines up with its Save button. */
+.team-set .settings-field--row .inv-text-field-control {
+  box-sizing: border-box;
+  height: var(--settings-control-height, 34px);
+  padding-block: 0;
+}
+
+/* The summary line under the server status (row 168): one jump link per fact. */
+.team-set-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-10);
+  margin: 0 0 var(--space-10);
+  padding: 0;
+  list-style: none;
+}
+
+.team-set-summary a {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.team-set-summary a:hover b {
+  text-decoration: underline;
+}
+
+.team-set-summary a:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.team-set-summary span {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.team-set-summary b {
+  font-weight: 600;
+}
+
+/* The connected owner's folded groups: the summary is the heading; the group's own heading stays for aria-labelledby
+   and for the focus a summary link moves, clipped out of sight rather than removed. */
+.team-set .settings-fold {
+  margin-top: var(--space-8);
+}
+
+.team-set .settings-fold + .team-set-group {
+  margin-top: var(--space-12);
+}
+
+.team-set .settings-fold > .team-set-group {
+  position: relative;
+  margin-top: var(--space-5);
+}
+
+.team-set .settings-fold > .team-set-group > .settings-group-heading {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .team-set-list {
   display: flex;
   flex-direction: column;
@@ -93,6 +163,42 @@
 .team-set-inline > .inv-text-field {
   flex: 1 1 260px;
   min-width: 0;
+}
+
+/* In a settings row (Team name) the field and its Save stay on one line: the field gives way, the button never drops under it. */
+.team-set .settings-field-control > .team-set-inline {
+  flex-wrap: nowrap;
+}
+
+.team-set .settings-field-control > .team-set-inline > .inv-text-field {
+  flex-basis: 0;
+}
+
+/* A segmented control, a dropdown and the button beside them share one height, corner and surface: the
+   Settings control family (settings-control-family.css) reaches only controls inside a settings row. */
+.team-set-inline > .inv-segmented {
+  box-sizing: border-box;
+  height: var(--settings-control-height, 34px);
+  border-color: var(--settings-control-border, var(--widget-button-secondary-border));
+  border-radius: var(--settings-control-radius, var(--radius-base));
+  background-color: var(--settings-control-bg, var(--surface-input-background));
+}
+
+.team-set-inline > .inv-segmented .inv-segmented-option {
+  height: 100%;
+  border-radius: calc(var(--settings-control-radius, var(--radius-base)) - 3px);
+}
+
+.team-set-inline > .inv-select-field .inv-select-field-control {
+  height: var(--settings-control-height, 34px);
+  padding-block: 0;
+  border-color: var(--settings-control-border, var(--widget-button-secondary-border));
+  border-radius: var(--settings-control-radius, var(--radius-base));
+  background-color: var(--settings-control-bg, var(--surface-input-background));
+}
+
+.team-set-inline:has(> .inv-segmented, > .inv-select-field) > .btn {
+  --btn-min-height: var(--settings-control-height, 34px);
 }
 
 .team-set-after {
@@ -305,3 +411,8 @@
   .team-net-link[data-s="bad"] { border-inline-start-style: dashed; }
   .team-net-link[data-s="bad"]::after { top: -1px; inset-inline: 10px auto; margin-inline: 0; }
 }
+
+/* A You row (row 170): the two names and Save on one line; the labels sit above their fields. */
+.team-set-profile { align-items: flex-end; }
+.team-set-profile .team-set-profile__field { flex: 1 1 0; min-width: 0; }
+.team-set-profile .inv-text-field-label { display: block; margin-bottom: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-footnote); }

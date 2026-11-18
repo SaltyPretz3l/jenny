@@ -37,12 +37,53 @@
       ...(ariaLabel ? { ariaLabel } : {}), ...(title ? { title } : {}) });
   }
 
+  function groupStart(id) { return '<div class="settings-group team-set-group" role="group" aria-labelledby="teamGroup-' + id + '"'; }
+
   function group(id, heading, { copy = '', extra = '', body = '' } = {}) {
     const headingId = 'teamGroup-' + id;
-    return '<div class="settings-group team-set-group" role="group" aria-labelledby="' + headingId + '" data-team-group="' + id + '">'
+    return groupStart(id) + ' data-team-group="' + id + '">'
       + '<h4 class="settings-group-heading" id="' + headingId + '">' + escapeHtml(heading)
       + (extra ? '<span class="team-set-count">' + escapeHtml(extra) + '</span>' : '') + '</h4>'
       + (copy ? '<p class="settings-group-copy">' + escapeHtml(copy) + '</p>' : '') + body + '</div>';
+  }
+
+  // A rarely used group of the connected owner's page, folded under its own heading (row 168). `html` is one group's
+  // markup; its heading text (and the count span after it) become the summary, and the heading itself stays inside for
+  // aria-labelledby. `isOpen(id, html)` says whether it is open. A group with no heading in `html` is returned as it was.
+  function fold(id, html, isOpen) {
+    const match = html && /<h4 class="settings-group-heading"[^>]*>([^<]*)(?:<span class="team-set-count">([^<]*)<\/span>)?/.exec(html);
+    if (!match) return html;
+    return '<details class="settings-fold" data-team-fold="' + id + '"' + (isOpen(id, html) ? ' open' : '') + '><summary>' + match[1]
+      + (match[2] ? '<span class="settings-fold-count">' + match[2] + '</span>' : '') + '</summary>' + html + '</details>';
+  }
+
+  // The same for the group that ends `html` (the GPU groups arrive as one string with GPU use last).
+  function foldLast(id, html, isOpen) {
+    const at = html.indexOf(groupStart(id));
+    return at < 0 ? html : html.slice(0, at) + fold(id, html.slice(at), isOpen);
+  }
+
+  // The summary line under the server status: one jump link per fact, `{ id, label, value }` with the group it opens.
+  function summaryLine(facts) {
+    if (!facts.length) return '';
+    return '<ul class="team-set-summary">' + facts.map((fact) => '<li><a href="#" data-team-jump="' + fact.id + '"><span>' + escapeHtml(fact.label)
+      + '</span><b>' + escapeHtml(fact.value) + '</b></a></li>').join('') + '</ul>';
+  }
+
+  // Scrolls a group into view for a summary link, opening the fold that holds it, and moves focus to its heading.
+  // Returns the id of the fold it opened, else ''. The only DOM work in this module.
+  function revealGroup(root, id) {
+    const target = root && root.querySelector('[data-team-group="' + id + '"]');
+    if (!target) return '';
+    const holder = target.closest('details[data-team-fold]');
+    const opened = holder && !holder.open ? holder.getAttribute('data-team-fold') : '';
+    if (opened) holder.open = true;
+    const heading = target.querySelector('.settings-group-heading');
+    if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+    const win = target.ownerDocument.defaultView;
+    const still = Boolean(win && typeof win.matchMedia === 'function' && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+    return opened;
   }
 
   function note(text, attrs = '') {
@@ -239,5 +280,5 @@
       + '<p class="team-set-code__note">' + escapeHtml(noteText) + '</p></div>';
   }
 
-  return { button, group, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, HELD_ACTIONS };
+  return { button, group, fold, foldLast, summaryLine, revealGroup, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, HELD_ACTIONS };
 });

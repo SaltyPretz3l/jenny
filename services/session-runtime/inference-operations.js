@@ -29,7 +29,13 @@ function refusalReason(error) {
 class InferenceOperations {
   constructor({ lanes, route, requestId, sessionId, authorityRevision, assertCurrent,
     maxOperations = 256, budget = null, initialLease = null,
-    fallbackRoutes = [], assertRouteCurrent = () => {} } = {}) {
+    fallbackRoutes = [], helperRoutes = [], assertRouteCurrent = () => {} } = {}) {
+    // Row 179: a cloud turn's delegate children may run on one local helper
+    // route. It never widens a local turn, and it never shadows the primary.
+    const helpersValid = Array.isArray(helperRoutes) && helperRoutes.length <= 1
+      && (helperRoutes.length === 0 || route?.resource_class === 'cloud')
+      && helperRoutes.every(item => isRuntimeRoute(item) && item.resource_class === 'local'
+        && item.engine_type !== route.engine_type);
     if (!lanes || typeof lanes.tryAcquireInference !== 'function'
       || typeof lanes.release !== 'function' || !isRuntimeRoute(route)
       || ![requestId, authorityRevision].every(value => typeof value === 'string' && TOKEN.test(value))
@@ -39,13 +45,14 @@ class InferenceOperations {
       || (initialLease !== null && lanes.ownsInferenceLease?.(initialLease, route) !== true)
       || !Array.isArray(fallbackRoutes) || fallbackRoutes.some(item => !isRuntimeRoute(item)
         || item.resource_class !== route.resource_class)
+      || !helpersValid
       || typeof assertRouteCurrent !== 'function'
       || !Number.isSafeInteger(maxOperations) || maxOperations < 1 || maxOperations > 4096) {
       throw new TypeError('runtime_inference_binding_invalid');
     }
     Object.assign(this, { lanes, route, requestId, sessionId, authorityRevision, assertCurrent, maxOperations, budget });
     this.operations = new Map();
-    this.routes = new Map([route, ...fallbackRoutes].map(item => [item.engine_type, item]));
+    this.routes = new Map([route, ...fallbackRoutes, ...helperRoutes].map(item => [item.engine_type, item]));
     this.assertRouteCurrent = assertRouteCurrent;
     this.initialLease = initialLease;
     // What the latest waiting admit waits behind, for the chat's wait line (the wire answer

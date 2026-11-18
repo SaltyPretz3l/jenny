@@ -78,7 +78,7 @@ test('a reply opens its root’s thread: R on a reply keeps the shown thread and
   assert.equal(h.sent('chatThread').length, 1, 'the same thread, not read again');
   assert.equal(h.window.document.activeElement, thInput(h));
   thRow(h, 3).querySelector('[data-team-msg-action="more"]').click();
-  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Edit', 'Delete'], 'no Mark unread or Reply in a thread');
+  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Copy with source', 'Edit', 'Delete'], 'no Mark unread or Reply in a thread');
   assert.equal(aside(h).querySelector('[data-team-msg-action="reply"], .team-thread-link'), null);
 });
 

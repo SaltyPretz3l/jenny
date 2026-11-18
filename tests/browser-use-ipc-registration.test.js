@@ -175,3 +175,26 @@ test('a service failure never leaks a message, and odd reasons are replaced', as
   assert.deepEqual(await call('hide', { session_id: SESSION }), { ok: false, reason: 'browser_error' });
   assert.deepEqual(await call('getState', { session_id: SESSION }), { ok: false, reason: 'browser_error' });
 });
+
+test('a state read with peekService never starts the service: nothing started reads as no page', async () => {
+  const handlers = new Map();
+  const state = { started: null, gets: 0 };
+  registerBrowserUseIpc({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+    getService: () => { state.gets += 1; return makeService(); },
+    peekService: () => state.started,
+    authorization: { authorize: (event) => event.trusted === true },
+    isEnabled: () => true,
+  });
+  const getState = (payload) => handlers.get(getBridgeChannel('browserUse.getState'))({ trusted: true }, payload);
+  const closed = await getState({ session_id: SESSION });
+  assert.equal(closed.ok, true);
+  assert.equal(closed.open, false);
+  assert.equal(closed.url, '');
+  assert.equal(state.gets, 0, 'the service was not built for a read');
+  assert.equal((await getState({ session_id: SESSION, extra: 1 })).reason, 'invalid_payload');
+  state.started = makeService();
+  const open = await getState({ session_id: SESSION });
+  assert.equal(open.open, true);
+  assert.equal(open.url, 'https://example.com/');
+  assert.equal(state.gets, 0);
+});

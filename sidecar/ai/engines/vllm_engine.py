@@ -20,7 +20,7 @@ from sidecar.ai.engines.model_name import (
     canonical_model_token,
     model_token_matches,
 )
-from sidecar.ai.engines.provider_http import ProviderHttpService
+from sidecar.ai.engines.provider_http import ProviderHttpService, is_idle_local_server
 from sidecar.ai.engines.vllm_engine_generation import _VLLMGenerationMixin
 from sidecar.ai.engines.vllm_engine_telemetry import _VLLMTelemetryMixin
 from sidecar.runtime.local_engine.reasoning import (
@@ -264,9 +264,17 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         A no-model init otherwise reported a dead port as a ready runtime. The
         probe rides ``_HEALTH_TIMEOUT_SECONDS`` (3 s) and raises the same
         connection error ``load_model`` does, so the factory falls back and
-        Electron reads the engine as unavailable.
+        Electron reads the engine as unavailable. A refused loopback port is
+        marked ``idle_local_server`` so the factory logs a stopped server, not a
+        failing one.
         """
-        if self._query_models() is None:
+        try:
+            body = self._service.get_json("/models", timeout=_HEALTH_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001
+            error = EngineConnectionError(self._build_not_reachable_message())
+            error.idle_local_server = is_idle_local_server(self._base_url, exc)
+            raise error from exc
+        if not isinstance(body, dict):
             raise EngineConnectionError(self._build_not_reachable_message())
 
     def _record_capability_probe_success(self, model_name: str) -> None:

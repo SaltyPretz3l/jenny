@@ -64,3 +64,19 @@ test('slash commands, URL routes, UNC and parent escapes never decorate', (t) =>
   );
   assert.equal(rootEl.querySelector('[data-chat-path-open]'), null);
 });
+
+test('inlinePaths: false keeps a path plain code (the Team tab has no path controller), also from the render cache', (t) => {
+  const markdownUtils = require('../renderer/shared/markdown-utils');
+  const { renderMarkdown } = markdownUtils;
+  const had = globalThis.markdownUtils;
+  globalThis.markdownUtils = markdownUtils;
+  t.after(() => { globalThis.markdownUtils = had; });
+  const messageRow = require('../renderer/team/renderer-team-message-row');
+  const doc = new JSDOM('<body></body>').window.document;
+  assert.match(renderMarkdown('See `src/app.js:4`.'), /data-chat-path-open="src\/app\.js"/, 'the local chat still chips it');
+  for (let i = 0; i < 2; i += 1) {
+    const html = messageRow.bodyHtml('See `src/app.js:4`.', [], null, doc);
+    assert.match(html, /<code>src\/app\.js:4<\/code>/);
+    assert.doesNotMatch(html, /chat-inline-path|data-chat-path|role="link"/);
+  }
+});

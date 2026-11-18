@@ -37,7 +37,7 @@ const http = require('node:http');
 const { FINAL_REASONS, createEngineClient } = require('./engine-forward');
 const { createNodeAgent } = require('./node-agent');
 const { createTeamLink } = require('./team-link');
-const { resolveLocalEngine } = require('./local-engine');
+const { readModelCapabilities, resolveLocalEngine } = require('./local-engine');
 const { loadSharing, saveSharing } = require('./sharing-file');
 
 const LOOK_MS = 1000;
@@ -62,7 +62,7 @@ function keyedRequest(key) {
 function createTeamSharing({
   userDataPath, getBackend = () => null, isBusy = () => false, log = () => {}, now = Date.now,
   timers = { setTimeout, clearTimeout }, createAgent = createNodeAgent, resolveEngine = resolveLocalEngine,
-  load = loadSharing, save = saveSharing, markBlock = MARK_BLOCK, markMargin = MARK_MARGIN,
+  readCapabilities = readModelCapabilities, load = loadSharing, save = saveSharing, markBlock = MARK_BLOCK, markMargin = MARK_MARGIN,
 } = {}) {
   const managers = new Map(); // team id -> connection manager
   let wanted = null; // the team whose setting is on: { teamId, mark (the mark on disk) }
@@ -168,6 +168,7 @@ function createTeamSharing({
       engine: createEngineClient({ request: engine.key ? keyedRequest(engine.key) : http.request }),
       engineInfo: { kind: engine.kind === 'local' ? 'openai-compatible' : engine.kind, version: 'unknown' },
       logger: (level, event, fields) => say(level, event, { team_id: teamId, ...fields }),
+      readCapabilities: () => readCapabilities(getBackend()),
     });
     active = { teamId, agent, engine, since: null, after: false };
     say('INFO', 'team.sharing.started', { team_id: teamId, engine: engine.kind === 'local' ? 'local' : engine.kind });

@@ -156,6 +156,7 @@ function renderBoth(modules, options = {}) {
       },
     }, messages, {
       pairedToolResultRow,
+      sessionId: options.sessionId,
       forceMaterializeToolDetails: options.forceMaterialize === true,
     }),
     transcript: renderers.transcript.renderToolCallBlock(toolUseMessage, messages, {
@@ -297,4 +298,70 @@ test('project notes reads and failures render no notes row in either path', () =
       assert.doesNotMatch(markup.transcript, /notes-chat__row/);
     }
   });
+});
+
+// Row 178 (owner pick D4): a finished terminal_run row links to the chat's Terminal panel, only while the panel API exists.
+const cardsModule = require('../renderer/chat/renderer-approval-block-cards');
+
+function withTerminalPanel(panel, callback) {
+  const previous = {
+    panel: globalThis.rendererChatTerminalPanel, cards: globalThis.rendererApprovalBlockCards,
+  };
+  if (panel) globalThis.rendererChatTerminalPanel = panel; else delete globalThis.rendererChatTerminalPanel;
+  globalThis.rendererApprovalBlockCards = cardsModule;
+  try {
+    return callback();
+  } finally {
+    for (const [name, value] of [['rendererChatTerminalPanel', previous.panel], ['rendererApprovalBlockCards', previous.cards]]) {
+      if (value === undefined) delete globalThis[name]; else globalThis[name] = value;
+    }
+  }
+}
+
+const terminalRow = (modules, terminal, metadata = {}) => renderBoth(modules, {
+  toolName: 'terminal_run', action: 'run', sessionId: 'chat-7', metadata: { result_kind: 'terminal_run', status: 'ok', terminal, ...metadata },
+}).turn;
+
+test('a finished terminal_run row offers Open in terminal for its own terminal while the panel exists', () => {
+  withFreshRendererModules(calendarBlock, (modules) => withTerminalPanel({ open: () => Promise.resolve(true) }, () => {
+    const link = documentFor(terminalRow(modules, 2)).querySelector('[data-terminal-open-slot]');
+    assert.ok(link, 'the link is drawn');
+    assert.equal(link.getAttribute('data-terminal-open-slot'), '2');
+    assert.equal(link.getAttribute('data-terminal-open-session'), 'chat-7');
+    assert.equal(link.textContent.trim(), 'Open in terminal');
+    assert.equal(link.tagName, 'BUTTON');
+  }));
+});
+
+test('the Open in terminal link is absent without the panel, without an integer terminal, and on other tools', () => {
+  withFreshRendererModules(calendarBlock, (modules) => {
+    withTerminalPanel(null, () => assert.doesNotMatch(terminalRow(modules, 2), /data-terminal-open-slot/));
+    withTerminalPanel({ open: () => Promise.resolve(true) }, () => {
+      for (const terminal of [null, undefined, '2', 0, -1, 1.5, 100]) {
+        assert.doesNotMatch(terminalRow(modules, terminal), /data-terminal-open-slot/, String(terminal));
+      }
+      assert.doesNotMatch(renderBoth(modules, { toolName: 'terminal_read', metadata: { result_kind: 'terminal_read', terminal: 2 } }).turn, /data-terminal-open-slot/);
+    });
+  });
+});
+
+test('a click on the link opens that chat\'s terminal tab; a click elsewhere, or with no panel, does nothing', async () => {
+  const dom = new JSDOM('<main><button data-terminal-open-slot="3" data-terminal-open-session="chat-7"><span id="inner">Open</span></button><p id="other">x</p></main>');
+  const { document } = dom.window;
+  const calls = [];
+  const windowRef = { rendererChatTerminalPanel: { open: (options) => { calls.push(options); return Promise.resolve(true); } } };
+  const click = (target) => cardsModule.handleTerminalOpenClick({ target, preventDefault() {} }, windowRef);
+  assert.equal(click(document.getElementById('inner')), true);
+  assert.equal(click(document.getElementById('other')), false);
+  assert.deepEqual(calls, [{ slot: 3, sessionId: 'chat-7' }]);
+  assert.equal(cardsModule.handleTerminalOpenClick({ target: document.getElementById('inner'), preventDefault() {} }, {}), false);
+  const rejecting = { rendererChatTerminalPanel: { open: () => Promise.reject(new Error('boom')) } };
+  assert.equal(cardsModule.handleTerminalOpenClick({ target: document.getElementById('inner'), preventDefault() {} }, rejecting), true, 'a failing open never throws');
+  await new Promise((resolve) => setImmediate(resolve));
+  const bound = new JSDOM('<main><button data-terminal-open-slot="1">Open</button></main>');
+  const live = [];
+  assert.equal(cardsModule.bindTerminalOpenLinks(bound.window.document, { rendererChatTerminalPanel: { open: (options) => { live.push(options); return true; } } }), true);
+  assert.equal(cardsModule.bindTerminalOpenLinks(bound.window.document, {}), false, 'bound once per document');
+  bound.window.document.querySelector('button').click();
+  assert.deepEqual(live, [{ slot: 1 }]);
 });

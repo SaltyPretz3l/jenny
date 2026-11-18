@@ -2,9 +2,10 @@
  *
  * Under a message's text and above its foot, never for a deleted message: first its pictures in a wrapping row, then
  * its other files, each kind in the order the message gives.
- * - A picture is an attachment the host stored as `kind: 'image'` with a png, jpeg or webp type. Anything else,
- *   whatever its name or declared type (an SVG, a web page, a `.png` the host kept as a file), is a file line and
- *   is never drawn. One picture is 220 px tall, several 140 px each (styles/team-chat.css), so nothing below moves
+ * - A picture is an attachment the host stored as `kind: 'image'` with a png, jpeg or webp type, or a GIF (the host
+ *   keeps a GIF as `kind: 'file'`, `image/gif`; main checks it before it is drawn, and the viewer offers no Copy for
+ *   it). Anything else, whatever its name or declared type (an SVG, a web page, a `.png` the host kept as a file), is
+ *   a file line and is never drawn. One picture is 220 px tall, several 140 px each (styles/team-chat.css), so nothing below moves
  *   when one arrives. A picture is a button that opens the image viewer on the message's pictures.
  * - A picture is fetched only when its row comes near the viewport (checked after each patch and once per animation
  *   frame on scroll), at most 3 at once, as a data: URL main checked (image types, at most 4 MiB, 8192 px a side,
@@ -19,6 +20,13 @@
  * - A file line: a glyph, the name, "{type} · {size}" and Download, which opens main's save dialog. While it runs
  *   the line says "Downloading…", then "Saved to {folder}" with "Show in folder", or "Not downloaded. {reason}".
  *   Cancelling the dialog says nothing. Offline and gone grey Download with the reason.
+ * - A text or code file (`previewable`) has its name as a button, and, up to 64 KiB, a three-line peek (fetched only
+ *   online; one already read stays offline)
+ *   under the line: fetched like a picture (near the viewport, in the same 3-at-once queue), text escaped, in a box
+ *   that has its three lines of height from the first draw. Main refusing it as not text takes the peek and the name
+ *   button away; any other failure leaves the empty peek and the name. The name and the peek both dispatch a bubbling
+ *   `team:file-preview` event on themselves (team, channel, message, attachment, author, own, time); the Team tab
+ *   opens the preview column, and nothing else here reacts.
  * Names are drawn as the save dialog suggests them (`shownName`), as text (escaped, `dir="auto"`); ids are checked against the host's pattern before they reach markup.
  * Nothing here reaches a log. */
 (function (root, factory) {
@@ -34,8 +42,12 @@
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   const ATT_ID = /^att_[0-9A-HJKMNP-TV-Z]{26}$/;
-  const PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
-  const DATA_URL = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+  const PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+  const DATA_URL = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+  const PREVIEW_TYPES = new Set(['application/json', 'application/xml', 'application/javascript', 'image/svg+xml']);
+  const PREVIEW_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'log', 'csv', 'tsv', 'json', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'rs', 'go',
+    'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'rb', 'sh', 'ps1', 'yml', 'yaml', 'toml', 'ini', 'xml', 'html', 'htm', 'css', 'scss', 'sql', 'svg']);
+  const PEEK_MAX_BYTES = 65536;
   const CACHE_MAX = 64 * 1024 * 1024;
   const AT_ONCE = 3;
   const NEAR_PX = 600;
@@ -103,7 +115,8 @@
   const urlLength = (bytes) => Math.ceil(Math.max(0, Number(bytes) || 0) / 3) * 4 + 23;
 
   // { teamId, cache: Map(id -> data URL), total, peak, tick, seen: Map(id -> tick last in view), status: Map(id -> { state, error }),
-  //   saves: Map, views: Set({ redraw, near: Set }), viewing: Set | null }
+  //   peeks: Map(id -> { state: 'loading' } | { state: 'shown', lines } | { state: 'failed' }), saves: Map,
+  //   views: Set({ redraw, near: Set }), viewing: Set | null }
   let team = null;
   let running = 0;
   const queue = [];
@@ -111,13 +124,13 @@
   function teamFor(teamId) {
     if (!team || team.teamId !== teamId) {
       if (team) dropTeam();
-      team = { teamId, cache: new Map(), total: 0, peak: 0, tick: 0, seen: new Map(), status: new Map(), saves: new Map(), views: new Set(), viewing: null };
+      team = { teamId, cache: new Map(), total: 0, peak: 0, tick: 0, seen: new Map(), status: new Map(), peeks: new Map(), saves: new Map(), views: new Set(), viewing: null };
     }
     return team;
   }
   function dropTeam() {
     if (!team) return;
-    for (const map of [team.cache, team.seen, team.status, team.saves, team.views]) map.clear();
+    for (const map of [team.cache, team.seen, team.status, team.peeks, team.saves, team.views]) map.clear();
     team = null;
     queue.length = 0;
   }
@@ -172,22 +185,42 @@
       const job = queue.shift();
       if (!team || team.teamId !== job.teamId) continue;
       // Its row left view while it waited: dropped, and asked again when it comes back.
-      if (!job.force && !inView(team, job.id)) { team.status.delete(job.id); continue; }
+      if (!job.force && !inView(team, job.id)) { (job.peek ? team.peeks : team.status).delete(job.id); continue; }
       void fetchOne(job);
     }
   }
-  async function fetchOne({ teamId, channelId, id, force }) {
+  // A peek's answer (main already cut it to 3 lines of 200 characters), as text: newlines and control characters out.
+  function peekLines(answer) {
+    // eslint-disable-next-line no-control-regex -- control characters are not drawn in a peek.
+    const clean = (line) => line.replace(/[\r\n\u0085\u2028\u2029]+/gu, ' ').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, '');
+    return answer.lines.filter((line) => typeof line === 'string').map(clean);
+  }
+  // A peek never enters the picture cache. Not text and gone are the file's state; any other failure is the peek's own
+  // and is not asked again until the team is shown again.
+  function settlePeek(t, id, answer) {
+    if (!t.peeks.has(id)) return;
+    if (answer && answer.ok && Array.isArray(answer.lines)) { t.peeks.set(id, { state: 'shown', lines: peekLines(answer) }); tellViews(t); return; }
+    const error = (answer && answer.error) || { code: '', reason: 'team_chat_answer_invalid' };
+    if (error.reason === 'team_attachment_not_text' || error.reason === 'team_chat_not_found') {
+      t.peeks.delete(id);
+      t.status.set(id, error.reason === 'team_chat_not_found' ? { state: 'gone', error } : { state: 'notext' });
+    } else t.peeks.set(id, { state: 'failed' });
+    tellViews(t);
+  }
+  async function fetchOne({ teamId, channelId, id, force, peek, name }) {
     running += 1;
     let answer;
     try {
       const teams = store();
-      answer = teams ? await teams.call('chatAttachmentImage', { team_id: teamId, channel_id: channelId, attachment_id: id }) : null;
+      const args = { team_id: teamId, channel_id: channelId, attachment_id: id };
+      answer = teams ? await teams.call(peek ? 'chatAttachmentText' : 'chatAttachmentImage', peek ? { ...args, peek: true, name } : args) : null;
     } catch {
       answer = null;
     }
     running -= 1;
     const t = team && team.teamId === teamId ? team : null;
-    if (t && t.status.has(id)) {
+    if (t && peek) settlePeek(t, id, answer);
+    else if (t && t.status.has(id)) {
       if (answer && answer.ok && typeof answer.data_url === 'string' && DATA_URL.test(answer.data_url)) {
         t.status.set(id, { state: cachePut(t, id, answer.data_url, force) ? 'shown' : 'waiting', error: null });
       } else {
@@ -204,11 +237,29 @@
     queue.push({ teamId: t.teamId, channelId, id, force });
     pump();
   }
+  // A text file's three lines (in `peeks`), on the pictures' queue. It names the file: the host serves a text file
+  // without its name, and main applies its extension rule to this one.
+  function requestPeek(t, channelId, id, name) {
+    t.peeks.set(id, { state: 'loading' });
+    queue.push({ teamId: t.teamId, channelId, id, force: false, peek: true, name });
+    pump();
+  }
 
   // ------------------------------------------------------------ one log's view
 
   const valid = (a) => Boolean(a) && typeof a === 'object' && typeof a.id === 'string' && ATT_ID.test(a.id) && typeof a.name === 'string';
-  const isPicture = (a) => a.kind === 'image' && PICTURE_TYPES.has(String(a.mime || '').toLowerCase());
+  const mimeOf = (a) => String(a.mime || '').toLowerCase();
+  // The host stores a GIF as a file; main still checks it before it is drawn.
+  const isPicture = (a) => PICTURE_TYPES.has(mimeOf(a)) && (a.kind === 'image' || (a.kind === 'file' && mimeOf(a) === 'image/gif'));
+  // Text or code Jenny can show as text (main decides again): by declared type, else by the name's extension.
+  function previewable(a) {
+    if (!a || typeof a !== 'object' || isPicture(a)) return false;
+    const type = mimeOf(a).split(';')[0].trim();
+    if (type.startsWith('text/') || PREVIEW_TYPES.has(type)) return true;
+    const name = String(a.name || '');
+    const dot = name.lastIndexOf('.');
+    return dot > 0 && PREVIEW_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+  }
 
   // `scroll` is the log element; `ctx()` the tab's context ({ online, me, nameOf(id), author(a) });
   // `onChange` redraws the log (rows patch by signature, so only a changed row is redrawn).
@@ -259,6 +310,19 @@
         + '" aria-label="' + name + '"><span class="team-img__words">' + inner + '</span></div>';
     }
 
+    // Previewable and not found to be gone or not text: its name is a button, and it may have a peek.
+    function canPreview(a) { const state = (t.status.get(a.id) || {}).state; return previewable(a) && state !== 'notext' && state !== 'gone'; }
+    // The peek has its three lines of height from its first draw (styles/team-chat.css); the lines are escaped text.
+    function peekHtml(a, c) {
+      if (!canPreview(a) || !(Number(a.size_bytes) <= PEEK_MAX_BYTES)) return '';
+      const held = t.peeks.get(a.id);
+      // Offline, a peek already read stays (as a picture does); one never read is not drawn, nor one that failed.
+      if ((held && held.state === 'failed') || (!c.online && !(held && held.state === 'shown'))) return '';
+      const label = jt('team.files.previewLabel', 'Preview {name}', { name: shownName(a.name) });
+      return inv().actionButton({ plain: true, className: 'team-peek', dataset: { 'team-file': 'preview', 'team-att': a.id, 'team-peek': a.id },
+        ariaLabel: label, title: label,
+        trustedHtml: held && held.state === 'shown' ? held.lines.map(escapeHtml).join('\n') : '' });
+    }
     function fileHtml(a, c) {
       const gone = (t.status.get(a.id) || {}).state === 'gone';
       const save = t.saves.get(a.id);
@@ -278,16 +342,21 @@
         after = '<span class="team-file__meta" data-tone="danger" role="status">' + escapeHtml(jt('team.files.notDownloaded', 'Not downloaded. {reason}', { reason: words.errorText(save.error) })) + '</span>';
       }
       const meta = gone ? jt('team.files.fileGone', 'No longer on the team server') : jt('team.attach.meta', '{type} · {size}', { type: typeWord(a.mime, a.name), size: sizeText(a.size_bytes) });
+      const open = jt('team.files.previewLabel', 'Preview {name}', { name: shown });
+      const name = canPreview(a)
+        ? inv().actionButton({ plain: true, className: 'team-file__open', dataset: { 'team-file': 'preview', 'team-att': a.id }, ariaLabel: open, title: open,
+          trustedHtml: '<span dir="auto">' + escapeHtml(shown) + '</span>' })
+        : '<span class="team-file__name" dir="auto" title="' + escapeHtml(shown) + '">' + escapeHtml(shown) + '</span>';
       return '<div class="team-file"' + (gone ? ' data-gone="true"' : '') + '><span class="team-file__glyph" aria-hidden="true">' + FILE_GLYPH + '</span>'
-        + '<span class="team-file__text"><span class="team-file__name" dir="auto" title="' + escapeHtml(shown) + '">' + escapeHtml(shown) + '</span>'
-        + '<span class="team-file__meta">' + escapeHtml(meta) + '</span></span><span class="team-file__dl">' + button + after + '</span></div>';
+        + '<span class="team-file__text">' + name + '<span class="team-file__meta">' + escapeHtml(meta) + '</span></span><span class="team-file__dl">' + button + after + '</span></div>'
+        + peekHtml(a, c);
     }
 
     // What the block shows: each file's id and state, and whether the team is online.
     function sigOf(pictures, others, c) {
       const save = (a) => { const s = t.saves.get(a.id); return s ? s.state + (s.folder || '') : ''; };
       return (c.online ? 'on' : 'off') + ':' + pictures.map((a) => a.id + pictureState(a, c)).join(',') + ';'
-        + others.map((a) => a.id + ((t.status.get(a.id) || {}).state || '') + save(a)).join(',');
+        + others.map((a) => a.id + ((t.status.get(a.id) || {}).state || '') + ((t.peeks.get(a.id) || {}).state || '') + save(a)).join(',');
     }
     // A message's block and its signature, { sig, html } ('' for no files or a deleted message). `c` is the pass's
     // context, read once by the caller; the markup is built only when the signature changed.
@@ -314,12 +383,14 @@
       }
     }
     // Which pictures are near the viewport: those are marked seen now, fetched when they have no state yet, and fetched
-    // again when they come back into view after being dropped or found not to fit.
+    // again when they come back into view after being dropped or found not to fit. Then the peeks near it.
     function look() {
       frame = 0;
       if (disposed || !scroll) return;
       const online = ctx().online;
       const box = scroll.getBoundingClientRect();
+      // A hidden log (a thread the preview covers): nothing in it is near, so nothing is asked for.
+      if (scroll.closest('[hidden]')) return;
       const was = view.near;
       view.near = new Set();
       for (const el of scroll.querySelectorAll('.team-img[data-team-att]')) {
@@ -336,6 +407,16 @@
         if (!a) continue;
         if (fits(t, id, urlLength(a.size_bytes))) request(t, message.channel_id || channelId, id, false, urlLength(a.size_bytes));
         else if (state !== 'waiting') { t.status.set(id, { state: 'waiting', error: null }); view.redraw(); }
+      }
+      // The peeks of text files near the viewport, asked once each (a failed one waits for the team to be shown again).
+      for (const el of scroll.querySelectorAll('.team-peek[data-team-peek]')) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom < box.top - NEAR_PX || r.top > box.bottom + NEAR_PX) continue;
+        const id = el.dataset.teamPeek;
+        view.near.add(id);
+        if (!online || t.peeks.has(id)) continue;
+        const found = findAttachment(el.closest('.team-msg'), id);
+        if (found) requestPeek(t, found.message.channel_id || channelId, id, found.attachment.name);
       }
     }
     // After a patch: the bytes, then what is near. On scroll: what is near, once per animation frame.
@@ -364,9 +445,10 @@
       const items = shown.map((a) => ({ kind: 'source', src: t.cache.get(a.id), title: shownName(a.name),
         caption: own ? jt('team.files.fromYou', 'From you · {when} · {size}', { when: whenText(message.created_at), size: sizeText(a.size_bytes) })
           : jt('team.files.from', 'From {name} · {when} · {size}', { name: c.author(message.author).name, when: whenText(message.created_at), size: sizeText(a.size_bytes) }),
+        // Main refuses to copy a GIF, so the viewer is not offered Copy for one.
         actions: {
           'save-as': () => saveTo(message, a).then((answer) => (answer && answer.ok && answer.saved === false ? { canceled: true } : answer)),
-          copy: () => call('chatAttachmentCopy', message, a),
+          ...(mimeOf(a) === 'image/gif' ? {} : { copy: () => call('chatAttachmentCopy', message, a) }),
         } }));
       const index = shown.findIndex((a) => a.id === id);
       const viewer = globalThis.rendererImageViewerController;
@@ -413,6 +495,12 @@
       else if (action === 'fetch') { request(t, message.channel_id || channelId, attachment.id, true); tellViews(t); }
       else if (action === 'download') void download(message, attachment);
       else if (action === 'reveal') void call('chatAttachmentReveal', message, attachment);
+      else if (action === 'preview') {
+        const own = Boolean(message.author && message.author.kind === 'member' && message.author.member_id === ctx().me);
+        control.dispatchEvent(new (win.CustomEvent || CustomEvent)('team:file-preview', { bubbles: true, detail: { teamId, channelId: message.channel_id || channelId,
+          messageId: message.id, attachment: { id: attachment.id, name: attachment.name, mime: attachment.mime, size_bytes: attachment.size_bytes },
+          authorName: ctx().author(message.author).name, own, createdAt: message.created_at } }));
+      }
     }
     if (scroll) {
       scroll.addEventListener('click', onClick);
@@ -439,5 +527,5 @@
   function disposeAll() { dropTeam(); }
   function forgetTeam(teamId) { if (team && team.teamId === teamId) dropTeam(); }
 
-  return { createFiles, disposeAll, forgetTeam, shownName, typeWord, sizeText, FILE_GLYPH, CACHE_MAX, AT_ONCE };
+  return { createFiles, disposeAll, forgetTeam, shownName, typeWord, sizeText, previewable, FILE_GLYPH, CACHE_MAX, AT_ONCE };
 });

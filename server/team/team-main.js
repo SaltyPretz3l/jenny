@@ -23,7 +23,7 @@ const { loadHostConfig } = require('../config');
 const { FileSecretStore, TEAM_HOST_SECRET_FILES } = require('../file-secret-store');
 const { assertStartable } = require('./maintenance-markers');
 const { assertSafeFile } = require('../../services/host/path-guard');
-const { chatRoster, createTeamChatHost } = require('../../services/host/team-chat-host');
+const { chatAudit, chatRoster, createTeamChatHost } = require('../../services/host/team-chat-host');
 const { ClientRegistry } = require('../client-registry');
 const { ControlLeases, projectLeaseRevoker } = require('../control-leases');
 const { log, acquireConfiguredProfile, assertTeamProjectsRoot, createHostCore, diskRootsFor } = require('../host-core');
@@ -35,12 +35,13 @@ const { REVOKE_EVENT_KINDS } = require('./membership-events');
 const { mintOwnerInvite, mintRecoveryInvite } = require('./owner-bootstrap');
 const { createRateLimiter } = require('./rate-limit');
 const { createTeamBoardHost } = require('./boards/team-board-host');
+const { createTeamTurnContext } = require('./turn-context');
 const { startSweeps } = require('./sweep-timer');
 const { announceTeamDeleted } = require('./team-deleted-notice');
 const { safeLogger } = require('./safe-logger');
 const { writeReadyMarker, removeReadyMarker } = require('./ready-marker');
 const { createTeamApprovals } = require('./team-approvals');
-const { createTeamCommands } = require('./team-commands');
+const { createTeamCommands, TEAM_LIST_LIMIT } = require('./team-commands');
 const { createProjectAnnouncer, createTeamProjectCommands, subscribeProjectChanges } = require('./team-project-commands');
 const { createProjectDeleter } = require('./team-project-delete');
 const { startTeamProjectRules } = require('./team-project-rules');
@@ -49,6 +50,7 @@ const { createProjectFolders } = require('./project-folders');
 const { createTeamProjectFiles } = require('./team-project-files');
 const { createTeamModelSharing, memberStreamFanOut } = require('./model-sharing');
 const { createModelRelayLink } = require('./model-relay-link');
+const { createFileToolsLink } = require('./file-tools-link');
 const { createTeamListener } = require('./team-http-server');
 const { createChatAttachmentRoutes } = require('./chat-attachment-routes');
 const { createPoolComposition } = require('./pool-composition');
@@ -63,7 +65,7 @@ const CLIENT_CAPACITY = 64;
 const CLIENT_CAPACITY_PER_DEVICE = 4;
 const EVENT_CLIENT_CAPACITY = 64;
 const BOOT_SECRET_BYTES = 32;
-// Admin commands: 30 per member per minute (spec "Limits").
+// Admin commands: 30 per member per minute (spec "Limits"); list reads count apart (TEAM_LIST_LIMIT).
 const TEAM_COMMAND_LIMIT = Object.freeze({ limit: 30, windowMs: 60_000, maxKeys: 64 });
 // Bridge changes this close together are judged once.
 const REACH_DEBOUNCE_MS = 250;
@@ -113,11 +115,24 @@ function reasonOf(error) {
 // (owner and full member) and, for a conversation's turn, `session.write` on that
 // conversation (its project resolved by the authorizer). No device, a refusal or a
 // degraded directory answers false.
+// A member's active device as the actor the authorize function takes; null without one.
+function memberActor(store, memberId) {
+  const device = store.listDevices(memberId).find((entry) => store.directory.isDeviceActive(entry.device_id));
+  return device ? { device_id: device.device_id } : null;
+}
+
+// Row 123 (team host file tools): whether a node's member may read a conversation (its project's files too).
+function conversationReader({ store, authorize }) {
+  return (memberId, sessionId) => {
+    const actor = memberActor(store, memberId);
+    return actor !== null && authorize(actor, 'session.read', { kind: 'session', id: sessionId }).ok === true;
+  };
+}
+
 function poolAccess({ store, authorize }) {
   return (memberId, sessionId) => {
-    const device = store.listDevices(memberId).find((entry) => store.directory.isDeviceActive(entry.device_id));
-    if (!device) return false;
-    const actor = { device_id: device.device_id };
+    const actor = memberActor(store, memberId);
+    if (!actor) return false;
     if (authorize(actor, ENGINE_ACTION, TEAM_RESOURCE).ok !== true) return false;
     return sessionId === null || authorize(actor, 'session.write', { kind: 'session', id: sessionId }).ok === true;
   };
@@ -439,7 +454,7 @@ async function startTeamHost(configPath, parent, options = {}) {
     const publish = (type, payload, options) => core?.events.publish(type, payload, options);
     onDeleting = () => announceTeamDeleted({ store, publish });
     chat = createTeamChatHost({ profileDir: config.userDataPath, directory: store.directory, logger,
-      maxResponseBytes: config.resourceLimits?.maxResponseBytes, roster: chatRoster(store), publish });
+      maxResponseBytes: config.resourceLimits?.maxResponseBytes, roster: chatRoster(store), audit: chatAudit(store), publish });
     // Shared projects (slice 3-4a): the application project service and the chat store are read
     // lazily, since the core and the chat store do not exist yet.
     const announce = createProjectAnnouncer({ directory: store.directory, logger, publish });
@@ -473,7 +488,7 @@ async function startTeamHost(configPath, parent, options = {}) {
     let usageLog = null;
     const models = createTeamModelSharing({ flowing: config.team.modelRelayFlowing, store, authorize, publish, logger, clock });
     const teamCommands = createTeamCommands({ store, invites, directory: store.directory, logger, internet: internetSetting, settle: mappingSettled,
-      addresses, limiter: createRateLimiter(TEAM_COMMAND_LIMIT), chat: chat.commands, projects, nodes: nodeCommands,
+      addresses, limiter: createRateLimiter(TEAM_COMMAND_LIMIT), listLimiter: createRateLimiter(TEAM_LIST_LIMIT), chat: chat.commands, projects, nodes: nodeCommands,
       usage: () => usageLog, projectAudit: approvals.audit, files: files.commands, rules: rules.commands, models: models.commands, boards: boards.commands,
       admitChatBoard: boards.admitChat });
     // The pool (slice 4a-4), only with a `pool` block: its gateway is the backend's model endpoint, a
@@ -482,6 +497,7 @@ async function startTeamHost(configPath, parent, options = {}) {
     let poolInputs = {};
     if (config.team.pool) {
       pool = createPool({ contextLength: config.team.pool.contextLength, logger, mayUsePool: poolAccess({ store, authorize }),
+        nodesMustRead: config.team.fileTools === true, mayReadConversation: conversationReader({ store, authorize }),
         teamModel: () => store.poolNames()?.team_model ?? null });
       const { modelEndpoint } = await pool.start();
       alive();
@@ -505,7 +521,7 @@ async function startTeamHost(configPath, parent, options = {}) {
     unsubscribes.push(...subscribeRevokeFanOut({ store, clients, leases, events: core.events, parent, dropKey, pool,
       nodes: nodeCommands }));
     unsubscribes.push(...approvals.attach({ core, store }), ...files.attach(), ...rules.attach({ core, store }), ...models.attach(),
-      ...boards.attach({ core, store }));
+      ...boards.attach({ core, store }), createTeamTurnContext({ store }).attach(core.composition.backend));
     unsubscribes.push(subscribeProjectChanges({ store, announce, pool: () => pool, logger,
       revokeLeases: projectLeaseRevoker({ leases, sessionProject }),
       dropViewers: (event) => { try { approvals.dropForProject(event); } finally { boards.dropForProject(event); } },
@@ -564,7 +580,15 @@ async function startTeamHost(configPath, parent, options = {}) {
           stop().catch(() => {});
         } });
       await bridge.start();
-    } catch { throw failure('team_transport_down'); }
+    } catch (error) {
+      // No bridge binary (a source checkout whose build/sidecar lost it, or a broken install) is not a network
+      // failure: it gets its own reason so Settings does not blame the connection.
+      if (error?.code === 'transport_unavailable') {
+        say('ERROR', 'team.transport_unavailable');
+        throw failure('team_transport_missing');
+      }
+      throw failure('team_transport_down');
+    }
     alive();
 
     // 11. Ready.
@@ -578,6 +602,10 @@ async function startTeamHost(configPath, parent, options = {}) {
     ready = true;
     readyAt = clock();
     if (parent) { relayLink = createModelRelayLink({ sharing: models, send: (m) => parent.send(m) }); unsubscribes.push(() => relayLink.dispose()); }
+    if (parent) { // row 123: project files state and running turns, for the desktop's switch
+      const filesLink = createFileToolsLink({ backend: () => core?.composition?.backend ?? null, send: (m) => parent.send(m) });
+      unsubscribes.push(() => filesLink.dispose());
+    }
     say('INFO', 'team.listening', { boot_epoch: core.bootEpoch });
     reportReach();
     reportMapped();

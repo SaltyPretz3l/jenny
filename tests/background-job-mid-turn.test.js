@@ -160,7 +160,7 @@ test('promptCommand keeps a command on one line without backticks and clips it t
   assert.ok(clipped.endsWith('…'));
 });
 
-test('the router table covers both mid-turn acknowledgements', () => {
-  assert.deepEqual([...MID_TURN_ACKS.keys()], ['session.mail_consumed', 'session.job_notice_consumed']);
+test('the router table covers every mid-turn acknowledgement', () => {
+  assert.deepEqual([...MID_TURN_ACKS.keys()], ['session.mail_consumed', 'session.job_notice_consumed', 'session.user_steer_consumed']);
   assert.equal(MID_TURN_ACKS.get('session.job_notice_consumed'), acceptJobNoticeConsumedNotification);
 });

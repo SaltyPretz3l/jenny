@@ -160,6 +160,8 @@ function createHostCore({
     // E19: only a team config may carry no model endpoint, and only it opts in.
     composition = createBackend({ ...config, pythonExecutable, executionBroker, modelOptional: Boolean(config.team),
       projectsRoot: config.team?.projectsRoot ?? null, memberTurns: Boolean(config.team),
+      // Team host file tools (row 123): the loader allowed `true` only with a projects root (and on win32 after W14).
+      hostFileTools: config.team?.fileTools === true,
       executionStagingRoot: config.execution?.stagingRoot || null,
       repoRoot: launch.repoRoot,
       ...(launch.resolvePackagedLaunch ? { resolvePackagedLaunch: launch.resolvePackagedLaunch,

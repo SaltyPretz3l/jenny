@@ -93,6 +93,7 @@ function build(options = {}) {
     stuckSends: options.stuckSends,
     questionCards: options.questionCards,
     currentSessionOnScreen: options.currentSessionOnScreen,
+    team: options.team,
   });
 }
 
@@ -456,4 +457,60 @@ test('a chat with a structured question batch does not also get a live-card row 
   const inbox = build({ sessions: [session('s1'), s2], questionCards: [{ sessionId: 's2', callId: 'ask-1', questionCount: 1, introText: 'Which format?' }] });
   assert.deepEqual(inbox.rows.map((row) => row.key), ['question:s2:b1']);
   assert.equal(inbox.counts.answerable, 1);
+});
+
+// Row 175 F10 (D16): Team rows from the Team notifier's accessor.
+const teamItem = (over = {}) => ({ kind: 'approval', unattended: false, teamId: 'team_one', projectId: 'project_p1',
+  sessionId: 'sess_' + 'a'.repeat(32), title: 'Palette cleanup', where: 'Palette', count: 1, onScreen: false, ...over });
+
+test('Team rows follow the local rows of their kind, in arrival order, with the Team line and no decisions', () => {
+  const inbox = build({
+    sessions: [session('s1'), session('s2')],
+    pendingToolApprovals: approvalMap([liveApproval()]),
+    questionCards: [{ sessionId: 's2', callId: 'ask-1', questionCount: 1, introText: '' }],
+    team: { key: 'k', notices: [], waiting: [
+      teamItem({ kind: 'question', sessionId: 'sess_q1', title: 'Q one' }),
+      teamItem({ sessionId: 'sess_a1', title: 'A one' }),
+      teamItem({ sessionId: 'sess_a2', title: 'A two', unattended: true, where: 'Docs' }),
+    ] },
+  });
+  assert.deepEqual(inbox.rows.map((row) => row.key), ['approval:call-1', 'team_approval:sess_a1', 'team_approval:sess_a2',
+    'question:s2:ask-1', 'team_question:sess_q1'], 'kind first, then local before Team, then arrival');
+  const [local, ownApproval, unattended, , question] = inbox.rows;
+  assert.equal(local.source, undefined);
+  assert.deepEqual([ownApproval.source, ownApproval.canAllow, ownApproval.canAlwaysAllow, ownApproval.teamId, ownApproval.projectId],
+    ['team', false, false, 'team_one', 'project_p1']);
+  assert.deepEqual(inbox.rows.filter((row) => row.source === 'team').map(rowNote), ['Team · Palette · Your turn',
+    'Team · Docs · Nobody is viewing', 'Team · Palette · 1 question waiting']);
+  assert.equal(rowNote(unattended), 'Team · Docs · Nobody is viewing');
+  assert.equal(question.sessionTitle, 'Q one');
+  assert.equal(inbox.counts.answerable, 5, 'the badge counts Team rows');
+  assert.equal(inbox.counts.approvals, 3);
+});
+
+test('a Team row names the prompter when it is known, pluralises its questions and keeps an unnamed project quiet', () => {
+  const inbox = build({ team: { key: 'k', notices: [], waiting: [
+    teamItem({ unattended: true, prompterName: 'Maya', sessionId: 'sess_a1' }),
+    teamItem({ kind: 'question', count: 3, where: '', sessionId: 'sess_q1' }),
+    teamItem({ sessionId: 'sess_a2', title: '' }),
+  ] } });
+  assert.deepEqual(inbox.rows.map(rowNote), ["Team · Palette · Maya's turn · Nobody is viewing", 'Team · Palette · Your turn', 'Team · 3 questions waiting']);
+  assert.equal(inbox.rows[1].sessionTitle, 'A project conversation');
+});
+
+test('a Team row says it is on screen when the notifier does, and malformed Team items are dropped', () => {
+  const inbox = build({ team: { key: 'k', notices: [], waiting: [
+    teamItem({ sessionId: 'sess_a1', onScreen: true }), teamItem({ sessionId: 'sess_a2' }),
+    null, { kind: 'plan_review', teamId: 't', sessionId: 's' }, { kind: 'approval', teamId: '', sessionId: 's' }, { kind: 'approval', teamId: 't' },
+  ] } });
+  assert.deepEqual(inbox.rows.map((row) => [row.sessionId, row.onScreen]), [['sess_a1', true], ['sess_a2', false]]);
+  assert.deepEqual(build({ team: null }).rows, []);
+  assert.deepEqual(build({ team: { waiting: 'x' } }).rows, []);
+});
+
+test('the source fingerprint moves with the Team key, so an arriving or leaving Team row rebuilds the inbox', () => {
+  const base = { collapsed: false, stuckSends: [], questionCards: [], verdicts: [] };
+  const state = { sessions: [], pendingToolApprovals: new Map() };
+  assert.notEqual(sourceFingerprint(state, { ...base, team: { key: 'a' } }), sourceFingerprint(state, { ...base, team: { key: 'b' } }));
+  assert.equal(sourceFingerprint(state, { ...base, team: null }), sourceFingerprint(state, { ...base, team: { key: '' } }));
 });

@@ -25,7 +25,7 @@ const REASONS = [
   'team_public_key_invalid', 'team_invite_ttl_invalid', 'team_cursor_invalid',
   'member_pending', 'member_revoked', 'role_forbidden', 'team_not_found', 'invite_not_valid', 'team_hello_required',
   'team_client_too_old', 'team_server_too_old', 'team_member_state_invalid', 'team_last_owner', 'team_owner_transfer_required',
-  'team_host_key_mismatch', 'team_unavailable', 'team_transport_down', 'team_key_timeout', 'team_store_failed',
+  'team_host_key_mismatch', 'team_unavailable', 'team_transport_down', 'team_transport_missing', 'team_key_timeout', 'team_store_failed',
   'team_store_schema_unsupported', 'team_member_limit', 'team_device_limit', 'team_invite_limit', 'team_rate_limit',
   // 1f-1 as built (refusals in main and the client's own)
   'team_request_invalid', 'team_join_in_progress', 'team_already_joined', 'team_limit_reached', 'team_disposed',
@@ -56,7 +56,9 @@ const REASONS = [
 ];
 
 // Reason-like words in the 3-9 client's source that are event or push names, never failure reasons.
-const NOT_REASONS = new Set(['control_changed', 'decision_changed', 'session_changed', 'team_gone', 'team_project_changed']);
+// Row 175: project_notice and project_waiting are team.onProject push kinds; approval_unattended is a host event.
+const NOT_REASONS = new Set(['control_changed', 'decision_changed', 'session_changed', 'team_gone', 'team_project_changed',
+  'project_notice', 'project_waiting', 'approval_unattended']);
 
 test('every reason word in the shared-project client source is on its closed list (so a missing sentence fails)', () => {
   const dir = path.join(__dirname, '..', 'services', 'team');
@@ -172,6 +174,10 @@ test('every membership audit kind the host writes has its own activity sentence'
     assert.notEqual(strings.activityText({ kind }, nameOf), generic, kind);
   }
   assert.ok(AUDIT_KINDS.includes('audit_log_reset'));
+  // Row 173: the chat channel kinds sit in their own list and name the channel.
+  const { CHAT_AUDIT_KINDS } = require('../server/team/audit-log');
+  for (const kind of CHAT_AUDIT_KINDS) assert.notEqual(strings.activityText({ kind }, nameOf), generic, kind);
+  assert.equal(strings.activityText({ kind: 'chat_channel_deleted', actor_member_id: 'member_a', name: 'design' }, nameOf), 'Olive deleted #design');
   assert.equal(strings.activityText({ kind: 'audit_log_reset', actor_member_id: null }, nameOf),
     'The audit log could not be read and was set aside. A new log starts here.');
 });

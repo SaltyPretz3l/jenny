@@ -463,6 +463,48 @@ def test_child_runtime_refuses_an_unbindable_parent_admission() -> None:
         )
 
 
+def test_child_on_another_engine_is_admitted_on_that_engines_route() -> None:
+    # Row 179: a cloud parent's local helper child rebinds to the helper's engine.
+    calls: list[tuple[str, Any]] = []
+
+    def provider_bound(_context: InferenceAttemptContext) -> None:
+        return None
+
+    def request_bound(_context: InferenceAttemptContext) -> None:
+        return None
+
+    def bind_provider(provider: str) -> Any:
+        calls.append(("bind_provider", provider))
+        return provider_bound
+
+    def bind_request(**kwargs: Any) -> Any:
+        calls.append(("bind_request", kwargs["request_id"]))
+        return request_bound
+
+    request_bound.bind_provider = bind_provider  # type: ignore[attr-defined]
+    parent = SimpleNamespace(bind_request=bind_request)
+    child_context = ChatRequestContext(
+        request_id="child-request", trace_id="trace", session_id="session",
+        mode="chat", approvals_pre_granted=False,
+    )
+    same = _child_loop_runtime(
+        parent_runtime=LoopRuntime(inference_admission=parent), child_context=child_context,
+        child_cancel=TurnCancellationHandle("child-request"), max_runtime_ms=None,
+    )
+    assert same.inference_admission is request_bound
+    other = _child_loop_runtime(
+        parent_runtime=LoopRuntime(inference_admission=parent), child_context=child_context,
+        child_cancel=TurnCancellationHandle("child-request"), max_runtime_ms=None,
+        inference_provider="openai-compatible",
+    )
+    assert other.inference_admission is provider_bound
+    assert calls == [
+        ("bind_request", "child-request"),
+        ("bind_request", "child-request"),
+        ("bind_provider", "openai-compatible"),
+    ]
+
+
 class _UncooperativeProviderStream:
     def __init__(self) -> None:
         self.started = threading.Event()

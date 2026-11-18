@@ -282,6 +282,9 @@ def test_hosted_overlay_does_not_disclose_captured_root(tmp_path: Path) -> None:
     )
     assert tmp_path.name not in messages[0]
     assert "git_repo:" not in messages[0]
+    # Not "not set": on a host that reads as something the user could configure.
+    assert "workspace_root: <hidden on a hosted server" in messages[0]
+    assert "workspace_root: <not set" not in messages[0]
 
 
 

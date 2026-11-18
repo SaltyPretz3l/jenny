@@ -34,13 +34,15 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team']);
+  /* Row 175: `teamProject`, your own turn in a team project conversation, or an approval nobody who can answer is viewing. */
+  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team', 'teamProject']);
+  var TEAM_CATEGORIES = Object.freeze(['team', 'teamProject']);
   var DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
     enabled: true,
     onlyWhenUnfocused: true,
     sound: true,
     replyPreview: false,
-    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true }),
+    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true, teamProject: true }),
   });
   /* App-started turns that are the Jenny chat's own work; an auto-resume
    * continues the person's turn and stays an ordinary reply. */
@@ -494,10 +496,10 @@
       return fresh;
     }
 
-    /* A team message (slice 2a-6c): the team subscriber builds the candidate; it goes through the same ring
-     * and bridge. Only `team` candidates pass here. */
+    /* A team message (slice 2a-6c) or project activity (row 175): the team subscriber builds the candidate; it goes
+     * through the same ring and bridge. Only `team` and `teamProject` candidates pass here. */
     function notifyTeam(candidate) {
-      if (!isObject(candidate) || candidate.category !== 'team') return null;
+      if (!isObject(candidate) || TEAM_CATEGORIES.indexOf(candidate.category) === -1) return null;
       return emit(candidate);
     }
 
@@ -508,7 +510,7 @@
 
     function handleOpen(payload) {
       if (disposed) return;
-      if (payload && payload.category === 'team') {
+      if (payload && TEAM_CATEGORIES.indexOf(payload.category) !== -1) {
         // No opener (no team is left, so the notifier stopped) or one that found no team: say so where the person lands.
         var opened;
         try { opened = teamOpenHandler ? teamOpenHandler(payload) !== false : false; } catch (error) { opened = true; logOnce('desktop_notifications.team_open_failed', error); }

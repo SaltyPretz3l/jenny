@@ -523,3 +523,15 @@ def test_one_root_pin_open_and_close_costs_milliseconds_at_most(lib, root: Path)
         client.open_root(root, *pair).close()
     per_pin = (time.perf_counter() - started) / 100
     assert per_pin < 0.05, f"{per_pin * 1e3:.2f} ms per pin"
+
+
+def test_a_team_worker_reads_lists_writes_and_edits_one_project_with_no_process_root(
+    lib, tmp_path: Path, monkeypatch,
+) -> None:
+    """Team host file tools (row 123): `main()` with an empty workspace root, a root
+    boundary and the switch, then read, list, write and edit through a request scope
+    with the real library. Nothing lands outside the request root but the worker's
+    ledger (D8, I10), and a second project's file is refused."""
+    from tests.sidecar.test_builtin_server_hosted_degrade import exercise_one_project
+
+    exercise_one_project(monkeypatch, tmp_path, "--hosted-win32-files")

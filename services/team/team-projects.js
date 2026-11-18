@@ -5,7 +5,10 @@
 // manager change, `drop` when a team leaves or stops, `stopAll` at app stop; a team with no entry answers
 // `team_not_found`. Per team it holds the project list (project-list.js), the open conversations
 // (project-conversations.js) and the transfers (project-transfer.js), and routes the team's host events to them.
-// Nothing is read at connect: a team's list is read, then kept current, from the first project call for it on.
+// Row 175 (F2): a team's list is read when the team comes online (one `projects.list` and one `sessions.list`, again on a
+// resync or a role change), then kept current from its events, so project activity notices count from connect, not from
+// the Team tab's first project call. A `conversationSend` tells the list that this member's turn is starting there
+// (project-list.js `sending`); the list knows the open conversations (`isViewing`) to keep a notice from the one shown.
 // While events keep it current, `projectList` and `projectConversations` answer from it with no read (fix 15); a call
 // that changes it marks it stale and the host's event (or the next call) reads it once. While Force local holds, no
 // event reaches the list or the conversations, so nothing is read or sent (fix 6).
@@ -29,6 +32,7 @@ const { invalidRequest } = require('./team-errors');
 
 const LIST_METHODS = new Set(['projectList', 'projectConversations']);
 const TRANSFER_METHODS = new Set(['uploadFolder', 'uploadCancel', 'downloadProject', 'downloadCancel']);
+const REDO_METHODS = new Set(['projectRegenerate', 'projectEditResend']); // row 175 item 6: recorded as this member's turn
 // Calls whose success changes the list: it is marked stale, so the host's event or the next list call reads it once.
 const CHANGES_LIST = new Set(['projectCreate', 'projectRename', 'projectDelete', 'projectLeave', 'projectJoin',
   'conversationCreate', 'conversationDelete']);
@@ -46,11 +50,10 @@ function createTeamProjects({
   }
 
   function build(teamId, manager) {
-    // `watched`: the list is read and kept only after this team's projects were first asked for (no read at connect).
-    const entry = { manager, unsubscribe: () => {}, online: false, facts: null, watched: false };
+    const entry = { manager, unsubscribe: () => {}, online: false, facts: null };
     const isOnline = () => entry.online && !isHeld();
     entry.list = createProjectList({ manager, teamId, push: send, log: say, isHeld,
-      onProjects: (rows) => entry.conversations.reconcile(rows) });
+      onProjects: (rows) => entry.conversations.reconcile(rows), isViewing: (sessionId) => entry.conversations.isOpen(sessionId) });
     entry.conversations = createProjectConversations({ manager, teamId, log: say, isHeld, online: isOnline,
       push: (payload) => send(payload), projectOf: (sessionId) => entry.list.projectOf(sessionId), ...(timers ? { timers } : {}) });
     entry.transfers = createProjectTransfers({ ...transferOptions, manager, teamId, log: say, isHeld,
@@ -72,7 +75,7 @@ function createTeamProjects({
       const reason = event.reason === 'deleting' ? 'team_project_deleting' : 'project_not_found';
       entry.conversations.closeWhere((sessionId) => entry.list.projectOf(sessionId) === projectId, reason);
     }
-    if (entry.watched) entry.list.onEvent(event);
+    entry.list.onEvent(event);
     entry.conversations.onEvent(event);
     if (event?.event_type === 'resync_required') void entry.conversations.resync();
   }
@@ -97,7 +100,7 @@ function createTeamProjects({
       const wasOnline = entry.online;
       entry.online = true;
       if (!wasOnline) entry.list.clearActivity();
-      if (entry.watched) void entry.list.refresh();
+      void entry.list.refresh();
       if (!wasOnline) { entry.conversations.reconnected(); entry.transfers.reconnected(); }
     }
     // Offline: events may be missed, so the list is read again before it answers a call.
@@ -131,11 +134,26 @@ function createTeamProjects({
     return answer;
   }
 
+  // Row 175: a turn this member starts here; the list binds it to the turn's stream when it starts.
+  async function sendTurn(entry, value) {
+    entry.list.sending(value.session_id);
+    const answer = await entry.conversations.call('conversationSend', value);
+    if (answer?.ok === true) entry.list.sent(value.session_id, answer.turn_id); else entry.list.unsent(value.session_id);
+    return answer;
+  }
+
+  // Row 175 item 6: a regenerate or an edit and resend is this member's turn too (a plain host call; no turn id).
+  async function redoTurn(entry, method, value) {
+    entry.list.sending(value.session_id);
+    const answer = await hostCall(entry, method, value);
+    if (answer?.ok === true) entry.list.sent(value.session_id, null); else entry.list.unsent(value.session_id);
+    return answer;
+  }
+
   async function call(method, value) {
     if (isHeld()) return forceLocalFailure();
     const entry = teams.get(value.team_id);
     if (!entry || stopped) return invalidRequest('team_not_found');
-    entry.watched = true;
     if (method === 'projectList') {
       if (entry.list.current()) return { ok: true, ...entry.list.view() };
       const read = await entry.list.refresh();
@@ -151,6 +169,8 @@ function createTeamProjects({
       if (!entry.list.knows(value.project_id)) return invalidRequest('team_not_found');
       return { ok: true, conversations: entry.list.conversationsOf(value.project_id) };
     }
+    if (method === 'conversationSend') return sendTurn(entry, value);
+    if (REDO_METHODS.has(method)) return redoTurn(entry, method, value);
     if (method.startsWith('conversation') && method !== 'conversationCreate') return entry.conversations.call(method, value);
     if (TRANSFER_METHODS.has(method)) return entry.transfers.call(method, value);
     if (!Object.hasOwn(PROJECT_OPERATIONS, method) || LIST_METHODS.has(method)) return invalidRequest();

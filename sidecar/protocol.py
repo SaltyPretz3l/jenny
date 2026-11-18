@@ -49,6 +49,15 @@ SESSION_MAIL_ARRIVED_METHOD = "session.mail_arrived"
 # that turn's handle and announced by the tool loop before its next generation;
 # never answered. An unconsumed push leaves the job unread for the post-turn wake.
 SESSION_JOB_SETTLED_METHOD = "session.job_settled"
+# Inbound shell->sidecar NOTIFICATIONS (row 180, agent steering): messages the person sent
+# while the live chat.send of ``session_id`` works. ``session.user_steer_arrived`` carries
+# ``{session_id, request_id, items: [{item_id, content, images}]}``; the items are parked on
+# that turn's handle and taken by the tool loop at the top of its next iteration, and the
+# arrival also wakes a blocking background-job wait. ``session.user_steer_withdrawn`` carries
+# ``{session_id, request_id, item_ids}`` and removes items still parked. Gated by the
+# negotiated ``mid_turn_steer`` chat-workspace capability; never answered.
+SESSION_USER_STEER_ARRIVED_METHOD = "session.user_steer_arrived"
+SESSION_USER_STEER_WITHDRAWN_METHOD = "session.user_steer_withdrawn"
 # Manual context-compaction trigger. Request/response sibling of chat.send /
 # chat.cancel -- NOT a notification, so it is intentionally absent from
 # ALLOWED_NOTIFICATION_METHODS. Success re-emits the existing
@@ -154,8 +163,8 @@ WORKSPACE_TEST_CLOSE_METHOD = "workspace_test.close"
 
 # Shell -> sidecar request methods that participate in the lockstep API-version
 # contract. ``engine.activity``, ``session.run_mode_updated`` and
-# ``session.mail_arrived`` and ``session.job_settled`` are unversioned inbound
-# notifications;
+# ``session.mail_arrived``, ``session.job_settled``, ``session.user_steer_arrived`` and
+# ``session.user_steer_withdrawn`` are unversioned inbound notifications;
 # JSON-RPC responses (tool approval decisions) carry no method or params.
 INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
     {
@@ -379,6 +388,10 @@ SESSION_MAIL_CONSUMED_METHOD = "session.mail_consumed"
 # Mid-turn background-job notice acknowledgement. EPHEMERAL like the mail ack; Electron
 # marks the jobs read. Payload: standard chat ctx + ``job_ids``, ``iteration``.
 SESSION_JOB_NOTICE_CONSUMED_METHOD = "session.job_notice_consumed"
+# Mid-turn steer acknowledgement (row 180). EPHEMERAL like the mail ack: never journaled,
+# outside canonical history; emitted before the generation that sees the items, so it always
+# precedes chat.done. Payload: standard chat ctx + ``item_ids``, ``iteration``.
+SESSION_USER_STEER_CONSUMED_METHOD = "session.user_steer_consumed"
 
 # Canonical set of notification method names the sidecar is permitted to emit.
 # Any new notification method MUST be added here so `rpc.notification()` can
@@ -414,5 +427,6 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         RUNTIME_LOAD_FAILURE_METHOD,
         SESSION_MAIL_CONSUMED_METHOD,
         SESSION_JOB_NOTICE_CONSUMED_METHOD,
+        SESSION_USER_STEER_CONSUMED_METHOD,
     }
 )

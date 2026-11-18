@@ -1,7 +1,7 @@
 {
   "index_html_lines": {
-    "baseline": 1831,
-    "note": "Measured 2026-11-15 (empty-chat hero direction A: the avatar lines out of both heroes). Goes down only; a split that moves code into a new deferred module may add its tag line. Dated records: docs/history/complexity-ratchet-history.md."
+    "baseline": 1850,
+    "note": "Raised 2026-11-16 with owner approval (Settings > About credits list). Goes down only; a split that moves code into a new deferred module may add its tag line. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "index_html_scripts": {
     "baseline": 722,

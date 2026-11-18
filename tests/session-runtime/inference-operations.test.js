@@ -226,3 +226,42 @@ test('a waiting admit keeps what it waits behind for the wait line, and a grant 
   assert.equal(setup.gateway.wait, null);
   setup.gateway.close({ producerSettled: true });
 });
+
+// Row 179: a cloud turn's delegate children may run on one local helper route.
+test('a cloud turn admits its local helper route on the local lane and nothing else', () => {
+  const lanes = new RuntimeLaneAdmission();
+  const cloud = captureRuntimeRoute({ engine_type: 'api-provider', provider_id: 'api-provider',
+    configuration_revision: 'config:1', resource_class: 'cloud', requires_gpu: false });
+  const helper = captureRuntimeRoute({ engine_type: 'openai-compatible', provider_id: 'openai-compatible',
+    configuration_revision: 'config:2', resource_class: 'local', requires_gpu: true });
+  const gateway = new InferenceOperations({ lanes, route: cloud, requestId: 'request:1',
+    sessionId: 'session:1', authorityRevision: 'authority:1', assertCurrent: () => {},
+    helperRoutes: [helper] });
+  const base = { schema_version: 1, api_version: '2026-10-15', kind: 'inference', phase: 'admit',
+    request_id: 'request:1', session_id: 'session:1', authority_revision: 'authority:1' };
+  assert.equal(gateway.handle({ ...base, operation_id: 'parent', engine_type: 'api-provider' }).status, 'granted');
+  assert.equal(gateway.handle({ ...base, operation_id: 'child', engine_type: 'openai-compatible' }).status, 'granted');
+  assert.equal(gateway.handle({ ...base, operation_id: 'other', engine_type: 'ollama' }).reason,
+    'inference_provider_mismatch');
+  const snapshot = lanes.snapshot();
+  assert.equal(snapshot.active_leases, 2);
+  gateway.close({ producerSettled: true });
+  assert.equal(lanes.snapshot().active_leases, 0);
+});
+
+test('a helper route is refused on a local turn, when cloud, or when more than one', () => {
+  const local = captureRuntimeRoute({ engine_type: 'ollama', provider_id: 'ollama',
+    configuration_revision: 'config:1', resource_class: 'local', requires_gpu: true });
+  const cloud = captureRuntimeRoute({ engine_type: 'chatgpt', provider_id: 'chatgpt',
+    configuration_revision: 'config:1', resource_class: 'cloud', requires_gpu: false });
+  const helper = captureRuntimeRoute({ engine_type: 'openai-compatible', provider_id: 'openai-compatible',
+    configuration_revision: 'config:2', resource_class: 'local', requires_gpu: true });
+  const make = (route, helperRoutes) => new InferenceOperations({ lanes: new RuntimeLaneAdmission(),
+    route, requestId: 'request:1', sessionId: 'session:1', authorityRevision: 'authority:1',
+    assertCurrent: () => {}, helperRoutes });
+  assert.throws(() => make(local, [helper]), /runtime_inference_binding_invalid/);
+  assert.throws(() => make(cloud, [cloud]), /runtime_inference_binding_invalid/);
+  assert.throws(() => make(cloud, [helper, helper]), /runtime_inference_binding_invalid/);
+  assert.throws(() => make(cloud, [{ ...helper }]), /runtime_inference_binding_invalid/);
+  assert.doesNotThrow(() => make(cloud, [helper]));
+});

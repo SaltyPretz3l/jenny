@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -299,3 +300,54 @@ def test_a_prestart_spawn_failure_is_reported_on_first_use() -> None:
     assert worker._process is None
     with pytest.raises(grep_module._WorkerUnavailable, match="failed to start: no such program"):
         worker.send({"op": SCAN_BATCH_OP, "files": []})
+
+
+# W14 review, finding 1: a latch in a grep child reaches the parent, and a latched
+# parent's requests latch a fresh child.
+
+def test_a_latched_worker_says_so_on_every_answer(monkeypatch) -> None:
+    monkeypatch.setattr(grep_search_worker, "hosted_file_access_latched", lambda: True)
+    out = io.StringIO()
+    grep_search_worker.grep_search_worker_main(io.StringIO('{"op":"scan_batch","files":7}\n'), out)
+    answers = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert answers[0] == grep_search_worker.WORKER_READY_MESSAGE
+    assert answers[1]["status"] == "error"
+    assert answers[1]["file_access_latched"] is True
+
+
+def test_a_request_from_a_latched_parent_latches_the_worker(monkeypatch) -> None:
+    latched: list[bool] = []
+    monkeypatch.setattr(grep_search_worker, "latch_hosted_file_access", lambda: latched.append(True))
+    grep_search_worker.grep_search_worker_main(
+        io.StringIO('{"op":"scan_batch","files":7,"file_access_latched":true}\n'), io.StringIO())
+    assert latched == [True]
+
+
+def test_the_parent_names_its_latch_only_when_latched(monkeypatch) -> None:
+    monkeypatch.setattr(grep_search_worker, "hosted_file_access_latched", lambda: False)
+    assert "file_access_latched" not in grep_search_worker.hosted_request_fields()
+    monkeypatch.setattr(grep_search_worker, "hosted_file_access_latched", lambda: True)
+    assert grep_search_worker.hosted_request_fields()["file_access_latched"] is True
+
+
+def test_the_parent_latches_when_a_child_says_its_library_latched(monkeypatch) -> None:
+    from sidecar.ai.tools.builtins import grep_search_client
+
+    latched: list[bool] = []
+    monkeypatch.setattr(grep_search_client, "latch_hosted_file_access", lambda: latched.append(True))
+    script = (
+        "import json, sys\n"
+        "print(json.dumps({'status': 'ready'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    if line.strip() == 'null':\n"
+        "        break\n"
+        "    print(json.dumps({'status': 'error', 'error_code': 'CMP-TOOL-0001', 'message': 'm',\n"
+        "                      'retryable': True, 'file_access_latched': True}), flush=True)\n"
+    )
+    worker = grep_search_client._RegexSearchWorker(command_factory=lambda: [sys.executable, "-c", script])
+    try:
+        worker.send({"op": "probe"})
+        worker.receive(10.0)
+    finally:
+        worker.close()
+    assert latched == [True]

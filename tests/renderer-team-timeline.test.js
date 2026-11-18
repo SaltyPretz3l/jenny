@@ -85,6 +85,8 @@ test('an empty channel: its name and one sentence; a team with only you adds Inv
   const owner = await openChat({ teams: [snapshot()], host: hostState(), members: [chatMember(ME, 'Olive Owner', { role: 'owner' })],
     answers: { members: { ok: true, members: [ROSTER[0]] } } });
   t.after(owner.h.restore);
+  owner.h.view.q('[data-team-channel="chan_team"]').click(); // a solo owner's tab opens on Overview (row 168)
+  await flush();
   const invite = owner.h.view.q('.team-empty [data-team-tab-action="invite"]');
   assert.equal(invite.textContent, 'Invite someone');
   invite.click();

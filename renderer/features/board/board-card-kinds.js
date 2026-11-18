@@ -23,6 +23,7 @@
  *                              or 'outline'. Return true when handled
  *   tools                      toolbar buttons: [{ id, label, title, order, run() }], sorted by order. A button is
  *                              disabled while the board cannot be changed
+ *   shown(isShown)             the page was hidden (false) or shown again (true): stop and catch up
  *   dispose()                  the page is going away: remove listeners, revoke object URLs
  *
  * A part that throws costs only itself: the call is logged and the others still run.
@@ -61,6 +62,7 @@
     });
     const drawn = new Map(); // card id -> what decorate last saw
     let disposed = false;
+    let visible = true;
     const jt = typeof context.jt === 'function' ? context.jt : fallbackJt;
     const page = context.context || {};
 
@@ -142,6 +144,13 @@
       activate(card, origin) {
         if (disposed || !card) return false;
         return parts.some((entry) => takes(entry, card) && call(entry, 'activate', [card, origin || 'canvas']) === true);
+      },
+      /** The page was hidden or shown again; a repeat of the current value is ignored. */
+      setShown(isShown) {
+        const next = isShown !== false;
+        if (disposed || next === visible) return;
+        visible = next;
+        parts.forEach((entry) => call(entry, 'shown', [next]));
       },
       tools: () => tools.slice(),
       names: () => parts.map((entry) => entry.name),

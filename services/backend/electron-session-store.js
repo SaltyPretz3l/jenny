@@ -5,7 +5,7 @@ const {
   messageIntentMatches,
 } = require('./conversation-store-port');
 const { normalizeContextPreferences } = require('./context-preferences');
-const { allowedNodesField } = require('./session-allowed-nodes');
+const { teamConversationFields } = require('./session-normalizers'); // the allowed-node list and row 172's team fields
 const {
   normalizeConversationMode,
   normalizeInteractiveRoundCount,
@@ -211,7 +211,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
       sessionId
     ),
     linked_task_id: normalizeLinkedTaskId(input.linked_task_id),
-    ...(composerDraft ? { composer_draft: composerDraft } : {}), ...allowedNodesField(input.allowed_nodes),
+    ...(composerDraft ? { composer_draft: composerDraft } : {}), ...teamConversationFields(input),
     messages: messageList,
     message_seq_counter: Number(input.message_seq_counter || 0),
     turn_event_log_version: normalizedTurnEventLogVersion,
@@ -916,8 +916,8 @@ class ElectronSessionStore {
   updateSession(sessionId, patch = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
     const safePatch = { ...patch };
-    // Only their own seams write these: the role (row 69), the team host's allowed nodes (setSessionPreferences).
-    for (const key of ['runtime_continuations', 'suggested_changes', 'session_role', 'allowed_nodes']) delete safePatch[key];
+    // Only their own seams write these: the role (row 69), the team host's allowed nodes and row 172 fields (setSessionPreferences).
+    for (const key of ['runtime_continuations', 'suggested_changes', 'session_role', 'allowed_nodes', 'team_tool_switches', 'preference_log']) delete safePatch[key];
     stripCoordinationFields(safePatch);
     return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,

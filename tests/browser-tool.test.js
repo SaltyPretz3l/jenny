@@ -278,9 +278,11 @@ test('the hosted and CLI tool executors never register browser', () => {
   const { createConversationToolExecutor } = require('../services/host/conversation-tool-executor');
   const { createCuratedToolExecutor } = require('../services/cli-host/curated-tool-executor');
   const configService = { getState: () => ({}) };
-  for (const executor of [createConversationToolExecutor({ configService, logger: () => {} }),
-    createCuratedToolExecutor({ configService, logger: () => {} })]) {
+  for (const [executor, names] of [
+    [createConversationToolExecutor({ configService, logger: () => {}, appGuide: true }), ['ask_user', 'exit_plan_mode', 'jenny_help']],
+    [createConversationToolExecutor({ configService, logger: () => {} }), ['ask_user', 'exit_plan_mode']],
+    [createCuratedToolExecutor({ configService, logger: () => {} }), ['ask_user', 'exit_plan_mode']]]) {
     assert.equal(executor.registry.getTool('browser'), undefined);
-    assert.deepEqual(executor.registry.getAllTools().map(item => item.name).sort(), ['ask_user', 'exit_plan_mode']);
+    assert.deepEqual(executor.registry.getAllTools().map(item => item.name).sort(), names);
   }
 });

@@ -600,6 +600,7 @@ function buildManagedStatusSnapshot(service, overrides = {}) {
   const schemaVersions = normalizeSchemaVersionEntries(
     pick('schema_versions')
   );
+  const hostedFiles = normalizeHostedFiles(pick('hosted_files'));
   const legacyEngineFallback = localRuntime.fallback.active === true
     ? {
       requested_engine: localRuntime.fallback.requested_engine,
@@ -630,10 +631,20 @@ function buildManagedStatusSnapshot(service, overrides = {}) {
     mcp_servers_failed: mcpServersFailed,
     mcp_server_cooldowns: mcpServerCooldowns,
     schema_versions: schemaVersions,
+    hosted_files: hostedFiles,
     memory: overrides.memory || undefined,
     engine_fallback: legacyEngineFallback,
     template_diagnostics: localRuntime.template_diagnostics || undefined,
   };
+}
+
+// Team host file tools (row 123): the sidecar's report of its worker's file tools, `{ available, reason }`, kept in
+// that closed shape; absent on any other host. The reason is a short word; server/team-conversation-preferences.js
+// maps it onto its closed list.
+function normalizeHostedFiles(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const reason = typeof value.reason === 'string' && /^[a-z_]{1,64}$/.test(value.reason) ? value.reason : null;
+  return { available: value.available === true && reason === null, reason };
 }
 
 module.exports = {

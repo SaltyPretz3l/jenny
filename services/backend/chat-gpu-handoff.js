@@ -22,6 +22,7 @@ const { t } = require('../i18n-main');
 const { largestGpuDevice: largestDevice, probeNvidiaSmiVram } = require('../gpu-vram-probe');
 const { pendingRuntimeInferenceCount } = require('./backend-runtime-inference');
 const { verifyGpuEvictedForEngine, verifyOllamaGpuEvicted } = require('./exclusive-gpu-preflight');
+const { residentLocalSubagentEngine } = require('./local-subagent-engine');
 const { isProcessAlive, wait } = require('./process-utils');
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
@@ -226,7 +227,14 @@ function createChatGpuHandoff({
       }
       return { engine: 'ollama', model };
     }
-    const verdict = await verifyGpuEvictedForEngine({ engineType, fetchImpl, url: `${ollamaBaseUrl}/api/ps` });
+    // Row 179: a cloud primary's resident local subagent engine is parked like a primary.
+    const helper = residentLocalSubagentEngine(backendService, {
+      ninferManager: getNinferManager(), llamaServerManager: getLlamaServerManager(),
+    });
+    if (helper.park) return parkManagedServer(helper.park.manager, helper.park.plan, helper.park.reason);
+    const verdict = await verifyGpuEvictedForEngine({
+      engineType, fetchImpl, url: `${ollamaBaseUrl}/api/ps`, localServerResident: helper.resident,
+    });
     if (verdict.ok !== true) {
       throw new ChatGpuHandoffError(CODES.EVICTION_UNVERIFIED, verdict.reason || 'gpu_eviction_unverifiable', { engineType });
     }

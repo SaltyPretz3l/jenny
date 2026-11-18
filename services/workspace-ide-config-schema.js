@@ -12,6 +12,7 @@
  * right, which stays collapsed until the user reveals it.) */
 
 const { normalizeLayout } = require('../renderer/shared/workbench-layout-model');
+const { cleanTerminalStartFolder } = require('./terminal-start-folder');
 
 const WORKSPACE_IDE_RAIL_WIDTH_DEFAULT = 300;
 const WORKSPACE_IDE_RAIL_WIDTH_MIN = 200;
@@ -149,6 +150,8 @@ const WORKSPACE_IDE_EDITOR_PREF_SPECS = Object.freeze([
     key: 'terminalDefaultProfile', kind: 'text', def: '',
     clean: (value) => (typeof value === 'string' && WORKSPACE_IDE_TERMINAL_PROFILE_ID_RE.test(value) ? value : ''),
   },
+  // Where the Jenny chat's terminal_run starts its shell ('' = the Downloads folder; services/terminal-start-folder.js).
+  { key: 'terminalStartFolder', kind: 'text', def: '', clean: cleanTerminalStartFolder },
 ]);
 function normalizeWorkspaceIdeEditorPref(spec, src) {
   const raw = src[spec.key];

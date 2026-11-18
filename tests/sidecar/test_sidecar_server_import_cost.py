@@ -98,8 +98,13 @@ import sys
 # 2026-11-03: 423. Row 105 W2-G size split: chat_decision_preflight, tool_loop_call_state and
 # tool_loop_wind_down were extracted from modules already on the path (chat_decision,
 # tool_loop_calls, tool_loop_recovery); no new eager code.
-_MEASURED_SIDECAR_MODULES = 423
-_MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
+# 2026-11-17: 434, cap raised to it with no headroom (owner approved). Six new startup modules:
+# row 179 adds local_subagent_endpoint and provider_descriptor_v6 (config parsing of the local
+# helper and namespaced model ids), subagent_local_engine, and model_profile_resolution (split
+# out of container); row 180 adds turn_steers (the multiplexer's steer notification handlers)
+# and user_steers (the tool loop's steer intake).
+_MEASURED_SIDECAR_MODULES = 434
+_MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to
 # 30, so the next regression would have to be six times larger to trip the cap.

@@ -579,15 +579,19 @@ test('the real bundle exports a drawing as SVG and Excalidraw, and hides the vie
   assert.match(dom.window.document.getElementById('sketch-styles').textContent, /\.toolbar\s*\{\s*display:\s*none;?\s*\}/);
   assert.equal(root.querySelectorAll('.toolbar button').length, 1, 'no export or fullscreen button: only Draw, which is hidden with the bar');
   assert.ok(root.querySelector('form.drawbar-ask'), 'the question box is there for drawing mode');
+  // Sketchy is credited in Settings > About, so no drawing or export carries upstream's watermark.
+  assert.equal(root.querySelectorAll('.watermark').length, 0, 'no watermark on the drawing');
   listeners.message({ source: parent, data: { type: 'export', requestId: 'real', kind: 'svg' } });
   await wait(3);
   const svg = posted.at(-1);
   assert.equal(svg.ok, true);
   assert.equal(svg.name, 'sign-in');
   assert.match(svg.text, /^<\?xml[^>]*>\s*<svg[\s>]/);
+  assert.doesNotMatch(svg.text, /watermark/, 'no watermark in the SVG export');
   listeners.message({ source: parent, data: { type: 'export', requestId: 'real', kind: 'excalidraw' } });
   await wait(4);
   const excalidraw = JSON.parse(posted.at(-1).text);
   assert.equal(excalidraw.type, 'excalidraw');
   assert.ok(excalidraw.elements.length >= 3);
+  assert.equal(excalidraw.elements.some((element) => /watermark/.test(element.id)), false, 'no watermark in the Excalidraw export');
 });

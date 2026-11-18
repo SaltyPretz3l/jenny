@@ -11,10 +11,16 @@
   // Team section is shown (renderer-settings-utils.js `syncTeamSettingsSection`), never with the group below.
   const teamStrings = Object.freeze(['renderer/shell/renderer-settings-team-strings.js', 'rendererSettingsTeamStrings']);
   const teamStoreScript = Object.freeze(['renderer/team/renderer-team-store.js', 'rendererTeamStore']);
+  // Row 173: channel management. The menu holds the rules the channel helpers read, so it loads first wherever they do.
+  const teamChannelMenuScript = Object.freeze(['renderer/team/renderer-team-channel-menu.js', 'rendererTeamChannelMenu']);
+  // Row 175 (item 14): the column rows' own menu, read by the channel menu when it builds.
+  const teamChannelRowMenuScript = Object.freeze(['renderer/team/renderer-team-channel-row-menu.js', 'rendererTeamChannelRowMenu']);
   const teamChannelsScript = Object.freeze(['renderer/team/renderer-team-channels.js', 'rendererTeamChannels']);
   const teamExportScript = Object.freeze(['renderer/team/renderer-team-export.js', 'rendererTeamExport']);
   const teamView = Object.freeze(['renderer/shell/renderer-settings-team-view.js', 'rendererSettingsTeamView']);
   const teamOwnerView = Object.freeze(['renderer/shell/renderer-settings-team-owner-view.js', 'rendererSettingsTeamOwnerView']);
+  // Row 170: the stopped server's page and rows, shared by the tab (before its view and start page) and the Settings page.
+  const teamServerScript = Object.freeze(['renderer/team/renderer-team-server.js', 'rendererTeamServer']);
   // The chat store (slice 2a-5a): loaded by the gate once this Jenny is a member of a team (the tab's number).
   const teamChatStoreScript = Object.freeze(['renderer/team/renderer-team-chat-store.js', 'rendererTeamChatStore']);
   // Its read marks (E59), loaded right before it wherever it loads.
@@ -24,11 +30,12 @@
   const teamModelStoreScript = Object.freeze(['renderer/team/renderer-team-model-store.js', 'rendererTeamModelStore']);
   const teamShareRowsScript = Object.freeze(['renderer/shell/model-library/model-library-share-rows.js', 'modelLibraryShareRows']);
   // The export (2a-6c) loads with the page too, after the channel helpers it shares with the tab: Leave offers it first.
-  const teamSection = Object.freeze([teamStrings, teamStoreScript, teamChatReadsScript, teamChatStoreScript, teamChannelsScript, teamExportScript, teamView, teamOwnerView,
+  const teamSection = Object.freeze([teamStrings, teamStoreScript, teamChatReadsScript, teamChatStoreScript, teamChannelRowMenuScript, teamChannelMenuScript, teamChannelsScript, teamExportScript, teamView, teamOwnerView, teamServerScript,
     Object.freeze(['renderer/shell/renderer-settings-team-gpu.js', 'rendererSettingsTeamGpu']), // slice 4e: the GPU groups
     Object.freeze(['renderer/shell/renderer-settings-team-network.js', 'rendererSettingsTeamNetwork']), // slice 5-6: Network
     Object.freeze(['renderer/shell/renderer-settings-team-lifecycle.js', 'rendererSettingsTeamLifecycle']), // 5-6: delete, export
     teamModelStoreScript, Object.freeze(['renderer/shell/renderer-settings-team-models.js', 'rendererSettingsTeamModels']), // 6-7: Model sharing
+    Object.freeze(['renderer/shell/renderer-settings-team-files.js', 'rendererSettingsTeamFiles']), // row 123: Project files (file tools on a team host)
     Object.freeze(['renderer/shell/renderer-settings-team-section.js', 'rendererSettingsTeamSection']),
   ]);
   // The Team tab's gate (slice 1g-2): loaded by the top-nav shell after first paint, only while the `team`
@@ -37,9 +44,10 @@
   // The Team tab (slice 1g-2; the channel since 2a-5a, its composer and actions since 2a-5b): loaded by the gate
   // on the tab's first activation. It shares the strings, the stores and the two Settings views with the page
   // above; each script loads once, search, jump and message links included.
-  const teamTab = Object.freeze([teamStrings, teamStoreScript, teamChatReadsScript, teamChatStoreScript, teamView, teamOwnerView,
-    teamChannelsScript,
+  const teamTab = Object.freeze([teamStrings, teamStoreScript, teamChatReadsScript, teamChatStoreScript, teamView, teamOwnerView, teamServerScript,
+    teamChannelRowMenuScript, teamChannelMenuScript, teamChannelsScript,
     Object.freeze(['renderer/team/renderer-team-dm-picker.js', 'rendererTeamDmPicker']),
+    Object.freeze(['renderer/team/renderer-team-channel-form.js', 'rendererTeamChannelForm']), // row 173: the New channel view
     Object.freeze(['renderer/team/renderer-team-gpus.js', 'rendererTeamGpus']), // slice 4e: the GPUs section
     Object.freeze(['renderer/team/renderer-team-chat-writes.js', 'rendererTeamChatWrites']),
     Object.freeze(['renderer/team/renderer-team-link.js', 'rendererTeamLink']),
@@ -60,6 +68,9 @@
     Object.freeze(['renderer/team/renderer-team-composer.js', 'rendererTeamComposer']),
     Object.freeze(['renderer/team/renderer-team-thread-data.js', 'rendererTeamThreadData']),
     Object.freeze(['renderer/team/renderer-team-thread.js', 'rendererTeamThread']),
+    Object.freeze(['renderer/team/renderer-team-project-files.js', 'rendererTeamProjectFiles']), // row 175 (D13): the project file explorer
+    Object.freeze(['renderer/team/renderer-team-project-file-pane.js', 'rendererTeamProjectFilePane']), // row 175 (D13): its column and workspace panel
+    Object.freeze(['renderer/team/renderer-team-preview.js', 'rendererTeamPreview']), // row 167: the file preview column
     Object.freeze(['renderer/team/renderer-team-search.js', 'rendererTeamSearch']),
     teamModelStoreScript, // slice 6-7: the notice's model offers
     Object.freeze(['renderer/team/renderer-team-notice.js', 'rendererTeamNotice']),
@@ -69,9 +80,27 @@
     Object.freeze(['renderer/team/renderer-team-project-activity.js', 'rendererTeamProjectActivity']),
     Object.freeze(['renderer/team/renderer-team-project-page.js', 'rendererTeamProjectPage']),
     Object.freeze(['renderer/team/renderer-team-project-box.js', 'rendererTeamProjectBox']),
+    Object.freeze(['renderer/team/renderer-team-project-timeline.js', 'rendererTeamProjectTimeline']), // row 169: the conversation's timeline builders, before the conversation
+    Object.freeze(['renderer/team/renderer-team-project-conversation-parts.js', 'rendererTeamProjectConversationParts']), // row 169: the conversation's controllers, after the timeline
+    Object.freeze(['renderer/team/renderer-team-project-rows.js', 'rendererTeamProjectRows']), // row 171: the channel's rows, after the message row and the timeline
+    Object.freeze(['renderer/team/renderer-team-turn-adapter.js', 'rendererTeamTurnAdapter']), // row 171: host messages to the local chat's shape, before the popover
+    Object.freeze(['renderer/team/renderer-team-turn-pop-patch.js', 'rendererTeamTurnPopPatch']), // row 175: the popover's in-place patcher and focus keeper
+    Object.freeze(['renderer/team/renderer-team-turn-pop-follow.js', 'rendererTeamTurnPopFollow']), // row 175: the popover's scroll follow
+    Object.freeze(['renderer/team/renderer-team-turn-pop.js', 'rendererTeamTurnPop']), // row 171: the turn's transcript popover
+    Object.freeze(['renderer/team/renderer-team-project-queue.js', 'rendererTeamProjectQueue']), // row 171: the send queue
+    Object.freeze(['renderer/team/renderer-team-project-channel.js', 'rendererTeamProjectChannel']), // row 171: the channel's view model, before the conversation
+    Object.freeze(['renderer/team/renderer-team-conversation-controls.js', 'rendererTeamConversationControls']), // row 172: the Tools chip and model pill, before the conversation
+    Object.freeze(['renderer/team/renderer-team-project-find.js', 'rendererTeamProjectFind']), // row 175 (D15): find in a project conversation
+    Object.freeze(['renderer/team/renderer-team-project-paths.js', 'rendererTeamProjectPaths']), // row 175 (D13): path chips, the Files button and @file
+    Object.freeze(['renderer/team/renderer-team-project-plan.js', 'rendererTeamProjectPlan']), // row 175 (D14): the plan row and the Plan chip
+    Object.freeze(['renderer/team/renderer-team-project-actions.js', 'rendererTeamProjectActions']), // row 175 (D7, D8, F18): message menu, redo, ask, hand-off
+    Object.freeze(['renderer/team/renderer-team-project-drafts.js', 'rendererTeamProjectDrafts']), // row 175 (F6): the box text kept on this PC
     Object.freeze(['renderer/team/renderer-team-project-conversation.js', 'rendererTeamProjectConversation']),
     Object.freeze(['renderer/team/renderer-team-project-tab.js', 'rendererTeamProjectTab']),
     Object.freeze(['renderer/team/renderer-team-tab-focus.js', 'rendererTeamTabFocus']), // slice 3-10: moved out of the tab, unchanged
+    Object.freeze(['renderer/team/renderer-team-start.js', 'rendererTeamStart']), // row 168: the start page, with no team yet
+    Object.freeze(['renderer/team/renderer-team-overview.js', 'rendererTeamOverview']), // row 168: the Overview page of the column
+    Object.freeze(['renderer/team/renderer-team-tab-notify-menu.js', 'rendererTeamTabNotifyMenu']), // row 175: the channel notify-level menu, moved out of the tab
     Object.freeze(['renderer/team/renderer-team-tab.js', 'rendererTeamTab']),
   ]);
   // The shared store alone: loaded by the gate, which reads the team state and the tab's count through it.
@@ -81,10 +110,12 @@
   // Slice 6-7: model sharing's store (the tab's number counts offers) and the Library's share rows (Settings › Models
   // draws them once they load), with the team words their refusals are said in. The send and accept drawers are
   // `teamShareDrawers`, loaded by the share section on first use.
-  const teamChat = Object.freeze([teamChatReadsScript, teamChatStoreScript, Object.freeze(['renderer/team/renderer-team-presence.js', 'rendererTeamPresence']), teamChannelsScript,
+  const teamChat = Object.freeze([teamChatReadsScript, teamChatStoreScript, Object.freeze(['renderer/team/renderer-team-presence.js', 'rendererTeamPresence']), teamStrings, teamChannelRowMenuScript, teamChannelMenuScript, teamChannelsScript,
     Object.freeze(['renderer/team/renderer-team-notify.js', 'rendererTeamNotify']), Object.freeze(['renderer/team/renderer-team-palette.js', 'rendererTeamPalette']),
-    teamStrings, teamModelStoreScript, teamShareRowsScript,
-    Object.freeze(['renderer/shell/model-library/model-library-share-section.js', 'modelLibraryShareSection'])]);
+    teamModelStoreScript, teamShareRowsScript,
+    Object.freeze(['renderer/shell/model-library/model-library-share-section.js', 'modelLibraryShareSection']),
+    // Row 175 (D5): Post to Team… from a local answer; the item says why it is greyed until this loads.
+    Object.freeze(['renderer/chat/renderer-chat-post-to-team.js', 'rendererChatPostToTeam'])]);
   const teamShareDrawers = Object.freeze([teamStrings, teamShareRowsScript,
     Object.freeze(['renderer/shell/model-library/model-library-share-send.js', 'modelLibraryShareSend']),
     Object.freeze(['renderer/shell/model-library/model-library-share-accept.js', 'modelLibraryShareAccept'])]);

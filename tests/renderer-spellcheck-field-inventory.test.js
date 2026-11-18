@@ -78,6 +78,10 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
     // The suggestion bar's comment and reject-reason note (row 35 Plan Plus): prose.
     'markup:data-inline-note',
   ],
+  // Team conversation prompt box (rows 171-172): the member writes a prose prompt, same as #chatInput.
+  'renderer/team/renderer-team-project-box.js': [
+    'markup:data-project-input',
+  ],
 });
 
 const EXPECTED_TRUE_SPELLCHECK_COUNTS = Object.freeze(Object.fromEntries(

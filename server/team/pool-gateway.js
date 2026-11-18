@@ -79,6 +79,19 @@ function dropThinking(body) {
   }
 }
 
+// The thinking a leased model gets: none for one that does not think; for one that does, the top-level effort held to
+// the OpenAI set (`none`, `minimal`, `low`, `medium`, `high`). A Jenny host builds a qwen3.8 request for llama-server's
+// contract (`xhigh`, also in `chat_template_kwargs`), but a node may run Ollama, whose OpenAI endpoint hands `xhigh`
+// on as the template's `max` and the qwen3.8 template refuses the turn (live run 2026-11-16). `chat_template_kwargs`
+// is left as it is: llama-server reads its effort there and Ollama ignores it.
+const TOP_EFFORT_CEILING = new Set(['xhigh', 'max']);
+function fitThinking(body, info) {
+  if (info?.thinking !== true) { dropThinking(body); return; }
+  if (typeof body.reasoning_effort === 'string' && TOP_EFFORT_CEILING.has(body.reasoning_effort.toLowerCase())) {
+    body.reasoning_effort = 'high';
+  }
+}
+
 // Reads the body into memory up to `max` bytes; bytes past the cap are counted
 // and discarded, never buffered. A declared length over twice the cap is refused
 // at once without reading, and the socket closes after the answer. A smaller
@@ -178,7 +191,7 @@ function createPoolGateway({ scheduler, bootKey, clock = Date.now, logger, limit
     if (!isPlainObject(body)) { refuse(context, 400, 'invalid', 'request_body_invalid'); return; }
     const info = lease.model_info || { vision: false, thinking: false };
     if (info.vision !== true && hasImagePart(body)) { refuse(context, 400, 'invalid', 'model_lacks_vision'); return; }
-    if (info.thinking !== true) dropThinking(body);
+    fitThinking(body, info);
     body.model = lease.model;
     const stream = body.stream === true;
     const created = scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from(JSON.stringify(body)), stream });
@@ -337,5 +350,5 @@ function createPoolGateway({ scheduler, bootKey, clock = Date.now, logger, limit
 // The body reader and the body rules are shared with the team engine routes (slice 4b).
 module.exports = {
   COMMENT_INTERVAL_MS, JSON_HEADERS, POOL_MODEL_ALIAS, ROUTE_TOKEN_HEADER, SSE_HEADERS, TIMEOUT_REASONS,
-  createPoolGateway, dropThinking, hasImagePart, isPlainObject, readBody,
+  createPoolGateway, dropThinking, fitThinking, hasImagePart, isPlainObject, readBody,
 };

@@ -8,6 +8,7 @@ const { createWorkspaceIdeWatcher } = require('../../workspace-ide-watcher');
 const { WorkspaceGitService } = require('../../workspace-git-service');
 const { WorkspaceFileMapService } = require('../../workspace-file-map-service');
 const { WorkspacePtyService } = require('../../workspace-pty-service');
+const { cleanTerminalStartFolder, createTerminalStartFolder } = require('../../terminal-start-folder');
 const { WorkspaceRunTaskService } = require('../../workspace-run-task-service');
 const { createWorkspaceTestRunnerWiring } = require('../workspace-test-runner-wiring');
 const { getWorkspaceRootStatePayload } = require('../../workspace-root-ipc');
@@ -191,12 +192,27 @@ function registerWorkspaceServicesIpcHandlers(ipcMain, {
   // workspacePty.* namespace: the Workspace IDE terminal (real ConPTY). The
   // piped line terminal and its workspace_pty_terminal flag were retired in
   // the post-1.2.0 sweep (S8).
+  // terminal_run from the Jenny chat starts here: the Settings folder, else Downloads (services/terminal-start-folder.js).
   const workspacePtyService = new WorkspacePtyService({
     configService: shellConfigService,
     sendBridgeEvent,
     logger: log,
+    startFolder: createTerminalStartFolder({ config: () => shellConfigService, downloadsDir: () => app?.getPath?.('downloads') || '' }),
   });
   registerWorkspacePtyIpcHandlers(ipcMain, workspacePtyService, workspaceAuthorization);
+  // Settings > Editor > Terminal "Browse...": main opens the folder picker and answers the local folder; the
+  // renderer saves it through workspaceIde.updateSettings, and main re-checks it on every use.
+  registerIpcInvokeHandlers(ipcMain, {
+    'workspaceIde.chooseTerminalStartFolder': async () => {
+      if (typeof dialog?.showOpenDialog !== 'function') return { ok: false, picked: false, reason: 'unavailable' };
+      const result = await dialog.showOpenDialog(getMainWindow?.() || undefined, { properties: ['openDirectory'] });
+      const selected = Array.isArray(result?.filePaths) ? String(result.filePaths[0] || '') : '';
+      if (result?.canceled === true || !selected) return { ok: true, picked: false };
+      const folder = cleanTerminalStartFolder(selected);
+      if (folder) return { ok: true, picked: true, path: folder };
+      return { ok: false, picked: false, reason: /^[\\/]{2}/.test(selected.trim()) ? 'network_path' : 'unavailable' };
+    },
+  }, workspaceAuthorization);
   // workspaceRunTask.* namespace: UIUX-014 main-owned run-task identity/exit.
   const workspaceRunTaskService = new WorkspaceRunTaskService({ configService: shellConfigService, sendBridgeEvent, logger: log });
   registerIpcInvokeHandlers(ipcMain, {

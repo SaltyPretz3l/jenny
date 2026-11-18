@@ -242,6 +242,10 @@
             : '';
           const sendStateAttr = sendFailureActive ? ' data-send-state="failed"' : '';
           messageMarkup = `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true, literalBackslashes: true })}${failureChip}</div>`;
+          if (message.kind === 'steer') {
+            // Row 180: steer caption outside a coalesced turn.
+            messageMarkup += `<div class="chat-entry__steer-caption">${escapeHtml(jt('chat.steer.caption', 'Sent while Jenny was working'))}</div>`;
+          }
         }
       } else {
         messageMarkup = `<div class="chat-bubble" dir="auto">${escapeHtml(message.content)}</div>`;

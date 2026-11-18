@@ -15,6 +15,8 @@ module.exports = Object.freeze({
   'chat.discardUnsavedReply': invokeMethod('chat:discard-unsaved-reply'),
   'chat.getActiveTurnState': invokeMethod('chat:get-active-turn-state'),
   'chat.cancelStream': invokeMethod('chat:cancel-stream'),
+  'chat.offerSteer': invokeMethod('chat:offer-steer'),
+  'chat.withdrawSteer': invokeMethod('chat:withdraw-steer'),
   'chat.compactNow': invokeMethod('chat:compact-now'),
   'chat.firstSession': invokeMethod('chat:first-session'),
   'chat.hasPendingUserQuestions': invokeMethod('chat:has-pending-user-questions'),
@@ -53,6 +55,7 @@ module.exports = Object.freeze({
   // Snapshots push over the bridge-event bus (main-workspace window only);
   // kill, readOutput and clearFinished are trusted-sender-authorized in
   // services/main/ipc-registration/workspace-ipc.js.
+  // Live snapshots carry `serving` ({ url, host, port, sinceMs } or null): a loopback address the job printed that answers a TCP probe (row 176).
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
   'backgroundJobs.readOutput': invokeMethod('background-jobs:read-output'),

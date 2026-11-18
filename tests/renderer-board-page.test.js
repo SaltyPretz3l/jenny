@@ -141,21 +141,21 @@ test('a saved Board view with the flag off shows Chat and loads nothing', async 
   assert.deepEqual(s.requested, []);
 });
 
-test('leaving the Board stops the page, and the tab going away mid-view falls back to Chat', async (t) => {
+test('leaving the Board parks the page (kept built), and the tab going away mid-view disposes it and falls back to Chat', async (t) => {
   const s = shellHarness(t);
   s.open();
   await flush();
-  assert.ok(s.view().querySelector('[data-board-workbench]'));
+  const built = s.view().querySelector('[data-board-workbench]'); assert.ok(built);
   s.state.ui.activeView = 'chat';
   s.controller.applyViewChrome();
-  assert.equal(s.view().childElementCount, 0, 'hidden: the page is disposed and its DOM gone');
+  assert.equal(s.view().querySelector('[data-board-workbench]'), built, 'hidden: the page is parked, its DOM kept');
   s.open();
   await flush();
-  assert.ok(s.view().querySelector('[data-board-workbench]'), 'shown again from what was saved');
+  assert.equal(s.view().querySelector('[data-board-workbench]'), built, 'shown again as it was left, not rebuilt');
   s.state.features.featureFlags.project_boards = false;
   s.controller.applyViewChrome();
   assert.equal(s.state.ui.activeView, 'chat');
-  assert.equal(s.view().childElementCount, 0);
+  assert.equal(s.view().childElementCount, 0, 'flag off: the parked or shown page is disposed and its DOM cleared');
   s.open();
   assert.equal(s.state.ui.activeView, 'chat', 'with the flag off a Board view is not kept');
 });
@@ -275,12 +275,12 @@ test('an empty project shows the empty list, a New board button and a hint in th
   await (async () => { h.button('new').click(); await flush(); })();
   assert.deepEqual(h.names(), ['New board']);
   assert.equal(h.openName(), 'New board', 'a new board opens');
+  assert.equal(h.editor().value, 'New board', 'its name opens as a field, like a new file'); await h.type('New board', 'Escape');
   assert.equal(h.doc.querySelector('[data-board-empty]').hidden, false);
   assert.match(h.doc.querySelector('[data-board-empty]').textContent, /^Double-click to add a note, drop a file or picture here/);
   assert.equal(h.doc.querySelector('[data-board-note]').hidden, true);
-  h.button('new').click();
-  await flush();
-  assert.deepEqual(h.names(), ['New board', 'New board 2']);
+  h.button('new').click(); await flush(); await h.type('Roadmap');
+  assert.deepEqual(h.names(), ['New board', 'Roadmap'], 'the second new board takes the typed name');
 });
 
 test('create, open, rename in place, and a refused name shown inline with the field reopened', async (t) => {

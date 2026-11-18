@@ -64,7 +64,7 @@ const {
 const { createConnectionManager } = require('./connection-manager');
 const { createDeletedTeams } = require('./team-deleted');
 const {
-  HOST_OPERATIONS, POOL_OPERATIONS, PROJECT_OPERATIONS, SHARE_METHODS, hostParams, isBoardMethod, isChatMethod, isModelMethod, validatePayload,
+  HOST_OPERATIONS, POOL_OPERATIONS, PROJECT_DRAFT_METHODS, PROJECT_OPERATIONS, SHARE_METHODS, hostParams, isBoardMethod, isChatMethod, isModelMethod, validatePayload,
 } = require('./ipc-methods');
 const { createPoolView } = require('./node/pool-view');
 const { MAX_TEAMS, createTeamChats } = require('./team-chat');
@@ -72,13 +72,12 @@ const { createJoin } = require('./join-flow');
 const { applyTeamReconnectCode } = require('./reconnect-apply');
 const { JOIN_RATE_LIMIT_MS, STICKY_REPAIRS, checkedOwnerPayload, cleanHalfSaved, heldRevoked, lazyBoards, lazyModels, parseTeamId,
   resourceTotals, shareCall } = require('./team-service-helpers');
-const { createTeamProjects } = require('./team-projects');
+const { createTeamProjects } = require('./team-projects'), { createProjectDrafts } = require('./project-drafts');
 const { isId } = require('../../server/team/ids');
 const { isCleanText } = require('../../server/team/member-schema');
 const { failureAnswer, failureOf, invalidRequest, teamFailure } = require('./team-errors');
 const { createHeldTeams, forceLocalFailure } = require('./force-local-hold');
 const { createServiceHold } = require('./team-service-hold');
-
 
 function createTeamService({
   userDataPath, getSecureStore, sendState = () => {}, spawnChild, appVersion, protocolVersion, log = () => {},
@@ -105,7 +104,7 @@ function createTeamService({
   // Teams whose removeTeam or leave is awaiting: a recover, a reconnect code and a join for them are refused.
   const removing = new Set();
   const deleted = createDeletedTeams({ userDataPath, log: say, now });
-  const heldTeams = createHeldTeams();
+  const heldTeams = createHeldTeams(), drafts = createProjectDrafts({ userDataPath, log: say }); // drafts: the conversation box's unsent text, on this PC only (row 175 F6)
   const isHeld = () => gate?.held() === true;
   const halt = () => (isHeld() ? forceLocalFailure() : null);
   const heldAnswer = (teamId) => ({ ok: true, team: heldTeams.rows(true).find((row) => row.team_id === teamId) });
@@ -272,7 +271,7 @@ function createTeamService({
   // answers removeMembership's result, or null when it is not.
   function forget(teamId, manager, { key = true } = {}) {
     if (managers.get(teamId) !== manager) return null;
-    chats.drop(teamId);
+    chats.drop(teamId); drafts.forget(teamId); // row 175 F6: a rejoin never gets the removed membership's box text back
     void teamEngine?.drop(teamId);
     pools.drop(teamId); projects.drop(teamId); models.drop(teamId); boards.drop(teamId);
     teamSharing?.drop(teamId);
@@ -476,9 +475,10 @@ function createTeamService({
   }
 
   /** True when this Jenny holds a key, a directory or a manager for the team; throws when the secure store is unavailable. */
-  function holds(teamId) {
-    return managers.has(teamId) || deleted.has(teamId) || flow.alreadyHeld(teamId);
-  }
+  const holds = (teamId) => managers.has(teamId) || deleted.has(teamId) || flow.alreadyHeld(teamId);
+  // Main, when this PC's own host starts running: that team's wait between dials ends (not a deleted team, nor while held: E64).
+  const retryTeam = (teamId, reason) => { const manager = stopped || isHeld() || deleted.has(teamId) ? null : managers.get(teamId);
+    if (manager?.retryNow?.() === true) say('INFO', 'team.connection.retry_now', { team_id: teamId, reason }); };
 
   // A needs_repair row: its file is read once more. One that loads now starts its manager and the removal is
   // refused (the caller refreshes and sees the team); otherwise its key and directory are removed. A row with a
@@ -555,7 +555,7 @@ function createTeamService({
       return adminAnswer(HOST_OPERATIONS.deviceRevoke, await manager.revokeOwnDevice(hostParams(value)));
     }
     const answer = adminAnswer(HOST_OPERATIONS[method], await manager.command(HOST_OPERATIONS[method], hostParams(value)));
-    if (method === 'deviceList') repairLabel(manager, answer);
+    if (method === 'deviceList') repairLabel(manager, answer); else if (method === 'profileSet') require('./profile-change').keepProfile(answer, value, { own: ownRecords.get(manager), save: (next) => saveClientFile(userDataPath, next), log: say, push, held: !stopped && managers.get(value.team_id) === manager && !removing.has(value.team_id) });
     return answer;
   }
 
@@ -566,7 +566,7 @@ function createTeamService({
     if (stopped) return teamFailure('HOST_STOPPED', 'team_connection_stopped');
     let answer;
     try {
-      answer = chat ? await chats.handle(method, payload) : await run(method, checked.value);
+      answer = chat ? await chats.handle(method, payload) : PROJECT_DRAFT_METHODS.includes(method) ? drafts.call(method, checked.value) : await run(method, checked.value);
     } catch (error) {
       answer = failureOf(error);
     }
@@ -583,11 +583,11 @@ function createTeamService({
     pools.stopAll();
     const all = [...managers.values()];
     managers.clear();
-    await Promise.all([joining, chats.stopAll(), teamEngine?.stopAll(), projects.stopAll(), models.stopAll(), boards.stopAll(), ...all.map((manager) => manager.stop())]);
+    await Promise.all([joining, drafts.flush(), chats.stopAll(), teamEngine?.stopAll(), projects.stopAll(), models.stopAll(), boards.stopAll(), ...all.map((manager) => manager.stop())]);
   }
 
   return {
-    handle, startExisting, stopAll, snapshot, resources: () => resourceTotals(managers), holds, ownerJoin, ownerRecover, pushState: push,
+    handle, startExisting, stopAll, snapshot, resources: () => resourceTotals(managers), holds, ownerJoin, ownerRecover, pushState: push, retryTeam,
     holdForceLocal: forceLocal.hold, releaseForceLocal: forceLocal.release, interruptForceLocal: () => flow.cancel(),
     // Chat clients and cached messages (team-chat.js); kept apart from `resources()`, whose shape is pinned.
     chatResources: () => chats.resources(),

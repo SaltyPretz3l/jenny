@@ -533,6 +533,14 @@
   overflow-x: hidden;
 }
 
+/* Row 180: a message sent while Jenny worked is a user bubble inside her turn, with a caption and a Copy-only hover row shown on its own hover. */
+.chat-steer-entry { display: flex; flex-direction: column; align-items: flex-end; margin-inline-start: auto; width: fit-content; max-width: min(100%, var(--chat-user-bubble-max-width)); }
+.chat-entry .chat-steer-entry .chat-bubble { width: 100%; overflow-wrap: anywhere; padding: var(--space-6) var(--space-8); border-radius: var(--tl-radius-bubble); background: var(--tl-user-bubble-bg); border: 0; color: var(--text-primary); }
+.chat-entry__steer-caption { align-self: flex-end; text-align: end; color: var(--text-muted); font-size: var(--tl-font-meta); letter-spacing: 0; }
+.chat-entry.assistant .chat-steer-entry .chat-hover-row { justify-content: flex-end; opacity: 0; transform: translateY(-2px); pointer-events: none; }
+.chat-entry.assistant .chat-steer-entry:hover .chat-hover-row,
+.chat-entry.assistant .chat-steer-entry:focus-within .chat-hover-row { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
 /* Legacy read-only surface (old sessions only — the feature no longer emits
    new blocks). Quieted onto the timeline contract: flat hairline panel,
    sentence-case labels, contract weights. */

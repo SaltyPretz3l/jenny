@@ -133,7 +133,8 @@ test('the closed lists agree across the service, the tool, the manifest and the 
   assert.deepEqual(sorted(ACTIONS), sorted(RENDERER_ACTIONS));
   assert.deepEqual(sorted(SETTINGS_SECTIONS), sorted(params.section.enum));
   assert.deepEqual(sorted(CHAT_PANEL_SURFACES), sorted(params.surface.enum));
-  assert.deepEqual(sorted(CHAT_PANEL_SURFACES), sorted(SURFACES));
+  // 'browser' is renderer-only: row 176's Servers row opens the Browser panel; app_view does not offer it.
+  assert.deepEqual(sorted(CHAT_PANEL_SURFACES), sorted(SURFACES.filter((surface) => surface !== 'browser')));
   assert.deepEqual(sorted([...ACTIVITY_PANES, ...CLOSE_PANES]), sorted(params.pane.enum));
 });
 

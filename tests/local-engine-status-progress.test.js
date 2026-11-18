@@ -345,3 +345,55 @@ test('a no-model openai-compatible init that fell back reads unavailable; Ollama
   await initializeManagedSidecarWithTimeout(ollama, { requestedEngineType: 'ollama', ...FLIGHT_BOUNDS });
   assert.equal(ollama._modelLifecycle.state, 'unloaded');
 });
+
+test('a startup dead-port init with "Load model at startup" off reads ready with no model, not a failure', async () => {
+  const deadPortService = (startupModelLoad) => {
+    const service = createService(async () => ({
+      active_engine: 'mock',
+      active_model: 'mock-v1',
+      engine_fallback: { requested_engine: 'openai-compatible', reason: 'engine failed to initialize: EngineConnectionError' },
+    }));
+    service.currentEngineType = 'openai-compatible';
+    service.configService = { getLocalEngines: () => ({ startupModelLoad }) };
+    service.logs = [];
+    service._emitServiceLog = (level, event, details) => service.logs.push({ level, event, details });
+    return service;
+  };
+  const initLog = (service) => service.logs.find((entry) => entry.event === 'backend.managed_sidecar_initialize_failed');
+  const run = (service, reason) => assert.rejects(
+    initializeManagedSidecarWithTimeout(service, { requestedEngineType: 'openai-compatible', reason, ...FLIGHT_BOUNDS }),
+    (error) => /^The openai-compatible engine is unavailable: /.test(error.message)
+  );
+
+  const off = deadPortService(false);
+  await initializeManagedSidecarWithTimeout(off, { requestedEngineType: 'openai-compatible', reason: 'startup', ...FLIGHT_BOUNDS });
+  assert.equal(off._modelLifecycle.state, 'unloaded');
+  assert.equal(off._modelLifecycle.failure, null, 'no failure record for the banner');
+  assert.equal(off._startupIdleByChoice, true);
+  assert.equal(initLog(off), undefined);
+  const idleLog = off.logs.find((entry) => entry.event === 'backend.startup_idle_by_choice');
+  assert.equal(idleLog.level, 'INFO');
+  assert.deepEqual(idleLog.details, { engine: 'openai-compatible', reason: 'startup_model_load_off' });
+  off._managedReadyOnce = true;
+  assert.equal(observedStatus(off).phase, 'ready');
+
+  // The setting on, or a later init with it off, is still a failure.
+  const on = deadPortService(true);
+  await run(on, 'startup');
+  assert.equal(initLog(on).level, 'WARN');
+  assert.equal(on._modelLifecycle.state, 'unavailable');
+  assert.equal(on._startupIdleByChoice, false);
+  const later = deadPortService(false);
+  await run(later, 'restart');
+  assert.equal(initLog(later).level, 'WARN');
+  assert.equal(later._modelLifecycle.state, 'unavailable');
+
+  // A later no-model init (a settings refresh) keeps the idle; once a load ends it, the same init fails.
+  await initializeManagedSidecarWithTimeout(off, { requestedEngineType: 'openai-compatible', reason: 'feature_settings', ...FLIGHT_BOUNDS });
+  assert.equal(off._modelLifecycle.state, 'unloaded');
+  assert.equal(off._startupIdleByChoice, true);
+  require('../services/backend/local-engine-status').setModelLifecycle(off, { state: 'loading', requested_model: 'gemma' });
+  assert.equal(off._startupIdleByChoice, false);
+  await run(off, 'feature_settings');
+  assert.equal(off._modelLifecycle.state, 'unavailable');
+});

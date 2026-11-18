@@ -140,6 +140,8 @@ test('a team with only you says so in the header', async (t) => {
   const h = await open({ host: hostState(), teams: [snapshot()], answers: { members: { ok: true, members: [ROSTER[0]] },
     chatOverview: overview({ members: [chatMember(ME, 'Olive Owner', { role: 'owner' })] }) } });
   t.after(h.restore);
+  h.view.q('[data-team-channel="chan_team"]').click(); // a solo owner's tab opens on Overview (row 168)
+  await flush();
   assert.equal(h.view.q('.team-head__sub').textContent, 'Everyone on this team · only you so far');
 });
 

@@ -104,6 +104,18 @@ def _artifact_candidates() -> list[Path]:
     return [preferred, alternate]
 
 
+def _clean_previous_outputs() -> None:
+    """Remove this script's own outputs and its temp dir, never the whole artifact dir.
+
+    build/sidecar/ is shared: the native builders (team bridge, launcher, file access)
+    write their binaries and manifests beside sidecar(.exe), and a source checkout
+    runs them from there. Removing the directory wiped them (1.8.0 cut, 2026-11-16).
+    """
+    for path in (*_artifact_candidates(), ARTIFACT_DIR / MANIFEST_NAME):
+        path.unlink(missing_ok=True)
+    shutil.rmtree(TEMP_BUILD_DIR, ignore_errors=True)
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build build/sidecar/sidecar(.exe) via PyInstaller."
@@ -130,7 +142,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-clean",
         action="store_true",
-        help="Preserve existing build temp and artifact directories before building.",
+        help="Keep the previous sidecar artifact, its manifest and the build temp dir.",
     )
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -433,8 +445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     dependency_provenance = _required_dependency_provenance()
 
     if not args.skip_clean:
-        shutil.rmtree(ARTIFACT_DIR, ignore_errors=True)
-        shutil.rmtree(TEMP_BUILD_DIR, ignore_errors=True)
+        _clean_previous_outputs()
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     temp_run_dir = _create_temp_build_run_dir()

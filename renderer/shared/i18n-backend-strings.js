@@ -197,6 +197,7 @@
     'CMP-TERMINAL-0003': function () { return jt('error.terminal.noSession', 'No terminal session is running.'); },
     'CMP-TERMINAL-0004': function () { return jt('error.terminal.moduleLoadFailed', 'The terminal engine could not be loaded.'); },
     'CMP-TERMINAL-0005': function () { return jt('error.terminal.cwdOutsideRoot', 'The terminal can only start in a folder inside the workspace.'); },
+    'CMP-TERMINAL-0006': function () { return jt('error.terminal.startFolderUnavailable', 'The start folder for Jenny\'s commands is not an existing folder. Choose one in Settings > Editor > Terminal.'); },
     'CMP-TESTRUNNER-0001': function () { return jt('error.testRunner.workspaceRootMissing', 'No workspace root is configured; choose a workspace folder first.'); },
     'CMP-TESTRUNNER-0002': function () { return jt('error.testRunner.configNotFound', 'That test configuration no longer exists.'); },
     'CMP-TESTRUNNER-0003': function () { return jt('error.testRunner.cwdOutsideRoot', 'The test working directory must stay inside the workspace.'); },

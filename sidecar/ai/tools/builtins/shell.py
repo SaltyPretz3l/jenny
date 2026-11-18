@@ -47,7 +47,7 @@ from sidecar.ai.tools.builtins.shell_background import (
 from sidecar.ai.tools.builtins.shell_background_wait import (
     MAX_WAIT_MS,
     sleep_payload_if_waiting,
-    wait_for_settle,
+    wait_on_background_job,
 )
 from sidecar.ai.tools.builtins.shell_command_hint import (
     unresolved_command_hint as _unresolved_command_hint,
@@ -928,11 +928,7 @@ def check_background_job_tool(
     status = read_background_job(root, job_id)
     wait_ms = _parse_wait_ms(arguments)
     if wait_ms and status.get("state") == "running":
-        settled = wait_for_settle(
-            root, [job_id], max_seconds=wait_ms / 1000,
-            abort_event=cancellation.current_abort_event(),
-        )
-        status = settled[1] if settled is not None else read_background_job(root, job_id)
+        status = wait_on_background_job(root, job_id, wait_ms / 1000)
     if status.get("state") == "not_found":
         raise ToolExecutionFailure(
             code=CMP_TOOL_BACKGROUND_NOT_FOUND,

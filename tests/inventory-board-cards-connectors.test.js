@@ -241,6 +241,74 @@ test('connectorPath never returns NaN for overlapping or identical rectangles', 
   assert.equal(stacked.end.y, 300);
 });
 
+test('a connector goes round the other cards: the first way that is clear', () => {
+  const { connectorPath } = connectorLayer;
+  const top = { x: 0, y: 0, w: 200, h: 100 };
+  const near = { x: 300, y: 200, w: 200, h: 100 };
+  const far = { x: 524, y: 200, w: 200, h: 100 }; // 24 to the right of `near`, in the same row
+  const plain = connectorPath(top, far);
+  assert.deepEqual([plain.start.x, plain.end.x], [200, 524], 'alone, it runs side to side, through where `near` is');
+  const round = connectorPath(top, far, [top, near, far]);
+  assert.deepEqual([round.end.x, round.end.y], [624, 200], 'with `near` in the way it arrives from above');
+  assert.equal(connectorPath(top, far, [top, far]).d, plain.d, 'its own two cards are never in the way');
+  assert.equal(connectorPath(top, far, [{ x: -5000, y: -5000, w: 20000, h: 20000 }]).d, plain.d, 'when every way is blocked, the nearest');
+  makeEnv();
+  const layer = connectorLayer();
+  const item = { id: 'c', from: top, to: far, ends: 'none' };
+  layer.render([item], [top, far]);
+  const line = () => layer.element.querySelector('[data-connector-line]').getAttribute('d');
+  assert.equal(line(), plain.d);
+  layer.render([item], [top, near, far]);
+  assert.equal(line(), round.d, 'a card moved into the way: the same connector is drawn again');
+  assert.equal(layer.hitTest(round.mid.x, round.mid.y, 4), 'c');
+});
+
+test('a connector is straight runs: level cards get one, a fan shares its first run, close cards the nearest sides', () => {
+  const { connectorPath } = connectorLayer;
+  const runs = (d) => d.split(' L ').length - 1;
+  const from = { x: 0, y: 0, w: 200, h: 100 };
+  const level = connectorPath(from, { x: 260, y: 10, w: 200, h: 100 });
+  assert.deepEqual([runs(level.d), level.start.y, level.end.y], [1, 55, 55], 'sides near level are joined by one straight run');
+  const row = [0, 300, 600].map((x) => connectorPath({ x: 300, y: 0, w: 200, h: 100 }, { x, y: 240, w: 200, h: 100 + x / 10 }));
+  assert.deepEqual(row.map((p) => [p.start.x, p.start.y, p.end.y]), [[400, 100, 240], [400, 100, 240], [400, 100, 240]], 'a fan leaves by one point');
+  assert.ok(row[0].d.includes(' Q ') && row[0].d.startsWith('M 400 100 L 400 158'), 'out to the middle of the gap, then a rounded corner');
+  assert.equal(runs(row[1].d), 1, 'the card straight below gets a straight line');
+  const bent = connectorPath(from, { x: 150, y: 200, w: 200, h: 100 }, [{ x: 0, y: 130, w: 400, h: 40 }]);
+  assert.deepEqual([bent.start, bent.end], [{ x: 100, y: 100 }, { x: 250, y: 200 }], 'every way blocked: the first');
+  const round = connectorPath(from, { x: 205, y: 104, w: 200, h: 100 });
+  assert.deepEqual([round.start, round.end], [{ x: 200, y: 50 }, { x: 305, y: 104 }], 'no gap to cross: out of a side and round one corner');
+  assert.equal(runs(connectorPath(from, { x: 150, y: 60, w: 200, h: 100 }).d), 1, 'overlapping cards: one line between the nearest sides');
+});
+
+test('connectorLayer: a label sits on a pill, lit connectors carry a moving trace, drawIn clears itself', async () => {
+  const win = makeEnv();
+  const layer = connectorLayer();
+  layer.render([connector('a', { label: 'feeds' }), connector('b', { to: { x: 0, y: 300, w: 100, h: 60 } })]);
+  const g = (id) => layer.element.querySelector(`[data-connector-id="${id}"]`);
+  const pill = g('a').querySelector('[data-connector-pill]');
+  const text = g('a').querySelector('text');
+  assert.equal(Number(pill.getAttribute('x')) + Number(pill.getAttribute('width')) / 2, Number(text.getAttribute('x')), 'the pill is centred on the label');
+  assert.equal(g('b').querySelector('[data-connector-pill]'), null);
+  assert.ok(!g('a').querySelector('[data-connector-line]').getAttribute('d').endsWith(' 300 30'), 'the line stops short of the arrowhead tip');
+  layer.setLit(['a']);
+  assert.deepEqual([layer.element.hasAttribute('data-focus'), g('a').hasAttribute('data-lit'), g('b').hasAttribute('data-lit')], [true, true, false]);
+  const trace = g('a').querySelector('[data-connector-trace="flow"]');
+  assert.equal(trace.getAttribute('d'), g('a').querySelector('[data-connector-line]').getAttribute('d'));
+  layer.render([connector('a', { label: 'feeds', to: { x: 300, y: 200, w: 100, h: 60 } }), connector('b')]);
+  assert.equal(trace.getAttribute('d'), g('a').querySelector('[data-connector-line]').getAttribute('d'), 'the trace follows a moved line');
+  layer.render([connector('a'), connector('b'), connector('c', { to: { x: 0, y: 300, w: 100, h: 60 } })]);
+  assert.equal(g('c').hasAttribute('data-lit'), false);
+  layer.setLit(null);
+  assert.deepEqual([layer.element.hasAttribute('data-focus'), layer.element.querySelectorAll('[data-connector-trace]').length], [false, 0]);
+  win.setTimeout = (run) => { win.ran = run; return 1; };
+  layer.drawIn({ b: 120, missing: 0 });
+  assert.deepEqual([g('b').hasAttribute('data-arriving'), g('b').style.getPropertyValue('--board-arrive-delay'), g('b').querySelectorAll('[data-connector-trace="draw"]').length], [true, '120ms', 1]);
+  win.ran();
+  assert.deepEqual([g('b').hasAttribute('data-arriving'), g('b').querySelectorAll('[data-connector-trace]').length], [false, 0]);
+  layer.dispose();
+  assert.doesNotThrow(() => { layer.setLit(['a']); layer.drawIn({ a: 0 }); }, 'a disposed layer ignores both');
+});
+
 test('connectorLayer hitTest returns the nearest connector inside the tolerance, else null', () => {
   makeEnv();
   const layer = connectorLayer();

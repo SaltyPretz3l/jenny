@@ -89,11 +89,13 @@ test('a flow lands to the right of what is on the board, and cards outside it ar
   assert.deepEqual([out.card('Alone').w, out.card('Alone').h], [240, 160], 'a card outside a flow keeps the default size');
 });
 
-test('what is not a flow is left to default placement', () => {
+test('what is not a flow follows its arrows; a group a person already has keeps default placement', () => {
   const pair = accept(fresh(), ['note One as a', 'note Two as b', 'a -> b']);
-  assert.deepEqual([pair.card('One').w, pair.card('Two').w], [240, 240], 'two cards are not a flow');
+  assert.deepEqual([pair.card('One').w, pair.card('Two').w], [220, 220], 'two cards are not a flow: they follow their arrow');
+  assert.ok(pair.card('Two').y >= pair.card('One').y + pair.card('One').h || pair.card('Two').x >= pair.card('One').x + 220, 'the second comes after the first');
   const ring = accept(fresh(), ['note One as a', 'note Two as b', 'note Three as c', 'a -> b', 'b -> c', 'c -> a']);
-  assert.deepEqual(ring.cards.map((c) => c.w), [240, 240, 240], 'arrows in a circle are not a flow');
+  assert.deepEqual(ring.cards.map((c) => c.w), [220, 220, 220], 'arrows in a circle are not a flow');
+  ring.cards.forEach((a, i) => ring.cards.slice(i + 1).forEach((b) => assert.equal(hit(a, b), false)));
   let board = accept(fresh(), ['group Old']).plan.board;
   const alias = Object.values(board.groups)[0].alias;
   const old = accept(board, [`note One in ${alias} as a`, `note Two in ${alias} as b`, `note Three in ${alias} as c`, 'a -> b', 'b -> c'], 300);
@@ -117,6 +119,74 @@ test('flowLayout: branches go under the chain, two flows stack, bad input gives 
   assert.deepEqual(flow.arrange(null, [{ op: {} }]), [{ op: {} }]);
   const twice = flow.flowLayout({ nodes: [n('a'), n('b'), n('c')], edges: [{ from: 'a', to: 'b', soft: true }, { from: 'a', to: 'b' }, { from: 'b', to: 'c' }] });
   assert.equal(twice.flows.length, 1, 'a solid arrow counts when a dashed one between the same two cards came first');
-  assert.deepEqual(flow.fitNote('Short'), { w: 200, h: 65 });
+  assert.deepEqual(flow.fitNote('Short'), { w: 200, h: 68 });
   assert.equal(flow.fitNote('x'.repeat(4000)).h, flow.fitNote('y\n'.repeat(40)).h, 'height is capped');
+});
+
+// The owner's board of 2026-11-16: three groups, seven dashed arrows, no chain.
+const step = (name, body, group, as) => [`note **${name}** in ${group} as ${as}`, `  | ${body}`];
+const SAND = [
+  'group Main loop as loop',
+  ...step('Tick', 'Every animation frame: run the step (unless paused), render, then schedule the next frame', 'loop', 'a'),
+  ...step('Step', 'Scans the grid bottom-to-top (row 99 to 0), alternating scan direction each frame so sand does not drift; a cell can act at most once per step', 'loop', 'b'),
+  ...step('Render', 'Colors every cell, fire and smoke shaded by remaining life, the rest by base color plus per-cell noise, and scales the image onto the canvas', 'loop', 'c'),
+  ...step('Rules', 'Each cell acts on the rule of its element', 'loop', 'r'),
+  'b --> r',
+  'group Element rules as rules',
+  ...step('Sand', 'Falls down; sinks through water or smoke; otherwise slides diagonally at random', 'rules', 's1'),
+  ...step('Water', 'Falls down if it can, otherwise spreads sideways', 'rules', 's2'),
+  ...step('Fire', 'Ignites adjacent plants (50% chance); water nearby douses it; life counts down, then it dies into smoke or empty space', 'rules', 's3'),
+  ...step('Smoke', 'Rises with sideways jitter, fades out when its life runs out', 'rules', 's4'),
+  ...step('Stone', 'Stays put: solid, blocks everything', 'rules', 's5'),
+  'r --> s1', 'r --> s2', 'r --> s3', 'r --> s4', 'r --> s5',
+  'group State as state',
+  ...step('Grid', 'A grid of cells plus per-cell life and random noise; you paint into it with the brush', 'state', 'g1'),
+  'a --> g1',
+  'note Alone',
+];
+
+test('cards in several groups follow their arrows: each sits after the card that points at it, in its own group', () => {
+  const out = accept(fresh(), SAND);
+  assert.deepEqual(out.plan.skipped, []);
+  const card = (name) => out.card(`**${name}**`);
+  const group = (title) => out.groups.find((g) => g.title === title);
+  const elements = ['Sand', 'Water', 'Fire', 'Smoke', 'Stone'].map(card);
+  const mid = (c) => c.x + c.w / 2;
+  assert.deepEqual([card('Rules').x, card('Rules').y > card('Step').y + card('Step').h], [card('Step').x, true], 'Rules sits under Step');
+  assert.ok(card('Tick').x + card('Tick').w < card('Step').x && card('Render').x === card('Tick').x && card('Render').y > card('Tick').y,
+    'the cards no arrow ties inside the group stand beside the chain, not where it leads');
+  assert.equal(new Set(elements.map((c) => c.y)).size, 1, 'the five rules are one line facing the card that points at them');
+  assert.ok(elements[0].y > group('Main loop').y + group('Main loop').h, 'under the group that points into them');
+  assert.deepEqual(elements.map((c) => c.x), elements.map((c) => c.x).sort((a, b) => a - b), 'in written order');
+  assert.ok(Math.abs(mid(card('Rules')) - mid(elements[2])) <= 1, 'the fan is centred under Rules');
+  assert.ok(group('State').x + group('State').w < group('Main loop').x, 'State is beside Tick, the card that ties it to the loop');
+  out.cards.forEach((a, i) => out.cards.slice(i + 1).forEach((b) => assert.equal(hit(a, b), false, `${a.data.text} and ${b.data.text}`)));
+  out.groups.forEach((a, i) => out.groups.slice(i + 1).forEach((b) => assert.equal(hit(a, b), false, `${a.title} and ${b.title}`)));
+  out.cards.filter((c) => c.group_id).forEach((c) => assert.ok(inside(c, out.plan.board.groups[c.group_id]), c.data.text));
+  out.cards.filter((c) => c.group_id).forEach((c) => assert.deepEqual([c.w, c.h], [220, flow.fitNote(c.data.text, 220).h], 'a note is as tall as its text'));
+  assert.deepEqual([card('Render').data.text.endsWith('canvas'), out.card('Alone').w], [true, 240], 'an unused one-letter name is not text; a card no arrow touches keeps default placement');
+  assert.equal(out.cards.some((c) => c !== out.card('Alone') && hit(c, out.card('Alone'))), false);
+});
+
+test('arrowLayout: tall cards go side by side, a fan of large cards goes under; circles, repeats and bad input are safe', () => {
+  const n = (id, group) => ({ id, w: 200, h: 100, group });
+  const big = (id) => ({ id, w: 200, h: 160 });
+  const fan = flow.arrowLayout({ cards: ['top', 'a', 'b', 'c', 'd'].map(big), edges: ['a', 'b', 'c', 'd'].map((to) => ({ from: 'top', to })) });
+  assert.deepEqual(['a', 'b', 'c', 'd'].map((id) => fan.cards[id].y), [216, 216, 216, 216], 'four cards in a column would be taller than wide: they go under');
+  assert.deepEqual(['a', 'b', 'c', 'd'].map((id) => fan.cards[id].x), [0, 224, 448, 672]);
+  assert.equal(fan.cards.top.x, 336, 'the card that points at them is centred over them');
+  const tall = (id) => ({ id, w: 100, h: 400 });
+  const side = flow.arrowLayout({ cards: [tall('a'), tall('b')], edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'b' }, { from: 'a', to: 'a' }, { from: 'a', to: 'nope' }] });
+  assert.deepEqual([side.cards.a, side.cards.b], [{ x: 0, y: 0, w: 100, h: 400 }, { x: 156, y: 0, w: 100, h: 400 }], 'tall cards go side by side');
+  const ring = flow.arrowLayout({ cards: [n('a'), n('b'), n('c')], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'a' }] });
+  assert.equal(Object.keys(ring.cards).length, 3);
+  const mixed = flow.arrowLayout({ cards: [n('a', 'g'), n('b', 'g'), n('lone'), n('x', 'h'), n('y', 'h')], edges: [{ from: 'a', to: 'b' }] });
+  assert.deepEqual([Object.keys(mixed.cards), Object.keys(mixed.groups)], [['a', 'b'], ['g']], 'what no arrow touches is left out');
+  assert.deepEqual([mixed.groups.g.x, mixed.groups.g.y, mixed.cards.a.x, mixed.cards.a.y], [0, 0, 16, 40]);
+  const odd = flow.arrowLayout({ cards: [n('a'), n('b'), n('a>b')], edges: [{ from: 'a', to: 'b' }] });
+  assert.deepEqual(Object.keys(odd.cards), ['a', 'b'], 'a card whose id looks like an arrow is not taken for one');
+  [null, {}, { cards: 'x', edges: [] }, { cards: [n('a')], edges: [] }, { cards: [{ id: 'a' }, n('b')], edges: [{ from: 'a', to: 'b' }] }].forEach((bad) => {
+    assert.deepEqual(Object.keys(flow.arrowLayout(bad).cards), []);
+  });
+  assert.deepEqual(flow.fitNote('one line', 240), { w: 240, h: 68 });
 });

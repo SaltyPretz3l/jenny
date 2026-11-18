@@ -9,7 +9,7 @@
 //
 // `create`, `locate`, `has`, `isEmpty`, `countFiles`, `list`, `trash` and `childState` are synchronous;
 // `sweepTrash` and slice 3-8b's file IO (project-folder-io.js: `measure`, `listFiles`, `openListed`,
-// `sweepInstalls`, `install`) are asynchronous.
+// `sweepInstalls`, `install`; row 175's `readListed`) are asynchronous.
 
 const fs = require('node:fs');
 const path = require('node:path');

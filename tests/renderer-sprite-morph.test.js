@@ -465,3 +465,18 @@ test('review fixes: tool -> search spins into the magnifier pose; approve ring e
   assert.equal(activity(rig), 'compose');
   rig.close();
 });
+
+test('a reset inside a hidden view clears the loops without forcing a layout', () => {
+  const rig = createRig();
+  try {
+    const flushes = rig.watchReflow(() => true);
+    rig.morph.reset();
+    assert.equal(flushes.length, 1, 'on screen the reset flushes once so no transition replays');
+    rig.sprite.parentElement.classList.add('hidden');
+    rig.morph.reset();
+    assert.equal(flushes.length, 1, 'inside a hidden view nothing can transition, so no flush');
+    assert.equal(rig.root.querySelector('.r').style.transition, '', 'the loops are handed back to CSS either way');
+  } finally {
+    rig.close();
+  }
+});

@@ -292,3 +292,26 @@ test('board rows: choosing one saves it as the project\'s open board and moves t
   assert.deepEqual(JSON.parse(h.memory.get(OPEN_KEY)), { project_alpha: 'board_a' });
   assert.deepEqual(h.views, [['view', 'board'], ['focus', 'board']]);
 });
+
+// Row 175 F1: each listed project conversation of an online team, typed only, with its project's name; picking opens it.
+test('row 175: project conversations are typed-only Team rows with the project name beside them; picking one opens it in the tab', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h } = await projects.openProjects();
+  t.after(h.restore);
+  const rows = teamItems().filter((item) => item.id.startsWith('team:conv:'));
+  assert.deepEqual(rows.map((item) => [item.label, item.description, item.tag, item.queryOnly, item.landing]), [
+    ['Palette loader cleanup', 'jenny-site', 'Project', true, undefined], ['Blog post draft', 'jenny-site', 'Project', true, undefined],
+    ['Contrast checker', 'palette-tools', 'Project', true, undefined]]);
+  assert.deepEqual(rows[0].scopes, ['chats']);
+  rows[1].run();
+  await projects.flush();
+  assert.equal(require('../renderer/team/renderer-team-notify').shownFrame().channelId, 'conv:' + projects.S2);
+});
+
+test('row 175: at most 200 project conversation rows in all', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const many = Array.from({ length: 250 }, (_v, i) => projects.conversation('sess_' + String(i).padStart(32, '0'), projects.P1, 'Talk ' + i));
+  const { h } = await projects.openProjects({ list: projects.listAnswer({ conversations: many }) });
+  t.after(h.restore);
+  assert.equal(teamItems().filter((item) => item.id.startsWith('team:conv:')).length, 200);
+});

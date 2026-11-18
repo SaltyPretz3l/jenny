@@ -199,6 +199,17 @@
   text-overflow: ellipsis;
 }
 
+/* A Team row's muted line may run to two lines instead of one clipped one: it carries where the conversation lives and,
+   for a teammate's turn, who is waiting and that nobody is viewing. Local rows stay one clipped line. */
+.attention-inbox__row--team .attention-inbox__policy,
+.attention-inbox__row--team .attention-inbox__note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+}
+
 /* Line 4: the decisions, as text. */
 .attention-inbox__actions {
   display: flex;

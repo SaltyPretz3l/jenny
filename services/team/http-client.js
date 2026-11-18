@@ -56,7 +56,7 @@ const MAX_PART_BYTES = 4 * 1024 * 1024;
 const MAX_PART_ANSWER_BYTES = 64 * 1024;
 // Slice 2c renderer: the chat attachment routes (server/team/chat-attachment-routes.js), channel and id in the host's
 // own shapes (services/host/team-chat-schema.js CHANNEL_PATTERNS, PATTERNS.attachment); a file is at most 4 MiB.
-const CHANNEL = '(?:chan_team|chan_project_[A-Za-z0-9_-]{1,128}|chan_dm_[a-f0-9]{64})';
+const CHANNEL = '(?:chan_team|chan_project_[A-Za-z0-9_-]{1,128}|chan_dm_[a-f0-9]{64}|chan_c_[a-z2-7]{16})';
 const CHAT_UPLOAD_PATH = new RegExp(`^/api/v1/team/chat/uploads/${CHANNEL}$`, 'u');
 const CHAT_FILE_PATH = new RegExp(`^/api/v1/team/chat/attachments/${CHANNEL}/att_[0-9A-HJKMNP-TV-Z]{26}$`, 'u');
 // Slice 6-5: one model part, ids in the relay's shapes (server/team/model-relay-core.js), at most 8 files per offer.

@@ -363,3 +363,90 @@ test('row 100 P2: a live job other chats wait on reads "N waiting", names them o
   jobs.dispose();
   window.close();
 });
+
+/* Row 176: Servers rows (Stop / Close) and the "N up" part of the hidden-tray readout. */
+const SERVING = { serving_url: 'http://localhost:5173', serving_port: 5173, serving_since_ms: NOW - 5000 };
+const PAGE = { ok: true, open: true, url: 'https://example.com/docs', title: 'Example docs' };
+
+test('jobs helper: Stop on a serving job kills it, Close on the browser closes this chat\'s page; a refusal re-enables each', async () => {
+  const { window } = new JSDOM('<body><div id="tray"></div></body>', { pretendToBeVisual: true });
+  window.inventoryActionButton = actionButton;
+  const tray = window.document.getElementById('tray');
+  const calls = [];
+  let refuse = false;
+  const jobs = createRailJobs({
+    tray, win: window, jt, getSessionId: () => 's1', trayShown: () => true,
+    getBackgroundJobs: () => ({ kill: async (id) => { calls.push(['kill', id]); return { ok: !refuse }; } }),
+    getBrowserUse: () => ({ getState: async () => PAGE, close: async (payload) => { calls.push(['close', payload]); return { ok: !refuse }; } }),
+  });
+  await flush();
+  const vm = model.buildRailViewModel({ summary: summaryFor('s1', { background_tasks: tasks([jobItem('aaaaaaaaaaaa', 'running', SERVING)]) }), sessionId: 's1', jt, browser: jobs.getBrowser() });
+  tray.innerHTML = render.bodyHtml(vm.sections.find((section) => section.key === 'servers'));
+  tray.addEventListener('click', (event) => jobs.handleClick(event));
+  const [close, stop] = tray.querySelectorAll('[data-rail-server-stop]');
+  assert.deepEqual([close.getAttribute('data-rail-server-stop'), stop.getAttribute('data-rail-server-stop')], ['browser', 'job:aaaaaaaaaaaa']);
+  stop.click();
+  close.click();
+  assert.deepEqual([stop.disabled, close.disabled], [true, true]);
+  await flush();
+  assert.deepEqual(calls, [['kill', 'aaaaaaaaaaaa'], ['close', { session_id: 's1' }]]);
+  assert.deepEqual([stop.disabled, close.disabled], [true, true], 'accepted: they stay disabled until the next paint');
+  refuse = true;
+  stop.disabled = false;
+  close.disabled = false;
+  stop.click();
+  close.click();
+  await flush();
+  assert.deepEqual([stop.disabled, close.disabled], [false, false]);
+  assert.equal(stop.title, 'Could not stop the background job.');
+  assert.equal(close.title, 'Could not close the browser.');
+  jobs.dispose();
+  window.close();
+});
+
+test('jobs helper: the readout says "1 running · 2 up", and "2 up" alone when nothing runs; serving jobs are up, not running', async () => {
+  const { window } = new JSDOM('<body><div id="tray"></div><button id="toggle"></button></body>', { pretendToBeVisual: true });
+  window.inventoryActionButton = actionButton;
+  const toggle = window.document.getElementById('toggle');
+  toggle.innerHTML = render.toggleContent('Session');
+  let push = null;
+  let pushBrowser = null;
+  let page = { ok: true, open: false };
+  const jobs = createRailJobs({
+    tray: window.document.getElementById('tray'), toggle, win: window, jt, getSessionId: () => 's1', trayShown: () => false,
+    getBackgroundJobs: () => ({ onChanged: (fn) => { push = fn; return () => { push = null; }; }, getState: async () => ({ jobs: [] }) }),
+    getBrowserUse: () => ({ getState: async () => page, onChanged: (fn) => { pushBrowser = fn; return () => { pushBrowser = null; }; } }),
+  });
+  const slot = toggle.querySelector('[data-session-rail-jobs-readout]');
+  const serving = { url: 'http://localhost:5173', host: 'localhost', port: 5173, sinceMs: 1 };
+  push({ jobs: [{ sessionId: 's1', state: 'running' }, { sessionId: 's1', state: 'running', serving }, { sessionId: 's2', state: 'running', serving }] });
+  assert.equal(slot.textContent, '1 running · 1 up');
+  pushBrowser({ session_id: 's1', open: true, url: 'https://example.com', title: 'Example' });
+  assert.equal(slot.textContent, '1 running · 2 up');
+  pushBrowser({ session_id: 's2', open: false });
+  assert.equal(slot.textContent, '1 running · 2 up', 'another chat\'s page push is ignored');
+  push({ jobs: [{ sessionId: 's1', state: 'killing', serving }] });
+  assert.equal(slot.textContent, '2 up');
+  pushBrowser({ session_id: 's1', open: false });
+  push({ jobs: [{ sessionId: 's1', state: 'running' }] });
+  assert.equal(slot.textContent, '1 running');
+  push({ jobs: [] });
+  assert.equal(slot.hidden, true);
+  jobs.dispose();
+  assert.equal(pushBrowser, null, 'dispose unsubscribes from the browser too');
+  window.close();
+});
+
+test('jobs helper: a missing browser bridge, or a state that is not ok, reads as no page and never throws', async () => {
+  const { window } = new JSDOM('<body><div id="tray"></div></body>', { pretendToBeVisual: true });
+  const seen = [];
+  const make = (getBrowserUse) => createRailJobs({ tray: window.document.getElementById('tray'), win: window, jt, getSessionId: () => 's1', getBackgroundJobs: () => null, getBrowserUse, onBrowserChange: (page) => seen.push(page) });
+  for (const bridge of [null, {}, { getState: async () => ({ ok: false, reason: 'no_page' }) }, { getState: async () => { throw new Error('gone'); } }]) {
+    const jobs = make(() => bridge);
+    await flush();
+    assert.equal(jobs.getBrowser(), null);
+    jobs.dispose();
+  }
+  assert.deepEqual(seen, []);
+  window.close();
+});

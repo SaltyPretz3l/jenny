@@ -17,11 +17,17 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from sidecar.ai.tools.builtins import cancellation
 from sidecar.ai.tools.builtins.shell_background import active_job_ids, read_background_job
 from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
 
 MAX_WAIT_MS = 600_000
 POLL_INTERVAL_SECONDS = 0.5
+# With both a Stop (abort) and a person's message (wake) to watch, the pause blocks on the
+# abort event in slices this long and looks at the wake between them (an Event cannot be
+# waited on in pairs): Stop stays immediate, a message ends the wait within a quarter second,
+# and an idle wait wakes four times a second rather than spinning.
+WAKE_POLL_SECONDS = 0.25
 
 _REDIRECTS = r"(?:\s*(?:[12]?>\s*(?:nul|/dev/null)|2>&1))*"
 # Each pattern captures the requested seconds; ping counts echo requests, one
@@ -51,30 +57,85 @@ def sleep_only_seconds(command: str) -> float | None:
     return None
 
 
-def wait_for_settle(
+def _pause(
+    seconds: float, abort_event: threading.Event | None, wake_event: threading.Event | None
+) -> None:
+    """Sleep up to *seconds*, ending early on the abort event or the wake event."""
+    if wake_event is None or abort_event is None:
+        event = wake_event or abort_event
+        (event.wait if event is not None else time.sleep)(seconds)
+        return
+    end = time.monotonic() + seconds
+    while not wake_event.is_set() and not abort_event.is_set():
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        abort_event.wait(min(WAKE_POLL_SECONDS, left))
+
+
+def wait_for_settle(  # noqa: PLR0913 - explicit wait inputs, all keyword-only
     workspace_root: Path,
     job_ids: list[str],
     *,
     max_seconds: float,
     abort_event: threading.Event | None = None,
+    wake_event: threading.Event | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[str, dict[str, object]] | None:
-    """Poll until one of *job_ids* leaves ``running``; ``None`` on timeout or cancel.
+    """Poll until one of *job_ids* leaves ``running``; ``None`` on timeout, cancel or wake.
 
     Returns the first settled job's id and status. A job that cannot be read
-    counts as settled so its caller reports it instead of waiting it out.
+    counts as settled so its caller reports it instead of waiting it out. A set
+    *wake_event* (a person's message arrived, row 180) ends the wait without
+    stopping any job: the caller tells a wake from a timeout by ``wake_event.is_set()``.
     """
     deadline = clock() + max(0.0, max_seconds)
-    pause = abort_event.wait if abort_event is not None else time.sleep
     while True:
         for job_id in job_ids:
             status = read_background_job(workspace_root, job_id)
             if status.get("state") != "running":
                 return job_id, status
         remaining = deadline - clock()
-        if remaining <= 0 or (abort_event is not None and abort_event.is_set()):
+        if (
+            remaining <= 0
+            or (abort_event is not None and abort_event.is_set())
+            or (wake_event is not None and wake_event.is_set())
+        ):
             return None
-        pause(min(POLL_INTERVAL_SECONDS, remaining))
+        _pause(min(POLL_INTERVAL_SECONDS, remaining), abort_event, wake_event)
+
+
+def interrupted_message(job_id: str) -> str:
+    """Model-facing wording when a person's message ended a wait on a still-running job."""
+    return (
+        f"The person sent a message. Job {job_id} is still running; "
+        "you will be told when it finishes."
+    )
+
+
+def wait_on_background_job(
+    workspace_root: Path, job_id: str, max_seconds: float
+) -> dict[str, object]:
+    """``check_background_job wait_ms``: the job's status after waiting for it to settle.
+
+    When a person's message ended the wait early the status stays ``running`` and carries
+    ``interrupted_by_user_message`` plus the model-facing note.
+    """
+    wake = cancellation.current_wake_event()
+    settled = wait_for_settle(
+        workspace_root,
+        [job_id],
+        max_seconds=max_seconds,
+        abort_event=cancellation.current_abort_event(),
+        wake_event=wake,
+    )
+    if settled is not None:
+        return settled[1]
+    status = read_background_job(workspace_root, job_id)
+    if wake is not None and wake.is_set() and status.get("state") == "running":
+        status["interrupted_by_user_message"] = True
+        status["message"] = interrupted_message(job_id)
+    return status
 
 
 def running_workspace_jobs(workspace_root: Path) -> list[str]:
@@ -92,11 +153,13 @@ def sleep_until_job_settles(
     job_ids: list[str],
     *,
     abort_event: threading.Event | None = None,
+    wake_event: threading.Event | None = None,
 ) -> dict[str, object]:
     """Run a sleep-only command as a wait on *job_ids*; the run_command payload fields.
 
     It ends early only once every one of them settled: any still running may be
-    what the sleep is for (a dev server booting while a lint job finishes).
+    what the sleep is for (a dev server booting while a lint job finishes). A
+    person's message (*wake_event*) ends it at once with the jobs still running.
     """
     started = time.monotonic()
     deadline = started + max(0.0, seconds)
@@ -108,12 +171,19 @@ def sleep_until_job_settles(
             waiting,
             max_seconds=deadline - time.monotonic(),
             abort_event=abort_event,
+            wake_event=wake_event,
         )
         if found is None:
             break
         settled = found
         waiting.remove(found[0])
     slept = round(time.monotonic() - started, 1)
+    if waiting and wake_event is not None and wake_event.is_set():
+        return {
+            "slept_seconds": slept,
+            "interrupted_by_user_message": True,
+            "message": interrupted_message(waiting[0]),
+        }
     if waiting or settled is None:
         still = ", ".join(waiting or job_ids)
         return {
@@ -158,5 +228,9 @@ def sleep_payload_if_waiting(
     if not job_ids:
         return None
     return sleep_until_job_settles(
-        min(seconds, timeout_seconds), root, job_ids, abort_event=abort_event
+        min(seconds, timeout_seconds),
+        root,
+        job_ids,
+        abort_event=abort_event,
+        wake_event=cancellation.current_wake_event(),
     )

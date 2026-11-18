@@ -13,6 +13,8 @@ const CLIENT = Object.freeze([
   'team_conversation_open', 'team_transfer_busy', 'team_transfer_failed', 'team_upload_empty', 'team_upload_changed',
   'team_upload_unreadable', 'team_download_changed', 'team_download_folder_invalid', 'team_download_folder_not_empty',
   'team_download_write_failed',
+  // Row 175 (F6): the box text kept on this PC cannot be written (the team's folder is gone or newer).
+  'team_project_drafts_unavailable',
 ]);
 
 const HOST = Object.freeze([
@@ -29,6 +31,10 @@ const HOST = Object.freeze([
   'team_rule_request_limit', 'team_rule_request_not_found', 'team_rule_not_found', 'team_rule_folder_invalid',
   'team_rule_reason_invalid', 'team_rule_answer_invalid', 'team_rule_always_invalid', 'team_rule_tool_invalid',
   'team_rule_no_project', 'team_audit_unavailable',
+  // Row 175 round 2b: regenerate, edit and resend, branch, ask a teammate, hand the seat, plan decisions.
+  'team_turn_not_latest', 'team_redo_forbidden', 'session_active', 'runtime_unavailable', 'runtime_submission_refused',
+  'operation_indeterminate', 'team_branch_refused', 'session_capacity', 'team_member_unavailable', 'team_hand_refused',
+  'plan_decision_invalid', 'team_redo_attachments', 'application_turn_retry_refused', 'handoff_preparation_retry_refused',
 ]);
 
 const PROJECT_REASONS = Object.freeze([...new Set([...CLIENT, ...HOST, ...LEASE_ENDING, ...VIEW_ENDING])]);

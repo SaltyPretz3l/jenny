@@ -174,3 +174,68 @@ test('visible outbox hides for an empty active session', () => {
   assert.equal(host.hidden, true);
   dom.window.close();
 });
+
+function renderRows(items, extra = {}) {
+  const dom = new JSDOM('<div id="outbox"></div>');
+  const host = dom.window.document.getElementById('outbox');
+  const state = { currentSessionId: 's1', sendOutboxBySession: new Map([['s1', items]]), ...extra };
+  renderSendOutbox({ state, host, actions: { edit() {}, cancel() {}, retry() {} } });
+  return { dom, host, state };
+}
+
+test('an offered row says Jenny reads it at the next step, cannot be edited, and keeps a live ×', () => {
+  const withdrawn = [];
+  const { dom, host } = renderRows(
+    [{ id: 'one', prompt: 'Take this', status: 'offered', revision: 3 }],
+    { sendSteerController: { withdraw: (item) => withdrawn.push([item.id, item.revision]) } }
+  );
+  const row = host.querySelector('[data-outbox-item-id="one"]');
+  assert.match(row.querySelector('.send-outbox__status').textContent, /^Jenny reads this at the next step$/);
+  assert.equal(row.querySelector('.send-outbox__preview').disabled, true, 'locked for editing');
+  const cancel = row.querySelector('.send-outbox__action--cancel');
+  assert.equal(cancel.disabled, false, '× stays enabled to withdraw');
+  cancel.click();
+  assert.deepEqual(withdrawn, [['one', 3]]);
+  dom.window.close();
+});
+
+test('a waiting row names why it waits, and shows no line when no reason is known', () => {
+  const reasons = {
+    slash_command: 'slash command',
+    model_change: 'changes the model',
+    mode_change: 'changes the mode',
+    mentions: 'has @-mentions',
+    needs_new_turn: 'needs a new turn',
+    behind_waiting_item: 'waits for the message above',
+  };
+  const items = Object.keys(reasons).map((reason, index) => ({
+    id: `item${index}`, prompt: reason, status: index % 2 ? 'waiting_for_turn' : 'ready', steerReason: reason,
+  }));
+  items.push({ id: 'plain', prompt: 'plain', status: 'ready' });
+  items.push({ id: 'refused', prompt: 'refused', status: 'waiting_for_turn', steerReason: null });
+  const { dom, host } = renderRows(items);
+  Object.entries(reasons).forEach(([reason, text], index) => {
+    const status = host.querySelector(`[data-outbox-item-id="item${index}"] .send-outbox__status`);
+    assert.equal(status.textContent, `Sends after this turn · ${text}`, reason);
+  });
+  assert.equal(host.querySelector('[data-outbox-item-id="plain"] .send-outbox__status'), null);
+  assert.equal(host.querySelector('[data-outbox-item-id="refused"] .send-outbox__status'), null);
+  dom.window.close();
+});
+
+test('a reason change redraws the row and the lost-race row says Jenny already read it', () => {
+  const dom = new JSDOM('<div id="outbox"></div>');
+  const host = dom.window.document.getElementById('outbox');
+  const item = { id: 'one', prompt: 'x', status: 'ready', revision: 1 };
+  const state = { currentSessionId: 's1', sendOutboxBySession: new Map([['s1', [item]]]) };
+  renderSendOutbox({ state, host });
+  assert.equal(host.querySelector('.send-outbox__status'), null);
+  state.sendOutboxBySession.set('s1', [{ ...item, steerReason: 'mentions' }]);
+  renderSendOutbox({ state, host });
+  assert.match(host.querySelector('.send-outbox__status').textContent, /has @-mentions/);
+  state.sendOutboxBySession.set('s1', [{ ...item, status: 'taken' }]);
+  renderSendOutbox({ state, host });
+  assert.equal(host.querySelector('.send-outbox__status').textContent, 'Jenny already read this');
+  assert.equal(host.querySelector('.send-outbox__action--cancel').disabled, true);
+  dom.window.close();
+});

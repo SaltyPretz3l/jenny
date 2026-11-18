@@ -133,3 +133,24 @@ test('ollama command resolution re-probes after stop so a managed linux install 
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('a missing Ollama warns only when the chat engine needs it', async () => {
+  for (const [options, level] of [[undefined, 'WARN'], [{ optional: false }, 'WARN'], [{ optional: true }, 'INFO']]) {
+    const logs = [];
+    const manager = new OllamaProcessManager({
+      platform: 'win32',
+      stateStore: null,
+      detectTrayConflictImpl: () => null,
+      logger: (logLevel, event, details) => logs.push({ level: logLevel, event, details }),
+    });
+    manager._isRunning = async () => false;
+    manager._resolveCommandPromise = Promise.resolve(null);
+
+    const result = await manager.start(options);
+
+    assert.equal(result.failure.likelyCause, 'not_installed', 'the failure record stays, for setup surfaces');
+    const notFound = logs.filter((entry) => entry.event === 'ollama.not_found');
+    assert.deepEqual(notFound.map((entry) => entry.level), [level], JSON.stringify(options));
+    assert.equal(notFound[0].details.reason, level === 'INFO' ? 'not_needed_by_chat_engine' : undefined);
+  }
+});

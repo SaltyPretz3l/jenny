@@ -178,6 +178,12 @@
         toggle(jt('chat.utilities.panels.backgroundTasks', 'Background tasks'), background.isOpen?.() === true,
           () => background.toggle({ sessionId: getSessionId(), opener: button }));
       }
+      // Row 178: the Terminal panel, offered while its flag is on and the pty bridge exists.
+      const terminal = globalThis.rendererChatTerminalPanel;
+      if (typeof terminal?.toggle === 'function' && globalThis.jennyShell?.workspacePty && panels?.featureEnabled?.('chat_terminal_panel') !== false) {
+        items.push({ label: jt('chat.utilities.panels.terminal', 'Terminal'), toggle: true, checked: terminal.isOpen?.() === true, shortcutHint: 'Ctrl+`',
+          action: () => terminal.toggle({ sessionId: getSessionId(), opener: button }) });
+      }
       const pane = cluster.closest('.chat-pane');
       const railMode = panels ? String(panels.railMode?.() || '') : '';
       const cards = pane ? pane.querySelectorAll('[data-subagent-open]') : [];

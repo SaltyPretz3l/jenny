@@ -48,8 +48,8 @@ def current_turn_anchor_index(
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         content = message.get("content")
-        if str(message.get("role") or "").strip().lower() != "user":
-            continue
+        if str(message.get("role") or "").strip().lower() != "user" or message.get("steer"):
+            continue  # a steered message (row 180) never carries the turn's own images
         if not isinstance(content, str):
             continue
         # A pin answered in-turn carries the prefix; compare the bare text so a

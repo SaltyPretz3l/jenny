@@ -63,8 +63,19 @@ def _is_windows_path(text: str) -> bool:
     return bool(_WINDOWS_DRIVE_RE.match(text))
 
 
+_SEPARATOR_RUN_RE = re.compile(r"\\{2,}")
+
+
 def _fold_windows_path(text: str) -> str:
-    return text.replace("/", "\\").casefold()
+    r"""Case- and separator-insensitive form; a separator run is one, past a leading UNC pair.
+
+    A path the call's code names in a normal string literal ("C:\\Windows") and the same
+    path printed with repr() both carry doubled separators that the real path lacks, so
+    without the collapse the model's own path came back as ``<path>``.
+    """
+    folded = text.replace("/", "\\")
+    lead = "\\\\" if folded.startswith("\\\\") else ""
+    return (lead + _SEPARATOR_RUN_RE.sub(r"\\", folded[len(lead):])).casefold()
 
 
 def _argument_strings(value: object, depth: int = 0) -> list[str]:

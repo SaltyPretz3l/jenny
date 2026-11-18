@@ -273,6 +273,12 @@ button.session-rail-fact:hover {
   text-align: start;
 }
 
+/* A server's address reads as an address. */
+.session-rail-ellip--addr {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
 .session-rail-meta {
   color: var(--text-muted);
   font-size: var(--font-size-caption);

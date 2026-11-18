@@ -24,8 +24,8 @@
   var SEEN_STORAGE_KEY = 'jenny.ui.awayDigest.seenAt';
   var SESSION_SEEN_STORAGE_KEY = 'jenny.ui.awayDigest.seenBySession';
   var SNAPSHOT_LIMIT = 100;
-  var USAGE_LIMIT = 200;
   var META_SEPARATOR = ' · ';
+  var TEAM_EVENT = 'jenny:team-attention'; // renderer-team-notify.js: Team turns finished or failed, or taken away
   var BODY_TEARDOWNS = new WeakMap();
   function localeTag() {
     return globalThis.jennyI18n && typeof globalThis.jennyI18n.tag === 'function' ? globalThis.jennyI18n.tag() : undefined;
@@ -58,11 +58,6 @@
     var disposed = false;
     var lastPanelVisible = null;
     var lastChromeSession = '';
-    var usagePromise = null;
-    var workStreamPromises = new Map();
-    var tokenValues = new Map();
-    var tokenWarnings = new Set();
-    var usageFailed = false;
     var listeners = [];
     var watchedAt = {}; // last instant each chat was on screen; committed as its cursor at read/switch/hide
     var published = null;
@@ -194,7 +189,7 @@
         readFailed = false;
         limit = model().DEFAULT_ROW_LIMIT;
         loading = false;
-        if (usageFailed) { usagePromise = null; usageFailed = false; }
+        tokenReader.retry();
         publish(false);
         noteWatched();
         commitWatched(false);
@@ -266,96 +261,27 @@
     }
     function homeOrPanel() { return (state.ui && state.ui.activeView === 'home') || panelVisible(); }
 
-    function warnTokens(workId, error) {
-      if (tokenWarnings.has(workId)) return;
-      tokenWarnings.add(workId);
-      log('WARN', 'chat.away_digest_tokens_failed', {
-        workId: workId,
-        message: String(error && error.message || error || ''),
-      });
-    }
-
-    function readWorkStream(workId) {
-      if (workStreamPromises.has(workId)) return workStreamPromises.get(workId);
-      var runtime = runtimeBridge();
-      if (!runtime || typeof runtime.getWork !== 'function') {
-        warnTokens(workId, new Error('runtime_work_unavailable'));
-        var missing = Promise.resolve(null);
-        workStreamPromises.set(workId, missing);
-        return missing;
-      }
-      var promise = Promise.resolve().then(function readWork() {
-        return runtime.getWork({ work_id: workId });
-      }).then(function workResult(result) {
-        var streamId = result && result.ok === true && result.work && result.work.attempt
-          ? String(result.work.attempt.stream_id || '') : '';
-        if (!streamId) throw new Error(String(result && result.error || 'runtime_work_refused'));
-        return streamId;
-      }).catch(function workError(error) {
-        warnTokens(workId, error);
-        return null;
-      });
-      workStreamPromises.set(workId, promise);
-      return promise;
-    }
-
-    function readUsage() {
-      if (usagePromise) return usagePromise;
-      var usage = windowRef.jennyShell && windowRef.jennyShell.usage;
-      if (!usage || typeof usage.getSnapshot !== 'function') return Promise.reject(new Error('usage_bridge_unavailable'));
-      usagePromise = Promise.resolve().then(function readUsagePage() {
-        return usage.getSnapshot({ limit: USAGE_LIMIT });
-      }).then(function usageResult(result) {
-        if (!result || !Array.isArray(result.recent_turns)) throw new Error('usage_snapshot_refused');
-        var byStream = new Map();
-        result.recent_turns.forEach(function index(record) {
-          var streamId = String(record && record.stream_id || '');
-          if (streamId && !byStream.has(streamId)) byStream.set(streamId, record);
-        });
-        return byStream;
-      }).catch(function usageError(error) {
-        usageFailed = true; // retained until the next arrival read
-        throw error;
-      });
-      return usagePromise;
-    }
-
-    function readTokens(row) {
-      if (disposed || !row || !row.workId) return Promise.resolve(null);
-      var workId = String(row.workId);
-      if (tokenValues.has(workId)) return Promise.resolve(tokenValues.get(workId));
-      return readWorkStream(workId).then(function withStream(streamId) {
-        if (!streamId) return null;
-        return readUsage().then(function withUsage(usageByStream) {
-          var tokens = usageByStream ? model().tokensForStream(usageByStream, streamId) : null;
-          tokenValues.set(workId, tokens);
-          return tokens;
-        }).catch(function tokensError(error) {
-          warnTokens(workId, error);
-          return null;
-        });
-      });
-    }
-
     function dispose() {
       if (disposed) return;
       disposed = true;
       settleReads.dispose();
       if (documentRef) documentRef.removeEventListener('visibilitychange', handleDocumentVisibility);
+      if (typeof windowRef.removeEventListener === 'function') windowRef.removeEventListener(TEAM_EVENT, onTeam);
       commitWatched(false);
       listeners = [];
-      usagePromise = null;
-      workStreamPromises.clear();
-      tokenValues.clear();
-      tokenWarnings.clear();
+      tokenReader.dispose();
     }
+    var tokenReader = model().createTokenReader({ log: log, runtimeBridge: runtimeBridge,
+      usageBridge: function usageBridge() { return windowRef.jennyShell && windowRef.jennyShell.usage; } });
     publish(false);
     var settleReads = model().createSettleReads({ windowRef: windowRef, documentRef: documentRef, onScreen: homeOrPanel,
       digest: function digest() { return published.digest; },
       read: function read() { return Promise.resolve(inFlight).then(function reread() { return refresh(); }); } });
     if (documentRef) documentRef.addEventListener('visibilitychange', handleDocumentVisibility);
+    function onTeam() { if (!disposed) publish(true); }
+    if (typeof windowRef.addEventListener === 'function') windowRef.addEventListener(TEAM_EVENT, onTeam);
     return { refresh: refresh, markAllSeen: markAllSeen, noteSessionOpened: noteSessionOpened,
-      onChromePass: onChromePass, onRunSettled: function onRunSettled(event) { settleReads.note(event); }, showAll: showAll, readTokens: readTokens, subscribe: subscribe,
+      onChromePass: onChromePass, onRunSettled: function onRunSettled(event) { settleReads.note(event); }, showAll: showAll, readTokens: tokenReader.readTokens, subscribe: subscribe,
       getSnapshot: function getSnapshot() { return published; }, dispose: dispose };
   }
 
@@ -397,6 +323,7 @@
 
     function openRow(row) {
       return Promise.resolve().then(function open() {
+        if (row.team) return model().openTeamConversation(row);
         if (typeof callbacks.openSession === 'function') return callbacks.openSession(row.sessionId);
         return undefined;
       }).then(function opened() {
@@ -419,10 +346,18 @@
       if (outcome === 'cancelled') return jt('chat.awayDigest.outcomeCancelled', 'Cancelled');
       return jt('chat.awayDigest.outcomeCompleted', 'Finished');
     }
+    // A Team turn names its project after the title (row 175 F10); a local row has no such label.
+    function teamMarker(row) {
+      var where = element('span', 'away-digest__where', row.marker);
+      where.title = row.marker;
+      where.dir = 'auto';
+      return where;
+    }
     function renderMeta(row) {
       var meta = element('span', 'away-digest__meta');
       if (row.outcome !== 'completed') {
-        var outcome = element('span', 'away-digest__outcome', outcomeLabel(row.outcome));
+        var outcome = element('span', 'away-digest__outcome', row.team && row.outcome === 'failed'
+          ? jt('team.home.turnFailed', 'Your turn failed') : outcomeLabel(row.outcome));
         outcome.classList.add('away-digest__outcome--' + row.outcome);
         meta.appendChild(outcome);
         meta.appendChild(documentRef.createTextNode(META_SEPARATOR));
@@ -469,7 +404,7 @@
           var row = reader.getSnapshot().digest.rows.find(function find(candidate) {
             return candidate.key === rowKey;
           });
-          if (!row || !el.isConnected) return;
+          if (!row || row.team || !el.isConnected) return;
           Promise.resolve(reader.readTokens(row)).catch(function noTokens() { return null; }).then(function show(tokens) {
             if ((hoveredEl !== el && focusedEl !== el) || !el.isConnected) return;
             var startedLine = el.dataset.tooltip || jt('chat.awayDigest.started', 'Started {when}', {
@@ -529,7 +464,7 @@
       var digest = snapshot.digest;
       var renderKey = JSON.stringify([snapshot.readFailed, snapshot.hasRead, digest.unseenCount,
         digest.runningCount, digest.truncated, digest.rows.map(function key(row) {
-          return [row.key, row.sessionTitle, row.sessionGone, row.outcome, row.finishedAt, row.olderThanRetention];
+          return [row.key, row.sessionTitle, row.sessionGone, row.outcome, row.finishedAt, row.olderThanRetention, row.marker];
         })]);
       if (body.dataset.awayDigestRenderKey === renderKey) return;
       if (documentRef.activeElement && body.contains(documentRef.activeElement)) {
@@ -556,7 +491,7 @@
       }
 
       digest.rows.forEach(function renderRow(row) {
-        var rowEl = element('div', 'away-digest__row');
+        var rowEl = element('div', 'away-digest__row' + (row.team ? ' away-digest__row--team' : ''));
         rowEl.dataset.digestKey = row.key;
         if (row.sessionGone) {
           var gone = element('span', 'away-digest__title', row.sessionTitle);
@@ -565,11 +500,13 @@
         } else {
           var title = control(rowEl, { action: 'open', className: 'away-digest__title', label: row.sessionTitle,
             title: jt('chat.awayDigest.openTitle', 'Open this conversation'), onClick: function open() { openRow(row); } });
-          if (title) {
+          if (title && !row.team) {
             title.dataset.tooltip = jt('chat.awayDigest.started', 'Started {when}', { when: relativeTime(row.startedAt) });
             title.removeAttribute('title');
           }
+          if (title) title.dir = 'auto';
         }
+        if (row.team) rowEl.appendChild(teamMarker(row));
         rowEl.appendChild(renderMeta(row));
         body.appendChild(rowEl);
       });

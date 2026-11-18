@@ -273,6 +273,47 @@ test('tokens stay text in code, in a link, for another team, an unlisted channel
 });
 
 
+// ---------------------------------------------------------------- links into other teams and to a channel (F19, item 14)
+
+const SECOND = 'team_DDDDDDDDDDDDDDDDDDDDDD';
+const DESIGN = 'chan_c_aaaaaaaaaaaaaaaa';
+const customRow = (over = {}) => chatChannel({ channel_id: DESIGN, kind: 'channel', name: 'design', topic: '', created_by: DOT, archived: false, archived_by: null, changes: [], rev: 2, ...over });
+const panelTitle = (h) => h.view.q('.team-panel__title').textContent;
+
+test('a link into another team this member belongs to is a chip that switches to that team; one into a team not joined stays text', async (t) => {
+  const messages = [message(1), message(2, { text: `go ${token(1, { team: SECOND })} or ${token(1, { team: 'team_CCCCCCCCCCCCCCCCCCCCCC' })}` })];
+  const { h } = await openChat({ messages, channel: { last_seq: 2 }, teams: [memberTeam(), memberTeam({ team_id: SECOND, team_name: 'Studio' })] });
+  t.after(h.restore);
+  const found = chips(h, 2);
+  assert.equal(found.length, 1, 'only the joined team is a link');
+  assert.equal(found[0].dataset.linkTeam, SECOND);
+  assert.equal(found[0].querySelector('.team-msglink__where').textContent, 'Studio · #team · message');
+  assert.ok(row(h, 2).textContent.includes('team_CCCCCCCCCCCCCCCCCCCCCC'), 'the other one is left as written');
+  assert.equal(panelTitle(h), 'Dot lab');
+  found[0].click();
+  await flush();
+  assert.equal(panelTitle(h), 'Studio', 'the click switches team, then opens there');
+});
+
+test('a link to a custom channel is a chip that shows it, in this team and in another; a team no longer joined says so', async (t) => {
+  const own = `jenny-team:${OTHER}/${DESIGN}`;
+  const there = `jenny-team:${SECOND}/${DESIGN}`;
+  const messages = [message(1), message(2, { text: `see ${own} and ${there} and jenny-team:${OTHER}/chan_c_zzzzzzzzzzzzzzzz` })];
+  const { h } = await openChat({ messages, channel: { last_seq: 2 }, teams: [memberTeam(), memberTeam({ team_id: SECOND, team_name: 'Studio' })],
+    answers: { chatOverview: { ok: true, ...require('./helpers/team-settings-harness').overview({ channels: [chatChannel({ last_seq: 2 }), customRow()] }) } } });
+  t.after(h.restore);
+  const [first, second] = chips(h, 2);
+  assert.equal(chips(h, 2).length, 2, 'an unlisted channel stays text');
+  assert.equal(first.querySelector('.team-msglink__where').textContent, '#design');
+  assert.equal(first.title, 'Go to this channel');
+  assert.equal(second.querySelector('.team-msglink__where').textContent, 'Studio · #design');
+  first.click();
+  await flush();
+  assert.equal(h.view.q('[data-team-channel][aria-current="true"]').dataset.teamChannel, DESIGN);
+  assert.equal(panelTitle(h), 'Dot lab');
+});
+
+
 // ---------------------------------------------------------------- review round
 
 test('a jump superseded by a plain open of the channel says nothing', async (t) => {

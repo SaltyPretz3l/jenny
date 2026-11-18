@@ -255,6 +255,18 @@ function jobProgressFields(progress) {
   };
 }
 
+// Row 176: the loopback address a live job serves on (tracker `serving`); a settled job carries nulls.
+function jobServingFields(row) {
+  const live = row.state === 'running' || row.state === 'killing';
+  const serving = live && row.serving && typeof row.serving === 'object' ? row.serving : null;
+  const ok = serving && typeof serving.url === 'string' && serving.url && Number.isInteger(serving.port);
+  return {
+    serving_url: ok ? serving.url : null,
+    serving_port: ok ? serving.port : null,
+    serving_since_ms: ok ? msOrNull(serving.sinceMs) : null,
+  };
+}
+
 // `row` is one tracker snapshot already filtered to this session.
 function jobItem(row, sessionId) {
   return {
@@ -268,6 +280,7 @@ function jobItem(row, sessionId) {
     ended_at_ms: msOrNull(row.endedAtMs),
     exit_code: Number.isInteger(row.exitCode) ? row.exitCode : null,
     stop_requested: row.stopRequested === true,
+    ...jobServingFields(row),
     ...jobProgressFields(row.progress),
   };
 }

@@ -18,7 +18,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const escapeHtml = stringUtils.escapeHtml;
   const button = (options) => (actionButton || globalThis.inventoryActionButton)(options);
-  const FILTERS = Object.freeze(['all', 'commands', 'chats']);
+  const FILTERS = Object.freeze(['all', 'commands', 'chats', 'servers']);
   const CLOCK = '\u0001'; // stands in for the ticking clock inside a translated sentence
   const BACK_GLYPH = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M10 3.5 5.5 8l4.5 4.5"></path></svg>';
   const DOT_CLASS = Object.freeze({ active: 'status-dot--active', pending: 'status-dot--pending', error: 'status-dot--error', warn: 'status-dot--warn' });
@@ -35,13 +35,26 @@
     return hours > 0 ? `${hours}:${pad(minutes)}:${pad(total % 60)}` : `${minutes}:${pad(total % 60)}`;
   }
 
+  /* Row 176: the address a live job serves (the tracker's `serving`), or null. Only a loopback http(s) address can be opened. */
+  function servingOf(job, live) {
+    const url = live && typeof job.serving?.url === 'string' ? job.serving.url.trim() : '';
+    return url ? { url, port: Number.isInteger(job.serving.port) ? job.serving.port : null, sinceMs: num(job.serving.sinceMs) } : null;
+  }
+  function loopbackUrl(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      return (url.protocol === 'http:' || url.protocol === 'https:') && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ? url.href : '';
+    } catch (_error) { return ''; }
+  }
+
   function commandTask(job) {
     const state = String(job.state || '');
     const percent = Number(job.progress?.percent);
+    const live = state === 'running' || state === 'killing';
     return {
-      id: `job:${job.jobId}`, kind: 'command', jobId: String(job.jobId), state,
+      id: `job:${job.jobId}`, kind: 'command', jobId: String(job.jobId), state, serving: servingOf(job, live),
       text: String(job.command || '') || jt('chat.backgroundJobs.backgroundJob', 'background job'),
-      live: state === 'running' || state === 'killing', stopping: state === 'killing', failed: state === 'failed',
+      live, stopping: state === 'killing', failed: state === 'failed',
       stopped: job.stopRequested === true, exitCode: Number.isInteger(job.exitCode) ? job.exitCode : null,
       startedAtMs: num(job.startedAtMs), endedAtMs: num(job.endedAtMs),
       percent: Number.isFinite(percent) && job.progress?.percent !== null ? Math.floor(Math.min(100, Math.max(0, percent))) : null,
@@ -75,7 +88,7 @@
   }
 
   const duration = (task) => formatClock((task.endedAtMs || task.startedAtMs) - task.startedAtMs);
-  const clockSpan = (task) => `<span data-bgt-started-at="${task.startedAtMs}"></span>`;
+  const clockSpan = (task) => `<span data-bgt-started-at="${task.serving?.sinceMs || task.startedAtMs}"></span>`; // a server's clock runs from when it came up
   const sentence = (text, task) => escapeHtml(text).replace(CLOCK, clockSpan(task));
 
   function dotHtml(task) {
@@ -104,6 +117,7 @@
         : escapeHtml(jt('backgroundTasks.status.chatDone', '{phase} · {duration}', { phase: word, duration: duration(task) }));
     }
     if (task.stopping) return escapeHtml(jt('backgroundTasks.status.stopping', 'Stopping…'));
+    if (task.serving) return sentence(jt('backgroundTasks.serving.up', 'Up · {elapsed}', { elapsed: CLOCK }), task);
     if (task.live) return sentence(jt('backgroundTasks.status.running', 'Running · {elapsed}', { elapsed: CLOCK }), task);
     const took = duration(task);
     if (task.stopped) return escapeHtml(jt('backgroundTasks.status.stopped', 'Stopped after {duration}', { duration: took }));
@@ -125,16 +139,19 @@
   }
 
   function rowHtml(task) {
-    const name = `<span class="session-rail-ellip${task.kind === 'command' ? ' background-tasks-command-name' : ''}">${escapeHtml(task.text)}</span>`;
+    const address = task.serving ? railModel.bareAddress(task.serving.url) : ''; // a serving job's row shows its address, in mono, like the rail
+    const name = address ? `<span class="session-rail-ellip session-rail-ellip--addr">${escapeHtml(address)}</span>`
+      : `<span class="session-rail-ellip${task.kind === 'command' ? ' background-tasks-command-name' : ''}">${escapeHtml(task.text)}</span>`;
+    const title = address ? jt('chat.sessionRail.servers.jobTitle', '{command} on {address}', { command: task.text, address }) : task.text;
     return `<div class="session-rail-job" data-job-state="${task.kind === 'command' && task.live ? 'running' : 'done'}" data-bgt-task="${escapeHtml(task.id)}">`
       + button({
-        plain: true, className: 'session-rail-fact session-rail-row', title: task.text, dataset: { 'bgt-open': task.id },
+        plain: true, className: 'session-rail-fact session-rail-row', title, dataset: { 'bgt-open': task.id },
         trustedHtml: `<span class="session-rail-icon">${dotHtml(task)}</span>${name}<span class="session-rail-meta">${factHtml(task)}</span>`,
       })
       + (task.kind === 'command' && task.live ? stopHtml(task) : '') + '</div>';
   }
 
-  const matchesFilter = (filter) => (task) => filter === 'all' || (filter === 'chats') === (task.kind === 'chat');
+  const matchesFilter = (filter) => (task) => filter === 'all' || (filter === 'servers' ? Boolean(task.serving) : (filter === 'chats') === (task.kind === 'chat'));
 
   /* The list page: the filter, then running rows, the "N finished" fold with Clear, the finished rows. */
   function listHtml({ tasks, filter, foldOpen, clearable }) {
@@ -146,11 +163,13 @@
         { value: 'all', label: jt('backgroundTasks.filter.all', 'All') },
         { value: 'commands', label: jt('backgroundTasks.filter.commands', 'Commands') },
         { value: 'chats', label: jt('backgroundTasks.filter.chats', 'Linked chats') },
+        { value: 'servers', label: jt('backgroundTasks.filter.servers', 'Servers') },
       ],
     })}</div>`;
     const shown = (Array.isArray(tasks) ? tasks : []).filter(matchesFilter(current));
     if (!shown.length) {
       const empty = current === 'chats' ? jt('backgroundTasks.empty.chats', 'No linked chats yet.')
+        : current === 'servers' ? jt('backgroundTasks.empty.servers', 'Nothing this chat started is still serving.')
         : current === 'commands' ? jt('backgroundTasks.empty.commands', 'No background commands in this chat yet.')
           : jt('backgroundTasks.empty.all', 'Nothing has run in the background in this chat yet.');
       return `${toolbar}<p class="background-tasks-empty">${escapeHtml(empty)}</p>`;
@@ -178,6 +197,14 @@
       + `<span class="background-tasks-actions">${stoppable ? stopHtml(task) : ''}</span></div>`;
   }
 
+  /* A serving job's plain label/value lines under the status: where it answers, on which port. Empty for any other task. */
+  function factsHtml(task) {
+    const s = task.serving;
+    const line = (label, value, mono) => `<dt>${escapeHtml(label)}</dt><dd${mono ? ' class="background-tasks-command-name"' : ''}>${escapeHtml(value)}</dd>`;
+    return `<dl class="background-tasks-facts" data-bgt-facts>${s ? line(jt('backgroundTasks.serving.address', 'Address'), s.url, true)
+      + (s.port == null ? '' : line(jt('backgroundTasks.serving.port', 'Port'), jt('backgroundTasks.serving.portValue', '{port}, this PC only', { port: s.port }))) : ''}</dl>`;
+  }
+
   /* The output's words: the text, else what its absence means. */
   function outputText(task, out) {
     if (out?.failed) return jt('chat.sessionRail.tasks.outputUnavailable', "That job's output isn't available any more.");
@@ -193,11 +220,13 @@
   /* The foot line: copy and open actions, then Following output / Jump to latest while the command runs. */
   function footHtml(task, out, following) {
     if (task.kind === 'chat') return `<div class="background-tasks-foot" data-bgt-foot>${link(jt('backgroundTasks.openChat', 'Open chat'), { 'bgt-open-chat': task.sessionId })}</div>`;
+    const where = !task.serving ? '' : (loopbackUrl(task.serving.url) ? link(jt('backgroundTasks.serving.open', 'Open in browser'), { 'bgt-open-address': '' }) : '')
+      + link(jt('backgroundTasks.serving.copy', 'Copy address'), { 'bgt-copy-address': '' });
     const full = out?.fullOutputPath ? link(jt('chat.sessionRail.tasks.openFullOutput', 'Open full output'), { 'bgt-open-full': task.jobId }) : '';
     const live = !task.live ? '' : following !== false
       ? `<span class="background-tasks-live">${escapeHtml(jt('backgroundTasks.following', 'Following output'))}</span>`
       : link(jt('backgroundTasks.jumpToLatest', 'Jump to latest'), { 'bgt-jump': '' }, 'background-tasks-live');
-    return `<div class="background-tasks-foot" data-bgt-foot>${link(jt('backgroundTasks.copyCommand', 'Copy command'), { 'bgt-copy-command': '' })}`
+    return `<div class="background-tasks-foot" data-bgt-foot>${where}${link(jt('backgroundTasks.copyCommand', 'Copy command'), { 'bgt-copy-command': '' })}`
       + `${link(jt('backgroundTasks.copyOutput', 'Copy output'), { 'bgt-copy-output': '' })}${full}${live}</div>`;
   }
 
@@ -208,7 +237,7 @@
         + `<div class="session-rail-job-output background-tasks-output"><pre data-bgt-output tabindex="0">${escapeHtml(outputText(task, out))}</pre></div>`;
     return `<div class="background-tasks-detail" data-bgt-detail="${escapeHtml(task.id)}">`
       + `<p class="background-tasks-command${task.kind === 'chat' ? ' background-tasks-command--plain' : ''}">${escapeHtml(task.text)}</p>`
-      + statusLineHtml(task) + output + footHtml(task, out, following)
+      + statusLineHtml(task) + factsHtml(task) + output + footHtml(task, out, following)
       + '<span class="sr-only" role="status" aria-live="polite" data-bgt-announce></span></div>';
   }
 
@@ -220,5 +249,5 @@
     });
   }
 
-  return { FILTERS, formatClock, buildTasks, listHtml, detailHtml, statusLineHtml, footHtml, outputText, statusHtml, titleHtml };
+  return { FILTERS, formatClock, buildTasks, listHtml, detailHtml, statusLineHtml, factsHtml, footHtml, outputText, statusHtml, titleHtml, loopbackUrl };
 });

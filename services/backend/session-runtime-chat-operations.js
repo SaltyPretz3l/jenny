@@ -20,6 +20,19 @@ function executionOptionsFor(request, cancellation) {
   };
 }
 
+// Row 179: under a cloud turn, a ready local subagent engine is one more
+// admission route for that turn's delegate children (the `local` lane).
+function localHelperRoutes(service, route) {
+  if (route?.resource_class !== 'cloud' || service?.getLocalSubagentEngineStatus?.()?.ready !== true) return [];
+  try {
+    const candidate = captureSessionRuntimeProviderRoute(service, { engineType: 'openai-compatible' });
+    return candidate.resource_class === 'local' ? [candidate] : [];
+  } catch (_error) {
+    // An unavailable helper never blocks the cloud turn; its children are refused.
+    return [];
+  }
+}
+
 // Construct only inside the adapter's pre-start cleanup boundary: budget reads
 // can fail after canonical claim, before any provider has acquired a worker.
 function createRuntimeChatOperations(adapter, { work, route, context, assertCurrent, onSettled }) {
@@ -37,6 +50,7 @@ function createRuntimeChatOperations(adapter, { work, route, context, assertCurr
           return [];
         }
       }) : [];
+  const helperRoutes = localHelperRoutes(adapter.service, route);
   const check = () => {
     assertCurrent();
     if (work.input.kind === 'child_chat') assertRuntimeWork(adapter.budgetStore, adapter.service, work, context);
@@ -45,6 +59,7 @@ function createRuntimeChatOperations(adapter, { work, route, context, assertCurr
     lanes: adapter.lanes,
     initialLease: context.initialInferenceLease || null,
     fallbackRoutes,
+    helperRoutes,
     assertRouteCurrent: candidate => assertSessionRuntimeProviderRouteCurrent(adapter.service, candidate),
     budget: bindRuntimeInferenceBudget(adapter.budgetStore, adapter.service, work, context),
     route,
@@ -66,4 +81,4 @@ function createRuntimeChatOperations(adapter, { work, route, context, assertCurr
   return gateway;
 }
 
-module.exports = { createRuntimeChatOperations, executionOptionsFor };
+module.exports = { createRuntimeChatOperations, executionOptionsFor, localHelperRoutes };

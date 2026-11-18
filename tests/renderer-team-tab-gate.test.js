@@ -29,12 +29,12 @@ test('flag off: no tab, no team script (not even the gate), no team call and no 
   assert.equal(s.controller.openTeamView(), false);
 });
 
-test('flag on, team data on disk but no team and nothing deployed: no tab, one status and one hostStatus, only the gate and the store load', async (t) => {
+test('flag on, team data on disk but no team and nothing deployed: the tab is there, one status and one hostStatus, only the gate and the store load', async (t) => {
   const h = harness({ show: false });
   t.after(h.restore);
   const s = shell(h);
   await flush();
-  assert.deepEqual(s.tabs(), BASE);
+  assert.deepEqual(s.tabs(), WITH_TEAM, 'row 168: the tab opens on the start page');
   assert.deepEqual(h.methods(), ['hostStatus', 'status']);
   assert.deepEqual(s.requested, srcs(manifest().teamGate, manifest().teamStore));
   assert.equal(h.window.document.querySelector('link[rel="stylesheet"]'), null);
@@ -77,7 +77,7 @@ test('the boot seed has no team key: no tab, no script and no call until the rea
   assert.equal(s.requested[0], manifest().teamGate[0][0], 'the gate is the first team script, loaded through the script loader');
 });
 
-test('the tab disappears when the last team is removed, and an open Team view falls back to Chat', async (t) => {
+test('the last team removed: the tab stays and the open Team view shows the start page; a deployed host shows its state', async (t) => {
   const h = harness({ show: false, teams: [memberTeam()] });
   t.after(h.restore);
   const s = shell(h);
@@ -87,21 +87,24 @@ test('the tab disappears when the last team is removed, and an open Team view fa
   assert.equal(s.state.ui.activeView, 'team');
   h.listeners.state({ teams: [] });
   await flush();
-  assert.deepEqual(s.tabs(), BASE);
-  assert.equal(s.state.ui.activeView, 'chat');
+  assert.deepEqual(s.tabs(), WITH_TEAM);
+  assert.equal(s.state.ui.activeView, 'team');
+  assert.ok(h.view.q('.team-start'), 'the start page');
   h.listeners.host(hostState({ state: 'stopped' }));
   await flush();
-  assert.deepEqual(s.tabs(), WITH_TEAM, 'and comes back with a deployed host');
-  assert.equal(s.state.ui.activeView, 'chat', 'without taking the view');
+  assert.equal(h.view.q('.team-start'), null);
+  assert.equal(h.view.q('.team-srv h2').textContent, 'Studio', 'the stopped server page');
+  assert.equal(h.view.q('.team-state'), null);
 });
 
-test('a saved team view with no tab shows Chat once the answer is known', async (t) => {
+test('a saved team view with no team shows the start page once the answer is known', async (t) => {
   const h = harness({ show: false });
   t.after(h.restore);
   const s = shell(h, { activeView: 'team' });
   await flush();
-  assert.equal(s.state.ui.activeView, 'chat');
-  assert.equal(s.requested.includes(TAB_SCRIPT), false);
+  assert.equal(s.state.ui.activeView, 'team');
+  assert.ok(s.requested.includes(TAB_SCRIPT));
+  assert.ok(h.view.q('.team-start'));
 });
 
 test('a saved team view with the flag off shows Chat', async (t) => {
@@ -130,17 +133,19 @@ test('a saved team view with a team opens the view: its scripts and stylesheets 
 
 // ------------------------------------------------- calls and loads that fail
 
-test('a status that never answers: a saved Team view ends in Chat when the call times out', async (t) => {
+test('a status that never answers: a saved Team view waits blank, then shows the start page when the call times out', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
   const h = harness({ show: false, answers: { status: () => new Promise(() => {}) } });
   t.after(h.restore);
   const s = shell(h, { activeView: 'team' });
   await micro();
   assert.equal(s.state.ui.activeView, 'team', 'not decided yet');
+  assert.equal(h.view.q('.team-start, .team-state'), null, 'nothing is said before the answer');
   t.mock.timers.tick(10_000);
   await micro();
-  assert.equal(s.state.ui.activeView, 'chat');
-  assert.deepEqual(s.tabs(), BASE);
+  assert.equal(s.state.ui.activeView, 'team');
+  assert.deepEqual(s.tabs(), WITH_TEAM);
+  assert.ok(h.view.q('.team-start'));
 });
 
 test('a failed load of the view scripts goes back to Chat, and the next open tries again', async (t) => {
@@ -183,16 +188,17 @@ test('a failed load of the gate script: no tab, a saved Team view shows Chat, an
 
 // -------------------------------------------------------------------- keys
 
-test('Ctrl+6 and Ctrl+Alt+6 open Team only when the tab exists; Ctrl+1..5 keep their views', async (t) => {
+test('Ctrl+6 and Ctrl+Alt+6 open Team with the flag on, team or not; Ctrl+1..5 keep their views', async (t) => {
   const h = harness({ show: false });
   t.after(h.restore);
   const s = shell(h);
   await flush();
-  const idle = s.press('6');
-  assert.equal(idle.defaultPrevented, false);
-  assert.equal(s.press('6', { alt: true }).defaultPrevented, false);
-  assert.equal(s.state.ui.activeView, 'chat');
-  assert.deepEqual(s.views, []);
+  assert.equal(s.press('6').defaultPrevented, true, 'no team: the start page');
+  assert.equal(s.state.ui.activeView, 'team');
+  s.press('2');
+  assert.equal(s.press('6', { alt: true }).defaultPrevented, true);
+  assert.equal(s.state.ui.activeView, 'team');
+  s.press('2');
   h.listeners.state({ teams: [memberTeam()] });
   await flush();
   assert.equal(s.press('6').defaultPrevented, true);
@@ -341,7 +347,7 @@ test('after a successful Join on the Settings Team page the active view becomes 
   t.after(h.restore);
   const s = shell(h, { activeView: 'settings' });
   await flush();
-  assert.deepEqual(s.tabs(), BASE);
+  assert.deepEqual(s.tabs(), WITH_TEAM);
   h.type('#teamYourName', 'Olive');
   h.type('#teamPcName', 'Desk');
   h.type('#teamInviteCode', 'jteam1_SOMEINVITE');
@@ -389,14 +395,15 @@ test('layout: the Team panel is on screen, live and exposed only while the Team 
   assert.deepEqual(panelState(h), OFF);
 });
 
-test('layout: a saved Team view with no team is replaced by Chat, on screen and in what is saved', async (t) => {
+test('layout: a saved Team view with no team stays, on screen and in what is saved', async (t) => {
   const h = harness({ show: false });
   t.after(h.restore);
   const s = shell(h, { activeView: 'team', layout: true });
   await flush();
-  assert.equal(s.state.ui.activeView, 'chat');
-  assert.deepEqual(s.persisted, ['chat']);
-  assert.deepEqual(panelState(h), OFF);
+  assert.equal(s.state.ui.activeView, 'team');
+  assert.deepEqual(s.persisted, []);
+  assert.deepEqual(panelState(h), ON);
+  assert.ok(h.view.q('.team-start'));
 });
 
 test('layout: the flag going off while the Team view is open ends in Chat from a layout pass alone', async (t) => {
@@ -552,21 +559,21 @@ test('presence: a refused report is told again on the next store change, once', 
   assert.equal(rig.calls.length, 2, 'once, and never on a timer');
 });
 
-// E50: with the flag on and no team data on disk (main's `teamData: false`) nothing team-related loads.
-test('E50 no team data on disk: no tab, no script, style, call or listener; a saved Team view and Ctrl+6 show Chat', async (t) => {
+// E50: with the flag on and no team data on disk (main's `teamData: false`) nothing team-related loads until the
+// Team tab is opened (row 168: a saved Team view opens it); then the start page asks main nothing.
+test('E50 no team data on disk: the tab is there; a saved Team view loads the tab quietly: no call, no listener', async (t) => {
   const h = harness({ show: false });
   t.after(h.restore);
   const s = shell(h, { teamData: false, activeView: 'team' });
   await flush();
-  assert.equal(s.state.ui.activeView, 'chat');
-  s.press('6');
-  assert.equal(s.controller.openTeamView(), false);
+  assert.equal(s.state.ui.activeView, 'team');
+  assert.deepEqual(s.tabs(), WITH_TEAM);
+  assert.ok(s.requested.includes(TAB_SCRIPT) && h.view.q('.team-start'));
+  assert.equal(s.controller.openTeamView(), true);
   await flush();
-  assert.deepEqual(s.tabs(), BASE);
-  assert.deepEqual(s.requested, []);
   assert.deepEqual(h.calls, []);
   assert.equal(h.listeners.state, null);
-  assert.equal(h.window.document.querySelector('link[rel="stylesheet"]'), null);
+  assert.equal(h.listeners.host, null);
 });
 
 test('E50 no team data: the first join (openTeamView with wait) loads and starts the gate, and the tab appears and opens', async (t) => {
@@ -574,7 +581,7 @@ test('E50 no team data: the first join (openTeamView with wait) loads and starts
   t.after(h.restore);
   const s = shell(h, { teamData: false, activeView: 'settings' });
   await flush();
-  assert.equal(s.controller.openTeamView({ wait: true }), false, 'not open yet');
+  assert.equal(s.controller.openTeamView({ wait: true }), true, 'row 168: the view opens at once; the gate loads for it');
   await flush();
   assert.deepEqual(s.requested.slice(0, 2), srcs(manifest().teamGate, manifest().teamStore));
   assert.deepEqual(h.methodNames().filter((m) => m === 'hostStatus' || m === 'status'), ['hostStatus', 'status']);
@@ -586,7 +593,7 @@ test('E50 team data on disk: a join that ends in the tab while the gate is still
   const h = harness({ show: false, teams: [memberTeam()] });
   t.after(h.restore);
   const s = shell(h, { teamData: true, activeView: 'settings' });
-  assert.equal(s.controller.openTeamView({ wait: true }), false, 'the gate is still loading');
+  assert.equal(s.controller.openTeamView({ wait: true }), true, 'the gate is still loading: row 168 opens the view at once');
   await flush();
   assert.equal(s.state.ui.activeView, 'team');
 });

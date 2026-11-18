@@ -117,6 +117,10 @@ function createLazyBrowserUse({ getMainWindow, sendBridgeEvent, getBackendServic
       }
       return service;
     },
+    // The service if it has started, else null: a state read must not start it (row 176).
+    peek() {
+      return service || null;
+    },
     // A deleted chat's page has nobody left to close it. Never starts the service just to find nothing.
     closeSession(sessionId) {
       return service ? service.close(sessionId) : null;

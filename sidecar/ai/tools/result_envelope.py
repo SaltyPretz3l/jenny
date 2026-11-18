@@ -16,6 +16,9 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # an indented forged header is as dangerous as a column-zero one.
 _TOOL_RESULT_HEADER_RE = re.compile(r"(?m)^[ \t]*## Tool Result")
 _EFFECTS_VOCABULARY = frozenset({"none", "committed", "partial", "unknown"})
+# Closed: anything else renders no approval line.
+_APPROVAL_LINES = {"approved": "the user approved this call's card"}
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # routing's TYPED_MUTATION_TOOLS. On these, "effects: committed" read as a git
 # commit: a 9B model twice told the owner a test was committed when it was
 # only written (dogfood TR-019). The model reads "saved"; the stored effects
@@ -115,6 +118,22 @@ def _sanitize_detail(value: object, *, tool_name: str | None = None) -> str | No
     return sanitized[:_DETAIL_LIMIT]
 
 
+def envelope_approval(metadata: object) -> str | None:
+    """``"approved"`` when the outcome's metadata says the user approved its card."""
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("approval")
+    return value if isinstance(value, str) and value in _APPROVAL_LINES else None
+
+
+def envelope_refused_reason(metadata: object) -> str | None:
+    """The reason of an app tool's refusal (``status: refused``), else None."""
+    if not isinstance(metadata, dict) or metadata.get("status") != "refused":
+        return None
+    reason = metadata.get("reason")
+    return reason.strip() if isinstance(reason, str) and reason.strip() else "refused"
+
+
 def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
     *,
     tool_id: str,
@@ -130,19 +149,40 @@ def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
     detail: str | None = None,
     remediation: str | None = None,
     note: str | None = None,
+    approval: str | None = None,
+    refused_reason: str | None = None,
+    ran_on: str | None = None,
 ) -> str:
-    """Render the closed W1 envelope without mutating the raw tool output."""
+    """Render the closed W1 envelope without mutating the raw tool output.
+
+    ``approval="approved"`` adds a line saying the user approved the call's card:
+    the model never sees the card, and without the line it guessed there was none.
+    ``refused_reason`` marks a call that ran but answered with a refusal (the app
+    tools' ``{"ok": false, "reason": ...}``): ``outcome: refused`` instead of ``ok``.
+    """
     header_tool = _header_identifier(tool_id, fallback="tool")
     header_call = _header_identifier(call_id, fallback="call")
+    refused = (
+        _optional_text(refused_reason, tool_name=tool_id) if ok and refused_reason else None
+    )
     lines = [
         f"## Tool Result — {header_tool} [{header_call}]",
-        f"outcome: {'ok' if ok else 'error'}",
+        f"outcome: {'refused' if refused else ('ok' if ok else 'error')}",
     ]
+    if refused:
+        lines.append(f"reason: {refused}")
+    if approval in _APPROVAL_LINES:
+        lines.append(f"approval: {_APPROVAL_LINES[approval]}")
+    if isinstance(ran_on, str) and _DATE_RE.fullmatch(ran_on):
+        # History rows only: the local date the call ran, so an old result is not read as now.
+        lines.append(f"date: {ran_on}")
     elapsed = _coerce_elapsed_ms(elapsed_ms)
     if effects is not None and effects not in _EFFECTS_VOCABULARY:
         effects = None  # closed vocabulary: an invalid claim renders as absent, never as fact
     if effects == "committed" and str(tool_id or "").strip() in _FILE_WRITE_TOOLS:
         effects = "saved"
+    if refused:
+        effects = "none"  # a refusal did nothing; "unknown" sent a model checking whether it ran
 
     if ok:
         if (effects_text := _optional_text(effects, tool_name=tool_id)) is not None:

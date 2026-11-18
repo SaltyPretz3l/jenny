@@ -19,6 +19,7 @@
   function noop() {}
 
   const PANEL_MARKUP_SENTINEL = '__jenny-ide-pty-terminal__';
+  const HOSTED_MARKUP_SENTINEL = '__jenny-ide-pty-terminal-hosted__';
   const ROOT_COMMITTED_EVENT = 'ide:workspace-root-committed';
 
   function resolveModule(globalName, requirePath) {
@@ -42,6 +43,7 @@
     const slotDep = Math.floor(Number(deps?.slot));
     const slot = slotDep >= 1 && slotDep <= 4 ? slotDep : 1;
     const onSessionChange = typeof deps?.onSessionChange === 'function' ? deps.onSessionChange : null;
+    const onHostChange = typeof deps?.onHostChange === 'function' ? deps.onHostChange : null; // row 178
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const escapeHtml = typeof deps?.escapeHtml === 'function' ? deps.escapeHtml : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => null;
@@ -78,6 +80,7 @@
     let sessionShell = '';
     let sessionCwd = '';
     let starting = false;
+    let outsideEl = null; // row 178: the chat element hosting this terminal's xterm, else null
     let restartPromise = null;
     let statusMessage = '';
     let disposed = false;
@@ -202,7 +205,15 @@
         + '</div>';
     }
 
+    // The chat hosts the terminal (row 178): the IDE view only shows where it went.
+    function buildHostedMarkup() {
+      const label = jt('ide.ptyTerminal.showHere', 'Show here');
+      return '<div class="ide-terminal-hosted"><span class="ide-terminal-hosted-text">' + escapeHtml(jt('ide.ptyTerminal.hostedInChat', 'Terminal {n} is open in the chat.', { n: slot }))
+        + '</span>' + (typeof actionButton === 'function' ? buildToolbarButton('show-here', escapeHtml(label), label) : '') + '</div>';
+    }
+
     function getMount() {
+      if (outsideEl) return outsideEl;
       const panel = getPanelEl();
       return panel?.querySelector?.('[data-ide-pty-mount]') || null;
     }
@@ -210,6 +221,10 @@
     function renderTerminalPanel() {
       const panel = getMountEl();
       if (!panel || !isActivePanel()) {
+        return;
+      }
+      if (outsideEl) {
+        if (panel.__jennyIdePtyMarkup !== HOSTED_MARKUP_SENTINEL || !panel.querySelector?.('.ide-terminal-hosted')) { panel.innerHTML = buildHostedMarkup(); panel.__jennyIdePtyMarkup = HOSTED_MARKUP_SENTINEL; }
         return;
       }
       // UIUX-011: a sibling's innerHTML swap can wipe the xterm host without
@@ -278,23 +293,41 @@
 
     // Every start failure funnels here: paint a status word, log a WARN, and show
     // a deduped toast. Returns false so callers can `return failStart(...)`.
+    let lastStartFailure = null; // { status, code }
     function failStart(status, logCode, message, extra) {
+      lastStartFailure = { status: String(status || ''), code: String(extra?.code || '') };
       setStatusMessage(status);
       appendClientLog('WARN', logCode, extra || {});
       showError(message, { title: jt('ide.terminal.title', 'Terminal'), dedupeKey: 'ide:pty:start' });
       return false;
     }
 
-    // startSession(opts?): opts.cwd (root-relative start folder) and opts.profileId
-    // (shell id) are remembered for Restart; the default shell is the Settings pick.
+    // startSession(opts?): opts.cwd (root-relative), opts.profileId and opts.place
+    // ('start_folder', resolved in main) are remembered for Restart. A plain call during
+    // a start shares its answer; one with options (a task terminal: its own shell, its
+    // own folder) gets false with no failure once it settles, so its caller retries elsewhere.
     let startOptions = {};
-    async function startSession(opts) {
+    let inFlightStart = null;
+    function startSession(opts) {
+      if (inFlightStart) return opts && typeof opts === 'object' ? inFlightStart.then(() => false, () => false) : inFlightStart;
+      const run = runStart(opts);
+      inFlightStart = run;
+      const clear = () => { if (inFlightStart === run) inFlightStart = null; };
+      run.then(clear, clear);
+      return run;
+    }
+    async function runStart(opts) {
       if (disposed || isRunning() || starting) {
         return false;
       }
       if (opts && typeof opts === 'object') {
-        startOptions = { cwd: typeof opts.cwd === 'string' ? opts.cwd : '', profileId: typeof opts.profileId === 'string' ? opts.profileId : '' };
+        startOptions = {
+          cwd: typeof opts.cwd === 'string' ? opts.cwd : '',
+          profileId: typeof opts.profileId === 'string' ? opts.profileId : '',
+          place: opts.place === 'start_folder' ? 'start_folder' : '',
+        };
       }
+      lastStartFailure = null;
       const api = getApi();
       if (!api || typeof api.spawn !== 'function') {
         return failStart('unavailable', 'ide.pty_start_unavailable',
@@ -329,7 +362,8 @@
         const { cols: spawnCols, rows: spawnRows } = xterm.getSize();
         const profileId = startOptions.profileId || String(getIde()?.terminalDefaultProfile || '');
         const result = await api.spawn(Object.assign({ cols: spawnCols, rows: spawnRows, slot },
-          profileId ? { profileId } : null, startOptions.cwd ? { cwd: startOptions.cwd } : null));
+          profileId ? { profileId } : null, startOptions.cwd ? { cwd: startOptions.cwd } : null,
+          startOptions.place ? { place: startOptions.place } : null));
         if (disposed || epoch !== lifecycleEpoch) {
           const lateSessionId = String(result?.sessionId || '');
           if (lateSessionId) {
@@ -340,7 +374,7 @@
         }
         if (!result || result.ok === false) {
           const message = toErrorMessage(result?.message, result?.code || jt('ide.ptyTerminal.startFailed', 'The terminal could not be started.'));
-          startOptions = { profileId: startOptions.profileId || '' }; // a refused folder is not retried on the next Start
+          startOptions = { profileId: startOptions.profileId || '', place: startOptions.place || '' }; // a refused folder is not retried on the next Start
           return failStart('failed', 'ide.pty_start_failed', message, { code: String(result?.code || ''), message });
         }
         sessionId = String(result.sessionId || '');
@@ -434,7 +468,28 @@
         clearTerminal();
       } else if (kind === 'restart') {
         restartSession().then(focusWhenStarted, noop);
+      } else if (kind === 'show-here') {
+        releaseHost();
       }
+    }
+
+    // Row 178: move the live xterm (one per terminal) into the chat's element, the IDE view turning into the placeholder, or give it back.
+    function hostIn(el) {
+      if (disposed || !el) return false;
+      const moved = outsideEl !== el;
+      outsideEl = el;
+      renderTerminalPanel();
+      xterm.renderHost(el);
+      if (moved) onHostChange?.();
+      return true;
+    }
+
+    function releaseHost() {
+      if (!outsideEl) return false;
+      outsideEl = null;
+      renderTerminalPanel(); // the placeholder's sentinel differs: the IDE markup is rebuilt and the xterm re-attaches
+      onHostChange?.();
+      return true;
     }
 
     // Focus the live xterm, else (no session yet) the Start button. Returns
@@ -522,6 +577,9 @@
       dispose,
       focusTerminal,
       getSessionId,
+      getCwd: () => (isRunning() ? sessionCwd : ''), getShell: () => (isRunning() ? sessionShell : ''), getSelection: () => xterm.getSelection(),
+      hostIn, releaseHost, isHostedOutside: () => Boolean(outsideEl), isStarting: () => starting === true, refit: () => { if (outsideEl) xterm.renderHost(outsideEl); },
+      getLastStartFailure: () => (lastStartFailure ? { ...lastStartFailure } : null),
       getSlot: () => slot,
       isRunning,
       openFind: () => xterm.openFind(),

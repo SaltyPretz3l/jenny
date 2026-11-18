@@ -14,6 +14,7 @@
 // name, a display name or a path. Delete is team-project-delete.js, on the same queue.
 
 const { hostFailure } = require('../api-contract');
+const { channelMembers, chatBucket } = require('./authorize');
 const { LIMITS } = require('./member-schema');
 const { PROJECT_CHANGED_EVENT } = require('./event-scope');
 const { projectAudience } = require('./project-visibility');
@@ -38,13 +39,17 @@ function applicationFailure(answer) {
 // audience, computed now: the project's members as the visibility rule reads them,
 // the members the change named (so a removed member is told), and the team owner
 // (so the names-only list stays right). No bucket. A publisher that throws is logged.
+// `announce.channel(projectId, made)`: a project channel the chat store has just made goes out as a direct
+// conversation's does (team-chat-commands.js `team.chat.dm_open`): `team_chat_channel { reason: 'created' }` to the
+// channel's own audience (authorize.js channelMembers: the project's active members, never the whole team) in its chat
+// bucket, so a connected member's chat client lists it at once (an uncached channel's `created` resyncs its overview).
 function createProjectAnnouncer({ directory, publish, logger = null } = {}) {
   if (!directory || typeof directory.activeMemberIds !== 'function') {
     throw new TypeError('createProjectAnnouncer requires a directory.');
   }
   if (typeof publish !== 'function') throw new TypeError('createProjectAnnouncer requires publish.');
   const log = safeLogger(logger);
-  return function announce(projectId, reason, memberIds = []) {
+  function announce(projectId, reason, memberIds = []) {
     if (typeof projectId !== 'string' || !PROJECT_REASONS.has(reason)) return;
     try {
       const audience = projectAudience(directory, projectId);
@@ -56,7 +61,19 @@ function createProjectAnnouncer({ directory, publish, logger = null } = {}) {
     } catch {
       log('WARN', 'team_project.announce_failed', { reason });
     }
+  }
+  announce.channel = (projectId, made) => {
+    const channelId = `chan_${projectId}`;
+    try {
+      const audience = channelMembers(directory, channelId);
+      if (audience.size === 0) return;
+      publish('team_chat_channel', { channel_id: channelId, reason: 'created', floor_seq: 1,
+        channel_rev: Number.isSafeInteger(made?.rev) ? made.rev : 0, pin_count: 0 }, { audience, bucket: chatBucket(channelId) });
+    } catch {
+      log('WARN', 'team_project.channel_announce_failed', { project_id: projectId });
+    }
   };
+  return announce;
 }
 
 // The one subscriber to the store's project changes: it announces each and, for a
@@ -114,16 +131,20 @@ function createTeamProjectCommands({
     return { doc, project: doc.projects.find((entry) => entry.project_id === projectId) || null };
   }
 
-  // The channel step never undoes the project: a failure answers channel: false.
+  // The channel step never undoes the project: a failure answers channel: false and announces nothing. A channel
+  // made now is announced to its members (createProjectAnnouncer `announce.channel`).
   async function makeChannel(projectId) {
     const chatStore = callSafely(chat);
+    let made = null;
     if (chatStore && typeof chatStore.createChannel === 'function') {
-      try {
-        if ((await chatStore.createChannel({ channelId: `chan_${projectId}` }))?.ok === true) return true;
-      } catch { /* logged below */ }
+      try { made = await chatStore.createChannel({ channelId: `chan_${projectId}` }); } catch { made = null; }
     }
-    log('WARN', 'team_project.channel_failed', { project_id: projectId });
-    return false;
+    if (made?.ok !== true) {
+      log('WARN', 'team_project.channel_failed', { project_id: projectId });
+      return false;
+    }
+    if (made.created !== false && typeof announce.channel === 'function') announce.channel(projectId, made);
+    return true;
   }
 
   // The folder step never undoes the project: make the folder, bind exactly the path made, at root

@@ -239,8 +239,15 @@
       event.preventDefault();
       event.stopPropagation();
     }, true);
+    // A press on a card captures the pointer on the canvas, so the browser aims the double-click at the canvas itself:
+    // what lies under the pointer decides whether it landed on a card.
+    function underPointer(event) {
+      if (event.target !== element) return event.target;
+      var hit = typeof doc.elementFromPoint === 'function' ? doc.elementFromPoint(event.clientX, event.clientY) : null;
+      return hit && element.contains(hit) ? hit : event.target;
+    }
     listen(element, 'dblclick', function (event) {
-      if (onCard(event.target) || typeof settings.onBackgroundDoubleClick !== 'function') return;
+      if (onCard(underPointer(event)) || typeof settings.onBackgroundDoubleClick !== 'function') return;
       var at = toBoard(event.clientX, event.clientY);
       settings.onBackgroundDoubleClick({ x: at.x, y: at.y, event: event });
     });

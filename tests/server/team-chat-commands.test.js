@@ -67,6 +67,8 @@ test('happy path: post, history, sync, thread, edit, delete, mark_read, set_noti
   assert.deepEqual(overview.channels, [{
     channel_id: 'chan_team', kind: 'team', archived: false, rev: deleted.rev, last_seq: 3, floor_seq: 1,
     last_read_seq: 1, notify: 'none', unread: 0, unread_capped: false, mention: false, threads: [], reads: [], pin_count: 0,
+    // Row 173: the team channel's profile.
+    name: 'team', topic: '', created_by: null, archived_by: null, changes: [],
   }]);
 });
 

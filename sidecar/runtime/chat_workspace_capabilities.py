@@ -25,6 +25,8 @@ SESSION_HANDOFF_CONTEXT_KIND = "session_handoff"
 _REQUEST_KEYS = frozenset(
     {"schema_version", "producer_tools", "context_kinds", "session_messages", "mid_turn_mail"}
 )
+# Row 180: optional, so a shell that predates agent steering keeps the rest of its grant.
+_OPTIONAL_REQUEST_KEYS = frozenset({"mid_turn_steer"})
 
 
 def empty_chat_workspace_capabilities() -> dict[str, Any]:
@@ -34,6 +36,7 @@ def empty_chat_workspace_capabilities() -> dict[str, Any]:
         "context_kinds": [],
         "session_messages": False,
         "mid_turn_mail": False,
+        "mid_turn_steer": False,
     }
 
 
@@ -45,13 +48,18 @@ def _string_list(value: Any) -> list[str] | None:
 
 def negotiate(requested: Any, *, hosted: bool) -> dict[str, Any]:
     """Return the closed acknowledgment: the request intersected with support."""
-    if hosted or not isinstance(requested, dict) or set(requested) != _REQUEST_KEYS:
+    if (
+        hosted
+        or not isinstance(requested, dict)
+        or not _REQUEST_KEYS <= set(requested) <= _REQUEST_KEYS | _OPTIONAL_REQUEST_KEYS
+    ):
         return empty_chat_workspace_capabilities()
     version = requested.get("schema_version")
     producer_tools = _string_list(requested.get("producer_tools"))
     context_kinds = _string_list(requested.get("context_kinds"))
     session_messages = requested.get("session_messages")
     mid_turn_mail = requested.get("mid_turn_mail")
+    mid_turn_steer = requested.get("mid_turn_steer", False)
     if (
         isinstance(version, bool)
         or version != 1
@@ -59,6 +67,7 @@ def negotiate(requested: Any, *, hosted: bool) -> dict[str, Any]:
         or context_kinds is None
         or not isinstance(session_messages, bool)
         or not isinstance(mid_turn_mail, bool)
+        or not isinstance(mid_turn_steer, bool)
     ):
         return empty_chat_workspace_capabilities()
     negotiated_tools = [tool for tool in SUPPORTED_PRODUCER_TOOLS if tool in producer_tools]
@@ -71,6 +80,8 @@ def negotiate(requested: Any, *, hosted: bool) -> dict[str, Any]:
         "session_messages": negotiated_messages,
         # Mid-turn mail (row 70 W2a, session.mail_arrived) needs negotiated session messages.
         "mid_turn_mail": mid_turn_mail and negotiated_messages,
+        # Row 180 (session.user_steer_arrived): independent of session messages.
+        "mid_turn_steer": mid_turn_steer,
     }
 
 

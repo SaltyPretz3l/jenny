@@ -184,9 +184,18 @@ function readPage(messages, options = {}) {
   };
 }
 
+// Row 175 item 11: `{ receipts }` when the host gives a reader of them, else nothing (the snapshot keeps its keys).
+function receiptsPart(receiptsOf, sessionId) {
+  return typeof receiptsOf === 'function' ? { receipts: receiptsOf(sessionId) } : {};
+}
+
 // `prompterOf(sessionId)` (team host only, slice 3-6b) names each pending decision's prompter; without it
-// the entries are as before.
-function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId, revision, options = {}, prompterOf } = {}) {
+// the entries are as before. `teamFields(session)` (team host only, row 172) adds the conversation's model, effort,
+// tool switches, change log and file-tool availability to `session`; any other host's snapshot is unchanged.
+// `receiptsOf(sessionId)` (team host only, row 175 item 11) adds `receipts`: the conversation's decisions as the project
+// audit holds them (server/team/team-approvals.js `receiptsFor`); a snapshot without it carries no such key.
+function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId, revision, options = {}, prompterOf,
+  teamFields, receiptsOf } = {}) {
   const normalizedSessionId = String(sessionId || '').trim();
   const session = canonicalSession(backend, normalizedSessionId);
   if (!normalizedSessionId || !session) return null;
@@ -221,12 +230,14 @@ function buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId
       title: text(session.title, 240),
       revision: text(revision, 160),
       plan_mode: session.plan_mode === true,
+      ...(typeof teamFields === 'function' ? teamFields(session) : {}),
     },
     ...pageDto,
     active_turn: projectActiveTurn(activeTurn),
     pending_approvals: approvals,
     pending_questions: questions,
     live_projection: liveProjection,
+    ...receiptsPart(receiptsOf, normalizedSessionId),
   };
 }
 

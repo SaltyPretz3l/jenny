@@ -11,12 +11,14 @@
 // Slice 2a-3b adds presence (team-presence.js, fed by the team HTTP layer's
 // stream callback), the overview roster, search options, and a bounded retry
 // with backoff when opening the store or creating the team channel fails
-// transiently at start (a latched store is not retried).
+// transiently at start (a latched store is not retried). Row 173 adds the chat audit (`chatAudit`): archiving,
+// unarchiving and deleting a custom channel append an entry to the member store's audit log.
 // Logs carry fixed reasons and counts only.
 
 const { DEFAULT_RESOURCE_LIMITS } = require('../../server/config');
 const { hostFailure } = require('../../server/api-contract');
 const { channelMembers } = require('../../server/team/authorize');
+const { isCleanText } = require('../../server/team/member-schema');
 const { safeLogger } = require('../../server/team/safe-logger');
 const { assertSafeFile } = require('./path-guard');
 const { createTeamChatCommands, publishPruned } = require('./team-chat-commands');
@@ -38,11 +40,35 @@ function chatRoster(memberStore) {
     .map((member) => ({ member_id: member.member_id, display_name: member.display_name, role: member.role }));
 }
 
+// The chat audit from a member store (row 173): one entry in its audit log, `{ kind, actor_member_id, channel_id,
+// name }` => { ok } or a host failure. The entry carries the store's current revision, so the start reconcile, which
+// marks entries above the committed revision as not applied, leaves it alone; member store commits are synchronous,
+// so none is in flight. A log holding an entry above that revision (a commit failed after its audit entry, the
+// reconcile still owed) takes no chat entry until the member store reconciles: one placed after it would hide it
+// from the reconcile. The channel's name goes in the entry's name snapshot when it is clean text, else null; the
+// detail is `channel_id=<id>`.
+function chatAudit(memberStore) {
+  const unavailable = () => hostFailure('unavailable', 'team_unavailable');
+  return ({ kind, actor_member_id: actorMemberId, channel_id: channelId, name }) => {
+    try {
+      const rev = memberStore.rev();
+      const highest = memberStore.audit.highestStoreRev();
+      if (!Number.isSafeInteger(rev) || !Number.isSafeInteger(highest) || highest > rev) return unavailable();
+      const written = memberStore.audit.append([{ kind, actor_member_id: actorMemberId,
+        name: isCleanText(name) ? name : null, detail: `channel_id=${channelId}`, store_rev: rev }]);
+      return written.ok ? { ok: true } : written;
+    } catch (_error) {
+      return unavailable();
+    }
+  };
+}
+
 function createTeamChatHost({
   profileDir, directory, logger = null, clock = Date.now, randomBytes, assertSafePath = assertSafeFile,
   maxResponseBytes = DEFAULT_RESOURCE_LIMITS.maxResponseBytes, publish = null, storeLimits,
   retentionIntervalMs = RETENTION_INTERVAL_MS, timers: timerOptions = {}, roster = null, searchOptions = {},
   storeYield, startRetryDelaysMs = START_RETRY_DELAYS_MS, uploadSweepIntervalMs = UPLOAD_SWEEP_INTERVAL_MS,
+  audit = null,
 } = {}) {
   const timers = { ...DEFAULT_TIMERS, ...timerOptions };
   if (!directory || typeof directory.liveActor !== 'function' || typeof directory.activeMemberIds !== 'function') {
@@ -74,7 +100,7 @@ function createTeamChatHost({
   const presence = createTeamPresence({ activeMemberIds: () => directory.activeMemberIds(), publish: emit, clock,
     timers: { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } });
   const commands = createTeamChatCommands({ store, directory, audience: channelAudience, logger, clock,
-    limits: { maxResponseBytes }, presence, roster, search: searchOptions,
+    limits: { maxResponseBytes }, presence, roster, search: searchOptions, audit,
     unavailable: () => (disposed ? hostFailure('unavailable', 'team_unavailable', '', true) : failure) });
 
   async function sweep() {
@@ -205,4 +231,4 @@ function createTeamChatHost({
   });
 }
 
-module.exports = { chatRoster, createTeamChatHost };
+module.exports = { chatAudit, chatRoster, createTeamChatHost };

@@ -28,6 +28,17 @@
         : null;
     }
 
+    // Row 178: a resolved terminal_run's receipt links to the terminal its paired result names ('' otherwise).
+    function terminalReceiptLink(toolName, toolCallId, options) {
+      if (toolName !== 'terminal_run' || !toolCallId) return '';
+      const siblings = Array.isArray(options && options.siblingRows) ? options.siblingRows : [];
+      const result = siblings.find((entry) => entry && entry.kind === 'tool_result' && normalizeId(entry.tool_call_id) === toolCallId);
+      const terminal = result && result.payload && result.payload.metadata ? result.payload.metadata.terminal : null;
+      const cards = globalThis.rendererApprovalBlockCards || (typeof require === 'function' ? require('./renderer-approval-block-cards') : null);
+      return terminal != null && typeof cards?.terminalOpenLinkMarkup === 'function'
+        ? cards.terminalOpenLinkMarkup({ slot: terminal, sessionId: options && options.sessionId }) : '';
+    }
+
     function buildApprovalGapMarkup(row, _messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const toolCallId = resolveProjectedRowCallId(row);
@@ -103,6 +114,7 @@
         decision: resolved ? normalizeId(payload.decision) : '',
         approvalScope: resolved ? normalizeId(payload.approval_scope) : '',
         alwaysAllowPrefix: resolved ? String(payload.always_allow_prefix || '') : '',
+        receiptActionHtml: resolved ? terminalReceiptLink(toolName, toolCallId, options) : '',
       }, { escapeHtml });
     }
 

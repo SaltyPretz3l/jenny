@@ -92,6 +92,40 @@ test('refused calls change nothing: a second start, pause or stop when off, resu
 
 // ------------------------------------------------------------------ register
 
+// Live run 2026-11-16: every shared model registered with no thinking and no vision, so a team conversation never
+// offered Thinking and the host dropped every turn's effort. The member's own model list names both.
+async function capsAgent(t, readCapabilities) {
+  const timers = createManualTimers();
+  const host = createFakeHost({ timers });
+  const engine = await startEngine(t, { models: ['alpha', 'beta'] });
+  const agent = createNodeAgent({ link: host.link, resolveEngineUrl: () => engine.url, isBusy: () => false, timers,
+    now: timers.now, clock: timers.now, readCapabilities });
+  t.after(() => agent.dispose());
+  return { timers, host, agent };
+}
+const registered = (host) => host.of('team.node.register')[0].params.models;
+
+test('register carries what the member\'s Jenny says each model can do; an unnamed model stays off', async (t) => {
+  const { host, agent } = await capsAgent(t, async () => new Map([['alpha', { vision: true, thinking: true }],
+    ['gamma', { vision: true, thinking: true }], ['beta', { vision: 'yes', thinking: 1 }]]));
+  assert.equal((await agent.start()).ok, true);
+  assert.deepEqual(registered(host).map(({ name, vision, thinking }) => ({ name, vision, thinking })),
+    [{ name: 'alpha', vision: true, thinking: true }, { name: 'beta', vision: false, thinking: false }]);
+});
+
+test('a capabilities read that throws, answers junk or hangs registers every model with no vision or thinking', async (t) => {
+  for (const reader of [async () => { throw new Error('sidecar'); }, async () => 'junk', () => { throw new Error('sync'); }]) {
+    const { host, agent } = await capsAgent(t, reader);
+    assert.equal((await agent.start()).ok, true);
+    assert.ok(registered(host).every((m) => m.vision === false && m.thinking === false));
+  }
+  const { host, agent, timers } = await capsAgent(t, () => new Promise(() => {}));
+  const started = agent.start();
+  await drive(timers, () => host.of('team.node.register').length === 1, 'register after the bound', 250, 40);
+  assert.equal((await started).ok, true);
+  assert.ok(registered(host).every((m) => m.vision === false && m.thinking === false));
+});
+
 test('a version mismatch is final; another refusal is retried with backoff', async (t) => {
   const first = await setup(t, { protocolVersion: 2 });
   assert.deepEqual(await first.agent.start(), { ok: false, reason: 'node_version_mismatch' });

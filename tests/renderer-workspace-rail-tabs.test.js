@@ -132,13 +132,16 @@ test('the active tab is scrolled into view after a render that changes it', (t) 
   assert.deepEqual(calls.map((call) => call.id), ['s3', 's1', 's2'], 'a runtime pass that moves the active tab reveals it');
 });
 
-test('the rail publishes which edges hide tabs so CSS can fade them', (t) => {
+test('the rail publishes which edges hide tabs so CSS can fade them', async (t) => {
   const dom = setupDom();
   registerDomCleanup(t, dom);
   const doc = dom.window.document;
   const rig = makeRailController(dom);
   const list = [{ id: 's1', title: 'A' }, { id: 's2', title: 'B' }];
   rig.controller.renderRail(['s1', 's2'], 's1', list, [], []);
+  // renderRail measures the overflow on the next frame, not inside the render.
+  const nextFrame = () => new Promise((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+  await nextFrame();
   const rail = doc.querySelector('.workspace-rail');
   assert.equal(rail.hasAttribute('data-overflow-start'), false);
   assert.equal(rail.hasAttribute('data-overflow-end'), false, 'no overflow, no fade');
@@ -147,6 +150,7 @@ test('the rail publishes which edges hide tabs so CSS can fade them', (t) => {
   Object.defineProperty(rail, 'scrollWidth', { configurable: true, value: 500 });
   Object.defineProperty(rail, 'scrollLeft', { configurable: true, writable: true, value: 0 });
   rig.controller.renderRail(['s1', 's2'], 's1', list, [], []);
+  await nextFrame();
   assert.equal(rail.hasAttribute('data-overflow-start'), false);
   assert.equal(rail.hasAttribute('data-overflow-end'), true);
 

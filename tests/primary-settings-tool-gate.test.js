@@ -46,11 +46,28 @@ test('an ordinary chat gets every primary-only tool added to its deny list, keep
   assert.deepEqual(withPrimarySettingsToolGate(service, { session }, ['not', 'an', 'object']), { disabled_tools: NAMES });
 });
 
-test('a spawned child, a parent with a child and a project chat are not offered the tools', () => {
+test('a spawned child and a parent with a child are not offered the tools', () => {
   const service = {};
-  for (const session of [{ id: 'c', spawned_from: { parent_session_id: 'p1' } }, { id: 'p1', linked_session_ids: ['c'] }, { id: 'x', project_id: 'a' }]) {
+  for (const session of [{ id: 'c', spawned_from: { parent_session_id: 'p1' } }, { id: 'p1', linked_session_ids: ['c'] }]) {
     assert.deepEqual(withPrimarySettingsToolGate(service, { session }, {}), { disabled_tools: NAMES });
   }
+});
+
+// Row 178, owner pick D4: terminal_run (always carded; the port refuses it off the IDE's open project) is also offered to a
+// chat that belongs to a project; every other primary-only tool stays denied to it.
+test('a project chat keeps terminal_run and is denied every other primary-only tool', () => {
+  const service = {};
+  const session = { id: 'x', project_id: 'a' };
+  assert.equal(primaryTerminalToolsOffered(service, { session }), true);
+  assert.deepEqual(withPrimarySettingsToolGate(service, { session }, {}), { disabled_tools: NAMES.filter((name) => name !== 'terminal_run') });
+  for (const other of [{ id: 'x' }, { id: 'x', project_id: '' }, { id: 'x', project_id: 7 }, { id: 'x', project_id: null }, null, undefined]) {
+    assert.equal(primaryTerminalToolsOffered(service, { session: other }), false, JSON.stringify(other));
+  }
+  assert.equal(primaryTerminalToolsOffered(service, { session: { get project_id() { throw new Error('boom'); } } }), false, 'an unreadable chat fails closed');
+  // The General bucket is no project, and a spawned child (no one is watching it) is not offered terminal_run.
+  assert.equal(primaryTerminalToolsOffered(service, { session: { id: 'x', project_id: 'project_general' } }), false);
+  assert.equal(primaryTerminalToolsOffered(service, { session: { id: 'x', project_id: 'a', spawned_from: { parent_session_id: 'p' } } }), false);
+  assert.equal(primaryTerminalToolsOffered({ featureFlags: { terminal_tools: false } }, { session: { id: 'x' } }), true, 'the kill switch leaves the tool unregistered, not denied');
 });
 
 test('the primary chat keeps the tools and the same preferences object', () => {

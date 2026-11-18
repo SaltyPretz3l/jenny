@@ -170,7 +170,7 @@
       renderTasksSurface = null,
       renderSubagentsSurface = null,
       renderNotesSurface = null,
-      renderBackgroundTasksSurface = null,
+      renderBackgroundTasksSurface = null, renderTerminalSurface = null,
       renderBrowserSurface = null,
       panelV2 = null,
       sidePanel = null, // split view W3-2 panel owner (shell artifact bridge); absent: the focused session
@@ -555,6 +555,10 @@
         if (renderBackgroundTasksSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
         getArtifactReviewState().mode = 'artifact';
         syncArtifactReviewLayout();
+      }
+      if (mode === 'terminal') { // row 178: the chat Terminal panel, pulled like Background tasks
+        if (renderTerminalSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
+        getArtifactReviewState().mode = 'artifact'; syncArtifactReviewLayout();
       }
       if (mode === 'browser') {
         if (renderBrowserSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }

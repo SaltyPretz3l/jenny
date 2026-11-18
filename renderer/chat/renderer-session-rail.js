@@ -3,7 +3,7 @@
    Row 59 checkpoint 2 (chat workspace parity spec, "Session rail"). The controller
    owns, for ONE pane: the data (window.jennyShell.chatWorkspace, contract C2), the responsive
    docking decision, the Session toggle in the pane's utility cluster, the sheet below the dock
-   threshold, the five disclosure sections and their persistence, and focus. Markup lives in
+   threshold, the disclosure sections and their persistence, and focus. Markup lives in
    renderer-session-rail-render.js, words and rules in renderer-session-rail-model.js, layout in
    styles/chat-session-rail.css (which keys off the attribute this controller writes).
 
@@ -93,7 +93,7 @@
     let lastMode = '';
     let tray = null;
     let painted = false;
-    const cache = new Map();
+    const cache = new Map(), everHad = new Map(); // everHad: chats that had a server (row 176), bounded by the model
     const disposers = [];
 
     function listen(target, type, handler, listenerOptions) {
@@ -137,7 +137,7 @@
     // Row 115 slice 3: the toggle's glide and the drag-to-resize separator (renderer-session-rail-motion.js).
     const layout = railMotion.createRailLayout({ pane, rail, stage, chatView, win, getPaneWidth: o.getPaneWidth, motionOptions: o.motion });
     const resizer = railMotion.createRailResizer({ pane, rail, stage, chatTimeline: o.chatTimeline, doc, win, jt, notify: layout.notify });
-    const jobs = railJobs?.createRailJobs({ tray, toggle, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters }); if (jobs) disposers.push(jobs.dispose); // background-job rows + toggle readout
+    const jobs = railJobs?.createRailJobs({ tray, toggle, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters, getBrowserUse: o.getBrowserUse, onBrowserChange: () => paint() }); if (jobs) disposers.push(jobs.dispose); // background-job rows + toggle readout
     // Row 59 cp6: the Performance section and the toggle readout (own bridge; absent = nothing renders).
     const perf = performanceRail ? performanceRail.createRailPerformance({ win, doc, jt, getSessionId, idPrefix, bridge: o.performance, onChange: () => syncToggle(currentMode()) }) : null;
 
@@ -233,11 +233,19 @@
     // ── Docking ──────────────────────────────────────────────────────────
     /* `measuring`: a side panel's open is being measured (side-panel-measuring), so the decision is made
        with the panel's final state now and the rail leaves inside that motion. */
+    let awaitResize = false, awaitTimer = 0;
     function evaluateDock(options) {
       if (disposed) return;
       const measuring = Boolean(options && options.measuring === true);
       // Never re-evaluate mid-motion: the motion's end (the attribute leaving) re-runs this.
       if (!measuring && chatView && chatView.hasAttribute('data-panel-motion')) return;
+      // A hidden chat has no width; showing it resizes the stage, so decide then, after layout (250 ms at most).
+      if (!measuring && pane.closest && pane.closest('.hidden')) { awaitResize = true; return; }
+      if (!measuring && awaitResize && !(options && options.resized)) {
+        if (!awaitTimer) awaitTimer = win.setTimeout(() => { awaitTimer = 0; if (awaitResize) evaluateDock({ resized: true }); }, 250);
+        return;
+      }
+      awaitResize = false;
       const width = layout.paneWidth(docked);
       if (perf) perf.setPaneWidth(width);
       const next = model.resolveDocked({ paneWidth: width, panelActive: layout.panelActive(), wasDocked: docked });
@@ -314,7 +322,7 @@
       if (fetchTimer) { win.clearTimeout(fetchTimer); fetchTimer = 0; }
       closeSheet({ restoreFocus: false, silent: true });
       layout.cancel(); // a switch snaps any glide
-      applyMode();
+      applyMode(); jobs?.syncBrowser(); // the new chat's browser page
       paint({ instant: true });
       void fetchSummary();
       return true;
@@ -328,10 +336,16 @@
       return { ...summary, context: { ...summary.context, data } };
     }
 
+    function buildVm() {
+      const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt, browser: jobs?.getBrowser(), everHadServer: everHad.has(sessionId) });
+      model.rememberServers(everHad, sessionId, vm);
+      return vm;
+    }
+
     function paint(paintOptions) {
       if (disposed || !visible()) return;
-      const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt });
-      if (!painted) {
+      const vm = buildVm();
+      if (!painted || vm.sections.length !== cache.size) { // first paint, or Servers came or went (row 176)
         tray.innerHTML = vm.sections.map((section) => render.sectionHtml(section, idPrefix)).join('');
         cache.clear();
         for (const section of vm.sections) {
@@ -406,7 +420,7 @@
 
     function toggleSection(key) { // a section head, or Background tasks' finished divider
       if (!model.DISCLOSURE_KEYS.includes(key)) return;
-      const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt });
+      const vm = buildVm();
       const next = !model.isDisclosureOpen(vm, key);
       overrides = { ...overrides, [key]: next };
       paint();
@@ -516,7 +530,7 @@
     disposers.push(contextPreview.bindRefresh({ pane, win, listen, syncSession, scheduleFetch, paint, visible, options: o, getSessionId: () => sessionId }));
     if (o.chatTimeline) listen(o.chatTimeline, 'transcript-view-rendered', () => { syncSession(); });
 
-    disposers.push(layout.watch({ onResize: () => { syncSession(); evaluateDock(); }, onChange: () => { evaluateDock(); } }));
+    disposers.push(layout.watch({ onResize: () => { syncSession(); evaluateDock({ resized: true }); }, onChange: () => { evaluateDock(); } }));
     // A side panel's open is being measured: decide the dock with its final state, so a rail it forces out
     // leaves inside that motion rather than in a second reflow after it.
     disposers.push(layout.onMeasuring(() => { evaluateDock({ measuring: true }); }));

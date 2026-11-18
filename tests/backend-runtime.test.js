@@ -86,6 +86,18 @@ test('autoLoadDefaultModel starts an installed Ollama default when startup loadi
   });
 });
 
+test('autoLoadDefaultModel defers, without a warning, after a startup-load-off idle boot', () => {
+  const service = makeDefaultModelFallbackService();
+  service._startupIdleByChoice = true;
+
+  autoLoadDefaultModel(service);
+
+  assert.equal(service.logs.length, 1);
+  assert.equal(service.logs[0].level, 'INFO');
+  assert.equal(service.logs[0].event, 'backend.default_model_deferred');
+  assert.equal(service.logs[0].details.reason, 'startup_model_load_off');
+});
+
 test('autoLoadDefaultModel keeps Ollama lazy when startup loading is off', () => {
   const service = makeStartupModelService({ startupModelLoad: false });
 

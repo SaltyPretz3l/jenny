@@ -18,7 +18,9 @@
    Ctrl+Alt+W follows the split chord's editor rule, and stands down for AltGr.
    Ctrl+\ (no Shift, no Alt) follows the same rule, also stands down inside the
    Workspace view (Monaco owns it), and only prevents the default when
-   deps.callbacks.closeFocusedPanel() closed something.
+   deps.callbacks.closeFocusedPanel() closed something. Ctrl+` (row 178) toggles the
+   chat's Terminal panel (window.rendererChatTerminalPanel) from Chat only, also from
+   the panel's own terminal, and keeps the key while the feature is off.
    Every chord here stands down while the shared overlay manager reports an
    open overlay, with one exception: over a launcher-style overlay listed in
    deps.captureYieldingOverlayIds (the command palette) the capture chord
@@ -76,6 +78,13 @@
     return Boolean(event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
       && !event.defaultPrevented && !event.isComposing
       && (event.code === 'Backslash' || event.key === '\\'));
+  }
+
+  // Ctrl+` (row 178): the chat's Terminal panel, from Chat only. Typed in the panel's own terminal it still toggles.
+  function isTerminalChord(event) {
+    return Boolean(event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+      && !event.defaultPrevented && !event.isComposing
+      && (event.code === 'Backquote' || event.key === '`'));
   }
 
   function isChatWidthChord(event) {
@@ -170,6 +179,18 @@
           event.preventDefault();
           appendClientLog?.('INFO', 'shortcuts.panel_close', { key: 'Ctrl+\\' });
         }
+        return;
+      }
+      if (isTerminalChord(event)) {
+        const panel = (windowRef && windowRef.rendererChatTerminalPanel) || rootRef.rendererChatTerminalPanel;
+        if (!panel || typeof panel.toggle !== 'function' || panel.isAvailable?.() === false || isInsideWorkspaceView(event)
+          || documentRef?.documentElement?.dataset?.activeView !== 'chat'
+          || (!closestOf(event.target, '.chat-terminal-panel') && isForeignTextEditingSurfaceFocused(documentRef))) return;
+        event.preventDefault();
+        event.stopPropagation(); // the terminal itself would read it as NUL
+        if (event.repeat) return;
+        Promise.resolve(panel.toggle({})).catch(() => {});
+        appendClientLog?.('INFO', 'shortcuts.terminal_toggle', { key: 'Ctrl+`' });
         return;
       }
       if (isPaneSplitChord(event)) {

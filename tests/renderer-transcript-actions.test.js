@@ -321,3 +321,37 @@ test('Pin to board: with the flag on the model is told, and one pin button sits 
   const without = createTranscriptActionRenderer({ escapeHtml, buildMessageActionModel: () => buildHoverActionModel({}) }).renderMessageHoverRow({ id: 'm3' }, {}, '');
   assert.doesNotMatch(without, /data-message-action="pin"/);
 });
+
+// Post to Team (row 175 D5): one more hover action on a local Jenny answer, after Pin; greyed with the module's reason, never hidden.
+test('Post to Team hover action on a local answer', (t) => {
+  const asked = [];
+  globalThis.rendererChatMessageActionBindings = { pinEnabled: () => true, postToTeamState: (message) => { asked.push(message.id); return { visible: true, enabled: true, reason: '' }; } };
+  t.after(() => { delete globalThis.rendererChatMessageActionBindings; });
+  const actions = Object.fromEntries(['edit', 'branch', 'regenerate', 'copy', 'pin', 'elaborate'].map((name) => [name, { visible: true, enabled: true }]));
+  const renderer = createTranscriptActionRenderer({ escapeHtml, buildMessageActionModel: () => buildHoverActionModel({ actions }) });
+  const html = renderer.renderMessageHoverRow({ id: 'a1', role: 'assistant', content: 'Hello' }, {}, '');
+  const order = [...html.matchAll(/data-message-action="([a-z-]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(order, ['edit', 'branch', 'regenerate', 'copy', 'pin', 'post-to-team', 'elaborate']);
+  const button = html.match(/<button[^>]+data-message-action="post-to-team"[^>]*>/)[0];
+  assert.match(button, /aria-label="Post to Team…"/);
+  assert.match(button, /data-message-id="a1"/);
+  assert.doesNotMatch(button, /disabled/);
+  // A user message is not a Jenny answer: the hook is not asked and no button is drawn.
+  const user = renderer.renderMessageHoverRow({ id: 'u1', role: 'user', content: 'Hi' }, {}, '');
+  assert.doesNotMatch(user, /post-to-team/);
+  assert.deepEqual(asked, ['a1']);
+});
+
+test('Post to Team hover action is greyed with its reason, and absent while the hook has none (Team off)', (t) => {
+  let answer = { visible: true, enabled: false, reason: 'Join a team to post there.' };
+  globalThis.rendererChatMessageActionBindings = { postToTeamState: () => answer };
+  t.after(() => { delete globalThis.rendererChatMessageActionBindings; });
+  const renderer = createTranscriptActionRenderer({ escapeHtml, buildMessageActionModel: () => buildHoverActionModel({}) });
+  const message = { id: 'a2', role: 'assistant', content: 'Hello' };
+  const grey = renderer.renderMessageHoverRow(message, {}, '').match(/<button[^>]+data-message-action="post-to-team"[^>]*>/)[0];
+  assert.match(grey, /disabled aria-disabled="true"/);
+  assert.match(grey, /title="Join a team to post there\."/);
+  assert.match(grey, /aria-label="Post to Team… \(Join a team to post there\.\)"/);
+  answer = null;
+  assert.doesNotMatch(renderer.renderMessageHoverRow(message, {}, ''), /post-to-team/);
+});

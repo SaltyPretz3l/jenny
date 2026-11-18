@@ -182,6 +182,35 @@ def test_context_builder_filters_skill_tools_against_executable_tools(tmp_path) 
     assert "`glob_files`: workspace requirement missing" not in prompt
 
 
+def test_skill_tools_filtered_logs_once_per_skill_and_tool_set(monkeypatch, tmp_path) -> None:
+    bundled_root = tmp_path / "bundled"
+    (bundled_root / "ops").mkdir(parents=True)
+    (bundled_root / "ops" / "SKILL.md").write_text(
+        "---\nname: Verify Skill\nallowedTools:\n  - read_file\n  - web_search\n---\nBody\n",
+        encoding="utf-8",
+    )
+    events: list[str] = []
+    monkeypatch.setattr("sidecar.ai.context.builder_shared._filter_log_seen", set())
+    monkeypatch.setattr(
+        "sidecar.ai.context.builder.log_event",
+        lambda *_args, **kwargs: events.append(str(kwargs.get("event", ""))),
+    )
+    builder = ContextBuilder(
+        tmp_path / "workspace",
+        skill_scopes=(SkillScope(scope="bundled", root=bundled_root, enabled=True),),
+        skills_system_enabled=True,
+    )
+    read_file = RuntimeToolStatus(name="read_file", display_name="Read File", available=True)
+    search = RuntimeToolStatus(name="web_search", display_name="Web Search", available=True)
+    for _ in range(3):
+        builder.build_system_prompt("Base.", tool_statuses=[read_file])
+    assert events.count("ai.context.skill_tools_filtered") == 1
+    builder.build_system_prompt("Base.", tool_statuses=[read_file, search])
+    assert events.count("ai.context.skill_tools_filtered") == 1, "nothing filtered: no log"
+    builder.build_system_prompt("Base.", tool_statuses=[search])
+    assert events.count("ai.context.skill_tools_filtered") == 2, "another filtered set logs again"
+
+
 def test_context_builder_can_layer_skills_as_separate_runtime_overlay(tmp_path) -> None:
     bundled_root = tmp_path / "bundled"
     bundled_skill = bundled_root / "humanizer"

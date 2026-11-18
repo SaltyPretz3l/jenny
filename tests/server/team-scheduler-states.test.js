@@ -304,14 +304,17 @@ test('a node fail fails the claimed job and its lease; a bad reason is refused u
   assert.equal(scheduler.getLease(lease.lease_id).state, 'failed');
 });
 
-test('cancelling a claimed or streaming job cancels it and fails its lease', () => {
+// A turn closes a request it replaces (the sidecar's thinking-budget checkpoint): its next request on the lease is served.
+test('cancelling a claimed or streaming job keeps its lease for the turn\'s next request, or for its releaser', () => {
   for (const streaming of [false, true]) {
     const { scheduler, nodeId, lease, job } = setupJob();
     scheduler.claim(nodeId, 1);
     if (streaming) scheduler.acceptChunk(job.job_id, nodeId, 0, sseData('x'), false);
     assert.equal(scheduler.cancelJob(job.job_id).ok, true);
     assert.deepEqual(pick(scheduler.getJob(job.job_id)), { state: 'cancelled', reason: 'cancelled' });
-    assert.deepEqual(pick(scheduler.getLease(lease.lease_id)), { state: 'failed', reason: 'cancelled' });
+    assert.equal(scheduler.getLease(lease.lease_id).state, 'active');
+    if (streaming) assert.equal(scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).ok, true, 'the next request is served');
+    else assert.equal(scheduler.releaseLease(lease.lease_id).ok && scheduler.getLease(lease.lease_id).state, 'released');
   }
 });
 

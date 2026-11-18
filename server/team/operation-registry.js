@@ -85,6 +85,13 @@ const DEFINITIONS = [
   ['PUT /api/v1/projects/:project_id/uploads/:upload_id/files/:index/parts/:n']],
   ['project.files.download', 'OMR', 'project', 'reader', ['team.project.download.manifest'],
     ['GET /api/v1/projects/:project_id/downloads/:manifest_id/files/:index/parts/:n']],
+  // Row 175 wave 5 (project-files.js): a team project's files listed and one read as text, by anyone with a row.
+  ['project.files.read', 'OMR', 'project', 'reader', ['team.project.files.list', 'team.project.files.read'], []],
+  // Row 175 item 6 (D7), F13, F18 (command-router-redo.js): a project conversation's latest turn redone by a writer (the
+  // router adds: its prompter, or a project admin by `project.write`), and a branch, an ask and a handed seat.
+  ['project.redo', 'OM', 'project', 'writer', ['team.project.regenerate', 'team.project.edit_resend'], []],
+  ['project.conversation', 'OM', 'project', 'writer', ['team.project.branch', 'team.project.ask',
+    'team.project.hand_driver'], []],
   // Slice 3-12 (team-project-rules.js): a project's "Always allowed" rules. Anyone with a row reads them; its admins
   // change them (the owner only with an admin row: no owner-any). Asking for one rides on approval.resolve.
   ['project.rules.read', 'OMR', 'project', 'reader', ['team.project.rules.list'], []],
@@ -125,6 +132,8 @@ const DEFINITIONS = [
   ['team.owner.transfer', 'O', 'member', 'none', ['team.owner.transfer'], []],
   ['team.audit.read', 'O', 'team', 'none', ['team.audit.read'], []],
   ['team.rename', 'O', 'team', 'none', ['team.rename'], []],
+  // Row 170: the caller's own name and this device's label; the payload names no member and no device.
+  ['team.member.profile', 'OMR', 'team', 'none', ['team.member.profile'], []],
   // Team chat (TEAM_CHAT_SPEC "Roles"); the dispatcher is services/host/team-chat-commands.js.
   // A project channel's audience is that project's members (the channel rule in authorize.js).
   ['chat.overview', 'OMR', 'team', 'none', ['team.chat.overview'], []],
@@ -140,6 +149,12 @@ const DEFINITIONS = [
   ['chat.typing', 'OM', 'channel', 'none', ['team.chat.typing'], []],
   // Slice 2d: opening a direct conversation. It names members, not a channel.
   ['chat.dm_open', 'OM', 'team', 'none', ['team.chat.dm_open'], []],
+  // Row 173 (TEAM_CHANNELS_2026-11-16.md): making a custom channel names the team; renaming, a topic, archiving and
+  // deleting name the channel, archived ones included. Who may act on which channel is the dispatcher's
+  // (team-chat-channel-ops.js): creator or owner, owner only for unarchive and delete, never a project or direct one.
+  ['chat.channel.create', 'OM', 'team', 'none', ['team.chat.channel_create'], []],
+  ['chat.channel.manage', 'OM', 'channel', 'none', ['team.chat.channel_update', 'team.chat.channel_archive',
+    'team.chat.channel_delete'], []],
   ['presence.set', 'OMR', 'team', 'none', ['team.presence.set'], []],
   // Slice 4b: the team engine (node protocol spec N10). A member's own Jenny uses the
   // pool for its private conversations; the routes live in server/team/engine-routes.js.
@@ -191,7 +206,8 @@ const OWNER_ANY = Object.freeze(new Set(['project.delete']));
 const OWNER_SEEN = Object.freeze(new Set(['session.takeover_running']));
 // Rows that exist only on an active project of the team (row 151 review): General, a project id with no team row and
 // a project being deleted read as not found for everyone, the owner included.
-const TEAM_PROJECT_ONLY = Object.freeze(new Set(['board.read', 'board.presence', 'board.write', 'board.admin']));
+const TEAM_PROJECT_ONLY = Object.freeze(new Set(['board.read', 'board.presence', 'board.write', 'board.admin',
+  'project.files.read', 'project.redo', 'project.conversation']));
 
 function buildActionTables(definitions) {
   const actions = Object.create(null);

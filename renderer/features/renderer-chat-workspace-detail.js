@@ -4,11 +4,13 @@
  *   window.rendererChatWorkspaceDetail.open({ surface, ownerSessionId, opener, resourceRef })
  *   window.rendererChatWorkspaceDetail.close()
  *
- * surface: 'outputs' | 'changes' | 'background_tasks' | 'context' | 'environment'.
+ * surface: 'outputs' | 'changes' | 'background_tasks' | 'browser' | 'context' | 'environment'.
  *   outputs          -> the artifact review panel (resourceRef: an artifact id opens that artifact)
  *   changes          -> the read-only working-tree Changes page (renderer-code-review-rail.js)
  *   background_tasks -> the Background tasks panel when openBackgroundTasks is wired (resourceRef: job:<id> or
  *                       chat:<id> opens that task), else the context panel's Activity
+ *   browser          -> the chat's Browser panel (row 176: the Servers row), through the shell's
+ *                       windowRef.rendererOpenBrowserUsePanel seam; false when the seam or panel is not there
  *   context          -> the composer context ring popover of the opener's pane
  *   environment      -> the project pill popover of the opener's pane
  *
@@ -29,7 +31,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const SURFACES = Object.freeze(['outputs', 'changes', 'background_tasks', 'context', 'environment']);
+  const SURFACES = Object.freeze(['outputs', 'changes', 'background_tasks', 'browser', 'context', 'environment']);
   const MAX_ID_LENGTH = 200;
   const CONTEXT_RING_SELECTOR = '[data-inv-chip="composer-context-ring"]';
   // An attribute selector on purpose: a second pane repeats this id, and an id selector may resolve against the first.
@@ -92,6 +94,11 @@
       return true;
     }
 
+    function openBrowser() {
+      const seam = windowRef()?.rendererOpenBrowserUsePanel;
+      return typeof seam === 'function' && seam() === true;
+    }
+
     function openComposerPopover(opener, selector) {
       const control = findInPane(opener, selector);
       if (!control || control.disabled) return false;
@@ -113,13 +120,15 @@
         if (surface === 'outputs') opened = openOutputs(ownerSessionId, opener, options.resourceRef);
         else if (surface === 'changes') opened = openChanges(ownerSessionId, opener, options.reviewFindings);
         else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener, options.resourceRef);
+        else if (surface === 'browser') opened = openBrowser();
         else if (surface === 'context') opened = openComposerPopover(opener, CONTEXT_RING_SELECTOR);
         else opened = openComposerPopover(opener, PROJECT_PILL_SELECTOR);
       } catch (error) {
         log('WARN', 'chat_workspace_detail.open_failed', { surface, message: String(error && error.message || error).slice(0, 200) });
         opened = false;
       }
-      if (opened) current = { surface, ownerSessionId, opener };
+      // The Browser panel closes through its own controls and never reports back here, so it is not tracked as current.
+      if (opened && surface !== 'browser') current = { surface, ownerSessionId, opener };
       return opened;
     }
 

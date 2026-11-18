@@ -9,6 +9,11 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
+
+  const TASK_START_REASONS = Object.freeze({ 'CMP-TERMINAL-0002': 'root_missing', 'CMP-TERMINAL-0006': 'start_folder_unavailable' });
+  function taskStartReason(failure) {
+    return TASK_START_REASONS[String(failure?.code || '')] || 'start_failed';
+  }
   // The sibling-module table and the extracted wiring + lifecycle (the manifest loads them before this file).
   const { resolveControllerModules } = globalRef.rendererIdeControllerModules || require('./renderer-ide-controller-modules');
   const outsideFilesUtils = globalRef.rendererIdeOutsideFiles || require('./renderer-ide-outside-files'); // row 137
@@ -226,6 +231,9 @@
       removeTerminalView: (id) => workbenchWiring?.removeView(id),
       revealView: (id, options) => workbenchWiring?.showPanel(id, options),
     }) || null;
+    // Row 178: the chat's Terminal panel drives the same terminals through this pool (renderer-ide-terminal-pool.js).
+    const terminalPool = mods.terminalPoolUtils.createIdeTerminalPool?.({ terminals, layoutModel, windowRef, appendClientLog, registerCleanup, getWiring: () => workbenchWiring,
+      setActiveView: (view) => callbacks.setActiveView?.(view), getRootPath: () => String(state.workspaceRoot?.path || ''), getApi: getWorkspacePtyApi }) || null;
 
     const statusBar = wiring.createStatusBar(parts);
 
@@ -705,12 +713,20 @@
       // app_view (row 94 P3): the terminal, opened and started.
       openTerminalPanel: async () => { await lifecycle.whenActivated().catch(() => {}); return workbenchWiring?.bottomPanel?.open('terminal') === true && (terminals?.panelFor?.(terminals.activeViewId())?.startSession?.().catch?.(() => {}), true); },
       closeBottomPanel: () => { workbenchWiring?.bottomPanel?.close(); return true; },
+      // Row 178: the terminal pool once the IDE has activated (never switches the view); at most 10 s, like runInTaskTerminal.
+      getTerminalPool: async () => { let timer = null; await Promise.race([lifecycle.whenActivated().catch(noop), new Promise((resolve) => { timer = setTimeout(resolve, 10_000); })]); clearTimeout(timer); return terminalPool; },
       // terminal_run (row 94 P4): the approved line in an idle Jenny terminal or a new one, never the user's shell
-      // (null when none is free, false when its shell would not start).
-      runInTaskTerminal: async (command) => {
+      // (null when none is free, false when its shell would not start). Waits for activation: a start during it was reset.
+      runInTaskTerminal: async (command, options) => {
         if (!terminals?.openTaskTerminal) return { ok: false, reason: 'no_ide' };
-        const task = await terminals.openTaskTerminal();
-        if (!task) return { ok: false, reason: task === null ? 'no_free_terminal' : 'start_failed' };
+        // At most 10 s, well inside main's 30 s report window (a slow restore must not outlast it).
+        let waitTimer = null;
+        await Promise.race([lifecycle.whenActivated().catch(noop), new Promise((resolve) => { waitTimer = setTimeout(resolve, 10_000); })]);
+        clearTimeout(waitTimer);
+        const place = options?.place === 'start_folder' ? { place: 'start_folder' } : undefined;
+        let task = await terminals.openTaskTerminal(undefined, place); // false with no reason: one retry
+        if (task === false && !terminals.lastTaskStartFailure?.()) task = await terminals.openTaskTerminal(undefined, place);
+        if (!task) return { ok: false, reason: task === null ? 'no_free_terminal' : taskStartReason(terminals.lastTaskStartFailure?.()) };
         const sessionId = task.getSessionId(); // read first: a shell that exits right after the line clears it
         return await task.sendCommand(command) === true ? { ok: true, session_id: task.getSessionId() || sessionId } : { ok: false, reason: 'send_failed' };
       },

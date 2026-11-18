@@ -11,6 +11,9 @@ const { createNinferManager } = require('./ninfer-manager');
 const ninferLifecycle = require('../ninfer-lifecycle');
 const { buildFeatureFlags } = require('../feature-flags');
 const { estimateLlamaServerMb, estimateNinferMb, withVramPreflight } = require('../backend/vram-load-preflight');
+const {
+  localSubagentEngineLoadPlan, localSubagentEngineOwnsManager, startLocalSubagentEngine,
+} = require('../backend/local-subagent-engine');
 
 const SHUTDOWN_STEP_COUNT = 7;
 // Startup reports phase keys and facts (see emitStartupProgress); only
@@ -112,29 +115,55 @@ function createRuntimeShutdownController({
     // here would start a flight for the OLD model and refuse the switch as busy.
     if (runtimeShutdownStarted || status.stoppedBy === 'engine_switch') return undefined;
     const backendService = getBackendService();
-    if (backendService?.currentEngineType !== 'openai-compatible' || typeof backendService.refreshManagedConfig !== 'function') return undefined;
+    // Row 179: a NInfer local subagent engine under a cloud primary drops its key the same way.
+    const brokered = backendService?.currentEngineType === 'openai-compatible'
+      || ownsHelper(backendService, 'ninfer');
+    if (!brokered || typeof backendService.refreshManagedConfig !== 'function') return undefined;
     return Promise.resolve(backendService.refreshManagedConfig('ninfer_stopped')).catch(() => null);
   }
+  function ownsHelper(backendService, kind) {
+    try {
+      return Boolean(backendService) && localSubagentEngineOwnsManager(backendService, kind);
+    } catch (_error) {
+      return false;
+    }
+  }
+  // A llama-server local subagent engine under a cloud primary (row 179) has
+  // no endpoint release of its own: its key leaves the sidecar on stop or crash.
+  let llamaHelperBrokered = false;
+  function releaseLlamaHelperEndpoint(status, backendService) {
+    if (!llamaHelperBrokered || !['stopped', 'crashed'].includes(status.state) || status.identityRetained === true) return undefined;
+    llamaHelperBrokered = false;
+    if (runtimeShutdownStarted || status.stoppedBy === 'engine_switch') return undefined;
+    if (!ownsHelper(backendService, 'llama-server') || typeof backendService.refreshManagedConfig !== 'function') return undefined;
+    return Promise.resolve(backendService.refreshManagedConfig('local_subagent_engine_stopped')).catch(() => null);
+  }
   // Every managed launch mints a new api key; a sidecar already talking to
-  // the openai-compatible engine must receive it or every request 401s.
-  function rebrokerManagedServer(status, reason) {
+  // the openai-compatible engine (or a cloud primary's local subagent engine) must receive it or every request 401s.
+  function rebrokerManagedServer(status, reason, kind = 'llama-server') {
     const backendService = getBackendService();
+    const helper = ownsHelper(backendService, kind);
     // A cold start reads as a model load with a clock (and feeds the
-    // last-load record) instead of a bare "Starting engine".
+    // last-load record) instead of a bare "Starting engine". A helper's
+    // start is not a primary model load.
     // Isolated so a status fault can never skip the key re-broker below.
     try {
-      if (backendService) observeManagedLlamaServerState(backendService, status);
+      if (backendService && !helper) observeManagedLlamaServerState(backendService, status);
     } catch (_error) { /* the status is advisory; the launch proceeds */ }
+    if (kind === 'llama-server' && status.state !== 'ready') {
+      return releaseLlamaHelperEndpoint(status, backendService);
+    }
     if (status.state !== 'ready') {
       return;
     }
+    if (kind === 'llama-server') llamaHelperBrokered = helper;
     // An identity restore (chat GPU handoff) relaunched with the key the
     // parked turn already holds: nothing to re-broker, and a stack rebuild
     // here would race the turn that is about to resume.
     if (status.identityReused === true) {
       return;
     }
-    if (backendService?.currentEngineType !== 'openai-compatible'
+    if ((backendService?.currentEngineType !== 'openai-compatible' && !helper)
       || typeof backendService.refreshManagedConfig !== 'function') {
       return;
     }
@@ -176,7 +205,7 @@ function createRuntimeShutdownController({
         /* best-effort */
       }
     },
-    onStateChange: (status) => rebrokerManagedServer(status, 'llama_server_ready'),
+    onStateChange: (status) => rebrokerManagedServer(status, 'llama_server_ready', 'llama-server'),
   });
   managedNinfer = ninferManager || createNinferManager({
     userDataPath: () => app.getPath('userData'),
@@ -199,7 +228,7 @@ function createRuntimeShutdownController({
       getBackendService()?.performance?.refreshRuntime?.(); // new launch -> new GPU runtime identity
       if (status.state !== 'ready') return releaseNinferEndpoint(status);
       ninferEndpointBrokered = true;
-      return rebrokerManagedServer(status, 'ninfer_ready');
+      return rebrokerManagedServer(status, 'ninfer_ready', 'ninfer');
     },
   });
   let emergencyRuntimeShutdownTriggered = false;
@@ -349,6 +378,7 @@ function createRuntimeShutdownController({
     // The engine the backend boots with (preferred, else inferred from the
     // default model); without a backend the manager reads the preferred one.
     const engineType = getBackendService()?.currentEngineType;
+    if (startLocalSubagentEngineAtBoot(engineType)) return;
     // NInfer first: when it was the last-used managed server it owns the boot
     // launch and llama-server stays down (one managed server on the GPU).
     if (ninferEnabled()) {
@@ -359,6 +389,27 @@ function createRuntimeShutdownController({
       }
     }
     await managedLlamaServer.startFromSettings(engineType ? { engineType } : {});
+  }
+
+  // Row 179: a cloud boot starts the picked local subagent engine instead of a
+  // primary managed server. The launch is not awaited (a cloud primary does not
+  // wait on it) and a failure is logged, never blocking boot.
+  function startLocalSubagentEngineAtBoot(engineType) {
+    const backendService = getBackendService();
+    let plan;
+    try {
+      plan = backendService ? localSubagentEngineLoadPlan(backendService, engineType) : null;
+    } catch (_error) {
+      plan = null;
+    }
+    if (!plan) return false;
+    if (getShellConfigService()?.getLocalEngines?.()?.startupModelLoad === false) {
+      log('INFO', 'runtime.startup_step', { step: 'local_subagent_engine_autostart', status: 'skipped', reason: 'startup_model_load_off' });
+      return true;
+    }
+    log('INFO', 'runtime.startup_step', { step: 'local_subagent_engine_autostart', status: 'started', engine: plan.kind });
+    void startLocalSubagentEngine(backendService, plan, 'boot');
+    return true;
   }
 
   // Closing latch first: an active render is cancelled with proof and no

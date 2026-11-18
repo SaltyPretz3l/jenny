@@ -67,3 +67,7 @@ Settings > Tools > Run commands in a sandbox runs foreground commands in a dispo
 - Commands are Linux /bin/sh commands, up to 120 seconds, with combined output capped at 256 KiB. The workspace copy is limited (64 MiB, 2,048 entries).
 - Not available in the sandbox: temporary scripts, Python execution, background jobs, Git subprocess tools, test runners, code intelligence, third-party MCP tools and delegation.
 - States include Ready, Busy, Unavailable (start Docker, then Retry) and Recovery required (cleanup could not be proven; new commands stay blocked until Retry succeeds). A command never falls back to running on your computer.
+
+## On a team host
+
+A turn in a team project runs on the team's host, which offers far fewer tools than your own Jenny: reading, searching, writing and editing files inside that project's team files (when the host has turned project files on), and jenny_help. Writes and edits ask a member who is viewing the conversation, unless a project admin set a rule. Everything else on this page is not offered there, by design: no artifacts, review findings, test summaries or suggested changes, no commands, terminal, Git, Python, web, memory, helpers or MCP tools. See team.

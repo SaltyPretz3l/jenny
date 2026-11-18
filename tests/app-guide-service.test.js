@@ -171,3 +171,12 @@ test('page text is returned as data and never logged', () => {
   }
   assert.deepEqual(logged, []);
 });
+
+test('the tools page tells a team turn which tools its host does not offer', () => {
+  // Row 175 (D6): a team host offers jenny_help but not create_artifact, so the page it serves names that limit.
+  const text = createAppGuideService().read('tools-overview').text;
+  const section = text.slice(text.indexOf('## On a team host'));
+  assert.ok(section.startsWith('## On a team host'));
+  assert.match(section, /no artifacts/);
+  assert.match(section, /jenny_help/);
+});

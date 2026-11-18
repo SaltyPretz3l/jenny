@@ -4,7 +4,7 @@
  * `settings_change` (row 88 D2/D7), `chat_organize` and `chat_configure` (row 94 P1), `schedule_list` and
  * `schedule_change` (row 85 D8), `project_create` and `projects_list` (row 94 P2), `app_view` (row 94 P3), `session_export` and `terminal_run` (row 94 P4), `away_digest` (row 86 D3) and `session_prioritize` (row 136): only the
  * primary Jenny chat. Every other chat gets
- * those names on its per-request `disabled_tools`. Fail closed: a chat whose role cannot be read is not offered
+ * those names on its per-request `disabled_tools` (`terminal_run` is also offered to a chat that belongs to a project). Fail closed: a chat whose role cannot be read is not offered
  * them. A separate module from session-directory-tool-gate.js because the rule differs (the directory tools also
  * reach linked chats) and the kill switches differ.
  *
@@ -19,12 +19,15 @@
 
 const { isPrimaryChatTurn } = require('./chat-send-optional-fields');
 const { PRIMARY_SETTINGS_TOOL_NAMES } = require('../primary-settings-contract');
+const { GENERAL_PROJECT_ID } = require('../projects/project-schema');
 
 const PRIMARY_CHAT_MANAGE_TOOL_NAMES = Object.freeze(['chat_organize', 'chat_configure']);
 const PRIMARY_CHAT_PLACEMENT_TOOL_NAMES = Object.freeze(['project_create', 'projects_list']);
 const PRIMARY_APP_VIEW_TOOL_NAMES = Object.freeze(['app_view']);
 const PRIMARY_EXPORT_TOOL_NAMES = Object.freeze(['session_export']);
 // terminal_read is not here: a project chat on the IDE's open project may read the terminal too (owner pick T1).
+// terminal_run is offered to the Jenny chat and to a chat that belongs to a project (row 178, owner pick D4; the port
+// refuses it unless that project is the one the IDE has open, and every run asks); every other chat has it denied.
 const PRIMARY_TERMINAL_TOOL_NAMES = Object.freeze(['terminal_run']);
 const PRIMARY_SCHEDULE_TOOL_NAMES = Object.freeze(['schedule_list', 'schedule_change']);
 const PRIMARY_DIGEST_TOOL_NAMES = Object.freeze(['away_digest']);
@@ -64,9 +67,19 @@ function primaryExportToolsOffered(service, { session } = {}) {
   return primaryOnly(service, session);
 }
 
+// A chat of a real project (not the General bucket), started by the user (not a spawned child).
+function inProject(session) {
+  try {
+    return typeof session?.project_id === 'string' && session.project_id !== '' && session.project_id !== GENERAL_PROJECT_ID
+      && !session.spawned_from;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function primaryTerminalToolsOffered(service, { session } = {}) {
   if (service?.featureFlags?.terminal_tools === false) return true;
-  return primaryOnly(service, session);
+  return primaryOnly(service, session) || inProject(session);
 }
 
 function primaryScheduleToolsOffered(service, { session } = {}) {

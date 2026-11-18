@@ -29,6 +29,11 @@ const VALID = Object.freeze({
     kind: 'approval_expired', project_id: P1, session_id: SESSION, actor_member_id: null,
     prompter_member_id: PROMPTER, tool_name: 'edit_file', decision: null, detail: null,
   },
+  // Schema 4 (row 175 item 11); its id keys are in team-project-audit-boards.test.js.
+  question_answered: {
+    kind: 'question_answered', project_id: P1, session_id: SESSION, actor_member_id: ACTOR,
+    prompter_member_id: PROMPTER, tool_name: null, decision: null, detail: null,
+  },
   files_uploaded: {
     kind: 'files_uploaded', project_id: P1, session_id: null, actor_member_id: ACTOR,
     prompter_member_id: null, tool_name: null, decision: null, detail: { files: 3, bytes: 4096, skipped: 0 },
@@ -103,15 +108,16 @@ test('each kind accepts its valid entry, durable with exactly the documented key
   }
   const disk = JSON.parse(fs.readFileSync(auditFile(fx), 'utf8'));
   assert.deepEqual(Object.keys(disk), ['schema_version', 'floor_seq', 'next_seq', 'entries', 'project_floors']);
-  assert.equal(disk.schema_version, 3);
+  assert.equal(disk.schema_version, 4);
   const saved = openAudit(fx).read({ projectId: P1 }).entries;
   assert.equal(saved.length, KINDS.length);
   for (const entry of saved) {
     assert.deepEqual(Object.keys(entry), ['seq', 'at', 'kind', 'project_id', 'session_id', 'board_id', 'actor_member_id',
-      'prompter_member_id', 'tool_name', 'decision', 'detail']);
+      'prompter_member_id', 'tool_name', 'decision', 'approval_id', 'call_id', 'plan_decision', 'detail']);
     assert.equal(entry.at, fx.clock());
     const { seq: _seq, at: _at, ...rest } = entry;
-    assert.deepEqual(rest, { ...valid(entry.kind), board_id: null }); // no kind of this file names a board
+    // No kind of this file names a board; the schema 4 ids are optional and null here.
+    assert.deepEqual(rest, { ...valid(entry.kind), board_id: null, approval_id: null, call_id: null, plan_decision: null });
   }
 });
 
@@ -165,6 +171,8 @@ test('each kind refuses an entry that breaks its key rule, and nothing is writte
     files_copied_in: [
       { actor_member_id: ACTOR }, { session_id: SESSION }, { detail: null }, { detail: { files: 1, bytes: 1, skipped: 0 } },
     ],
+    question_answered: [{ actor_member_id: null }, { session_id: null }, { tool_name: 'ask_user' }, { decision: 'approved' },
+      { detail: { questions: 1 } }, { approval_id: 'approval_x' }, { plan_decision: 'accepted' }],
   };
   for (const [kind, cases] of Object.entries(broken)) {
     for (const overrides of cases) {
@@ -405,7 +413,7 @@ test('corrupt, unknown-key, unknown-kind and newer-schema files leave the file b
     corrupt: Buffer.from([0x00, 0xff, 0x80]),
     truncated: '{"schema_version":1,"floor_seq":1,',
     array: '[]',
-    newer_schema: JSON.stringify({ schema_version: 4, floor_seq: 1, next_seq: 1, entries: [], project_floors: {} }),
+    newer_schema: JSON.stringify({ schema_version: 5, floor_seq: 1, next_seq: 1, entries: [], project_floors: {} }),
     older_schema: JSON.stringify({ schema_version: 0, floor_seq: 1, next_seq: 1, entries: [] }),
     unknown_document_key: doc([], { extra: true }),
     unknown_entry_key: doc([{ ...storedEntry(1), path: 'src/login.js' }]),
@@ -446,7 +454,7 @@ test('a file over the read cap is refused and left alone', (t) => {
 
 test('a file from a newer schema is refused and the rejected line says so', (t) => {
   const fx = createFixture(t);
-  fs.writeFileSync(auditFile(fx), JSON.stringify({ schema_version: 4, floor_seq: 1, next_seq: 1, entries: [] }));
+  fs.writeFileSync(auditFile(fx), JSON.stringify({ schema_version: 5, floor_seq: 1, next_seq: 1, entries: [] }));
   assert.equal(openAudit(fx).floorSeq(), null);
   assert.ok(fx.logs.some((log) => log.event === 'team_project_audit.rejected' && log.fields.cause === 'newer_schema'));
 });

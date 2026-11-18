@@ -51,7 +51,7 @@ function projectTurnRunning(backend) {
  */
 function createTeamProjectFiles({
   userDataPath, folders, store, authorize, serialized, audit = () => null, backend = () => null, publish = () => {},
-  clock = Date.now, randomBytes = crypto.randomBytes, logger = null, statfs, limits, coreLimits,
+  clock = Date.now, randomBytes = crypto.randomBytes, logger = null, statfs, limits, viewLimits, coreLimits,
   projectsRoot = null, probeVolumes = defaultProbe,
 } = {}) {
   const log = safeLogger(logger);
@@ -60,7 +60,7 @@ function createTeamProjectFiles({
   let timer = null;
   const build = (transfer) => createProjectFiles({ core: transfer, folders, store, authorize, serialized, audit,
     turnRunning: projectTurnRunning(backend), publish: (...args) => publish(...args),
-    roots: [stagingRoot, projectsRoot], statfs, clock, randomBytes, logger, limits });
+    roots: [stagingRoot, projectsRoot], statfs, clock, randomBytes, logger, limits, viewLimits });
   // Until open() succeeds, every entry answers unavailable.
   let files = build(null);
   const routes = createProjectFileRoutes({ files: () => files, logger });

@@ -116,3 +116,57 @@ test('the managed sidecar initialize payload carries the descriptor in config an
   assert.ok(!JSON.stringify(config).includes(KEY));
   assert.equal(buildManagedSidecarSecrets(service).api_provider_key, KEY);
 });
+
+test('the delegate model list carries the enabled models of the selected instance with their own limits and no key', () => {
+  const config = buildApiProviderSidecarConfig(makeService(), 'api-provider', MODEL);
+  const rows = config.api_provider_subagent_models;
+  assert.deepEqual(rows.map((row) => row.id), ['openai/gpt-6-luna', 'qwen/qwen4']);
+  assert.deepEqual(rows[0].limits, config.api_provider_model_limits);
+  assert.equal(rows[1].limits.context_length, 65536);
+  assert.equal(rows[1].limits.sources.context_length, 'pin');
+  assert.ok(!JSON.stringify(config).includes(KEY));
+  assert.ok(rows.every((row) => Object.keys(row).sort().join() === 'id,limits'));
+});
+
+test('the delegate model list is bounded to 64 models', () => {
+  const models = Array.from({ length: 70 }, (_, index) => ({ id: `model-${index}`, enabled: true }));
+  const service = makeService({ model: 'api-provider/openrouter/model-0', providers: apiProviders({ models }) });
+  const rows = buildApiProviderSidecarConfig(service, 'api-provider', 'api-provider/openrouter/model-0').api_provider_subagent_models;
+  assert.equal(rows.length, 64);
+  assert.equal(rows[0].id, 'model-0');
+});
+
+test('a model whose limit resolution throws is left out of the delegate list', () => {
+  const limitsPath = require.resolve('../services/backend/api-provider-limits');
+  const configPath = require.resolve('../services/backend/api-provider-sidecar-config');
+  const real = require(limitsPath);
+  const savedLimits = require.cache[limitsPath];
+  const savedConfig = require.cache[configPath];
+  try {
+    require.cache[limitsPath] = { ...savedLimits, exports: { ...real, resolveProviderModelLimits: (input) => {
+      if (input.modelId === 'qwen/qwen4') throw new Error('unresolvable');
+      return real.resolveProviderModelLimits(input);
+    } } };
+    delete require.cache[configPath];
+    const { buildApiProviderSidecarConfig: build } = require(configPath);
+    const config = build(makeService(), 'api-provider', MODEL);
+    assert.deepEqual(config.api_provider_subagent_models.map((row) => row.id), ['openai/gpt-6-luna']);
+  } finally {
+    require.cache[limitsPath] = savedLimits;
+    require.cache[configPath] = savedConfig;
+  }
+});
+
+test('the delegate model list is absent in every fail-closed case', () => {
+  const cases = [
+    [makeService({ flags: { api_providers: false } }), MODEL],
+    [makeService({ hostMode: 'server' }), MODEL],
+    [makeService(), 'api-provider/openrouter/meta/llama-5'],
+    [makeService(), 'api-provider/groq/x'],
+    [makeService(), ''],
+  ];
+  for (const [service, model] of cases) {
+    assert.deepEqual(buildApiProviderSidecarConfig(service, 'api-provider', model), {});
+  }
+  assert.deepEqual(buildApiProviderSidecarConfig(makeService(), 'ollama', MODEL), {});
+});

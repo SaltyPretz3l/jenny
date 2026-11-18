@@ -16,6 +16,7 @@ const { applyPerformanceTelemetryPatch } = require('./shell-config-performance')
 const { applyPrimaryChatPatch } = require('./shell-config-primary-chat');
 const { normalizeApiProvidersConfig } = require('./backend/api-provider-config');
 const { applySubagentRoutingPatch } = require('./subagent-routing-settings');
+const { applyLocalSubagentEnginePatch } = require('./backend/local-subagent-engine');
 const { applyMemorySettingsPatch } = require('./shell-config-normalizers');
 const {
   normalizeOfflineIntelligence,
@@ -64,6 +65,11 @@ const settingsBlockMethods = {
       ? applySubagentRoutingPatch(this.state.subagentRouting, source.subagentRouting)
       : this.state.subagentRouting;
     const routingChanged = JSON.stringify(nextRouting) !== JSON.stringify(this.state.subagentRouting);
+    // Row 179: the local subagent engine pick rides the same patch.
+    const nextHelper = Object.hasOwn(source, 'localSubagentEngine')
+      ? applyLocalSubagentEnginePatch(this.state.localSubagentEngine, source.localSubagentEngine)
+      : this.state.localSubagentEngine;
+    const helperChanged = JSON.stringify(nextHelper) !== JSON.stringify(this.state.localSubagentEngine);
     const nextTools = normalizeToolsSettings({
       ...this.state.tools,
       ...(source.tools && typeof source.tools === 'object' && !Array.isArray(source.tools)
@@ -91,7 +97,7 @@ const settingsBlockMethods = {
       JSON.stringify(nextWebSearch) !== JSON.stringify(this.state.webSearch);
     const nextMemory = applyMemorySettingsPatch(this.state.memory, source.memory, this._getNow());
     const memoryChanged = JSON.stringify(nextMemory) !== JSON.stringify(this.state.memory);
-    if (!toolsChanged && !overridesChanged && !webSearchChanged && !routingChanged && !memoryChanged) {
+    if (!toolsChanged && !overridesChanged && !webSearchChanged && !routingChanged && !memoryChanged && !helperChanged) {
       return this.getState();
     }
 
@@ -103,6 +109,7 @@ const settingsBlockMethods = {
       featureOverrides: nextFeatureOverrides,
       memory: nextMemory,
       subagentRouting: nextRouting,
+      localSubagentEngine: nextHelper,
     };
     let reason = 'feature_settings_updated';
     if (toolsChanged && !overridesChanged) {

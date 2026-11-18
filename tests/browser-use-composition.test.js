@@ -66,5 +66,6 @@ test('closing a deleted chat does not start the service just to find nothing', a
   const lazy = createLazyBrowserUse({ getMainWindow: () => null });
   assert.equal(lazy.closeSession('chat-a'), null);
   assert.equal(lazy.closeFinished('chat-a'), false, 'nor does a chat reporting back');
+  assert.equal(lazy.peek(), null, 'nor does a state read peeking at it');
   await lazy.dispose();
 });

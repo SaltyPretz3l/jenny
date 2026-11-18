@@ -56,7 +56,9 @@ const SESSION_SCOPED = new Set(['session_changed', 'control_changed', 'decision_
 const PUBLISHER_SCOPED = new Set(['team_chat_channel', 'team_chat_message', 'team_chat_read', 'team_chat_typing',
   PRESENCE_EVENT, PROJECT_CHANGED_EVENT, POOL_NODES_EVENT, TEAM_DELETED_EVENT, 'team_upload_progress',
   'team_model_offer', 'team_model_transfer', RULES_CHANGED_EVENT, RULE_REQUESTS_EVENT, BOARD_CHANGED_EVENT,
-  BOARD_LIST_EVENT, BOARD_VIEWERS_EVENT, BOARD_CURSOR_EVENT, BOARD_LOCK_EVENT, BOARD_PROPOSALS_EVENT]);
+  BOARD_LIST_EVENT, BOARD_VIEWERS_EVENT, BOARD_CURSOR_EVENT, BOARD_LOCK_EVENT, BOARD_PROPOSALS_EVENT,
+  // Row 175 F13 (command-router-redo.js): the asked member's devices only.
+  'teammate_asked']);
 
 // sessionScope: authorize.js's { audience(sessionId), redeem(options, sessionId) }.
 // logger: (level, event, fields). Returns scopeEvent(type, payload, options): the

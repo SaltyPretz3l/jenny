@@ -1,13 +1,15 @@
 'use strict';
 
 // Bounded, append-only audit log of membership changes: team-audit.json,
-// schema 3, read with a 2 MiB cap. Entries carry ids and a display-name
+// schema 5, read with a 2 MiB cap. Entries carry ids and a display-name
 // snapshot, never a key, an address or an invite string. Project entries
 // (schema 2, TEAM_PROJECTS_SPEC slice 3-1) carry a `project_id` and ids only:
 // no display name, project name or path. Schema 3 adds the kind
-// `audit_log_reset`. Schema 1 and 2 files are upgraded explicitly on load
-// (schema 1 entries gain `project_id: null`) and written as schema 3 by the
-// next append or reconcile.
+// `audit_log_reset`, schema 4 the kind `member_profile_changed` (row 170) and
+// schema 5 the chat channel kinds (row 173), so an older host refuses a newer
+// file as a newer schema and never sets it aside. Schema 1 to 4 files are
+// upgraded explicitly on load (schema 1 entries gain `project_id: null`) and
+// written as schema 5 by the next append or reconcile.
 //
 // At host start the member store reads `startState()`. A file refused for its
 // content is set aside (`setAsideAndReset`) and the fresh log's first entry,
@@ -37,7 +39,7 @@ const {
 } = require('./member-schema');
 const { safeLogger } = require('./safe-logger');
 
-const AUDIT_SCHEMA_VERSION = 3;
+const AUDIT_SCHEMA_VERSION = 5;
 const AUDIT_LIMITS = Object.freeze({
   MAX_ENTRIES: 5000,
   MAX_BYTES: 2 * 1024 * 1024,
@@ -48,12 +50,22 @@ const AUDIT_LIMITS = Object.freeze({
 });
 
 // `invite_name_taken` (owner decision E79): a join refused for a taken name, its detail the invite id and the
-// count, never the name tried.
+// count, never the name tried. `member_profile_changed` (row 170): a member changed their own name or this device's
+// label; `name` is the new name when it changed, never the old one.
 const AUDIT_KINDS = Object.freeze([
   'invite_created', 'invite_redeemed', 'invite_revoked', 'member_admitted', 'role_changed',
   'member_revoked', 'member_left', 'device_added', 'device_revoked', 'owner_transferred', 'recovery_used',
-  'team_renamed', 'audit_log_reset', 'invite_name_taken',
+  'team_renamed', 'audit_log_reset', 'invite_name_taken', 'member_profile_changed',
 ]);
+
+// Row 173: a custom team chat channel archived, unarchived or deleted (services/host/team-chat-host.js
+// `chatAudit`). The actor is the member who did it; `name` is the channel's name when it is clean text, else null;
+// the detail is `channel_id=<id>`. Not membership kinds: kept apart as the project kinds are.
+const CHAT_AUDIT_KINDS = Object.freeze(['chat_channel_archived', 'chat_channel_unarchived', 'chat_channel_deleted']);
+
+// The schema that brought each kind added after schema 2: an older file holding one is refused on upgrade.
+const KIND_SINCE = Object.freeze({ audit_log_reset: 3, member_profile_changed: 4,
+  ...Object.fromEntries(CHAT_AUDIT_KINDS.map((kind) => [kind, 5])) });
 
 // Kinds about one shared project: `project_id` set, `name` always null.
 // `project_reconciled` is produced by slice 3-4's start-up reconcile.
@@ -62,7 +74,7 @@ const PROJECT_AUDIT_KINDS = Object.freeze([
   'project_owner_self_added', 'project_deleting', 'project_deleted', 'project_reconciled',
 ]);
 
-const ALL_KINDS = Object.freeze([...AUDIT_KINDS, ...PROJECT_AUDIT_KINDS]);
+const ALL_KINDS = Object.freeze([...AUDIT_KINDS, ...CHAT_AUDIT_KINDS, ...PROJECT_AUDIT_KINDS]);
 const READ_ORDERS = Object.freeze(['oldest', 'newest']);
 
 const ENTRY_KEYS_V1 = ['seq', 'at', 'kind', 'actor_member_id', 'subject_member_id', 'subject_device_id', 'name',
@@ -103,22 +115,25 @@ function validDocument(doc) {
   return validLogDocument(doc, { schemaVersion: AUDIT_SCHEMA_VERSION, maxEntries: AUDIT_LIMITS.MAX_ENTRIES, validEntry });
 }
 
-// The explicit migration to schema 3: a schema 1 document whose entries all
+function broughtLater(entry, version) {
+  return isPlainObject(entry) && typeof entry.kind === 'string' && Object.hasOwn(KIND_SINCE, entry.kind)
+    && KIND_SINCE[entry.kind] > version;
+}
+
+// The explicit migration to schema 5: a schema 1 document whose entries all
 // have exactly the schema 1 keys gains `project_id: null` on every entry; a
-// schema 2 document holds no `audit_log_reset` entry. Either becomes a fresh
-// schema 3 document held to every schema 3 rule. Returns null for anything else.
+// schema 2, 3 or 4 document is kept as it is. None may hold a kind a later schema
+// brought (KIND_SINCE). Each becomes a fresh schema 5 document held to every
+// schema 5 rule. Returns null for anything else.
 function upgradeDocument(doc) {
   if (!isPlainObject(doc) || !hasExactKeys(doc, LOG_DOCUMENT_KEYS)) return null;
   if (!Array.isArray(doc.entries) || doc.entries.length > AUDIT_LIMITS.MAX_ENTRIES) return null;
-  let entries;
+  if (![1, 2, 3, 4].includes(doc.schema_version)) return null;
+  if (doc.entries.some((entry) => broughtLater(entry, doc.schema_version))) return null;
+  let entries = doc.entries;
   if (doc.schema_version === 1) {
     if (!doc.entries.every((entry) => isPlainObject(entry) && hasExactKeys(entry, ENTRY_KEYS_V1))) return null;
     entries = doc.entries.map((entry) => ({ ...entry, project_id: null }));
-  } else if (doc.schema_version === 2) {
-    if (doc.entries.some((entry) => entry?.kind === 'audit_log_reset')) return null;
-    entries = doc.entries;
-  } else {
-    return null;
   }
   const upgraded = { ...doc, schema_version: AUDIT_SCHEMA_VERSION, entries };
   return validDocument(upgraded) ? upgraded : null;
@@ -309,5 +324,5 @@ class AuditLog {
 }
 
 module.exports = {
-  AUDIT_SCHEMA_VERSION, AUDIT_LIMITS, AUDIT_KINDS, PROJECT_AUDIT_KINDS, AuditLog,
+  AUDIT_SCHEMA_VERSION, AUDIT_LIMITS, AUDIT_KINDS, CHAT_AUDIT_KINDS, PROJECT_AUDIT_KINDS, AuditLog,
 };

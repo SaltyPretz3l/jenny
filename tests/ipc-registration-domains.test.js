@@ -72,7 +72,7 @@ const CASES = [
     'chat.hasPendingUserQuestions chat.answerUserQuestions chat.declineUserQuestions'],
   [chatIpc.registerChatStreamIpcHandlers, 'ipcAuthorization', {},
     'chat.startStream chat.editAndRegenerate chat.retryUnsavedReply chat.discardUnsavedReply'
-    + ' chat.getActiveTurnState chat.cancelStream chat.compactNow chat.firstSession handoff.generateNote attachments.pick'
+    + ' chat.getActiveTurnState chat.cancelStream chat.offerSteer chat.withdrawSteer chat.compactNow chat.firstSession handoff.generateNote attachments.pick'
     + ' attachments:prepare-dropped-paths attachments.prepare attachments.saveImageAsset attachments.releaseAssets'],
   [workspaceIpc.registerWorkspaceStateIpcHandlers, 'workspaceAuthorization', {
     app: { getPath: () => USER_DATA }, backendService: {}, shellConfigService: {},

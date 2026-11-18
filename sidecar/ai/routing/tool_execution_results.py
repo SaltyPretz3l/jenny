@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -10,7 +11,11 @@ from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.routing.harness_helpers import MAX_RESPONSE_CHARS
 from sidecar.ai.tools.failure_taxonomy import FAILURE_CLASSES, classify
 from sidecar.ai.tools.registry import build_default_registry
-from sidecar.ai.tools.result_envelope import render_tool_result_envelope
+from sidecar.ai.tools.result_envelope import (
+    envelope_approval,
+    envelope_refused_reason,
+    render_tool_result_envelope,
+)
 from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate, truncate_text
 from sidecar.runtime.tool_execution_support import (
     GenerationResult,
@@ -354,6 +359,12 @@ def tool_result_message(
             note=(
                 ignored_argument_note(call.tool_id, call.arguments) if outcome.success else None
             ),
+            approval=envelope_approval(metadata),
+            refused_reason=envelope_refused_reason(metadata) if outcome.success else None,
+            # The same local date Electron stamps on this row in history (prompt_cache's
+            # resolve_current_date calendar), so the replayed row stays byte-identical to the
+            # live one and the next turn's prompt cache still hits.
+            ran_on=date.today().isoformat(),
         )
     else:
         framed_content = (

@@ -33,7 +33,7 @@ const { RESPONSE_WRITE_TIMEOUT_MS, STATUS_BY_CODE } = require('../http-server');
 const { isId } = require('./ids');
 const { ENGINE_KEY_PATTERN } = require('./pool-composition');
 const {
-  COMMENT_INTERVAL_MS, JSON_HEADERS, SSE_HEADERS, TIMEOUT_REASONS, dropThinking, hasImagePart, isPlainObject, readBody,
+  COMMENT_INTERVAL_MS, JSON_HEADERS, SSE_HEADERS, TIMEOUT_REASONS, fitThinking, hasImagePart, isPlainObject, readBody,
 } = require('./pool-gateway');
 const { routeDenial } = require('./route-guard');
 const { safeLogger } = require('./safe-logger');
@@ -396,7 +396,7 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     if (!body) body = parsed(record.body); // queued: parsed again only now
     record.body = null;
     if (!body) { reject(record, 400, 'request_body_invalid'); return; }
-    if (info.thinking !== true) dropThinking(body);
+    fitThinking(body, info);
     // R16-F01: the leased model is the body's one model key. Every key equal to `model` under case folding
     // goes first (an engine that matches keys without regard to case, as Ollama's Go decoder does, would act
     // on another); JSON.parse already kept only the last of a duplicate, and the job gets this rebuild.

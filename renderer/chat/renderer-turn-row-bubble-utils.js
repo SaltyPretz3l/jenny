@@ -191,6 +191,14 @@
       const attachmentsMarkup = shouldRenderMessageAttachments(row, options)
         ? buildRowAttachmentsMarkup(messageForAttachments)
         : '';
+      if (sourceMessage && sourceMessage.kind === 'steer') {
+        // Row 180: a steer bubble has one muted caption and a Copy-only hover row.
+        const hoverRow = typeof renderOptions.renderSteerHoverRow === 'function'
+          ? String(renderOptions.renderSteerHoverRow(sourceMessage) || '')
+          : '';
+        const caption = `<div class="chat-entry__steer-caption">${escapeHtml(jt('chat.steer.caption', 'Sent while Jenny was working'))}</div>`;
+        return `<div class="chat-steer-entry">${bubbleMarkup}${attachmentsMarkup}${caption}${hoverRow}</div>`;
+      }
       return `${bubbleMarkup}${attachmentsMarkup}`;
     }
 

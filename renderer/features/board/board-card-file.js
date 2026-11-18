@@ -92,6 +92,7 @@
     let asking = 0;
     let form = null;
     let disposed = false;
+    let hidden = false;
 
     async function refreshMissing() {
       const boardId = boardIdOf(ctx);
@@ -105,7 +106,7 @@
       missing = next;
       if (changed && ctx.host && typeof ctx.host.redraw === 'function') ctx.host.redraw();
     }
-    const onFocus = () => { if (askedFor) void refreshMissing(); };
+    const onFocus = () => { if (askedFor && !hidden) void refreshMissing(); };
     if (windowRef && typeof windowRef.addEventListener === 'function') windowRef.addEventListener('focus', onFocus);
 
     async function open(card) {
@@ -225,6 +226,11 @@
         if (!boardId || askedFor === boardId) return;
         askedFor = boardId;
         void refreshMissing();
+      },
+      shown(isShown) {
+        hidden = !isShown;
+        // The files may have moved while the page was away: one read when it is back.
+        if (isShown && askedFor) void refreshMissing();
       },
       activate(card) { void open(card); return true; },
       tools: [{ id: 'file', label: jt('board.toolbar.file', 'File'), title: jt('board.toolbar.fileTitle', 'Add a file from the project folder'), order: 20, run: runTool }],

@@ -144,5 +144,5 @@ test('top nav: after a settings render on a teamData false state, a view switch 
   s.controller.applyViewChrome();
   await flush();
   assert.equal(s.requested.includes(GATE_SRC), false, 'the gate stays unrequested');
-  assert.deepEqual(s.tabs().includes('team'), false);
+  assert.deepEqual(s.tabs().includes('team'), true, 'row 168: the tab is in the rail; the gate loads only when it is opened');
 });

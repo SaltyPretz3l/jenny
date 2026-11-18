@@ -35,18 +35,10 @@
   function fresh() { return { inv: null, invFailed: false, typed: '', newName: '', restoreTyped: '', banner: null, exportOpen: '', exported: null, picked: null }; }
   function inv() { return globalThis.inventory || {}; }
   function input(opts) { return (globalThis.inventoryTextField || inv().textField)(opts); }
-  function tag() { try { return globalThis.jennyI18n?.tag?.() || undefined; } catch (_error) { return undefined; } }
+  const { tag, sizeText, dateText } = words;
   function num(n) { try { return new Intl.NumberFormat(tag()).format(n); } catch (_error) { return String(n); } }
   function p(text) { return text ? '<p>' + escapeHtml(text) + '</p>' : ''; }
 
-  function sizeText(bytes) {
-    const units = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'];
-    let value = Math.max(0, Number(bytes) || 0);
-    let i = 0;
-    while (value >= 1000 && i < units.length - 1) { value /= 1000; i += 1; }
-    try { return new Intl.NumberFormat(tag(), { style: 'unit', unit: units[i], unitDisplay: 'short', maximumFractionDigits: i >= 3 ? 2 : (i ? 1 : 0) }).format(value); } catch (_error) { return Math.round(value) + ' ' + units[i]; }
-  }
-  function dateText(ms) { try { return new Intl.DateTimeFormat(tag(), { dateStyle: 'medium' }).format(new Date(ms)); } catch (_error) { return ''; } }
   function listText(names) { try { return new Intl.ListFormat(tag(), { type: 'conjunction' }).format(names); } catch (_error) { return names.join(', '); } }
 
   function keyLost(host) { return Boolean(host && host.deployed && LOST.has(host.key)); }
@@ -414,5 +406,5 @@
 
   function reset() { ui = fresh(); asked += 1; }
 
-  return { lostKeyGroup, deleteGroup, exportRow, restoreRow, banner, status, keyLost, hostBusy, onClick, onInput, reset, _sizeText: sizeText };
+  return { lostKeyGroup, deleteGroup, exportRow, restoreRow, banner, status, keyLost, hostBusy, onClick, onInput, reset };
 });

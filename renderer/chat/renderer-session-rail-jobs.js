@@ -13,7 +13,12 @@
        its hover and Stop tooltip say so; getJobWaiters returns the waiting chats' titles ('' if untitled);
      - the Session toggle reads "N running" while this chat has live jobs and the tray is out of sight
        (hidden, or a closed sheet). It counts from the tracker's own push (backgroundJobs.onChanged), since
-       a hidden rail skips its summary refetches.
+       a hidden rail skips its summary refetches. Row 176: "N up" follows it for what this chat serves (a job
+       with a loopback server, the browser page while open): "1 running · 2 up", zero parts left out;
+     - Servers rows (row 176): Stop (data-rail-server-stop="job:<id>") kills the job like a job Stop and
+       "browser" closes the chat's browser page, each disabling itself until the next paint (a refusal
+       re-enables it). The chat's browser state (browserUse.getState, then its onChanged pushes for this chat)
+       is read here and handed to the rail through getBrowser; onBrowserChange asks it to repaint.
    Job text renders through textContent only, never markup. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -48,13 +53,16 @@
     return Boolean(shown);
   }
 
-  function createRailJobs({ tray, toggle = null, win, jt, getSessionId = () => '', trayShown = () => true, getBackgroundJobs, getJobWaiters = null, pathMenu: injectedPathMenu = null, getWorkspaceRoot = null } = {}) {
-    if (!tray || !win) return { handleClick: () => false, dispose: () => {} };
+  function createRailJobs({ tray, toggle = null, win, jt, getSessionId = () => '', trayShown = () => true, getBackgroundJobs, getJobWaiters = null, pathMenu: injectedPathMenu = null, getWorkspaceRoot = null, getBrowserUse = () => win?.jennyShell?.browserUse, onBrowserChange = null } = {}) {
+    if (!tray || !win) return { handleClick: () => false, getBrowser: () => null, syncBrowser: () => {}, dispose: () => {} };
     const paths = new Map(); // job id -> its output file path ('' while the read runs), once read
     let ticker = 0;
     let disposed = false;
     let trackedJobs = [];
     let unsubscribe = null;
+    let browser = null; // { open, url, title } while this chat's browser page is open
+    let browserOff = null;
+    let browserSeq = 0;
 
     function api() {
       try { return getBackgroundJobs() || null; } catch { return null; }
@@ -100,16 +108,48 @@
       const sessionId = getSessionId();
       const live = sessionId ? trackedJobs.filter((job) => job?.sessionId === sessionId
         && (job.state === 'running' || job.state === 'killing')) : [];
-      const running = live.length;
-      const shown = running > 0 && !trayShown();
+      const serving = live.filter((job) => job.serving);
+      const running = live.length - serving.length;
+      const up = serving.length + (browser ? 1 : 0);
+      const shown = (running > 0 || up > 0) && !trayShown();
       // One running test job also shows how far it is (row 96).
-      const percent = running === 1 && Number.isFinite(live[0].progress?.percent) ? Math.floor(live[0].progress.percent) : null;
-      const text = !shown ? '' : percent == null
-        ? jt('chat.sessionRail.tasks.running', '{count} running', { count: running })
-        : jt('chat.sessionRail.tasks.runningPercent', '{count} running · {percent}%', { count: running, percent });
+      const only = running === 1 ? live.find((job) => !job.serving) : null;
+      const percent = Number.isFinite(only?.progress?.percent) ? Math.floor(only.progress.percent) : null;
+      const parts = [];
+      if (running > 0) {
+        parts.push(percent == null
+          ? jt('chat.sessionRail.tasks.running', '{count} running', { count: running })
+          : jt('chat.sessionRail.tasks.runningPercent', '{count} running · {percent}%', { count: running, percent }));
+      }
+      if (up > 0) parts.push(jt('chat.sessionRail.servers.up', '{count} up', { count: up }));
+      const text = shown ? parts.join(' · ') : '';
       if (slot.hidden === shown) slot.hidden = !shown;
       const value = slot.querySelector('[data-session-rail-jobs-readout-value]');
       if (value && value.textContent !== text) value.textContent = text;
+    }
+
+    // This chat's browser page: read on a chat switch, then pushed. A bridge that is missing reads as no page.
+    function applyBrowser(state) {
+      const open = state?.open === true && String(state.url || '').trim() !== '';
+      const next = open ? { open: true, url: String(state.url), title: String(state.title || '') } : null;
+      const same = next ? browser?.url === next.url && browser?.title === next.title : !browser;
+      browser = next;
+      syncReadout();
+      if (!same && typeof onBrowserChange === 'function') onBrowserChange(browser);
+    }
+
+    function syncBrowser() {
+      const sessionId = getSessionId();
+      const bridge = getBrowserUse();
+      const before = browser;
+      browser = null;
+      browserSeq += 1;
+      if (before && typeof onBrowserChange === 'function') onBrowserChange(browser);
+      if (!sessionId || typeof bridge?.getState !== 'function') return syncReadout();
+      const seq = browserSeq;
+      Promise.resolve().then(() => bridge.getState({ session_id: sessionId })).then((state) => {
+        if (!disposed && seq === browserSeq && state?.ok === true) applyBrowser(state);
+      }).catch(() => {});
     }
 
     function applyJobs(snapshot) {
@@ -152,6 +192,19 @@
       Promise.resolve(api()?.kill?.(jobId)).then((result) => { if (!result || result.ok !== true) refused(); }).catch(refused);
     }
 
+    // Servers rows: Stop on a serving job, Close on the browser page; either disables itself until the next paint.
+    function stopServer(button) {
+      const target = button.getAttribute('data-rail-server-stop') || '';
+      const browserRow = target === 'browser';
+      const refused = () => {
+        button.disabled = false;
+        button.title = browserRow ? jt('chat.sessionRail.servers.closeFailed', 'Could not close the browser.') : jt('chat.backgroundJobs.stopFailed', 'Could not stop the background job.');
+      };
+      button.disabled = true;
+      const call = browserRow ? () => getBrowserUse()?.close?.({ session_id: getSessionId() }) : () => api()?.kill?.(target.replace(/^job:/, ''));
+      Promise.resolve().then(call).then((result) => { if (!result || result.ok !== true) refused(); }).catch(refused);
+    }
+
     // The workspace the chat path controller resolves against (published through the shared resolver).
     function currentRoot() {
       try { return String((getWorkspaceRoot || (() => win.jennyWorkspacePathResolve?.getWorkspaceRoot?.()))() || ''); } catch { return ''; }
@@ -169,10 +222,11 @@
     // The rail's tray click listener asks first; true means the click was Stop (a row's click opens the panel).
     function handleClick(event) {
       const target = event?.target?.closest ? event.target : null;
-      const control = target && target.closest('[data-rail-job-stop]');
+      const control = target && target.closest('[data-rail-job-stop], [data-rail-server-stop]');
       if (!control || !tray.contains(control)) return false;
       event.preventDefault();
-      stop(control);
+      if (control.hasAttribute('data-rail-server-stop')) stopServer(control);
+      else stop(control);
       return true;
     }
 
@@ -187,6 +241,12 @@
     const bridge = api();
     if (typeof bridge?.onChanged === 'function') unsubscribe = bridge.onChanged(applyJobs);
     if (typeof bridge?.getState === 'function') Promise.resolve(bridge.getState()).then((snapshot) => { if (!trackedJobs.length) applyJobs(snapshot); }).catch(() => {});
+    const browserBridge = getBrowserUse();
+    if (typeof browserBridge?.onChanged === 'function') {
+      // A push is newer than any getState still in flight for this chat, so it wins (the seq bump drops that reply).
+      browserOff = browserBridge.onChanged((event) => { if (!disposed && event?.session_id === getSessionId()) { browserSeq += 1; applyBrowser(event); } });
+    }
+    syncBrowser();
     sync();
 
     function dispose() {
@@ -197,11 +257,12 @@
       observer?.disconnect();
       toggleObserver?.disconnect();
       if (typeof unsubscribe === 'function') unsubscribe();
+      if (typeof browserOff === 'function') browserOff();
       if (ticker) win.clearInterval(ticker);
       ticker = 0;
     }
 
-    return { handleClick, sync, syncReadout, dispose };
+    return { handleClick, sync, syncReadout, getBrowser: () => browser, syncBrowser, dispose };
   }
 
   return { createRailJobs, showOutputPathMenu };

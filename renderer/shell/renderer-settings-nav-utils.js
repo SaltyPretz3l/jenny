@@ -365,7 +365,8 @@
     function labelOf(heading) {
       return [].map.call(heading.childNodes, function (node) {
         return node.nodeType === 1 && node.classList.contains('settings-fold-count') ? '' : node.textContent;
-      }).join('').replace(/\s+/g, ' ').trim();
+      // Joined with a space: a count beside the title ("People" + "1 of 8") is its own element, with no space in the markup.
+      }).join(' ').replace(/\s+/g, ' ').trim();
     }
     function collect(card) {
       if (!card) return [];

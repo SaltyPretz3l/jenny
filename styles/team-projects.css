@@ -31,7 +31,6 @@
 .team-project-root { flex: 1; min-block-size: 0; display: flex; flex-direction: column; }
 /* The page's parts and the box's slots are written one by one; they draw no box of their own. */
 [data-page-part], [data-conv-box="above"], [data-conv-box="below"] { display: contents; }
-.team-conv-box[hidden] { display: none; }
 .team-page { flex: 1; min-block-size: 0; overflow: auto; padding-block: var(--space-10) var(--space-16); padding-inline: var(--space-12); }
 .team-page__inner { max-inline-size: 760px; display: flex; flex-direction: column; gap: var(--space-12); }
 .team-page__lede { margin: 0; font-size: var(--font-size-body); color: var(--text-secondary); line-height: 1.5; max-inline-size: 620px; overflow-wrap: anywhere; }
@@ -39,6 +38,7 @@
 .team-page h3 .team-set-count { font-weight: 400; }
 .team-page__acts { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-block-start: var(--space-5); }
 .team-page__fact { margin: 0; font-size: var(--font-size-body); color: var(--text-secondary); overflow-wrap: anywhere; }
+.team-set-list--paused { opacity: 0.6; }
 .team-page .team-set-person__name, .team-page .team-set-person__fact { overflow-wrap: anywhere; }
 .team-progress { display: flex; flex-direction: column; gap: var(--space-3); margin-block-start: var(--space-5); max-inline-size: 560px; }
 .team-progress__line { display: flex; align-items: center; gap: var(--space-5); font-size: var(--font-size-footnote); color: var(--text-secondary); }
@@ -49,17 +49,245 @@
 /* ------------------------------------------------------ shared conversation */
 
 .team-conv { flex: 1; min-block-size: 0; display: flex; flex-direction: column; }
-.team-conv__scroll { flex: 1; min-block-size: 0; overflow: auto; padding-block: var(--space-8); padding-inline: 12%; }
+.team-conv__scroll { flex: 1; min-block-size: 0; overflow: auto; overflow-anchor: none; }
 .team-conv .team-head__name, .team-page ~ .team-head__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-author { display: block; margin-block: 0 var(--space-2); text-align: end; font-size: var(--tl-font-meta, var(--font-size-caption)); color: var(--text-muted); }
-.chat-author b { color: var(--text-secondary); font-weight: 600; }
 .team-head__sub b { color: var(--text-secondary); font-weight: 600; }
-.team-tool-line .turn-activity-label { color: var(--text-muted); }
 .team-drive { display: flex; align-items: center; gap: var(--space-5); padding-block: var(--space-6); padding-inline: var(--space-8); border-block-start: 1px solid var(--line); font-size: var(--font-size-body); color: var(--text-secondary); }
 .team-drive .btn { margin-inline-start: auto; }
 .team-drive__confirm { display: flex; flex-direction: column; gap: var(--space-4); padding-block: var(--space-6); padding-inline: var(--space-8); border-block-start: 1px solid var(--line); font-size: var(--font-size-body); color: var(--text-secondary); }
 .team-drive__confirm div { display: flex; gap: var(--space-4); }
 .team-drive__confirm p { margin: 0; }
 .team-drive__note { margin: 0; padding-inline: var(--space-8); }
-.team-conv-box { border-block-start: 1px solid var(--line); }
 .tool-approval-who { margin-block: var(--space-3) 0; margin-inline: 0; font-size: var(--font-size-caption); color: var(--text-muted); }
+
+/* --------------------------------------- shared conversation: stage and box (row 169) */
+
+/* What the channel (row 171, below) keeps from row 169's chat look: the stage, the earlier-page button, the hero, the
+ * question's who-line, the jump pill and the box's sentences, model fact and readers' line. */
+.team-conv__stage { position: relative; flex: 1; min-block-size: 0; display: flex; flex-direction: column; }
+.team-conv__earlier { align-self: center; border: 0; background: transparent; font: inherit; font-size: var(--font-size-footnote); color: var(--text-muted); cursor: pointer; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); }
+.team-conv__earlier:hover:not(:disabled) { color: var(--text-primary); background: var(--rail-hover-bg); }
+.team-conv__earlier:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; }
+.team-conv__earlier:disabled { cursor: default; }
+.team-conv__hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); text-align: center; padding-block: var(--space-10); }
+.team-conv__hero .hero-title { margin: 0; }
+.team-conv__hero p { margin: 0; max-inline-size: 460px; font-size: var(--font-size-body); line-height: 1.5; color: var(--text-muted); }
+.team-conv__who { margin: var(--space-3) 0 0; font-size: var(--font-size-footnote); color: var(--text-muted); }
+.team-conv__stage > .chat-jump-latest { bottom: var(--space-5); }
+
+/* The message box. */
+.team-conv__box { flex: none; padding-inline: var(--space-8); }
+.team-conv__box .team-composer__hint { margin: 0; padding-inline: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Above the box: "{Name} took over." and "Nobody is sharing a GPU": in the column, no rule across the page. */
+.team-conv__box .team-note-line, .team-conv__box .team-drive--above { max-inline-size: 860px; margin-inline: auto; box-sizing: border-box; border: 0; padding-inline: var(--space-5); }
+/* Two or more approvals wait in one turn (row 175 item 15): the batch banner above the box, like the chat's. */
+.team-batch { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-5); max-inline-size: 860px; margin-inline: auto; margin-block-end: var(--space-3); padding-block: var(--space-3); padding-inline: var(--space-5); box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--font-size-body); color: var(--text-secondary); }
+.team-batch__title { flex: 1; min-inline-size: 0; }
+.team-batch__actions { display: flex; gap: var(--space-3); }
+/* Somebody else drives, or read-only: the shell stays where it is and the sentence takes the field's place. */
+.team-conv__locked { display: flex; align-items: center; gap: var(--space-5); min-block-size: 44px; padding-inline: var(--space-5); font-size: var(--font-size-body); color: var(--text-secondary); }
+.team-conv__locked > span, .team-conv__locked > p { flex: 1; min-inline-size: 0; margin: 0; }
+.team-conv__locked[hidden] { display: none; }
+/* The readers' line (E68): always there, under the box, so the head keeps the title and who drives. */
+.team-conv__standing { margin: 0; padding-block: 0 var(--space-4); padding-inline: var(--space-8); text-align: center; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-head__rename { opacity: 0; }
+.team-head__rename:disabled { cursor: default; }
+/* The title being renamed: the field where the title was, no wider than a title needs. */
+.team-head .team-inline-name.team-head__title { flex: 0 1 360px; }
+.team-conv__locked > .team-drive__confirm { flex: 1; min-inline-size: 0; border: 0; padding: var(--space-3) 0; }
+.team-head:is(:hover, :focus-within) .team-head__rename { opacity: 1; }
+
+/* --------------------------------------- shared conversation as a channel (row 171) */
+
+/* Owner pick 2026-11-16, mockup team-conversation-channel: #team's own scroller, rows and composer (.team-scroll,
+ * .team-msg*, .team-composer*, team-chat.css) under the conversation head. Only what differs is set here: the working
+ * chip in Jenny's row and the frame of the turn's transcript popover (its insides keep the local chat's stylesheets). */
+.team-conv--channel { position: relative; }
+.team-conv--channel .team-conv__scroll { padding-block: 8px 6px; padding-inline: 0; }
+.team-conv--channel [data-conv-region="log"], .team-conv--channel [data-conv-region="live"], .team-conv--channel [data-conv-region="queued"] { display: contents; }
+.team-conv--channel .team-conv__qform { margin: 0; }
+/* Approval receipts line up with the rows' text column (.team-msg: 18px padding, 30px avatar, 12px gap). */
+.team-conv--channel .team-conv__receipts { display: flex; flex-direction: column; gap: 2px; padding-block: 2px 4px; padding-inline: 60px 18px; }
+.team-conv--channel .team-conv__receipts .tool-approval-block { margin: 0; padding: 0; border: 0; background: transparent; }
+.team-conv--channel .team-msg__text:empty { display: none; }
+/* Owner 2026-11-16: #team's 7% hover wash flickers across a long reply. Jenny's rows keep only their toolbar; members' rows go lighter. */
+.team-conv--channel .team-msg:is(:hover, :focus-within) { background: color-mix(in srgb, var(--text-muted) 3%, transparent); }
+.team-conv--channel .team-msg[data-turn-id]:is(:hover, :focus-within) { background: transparent; }
+.team-conv--channel .team-conv__box { padding-inline: 0; }
+.team-conv--channel .team-composer[hidden], .team-conv--channel .team-composer__field[hidden], .team-conv--channel .team-composer__bar[hidden] { display: none; }
+.team-conv--channel .team-composer__bar > [data-conv-box] { display: contents; }
+.team-conv--channel .team-composer__bar .team-composer__hint { margin-inline-start: auto; min-inline-size: 0; }
+
+/* The working chip: one quiet line in Jenny's row, the timeline's activity grammar (dot, label, elapsed, Show work). */
+.team-turn-chip { display: inline-flex; align-items: center; gap: 7px; max-inline-size: 100%; margin-block: 3px 2px; padding-block: 3px; padding-inline: 7px 9px;
+  border: 0; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--text-muted) 9%, transparent); color: var(--text-secondary);
+  font: inherit; font-size: var(--font-size-footnote); cursor: pointer; text-align: start; }
+.team-turn-chip:hover { background: color-mix(in srgb, var(--text-muted) 16%, transparent); color: var(--text-primary); }
+.team-turn-chip:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; }
+.team-turn-chip[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text-primary); }
+.team-turn-chip .status-dot { flex: none; }
+.team-turn-chip__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-turn-chip__label.shimmer-active { animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite; }
+.team-turn-chip__time { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.team-turn-chip__more { flex: none; color: var(--text-link); }
+.team-turn-chip[data-state="asks"] .team-turn-chip__label { color: var(--text-primary); font-weight: 600; }
+.team-turn-chip[data-state="failed"] .team-turn-chip__label { color: var(--text-danger-soft); }
+.team-turn-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.team-turn-line .team-icon-btn { height: 24px; }
+.team-turn-line .team-icon-btn rect { fill: currentColor; stroke: none; }
+/* Row 175: why a turn failed, and that Jenny summarised earlier turns: quiet lines under the chip. */
+.team-turn-reason, .team-turn-compact { margin-block: var(--space-2) 0; margin-inline: 0; font-size: var(--font-size-caption); color: var(--text-muted); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .team-turn-chip__label.shimmer-active { animation: none; } }
+
+/* A question in the channel: the Team's own card at the text's measure, with whose turn asked under it. */
+.team-msg .team-conv__question { max-inline-size: min(560px, var(--chat-measure-cap)); margin-block: 6px 2px; }
+
+/* The transcript popover: from the inline end (where a #team thread opens), over the channel, ending above the box.
+ * The host covers the stage's end side; only the popover inside it takes the pointer. */
+.team-turn-pop-host { position: absolute; inset-block: 0; inset-inline-end: 0; z-index: 6; inline-size: min(500px, 100%); pointer-events: none; }
+.team-turn-pop-host:empty { display: none; }
+.team-turn-pop { pointer-events: auto; block-size: 100%; display: flex; flex-direction: column; box-sizing: border-box;
+  background: var(--bg-base); border-inline-start: 1px solid var(--line-strong); box-shadow: var(--shadow-soft); }
+.team-turn-pop__head { flex: none; display: flex; align-items: center; gap: 8px; padding-block: 10px; padding-inline: 16px 10px; border-block-end: 1px solid var(--line); }
+.team-turn-pop__title { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; gap: 1px; }
+.team-turn-pop__title b { font-size: var(--font-size-body); font-weight: 600; color: var(--text-primary); }
+.team-turn-pop__title span { font-size: var(--font-size-caption); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Follow is the popover's own (renderer-team-turn-pop-follow.js): browser scroll anchoring would fight it. */
+.team-turn-pop__scroll { flex: 1; min-block-size: 0; overflow-y: auto; overflow-anchor: none; padding-block: var(--space-6) var(--space-8); padding-inline: var(--space-6); }
+.team-turn-pop__scroll > .chat-timeline { display: flex; flex-direction: column; gap: var(--tl-turn-gap, 22px); }
+.team-turn-pop .chat-entry { max-inline-size: 100%; }
+.team-turn-pop .chat-entry.assistant { inline-size: 100%; }
+.team-turn-pop__foot { flex: none; margin: 0; padding-block: 8px 12px; padding-inline: 16px; font-size: var(--font-size-caption); color: var(--text-muted); border-block-start: 1px solid var(--line); }
+.team-turn-pop__stop { display: inline-flex; align-items: center; gap: 6px; }
+.team-turn-pop__stop svg rect { fill: currentColor; stroke: none; }
+/* Who asked, over the prompt bubble (the head's sub-line type), and how a failed or stopped turn ended. */
+.team-turn-pop__by { margin-block: 0 var(--space-2); text-align: end; font-size: var(--font-size-caption); color: var(--text-muted); overflow-wrap: anywhere; }
+.team-turn-pop__end { margin-block: var(--space-4) 0; font-size: var(--font-size-caption); color: var(--text-muted); }
+.team-turn-pop__end[data-end-kind="failed"] { color: var(--text-danger-soft); }
+.team-turn-pop__compact { font-size: var(--font-size-caption); color: var(--text-muted); }
+/* The Board's narrow conversation column: a full-column sheet. */
+.team-conv[data-board="true"] .team-turn-pop-host { inline-size: 100%; }
+/* Narrow, by the Team view's width (not the window's): a full-width sheet, no shadow. */
+@container teamview (max-width: 720px) {
+  .team-turn-pop-host { inline-size: 100%; }
+  .team-turn-pop { box-shadow: none; }
+}
+
+/* The conversation rows in the Projects section: a menu button over the row's end, a rename field, a delete confirm. */
+.team-proj__kids .team-row--conv { position: relative; display: flex; align-items: center; }
+.team-proj__kids .team-row--conv > .team-row--link { flex: 1; min-inline-size: 0; }
+.team-row__trail { margin-inline-start: auto; display: inline-flex; align-items: center; gap: var(--space-2); }
+.team-row__menu { position: absolute; inset-inline-end: 2px; inset-block-start: 50%; transform: translateY(-50%); opacity: 0; block-size: 24px; padding-block: 0; padding-inline: 5px; }
+.team-row--conv:is(:hover, :focus-within) .team-row__menu, .team-row__menu[aria-expanded="true"] { opacity: 1; }
+.team-row--conv:is(:hover, :focus-within) .team-row__trail { visibility: hidden; }
+/* The rename field takes the row's place: the create field's own row (.team-inline-name), with no line under it. */
+.team-proj__kids .team-row--conv.team-inline-name { padding-block: 2px; }
+.team-row__confirm { padding-block: var(--space-2) var(--space-4); padding-inline: var(--space-4); font-size: var(--font-size-footnote); color: var(--text-secondary); }
+.team-row__confirm p { margin-block: 0 var(--space-3); margin-inline: 0; overflow-wrap: anywhere; }
+.team-row__confirm div { display: flex; gap: var(--space-3); }
+
+
+/* ------------------------------------- the Tools chip and model pill (row 172) */
+
+/* The local composer's own chip, panel and picker (chat-composer-shell-v2.css) in the #team bar: the chip follows the attach
+ * icon, the pill sits before Send, both open upward from their own anchor. Disabled, never hidden; the reason is in the popover. */
+.team-conv-ctl { position: relative; display: inline-flex; }
+.team-conv-ctl .inv-chip { block-size: var(--composer-secondary-control-size, 26px); }
+.team-conv-ctl--tools { margin-inline-start: var(--space-3); }
+.team-conv-ctl--model { margin-inline-end: var(--space-4); }
+.team-conv-ctl .composer-chat-panel { inset-inline-start: 0; }
+.team-conv-ctl .composer-model-popover { inset-inline-end: 0; }
+.team-conv-ctl .inv-popover:focus { outline: none; }
+.team-conv-ctl .inv-chip[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.team-conv-ctl .composer-model-pill .inv-chip-label { max-inline-size: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-conv-ctl .composer-tools-chip .inv-chip-count { padding: 0; border: 0; background: none; color: var(--accent-amber); font-size: var(--font-size-caption); }
+.team-conv-ctl .composer-chat-panel-foot > :last-child { margin-inline-start: auto; color: var(--text-muted); }
+/* Who may change: a read-only line in the popover's head. */
+.team-conv-ro { margin: 0; padding-block: 0 var(--space-3); padding-inline: var(--space-5); font-size: var(--font-size-footnote); color: var(--text-muted); }
+.composer-model-picker > .team-conv-ro { padding-inline: 0; }
+/* The channel's quiet line when somebody changes Jenny's model or tools: plain text in the message column. */
+.team-conv-note { padding-block: 2px; padding-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-muted); overflow-wrap: anywhere; }
+.team-conv-note b { color: var(--text-secondary); font-weight: 600; }
+
+/* ------------------------------------- a project's files: the tree, a file, the workspace panel (row 175 round 2, D13) */
+
+/* The tree reuses the column's own row (.team-row.team-row--link: hover, current and focus rings exist); indent by depth. */
+.team-ftree { display: flex; flex-direction: column; }
+.team-ftree__row { padding-inline-start: calc(var(--space-4) + var(--depth, 0) * var(--space-7)); font-size: var(--font-size-footnote); }
+.team-ftree__chev { flex: none; inline-size: 12px; block-size: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; color: var(--text-muted); transition: transform var(--motion-duration-fast, 120ms); }
+.team-ftree__row[aria-expanded="false"] .team-ftree__chev { transform: rotate(-90deg); }
+[dir="rtl"] .team-ftree__row[aria-expanded="false"] .team-ftree__chev { transform: rotate(90deg); }
+.team-ftree__gap { flex: none; inline-size: 12px; }
+.team-ftree__row[data-ftree-kind="dir"] .team-row__name { color: var(--text-primary); }
+.team-ftree__row .team-row__meta { font-variant-numeric: tabular-nums; }
+/* "Showing the first 500 of 1,284 entries" and its button: one quiet line under the tree. */
+.team-ftree__foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); margin-block-start: var(--space-5); padding-inline: var(--space-4); font-size: var(--font-size-footnote); color: var(--text-muted); }
+.team-ftree__foot p { margin: 0; }
+/* A state in the tree's place (loading, empty, unavailable, failed). */
+.team-ftree__state { margin-block-start: var(--space-5); padding-inline: var(--space-4); font-size: var(--font-size-body); line-height: 1.5; color: var(--text-muted); max-inline-size: 520px; }
+.team-ftree__state b { display: block; margin-block-end: var(--space-1); color: var(--text-primary); font-weight: 600; }
+.team-ftree__state .btn { margin-block-start: var(--space-3); }
+/* The tree in the side column: the preview body's padding, narrower. */
+.team-preview__body--tree { padding-block: var(--space-4) var(--space-8); padding-inline: var(--space-5); }
+/* A picture: fitted to the width, never wider than its own pixels. */
+.team-fimg { margin: 0; }
+.team-fimg__img { display: block; max-inline-size: 100%; block-size: auto; margin-inline: auto; border-radius: var(--radius-sm); }
+/* The workspace panel: the inventory drawer, wider, with the tree and the file side by side. */
+#teamFilesPanel.inv-drawer-host { grid-template-columns: minmax(0, 1fr) minmax(320px, min(1180px, 88vw)); }
+#teamFilesPanel .inv-drawer-panel { display: flex; flex-direction: column; overflow: hidden; }
+#teamFilesPanel .inv-drawer-body { flex: 1; min-block-size: 0; padding: 0; }
+.team-fpanel { display: grid; grid-template-columns: minmax(220px, 32%) minmax(0, 1fr); block-size: 100%; min-block-size: 0; }
+.team-fpanel__tree { min-block-size: 0; overflow: auto; padding-block: var(--space-4) var(--space-8); padding-inline: var(--space-4); border-inline-end: 1px solid var(--line); }
+.team-fpanel__view { display: flex; flex-direction: column; min-inline-size: 0; min-block-size: 0; }
+.team-fpanel .team-preview__head { padding-inline-start: var(--space-6); }
+.team-fpanel .team-preview__body { padding-inline: var(--space-7); }
+@media (max-width: 720px) {
+  #teamFilesPanel.inv-drawer-host { grid-template-columns: 0 minmax(0, 1fr); }
+  .team-fpanel { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 40%) minmax(0, 1fr); }
+  .team-fpanel__tree { border-inline-end: 0; border-block-end: 1px solid var(--line); }
+}
+
+/* Row 175 item 16: the dictation line (the local composer's own) above the project box's field. */
+.team-composer__field > .composer-dictation-line { padding: var(--space-2) var(--space-3) 0; }
+
+/* Row 175 item 8: Find in a project conversation (renderer-team-project-find.js). The bar is the local chat's own
+ * .chat-search-bar* (styles/chat-search-v2.css, with its ::highlight paint); only its place in the head and the one quiet
+ * line under the head are new. The popover host is inside the stage, under the head, so the field is never covered. */
+.team-head > .chat-find { flex: 1 1 auto; min-inline-size: 0; max-inline-size: 34rem; margin-inline-end: auto; container-type: inline-size; }
+.team-head[data-find-open] > :is(.team-head__name, .team-head__sub, .team-head__rename, .team-head__title, .team-head__actions) { display: none; }
+.team-find-note { margin: 0; padding-block: var(--space-3); padding-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-muted); }
+.team-find-note button { padding: 0; border: 0; background: transparent; font: inherit; color: var(--text-link); cursor: pointer; }
+.team-find-note button:hover { text-decoration: underline; }
+.team-find-note button:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 2px; border-radius: 2px; }
+@container teamview (max-width: 720px) { .team-find-note { padding-inline: 54px 12px; } }
+
+/* Row 175 item 1, D13 and item 13: path chips, the head's Files button and the @file picker (renderer-team-project-paths.js).
+ * The chips are the local chat's own .tool-path-chip, .chat-inline-path and .chat-path-more (styles/chat-tool-block-v2.css,
+ * styles/chat-machinery.css); the path menu is the inventory context menu; the picker is the channel composer's .team-menu. */
+.team-head__actions + .team-head__actions { margin-inline-start: 0; }
+.team-menu--files { max-inline-size: min(420px, 100%); }
+.team-menu--files .team-row__name { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-menu--files .team-row__note { max-inline-size: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-menu__note { padding-block: 4px; padding-inline: 8px; font-size: var(--font-size-footnote); color: var(--text-muted); }
+
+/* Row 175 item 7, D14: plan mode in a project conversation (renderer-team-project-plan.js). The Plan chip is the Tools chip's sibling and,
+ * on, takes the local composer's Plan colour; the plan is the local .plan-document and its receipt (styles/chat-plan-document.css) at the
+ * row's text measure, read-only (no title or step editing in Team). */
+.team-conv-ctl--plan { margin-inline-start: var(--space-2); }
+.team-conv-ctl .composer-plan-chip.inv-chip--on { color: var(--accent-amber); border-color: color-mix(in srgb, var(--accent-amber) 56%, var(--border-strong)); background: var(--widget-composer-mode-active-bg); }
+.team-conv-ctl .composer-plan-chip.inv-chip--on:hover:not(.inv-chip--disabled) { background: color-mix(in srgb, var(--accent-amber) 18%, var(--widget-composer-mode-active-bg)); }
+.team-msg__body .plan-document { margin-block: var(--space-4) 0; padding-block: var(--space-3) 0; gap: var(--space-6); max-inline-size: 72ch; }
+.team-msg__body .plan-document :is(.plan-document__title, .plan-document__step-text) { cursor: default; }
+.team-msg__body .plan-document :is(.plan-document__step-lead, .plan-document__step-flow, .plan-document__step-plain) { padding-inline-end: 0; }
+.team-msg__body .plan-document .tool-approval-who, .team-plan-act .tool-approval-who { margin: 0; }
+.team-msg__body .plan-document-receipt, .team-turn-pop .plan-document-receipt { max-inline-size: 72ch; }
+.team-plan-act { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-block-start: var(--space-3); }
+.team-turn-pop .plan-document-receipt { margin-block-start: var(--space-6); }
+
+/* Row 175 items 5, 6, 11, F13, F18 (renderer-team-project-actions.js): the row's redo confirm and editor at the text measure, the
+ * toast over the stage (it ends above the box), Ask a teammate under an approval card, and host receipts under their turn (inside
+ * the row, so without the log's gutter). */
+.team-conv-act { margin-block: var(--space-2) 0; max-inline-size: 72ch; }
+.team-conv__stage > .team-copied { inset-block-end: var(--space-6); }
+.team-conv-ask { margin: var(--space-2) 0 0; }
+.team-conv--channel .team-msg .team-conv__receipts--turn { padding-inline: 0; }

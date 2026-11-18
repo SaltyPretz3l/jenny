@@ -206,6 +206,10 @@ test('a failed restore leaves the relay token this PC had before exactly as it w
 
 test('a restored team comes back with internet joining off and the backup\'s values kept for the form; a bad value is refused', async (t) => {
   const host = team(t, { holds: false });
+  // Team host file tools I11: a team exported with file tools on is restored with them off.
+  const configPath = path.join(host.userDataPath, 'team-host', 'host-config.json');
+  const live = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  fs.writeFileSync(configPath, JSON.stringify({ ...live, team: { ...live.team, file_tools: true } }));
   const answer = await exported(host);
   assert.equal((await host.controller.handle('hostDelete', { name: TEAM_NAME })).ok, true);
   host.picks.file = path.join(answer.folder, `${TEAM_NAME}.jennyteam`);
@@ -213,6 +217,8 @@ test('a restored team comes back with internet joining off and the backup\'s val
   const restored = await host.controller.handle('hostRestore', { password: PASSWORD, ...NAMES });
   assert.equal(restored.ok, true, JSON.stringify(restored));
   assert.equal(restored.host.internet, null, 'off until the owner turns it on through the page');
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(configPath, 'utf8')).team, 'file_tools'), false,
+    'I11: file tools come back off');
   assert.deepEqual(restored.host.internet_draft, { public_address: null, relay_url: 'https://relay.example.org' });
   assert.equal(host.secureStore.values.has(HOST_RELAY_TOKEN_NAME), false, 'the backup\'s token is not stored: the owner enters it with the relay');
   assert.equal((await host.controller.handle('hostInternet', { enabled: true })).ok, true, 'turning it on keeps the draft for the form');

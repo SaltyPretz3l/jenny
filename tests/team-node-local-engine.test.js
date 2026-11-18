@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
 const test = require('node:test');
 
-const { DEFAULT_READERS, resolveLocalEngine } = require('../services/team/node/local-engine');
+const { DEFAULT_READERS, readModelCapabilities, resolveLocalEngine } = require('../services/team/node/local-engine');
 const { readModels } = require('../services/team/node/engine-forward');
 const { isCloudModelName } = require('../services/cli-host/local-only-providers');
 const { createManualTimers } = require('./helpers/team-node-agent-fixture');
@@ -58,4 +58,26 @@ test('readModels never offers a cloud model, on any engine', async () => {
   const engine = { call: async () => ({ status: 200, body: Readable.from([Buffer.from(JSON.stringify({ data: listed.map((id) => ({ id })) }))]) }) };
   const read = await readModels({ engine, target: {}, timers: createManualTimers() });
   assert.deepEqual(read.models.map((entry) => entry.name), ['qwen3.8-27b', 'gemma-4-12b']);
+});
+
+test('model capabilities come from the member\'s own list for the current engine; a failed read is null', async () => {
+  const seen = [];
+  const list = async (service, engineType) => {
+    seen.push(engineType);
+    return { data: [
+      { id: 'thinker', capabilities: { thinking: true, reasoning_effort: true } },
+      { id: 'seer', capabilities: { vision: true } },
+      { id: 'plain' },
+      { id: 'thinker', capabilities: { vision: true } },
+      { id: 'odd', capabilities: { vision: 'yes', thinking: 1 } },
+    ] };
+  };
+  const caps = await readModelCapabilities({ currentEngineType: 'Ollama' }, list);
+  assert.deepEqual(seen, ['ollama']);
+  assert.deepEqual([...caps], [['thinker', { vision: false, thinking: true }], ['seer', { vision: true, thinking: false }],
+    ['odd', { vision: false, thinking: false }]]);
+  assert.equal(await readModelCapabilities({ currentEngineType: 'ollama' }, async () => { throw new Error('sidecar'); }), null);
+  assert.equal(await readModelCapabilities({ currentEngineType: 'ollama' }, async () => ({ data: 'x' })), null);
+  assert.equal(await readModelCapabilities({ currentEngineType: '' }, list), null);
+  assert.equal(await readModelCapabilities(null, list), null);
 });

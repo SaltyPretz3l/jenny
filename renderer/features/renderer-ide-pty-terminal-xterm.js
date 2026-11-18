@@ -216,13 +216,13 @@
       }
     }
 
-    // Open the live xterm on `mount` when it is not already hosted there.
-    // Returns true when it (re)attached.
+    // Open the live xterm on `mount` when it is not already hosted there; an opened xterm (whose second open() is a
+    // no-op) moves its own element instead (row 178: the IDE view <-> the chat panel). Returns true when it (re)attached.
     function attach(mount) {
       if (!term || !mount || mountedEl === mount) {
         return false;
       }
-      try { term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
+      try { if (term.element) { if (term.element.parentNode !== mount) mount.appendChild(term.element); } else term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
       mountedEl = mount;
       observeResize(mount);
       unbindContextMenu?.();
@@ -518,6 +518,11 @@
       }
     }
 
+    // The live selection ('' when none or no terminal).
+    function getSelection() {
+      try { return term && typeof term.getSelection === 'function' ? String(term.getSelection() || '') : ''; } catch (error) { logIgnoredError('selection', error); return ''; }
+    }
+
     // Focus the live, hosted xterm; false when there is none.
     function focus() {
       if (term && mountedEl && typeof term.focus === 'function') {
@@ -566,6 +571,7 @@
       flushPendingWrites,
       focus,
       forgetMount,
+      getSelection,
       getDropStats: () => ({ events: writeDroppedEvents, bytes: writeDroppedBytes }),
       getSize: () => ({ cols: term ? term.cols : 0, rows: term ? term.rows : 0 }),
       getTerminal: () => term,

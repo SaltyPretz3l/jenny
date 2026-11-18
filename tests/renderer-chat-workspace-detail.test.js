@@ -40,8 +40,23 @@ function setup(overrides = {}) {
   return { dom, document, detail, calls, clicks, el: (id) => document.getElementById(id) };
 }
 
-test('the five surfaces are the closed set', () => {
-  assert.deepEqual([...SURFACES], ['outputs', 'changes', 'background_tasks', 'context', 'environment']);
+test('the surfaces are the closed set', () => {
+  assert.deepEqual([...SURFACES], ['outputs', 'changes', 'background_tasks', 'browser', 'context', 'environment']);
+});
+
+test('browser opens the Browser panel through the shell seam, and reports false when the seam is missing or declines', () => {
+  const h = setup();
+  const open = () => h.detail.open({ surface: 'browser', ownerSessionId: 's1', opener: h.el('row0') });
+  assert.equal(open(), false, 'no seam published: nothing opens');
+  assert.equal(h.detail.getCurrent(), null);
+  let calls = 0;
+  h.dom.window.rendererOpenBrowserUsePanel = () => { calls += 1; return false; };
+  assert.equal(open(), false, 'a Browser panel that has not loaded declines');
+  h.dom.window.rendererOpenBrowserUsePanel = () => { calls += 1; return true; };
+  assert.equal(open(), true);
+  assert.equal(calls, 2);
+  assert.equal(h.detail.getCurrent(), null, 'the Browser panel closes through its own controls, so it is never tracked as current');
+  assert.deepEqual(h.clicks, [], 'no composer control is clicked for it');
 });
 
 test('an unknown surface or a missing owner is refused and opens nothing', () => {

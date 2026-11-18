@@ -53,9 +53,12 @@ from sidecar.ai.tools.builtins.handle_containment import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.hosted_file_io import (
+    FILE_ACCESS_LATCHED_FIELD,
+    hosted_file_access_latched,
     hosted_file_io_enabled,
     hosted_file_io_identity,
     hosted_win32_files_enabled,
+    latch_hosted_file_access,
     scoped_hosted_file_io,
     set_hosted_win32_files,
 )
@@ -103,7 +106,7 @@ def grep_search_worker_main(
     sink = output_stream if output_stream is not None else sys.stdout
 
     def emit(response: object) -> None:
-        sink.write(encode_worker_message(response))
+        sink.write(encode_worker_message(_with_latch(response)))
         sink.flush()
 
     emit(WORKER_READY_MESSAGE)
@@ -129,10 +132,26 @@ def grep_search_worker_main(
             continue
         if request is None:
             return 0
-        if isinstance(request, dict) and request.get("op") == SCAN_BATCH_OP:
-            run_scan_batch_request(request, emit)
-        else:
-            emit(run_worker_request(request))
+        _answer(request, emit)
+
+
+def _with_latch(response: object) -> object:
+    """A latched worker says so on every answer, so the parent latches too (W14
+    review, finding 1)."""
+    if not isinstance(response, dict) or response is WORKER_READY_MESSAGE:
+        return response
+    if hosted_file_access_latched():
+        return {**response, FILE_ACCESS_LATCHED_FIELD: True}
+    return response
+
+
+def _answer(request: object, emit: Callable[[object], None]) -> None:
+    if isinstance(request, dict) and request.get(FILE_ACCESS_LATCHED_FIELD) is True:
+        latch_hosted_file_access()  # the parent's library latched: a fresh child starts latched
+    if isinstance(request, dict) and request.get("op") == SCAN_BATCH_OP:
+        run_scan_batch_request(request, emit)
+    else:
+        emit(run_worker_request(request))
 
 
 def run_worker_request(request: object) -> dict[str, object]:
@@ -182,12 +201,15 @@ def hosted_request_fields() -> dict[str, object]:
     """The parent's hosted state for one worker request: the mode, the Windows
     switch and the active scope's root identity, which the worker pins with."""
     device_id, inode = hosted_file_io_identity()
-    return {
+    fields: dict[str, object] = {
         "hosted_file_io": hosted_file_io_enabled(),
         "hosted_win32_files": hosted_win32_files_enabled(),
         "workspace_device_id": device_id,
         "workspace_inode": inode,
     }
+    if hosted_file_access_latched():
+        fields[FILE_ACCESS_LATCHED_FIELD] = True
+    return fields
 
 
 def _identity_field(request: dict[str, object], key: str) -> str | None:
@@ -411,7 +433,6 @@ def scan_text_batches(  # noqa: PLR0913
     """
     remaining_matches, remaining_bytes = max_output_matches, max_output_bytes
     index = 0
-    hosted = hosted_request_fields()
     while index < len(paths):
         chunk = _next_chunk(paths, index)
         worker.send(
@@ -421,7 +442,7 @@ def scan_text_batches(  # noqa: PLR0913
                 "pattern": compiled.pattern,
                 "flags": int(compiled.flags),
                 "workspace_root": str(workspace_root) if workspace_root is not None else "",
-                **hosted,
+                **hosted_request_fields(),  # per batch: a latch since the last one goes with it
                 "context_lines": context_lines,
                 "max_output_matches": remaining_matches,
                 "max_output_bytes": remaining_bytes,

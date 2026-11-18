@@ -519,7 +519,7 @@ test('reasoning appearance triggers article replacement not a stale skip', async
   assert.match(bodyText, /Then I can answer live/);
 });
 
-test('active streaming assistant branches stay expanded even after a collapse toggle', async (t) => {
+test('active streaming assistant branches over compat-only tool children stay expanded with no toggle', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -574,20 +574,22 @@ test('active streaming assistant branches stay expanded even after a collapse to
   });
   await waitForUiState(
     window,
-    () => timeline.querySelector('[data-thread-toggle="assistant_stream-test-1"]')
+    () => timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_stream-test-1"]')
       && timeline.querySelectorAll('article[data-message-id="assistant_stream-test-1"]').length === 1
   );
 
-  const toggle = timeline.querySelector('[data-thread-toggle="assistant_stream-test-1"]');
-  assert.ok(toggle, 'streaming assistant branch should expose a thread toggle when it owns multiple tool calls');
+  // ef75503fb: the turn article's row list already shows its tool rows, so a
+  // node whose children are all envelope compat anchors renders no toggle.
+  assert.equal(
+    timeline.querySelector('[data-thread-toggle="assistant_stream-test-1"]'),
+    null,
+    'a streaming turn whose tool children are all compat anchors should not render a collapse toggle'
+  );
   assert.equal(
     timeline.querySelectorAll('article[data-message-id="assistant_stream-test-1"]').length,
     1,
     'streaming renders should keep a single assistant article for the active stream'
   );
-
-  toggle.click();
-  await waitForUi(window, 40);
 
   const assistantBranch = timeline.querySelector('.chat-thread-node[data-thread-message-id="assistant_stream-test-1"]');
   const assistantChildren = timeline.querySelector('.chat-thread-children[data-thread-parent="assistant_stream-test-1"]');

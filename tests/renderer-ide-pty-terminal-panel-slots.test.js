@@ -144,3 +144,92 @@ test('the panel markup uses no fixed DOM ids, so four instances coexist', async 
   panel.renderTerminalPanel();
   assert.equal(mount.querySelectorAll('[id]').length, 0);
 });
+
+// terminal_run start fixes: a start in flight is shared, the start place rides the spawn, a refusal says why.
+function deferredSpawnApi() {
+  const api = fakePtyApi();
+  api.release = () => {};
+  api.spawn = (payload) => {
+    api.calls.spawn.push(payload);
+    return new Promise((resolve) => { api.release = () => resolve({ ok: true, sessionId: 'pty-1', shell: 'sh', cwd: '/w' }); });
+  };
+  return api;
+}
+
+test('two concurrent startSession calls share one spawn and both resolve true', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = deferredSpawnApi();
+  const { panel } = build(harness, { api });
+  panel.renderTerminalPanel();
+  const first = panel.startSession();
+  const second = panel.startSession();
+  api.release();
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(api.calls.spawn.length, 1, 'the second caller did not spawn again');
+  assert.equal(panel.getLastStartFailure(), null);
+});
+
+test('a concurrent start asking for a different place gets false, spawns nothing extra and records no failure', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = deferredSpawnApi();
+  const { panel } = build(harness, { api });
+  panel.renderTerminalPanel();
+  const first = panel.startSession();
+  const other = panel.startSession({ place: 'start_folder' });
+  api.release();
+  assert.equal(await first, true);
+  assert.equal(await other, false, 'the in-flight start does not use the start folder');
+  assert.equal(api.calls.spawn.length, 1);
+  assert.equal('place' in api.calls.spawn[0], false);
+  assert.equal(panel.getLastStartFailure(), null, 'a place mismatch is not a start failure');
+});
+
+test('a concurrent start with options never shares the in-flight shell, even for the same place (two runs, two shells)', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = deferredSpawnApi();
+  const { panel } = build(harness, { api });
+  panel.renderTerminalPanel();
+  const first = panel.startSession({ place: 'start_folder' });
+  const second = panel.startSession({ place: 'start_folder' });
+  api.release();
+  assert.deepEqual(await Promise.all([first, second]), [true, false]);
+  assert.equal(api.calls.spawn.length, 1);
+  assert.equal(panel.getLastStartFailure(), null, 'no failure: the caller retries on another terminal');
+});
+
+test('startSession with place start_folder sends it to spawn, and Restart keeps it', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const { panel, api, mount } = build(harness);
+  panel.renderTerminalPanel();
+  panel.bindEvents();
+  assert.equal(await panel.startSession({ place: 'start_folder' }), true);
+  assert.equal(api.calls.spawn[0].place, 'start_folder');
+  mount.querySelector('[data-ide-terminal-action="restart"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(api.calls.spawn.length, 2, 'Restart spawned again');
+  assert.equal(api.calls.spawn[1].place, 'start_folder', 'Restart starts in the same place');
+  await panel.stopSession();
+  await panel.startSession({ place: '' });
+  assert.equal('place' in api.calls.spawn[2], false, 'an empty place is not sent');
+});
+
+test('a refused spawn records its status and code, a copy of it, and a new start clears it', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = fakePtyApi({ ok: false, code: 'CMP-TERMINAL-0006', message: 'x' });
+  const { panel } = build(harness, { api });
+  panel.renderTerminalPanel();
+  assert.equal(panel.getLastStartFailure(), null, 'nothing failed yet');
+  assert.equal(await panel.startSession({ place: 'start_folder' }), false);
+  assert.deepEqual(panel.getLastStartFailure(), { status: 'failed', code: 'CMP-TERMINAL-0006' });
+  panel.getLastStartFailure().code = 'changed';
+  assert.equal(panel.getLastStartFailure().code, 'CMP-TERMINAL-0006', 'the caller gets a copy');
+  api.spawn = async (payload) => { api.calls.spawn.push(payload); return { ok: true, sessionId: 'pty-1', shell: 'sh', cwd: '/w' }; };
+  assert.equal(await panel.startSession(), true);
+  assert.equal(panel.getLastStartFailure(), null, 'a new start clears the record');
+  assert.equal(api.calls.spawn[1].place, 'start_folder', 'a refused start keeps its place for the next plain start');
+});

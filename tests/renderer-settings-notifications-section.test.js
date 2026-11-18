@@ -41,7 +41,7 @@ function settingsWith(overrides = {}) {
 test('normalizeNotificationSettings is total, fills partial input and drops unknown keys', () => {
   assert.deepEqual(section.normalizeNotificationSettings(undefined), {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true, teamProject: true },
   });
   const partial = section.normalizeNotificationSettings({ enabled: 'no', sound: false, categories: { replies: false, bogus: true }, extra: 1 });
   assert.equal(partial.enabled, true);
@@ -64,7 +64,7 @@ test('render lists every switch with its persisted value and disables dependents
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').getAttribute('aria-checked'), 'true');
     assert.equal(toggle(container, 'notificationsReplyPreviewToggle').getAttribute('aria-checked'), 'false');
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').hasAttribute('disabled'), false);
-    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 11, 'the team switch is always listed (greyed out with no team)');
+    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 12, 'the team switches are always listed (greyed out with no team)');
     assert.equal(toggle(container, 'notificationsCategoryJennyToggle').getAttribute('aria-checked'), 'true');
     // Every row carries its help line.
     assert.ok(container.querySelector('#notificationsSoundToggleDescription').textContent.length > 0);

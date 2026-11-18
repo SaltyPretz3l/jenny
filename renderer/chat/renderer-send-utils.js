@@ -49,7 +49,8 @@
   const _navigationIntentUtils = need(globalThis.rendererNavigationIntent
     || (canRequire ? require('./renderer-navigation-intent') : null), ['getOrCreateNavigationIntentOwner'], 'renderer-navigation-intent');
   const _sendOutboxDispatch = need(globalThis.rendererSendOutboxDispatch
-    || (canRequire ? require('./renderer-send-outbox-dispatch') : null), ['createQueuedSendDispatcher'], 'renderer-send-outbox-dispatch');
+    || (canRequire ? require('./renderer-send-outbox-dispatch') : null), ['createQueuedSendDispatcher', 'createSteerController'], 'renderer-send-outbox-dispatch');
+  const { createSteerController } = _sendOutboxDispatch;
   const { createSendPreflightUtils } = need(globalThis.rendererSendPreflightUtils
     || (canRequire ? require('./renderer-send-preflight-utils') : null), ['createSendPreflightUtils'], 'renderer-send-preflight-utils');
   const { createSendCompletion } = need(globalThis.rendererSendCompletion
@@ -328,10 +329,21 @@
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
     });
+    // Row 180: the live turn may read it at its next step.
+    const steer = createSteerController({
+      state, sendOutbox, appendClientLog,
+      getBridge: () => window.jennyShell?.chat,
+      isSessionBusy: (sessionId) => isSessionBusy(sessionId),
+      getStreamId: (sessionId) => multiStreamController?.getStreamIdForSession?.(sessionId) || '',
+      dispatchQueuedSend: (sessionId) => dispatchQueuedSendForSession(sessionId),
+      onChange: () => { renderComposerState(); renderSessions(); },
+    });
+    if (ownsSharedSendState || !state.sendSteerController) state.sendSteerController = steer;
     const queueBusySend = createBusySendQueue({
       state, chatInput, sendOutbox, sendSlashDispatch, stashQueuedSendForSession, canQueueForSession,
       consumePromptBlock: (block) => deps.promptCommands?.consume(block), appendClientLog, setComposerStatusNotice,
       renderComposerState, syncComposerInputHeight, syncComposerVisualState,
+      offerSteer: (sessionId) => steer.maybeOffer(sessionId),
     });
     const renderOptimisticSend = createOptimisticSendRenderer({
       state, sessionContext, getCurrentSessionId, patchSessionSummary, upsertSessionSummary,
@@ -485,8 +497,10 @@
       // Ungating this let a stale flag strand the queued-send drain (below)
       // exactly like it must not strand a fresh dock send.
       const durableEligible = !isEditRegenerate && durableModule.eligible(state, window.jennyShell, settings, prompt, normalizedInteractiveResponse);
-      if (durableEligible && !queueUntilBackendReady && !durableSend.hasCapacity()) return null;
-      if (queueUntilBackendReady || (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive())))) {
+      // Row 180: behind a live turn a steerable Send takes the outbox, which offers it; not taken, it drains as a durable Send.
+      const steerQueue = durableEligible && requestedSessionBusy && !isOutboxDispatch && steer.canOffer(requestedSessionId) && canQueueForSession(requestedSessionId);
+      if (durableEligible && !steerQueue && !queueUntilBackendReady && !durableSend.hasCapacity()) return null;
+      if (queueUntilBackendReady || steerQueue || (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive())))) {
         // An edit replaces a message in place and a drained outbox entry is
         // already queued: neither may become a new queued message.
         // Legacy outbox capture and draft consumption must precede any await:
@@ -497,6 +511,7 @@
           skillInvocation, imageEditDraft, promptBlock, imagePromptPin, boardId, settings, sessionQueue,
         });
       }
+      steer.noteTurnStart(requestedSessionId, runtimePreferences); // the turn this send starts: what a steer must match
       if (attachmentBudget.skipped.length) {
         showToastMessage(
           jtn('chat.send.attachmentBudgetSkipped', attachmentBudget.skipped.length, { count: attachmentBudget.skipped.length }, '{count} attachment skipped because the session budget is full.', '{count} attachments skipped because the session budget is full.'),
@@ -700,7 +715,8 @@
 
     function dispose() {
       if (!disposalFence.dispose()) return;
-      sendSlashDispatch.dispose(); backendStartQueue.dispose();
+      sendSlashDispatch.dispose(); backendStartQueue.dispose(); steer.dispose();
+      if (state.sendSteerController === steer) state.sendSteerController = null;
       dispatchQueuedSendForSession.dispose?.();
       durableSend.dispose();
       // Closing a split pane must not empty pane 0's outbox (a disposed outbox

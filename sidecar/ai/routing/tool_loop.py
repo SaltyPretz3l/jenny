@@ -51,6 +51,7 @@ from sidecar.ai.routing import (  # noqa: F401
     tool_loop_cycle_recovery,
     tool_loop_recovery,
     tool_loop_text_tool_calls,
+    user_steers,
     verify_after_write,
     write_progress,
 )

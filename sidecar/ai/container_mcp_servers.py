@@ -205,6 +205,20 @@ def _builtin_feature_flag_args(feature_flags: dict[str, bool]) -> list[str]:
     return args
 
 
+def _store_and_boundary_args(config: RuntimeConfig) -> list[str]:
+    """The profile store roots, or with a root boundary, the boundary, the Windows
+    switch when on, and no store: a boundary host keeps no copy of a root's text
+    outside that root (no pre-change snapshot pool, no recovery journal)."""
+    state_root = config.electron_state_root
+    if config.hosted_root_boundary is None:
+        snapshot_root = str(Path(state_root) / "workspace-snapshots") if state_root else ""
+        return ["--pre-change-snapshot-root", snapshot_root,
+                "--workspace-recovery-root", _workspace_recovery_version_root(state_root)]
+    switch = ["--hosted-win32-files"] if config.hosted_win32_files else []
+    return ["--hosted-root-boundary", config.hosted_root_boundary, *switch,
+            "--pre-change-snapshot-root", "", "--workspace-recovery-root", ""]
+
+
 def _default_mcp_servers(
     config: RuntimeConfig,
     workspace_root: Path | None,
@@ -214,14 +228,9 @@ def _default_mcp_servers(
         args.append("")
     else:
         args.append(str(workspace_root))
-    state_root = config.electron_state_root
-    snapshot_root = str(Path(state_root) / "workspace-snapshots") if state_root else ""
+    args.extend(_store_and_boundary_args(config))
     args.extend(
         [
-            "--pre-change-snapshot-root",
-            snapshot_root,
-            "--workspace-recovery-root",
-            _workspace_recovery_version_root(state_root),
             # Resolved in THIS process so config (and the sanctioned env
             # override) reach the builtin server despite its scrubbed
             # subprocess environment.

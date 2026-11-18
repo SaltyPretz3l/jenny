@@ -683,6 +683,8 @@
 
     function handleGlobalKeydown(event) {
       var key = event.key;
+      // Keys typed in the chat's Terminal panel belong to the shell (Ctrl+F is forward-char, Escape is Escape).
+      if (event.target && typeof event.target.closest === 'function' && event.target.closest('.chat-terminal-panel .xterm')) return;
       if (key === 'F3') {
         if (!isOpen || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || !ownsKeys()) return;
         event.preventDefault();

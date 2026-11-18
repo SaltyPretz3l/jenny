@@ -70,6 +70,9 @@ const MAX_TEXT = 256;
 const MAPPED_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}$/u;
 // The relay's transfer records (model-manifest.js maxTransferRecords): more cannot be passing.
 const MAX_PASSING = 256;
+// Row 123 (file-tools-link.js): the worker's reason word and the running turns the host reports.
+const FILE_REASON = /^file_access_[a-z_]{1,48}$/u;
+const MAX_TURNS = 64;
 
 const text = (value) => typeof value === 'string' && value.length > 0 && value.length <= MAX_TEXT;
 
@@ -91,6 +94,11 @@ function parseHostMessage(value) {
       const count = (n, max) => Number.isSafeInteger(n) && n >= 0 && n <= max;
       return count(value.flowing, MAX_RELAY_FLOWING) && count(value.passing, MAX_PASSING) ? Object.freeze({ ...value }) : null;
     }
+    case 'file_tools': {
+      const reasonOk = value.reason === null || (typeof value.reason === 'string' && FILE_REASON.test(value.reason));
+      return typeof value.on === 'boolean' && typeof value.available === 'boolean' && reasonOk
+        && Number.isSafeInteger(value.turns) && value.turns >= 0 && value.turns <= MAX_TURNS ? Object.freeze({ ...value }) : null;
+    }
     default: return Object.freeze({ type: value.type }); // stopped, owner_exists
   }
 }
@@ -110,7 +118,7 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
   const limits = { ...DEFAULT_BOUNDS, ...bounds };
   const listeners = new Set();
   const say = (level, event, fields) => { try { log(level, event, fields); } catch { /* best effort */ } };
-  let state = { state: 'stopped', team_id: null, team_name: null, addresses: [], reason: null, reach: null, relay: null, since: now() };
+  let state = { state: 'stopped', team_id: null, team_name: null, addresses: [], reason: null, reach: null, relay: null, files: null, since: now() };
   let run = null;
   // The running host's mapped address (`mapped`), for the reconnect code; null in every other state.
   let mappedAddress = null;
@@ -122,13 +130,14 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
   let reachTimer = null;
 
   function snapshot() {
-    return { ...state, addresses: [...state.addresses], reach: state.reach ? { ...state.reach } : null, relay: state.relay ? { ...state.relay } : null };
+    return { ...state, addresses: [...state.addresses], reach: state.reach ? { ...state.reach } : null, relay: state.relay ? { ...state.relay } : null,
+      files: state.files ? { ...state.files } : null };
   }
 
   // One word for a verdict, so two verdicts compare once; null stays null.
   const reachWord = (reach) => (reach ? `${reach.result}/${reach.reason}` : null);
   // The verdict and the relay's numbers together: what a quiet push tells.
-  const quietWord = (s) => `${reachWord(s.reach)}|${s.relay ? `${s.relay.flowing}/${s.relay.passing}` : ''}`;
+  const quietWord = (s) => `${reachWord(s.reach)}|${s.relay ? `${s.relay.flowing}/${s.relay.passing}` : ''}|${s.files ? `${s.files.available}/${s.files.reason}/${s.files.turns}` : ''}`;
 
   function tell() {
     toldReach = quietWord(state);
@@ -157,7 +166,7 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
     // `since` is when the state word last moved; a new verdict alone keeps it.
     const next = { ...state, ...patch, since: Object.hasOwn(patch, 'state') ? now() : state.since };
     // A verdict belongs to one running host.
-    if (next.state !== 'running') { next.reach = null; next.relay = null; mappedAddress = null; }
+    if (next.state !== 'running') { next.reach = null; next.relay = null; next.files = null; mappedAddress = null; }
     const moved = next.state !== state.state || next.reason !== state.reason || next.team_id !== state.team_id;
     const reachMoved = quietWord(next) !== quietWord(state);
     state = next;
@@ -300,6 +309,10 @@ function createHostSupervisor({ fork, entryPath, env = {}, bounds = {}, log = ()
       case 'model_relay':
         if (current.failure || current.stopRequested || run !== current) return;
         setState({ relay: { flowing: message.flowing, passing: message.passing } });
+        return;
+      case 'file_tools': // row 123: the project files state and the running turns, while running
+        if (current.failure || current.stopRequested || run !== current) return;
+        setState({ files: { on: message.on, available: message.available, reason: message.reason, turns: message.turns } });
         return;
       default:
         fail(current, message.reason);

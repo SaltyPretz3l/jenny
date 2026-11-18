@@ -47,12 +47,15 @@ test('the kill switch refuses first; Plan mode and read-only chats refuse a writ
 test('input is a closed schema: extra keys, missing or over-long fields are invalid_input', async () => {
   const { context, calls } = harness();
   const bad = [undefined, null, [], {}, 'x', { ...VALID, extra: 1 }, { command: 'npm test' }, { purpose: 'p' }, { command: '', purpose: 'p' },
-    { command: 'a', purpose: '' }, { command: 7, purpose: 'p' }, { command: 'x'.repeat(2001), purpose: 'p' }, { command: 'a', purpose: 'x'.repeat(201) }];
+    { command: 'a', purpose: '' }, { command: 7, purpose: 'p' }, { command: 'x'.repeat(2001), purpose: 'p' }, { command: 'a', purpose: 'x'.repeat(201) },
+    { ...VALID, where: 'C:\\elsewhere' }, { ...VALID, where: '' }, { ...VALID, where: null }];
   for (const input of bad) {
     assert.deepEqual(output(await tool.execute(input, context)), { ok: false, reason: 'invalid_input' }, JSON.stringify(input));
   }
   assert.deepEqual(calls, []);
   assert.equal(output(await tool.execute({ command: 'x'.repeat(2000), purpose: 'x'.repeat(200) }, context)).ok, true, 'the limits themselves are fine');
+  assert.equal(output(await tool.execute({ ...VALID, where: 'project' }, context)).ok, true, 'where is a closed word');
+  assert.equal(calls.at(-1).where, 'project');
 });
 
 test('a stale or missing live call and a missing port are unavailable', async () => {
@@ -68,7 +71,7 @@ test('a stale or missing live call and a missing port are unavailable', async ()
 test('the port gets the live caller, the call id and the exact command; the answer says sent, not done', async () => {
   const { context, calls } = harness();
   const result = await tool.execute(VALID, context);
-  assert.deepEqual(calls, [{ caller_session_id: 'caller', tool_call_id: 'call-1', command: 'npm test' }]);
+  assert.deepEqual(calls, [{ caller_session_id: 'caller', tool_call_id: 'call-1', command: 'npm test', where: undefined }]);
   const answer = output(result);
   assert.equal(answer.ok, true);
   assert.equal(answer.status, 'sent');
@@ -87,6 +90,8 @@ test('unconfirmed carries a check-first note; other refusals pass through their 
   assert.equal(unconfirmed.reason, 'unconfirmed');
   assert.match(unconfirmed.note, /may still run/);
   assert.match(unconfirmed.note, /terminal_read/);
+  // Not a refusal: `outcome: refused` led a model to run a timed-out install a second time.
+  assert.equal((await tool.execute(VALID, slow.context)).metadata.status, 'unconfirmed');
 
   const refused = harness({ port: { run: async () => ({ ok: false, reason: 'no_free_terminal', detail: 'C:\\private' }) } });
   const answer = await tool.execute(VALID, refused.context);

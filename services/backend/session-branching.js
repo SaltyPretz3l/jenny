@@ -24,6 +24,8 @@ const { isPrimaryRole } = require('./primary-session');
 const BRANCH_SESSION_FIELD_KEYS = Object.freeze([
   'session_incarnation', 'spawned_from', 'session_mail', 'preferred_model', 'reasoning_effort',
   'run_mode', 'plan_mode', 'pre_plan_run_mode', 'lockdown', 'tool_category_overrides',
+  // Row 175 review: a team branch keeps its source's tool switches and allowed nodes (command-router-redo.js).
+  'team_tool_switches', 'allowed_nodes',
 ]);
 
 function branchSessionFields(fields) {

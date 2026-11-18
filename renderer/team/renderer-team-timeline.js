@@ -37,6 +37,8 @@
  * - Slice 2b-2: a message's chips and pin mark come with its row parts, "Seen by" only for your own latest live
  *   message, and the Markdown is rendered once per (text, edited_at), not per revision, so a reaction does not
  *   render it again. The header's pinned list (renderer-team-pins.js) and the popovers share one popover host.
+ * - Row 173: a channel's change records (made, renamed, topic, archived, brought back) are quiet lines after the message each
+ *   followed (renderer-team-channel-menu.js `placeChanges`), drawn once the window shows where they go.
  * - The message actions (renderer-team-message-actions.js) draw the action
  *   row, the edit box and the foot's outbox words; after Mark unread the
  *   channel is not marked read again until it is opened again (unless the
@@ -44,12 +46,12 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-team-message-row'), require('./renderer-team-message-actions'), require('./renderer-team-chat-writes'),
-      require('./renderer-team-pop'), require('./renderer-team-pins'), require('./renderer-team-files'));
+      require('./renderer-team-pop'), require('./renderer-team-pins'), require('./renderer-team-files'), require('./renderer-team-channel-menu'));
     return;
   }
   root.rendererTeamTimeline = factory(root.rendererTeamMessageRow, root.rendererTeamMessageActions, root.rendererTeamChatWrites,
-    root.rendererTeamPop, root.rendererTeamPins, root.rendererTeamFiles);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (rows, actions, chatWrites, popModule, pinsModule, filesModule) {
+    root.rendererTeamPop, root.rendererTeamPins, root.rendererTeamFiles, root.rendererTeamChannelMenu);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (rows, actions, chatWrites, popModule, pinsModule, filesModule, channelMenu) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -133,10 +135,15 @@
       const all = chat.pending(teamId);
       const pending = pendingEntries(all, current.list, c.me);
       const related = rows.relatedEntries(all, channelId);
+      // A channel's change records, placed among the messages held; none until the window is loaded.
+      const placed = channelMenu.placeChanges(current.loaded && record ? record.changes : [], current.list, { hasMore: current.hasMore, hasNewer: current.hasNewer });
+      const lines = (list) => list.map((change, i) => ({ key: 'chg:' + change.kind + ':' + change.at + ':' + change.seq_after + ':' + i, kind: 'chan', html: channelMenu.changeHtml(change, c) }))
+        .filter((item) => item.html).map((item) => ({ ...item, sig: item.html }));
       if (current.loaded && !current.list.length && !pending.length) {
         const invite = c.soleOwner && !c.direct ? inv().actionButton({ label: jt('settings.team.invite.heading', 'Invite someone'), variant: 'primary', size: 'sm', dataset: { 'team-tab-action': 'invite' } }) : '';
         items.push({ key: 'empty', kind: 'empty', sig: 'y' + (invite ? 1 : 0) + c.channelTitle, html: '<b>' + escapeHtml(c.channelTitle) + '</b>'
           + escapeHtml(c.direct ? jt('team.dm.empty', 'No messages yet.') : jt('team.chat.empty', 'Everyone on the team can read and post here.')) + invite });
+        items.push(...lines(placed.lead));
       }
       let prev = null;
       let day = '';
@@ -148,6 +155,7 @@
       for (const message of current.list) {
         const key = rows.dayKey(message.created_at);
         if (key && key !== day) { items.push({ key: 'day:' + key, kind: 'day', sig: rows.dayLabel(key), html: escapeHtml(rows.dayLabel(key)) }); day = key; prev = null; }
+        if (message === current.list[0] && placed.lead.length) { items.push(...lines(placed.lead)); prev = null; }
         if (newAfter !== null && !freshPlaced && message.seq > newAfter && !rows.isOwnMessage(message, c.me)) {
           items.push({ key: 'new', kind: 'new', sig: 'n', html: escapeHtml(jt('team.chat.new', 'New')) });
           freshPlaced = true;
@@ -164,6 +172,8 @@
         items.push({ key: 'msg:' + message.id, kind: 'msg', message, first, body: html, files: block.html, pending: '', edit: part.edit, chips: part.chips, facts: part.facts, foot: part.foot, acts: part.acts, fresh,
           sig: part.sig === 'edit' ? 'edit' : [message.rev, first, author.name, author.former, deletedBy, message.edited_at, message.reply_count, message.last_reply_at, fresh, names, part.sig, block.sig].join('|') });
         prev = message;
+        const after = placed.after.get(message.seq);
+        if (after) { items.push(...lines(after)); prev = null; }
       }
       if (note) items.push({ key: 'note', kind: 'note', sig: note, html: escapeHtml(note) });
       for (const entry of pending) {
@@ -180,7 +190,7 @@
     function fill(el, item) {
       el.dataset.sig = item.sig;
       if (item.kind !== 'msg') {
-        const classes = { day: 'team-day', new: 'team-new', pruned: 'team-pruned', empty: 'team-empty', error: 'team-timeline-error', note: 'team-thread-gone' };
+        const classes = { day: 'team-day', new: 'team-new', pruned: 'team-pruned', empty: 'team-empty', error: 'team-timeline-error', note: 'team-thread-gone', chan: 'team-chan-event' };
         el.className = classes[item.kind];
         if (item.kind === 'day' || item.kind === 'new') el.setAttribute('role', 'separator');
         el.innerHTML = item.html;

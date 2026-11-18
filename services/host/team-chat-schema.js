@@ -12,15 +12,21 @@
 // may be null (no explicit choice: an item that only holds the mark of a thread
 // followed by the implicit rule). Version 1 is read and carried forward as
 // version 2, every mark null, so nothing reads as new after the upgrade.
+// Row 173 gives the channel document version 3: `name`, `topic`, `created_by`, `changes`, and `archived` as
+// `{ at, by }` (TEAM_CHANNELS_2026-11-16.md "Channel record, schema 3"). Versions 1 and 2 are read and carried
+// forward as version 3, the team channel named `team`, every other channel with no profile.
 
 const crypto = require('node:crypto');
 
 const { isId } = require('../../server/team/ids');
 const { isCount, isPlainObject } = require('../../server/team/member-schema');
+const names = require('./team-chat-names');
 
 const SCHEMA_VERSION = 1;
-// The channel document's version (2d): version 1 is read and carried forward as version 2 when it is next written.
-const CHANNEL_SCHEMA_VERSION = 2;
+// The channel document's version (row 173): versions 1 and 2 are read and carried forward as version 3 when the
+// document is next written.
+const CHANNEL_SCHEMA_VERSION = 3;
+const CHANNEL_V2 = 2;
 // The read state's version (E59), carried forward the same way.
 const READ_SCHEMA_VERSION = 2;
 const MIB = 1024 * 1024;
@@ -63,6 +69,12 @@ const LIMITS = Object.freeze({
   UNREAD_SCAN_MAX: 300,
   RECENT_LIMIT_MAX: 1000,
   THREAD_LIMIT_MAX: 100,
+  // Row 173: live custom channels per team (archived ones do not count), the change records a channel keeps,
+  // and the name and topic bounds in code points.
+  CUSTOM_CHANNELS_MAX: 32,
+  CHANNEL_CHANGES_MAX: 10,
+  CHANNEL_NAME_MAX: 40,
+  CHANNEL_TOPIC_MAX: 250,
 });
 
 const NOTIFY_LEVELS = Object.freeze(['all', 'mentions', 'none']);
@@ -86,16 +98,26 @@ const CHANNEL_PATTERNS = Object.freeze([
   ['team', /^chan_team$/u],
   ['project', /^chan_project_[A-Za-z0-9_-]{1,128}$/u],
   ['dm', /^chan_dm_[a-f0-9]{64}$/u],
+  // Row 173: a channel a member made; the suffix is host-generated base32 (10 random bytes).
+  ['channel', /^chan_c_[a-z2-7]{16}$/u],
 ]);
 
 const CHANNEL_KEYS_V1 = ['schema_version', 'channel_id', 'kind', 'created_at', 'archived', 'rev', 'next_seq', 'floor_seq',
   'bytes', 'pins', 'segments', 'requests'];
 
+const CHANNEL_KEYS_V2 = [...CHANNEL_KEYS_V1, 'participants'];
+
+// A change record's kinds (row 173); `renamed` also carries `from` and `to`.
+const CHANGE_KINDS = Object.freeze(['created', 'renamed', 'topic', 'archived', 'unarchived']);
+
 const KEYS = Object.freeze({
   index: ['schema_version', 'channels'],
   indexEntry: ['channel_id', 'kind', 'created_at'],
   channelV1: CHANNEL_KEYS_V1,
-  channel: [...CHANNEL_KEYS_V1, 'participants'],
+  channelV2: CHANNEL_KEYS_V2,
+  channel: [...CHANNEL_KEYS_V2, 'name', 'topic', 'created_by', 'changes', 'profile_rev'],
+  change: ['kind', 'by', 'at', 'seq_after'],
+  renamed: ['kind', 'by', 'at', 'seq_after', 'from', 'to'],
   segmentMeta: ['n', 'first_seq', 'last_seq', 'count', 'bytes', 'newest_at'],
   request: ['device_id', 'request_id', 'digest', 'at', 'result'],
   segment: ['schema_version', 'channel_id', 'n', 'messages'],
@@ -320,21 +342,54 @@ function validateSegmentMetas(segments, doc) {
   return segments.length === 0 || segments[0].first_seq >= doc.floor_seq;
 }
 
+// Row 173: a stored name or topic is its own normalization (team-chat-names.js), within the schema's bounds.
+const channelName = (value) => names.normalizeName(value, LIMITS.CHANNEL_NAME_MAX);
+const channelTopic = (value) => names.normalizeTopic(value, LIMITS.CHANNEL_TOPIC_MAX);
+const isChannelName = (value) => names.isStoredName(value, LIMITS.CHANNEL_NAME_MAX);
+
+// A change record: `by` is a member id, or null on an `archived` the host made; `seq_after` is the channel's last
+// assigned seq at the change (`nextSeq` - 1 at most).
+function isChange(change, nextSeq) {
+  if (!isPlainObject(change) || !CHANGE_KINDS.includes(change.kind)) return false;
+  if (!hasExactKeys(change, change.kind === 'renamed' ? KEYS.renamed : KEYS.change)) return false;
+  if (!(isMemberId(change.by) || (change.by === null && change.kind === 'archived'))) return false;
+  if (!isIso(change.at) || !isCount(change.seq_after) || change.seq_after >= nextSeq) return false;
+  return change.kind !== 'renamed' || (isChannelName(change.from) && isChannelName(change.to));
+}
+
+// Version 3's profile: `team` is named `team`; a custom channel has a name and its creator; a project or direct
+// channel has neither. Every channel has a topic ('' where none) and at most 10 change records.
+function isProfile(doc) {
+  const custom = doc.kind === 'channel';
+  const nameOk = doc.kind === 'team' ? doc.name === 'team' : custom ? isChannelName(doc.name) : doc.name === null;
+  return nameOk && (custom ? isMemberId(doc.created_by) : doc.created_by === null)
+    && names.isStoredTopic(doc.topic, LIMITS.CHANNEL_TOPIC_MAX) && Array.isArray(doc.changes)
+    && doc.changes.length <= LIMITS.CHANNEL_CHANGES_MAX && doc.changes.every((change) => isChange(change, doc.next_seq))
+    && isCount(doc.profile_rev) && doc.profile_rev <= doc.rev;
+}
+
+// Versions 1 and 2 archive as `{ at }`; version 3 as `{ at, by }`, `by` null when the host archived it.
+function isArchived(value, version) {
+  if (value === null) return true;
+  if (version !== CHANNEL_SCHEMA_VERSION) return hasExactKeys(value, ['at']) && isIso(value.at);
+  return hasExactKeys(value, ['at', 'by']) && isIso(value.at) && (value.by === null || isMemberId(value.by));
+}
+
 // Version 1 has no `participants`; version 2 has it: an array for a direct conversation that stores its
 // participants, null otherwise (a direct channel created before 2d, or one made without participants, has none and
-// shows to nobody).
+// shows to nobody). Version 3 adds the profile (row 173); a custom channel exists only from version 3.
 function validateChannelDoc(doc, channelId) {
-  const head = checkVersion(doc, [SCHEMA_VERSION, CHANNEL_SCHEMA_VERSION]);
+  const head = checkVersion(doc, [SCHEMA_VERSION, CHANNEL_V2, CHANNEL_SCHEMA_VERSION]);
   if (head) return head;
-  const keys = doc.schema_version === SCHEMA_VERSION ? KEYS.channelV1 : KEYS.channel;
+  const version = doc.schema_version;
+  const keys = version === SCHEMA_VERSION ? KEYS.channelV1 : version === CHANNEL_V2 ? KEYS.channelV2 : KEYS.channel;
   if (!hasExactKeys(doc, keys) || doc.channel_id !== channelId || channelKind(channelId) !== doc.kind) {
     return fail('channel_invalid');
   }
   if (doc.participants !== undefined && doc.participants !== null
     && !(doc.kind === 'dm' && isParticipants(doc.participants, channelId))) return fail('channel_invalid');
-  if (!isIso(doc.created_at) || !(doc.archived === null || (hasExactKeys(doc.archived, ['at']) && isIso(doc.archived.at)))) {
-    return fail('channel_invalid');
-  }
+  if (!isIso(doc.created_at) || !isArchived(doc.archived, version)) return fail('channel_invalid');
+  if (version === CHANNEL_SCHEMA_VERSION ? !isProfile(doc) : doc.kind === 'channel') return fail('channel_invalid');
   if (!isCount(doc.rev) || !isPositive(doc.next_seq) || !isPositive(doc.floor_seq) || doc.floor_seq > doc.next_seq
     || !isCount(doc.bytes)) return fail('channel_counters_invalid');
   if (!Array.isArray(doc.pins) || doc.pins.length > LIMITS.PINS_MAX || !doc.pins.every(isMessageId)
@@ -411,17 +466,25 @@ function newMessageId(nowMs, randomBytes) {
   return `msg_${encodeBase32(time, 10)}${encodeBase32(BigInt(`0x${bytes.toString('hex')}`), 16)}`;
 }
 
+// A new channel document. The team channel is named `team`; a custom channel's profile comes from its creator
+// (team-chat-manage.js); every other channel has none.
 function emptyChannelDoc(channelId, kind, createdAt, participants = null) {
   return {
     schema_version: CHANNEL_SCHEMA_VERSION, channel_id: channelId, kind, created_at: createdAt, archived: null, rev: 0,
     next_seq: 1, floor_seq: 1, bytes: 0, pins: [], segments: [], requests: [], participants: freezeList(participants),
+    name: kind === 'team' ? 'team' : null, topic: '', created_by: null, changes: [], profile_rev: 0,
   };
 }
 
-// A validated channel document in the current shape: version 1 gains version 2 and no participants. Nothing else changes.
-// The participants are frozen once, here and at creation, so the audience rule can hand the list out as it is.
+// A validated channel document in the current shape. Version 1 gains no participants; versions 1 and 2 gain the
+// team channel's name `team` (every other channel null), an empty topic, no creator and no change records, and an
+// archive stamp `{ at }` becomes `{ at, by: null }`. Nothing else changes. The participants are frozen once, here and
+// at creation, so the audience rule can hand the list out as it is.
 function currentChannelDoc(doc) {
-  return { ...doc, schema_version: CHANNEL_SCHEMA_VERSION, participants: freezeList(doc.participants) };
+  const current = { ...doc, schema_version: CHANNEL_SCHEMA_VERSION, participants: freezeList(doc.participants) };
+  if (doc.schema_version === CHANNEL_SCHEMA_VERSION) return current;
+  return { ...current, archived: doc.archived === null ? null : { at: doc.archived.at, by: null },
+    name: doc.kind === 'team' ? 'team' : null, topic: '', created_by: null, changes: [], profile_rev: 0 };
 }
 
 // A validated read document in the current shape: version 1 gains version 2 and a null mark on every followed item
@@ -447,8 +510,11 @@ module.exports = {
   LIMITS,
   NOTIFY_LEVELS,
   AUTHOR_KINDS,
+  CHANGE_KINDS,
   PATTERNS,
   channelKind,
+  channelName,
+  channelTopic,
   currentChannelDoc,
   currentReadDoc,
   defaultNotify,

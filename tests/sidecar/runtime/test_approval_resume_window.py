@@ -181,3 +181,24 @@ def test_approved_call_is_found_by_id_not_position() -> None:
 
     assert [call.call_id for call in selected] == ["c1", "c2", "c3"]
     assert approved_call(plan, selected).tool_id == "edit_file"
+
+
+def test_audit_metadata_marks_only_the_approved_call_as_user_approved() -> None:
+    # The model's tool result says the user approved the card (2026-11-17 review: it guessed "no card").
+    from types import SimpleNamespace as NS
+
+    from sidecar.runtime.chat_resume import _approval_audit_metadata_map
+
+    frozen = [
+        NS(call_id=call_id, injected_arg_keys=(), effective_args_fingerprint="fp")
+        for call_id in ("read_1", "c1")
+    ]
+    plan = NS(
+        approved_call_id="c1", call_id="c1", frozen_inputs=frozen, approval_plan_hash="h",
+        execution_context_fingerprint="e", model_identity_fingerprint="m", system_prompt_hash="s",
+        sampling_params_hash="p", message_history_hash="mh", tool_contract_hash="t",
+        parent_approval_plan_hash="",
+    )
+    metadata = _approval_audit_metadata_map(plan)
+    assert metadata["c1"]["approval"] == "approved"
+    assert "approval" not in metadata["read_1"]

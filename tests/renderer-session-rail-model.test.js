@@ -356,3 +356,133 @@ test('rail markup: a linked row exposes data-rail-session, the title is escaped,
   assert.equal((html.match(/data-rail-session=/g) || []).length, 1);
   assert.equal((html.match(/data-rail-surface="background_tasks"/g) || []).length, 3, 'every task row keeps its detail surface, and the section ends on All background tasks');
 });
+
+/* Row 176: the Servers section (the chat's browser page and run_command jobs that serve on a loopback port). */
+function servingJob(id, overrides = {}) {
+  return {
+    source_kind: 'background_job', operation_id: `job:${id}`, job_id: id, session_id: SID, state: 'running', command: 'npm run dev',
+    started_at_ms: 1000, serving_url: 'http://localhost:5173', serving_port: 5173, serving_since_ms: 2000, ...overrides,
+  };
+}
+function withJobs(items, state = 'available') {
+  const counts = { active: items.filter((item) => item.state === 'running' || item.state === 'killing').length, waiting: 0, failed: 0, completed: 0 };
+  return summary({ background_tasks: wrapper({ counts, coverage: 'complete', unsupported_sources: [], items }, state) });
+}
+const serversOf = (vm) => byKey(vm, 'servers');
+const BROWSER = { open: true, url: 'https://example.com/docs', title: 'Example docs' };
+
+test('Servers: absent with nothing serving and no earlier server; present as None up once one existed', () => {
+  assert.equal(serversOf(build()), undefined);
+  assert.equal(serversOf(build({ everHadServer: false, browser: { open: false, url: 'https://x.test', title: '' } })), undefined);
+  assert.deepEqual(model.SECTION_KEYS.slice(-2), ['background_tasks', 'servers']);
+  const none = serversOf(build({ everHadServer: true }));
+  assert.equal(none.valueText, 'None up');
+  assert.equal(none.dot, null);
+  assert.equal(none.defaultOpen, false);
+  assert.deepEqual(none.rows.map((row) => [row.kind, row.text]), [['note', 'Nothing this chat started is still serving.']]);
+  assert.deepEqual(build({ everHadServer: true }).sections.map((section) => section.key).slice(-2), ['background_tasks', 'servers']);
+});
+
+test('Servers: a serving job and an open browser read 2 up, the browser first, with a steady dot', () => {
+  const vm = build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]), browser: BROWSER });
+  const servers = serversOf(vm);
+  assert.equal(servers.valueText, '2 up');
+  assert.deepEqual(servers.dot, { tone: 'active', pulse: false });
+  assert.equal(servers.open, true, 'open by default with entries');
+  const [browser, job] = servers.rows;
+  assert.deepEqual([browser.kind, browser.serverKind, browser.text, browser.meta, browser.surface, browser.stopLabel, browser.addr],
+    ['server', 'browser', 'Example docs', 'Browser', 'browser', 'Close', undefined]);
+  assert.equal(browser.title, 'Example docs (https://example.com/docs)');
+  assert.equal(browser.stopAria, 'Close the browser: Example docs');
+  assert.deepEqual([job.kind, job.serverKind, job.jobId, job.text, job.addr, job.meta, job.surface, job.resourceRef, job.stopLabel],
+    ['server', 'job', 'aaaaaaaaaaaa', 'localhost:5173', true, 'Port 5173', 'background_tasks', 'job:aaaaaaaaaaaa', 'Stop']);
+  assert.equal(job.title, 'npm run dev on localhost:5173');
+  assert.equal(job.stopAria, 'Stop server: localhost:5173');
+  assert.equal(job.stopping, false);
+});
+
+test('Servers: the browser falls back to its address; jobs run oldest serving first; blank urls are not entries', () => {
+  const vm = build({
+    summary: withJobs([servingJob('bbbbbbbbbbbb', { serving_since_ms: 9000, serving_url: 'http://127.0.0.1:3000', serving_port: 3000 }),
+      servingJob('aaaaaaaaaaaa', { serving_since_ms: 4000 }), servingJob('cccccccccccc', { serving_url: '  ' })]),
+    browser: { open: true, url: 'https://example.com/a', title: '' },
+  });
+  assert.deepEqual(serversOf(vm).rows.map((row) => row.text), ['example.com/a', 'localhost:5173', '127.0.0.1:3000']);
+  assert.equal(serversOf(build({ browser: { open: true, url: '', title: 'x' } })), undefined);
+});
+
+test('Servers: a serving job is not a Background tasks running row and not in its count', () => {
+  const plain = servingJob('bbbbbbbbbbbb', { serving_url: null, serving_port: null, serving_since_ms: null, command: 'npm test' });
+  const tasks = byKey(build({ summary: withJobs([servingJob('aaaaaaaaaaaa'), plain]) }), 'background_tasks');
+  assert.equal(tasks.valueText, '1 running');
+  assert.deepEqual(tasks.rows.filter((row) => row.kind === 'job').map((row) => row.jobId), ['bbbbbbbbbbbb']);
+  const only = byKey(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]) }), 'background_tasks');
+  assert.equal(only.valueText, 'None running', 'its live work is all under Servers, not Unknown');
+  assert.equal(only.dot, null);
+  assert.equal(only.open, false, 'a serving job alone does not open Background tasks');
+  assert.equal(only.rows.some((row) => row.kind === 'job'), false);
+});
+
+test('Servers: a stopped serving job leaves Servers and lands in the finished fold', () => {
+  const stopped = servingJob('aaaaaaaaaaaa', { state: 'completed', ended_at_ms: 5000, stop_requested: true });
+  const vm = build({ summary: withJobs([stopped]), everHadServer: true });
+  assert.equal(serversOf(vm).valueText, 'None up');
+  assert.ok(byKey(vm, 'background_tasks').rows.some((row) => row.kind === 'job_done' && row.jobId === 'aaaaaaaaaaaa'));
+});
+
+test('Servers: a job being killed reads Stopping and its Stop is marked busy', () => {
+  const job = serversOf(build({ summary: withJobs([servingJob('aaaaaaaaaaaa', { state: 'killing' })]) })).rows[0];
+  assert.equal(job.meta, 'Stopping');
+  assert.equal(job.stopping, true);
+});
+
+test('Servers: persisted disclosure wins over the open-with-entries default', () => {
+  const closed = build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]), workspaceView: { disclosures: { servers: false } } });
+  assert.equal(serversOf(closed).open, false);
+  assert.equal(model.DISCLOSURE_KEYS.includes('servers'), true);
+  const opened = build({ everHadServer: true, workspaceView: { disclosures: { servers: true } } });
+  assert.equal(serversOf(opened).open, true);
+  assert.equal(model.isDisclosureOpen(opened, 'servers'), true);
+});
+
+test('Servers: checking and unavailable summaries use the section state words when nothing is up, and only when it would show', () => {
+  const checking = build({ summary: null, status: 'checking', browser: BROWSER });
+  assert.equal(serversOf(checking).valueText, '1 up', 'an open browser needs no summary: it shows while the summary checks');
+  assert.equal(serversOf(checking).rows[0].serverKind, 'browser');
+  assert.equal(serversOf(build({ summary: null, status: 'unavailable', browser: BROWSER })).valueText, '1 up');
+  assert.equal(serversOf(build({ summary: null, status: 'checking', everHadServer: true })).valueText, 'Checking…');
+  assert.equal(serversOf(build({ summary: null, status: 'checking' })), undefined);
+  assert.equal(serversOf(build({ summary: null, status: 'unavailable', everHadServer: true })).valueText, 'Unavailable');
+  const stale = serversOf(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')], 'stale') }));
+  assert.equal(stale.valueText, '1 up · stale');
+  assert.equal(stale.dot, null);
+});
+
+test('Servers: the view model says when it has entries so the controller can remember the chat', () => {
+  assert.equal(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]) }).hasServers, true);
+  assert.equal(build({ everHadServer: true }).hasServers, false);
+  const seen = new Map();
+  for (let i = 0; i < 70; i += 1) model.rememberServers(seen, `s${i}`, { hasServers: true });
+  model.rememberServers(seen, 'idle', { hasServers: false });
+  assert.equal(seen.size, 64);
+  assert.equal(seen.has('s0'), false);
+  assert.equal(seen.has('s69'), true);
+  assert.equal(seen.has('idle'), false);
+});
+
+test('rail markup: a server row has the stop control, a steady dot, mono only on jobs, and escapes the page title', () => {
+  const rows = serversOf(build({
+    summary: withJobs([servingJob('aaaaaaaaaaaa')]), browser: { open: true, url: 'https://example.com/"><b>', title: '<img src=x onerror=alert(1)>' },
+  })).rows;
+  const html = render.bodyHtml({ rows });
+  assert.equal(html.includes('<img'), false);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /data-rail-server-stop="browser"/);
+  assert.match(html, /data-rail-server-stop="job:aaaaaaaaaaaa"/);
+  assert.match(html, /<div class="session-rail-job" data-row-key="server:job:aaaaaaaaaaaa" data-job-state="running">/);
+  assert.match(html, /data-rail-surface="browser"/);
+  assert.match(html, /data-rail-resource="job:aaaaaaaaaaaa"/);
+  assert.equal(html.includes('session-rail-dot-pulse'), false);
+  assert.equal((html.match(/status-dot--active/g) || []).length, 2);
+  assert.equal((html.match(/session-rail-ellip--addr/g) || []).length, 1, 'only the job address is mono');
+});

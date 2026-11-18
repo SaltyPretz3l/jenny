@@ -9,6 +9,7 @@
 
 const {
   buildProviderDescriptor,
+  enabledModels,
   findInstance,
   normalizeApiProvidersConfig,
   parseNamespacedModelId,
@@ -19,6 +20,8 @@ const { getApiProviderPreset } = require('./api-provider-presets');
 const { registerExactSecret } = require('./exact-secret-redaction');
 
 const API_PROVIDER_ENGINE_TYPE = 'api-provider';
+// Matches MAX_ENABLED_MODELS in api-provider-config and the sidecar's row bound.
+const MAX_SUBAGENT_MODELS = 64;
 
 function apiProvidersAvailable(service) {
   return service?.hostMode !== 'server' && service?.featureFlags?.api_providers !== false;
@@ -65,6 +68,21 @@ function resolveSelectionCost({ instance, modelId }, { catalog = defaultApiProvi
   return catalog.lookup(instance.presetId, modelId)?.costPerMtokUsd || null;
 }
 
+// The enabled models of the selected instance with their resolved limits: what a
+// delegate task may route to. Ids and limits only; the key never rides this list.
+function buildSubagentModels(instance) {
+  const rows = [];
+  for (const model of enabledModels(instance)) {
+    if (rows.length >= MAX_SUBAGENT_MODELS) break;
+    try {
+      rows.push({ id: model.id, limits: resolveSelectionLimits({ instance, modelId: model.id }) });
+    } catch (_error) {
+      // A model whose limits cannot be resolved is not offered to delegates.
+    }
+  }
+  return rows;
+}
+
 function buildApiProviderSidecarConfig(service, engineType, modelId) {
   if (engineType !== API_PROVIDER_ENGINE_TYPE) return {};
   const selection = resolveApiProviderSelection(service, modelId);
@@ -72,6 +90,7 @@ function buildApiProviderSidecarConfig(service, engineType, modelId) {
   return {
     api_provider_descriptor: buildProviderDescriptor(selection.instance),
     api_provider_model_limits: resolveSelectionLimits(selection),
+    api_provider_subagent_models: buildSubagentModels(selection.instance),
   };
 }
 

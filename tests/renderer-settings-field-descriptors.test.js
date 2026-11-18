@@ -239,9 +239,28 @@ test('row 123 2a-6c: the team notification switch sits with the categories, need
   assert.deepEqual([team.sectionId, team.adapterId, team.key, team.default, team.enabledWhen], ['notifications', 'windowUi.notifications', 'categories.team', true, 'team']);
   assert.equal(team.copy.label, 'Someone messages you in a team');
   const ids = all.map((d) => d.controlId);
-  assert.equal(ids.indexOf('notificationsCategoryTeamToggle') + 1, ids.indexOf('notificationsReplyPreviewToggle'), 'last category, just before the preview');
+  // Row 175 (D2): Project activity follows the Team row, needs it on, and is the last category, just before the preview.
+  const project = descriptors.getSettingDescriptorByControlId('notificationsCategoryTeamProjectToggle');
+  assert.deepEqual([project.key, project.default, project.enabledWhen, project.copy.label], ['categories.teamProject', true, 'teamProject', 'Project activity']);
+  assert.deepEqual([ids.indexOf('notificationsCategoryTeamToggle') + 1, ids.indexOf('notificationsCategoryTeamProjectToggle') + 1],
+    [ids.indexOf('notificationsCategoryTeamProjectToggle'), ids.indexOf('notificationsReplyPreviewToggle')]);
+  assert.equal(fieldCopy.listSettingsSearchEntries().find((e) => e.id === 'notificationsCategoryTeamProjectToggle').label, 'Project activity');
   assert.equal(fieldCopy.listSettingsSearchEntries().find((e) => e.id === 'notificationsCategoryTeamToggle').label, 'Someone messages you in a team');
   const preview = descriptors.getSettingDescriptorByControlId('notificationsReplyPreviewToggle');
   const copy = typeof preview.copy === 'string' ? fieldCopy.getSettingsFieldCopy(preview.copy.slice('field-copy:'.length)) : preview.copy;
   assert.equal(copy.label, 'Show the first line of the reply or message');
+});
+
+test('the terminal start folder preference has a workspaceIde descriptor that search reaches by its keywords', () => {
+  const descriptor = descriptors.getSettingDescriptor('editorTerminalStartFolderField');
+  assert.equal(descriptor.adapterId, 'workspaceIde');
+  assert.equal(descriptor.key, 'terminalStartFolder');
+  assert.equal(descriptor.sectionId, 'editor');
+  assert.equal(descriptor.default, '');
+  assert.equal(descriptor.validation.maxLength, 512);
+  assert.deepEqual([...descriptor.copy.keywords], ['terminal start folder', 'downloads']);
+  assert.equal(descriptors.validateSettingValue(descriptor, 'D:\\Installs').ok, true);
+  assert.equal(descriptors.validateSettingValue(descriptor, '').ok, true, 'empty means the Downloads folder');
+  assert.equal(descriptors.validateSettingValue(descriptor, 'x'.repeat(513)).ok, false);
+  assert.ok(fieldCopy.listSettingsSearchEntries().some((entry) => entry.id === descriptor.controlId && entry.keywords.includes('downloads')));
 });

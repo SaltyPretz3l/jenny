@@ -184,14 +184,14 @@ function openOverlayEnv() {
   return { dom, helper };
 }
 
-test('catalog renders six groups in two columns with the app-wide chords', () => {
+test('catalog renders seven groups in two columns with the app-wide chords', () => {
   const html = buildCatalogBodyHtml();
   const columns = html.split('<div class="chat-help-overlay-column">');
   assert.equal(columns.length, 3, 'two column wrappers');
   assert.match(html, /^<div class="chat-help-overlay-columns">/);
   const groupIds = (chunk) => Array.from(chunk.matchAll(/data-group="(\w+)"/g)).map((m) => m[1]);
   assert.deepEqual(groupIds(columns[1]), ['everywhere', 'find', 'editing']);
-  assert.deepEqual(groupIds(columns[2]), ['composer', 'messages', 'selecting']);
+  assert.deepEqual(groupIds(columns[2]), ['composer', 'messages', 'selecting', 'team']);
   for (const id of ['commandPalette', 'quickSettings', 'splitView', 'quickCapture', 'reload']) {
     assert.ok(groupHtml(html, 'everywhere').includes('data-shortcut="' + id + '"'), id + ' lives in Everywhere');
   }
@@ -203,6 +203,21 @@ test('catalog renders six groups in two columns with the app-wide chords', () =>
   assert.match(rowHtml(html, 'send'), /<dt class="chat-help-overlay-description">Send<\/dt><dd class="chat-help-overlay-keys"/);
 });
 
+test('the Team group lists the Team tab keys', () => {
+  const html = buildCatalogBodyHtml();
+  const team = groupHtml(html, 'team');
+  const kbd = (key) => '<kbd class="chat-help-overlay-kbd">' + key + '</kbd>';
+  const plus = '<span class="chat-help-overlay-plus" aria-hidden="true">+</span>';
+  const alt = '<span class="chat-help-overlay-alt" aria-hidden="true">/</span>';
+  assert.match(team, /<h3 class="chat-help-overlay-section-heading">Team<\/h3>/);
+  assert.ok(rowHtml(html, 'teamNextRegion').includes(kbd('F6')), 'F6 moves to the next region');
+  assert.ok(rowHtml(html, 'teamPrevRegion').includes(kbd('Shift') + plus + kbd('F6')));
+  assert.ok(rowHtml(html, 'teamSearch').includes(kbd('Ctrl') + plus + kbd('F')));
+  assert.ok(rowHtml(html, 'teamRowUpDown').includes(kbd('Alt') + plus + kbd('↑') + alt + kbd('↓')));
+  assert.ok(rowHtml(html, 'teamMessageMenu').includes(kbd('Shift') + plus + kbd('F10')));
+  assert.match(buildCatalogBodyHtml('region'), /data-shortcut="teamNextRegion"/, 'the filter finds a Team row by its description');
+});
+
 test('headings and descriptions go through the translator', () => {
   const previous = globalThis.jennyI18n;
   const modulePath = require.resolve('../renderer/chat/renderer-chat-help-overlay');
@@ -212,7 +227,7 @@ test('headings and descriptions go through the translator', () => {
   try {
     const fresh = require('../renderer/chat/renderer-chat-help-overlay');
     const html = fresh.buildCatalogBodyHtml();
-    for (const id of ['everywhere', 'composer', 'messages', 'find', 'editing', 'selecting']) {
+    for (const id of ['everywhere', 'composer', 'messages', 'find', 'editing', 'selecting', 'team']) {
       assert.match(groupHtml(html, id), new RegExp('<h3 class="chat-help-overlay-section-heading">\\[help\\.group\\.' + id + '\\]</h3>'));
     }
     assert.match(rowHtml(html, 'splitView'), /\[help\.shortcut\.splitView\]/);

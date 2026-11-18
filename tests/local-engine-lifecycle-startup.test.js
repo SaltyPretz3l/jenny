@@ -215,6 +215,20 @@ for (const errorCode of [AI_ERROR_CODES.ENGINE_CONNECTION, SIDECAR_ERROR_CODES.T
   });
 }
 
+test('startBackendService reads ready, not model_unavailable, after a startup-load-off idle init', async () => {
+  const service = makeService({ engine: 'openai-compatible' });
+  service.configService.getLocalEngines = () => ({ startupModelLoad: false });
+  service._initializeManagedSidecar = async () => {
+    // The init resolves with no model when the dead port is that setting at work.
+    service._modelLifecycle = { state: 'unloaded', requested_model: '', engine: 'openai-compatible', failure: null };
+    service._startupIdleByChoice = true;
+  };
+  const status = await startBackendService(service, {});
+  assert.equal(status.phase, 'ready');
+  assert.equal(service.logs.some((entry) => entry[1] === 'backend.start_model_unavailable'), false);
+  assert.ok(service.calls.includes('model:autoLoad'));
+});
+
 test('retryStartBackendService preserves the engine-connection model-unavailable downgrade', async () => {
   const service = makeService({ engine: 'replay' });
   service._initializeManagedSidecar = async () => {

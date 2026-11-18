@@ -52,11 +52,12 @@ function createSingleOwnerDirectory() {
 // member, a project channel is that active project's members (nobody when the
 // directory has no project roles) and a direct channel (slice 2d) is its stored
 // participants who are active members, from the injected `participantsOf` lookup
-// (nobody without it). The single-owner directory keeps the Phase 2 rule, where a
-// direct channel is open to nobody. Any other id names no channel.
+// (nobody without it). A custom channel (row 173) has the team channel's audience.
+// The single-owner directory keeps the Phase 2 rule, where a direct channel is open
+// to nobody. Any other id names no channel.
 function isSharedChannel(channelId) {
   const kind = channelKind(channelId);
-  return kind === 'team' || kind === 'project';
+  return kind === 'team' || kind === 'project' || kind === 'channel';
 }
 
 // A channel's audience: a Set of active member ids, empty when the channel is

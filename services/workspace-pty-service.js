@@ -89,6 +89,7 @@ class WorkspacePtyService {
     platform = process.platform,
     detectShellProfiles = null,
     fsPromises = undefined,
+    startFolder = () => ({ ok: false, reason: 'start_folder_unavailable' }),
   } = {}) {
     if (!configService) {
       throw new TypeError('WorkspacePtyService requires configService');
@@ -112,6 +113,7 @@ class WorkspacePtyService {
       ? detectShellProfiles
       : (opts) => detectProfiles({ platform, env, ...opts });
     this._fsPromises = fsPromises;
+    this._startFolder = typeof startFolder === 'function' ? startFolder : () => ({ ok: false }); // terminal-start-folder.js
     this._sessions = new Map(); // slot -> { id, slot, pty, shell, cwd, ... }
     this._sessionCounter = 0;
     this._outputSeq = 0; // orders slots by most recent output (ms timestamps tie)
@@ -131,6 +133,12 @@ class WorkspacePtyService {
 
   _requireRoot() {
     return String(this._configService.getToolsWorkspaceRoot?.() || '').trim();
+  }
+
+  _resolveStartFolder() {
+    let answer = null;
+    try { answer = this._startFolder(); } catch (_error) { /* refused below */ }
+    return answer?.ok === true && typeof answer.folder === 'string' ? answer.folder : '';
   }
 
   // Lazy-load + cache the native module. Throws on loader failure; the caller
@@ -263,10 +271,11 @@ class WorkspacePtyService {
     };
   }
 
-  // spawn({ cols, rows, slot, profileId?, cwd? }): profileId picks a detected shell
+  // spawn({ cols, rows, slot, profileId?, cwd?, place? }): profileId picks a detected shell
   // (unknown or absent -> the platform default chain); cwd is a root-relative folder that
-  // must resolve inside the workspace root ('' or absent = the root itself).
-  async spawn({ cols, rows, slot, profileId, cwd: requestedCwd } = {}) {
+  // must resolve inside the workspace root ('' or absent = the root itself). place
+  // 'start_folder' (Jenny chat terminal_run) starts in main's start folder, no root needed.
+  async spawn({ cols, rows, slot, profileId, cwd: requestedCwd, place } = {}) {
     // A slot whose session is being killed (a terminal closed and reopened at
     // once) is waited out, so the new tab never reattaches to the dying shell.
     for (let dying = this._sessions.get(normalizeSlot(slot)); dying?.terminationPromise && !this._disposed; dying = this._sessions.get(normalizeSlot(slot))) {
@@ -282,7 +291,13 @@ class WorkspacePtyService {
       };
     }
     // 1. Root check BEFORE lazy load - a rootless spawn must not load native code.
-    const root = this._requireRoot();
+    const atStartFolder = place === 'start_folder';
+    const startAt = atStartFolder ? this._resolveStartFolder() : null;
+    if (atStartFolder && !startAt) {
+      return { ok: false, available: true, code: TERMINAL_ERROR_CODES.START_FOLDER_UNAVAILABLE,
+        message: t('main.workspacePty.startFolderUnavailable', 'The start folder for Jenny\'s commands is not an existing folder. Choose one in Settings > Editor > Terminal.') };
+    }
+    const root = atStartFolder ? startAt : this._requireRoot();
     if (!root) {
       return {
         ok: false,
@@ -295,7 +310,7 @@ class WorkspacePtyService {
     // check from the spawn (two quick spawns on one slot must not both start a shell);
     // a dispose or root switch during the await refuses the stale request.
     let cwd = root;
-    if (typeof requestedCwd === 'string' && requestedCwd.trim() !== '') {
+    if (!atStartFolder && typeof requestedCwd === 'string' && requestedCwd.trim() !== '') {
       const contained = await resolveContainedCwd(root, requestedCwd, this._fsPromises ? { fs: this._fsPromises } : undefined);
       const stale = this._disposed || this._requireRoot() !== root;
       if (!contained.ok || stale) {

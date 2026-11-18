@@ -8,7 +8,8 @@
  *   composer and the project region are never replaced by a render and keep their own focus.
  * - Keys: F6 and Shift+F6 cycle the column, the notice, the timeline, the composer, the picker, an open thread and the
  *   project region (skipping a region that is not shown); Ctrl+F focuses search; Alt+Up/Down moves between column
- *   rows, over the rows of a folded project; the arrow keys on the switcher open its menu.
+ *   rows, over the rows of a folded project; the arrow keys on the switcher open its menu. In an open project conversation
+ *   Ctrl+F opens that conversation's find instead (row 175 item 8).
  *
  * `createTabFocus(deps)`: `container()`, `live()` (the tab's page state: `owedFocus`, `menuOpen`), `frame()`, and the
  * tab's own `openMenu` and `focusSearch`. SWITCH_ID and CONTROLS are the tab's too (one copy, here). */
@@ -101,7 +102,9 @@
       }
       if (frame() && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === 'f' || event.key === 'F')) {
         event.preventDefault();
-        focusSearch(event.target);
+        // Row 175 item 8: inside an open project conversation Ctrl+F finds in it (its own keys do the same); elsewhere it focuses the search.
+        const shown = frame().project;
+        if (!(shown && typeof shown.openFind === 'function' && shown.openFind())) focusSearch(event.target);
         return;
       }
       const row = event.target && event.target.closest ? event.target.closest('[data-team-channel], [data-team-project-row]') : null;

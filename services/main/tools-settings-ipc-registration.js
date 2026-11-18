@@ -31,6 +31,7 @@ function registerToolsSettingsIpc(ipcMain, {
   registerBrowserUseIpc(ipcMain, {
     authorization,
     getService: () => backendService.toolExecutor?.browserUse?.get?.() || null,
+    peekService: () => backendService.toolExecutor?.browserUse?.peek?.() || null,
     isEnabled: () => backendService.featureFlags?.tools_browser_use_enabled === true,
   });
   registerAppSoundIpc(ipcMain, { authorization, getHolder: () => backendService.toolExecutor?.browserUse || null });

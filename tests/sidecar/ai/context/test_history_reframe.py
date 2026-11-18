@@ -15,6 +15,7 @@ from typing import Any
 
 from sidecar.ai.context.history_reframe import reframe_tool_history_messages
 from sidecar.ai.context.messages import sanitize_semantic_message
+from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_execution_results import (
     annotate_derived_envelope_fields,
@@ -112,10 +113,14 @@ def test_history_framing_is_byte_identical_to_in_turn_framing() -> None:
             "failed_phase": "execute",
             "elapsed_ms": 41,
             "trace_id": "t_1.call_7",
+            # Electron stamps the row's local date (chat-stream-reasoning ran_on); the live
+            # render stamps today's, so a result replayed the same day keeps its cache prefix.
+            "ran_on": resolve_current_date(),
         },
     )
     reframed = _reframe([history_row])[0]
     assert reframed["content"] == in_turn["content"]
+    assert f"date: {resolve_current_date()}" in str(in_turn["content"])
 
 
 def test_success_row_reframes_with_wrap_and_ok_outcome() -> None:
@@ -253,6 +258,7 @@ def test_round_trip_through_persisted_fields_matches_in_turn_bytes() -> None:
         value = outcome.metadata.get(key)
         if isinstance(value, str) and value.strip():
             forwarded_envelope[key] = value.strip()
+    forwarded_envelope["ran_on"] = resolve_current_date()  # chat-stream-reasoning's row date
 
     history_row = _tool_row(
         tool_call_id="call_7",
@@ -350,3 +356,50 @@ def test_flag_on_drops_redundant_wire_fields_after_framing() -> None:
     assert "is_error" not in reframed
     assert "error_code" not in reframed
     assert reframed["name"] == "read_file"
+
+
+# --- approval, refusal and date carried into history (2026-11-17 review) ------
+
+
+def test_history_row_keeps_approval_refusal_and_date() -> None:
+    [row] = _reframe([
+        _tool_row(
+            name="terminal_run",
+            content='{"ok":false,"reason":"start_failed"}',
+            tool_envelope={
+                "v": 1,
+                "approval": "approved",
+                "refused_reason": "start_failed",
+                "ran_on": "2026-11-16",
+            },
+        )
+    ])
+    content = str(row["content"])
+    assert "outcome: refused" in content
+    assert "reason: start_failed" in content
+    assert "approval: the user approved this call's card" in content
+    assert "date: 2026-11-16" in content
+
+
+def test_history_envelope_admission_drops_unknown_approval_and_bad_date() -> None:
+    [row] = _reframe([
+        _tool_row(tool_envelope={"v": 1, "approval": "maybe", "ran_on": "11/16/2026"})
+    ])
+    content = str(row["content"])
+    assert "approval:" not in content
+    assert "date:" not in content
+    assert "outcome: ok" in content
+
+
+def test_live_result_reads_approval_and_refusal_from_metadata() -> None:
+    call = ToolCallRequest(call_id="call_9", tool_id="terminal_run", arguments={"command": "x"})
+    outcome = ToolExecutionOutcome(
+        tool_name="terminal_run",
+        success=True,
+        output='{"ok":false,"reason":"start_failed"}',
+        metadata={"approval": "approved", "status": "refused", "reason": "start_failed"},
+    )
+    content = str(tool_result_message(call, outcome, _config())["content"])
+    assert "outcome: refused" in content
+    assert "reason: start_failed" in content
+    assert "approval: the user approved this call's card" in content

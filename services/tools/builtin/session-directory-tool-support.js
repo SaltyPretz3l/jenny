@@ -24,6 +24,19 @@ const REFUSAL_SENTENCES = Object.freeze({
   unknown_chat: 'No chat matches that id. Call sessions_list to get current ids.',
   mode_refused: 'The current mode of this chat does not allow this. Do not call it again; tell the user what you wanted to do.',
   lockdown: 'This chat is locked down, so this is not allowed. Do not call it again.',
+  // terminal_run / terminal_read (2026-11-17 review: a bare start_failed sent the model guessing at causes).
+  start_failed: 'The terminal could not start, so the command did not run and nothing changed. Try once more; if it fails again, tell the user and give them the command to run themselves.',
+  no_free_terminal: 'All four terminals are busy, so the command did not run. Ask the user to close one, then try again.',
+  send_failed: 'The terminal started but the command could not be typed into it, so it did not run. Try once more, then tell the user.',
+  no_ide: 'The Workspace IDE could not open, so the command did not run. Tell the user and give them the command to run themselves.',
+  root_missing: 'No project folder is open in the Workspace IDE, so the command did not run. Run it again without where, or ask the user to open the project first.',
+  project_not_open: 'No project folder is open in the Workspace IDE, so the command did not run. Run it again without where, or ask the user to open the project first.',
+  folder_changed: 'The folder on the approval card changed before the command ran, so it did not run. Call terminal_run again so the user approves the new folder.',
+  start_folder_unavailable: 'The start folder for your commands is not an existing folder, so the command did not run. Ask the user to choose one in Settings > Editor > Terminal.',
+  no_terminal: 'No terminal is running, so there is no output to read. A command that failed to start already said so in its own result.',
+  // terminal_read and terminal_run (row 178: a project chat runs only on its own project, carded every time).
+  not_in_project: 'This chat can use a terminal only while the Workspace has this chat\'s project open. Ask the user to open this chat\'s project in the Workspace first.',
+  project_chat_runs_in_project: 'A project chat\'s terminal_run always runs in its project folder; omit where.',
 });
 
 function withRefusalSentence(value) {
@@ -37,7 +50,8 @@ function jsonToolResult(name, summary, rawValue, okMetadata = {}) {
   const value = withRefusalSentence(rawValue);
   return {
     content: JSON.stringify(value), summary, isError: false,
-    metadata: { result_kind: name, status: value.ok ? 'ok' : 'refused', ...(value.ok ? okMetadata : { reason: value.reason }) },
+    // 'unconfirmed' (terminal_run timed out; it may still run) is not a refusal: `outcome: refused` led a model to run it again.
+    metadata: { result_kind: name, status: value.ok ? 'ok' : (value.reason === 'unconfirmed' ? 'unconfirmed' : 'refused'), ...(value.ok ? okMetadata : { reason: value.reason }) },
   };
 }
 

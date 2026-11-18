@@ -152,10 +152,11 @@ test('the key, a token and the port never reach a log record', async (t) => {
 test('every refusal of acquire carries its reason and none takes a lease', async (t) => {
   const { pool, scheduler } = compose(t);
   await pool.start();
-  await assert.rejects(pool.turnRoute.acquire(turn()), (error) => error.reason === 'model_not_in_pool');
+  // Row 172: a conversation's own model that no online PC offers is refused with its own reason before the scheduler.
+  await assert.rejects(pool.turnRoute.acquire(turn()), (error) => error.reason === 'conversation_model_offline');
   await assert.rejects(pool.turnRoute.acquire(turn({ model: '' })), (error) => error.reason === 'model_not_in_pool');
   const nodeA = addNode(scheduler, { deviceId: 'device_a', models: [model('alpha')] });
-  await assert.rejects(pool.turnRoute.acquire(turn({ model: 'beta' })), (error) => error.reason === 'model_not_in_pool'
+  await assert.rejects(pool.turnRoute.acquire(turn({ model: 'beta' })), (error) => error.reason === 'conversation_model_offline'
     && error.code === 'CMP-HOST-0007' && error.kind === 'limit');
   await assert.rejects(pool.turnRoute.acquire(turn({ wantsVision: true })), (error) => error.reason === 'model_lacks_vision');
   scheduler.setNodePaused(nodeA, { on: true });
@@ -572,4 +573,19 @@ test('the default clock is monotonic: wall-clock steps between node contacts cha
   await sleep(60);
   assert.deepEqual(states(), ['failed', 'failed', false]);
   assert.equal(scheduler.getJob(job.job_id).reason, 'node_lost');
+});
+
+test('acquire with wait false refuses a busy pool at once with pool_busy and leaves no lease or waiter', async (t) => {
+  const { pool, scheduler } = compose(t);
+  await pool.start();
+  addNode(scheduler);
+  const held = await pool.turnRoute.acquire(turn());
+  await assert.rejects(pool.turnRoute.acquire(turn({ sessionId: 'session_2', wait: false })),
+    (error) => error.reason === 'pool_busy' && error.retryable === true);
+  assert.equal(pool.resources().waiters, 0);
+  assert.equal(pool.resources().leases, 1, 'only the held lease is remembered');
+  assert.deepEqual(scheduler.listLeases().filter((lease) => lease.state === 'queued'), []);
+  held.release({ ok: true });
+  const free = await pool.turnRoute.acquire(turn({ sessionId: 'session_3', wait: false }));
+  assert.match(free.token, /^[A-Za-z0-9_-]{43}$/u, 'a free slot still answers a non-waiting acquire');
 });

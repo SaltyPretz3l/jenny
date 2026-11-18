@@ -370,6 +370,7 @@
       decorate,
       release,
       activate(card, origin) { openLive(card, origin); return true; },
+      shown: pictures.shown, // a parked page sweeps a theme change once it is back
       tools: [{ id: 'diagram', label: jt('board.diagram.tool', 'Diagram'), title: jt('board.diagram.toolTitle', 'Add a diagram'), order: 40, run: addDiagram }],
       dispose() {
         gone = true;

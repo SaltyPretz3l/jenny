@@ -42,7 +42,7 @@ test('a loop in Q at the bound leaves P\'s entries; Q pays for itself and its fl
   assert.deepEqual(seqs(audit, Q), [19, 20, 21, 22]);
   assert.equal(audit.read({ projectId: Q }).floor_seq, 19);
   assert.deepEqual([disk(fx).schema_version, disk(fx).floor_seq, disk(fx).entries.length, disk(fx).project_floors],
-    [3, 1, 6, { [Q]: 19 }]);
+    [4, 1, 6, { [Q]: 19 }]);
   const reopened = openAudit(fx, { maxEntries: 6 });
   assert.equal(reopened.read({ projectId: Q }).floor_seq, 19);
   assert.equal(reopened.append(decided(P)).ok, true);
@@ -86,7 +86,7 @@ test('a schema 1 file is read and upgraded on the next append; the byte bound co
   assert.equal(disk(fx).schema_version, 1, 'a read writes nothing');
   assert.deepEqual(audit.append(decided(Q)), { ok: true, seq: 3 });
   assert.deepEqual(Object.keys(disk(fx)), ['schema_version', 'floor_seq', 'next_seq', 'entries', 'project_floors']);
-  assert.equal(disk(fx).schema_version, 3);
+  assert.equal(disk(fx).schema_version, 4);
   const limit = fs.statSync(fileOf(fx)).size + 10;
   const tight = openAudit(fx, { maxBytes: limit });
   for (let index = 0; index < 5; index += 1) assert.equal(tight.append(ruleAdded(Q)).ok, true);

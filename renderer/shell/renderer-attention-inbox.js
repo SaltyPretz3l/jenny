@@ -111,6 +111,7 @@
     var signature = null;
     var collapsed = null;
     var disposed = false;
+    var onTeam = function onTeam() { render(); }; // renderer-team-notify.js announces a change in what waits on this member
     /* Keys the bridge has answered (dropped at once; the resolved stream event
      * prunes the map) and keys it refused as no longer active. */
     var resolved = new Set();
@@ -136,9 +137,7 @@
       } catch (_error) { /* remembering the choice is a convenience, not a contract */ }
     }
 
-    /* A cheap read of the sources THEMSELVES, taken before the model is built
-     * (renderer-attention-inbox-model.js sourceFingerprint): render() runs on
-     * every workspace-chrome pass, which during streaming is every frame. */
+    /* A cheap read of the sources, taken before the model is built (the model's sourceFingerprint). */
     function sourceFingerprint() {
       return model().sourceFingerprint(state, { collapsed: readCollapsed(), stuckSends: stuckSends(),
         questionCards: questionCards(), verdicts: [stale, inFlight, resolved] });
@@ -227,11 +226,8 @@
       if (typeof call !== 'function') return;
       inFlight.add(row.key);
       setRowBusy(row.key, true);
-      // The approval id, not the call id: the backend keys its pending map by
-      // the scoped approval id and only falls back to a call-id scan when the
-      // approval does not require an exact reference (runtime-decision
-      // approvals do), so a bare call id would read "Already resolved" while
-      // the turn is still blocked.
+      // The approval id, not the call id: the backend keys its pending map by the scoped approval id, and a
+      // bare call id would read "Already resolved" while the turn is still blocked.
       var request = decision === 'deny'
         ? tools.deny(row.approvalId)
         : tools.approve(row.approvalId, { alwaysAllow: decision === 'always' });
@@ -269,7 +265,11 @@
       });
     }
 
-    function openSession(sessionId) { closeFlyout({ restoreFocus: false }); if (typeof callbacks.openSession === 'function') callbacks.openSession(sessionId); }
+    function openSession(sessionId, row) {
+      closeFlyout({ restoreFocus: false });
+      if (row && row.source === 'team') model().openTeamConversation(row);
+      else if (typeof callbacks.openSession === 'function') callbacks.openSession(sessionId);
+    }
 
     /* One muted line under the title, ellipsised, with the whole of it kept
      * in the tooltip: the row is read out of the transcript's context, so it
@@ -327,7 +327,7 @@
         className: TITLE_CLASS,
         label: row.sessionTitle,
         title: jt('chat.attentionInbox.openSessionTitle', 'Open this conversation'),
-        onClick: function onOpenSession() { openSession(row.sessionId); },
+        onClick: function onOpenSession() { openSession(row.sessionId, row); },
       });
       if (!button) return;
       var dot = element('span', 'attention-inbox__dot');
@@ -356,8 +356,8 @@
         return;
       }
       var busy = inFlight.has(row.key);
-      function onOpen() { openSession(row.sessionId); }
-      if (row.kind === 'approval') {
+      function onOpen() { openSession(row.sessionId, row); }
+      if (row.kind === 'approval' && row.source !== 'team') {
         if (row.canAllow !== false) {
           decide(actions, row, {
             action: 'allow', label: jt('chat.attentionInbox.allow', 'Allow'), disabled: busy,
@@ -395,7 +395,8 @@
       decide(actions, row, {
         action: isQuestion ? 'answer' : 'open', idName: 'open',
         label: isQuestion ? jt('chat.attentionInbox.answer', 'Answer') : jt('chat.attentionInbox.open', 'Open'),
-        title: isQuestion ? jt('chat.attentionInbox.answerTitle', 'Open this chat to answer')
+        title: row.source === 'team' ? jt('team.home.openTitle', 'Open this conversation in Team')
+          : isQuestion ? jt('chat.attentionInbox.answerTitle', 'Open this chat to answer')
           : row.kind === 'delivery_failed' ? jt('chat.attentionInbox.deliveryFailedTitle', 'Open this chat to retry or cancel the send')
             : jt('chat.attentionInbox.openTitle', 'Open this chat to read the plan'),
         onClick: onOpen,
@@ -406,13 +407,14 @@
       var node = element('div', ROW_CLASS);
       node.classList.add(ROW_CLASS + '--' + row.kind);
       node.dataset.attentionKey = row.key;
+      if (row.source === 'team') { node.classList.add(ROW_CLASS + '--team'); node.dir = 'auto'; } // names read in their own direction
       renderTitle(row, node);
       if (row.onScreen) {
         // Its own transcript card is where this wait is answered.
         node.classList.add(ROW_CLASS + '--here');
         node.appendChild(muted('attention-inbox__note', jt('chat.attentionInbox.onScreen', 'Waiting in the chat on screen')));
       } else {
-        if (row.kind === 'approval') renderApprovalRow(row, node);
+        if (row.kind === 'approval' && row.source !== 'team') renderApprovalRow(row, node);
         else node.appendChild(muted('attention-inbox__note', model().rowNote(row)));
         renderRowActions(row, node);
       }
@@ -521,6 +523,7 @@
       if (first && typeof first.focus === 'function') first.focus();
     }
 
+    if (typeof windowRef.addEventListener === 'function') windowRef.addEventListener('jenny:team-attention', onTeam);
     var badge = flyoutApi && typeof flyoutApi.createAttentionInboxBadge === 'function' && actionButton
       ? flyoutApi.createAttentionInboxBadge({ anchor: options.badgeAnchor, actionButton: actionButton, onClick: handleBadgeClick })
       : null;
@@ -545,7 +548,7 @@
       var inbox = readInbox();
       var modelRows = Array.isArray(inbox && inbox.rows) ? inbox.rows : [];
       // Desktop notifications see every moved pass; a failure never breaks the inbox.
-      try { if (typeof options.onInboxRows === 'function') options.onInboxRows(modelRows); } catch (_error) { /* optional */ }
+      try { if (typeof options.onInboxRows === 'function') options.onInboxRows(modelRows.filter(function local(row) { return row.source !== 'team'; })); } catch (_error) { /* optional */ }
       var live = new Set(modelRows.map(function keyOf(row) { return row.key; }));
       // A wait the sources no longer list is gone for good; forget its verdict.
       resolved.forEach(function pruneResolved(key) { if (!live.has(key)) resolved.delete(key); });
@@ -557,10 +560,7 @@
       // The second gate: what the rows would actually say, so a source that
       // moved without changing a word still touches no DOM.
       var next = JSON.stringify([readCollapsed(), answerable.length, rows.map(function rowContent(row) {
-        return [row.key, row.sessionTitle, row.toolName, row.preview, row.canAllow, row.canAlwaysAllow, row.questionCount,
-          row.introText, row.consequence, row.policyScope, row.failedCount, row.onScreen,
-          (row.facts || []).map(function labelOf(fact) { return fact.label; }),
-          stale.has(row.key), inFlight.has(row.key)];
+        return model().rowSignature(row).concat([stale.has(row.key), inFlight.has(row.key)]);
       })]);
       if (signature === next) return;
       signature = next;
@@ -583,6 +583,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      if (typeof windowRef.removeEventListener === 'function') windowRef.removeEventListener('jenny:team-attention', onTeam);
       if (flyout) flyout.dispose();
       while (panel.cleanup.length) panel.cleanup.pop()();
       if (badge) badge.dispose();

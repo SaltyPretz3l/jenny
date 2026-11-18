@@ -40,6 +40,7 @@ const OUTBOUND_FIELDS = Object.freeze({
   reach: ['type', 'result', 'reason'],
   mapped: ['type', 'external'],
   model_relay: ['type', 'flowing', 'passing'],
+  file_tools: ['type', 'on', 'available', 'reason', 'turns'], // row 123: file-tools-link.js
 });
 
 const PING = Object.freeze({ type: 'ping' });

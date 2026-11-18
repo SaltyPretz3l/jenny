@@ -58,3 +58,12 @@ def test_read_only_inspection_guidance_stays_out_without_run_command():
     ])
     assert "## Tool Use Discipline" in guidance
     assert "temp script" not in guidance
+
+
+def test_background_guidance_tells_the_model_a_person_message_arrives_between_steps(tmp_path):
+    prompt = str(ContextBuilder(tmp_path).build_system_prompt(
+        "Base prompt", tool_statuses=[_run_command()], native_tool_schemas=False,
+        include_skills=False, include_bootstrap=False))
+    assert prompt.count("may send a message while you work") == 1
+    assert "arrives as a user message between your steps" in prompt
+    assert "take it into account before continuing" in prompt

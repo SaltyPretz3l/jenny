@@ -20,6 +20,10 @@ from sidecar.ai.tools.builtins import cancellation
 from sidecar.runtime.pipe_stdin import GatedPipeReader, gated_stdin
 
 CANCEL_NOTIFICATION_METHOD = "notifications/cancelled"
+# Row 180: the sidecar's MCP client says a person's message arrived while this call runs;
+# a background-job wait ends early (the call is not aborted). Lockstep with
+# ``transport_stdio_channel.WAKE_NOTIFICATION_METHOD``.
+WAKE_NOTIFICATION_METHOD = "notifications/jenny_wake"
 INITIALIZED_NOTIFICATION_METHOD = "notifications/initialized"
 
 _PROTOCOL_STDOUT: TextIO | None = None
@@ -133,11 +137,14 @@ def _intercept_cancellation(stripped: str) -> bool:
     method = payload.get("method")
     if method == INITIALIZED_NOTIFICATION_METHOD:
         return True
-    if method != CANCEL_NOTIFICATION_METHOD:
+    if method not in (CANCEL_NOTIFICATION_METHOD, WAKE_NOTIFICATION_METHOD):
         return False
     params = payload.get("params")
     request_id = params.get("requestId") if isinstance(params, dict) else None
-    cancellation.cancel_request(request_id)
+    if method == WAKE_NOTIFICATION_METHOD:
+        cancellation.wake_request(request_id)
+    else:
+        cancellation.cancel_request(request_id)
     return True
 
 

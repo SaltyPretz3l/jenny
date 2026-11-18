@@ -43,6 +43,7 @@
     node_agent_running: () => jt('settings.team.reason.shareOtherTeam', 'This PC already shares its GPU with another team. Turn that off first.'),
     team_unavailable: () => jt('settings.team.reason.unavailable', 'The team server is not answering. Try again in a moment.'),
     team_transport_down: () => jt('settings.team.reason.transportDown', 'The server lost its network connection.'),
+    team_transport_missing: () => jt('settings.team.reason.transportMissing', 'This Jenny is missing its team connection helper, so the server cannot start. Reinstall or update Jenny.'),
     team_key_timeout: () => jt('settings.team.reason.keyTimeout', 'The server did not get its key in time. Start it again.'),
     team_store_failed: () => jt('settings.team.reason.storeFailed', 'The team server could not save the change. Nothing was changed.'),
     team_store_schema_unsupported: () => jt('settings.team.reason.storeNewer', 'The team’s files were written by a newer Jenny. Update Jenny.'),
@@ -75,6 +76,8 @@
     team_host_config_write_failed: () => jt('settings.team.reason.configWrite', 'Jenny could not write the server’s settings on this PC.'),
     team_host_stopped: () => jt('settings.team.reason.hostStopped', 'The server was stopped before it finished starting.'),
     team_host_not_deployed: () => jt('settings.team.reason.notDeployed', 'This PC has not hosted a team yet.'),
+    team_file_tools_windows_unreviewed: () => jt('settings.team.reason.fileToolsWindows', 'Project files are not on Windows yet. They wait for a safety review of how Jenny reaches files on Windows.'),
+    team_host_turn_running: () => jt('settings.team.reason.turnRunning', 'A turn is running in a team project. Try again when it finishes.'),
     team_host_start_timeout: () => jt('settings.team.reason.startTimeout', 'The server did not start in time.'),
     team_host_exited: () => jt('settings.team.reason.exited', 'The server stopped unexpectedly.'),
     team_host_stopped_itself: () => jt('settings.team.reason.exited', 'The server stopped unexpectedly.'),
@@ -180,6 +183,22 @@
     team_download_folder_not_empty: () => jt('settings.team.reason.downloadNotEmpty', 'Pick an empty folder to download into.'),
     team_download_folder_invalid: () => jt('settings.team.reason.downloadFolderInvalid', 'That is not a folder Jenny can download into. Pick an empty folder.'),
     team_download_write_failed: () => jt('settings.team.reason.downloadWriteFailed', 'Jenny could not save a file in that folder. Nothing partly saved was kept.'),
+    team_project_drafts_unavailable: () => jt('settings.team.reason.projectDraftsUnavailable', 'Jenny could not keep this draft on this PC. The text stays in the box until you send it.'),
+    // Row 175 round 2b: conversation actions and plan decisions.
+    team_turn_not_latest: () => jt('settings.team.reason.turnNotLatest', 'A newer question was asked since. Only the latest question can be redone.'),
+    team_redo_forbidden: () => jt('settings.team.reason.redoForbidden', 'Only the member who asked can do this (a project admin can also regenerate).'),
+    session_active: () => jt('settings.team.reason.sessionActive', 'Jenny is still working in this conversation. Try again when the turn ends.'),
+    runtime_unavailable: () => jt('settings.team.reason.runtimeUnavailable', 'The team’s host cannot start a turn right now. Try again later.'),
+    runtime_submission_refused: () => jt('settings.team.reason.runtimeRefused', 'The team’s host could not start that turn. Try again.'),
+    operation_indeterminate: () => jt('settings.team.reason.operationIndeterminate', 'The team’s host may or may not have done that. Reload the conversation to see.'),
+    team_branch_refused: () => jt('settings.team.reason.branchRefused', 'The team’s host could not branch from that message.'),
+    session_capacity: () => jt('settings.team.reason.sessionCapacity', 'The team’s host holds as many conversations as it can. Delete one first.'),
+    team_member_unavailable: () => jt('settings.team.reason.memberUnavailable', 'That member is not in this project any more.'),
+    team_hand_refused: () => jt('settings.team.reason.handRefused', 'That member is no longer viewing this conversation or cannot write in it.'),
+    plan_decision_invalid: () => jt('settings.team.reason.planDecisionInvalid', 'That plan is no longer waiting for a decision.'),
+    team_redo_attachments: () => jt('settings.team.reason.redoAttachments', 'A question with attachments cannot be redone here. Branch from it instead.'),
+    application_turn_retry_refused: () => jt('settings.team.reason.turnRetryRefused', 'That turn cannot be redone now. Reload the conversation and try again.'),
+    handoff_preparation_retry_refused: () => jt('settings.team.reason.handoffRetryRefused', 'That turn cannot be redone while a hand-off is being prepared.'),
     // Slice 6-7: model sharing (services/team/model-reasons.js, every word; a refusal and a transfer row's reason).
     team_model_sharing_off: () => jt('settings.team.reason.modelSharingOff', 'Model sharing is off, so nothing was sent or received.'),
     team_model_host_too_old: () => jt('settings.team.reason.modelHostTooOld', 'The team’s host runs an older Jenny that cannot share models. The owner needs to update it.'),
@@ -235,6 +254,8 @@
     fulfilled: () => jt('settings.team.reason.modelFulfilled', 'It arrived and was checked.'),
     // Slice 2c renderer: main's own refusals for a picture, a copy and Show in folder.
     team_attachment_not_image: () => jt('settings.team.reason.attachmentNotImage', 'That file is not a picture Jenny can show.'),
+    team_attachment_not_text: () => jt('settings.team.reason.attachmentNotText', 'That file is not text Jenny can show.'),
+    team_attachment_too_large_for_peek: () => jt('settings.team.reason.attachmentTooLargeForPeek', 'That file is too large for a quick look. Open it to read it.'),
     team_attachment_copy_failed: () => jt('settings.team.reason.attachmentCopyFailed', 'Jenny could not copy that picture.'),
     team_attachment_not_saved: () => jt('settings.team.reason.attachmentNotSaved', 'That file is no longer where Jenny saved it.'),
     team_upload_stale: () => jt('settings.team.reason.uploadStale', 'The upload got out of step with the team’s host. Start it again.'),
@@ -425,8 +446,13 @@
       case 'owner_transferred': return jt('settings.team.activity.ownerTransferred', '{actor} made {subject} the owner', params);
       case 'recovery_used': return jt('settings.team.activity.recoveryUsed', '{subject} reclaimed ownership on the server’s PC', params);
       case 'team_renamed': return jt('settings.team.activity.teamRenamed', '{actor} renamed the team', params);
+      case 'member_profile_changed': return jt('settings.team.activity.profileChanged', '{actor} changed their name or PC name.', params);
       case 'audit_log_reset': return jt('settings.team.activity.auditLogReset', 'The audit log could not be read and was set aside. A new log starts here.', params);
       case 'invite_name_taken': return jt('settings.team.activity.inviteNameTaken', 'A join was refused because the name was already taken', params);
+      // Row 173: a custom channel archived, brought back or deleted; `name` is the channel's (null when it was not clean text).
+      case 'chat_channel_archived': return jt('settings.team.activity.channelArchived', '{actor} archived #{channel}', { actor, channel: entry.name || '?' });
+      case 'chat_channel_unarchived': return jt('settings.team.activity.channelUnarchived', '{actor} brought back #{channel}', { actor, channel: entry.name || '?' });
+      case 'chat_channel_deleted': return jt('settings.team.activity.channelDeleted', '{actor} deleted #{channel}', { actor, channel: entry.name || '?' });
       default: return jt('settings.team.activity.other', '{actor} changed the team', params);
     }
   }
@@ -517,5 +543,23 @@
     });
   })();
 
-  return { modelWords, errorText, exportLeftOutText, forceLocalText, markErrorText, uploadErrorText, uploadRetry, repairText, connectionText, revokedText, roleText, teamName, formatFingerprint, ownKeyText, formatTime, deviceCount, activityText, _reasons: Object.keys(REASONS) };
+  // Sizes and dates for the team pages, in the app's language (a set-aside team, a backup, the server page).
+  function tag() { try { return globalThis.jennyI18n?.tag?.() || undefined; } catch (_error) { return undefined; } }
+  function sizeText(bytes) {
+    const units = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'];
+    let value = Math.max(0, Number(bytes) || 0);
+    let i = 0;
+    while (value >= 1000 && i < units.length - 1) { value /= 1000; i += 1; }
+    try { return new Intl.NumberFormat(tag(), { style: 'unit', unit: units[i], unitDisplay: 'short', maximumFractionDigits: i >= 3 ? 2 : (i ? 1 : 0) }).format(value); } catch (_error) { return Math.round(value) + ' ' + units[i]; }
+  }
+  // `short`: day and month, with the year only when it is not this one.
+  function dateText(ms, short) {
+    try {
+      const date = new Date(ms);
+      const options = short ? { day: 'numeric', month: 'short', ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) } : { dateStyle: 'medium' };
+      return new Intl.DateTimeFormat(tag(), options).format(date);
+    } catch (_error) { return ''; }
+  }
+
+  return { tag, sizeText, dateText, modelWords, errorText, exportLeftOutText, forceLocalText, markErrorText, uploadErrorText, uploadRetry, repairText, connectionText, revokedText, roleText, teamName, formatFingerprint, ownKeyText, formatTime, deviceCount, activityText, _reasons: Object.keys(REASONS) };
 });

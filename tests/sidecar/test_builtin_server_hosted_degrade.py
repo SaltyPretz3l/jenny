@@ -10,6 +10,8 @@ import hashlib
 import json
 import logging
 import os
+import queue
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -293,3 +295,244 @@ def test_desktop_mode_asks_no_reason(monkeypatch, tmp_path: Path) -> None:
 
     assert asked == []
     assert hosted_file_io.hosted_file_io_enabled() is False
+
+
+# --- A team host: no process root, a root boundary (row 123, team host file tools) ---
+
+_TEAM_EXTRAS = frozenset({"jenny_help", "ask_user", "exit_plan_mode"})
+_NOT_ON_A_TEAM_HOST = frozenset({"create_artifact", "propose_change", "report_findings"})
+
+
+def run_team_worker(monkeypatch, boundary: Path, *extra: str) -> dict[str, Any]:
+    """`main()` as a team host launches it: an empty `--workspace-root` and a boundary.
+
+    One `initialize` is answered; returns the registered tools, the worker's
+    host config, the initialize answer and the start events."""
+    seen: dict[str, Any] = {"responses": []}
+    real_default_tools = builtin_server._default_tools
+    real_dispatch = builtin_server._dispatch_message
+
+    def recording_default_tools(config=None, **kwargs):
+        tools = real_default_tools(config, **kwargs)
+        seen.update(kwargs, tools=tools, config=config)
+        return tools
+
+    def recording_dispatch(payload, tools, workspace, host_config=None):
+        seen.update(host_config=host_config, workspace=workspace)
+        return real_dispatch(payload, tools, workspace, host_config)
+
+    def one_initialize():
+        inbox: queue.Queue[str | None] = queue.Queue()
+        inbox.put(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}))
+        inbox.put(None)
+        return inbox
+
+    events: list[str] = []
+
+    class Recorder(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            events.append(record.getMessage())
+
+    monkeypatch.setattr(builtin_server, "_default_tools", recording_default_tools)
+    monkeypatch.setattr(builtin_server, "_dispatch_message", recording_dispatch)
+    monkeypatch.setattr(builtin_server, "start_stdin_pump", one_initialize)
+    monkeypatch.setattr(builtin_server, "_write_response", seen["responses"].append)
+    monkeypatch.setattr(builtin_server, "_configure_logging", lambda **_: False)
+    recorder = Recorder(logging.DEBUG)
+    hosted_logger = logging.getLogger("sidecar.ai.mcp.builtin_server_hosted")
+    hosted_logger.addHandler(recorder)
+    try:
+        builtin_server.main([
+            "--workspace-root", "", "--host-mode", "server",
+            "--host-execution-policy-version", "1",
+            "--hosted-root-boundary", str(boundary), *extra,
+        ])
+    finally:
+        hosted_logger.removeHandler(recorder)
+    seen["events"] = events
+    [initialize] = seen["responses"]
+    seen["hosted_files"] = (
+        initialize["result"]["capabilities"].get("experimental", {}).get("jenny_hosted_files"))
+    return seen
+
+
+def team_listed(seen: dict[str, Any]) -> set[str]:
+    return {entry["name"] for entry in builtin_server._handle_tools_list(
+        1, seen["tools"], seen["host_config"])["result"]["tools"]}
+
+
+def _offered_on_a_team_host(listed: list[dict[str, Any]], boundary: Path, root: Path) -> set[str]:
+    """The model's list on a team host's main sidecar, from a worker's list. The
+    request root is simulated through the config root: the real list follows the
+    request's root (tool_resolution), which this helper does not build."""
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(mode="assist", host_mode="server", host_execution_policy_version=1,
+                              tools_workspace_root=str(root),
+                              hosted_root_boundary=str(boundary)),
+        _mcp_client=SimpleNamespace(available_tools=[
+            descriptor_from_payload(BUILTIN_MCP_SERVER_NAME, payload) for payload in listed
+        ]),
+        _engine=SimpleNamespace(supports_tool_calling=True, supports_inband_tool_calling=False),
+    )
+    schemas = tool_resolution.build_tool_payload(kernel, None)
+    return {str((schema.get("function") or schema).get("name")) for schema in schemas}
+
+
+def test_a_boundary_with_a_working_backend_registers_exactly_the_six_file_tools(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    boundary = (tmp_path / "projects").resolve()
+    (boundary / "project_alpha").mkdir(parents=True)
+    monkeypatch.setattr(hosted_file_io, "hosted_file_io_unavailable_reason", lambda root: None)
+
+    seen = run_team_worker(monkeypatch, boundary)
+
+    assert seen["workspace_root_present"] is True
+    listed = team_listed(seen)
+    assert listed & _workspace_required() == _FILE_TOOLS
+    assert _FILE_TOOLS <= listed <= _FILE_TOOLS | _TEAM_EXTRAS
+    assert not listed & _NOT_ON_A_TEAM_HOST
+    assert set(seen["tools"]) <= _FILE_TOOLS | _TEAM_EXTRAS, "registered, not only listed"
+    assert seen["hosted_files"] == {"available": True, "reason": None}
+    assert hosted_file_io.hosted_file_io_enabled() is True
+    assert hosted_file_io.hosted_file_io_root() is None, "I4: no process-level root"
+    assert seen["workspace"].root is None
+
+
+def test_the_model_on_a_team_host_is_offered_no_tool_outside_the_named_set(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Even when a worker lists the single-owner hosted set, the main sidecar offers
+    only the named set (I1, D7)."""
+    boundary = (tmp_path / "projects").resolve()
+    root = boundary / "project_alpha"
+    root.mkdir(parents=True)
+    single_owner = _listed(builtin_server._default_tools(
+        dict(_HOST), workspace_root_present=True, request_scoped_authority=True))
+    assert _NOT_ON_A_TEAM_HOST & {entry["name"] for entry in single_owner}, "fixture lists them"
+
+    offered = _offered_on_a_team_host(single_owner, boundary, root)
+
+    assert not offered & _NOT_ON_A_TEAM_HOST
+    assert offered & _workspace_required() == _FILE_TOOLS
+    assert offered <= _FILE_TOOLS | _TEAM_EXTRAS
+
+
+def test_a_boundary_with_a_refusing_backend_registers_none_and_reports_the_reason(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    boundary = (tmp_path / "projects").resolve()
+    boundary.mkdir()
+    monkeypatch.setattr(hosted_file_io, "_platform", lambda: "win32")
+
+    seen = run_team_worker(monkeypatch, boundary)
+
+    assert seen["workspace_root_present"] is False
+    assert not team_listed(seen) & (_workspace_required() | _FILE_TOOLS)
+    assert seen["hosted_files"] == {"available": False, "reason": "file_access_switch_off"}
+    assert seen["events"].count("hosted_file.unavailable reason=file_access_switch_off") == 1
+    assert hosted_file_io.hosted_file_io_enabled() is True
+    assert hosted_file_io.hosted_file_io_root() is None
+
+
+def test_a_boundary_that_does_not_resolve_to_itself_registers_none(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(hosted_file_io, "hosted_file_io_unavailable_reason", lambda root: None)
+
+    seen = run_team_worker(monkeypatch, (tmp_path / "absent").resolve())
+
+    assert seen["workspace_root_present"] is False
+    assert not team_listed(seen) & _FILE_TOOLS
+    assert seen["hosted_files"] == {"available": False, "reason": "file_access_root_invalid"}
+
+
+@pytest.mark.parametrize("argv", [
+    ["--hosted-root-boundary", "{boundary}"],
+    ["--host-mode", "server", "--host-execution-policy-version", "1",
+     "--workspace-root", "{boundary}", "--hosted-root-boundary", "{boundary}"],
+    ["--host-mode", "server", "--host-execution-policy-version", "1",
+     "--workspace-root", "", "--hosted-root-boundary", "relative/projects"],
+    ["--host-mode", "server", "--host-execution-policy-version", "1",
+     "--workspace-root", "", "--hosted-root-boundary", ""],
+], ids=["desktop", "with-a-workspace-root", "relative", "empty"])
+def test_a_boundary_outside_a_rootless_server_worker_ends_the_start(
+    monkeypatch, tmp_path: Path, argv: list[str],
+) -> None:
+    monkeypatch.setattr(builtin_server.sys, "stdin",
+                        type("EmptyStdin", (), {"readline": staticmethod(lambda: "")})())
+    with pytest.raises(SystemExit) as stopped:
+        builtin_server.main([item.replace("{boundary}", str(tmp_path)) for item in argv])
+    assert stopped.value.code == 2
+
+
+def test_no_boundary_answers_no_hosted_files_capability(monkeypatch, tmp_path: Path) -> None:
+    seen = _run_main(monkeypatch, tmp_path.resolve())
+    response = builtin_server._dispatch_message(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, seen["tools"], WorkspaceGuard(None),
+        dict(_HOST))
+    assert "jenny_hosted_files" not in response["result"]["capabilities"]["experimental"]
+
+
+def child_envelope(root: Path) -> dict[str, object]:
+    return {TRUSTED_EXECUTION_CONTEXT_KEY: _envelope(root)}
+
+
+def files_outside(top: Path, *allowed: Path) -> set[str]:
+    return {
+        str(path) for path in top.rglob("*")
+        if path.is_file() and not any(path.is_relative_to(item) for item in allowed)
+    }
+
+
+def exercise_one_project(monkeypatch, tmp_path: Path, *extra: str) -> None:
+    """D8 and I10, and slice 1's stop line: through a team worker's real tools/call
+    path, a read, a list, a write and an edit in one project complete with empty
+    snapshot and recovery roots, a read of a second project is refused, and the
+    only files outside the request root are the worker's own operation ledger."""
+    boundary = (tmp_path / "projects").resolve()
+    root = boundary / "project_alpha"
+    other = boundary / "project_beta"
+    root.mkdir(parents=True)
+    other.mkdir()
+    (root / "notes.txt").write_text("first line\n", encoding="utf-8")
+    (other / "secret.txt").write_text("beta only\n", encoding="utf-8")
+    ledger = tmp_path / "ledger"
+    seen = run_team_worker(monkeypatch, boundary, "--pre-change-snapshot-root", "",
+                           "--workspace-recovery-root", "", "--operation-ledger-root", str(ledger),
+                           *extra)
+    assert seen["hosted_files"] == {"available": True, "reason": None}
+    before = files_outside(tmp_path, root, ledger)
+
+    def call(message_id: int, name: str, arguments: dict[str, object]) -> dict[str, Any]:
+        params = {"name": name, "arguments": {**arguments, **child_envelope(root)}}
+        return builtin_server._handle_tools_call(message_id, seen["tools"], seen["workspace"],
+                                                 params, seen["host_config"])
+
+    read = call(1, "read_file", {"path": "notes.txt"})
+    listed = call(2, "list_dir", {"path": "."})
+    written = call(3, "write_file", {"path": "made.txt", "content": "made\n"})
+    edited = call(4, "edit_file", {"file_path": "notes.txt", "old_string": "first",
+                                   "new_string": "second"})
+    escaped = call(5, "read_file", {"path": "../project_beta/secret.txt"})
+
+    for outcome in (read, listed, written, edited):
+        assert outcome.get("result", {}).get("success") is True, outcome
+    assert "first line" in json.dumps(read)
+    assert "notes.txt" in json.dumps(listed)
+    assert (root / "made.txt").read_text(encoding="utf-8") == "made\n"
+    assert (root / "notes.txt").read_text(encoding="utf-8") == "second line\n"
+    assert "second" in json.dumps(edited["result"].get("metadata", {}).get("diff")), (
+        "the inline diff is built in memory and survives with no snapshot store")
+    assert "beta only" not in json.dumps(escaped)
+    assert escaped.get("error") or escaped["result"].get("success") is False
+    assert files_outside(tmp_path, root, ledger) == before
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows runs this through the real library in "
+                           "test_hosted_file_io_win32_e2e.py")
+def test_a_posix_team_worker_reads_writes_and_edits_one_project_and_leaves_nothing_outside(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    exercise_one_project(monkeypatch, tmp_path)

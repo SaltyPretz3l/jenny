@@ -43,18 +43,23 @@
   }
 
   /* A descriptor's `enabledWhen` (slice 2a-6c). `team`: this Jenny has joined or hosts a team, which is when the
-   * Team tab exists; with the `team` flag off the tab never does. */
-  function conditionHolds(condition, state) {
-    if (condition !== 'team') return true;
+   * Team tab exists; with the `team` flag off the tab never does. `teamProject` (row 175): that, and the Team row on. */
+  function teamHolds(state) {
     const shell = globalThis.rendererTopNavShellController;
     return state?.features?.featureFlags?.team === true && typeof shell?.isTeamTabAvailable === 'function' && shell.isTeamTabAvailable() === true;
+  }
+  function conditionHolds(condition, state) {
+    if (condition === 'teamProject') return teamHolds(state) && readSettings(state).categories.team === true;
+    return condition !== 'team' || teamHolds(state);
   }
 
   /* A setting that cannot be used yet keeps its place (owner, 2026-11-12): greyed out, switched off, not operable
    * (`disabled` and `aria-disabled` on the switch) and saying what makes it available; Settings search still finds it. */
-  function unavailableRow(binding, descriptor, toggleSwitch) {
+  function unavailableRow(binding, descriptor, toggleSwitch, state) {
+    const teamOff = descriptor.enabledWhen === 'teamProject' && teamHolds(state);
     return binding.renderSettingRow(descriptor, false, { inventory: { toggleSwitch }, disabled: true, rowClassName: 'settings-field--unavailable',
-      description: jt('settings.notifications.teamUnavailable', 'Available once this Jenny has joined or hosts a team.') });
+      description: teamOff ? jt('settings.notifications.teamProjectUnavailable', 'Available while Someone messages you in a team is on.')
+        : jt('settings.notifications.teamUnavailable', 'Available once this Jenny has joined or hosts a team.') });
   }
 
   /* `container` is the card; the three lists are found inside it so the
@@ -74,7 +79,7 @@
     descriptors.listSettingDescriptors({ adapterId: ADAPTER_ID }).forEach((descriptor) => {
       const reply = descriptor.key === 'replyPreview';
       const list = descriptor.key.startsWith('categories.') ? '#notificationsCategoryList' : (reply ? '#notificationsContentList' : '#notificationsGeneralList');
-      if (descriptor.enabledWhen && !conditionHolds(descriptor.enabledWhen, state)) { lists[list].push(unavailableRow(binding, descriptor, toggleSwitch)); return; }
+      if (descriptor.enabledWhen && !conditionHolds(descriptor.enabledWhen, state)) { lists[list].push(unavailableRow(binding, descriptor, toggleSwitch, state)); return; }
       const disabled = descriptor.key !== 'enabled' && (off || (reply && previewUnused));
       lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled }));
     });

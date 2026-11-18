@@ -18,6 +18,7 @@ const { buildInteractiveQuestionBatchVisibleText } = require('./interactive-sess
 const { finishTerminalReport, prepareTerminalReport } = require('./session-report-admission');
 const { finishMidTurnMail, releaseMidTurnMailForStream, settleMidTurnMail } = require('./session-mail-mid-turn');
 const { undrawnImagePromptFields } = require('./image-prompt-pin');
+const { releaseUserSteers } = require('./user-steer-mid-turn');
 
 function supportsManagedTerminalCoordinator(ctx) {
   return Boolean(
@@ -39,6 +40,7 @@ async function settleMutation(ctx, {
   if (ctx.unfinishedToolRepairFailure) {
     // Nothing persists on this path: mid-turn mail (row 70 W2a) returns to queued.
     releaseMidTurnMailForStream(ctx, 'terminal_refused');
+    releaseUserSteers(ctx, 'refused'); // row 180: steered messages the model never took go back to the renderer
     ctx.terminalCoordinatorHandled = true;
     ctx.terminalPersistRefused = true;
     return {
@@ -60,6 +62,7 @@ async function settleMutation(ctx, {
   // Mid-turn mail the model consumed (row 70 W2a) persists with this turn, after the rows it already
   // persisted and before the refused segments and the assistant row; finalized once durable.
   const mail = settleMidTurnMail(ctx);
+  releaseUserSteers(ctx, kind === 'cancelled' ? 'cancel' : 'terminal'); // before the terminal, so the renderer re-queues first
   if (mail.rows.length) mutation.messages = [...mail.rows, ...mutation.messages];
   let settled;
   try {

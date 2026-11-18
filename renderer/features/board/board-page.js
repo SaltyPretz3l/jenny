@@ -3,7 +3,7 @@
  * showBoardPage({ container, windowRef, ... }) builds the page into #boardView; hideBoardPage() stops it.
  * Nothing runs before the first show: no read, no listener, no timer. Everything the page starts (the
  * project subscription, the source's change listener, the size observer, the workbench's own listeners)
- * is stopped by dispose(), which hideBoardPage() calls.
+ * is stopped by dispose(), which hideBoardPage() calls; parkBoardPage() keeps the page built and idle instead (resumed by the next show).
  *
  * The page talks to a BoardSource (the project board plan, section 6): the preload bridge
  * while it is present and enabled; with none it says boards are not available (the in-memory source is
@@ -128,6 +128,8 @@
     let docToken = 0;
     let observer = null;
     let frame = 0;
+    // stale: 'list' or 'project' changed while parked; lastSize: the size last drawn at
+    let parked = false; let stale = ''; let lastSize = '';
     let project = projectTracker.get();
     let unavailable = false;
     let transfer = null; // the Export menu and the Import call (board-export.js), once the source is chosen
@@ -173,12 +175,13 @@
       onLayoutChange: () => { if (chatDock) chatDock.sync(); teamCall('sync'); },
     });
     // The chat beside the board (slice C1): the app's one chat dock, held here while the Board is on screen.
-    chatDock = mod('rendererBoardChatDock').attachBoardChatDock({
+    const attachDock = () => mod('rendererBoardChatDock').attachBoardChatDock({
       windowRef, state: opts.state, bench, chatHost: bench.chatHost, rootEl, chat: opts.chat, appendClientLog: log,
       getBoard: () => boards.find((board) => board.id === openId) || null, getProject: () => project, nameOfProject: (id) => projectTracker.nameOf(id),
       isTeam: () => Boolean(project.team),
       layout: () => scheduleRender(), focusCanvas: () => views.focus() || bench.focusCanvas(),
     });
+    chatDock = attachDock();
 
     // The docked chat follows the open board and the project: which board a turn is stamped with, and the
     // line that says the chat belongs to another project. Never called inside the tab's show, where the
@@ -315,6 +318,8 @@
       openId = result.board.id;
       layoutStore.saveOpenBoard(project.id, openId);
       await loadList({});
+      // Like a new file, the new board opens with its name field ready to type over.
+      if (!disposed) list.beginRename(result.board.id);
     }
 
     async function duplicateBoard(id) {
@@ -375,6 +380,7 @@
     function onSourceEvent(event, editor) {
       if (disposed || !event || event.kind === 'proposals') return; // the changes view reads those itself
       if (event.kind !== 'moved' && event.projectId !== project.id) return;
+      if (parked) { stale = stale || 'list'; return; } // a hidden page does no reads; resume reads once
       // A team batch the host turned down after this page drew it: the board is read again, and the person is told.
       if (event.kind === 'refused') {
         if (event.boardId === openId) { notify(refusalText(event), { tone: 'warning' }); void loadDoc(); }
@@ -419,7 +425,7 @@
       const ok = await Promise.resolve().then(() => gate.ensureTeamAssets({ windowRef, scripts: lists.teamBoard, styles: ['styles/board-team.css'] })).catch(() => false);
       teamLoading = false;
       const part = ok === true ? windowRef.rendererBoardTeam : null;
-      if (disposed || teamPart || !part || typeof part.attachBoardTeam !== 'function') return;
+      if (disposed || parked || teamPart || !part || typeof part.attachBoardTeam !== 'function') return; // parked meanwhile: resume attaches
       const made = part.attachBoardTeam({
         windowRef, document: doc, jt, notify, gate, lists,
         rootEl, listEl: list.element, canvas, chatHost: bench.chatHost,
@@ -435,6 +441,7 @@
 
     async function switchProject() {
       if (disposed) return;
+      if (parked) { stale = 'project'; return; }
       project = projectTracker.get();
       if (!source) return; // start() reads the project again once the source is chosen
       setScope();
@@ -446,9 +453,11 @@
 
     function scheduleRender() {
       if (disposed || frame) return;
-      const run = () => { frame = 0; if (disposed) return; bench.render(); canvas.resized(); };
+      if (parked) return; // resume() renders
+      const run = () => { frame = 0; if (disposed || parked) return; bench.render(); canvas.resized(); lastSize = sizeKey(); };
       frame = typeof windowRef.requestAnimationFrame === 'function' ? windowRef.requestAnimationFrame(run) : windowRef.setTimeout(run, 16);
     }
+    const sizeKey = () => `${rootEl.clientWidth}x${rootEl.clientHeight}`; const onResize = () => { if (!parked && sizeKey() !== lastSize) scheduleRender(); };
 
     async function start() {
       bench.render();
@@ -495,8 +504,8 @@
       views.setEditor(editor);
       unsubscribeSource = source.onChanged((event) => onSourceEvent(event, editor));
       if (typeof windowRef.ResizeObserver === 'function') {
-        observer = new windowRef.ResizeObserver(scheduleRender);
-        observer.observe(rootEl);
+        observer = new windowRef.ResizeObserver(onResize);
+        if (!parked) observer.observe(rootEl); // parked before the source was chosen: resume() starts it
       }
       project = projectTracker.get();
       setScope();
@@ -533,13 +542,33 @@
       container.textContent = '';
     }
 
-    return { dispose, started, container, isDisposed: () => disposed, checkProject: () => { projectTracker.check(); void attachTeam(); }, getProjectId: () => project.id, getOpenBoardId: () => openId, openBoard, getView: () => views.getView(), revealChanges: () => bench.revealChanges(),
+    // Parked: built, no reads or renders; dock back, team half let go. A team project's page is disposed (its viewing lease).
+    function park() {
+      if (disposed || parked) return;
+      if (teamSource()) { dispose(); return; }
+      parked = true; canvas.setShown(false);
+      if (observer) observer.disconnect();
+      chatDock.detach();
+      try { teamCall('dispose'); } catch (_error) { /* the page parks either way */ } teamPart = null;
+    }
+    const checkProject = () => { projectTracker.check(); if (!teamPart && !teamLoading) void attachTeam(); };
+    function resume() {
+      if (disposed || !parked) return;
+      parked = false; chatDock = attachDock(); canvas.setShown(true);
+      if (observer) observer.observe(rootEl);
+      checkProject(); // a project switch while away is noticed here, and the team half attached again
+      const was = stale; stale = ''; if (was === 'project') void switchProject(); else if (was) void loadList({ doc: true });
+      scheduleRender(); // always once: a load that landed while parked may still owe its fit
+      void Promise.resolve().then(() => { if (!parked) syncChat(); }); // not inside the show: the chat render that asked for it moves the transcript
+    }
+
+    return { dispose, park, resume, isParked: () => parked, started, container, isDisposed: () => disposed, checkProject, getProjectId: () => project.id, getOpenBoardId: () => openId, openBoard, getView: () => views.getView(), revealChanges: () => bench.revealChanges(),
       getProject: () => project, getTeamSource: teamSource, pickProject: (next) => projectTracker.pick(next), reload: () => (source ? loadList({ doc: true }) : Promise.resolve()) };
   }
 
   /** The tab's show: idempotent for the same container while the page is up. */
   function showBoardPage(options) {
-    if (active && !active.isDisposed() && active.container === options.container) { active.checkProject(); return active; }
+    if (active && !active.isDisposed() && active.container === options.container) { if (active.isParked()) active.resume(); else active.checkProject(); return active; }
     hideBoardPage();
     active = createBoardPage(options);
     return active;
@@ -552,15 +581,18 @@
     page.dispose();
   }
 
-  /** Opens a board of the page's project on the page that is up (the palette's row); nothing when no page is. */
+  /** Leaves the Board with the page kept built and idle; the next showBoardPage resumes it. */
+  function parkBoardPage() { if (active) { active.park(); if (active.isDisposed()) active = null; } }
+
+  /** Opens a board on the page, up or parked (the palette and pin menu call this before the tab moves). */
   function openBoardOnPage(id) {
     return active && !active.isDisposed() ? active.openBoard(id) : Promise.resolve();
   }
 
   /** Shows the Changes view of the page that is up (the chat row's Review); false when no page is. */
   function revealChangesOnPage() {
-    return active && !active.isDisposed() ? active.revealChanges() : false;
+    return active && !active.isDisposed() && !active.isParked() ? active.revealChanges() : false;
   }
 
-  return { showBoardPage, hideBoardPage, createBoardPage, openBoard: openBoardOnPage, revealChanges: revealChangesOnPage };
+  return { showBoardPage, hideBoardPage, parkBoardPage, createBoardPage, openBoard: openBoardOnPage, revealChanges: revealChangesOnPage };
 });

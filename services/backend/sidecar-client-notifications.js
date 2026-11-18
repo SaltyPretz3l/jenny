@@ -5,6 +5,8 @@ const ENGINE_ACTIVITY_METHOD = 'engine.activity';
 const SESSION_RUN_MODE_UPDATED_METHOD = 'session.run_mode_updated';
 const SESSION_MAIL_ARRIVED_METHOD = 'session.mail_arrived';
 const SESSION_JOB_SETTLED_METHOD = 'session.job_settled';
+const SESSION_USER_STEER_ARRIVED_METHOD = 'session.user_steer_arrived';
+const SESSION_USER_STEER_WITHDRAWN_METHOD = 'session.user_steer_withdrawn';
 
 // Canonical stream_id is physical; turn_id may span multiple attempts.
 function notificationRequestId(message) {
@@ -107,10 +109,44 @@ function notifyJobSettled(client, { sessionId, requestId, jobs } = {}) {
   return written === true && !threw;
 }
 
+// Agent steering (row 180): one frame to the live chat.send `requestId` of `sessionId`. Returns true only when
+// the frame was handed to the transport; the caller releases its reservation otherwise. Never logs the content.
+function sendUserSteerFrame(client, method, sessionId, requestId, field, list) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  const normalizedRequestId = String(requestId || '').trim();
+  if (
+    !normalizedSessionId
+    || !normalizedRequestId
+    || !Array.isArray(list)
+    || list.length === 0
+    || !canNotify(client)
+    || client._batch4TransportEnabled() !== true
+  ) return false;
+  let threw = false;
+  const written = client._writeFrame({
+    jsonrpc: JSONRPC_VERSION,
+    method,
+    params: { session_id: normalizedSessionId, request_id: normalizedRequestId, [field]: list },
+  }, {
+    onThrow: () => { threw = true; },
+  });
+  return written === true && !threw;
+}
+
+function notifyUserSteerArrived(client, { sessionId, requestId, items } = {}) {
+  return sendUserSteerFrame(client, SESSION_USER_STEER_ARRIVED_METHOD, sessionId, requestId, 'items', items);
+}
+
+function notifyUserSteerWithdrawn(client, { sessionId, requestId, itemIds } = {}) {
+  return sendUserSteerFrame(client, SESSION_USER_STEER_WITHDRAWN_METHOD, sessionId, requestId, 'item_ids', itemIds);
+}
+
 module.exports = {
   notificationRequestId,
   notifyEngineActivity,
   notifyJobSettled,
   notifySessionMailArrived,
   notifySessionRunModeUpdated,
+  notifyUserSteerArrived,
+  notifyUserSteerWithdrawn,
 };

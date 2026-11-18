@@ -299,3 +299,24 @@ test('a paired propose_command result renders the proposal card, anything else k
     assert.equal(toolCallUtils.isToolRunFoldable({ toolName, status: 'completed', approvalRequested: false, hasOwnContent: false }), false, toolName);
   }
 });
+
+test('row 178: an allowed terminal_run receipt links to the terminal its paired result names', () => {
+  require('../renderer/chat/renderer-approval-block-cards');
+  const opened = [];
+  globalThis.rendererChatTerminalPanel = { open: (options) => { opened.push(options); return Promise.resolve(true); } };
+  try {
+    const renderer = createToolRenderer({ renderApprovalBlock });
+    const gap = (decision) => ({ kind: 'approval_gap', turn_id: 't1', tool_call_id: 'call-t', payload: { tool_call_id: 'call-t', tool_name: 'terminal_run', state: 'resolved', decision, input: { command: 'winget install x' } } });
+    const result = { kind: 'tool_result', tool_call_id: 'call-t', payload: { tool_call_id: 'call-t', tool_name: 'terminal_run', metadata: { result_kind: 'terminal_run', terminal: 3 } } };
+    const html = renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [gap('allowed'), result] });
+    assert.match(html, /data-terminal-open-slot="3"/);
+    assert.match(html, /data-terminal-open-session="s-1"/);
+    // Denied, no paired result, or no panel: no link.
+    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('denied'), [], { sessionId: 's-1', siblingRows: [result] }), /data-terminal-open-slot/);
+    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [] }), /data-terminal-open-slot/);
+    delete globalThis.rendererChatTerminalPanel;
+    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [result] }), /data-terminal-open-slot/);
+  } finally {
+    delete globalThis.rendererChatTerminalPanel;
+  }
+});

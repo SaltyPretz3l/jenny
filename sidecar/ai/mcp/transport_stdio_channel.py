@@ -13,6 +13,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import count
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -22,6 +23,7 @@ from sidecar.ai.mcp.exceptions import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FA
 from sidecar.ai.mcp.transport_base import raise_cancelled_keeping_reply
 from sidecar.ai.mcp.transport_base import raise_if_cancelled as _raise_if_cancelled
 from sidecar.ai.mcp.transport_lifecycle import RequestScopedStderr, ToolLifecycleTracker
+from sidecar.ai.mcp.transport_stdio_wake import arm_steer_wake
 from sidecar.runtime.chat_models import TerminalChatStateError
 
 # Records keep the transport's logger name (this code moved out of transport_stdio).
@@ -74,6 +76,8 @@ class _PendingRequest:
     started_event: threading.Event = field(default_factory=threading.Event)
     operation_id: str = ""
     stderr_cursor: int = 0
+    # Removers for the steer-wake listener armed at dispatch (row 180); empty for most calls.
+    wake_cleanup: list[Callable[[], None]] = field(default_factory=list)
 
 
 class StdioChannelMixin:
@@ -98,6 +102,7 @@ class StdioChannelMixin:
     _pending_output_callbacks: dict[int, Any]
     _tool_lifecycle: ToolLifecycleTracker
     _active_stderr_cursor: int
+    _config: Any
 
     if TYPE_CHECKING:
         @property
@@ -180,6 +185,8 @@ class StdioChannelMixin:
         try:
             return self._await_request_result(pending)
         finally:
+            for remove_wake_listener in pending.wake_cleanup:
+                remove_wake_listener()
             with self._pending_lock:
                 self._pending_responses.pop(pending.request_id, None)
                 self._pending_output_callbacks.pop(pending.request_id, None)
@@ -226,6 +233,7 @@ class StdioChannelMixin:
                         started=False,
                     ) from error
                 raise
+            wake_cleanup = arm_steer_wake(self, method, cancel_handle, request_id)  # row 180
             return _PendingRequest(
                 request_id=request_id,
                 method=method,
@@ -236,6 +244,7 @@ class StdioChannelMixin:
                 started_event=started_event,
                 operation_id=operation_id,
                 stderr_cursor=stderr_cursor,
+                wake_cleanup=wake_cleanup,
             )
         except BaseException:
             with self._pending_lock:

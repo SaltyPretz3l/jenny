@@ -33,6 +33,9 @@
           </svg>
         `;
       }
+      if (action === 'post-to-team') {
+        return '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5"></path></svg>';
+      }
       if (action === 'edit') {
         return `
           <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -70,6 +73,9 @@
       }
       if (action === 'pin') {
         return jt('chat.transcript.pinToBoard', 'Pin to board');
+      }
+      if (action === 'post-to-team') {
+        return jt('chat.postToTeam.menu', 'Post to Team…');
       }
       if (action === 'edit') {
         return jt('chat.transcript.editYourMessage', 'Edit your message');
@@ -141,8 +147,11 @@
       const meta = actionModel.showMeta || visibleMetaLabel
         ? `<div class="chat-hover-meta" tabindex="0" title="${escapeHtml(fullMetaLabel || visibleMetaLabel)}">${escapeHtml(visibleMetaLabel)}</div>`
         : '<div class="chat-hover-meta chat-hover-meta-empty" aria-hidden="true"></div>';
-      const actions = ['edit', 'branch', 'regenerate', 'copy', 'pin', 'elaborate']
-        .map((action) => renderMessageActionButton(message, action, actionModel.actions[action]))
+      // Post to Team (row 175 D5): on a Jenny answer only; the bindings say whether it is usable now, or null while Team is off.
+      const toTeam = message.role === 'assistant' && actionModel.actions.copy?.visible ? globalThis.rendererChatMessageActionBindings?.postToTeamState?.(message) : null;
+      const shown = toTeam ? { ...actionModel.actions, 'post-to-team': toTeam } : actionModel.actions;
+      const actions = ['edit', 'branch', 'regenerate', 'copy', 'pin', 'post-to-team', 'elaborate']
+        .map((action) => renderMessageActionButton(message, action, shown[action]))
         .join('');
 
       return `${unsavedReplyNotice}

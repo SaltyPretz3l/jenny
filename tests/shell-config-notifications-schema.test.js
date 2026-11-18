@@ -22,12 +22,13 @@ const FULL_DEFAULTS = {
     reminders: true,
     jenny: true,
     team: true,
+    teamProject: true,
   },
 };
 
-test('categories are the seven ids in order (row 89 adds jenny, slice 2a-6c team) and the defaults are frozen', () => {
+test('categories are the eight ids in order (row 89 adds jenny, slice 2a-6c team, row 175 teamProject) and the defaults are frozen', () => {
   assert.deepEqual([...NOTIFICATION_CATEGORIES], [
-    'replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team',
+    'replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team', 'teamProject',
   ]);
   assert.ok(Object.isFrozen(NOTIFICATION_CATEGORIES));
   assert.ok(Object.isFrozen(DEFAULT_NOTIFICATION_SETTINGS));

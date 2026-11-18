@@ -218,6 +218,11 @@
   line-height: 1.4;
 }
 
+/* A proposed note is the card itself with its text (the primitive's ghost state), a step back from the real ones. */
+.board-ghosts > .inv-board-card[data-ghost] {
+  opacity: 0.72;
+}
+
 .board-ghost--group {
   border-radius: var(--radius-lg);
   font-weight: 600;

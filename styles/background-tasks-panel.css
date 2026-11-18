@@ -151,6 +151,29 @@
   transform: none;
 }
 
+/* A serving job's facts as plain label/value lines under its status. */
+.background-tasks-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+}
+
+.background-tasks-facts:empty {
+  display: none;
+}
+
+.background-tasks-facts dt {
+  color: var(--text-muted);
+}
+
+.background-tasks-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .background-tasks-output {
   flex: 1;
   min-height: calc(var(--space-12) * 5);

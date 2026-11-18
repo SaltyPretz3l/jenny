@@ -85,6 +85,7 @@ class FakeLibrary:
         self.listing_used: int | None = None
         self.write_outcome = 1
         self.root_open_raises: BaseException | None = None  # raised after the pin is issued
+        self.open_file_raises: BaseException | None = None  # raised after the token is issued
         self._next_token = 100
         handlers: dict[str, Callable[..., int]] = {
             "jfa_abi_version": lambda: abi_version,
@@ -146,6 +147,8 @@ class FakeLibrary:
         if status == 0:
             out_token.value = self._token()
             self.open_files.add(out_token.value)
+        if self.open_file_raises is not None:
+            raise self.open_file_raises
         return status
 
     def _file_take(self, token: int, out_handle: Any) -> int:

@@ -144,7 +144,7 @@ test('settings shell controller centralizes programmatic navigation through the 
 });
 // A host with a nav controller that runs the shell's leave guard the way the
 // real one does (renderer-settings-nav-utils.js setActiveSection).
-function createGuardedHost({ state, callbacks = {}, shown = [], resolve = (id) => id }) {
+function createGuardedHost({ state, callbacks = {}, shown = [], resolve = (id) => id, syncFlags }) {
   let navArgs = null;
   const controller = createSettingsShellController({
     state,
@@ -166,6 +166,7 @@ function createGuardedHost({ state, callbacks = {}, shown = [], resolve = (id) =
         },
       },
       settingsNavUtils: {
+        ...(syncFlags ? { syncFeatureFlaggedSettings: syncFlags } : {}),
         createSettingsNavController(args) {
           navArgs = args;
           return {
@@ -400,6 +401,29 @@ test('navigateSettingsSection refuses a section the nav would resolve to another
     assert.equal(controller.navigateSettingsSection('tools'), true, 'a section that resolves to itself is shown');
     assert.equal(state.ui.activeView, 'settings');
     assert.equal(state.ui.activeSettingsSection, 'tools');
+    controller.dispose();
+  } finally {
+    global.window = previousWindow;
+    global.document = previousDocument;
+  }
+});
+
+test('navigateSettingsSection applies the feature flags to the rail first, so Team opens before Settings has rendered', () => {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  global.window = { localStorage: createLocalStorage() };
+  global.document = { getElementById() { return null; } };
+  const state = { ui: { activeView: 'team', activeSettingsSection: 'usage' }, features: { featureFlags: { team: false } } };
+  let teamShown = false; // the rail's Team item: hidden until the flags are applied with team on
+  const syncFlags = (doc, flags) => { teamShown = Boolean(flags && flags.team === true); };
+  try {
+    const { controller } = createGuardedHost({ state, syncFlags, resolve: (id) => (id === 'team' && !teamShown ? 'models' : id) });
+    assert.equal(controller.navigateSettingsSection('team'), false, 'a flag that is off keeps Team refused');
+    assert.equal(state.ui.activeView, 'team');
+    state.features.featureFlags.team = true;
+    assert.equal(controller.navigateSettingsSection('team'), true, 'Team opens without Settings having been shown');
+    assert.equal(state.ui.activeView, 'settings');
+    assert.equal(state.ui.activeSettingsSection, 'team');
     controller.dispose();
   } finally {
     global.window = previousWindow;

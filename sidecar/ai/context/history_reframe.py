@@ -75,6 +75,12 @@ def reframe_tool_history_messages(
             trace=_string_field(envelope.get("trace_id")),
             detail=_string_field(envelope.get("detail")),
             remediation=_string_field(envelope.get("remediation")),
+            approval=_string_field(envelope.get("approval")),
+            refused_reason=(
+                _string_field(envelope.get("refused_reason"))
+                if message.get("is_error") is not True else None
+            ),
+            ran_on=_string_field(envelope.get("ran_on")),
         )
         prepared.append(row)
     return prepared

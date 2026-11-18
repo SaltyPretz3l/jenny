@@ -435,6 +435,10 @@ class StdioMCPTransport(StdioChannelMixin, StdioPromptsMixin, MCPTransport):
     def server_generation_id(self) -> str | None:
         return self._tool_lifecycle.generation_id
 
+    @property
+    def server_hosted_files(self) -> dict[str, object] | None:
+        return self._tool_lifecycle.hosted_files
+
     def _read_response_line(
         self,
         *,

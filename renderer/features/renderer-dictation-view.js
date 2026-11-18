@@ -32,7 +32,17 @@
     const total = Math.max(0, Math.floor(ms / 1000));
     return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
   }
-  function hostOf(input) { return input && input.closest ? input.closest('.composer-main') : null; }
+  // The composer's main box, a `data-dictation-host`, or a data-dictation-target field's own parent (the Team box).
+  function hostOf(input) {
+    if (!input || !input.closest) return null;
+    return input.closest('.composer-main, [data-dictation-host]') || (input.hasAttribute('data-dictation-target') ? input.parentElement : null);
+  }
+  // The popover's anchor: the composer, a host, or the nearest ancestor holding the mic and its field.
+  function popoverHost(button) {
+    let node = button.closest('.composer, [data-dictation-host]');
+    for (let up = button.parentElement; !node && up; up = up.parentElement) if (up.querySelector('[data-dictation-target]')) node = up;
+    return node || button.parentElement;
+  }
   function el(doc, tag, className, text) {
     const node = doc.createElement(tag);
     if (className) node.className = className;
@@ -220,7 +230,7 @@
     if (popover && popover.button === button) { closeSetup(); return; }
     closeSetup();
     const doc = button.ownerDocument;
-    const host = button.closest('.composer') || button.parentElement;
+    const host = popoverHost(button);
     const node = el(doc, 'div', ['inv-popover', 'composer-dictation-popover'].join(' '));
     node.setAttribute('role', 'dialog');
     node.setAttribute('aria-modal', 'false');

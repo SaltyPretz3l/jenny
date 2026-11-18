@@ -72,3 +72,50 @@ def test_cancel_request_none_is_ignored() -> None:
     event = cancellation.begin_tool_call(None)
     assert cancellation.cancel_request(None) is False
     assert not event.is_set()
+
+
+# -- row 180: the per-call wake event, separate from the abort event ------------------------------
+
+
+def test_wake_of_active_request_sets_the_wake_event_and_leaves_abort_alone() -> None:
+    abort = cancellation.begin_tool_call(21)
+    wake = cancellation.current_wake_event()
+    assert wake is not None and wake is not abort
+    assert cancellation.wake_request(21) is True
+    assert wake.is_set()
+    assert not abort.is_set()
+
+
+def test_wake_of_another_request_leaves_the_active_call_alone() -> None:
+    cancellation.begin_tool_call(21)
+    wake = cancellation.current_wake_event()
+    assert cancellation.wake_request(22) is False
+    assert wake is not None and not wake.is_set()
+
+
+def test_wake_before_the_call_begins_is_remembered() -> None:
+    # The reader thread can see the wake before the dispatch thread registers the call.
+    assert cancellation.wake_request(23) is False
+    cancellation.begin_tool_call(23)
+    wake = cancellation.current_wake_event()
+    assert wake is not None and wake.is_set()
+
+
+def test_a_wake_never_leaks_into_the_next_call_or_a_cancel() -> None:
+    cancellation.begin_tool_call(24)
+    cancellation.wake_request(24)
+    cancellation.end_tool_call()
+    assert cancellation.current_wake_event() is None
+    abort = cancellation.begin_tool_call(25)
+    wake = cancellation.current_wake_event()
+    assert wake is not None and not wake.is_set() and not abort.is_set()
+    cancellation.cancel_request(25)
+    assert abort.is_set() and not wake.is_set()
+
+
+def test_wake_ids_match_across_int_str_drift_and_none_is_ignored() -> None:
+    cancellation.begin_tool_call(26)
+    wake = cancellation.current_wake_event()
+    assert cancellation.wake_request(None) is False
+    assert cancellation.wake_request("26") is True
+    assert wake is not None and wake.is_set()

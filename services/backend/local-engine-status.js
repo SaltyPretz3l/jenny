@@ -65,15 +65,29 @@ function createManagedInitializeCancellationError(reason = 'Managed sidecar init
   return error;
 }
 
-function createModelUnavailableError(model, fallback) {
+function createModelUnavailableError(model, fallback, engineType = '') {
   const reason = String(
     fallback?.reason || 'The requested model could not be loaded.'
   ).trim().slice(0, 240);
-  const error = new Error(`Model "${model}" is unavailable: ${reason}`);
+  // A no-model init names its engine: `Model "openai-compatible"` read as a model id.
+  const subject = model ? `Model "${model}"` : `The ${engineType || 'local'} engine`;
+  const error = new Error(`${subject} is unavailable: ${reason}`);
   error.error_code = AI_ERROR_CODES.ENGINE_CONNECTION;
   error.category = 'model_unavailable';
   error.retryable = true;
   return error;
+}
+
+// A boot with "Load model at startup" off starts no local server, so a no-model
+// probe of the engine's port failing to connect is that setting at work, not a
+// fault: the runtime reads ready with no model. A later no-model init (a
+// settings refresh) keeps that idle until something loads; a timeout, a model
+// load or a later init after a load is still a failure.
+function isStartupLoadOffIdle(service, { reason, requestedModel, error } = {}) {
+  return (reason === 'startup' || service?._startupIdleByChoice === true)
+    && !String(requestedModel || '').trim()
+    && error?.error_code === AI_ERROR_CODES.ENGINE_CONNECTION
+    && service?.configService?.getLocalEngines?.()?.startupModelLoad === false;
 }
 
 function createInitializeBusyError(activeModel, requestedModel) {
@@ -154,6 +168,8 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
     ready_at: state === 'ready' ? (patch.ready_at ?? previous.ready_at ?? now) : null,
   };
   service._modelLifecycle = next;
+  // Any load (or its failure) ends the boot's deliberate no-model idle.
+  if (state !== 'unloaded') service._startupIdleByChoice = false;
   recordModelLoadDuration(service, previous, next);
   if (emit && typeof service.emit === 'function') {
     service.emit('backend-status', buildObservedBackendStatus(service));
@@ -542,12 +558,20 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
       // The running sidecar now holds the credential generation captured above.
       service._chatgptRuntimeCredentialEpoch = authEpochAtSend;
       // A no-model openai-compatible init still probes its endpoint: a
-      // fallback there is a dead port, not a ready runtime.
+      // fallback there is a dead port, not a ready runtime — unless "Load
+      // model at startup" is off, when no server was started on purpose: the
+      // runtime is up with no model, and the first send loads the default.
+      let idleByChoice = false;
       if (probesEngine && service._lastEngineFallback) {
-        throw createModelUnavailableError(
-          requestedModel || requestedEngineType, service._lastEngineFallback
-        );
+        const unavailable = createModelUnavailableError(requestedModel, service._lastEngineFallback, requestedEngineType);
+        idleByChoice = isStartupLoadOffIdle(service, { reason: options.reason, requestedModel, error: unavailable });
+        if (!idleByChoice) throw unavailable;
+        service._emitServiceLog('INFO', 'backend.startup_idle_by_choice', {
+          engine: requestedEngineType,
+          reason: 'startup_model_load_off',
+        });
       }
+      service._startupIdleByChoice = idleByChoice;
       if (requestedModel && !String(service.currentModel || '').trim()) {
         throw createModelUnavailableError(requestedModel, {
           reason: 'The sidecar did not confirm an active model.',

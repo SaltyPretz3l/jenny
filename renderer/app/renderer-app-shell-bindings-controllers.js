@@ -110,6 +110,7 @@
     // idle on the Jenny chat, else shows the chip above the composer. IDE, split and preview openers come from app.js.
     if (windowRef.jennyShell?.appView && root.rendererAppViewController) {
       const more = callbacks.appViewOpeners || {};
+      const isShown = (el) => Boolean(el && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent)); // style only, no layout
       const appView = root.rendererAppViewController.createAppViewController({
         windowRef, documentRef: windowRef.document, appendClientLog, escapeHtml,
         getChipHost: () => dom.composerWrap || null,
@@ -137,7 +138,7 @@
           setSidebarCollapsed: (collapsed) => { setSidebarCollapsed(collapsed); return true; },
           close: (pane) => (pane === 'chat_panel' ? (root.rendererChatWorkspaceDetail?.close?.(), true) : more.close?.(pane) === true),
           readLayout: () => ({ ...(more.readLayout?.() || {}), active_view: state.ui?.activeView || 'other', current_session_id: state.currentSessionId || null,
-            chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()), terminal_open: Boolean(windowRef.document?.getElementById?.('wbView-terminal')?.offsetParent) }),
+            chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()), terminal_open: isShown(windowRef.document?.getElementById?.('wbView-terminal')) }),
         },
       });
       registerCleanup(() => appView.dispose());

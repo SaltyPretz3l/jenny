@@ -1,0 +1,301 @@
+/* Chat Terminal panel (row 178, renderer-chat-terminal-panel.js): the `terminal` mode of the artifact review panel.
+   The tab row is the panel's header (the chrome's title slot); the terminal runs edge to edge under a hairline. The
+   look is the owner-approved mockup's. Tokens only; the one animation (the tab's pulsing dot) is the session rail's own
+   and already stands down for reduced motion. */
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-controls,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-status,
+.artifact-review-panel[data-artifact-review-mode="terminal"] > .artifact-review-header {
+  display: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-v2-content-host,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-preview-shell,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-preview-content {
+  min-height: 0;
+  height: 100%;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-preview-content {
+  overflow: hidden;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-review-detail-panel {
+  gap: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-preview-content {
+  padding: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] {
+  background: var(--bg-base);
+  border-inline-start: 1px solid var(--line);
+}
+
+/* The panel's own Maximize replaces the chrome's Restore; the chrome keeps its Close. */
+.artifact-review-panel[data-artifact-review-mode="terminal"] [data-artifact-panel-maximize] {
+  display: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-header {
+  height: 44px;
+  min-height: 44px;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-2);
+  border-bottom: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-header-primary {
+  flex-wrap: nowrap;
+  height: auto;
+  overflow: visible;
+}
+
+.artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-header-primary > * {
+  height: auto;
+}
+
+.chat-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chat-terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-4);
+  height: 30px;
+  padding: 0 var(--space-4) 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-terminal-tab:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.chat-terminal-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.chat-terminal-tab:focus-visible,
+.chat-terminal-tab-close:focus-visible,
+.chat-terminal-add:focus-visible,
+.chat-terminal-icon:focus-visible,
+.chat-terminal-attach:focus-visible,
+.chat-terminal-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.chat-terminal-tab-close {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-muted);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chat-terminal-tab:hover .chat-terminal-tab-close,
+.chat-terminal-tab:focus-within .chat-terminal-tab-close,
+.chat-terminal-tab[aria-selected="true"] .chat-terminal-tab-close {
+  opacity: 1;
+}
+
+.chat-terminal-tab-close:hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.chat-terminal-tab-close svg,
+.chat-terminal-icon svg,
+.chat-terminal-add svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-terminal-tab-close svg,
+.chat-terminal-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-terminal-add svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+.chat-terminal-add,
+.chat-terminal-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chat-terminal-add:hover:not(:disabled),
+.chat-terminal-icon:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.chat-terminal-add:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.chat-terminal-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+}
+
+.chat-terminal-actions .chat-terminal-icon[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+/* The body: the terminal edge to edge under a hairline, or one sentence and one action. */
+.chat-terminal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.55;
+}
+
+.chat-terminal-mount {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-6) var(--space-7);
+  overflow: hidden;
+  background: var(--bg-base);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+}
+
+.chat-terminal-notice:empty {
+  display: none;
+}
+
+.chat-terminal-notice {
+  padding: var(--space-3) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.chat-terminal-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6);
+}
+
+.chat-terminal-empty p {
+  margin: 0;
+}
+
+.chat-terminal-ended {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-3) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.chat-terminal-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Add to message: a small floating action over a selection, at the terminal's bottom-right. */
+.chat-terminal-attach-slot {
+  position: absolute;
+  inset-block-end: var(--space-6);
+  inset-inline-end: var(--space-6);
+  z-index: 2;
+}
+
+.chat-terminal-attach {
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface, var(--bg-base));
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--bg-base) 55%, transparent);
+}
+
+/* Row 178: "Open in terminal" on a terminal_run receipt and result row: a quiet text link, not a button block. */
+.tool-terminal-open {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.tool-terminal-open:hover { text-decoration: underline; }
+.tool-terminal-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm, 4px); }
+.approval-gap-row:has(.tool-terminal-open) { display: flex; align-items: center; flex-wrap: wrap; }

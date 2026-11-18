@@ -101,6 +101,7 @@ async function writeConversation(file, dir, header, nameOf) {
 function titleOf(entry, channel, mine, ownerId, nameOf) {
   const projectId = entry.channel_id.slice('chan_'.length);
   if (entry.kind === 'team') return '#team';
+  if (entry.kind === 'channel' && typeof channel.name === 'string') return `#${channel.name}`;
   if (entry.kind === 'project' && !channel.archived && mine.has(projectId)) return `#${mine.get(projectId)}`;
   if (entry.kind === 'dm' && list(channel.participants).includes(ownerId)) {
     return list(channel.participants).filter((m) => m !== ownerId).map(nameOf).join(' and ');

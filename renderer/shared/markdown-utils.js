@@ -367,7 +367,8 @@
 
     if (options?.codeHighlight !== false && !plainCode) resolveCodeHighlight()?.decorateCodeBlocks?.(fragment);
 
-    const inlinePaths = resolveInlinePathUtils();
+    // inlinePaths: false: no path chips (a surface with no path controller).
+    const inlinePaths = options?.inlinePaths === false ? null : resolveInlinePathUtils();
     if (inlinePaths) {
       inlinePaths.decorateInlinePathChips(fragment);
     }
@@ -524,7 +525,7 @@
     if (!bypassCache && _markdownRenderCache) {
       const cached = _markdownRenderCache.get(cacheParts);
       if (cached.hit) {
-        let cachedDecorated = decorateCodeBlocks(cached.value, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
+        let cachedDecorated = decorateCodeBlocks(cached.value, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId, inlinePaths: options?.inlinePaths });
         if (mathMap) cachedDecorated = mathUtils.restoreMathPlaceholders(cachedDecorated, mathMap);
         return cachedDecorated;
       }
@@ -550,7 +551,7 @@
     if (!bypassCache && _markdownRenderCache) {
       _markdownRenderCache.set(cacheParts, sanitizedHtml);
     }
-    let decorated = decorateCodeBlocks(sanitizedHtml, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId });
+    let decorated = decorateCodeBlocks(sanitizedHtml, { mermaid: mermaidMode, codeBlocks: options?.codeBlocks, codeHighlight: options?.codeHighlight, codeBlockIndexOffset: options?.codeBlockIndexOffset, messageId: options?.messageId, inlinePaths: options?.inlinePaths });
     if (wantsFragment && decorated && typeof decorated.querySelectorAll === 'function') {
       let fragmentHtml = serializeFragment(decorated);
       if (mathMap) {

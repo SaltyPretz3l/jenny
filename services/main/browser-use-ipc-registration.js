@@ -10,6 +10,7 @@
 const { validSessionId } = require('../chat-messaging-contract');
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { isPlainObject } = require('../value-utils');
+const { CLOSED_STATE } = require('../browser-use/service-support');
 
 const REASON = /^[a-z][a-z0-9_]{0,63}$/u;
 const MAX_OFFSET = 32767;
@@ -82,7 +83,7 @@ function shape(result) {
   return { ok: false, reason: typeof result?.reason === 'string' && REASON.test(result.reason) ? result.reason : FAILED.reason };
 }
 
-function registerBrowserUseIpc(ipcMain, { getService, authorization, isEnabled = () => true }) {
+function registerBrowserUseIpc(ipcMain, { getService, authorization, isEnabled = () => true, peekService = null }) {
   const available = () => {
     try {
       return isEnabled() === true ? getService() || null : null;
@@ -102,13 +103,34 @@ function registerBrowserUseIpc(ipcMain, { getService, authorization, isEnabled =
     }
   };
   const plain = (payload) => parsePayload(payload, false);
+  // A state read never starts the service (row 176: the session rail reads it on every chat switch). With
+  // peekService wired, a service not started yet has no page, so the read answers the closed state.
+  const getState = async (_event, payload) => {
+    let enabled = false;
+    let service;
+    try {
+      enabled = isEnabled() === true;
+      service = enabled ? (typeof peekService === 'function' ? peekService() : getService()) || null : null;
+    } catch (_error) {
+      service = null;
+    }
+    if (!enabled || (!service && typeof peekService !== 'function')) return { ...UNAVAILABLE };
+    const parsed = plain(payload);
+    if (!parsed) return { ...INVALID };
+    if (!service) return { ok: true, ...CLOSED_STATE };
+    try {
+      return shape({ ok: true, ...(await service.getState(parsed.sessionId)) });
+    } catch (_error) {
+      return { ...FAILED };
+    }
+  };
   const bounded = (payload) => parsePayload(payload, true);
   const simple = (method) => handler(plain, (service, { sessionId }) => service[method](sessionId));
   const withBounds = (method) => handler(bounded, (service, { sessionId, bounds }) => service[method](sessionId, bounds));
   const request = (name, call) => handler((payload) => parseRequest(name, payload), (service, { sessionId, fields }) => call(service, sessionId, fields));
 
   return registerIpcInvokeHandlers(ipcMain, {
-    'browserUse.getState': handler(plain, async (service, { sessionId }) => ({ ok: true, ...(await service.getState(sessionId)) })),
+    'browserUse.getState': getState,
     'browserUse.show': withBounds('show'),
     'browserUse.setBounds': withBounds('setBounds'),
     'browserUse.hide': simple('hide'),

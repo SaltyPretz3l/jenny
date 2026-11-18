@@ -250,3 +250,25 @@ def test_a_caught_panic_latches_every_later_call() -> None:
     assert loaded.call("jfa_file_check", 2) == 8
     assert loaded.latched is True
     assert fake.calls == before
+
+
+def test_a_latch_from_a_related_process_holds_here() -> None:
+    """W14 review, finding 1: a grep child's latch reaches its parent and back."""
+    from sidecar.ai.tools import hosted_file_io
+
+    loaded = win32_library.load_library(lstat=regular_file_stat, loader=lambda path: FakeLibrary())
+    win32_library.reset_shared_library(loaded)
+    try:
+        assert win32_library.shared_library_latched() is False
+        assert hosted_file_io.hosted_file_access_latched() is False
+        hosted_file_io.latch_hosted_file_access()
+        assert win32_library.shared_library_latched() is True
+        assert hosted_file_io.hosted_file_access_latched() is True
+        assert loaded.call("jfa_pin_close", 1) == win32_library.STATUS["internal"]
+        win32_library.reset_shared_library(None)
+        win32_library.latch_shared_library()  # not loaded yet: refused for the process
+        assert win32_library.shared_library_latched() is False
+        with pytest.raises(win32_library.ComponentMissing, match="internal"):
+            win32_library.shared_library()
+    finally:
+        win32_library.reset_shared_library(None)

@@ -32,9 +32,28 @@ HOST_ALLOWED_TOOL_NAMES: frozenset[str] = frozenset(
         "report_findings",
         "ask_user",
         "exit_plan_mode",
+        # Read-only search and read over the app guide bundled with the host
+        # (config/app-guide). It touches no chat, store, file or network.
+        "jenny_help",
     }
 )
 HOST_ALLOWED_TOOL_NAMES_V2: frozenset[str] = HOST_ALLOWED_TOOL_NAMES | frozenset({"run_command"})
+# A host whose worker binds request roots only under one root boundary: the
+# typed file tools whose writes reach the exact
+# approval card, and nothing that writes or reads a file without it.
+HOST_ROOT_BOUNDARY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "list_dir",
+        "glob_files",
+        "grep_search",
+        "write_file",
+        "edit_file",
+        "jenny_help",
+        "ask_user",
+        "exit_plan_mode",
+    }
+)
 
 HOST_FILESYSTEM_MUTATION_TOOL_NAMES: frozenset[str] = frozenset(
     {"write_file", "edit_file", "create_artifact"}
@@ -129,6 +148,13 @@ def host_policy_from_cli(mode: Any, version: Any) -> HostExecutionPolicy:
     return validate_host_policy(mode, normalized_version)
 
 
+def host_root_boundary_present(config: Any = None) -> bool:
+    """True when the config names a root boundary (validated where it is parsed)."""
+
+    value = _value(config, "hosted_root_boundary", None)
+    return isinstance(value, str) and bool(value.strip())
+
+
 def host_policy_is_enforced(config: Any = None) -> bool:
     """Return true only for the exact supported hosted declaration."""
 
@@ -191,7 +217,12 @@ def host_tool_decision(tool: Any, config: Any = None) -> tuple[bool, str | None]
     name = tool if isinstance(tool, str) else getattr(tool, "name", "")
     normalized_name = str(name or "").strip()
     source_kind = getattr(tool, "source_kind", "builtin")
-    allowed_names = HOST_ALLOWED_TOOL_NAMES_V2 if policy.worker_enabled else HOST_ALLOWED_TOOL_NAMES
+    if host_root_boundary_present(config):
+        allowed_names = HOST_ROOT_BOUNDARY_TOOL_NAMES
+    elif policy.worker_enabled:
+        allowed_names = HOST_ALLOWED_TOOL_NAMES_V2
+    else:
+        allowed_names = HOST_ALLOWED_TOOL_NAMES
     if normalized_name not in allowed_names or source_kind != "builtin":
         return False, HOST_POLICY_DENIED_REASON
     if normalized_name == "run_command" and not host_execution_worker_enabled(config):
@@ -272,6 +303,7 @@ __all__ = [
     "HOST_MODE_SERVER",
     "HOST_POLICY_DENIED_REASON",
     "HOST_POLICY_INVALID_REASON",
+    "HOST_ROOT_BOUNDARY_TOOL_NAMES",
     "HostExecutionPolicy",
     "HostPolicyError",
     "container_host_policy_is_enforced",
@@ -279,6 +311,7 @@ __all__ = [
     "host_policy_from_cli",
     "host_policy_from_config",
     "host_policy_is_enforced",
+    "host_root_boundary_present",
     "host_execution_worker_enabled",
     "host_run_command_schema",
     "host_tool_decision",

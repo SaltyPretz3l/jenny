@@ -281,3 +281,235 @@ test('item 19: scrolled up from the latest, or with newer messages not loaded, t
   push(h, [fromMaya(40)]);
   assert.equal(sent.length, 2, 'newer messages not loaded: one');
 });
+
+// Row 175 F1: a project conversation reachable from outside its tab.
+test('F1: a conversation intent opens the Team tab on that project conversation; one no longer listed says so', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h } = await projects.openProjects();
+  t.after(h.restore);
+  const notify = require('../renderer/team/renderer-team-notify');
+  notify.request({ kind: 'conversation', teamId: OTHER, projectId: projects.P1, sessionId: projects.S1 });
+  await flush();
+  assert.equal(notify.shownFrame().channelId, 'conv:' + projects.S1, 'the conversation page is shown');
+  assert.deepEqual(h.sent('conversationOpen').map((c) => c.payload.session_id), [projects.S1]);
+  notify.request({ kind: 'conversation', teamId: OTHER, projectId: projects.P1, sessionId: 'sess_' + 'z'.repeat(32) });
+  await flush();
+  assert.equal(h.view.q('[data-team-head-note]').textContent, 'That conversation is no longer here.', 'said on the page shown');
+  assert.equal(notify.shownFrame().channelId, 'conv:' + projects.S1, 'what was shown stays');
+});
+
+// Row 175 F2 (D1, D2): main's project notices become teamProject candidates; the waiting approvals count for the tab.
+test('F2: a project notice is one teamProject candidate (title and a fixed sentence); Project activity off sends none; a click opens it', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h, push } = await projects.openProjects();
+  t.after(h.restore);
+  const sent = [];
+  let openHandler = null;
+  let told = 0;
+  const controller = { notifyTeam: (c) => { sent.push(c); return c; }, setTeamOpenHandler: (fn) => { openHandler = fn; } };
+  const state = { ui: { notifications: { enabled: true, categories: { team: true } } } };
+  const notify = require('../renderer/team/renderer-team-notify');
+  const notifier = notify.createNotifier({ windowRef: h.window, state, store: h.store, controller: () => controller, onWaiting: () => { told += 1; } });
+  h.cleanups.push(() => notifier.stop());
+  const notice = (over = {}) => push({ kind: 'project_notice', session_id: projects.S1, project_id: projects.P1, title: 'Palette loader cleanup', notice: 'finished', notice_id: '1', ...over });
+  notice();
+  assert.deepEqual(sent, [{ category: 'teamProject', key: 'teamProject:' + projects.S1 + ':1', teamId: OTHER, sessionId: projects.S1, projectId: projects.P1,
+    title: 'Palette loader cleanup', body: 'Jenny finished your turn.' }]);
+  notice({ notice: 'unattended', notice_id: '2', title: '<b>' + 'x'.repeat(200) });
+  notice({ notice: 'question', notice_id: '3', title: '' });
+  assert.deepEqual(sent.slice(1).map((c) => [c.body, Array.from(c.title).length]),
+    [['An approval is waiting. Nobody who can answer is viewing.', 80], ['Jenny has a question for you.', 'A project conversation'.length]]);
+  notice({ notice: 'text', notice_id: '4' });
+  notice({ notice_id: 'x' });
+  state.ui.notifications.categories.teamProject = false;
+  notice({ notice_id: '5' });
+  assert.equal(sent.length, 3, 'an unknown word or id, and Project activity off, send nothing');
+  push({ kind: 'project_waiting', session_id: projects.S1, count: 2 });
+  push({ kind: 'project_waiting', session_id: projects.S2, count: 1 });
+  push({ kind: 'project_waiting', session_id: projects.S2, count: 1 });
+  assert.deepEqual([notifier.waitingCount(), told], [3, 2], 'a count that did not move tells nobody');
+  assert.equal(openHandler({ category: 'teamProject', teamId: OTHER, sessionId: projects.S1, projectId: projects.P1 }), true);
+  await flush();
+  assert.equal(notify.shownFrame().channelId, 'conv:' + projects.S1, 'the click opens the conversation');
+  push({ kind: 'team_gone' });
+  assert.equal(notifier.waitingCount(), 0, 'a team gone takes its count');
+});
+
+test('F1: a conversation message link exists only for a listed conversation of the shown team; its chip opens the conversation', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h } = await projects.openProjects();
+  t.after(h.restore);
+  const link = require('../renderer/team/renderer-team-link');
+  const token = link.build({ teamId: OTHER, sessionId: projects.S1, messageId: 'm2' });
+  const gone = `jenny-team:${OTHER}/conv/sess_${'z'.repeat(32)}/m1`;
+  assert.equal(token, `jenny-team:${OTHER}/conv/${projects.S1}/m2`);
+  assert.deepEqual([link.build({ teamId: OTHER, sessionId: 'sess_' + 'z'.repeat(32), messageId: 'm1' }), link.build({ teamId: OTHER, sessionId: projects.S1, messageId: 'm 2' })], ['', '']);
+  const box = h.window.document.createElement('div');
+  box.innerHTML = `<p>see ${token}, ${gone} and <code>${token}</code></p>`;
+  link.markLinks(box, { teamId: OTHER, listed: () => true }, () => { throw new Error('the channel label is not asked'); });
+  const chips = [...box.querySelectorAll('.team-msglink')];
+  assert.equal(chips.length, 1, 'one chip: not the unlisted one, not in code');
+  assert.equal(chips[0].textContent, 'Palette loader cleanup · message');
+  assert.deepEqual(link.chipTarget(chips[0]), { session_id: projects.S1, message_id: 'm2' });
+  assert.equal(link.linkKey(`x ${token}`, { teamId: 'team_another', listed: () => true }, () => ({ where: '', text: '' })), '', 'another team: no chip');
+  const jumper = link.createJumper({ chat: h.chat, teamId: OTHER, channelId: 'chan_team', call: async () => ({ ok: false }), timeline: () => null,
+    openThread: () => null, showScreen: () => {}, holdEdit: () => false, rowOf: () => null });
+  jumper.jump(link.chipTarget(chips[0]));
+  await flush();
+  assert.equal(require('../renderer/team/renderer-team-notify').shownFrame().channelId, 'conv:' + projects.S1);
+});
+
+test('D2: the Team tab number counts the project approvals waiting for this member, with its own words', async (t) => {
+  const h = harness({ show: false, teams: [memberTeam()] });
+  t.after(h.restore);
+  let made = null;
+  let waiting = 0;
+  h.window.rendererTeamNotify = { createNotifier: (options) => { made = options; return { stop: () => {}, waitingCount: () => waiting }; } };
+  t.after(() => { delete h.window.rendererTeamNotify; });
+  const s = shell(h);
+  await flush();
+  waiting = 2;
+  made.onWaiting();
+  assert.equal(s.teamTab().getAttribute('aria-label'), 'Team: 2 approvals wait for you');
+  waiting = 0;
+  made.onWaiting();
+  assert.equal(s.teamTab().getAttribute('aria-label'), null);
+});
+
+// Row 175 F10 (D16): what waits on this member and what finished, for Home, the Needs-you inbox and the away digest.
+async function attentionSetup(over = {}) {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h, push } = await projects.openProjects();
+  const state = { ui: { activeView: 'chat', notifications: { enabled: true, categories: { team: true, teamProject: true } } } };
+  const clock = { at: Date.now() };
+  const notify = require('../renderer/team/renderer-team-notify');
+  const notifier = notify.createNotifier({ windowRef: h.window, state, store: h.store, controller: () => null, now: () => clock.at, ...over });
+  h.cleanups.push(() => notifier.stop());
+  let id = 0;
+  const notice = (word, extra = {}) => { id += 1; push({ kind: 'project_notice', session_id: projects.S1, project_id: projects.P1, title: 'Palette loader cleanup', notice: word, notice_id: String(id), ...extra }); };
+  const told = [];
+  h.window.addEventListener(notify.ATTENTION_EVENT, () => told.push(notify.attention().key));
+  return { h, push, state, clock, notify, notifier, notice, told, projects };
+}
+
+test('F10: an approval, a question and an unattended approval wait as rows in arrival order, with a name, and each change is announced', async (t) => {
+  const { h, push, notify, notice, told, projects } = await attentionSetup();
+  t.after(h.restore);
+  assert.deepEqual(notify.attention().waiting, [], 'nothing waits at first');
+  notice('approval');
+  notice('question', { session_id: projects.S2, title: '<b>Q</b>' });
+  const { waiting, notices, key } = notify.attention();
+  assert.deepEqual(waiting.map((row) => [row.kind, row.unattended, row.sessionId, row.title, row.projectId, row.count, row.onScreen]),
+    [['approval', false, projects.S1, 'Palette loader cleanup', projects.P1, 1, false], ['question', false, projects.S2, '<b>Q</b>', projects.P1, 1, false]]);
+  assert.deepEqual(notices, []);
+  assert.equal(told.length, 2, 'one announcement per change');
+  notice('unattended');
+  assert.deepEqual(notify.attention().waiting.map((row) => [row.kind, row.unattended]), [['question', false], ['approval', true]], 'the same conversation re-queues at the end');
+  assert.notEqual(notify.attention().key, key);
+  push({ kind: 'project_waiting', session_id: projects.S1, count: 1 });
+  assert.equal(notify.attention().waiting.length, 2, 'a count above 0 keeps the row');
+  push({ kind: 'project_waiting', session_id: projects.S1, count: 0 });
+  assert.deepEqual(notify.attention().waiting.map((row) => row.kind), ['question'], 'the approval leaves when its count goes to 0');
+  assert.equal(told.length, 4);
+  push({ kind: 'project_waiting', session_id: projects.S1, count: 1 });
+  assert.deepEqual(notify.attention().waiting.map((row) => row.kind), ['question', 'approval'], 'a resync sends 0 then the seeded count: the row comes back');
+});
+
+test('F10: a finished or failed turn is a digest notice and ends the question of its conversation; a team gone takes everything', async (t) => {
+  const { h, push, notify, notice, projects } = await attentionSetup();
+  t.after(h.restore);
+  notice('question');
+  notice('finished');
+  notice('failed', { session_id: projects.S2, title: 'Other' });
+  const { waiting, notices } = notify.attention();
+  assert.deepEqual(waiting, [], 'a finished turn ends its conversation\'s question');
+  assert.deepEqual(notices.map((row) => [row.notice, row.sessionId, row.title, row.id]), [['finished', projects.S1, 'Palette loader cleanup', '2'], ['failed', projects.S2, 'Other', '3']]);
+  assert.equal(typeof notices[0].at, 'number');
+  notice('approval');
+  push({ kind: 'team_gone' });
+  assert.deepEqual(notify.attention(), { key: '', waiting: [], notices: [] }, 'the team went away');
+});
+
+test('F10: Project activity off, or Team off, shows nothing and shows it again when switched back; notices of 24 hours at most', async (t) => {
+  const { h, notify, notice, state, clock } = await attentionSetup();
+  t.after(h.restore);
+  notice('approval');
+  notice('finished');
+  state.ui.notifications.categories.teamProject = false;
+  assert.deepEqual(notify.attention().waiting.concat(notify.attention().notices), [], 'Project activity off');
+  state.ui.notifications.categories.teamProject = true;
+  state.ui.notifications.categories.team = false;
+  assert.equal(notify.attention().key, '', 'Team off');
+  state.ui.notifications.categories.team = true;
+  assert.equal(notify.attention().waiting.length + notify.attention().notices.length, 2);
+  clock.at += 24 * 60 * 60 * 1000 + 1000;
+  assert.equal(notify.attention().key, '', 'a day later they are gone, never shown stale');
+});
+
+test('F10: opening the conversation from anywhere takes its rows; at most 50 of each are kept; the names come from the project, then the team', async (t) => {
+  const { h, notify, notice, told, projects } = await attentionSetup();
+  t.after(h.restore);
+  notice('approval');
+  notice('question');
+  const teamName = h.store.snapshot().teams.find((team) => team.team_id === OTHER).team_name;
+  assert.ok(teamName, 'the host names its team');
+  assert.equal(notify.attention().waiting[0].where, teamName, 'no project store loaded yet: the team name');
+  h.window.rendererTeamProjectStore = { getProjectStore: () => ({ project: (teamId, projectId) => (teamId === OTHER && projectId === projects.P1 ? { name: 'jenny-site' } : null) }) };
+  assert.equal(notify.attention().waiting[0].where, 'jenny-site', 'the Team tab loaded: the project name');
+  notify.request({ kind: 'conversation', teamId: OTHER, projectId: projects.P1, sessionId: projects.S1 });
+  await flush();
+  assert.deepEqual(notify.attention().waiting, [], 'opened: the approval and the question leave');
+  assert.equal(told.at(-1), '', 'and the views are told');
+  for (let n = 0; n < 60; n += 1) { notice('approval', { session_id: 'sess_' + String(n).padStart(32, '0') }); notice('finished', { session_id: 'sess_' + String(n).padStart(32, '1') }); }
+  const { waiting, notices } = notify.attention();
+  assert.deepEqual([waiting.length, notices.length], [50, 50]);
+  assert.equal(waiting.at(-1).sessionId, 'sess_' + '59'.padStart(32, '0'), 'the newest are kept');
+});
+
+test('F10: the notifier stopped takes its rows, tells the views, and the accessor then answers empty', async (t) => {
+  const { h, notify, notifier, notice, told } = await attentionSetup();
+  t.after(h.restore);
+  notice('approval');
+  const before = told.length;
+  notifier.stop();
+  assert.equal(notify.attention().key, '');
+  assert.ok(told.length > before);
+});
+
+test('F16: the Team tab says which conversation it shows, so its row on Home reads "on screen" and no other does', async (t) => {
+  const { h, notify, notice, state, projects } = await attentionSetup();
+  t.after(h.restore);
+  state.ui.activeView = 'team';
+  notify.request({ kind: 'conversation', teamId: OTHER, projectId: projects.P1, sessionId: projects.S1 });
+  await flush();
+  assert.deepEqual([notify.shownFrame().channelId, notify.shownFrame().sessionId], ['conv:' + projects.S1, projects.S1]);
+  notice('unattended');
+  notice('unattended', { session_id: projects.S2, title: 'Other' });
+  assert.deepEqual(notify.attention().waiting.map((row) => [row.sessionId, row.onScreen]), [[projects.S1, true], [projects.S2, false]]);
+  state.ui.activeView = 'chat';
+  assert.deepEqual(notify.attention().waiting.map((row) => row.onScreen), [false, false], 'another view is shown: none is on screen');
+});
+
+test('F13: an asked notice toasts who asked and where, every time, also while that conversation is shown; a click opens it; no Needs-you row', async (t) => {
+  const sent = [];
+  let openHandler = null;
+  const controller = { notifyTeam: (c) => { sent.push(c); return c; }, setTeamOpenHandler: (fn) => { openHandler = fn; } };
+  const { h, notify, notice, state, projects, told } = await attentionSetup({ controller: () => controller });
+  t.after(h.restore);
+  state.ui.activeView = 'team';
+  notify.request({ kind: 'conversation', teamId: OTHER, projectId: projects.P1, sessionId: projects.S1 });
+  await flush();
+  const before = told.length;
+  notice('asked', { asker_member_id: MAYA });
+  notice('asked', { asker_member_id: MAYA, approval_id: 'approval_x' });
+  notice('asked', { asker_member_id: '<b>' });
+  assert.deepEqual(sent.map((c) => [c.category, c.sessionId, c.title, c.body]), [
+    ['teamProject', projects.S1, 'Palette loader cleanup', 'Maya asked you to look at Palette loader cleanup'],
+    ['teamProject', projects.S1, 'Palette loader cleanup', 'Maya asked you to decide an approval in Palette loader cleanup'],
+  ], 'told while it is shown; an asker that is no member id tells nothing');
+  assert.deepEqual([notify.attention().waiting, notify.attention().notices, told.length], [[], [], before], 'no Needs-you row, no digest notice');
+  state.ui.activeView = 'chat';
+  assert.equal(openHandler({ category: 'teamProject', teamId: OTHER, sessionId: projects.S1, projectId: projects.P1 }), true);
+  await flush();
+  assert.equal(notify.shownFrame().sessionId, projects.S1, 'the click opens the conversation');
+});

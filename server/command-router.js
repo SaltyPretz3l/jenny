@@ -4,12 +4,14 @@ const { validateCommand, hostFailure } = require('./api-contract');
 const { createAccessCheck, createIdentityCheck } = require('./command-router-identity');
 const { createControlHandlers } = require('./command-router-control');
 const { createDecisionHandlers } = require('./command-router-decisions');
+const { createRedoHandlers } = require('./command-router-redo');
 const { createSessionList } = require('./command-router-session-list');
 const { createDecisionAdapter } = require('./decision-adapter');
 const { CancellationRegistry, SessionMutationQueue } = require('./command-router-concurrency');
 const { buildSessionSnapshot } = require('./session-snapshots');
 const { memberAuthor } = require('../services/backend/message-author');
 const { preferencesFor } = require('./command-router-preferences');
+const { teamSnapshotFields, turnToolPreferences } = require('./team-conversation-preferences');
 const {
   PROJECT_LEASE_OPERATIONS, PROJECT_MUTATIONS, PROJECT_OPERATIONS,
   createProjectCommandDispatcher,
@@ -82,6 +84,13 @@ function safeBackendError(error, requestId) {
   return hostFailure('unavailable', 'backend_unavailable', requestId, true);
 }
 
+// Row 175 item 11: a team host's snapshot carries the conversation's saved receipts (the project audit's decisions,
+// server/team/team-approvals.js `receiptsFor`; none without the approvals wiring); any other host's has no such key.
+function receiptsReader(teamHost, approvals) {
+  if (!teamHost) return undefined;
+  return typeof approvals?.receiptsFor === 'function' ? approvals.receiptsFor : () => [];
+}
+
 function createCommandRouter({
   backend, clients, leases, receipts, bootEpoch, eventStream, resolveAttachments, canAdmit = () => true,
   canAdmitDeletion = () => true, authorize, teamCommands = null, approvals = null,
@@ -114,7 +123,7 @@ function createCommandRouter({
   // Slice 3-5: a team host (built with `authorize`) names the actor as a user message's author (null, refused, without
   // a valid member id); the single-owner host's constant owner actor is never an author.
   const trustedAuthor = teamHost ? (context) => memberAuthor(context?.actor?.member_id) : () => undefined;
-  const decisionAdapter = createDecisionAdapter({ backend });
+  const decisionAdapter = createDecisionAdapter({ backend, exactApprovals: teamHost });
   const revisions = new Map();
   const mutationQueue = new SessionMutationQueue({ capacity: MAX_SESSIONS });
   const projectMutationQueue = new SessionMutationQueue({ capacity: 1 });
@@ -183,6 +192,16 @@ function createCommandRouter({
     backend.on('chat-stream', onBackendStream);
     listeners.push(['chat-stream', onBackendStream]);
   }
+
+  // Team host only: the model-written title (services/backend/session-auto-title.js) lands outside any command, so
+  // the host tells the conversation's audience it was renamed, as a rename command would. Desktop wires this elsewhere.
+  function emitRenamed(event) {
+    for (const sessionId of (Array.isArray(event?.session_ids) ? event.session_ids : []).slice(0, 16)) {
+      if (typeof sessionId !== 'string' || !hasSession(sessionId)) continue;
+      try { publish('session_changed', { session_id: sessionId, revision: bumpRevision(sessionId), reason: 'renamed' }); } catch (_error) { /* best effort */ }
+    }
+  }
+  if (teamHost) backend.emitSessionsChanged = emitRenamed;
 
   function revisionAndLease(command, context, { expectedRevision = true, requireSession = true, recheck = true } = {}) {
     const authFailure = recheck ? identity(command, context) : null;
@@ -269,7 +288,7 @@ function createCommandRouter({
     return value;
   }
 
-  const listSessions = createSessionList({ backend, identity, allows, safeSession, safeBackendError });
+  const listSessions = createSessionList({ backend, identity, allows, safeSession, safeBackendError, waitingCounts: teamHost });
   const control = createControlHandlers({ leases, identity, allows, teamHost, trustedAuthor, backend, hasSession, publish });
   // Slice 3-6b. The existence check of the decisions and `session.view` is cache-neutral (no transcript load).
   const sessionExists = (id) => (typeof backend.sessionStore?.peekSessionSummary === 'function'
@@ -278,6 +297,7 @@ function createCommandRouter({
     runReceipt, assertMutationAuthority, assertPostAwaitAuthority, sessionExists, bumpRevision, publish });
   // A team host's snapshot names each pending decision's prompter (the running turn's starter).
   const prompterOf = teamHost ? (approvals?.prompterOf ?? (() => null)) : undefined;
+  const teamFields = teamHost ? (session) => teamSnapshotFields(session, backend) : undefined; // row 172
 
   async function createSession(command, context) {
     return runReceipt(command, context, async () => {
@@ -310,12 +330,14 @@ function createCommandRouter({
     const value = buildSessionSnapshot({
       backend, eventStream, decisionAdapter, sessionId: command.session_id,
       revision: currentRevision(command.session_id),
-      options: { ...options, boot_epoch: bootEpoch }, prompterOf,
+      options: { ...options, boot_epoch: bootEpoch }, prompterOf, teamFields, receiptsOf: receiptsReader(teamHost, approvals),
     });
     if (!value) return hostFailure('conflict', 'session_not_found', command.request_id);
     if (value.ok === false) return hostFailure('invalid', value.reason, command.request_id);
     value.control = leases.get(command.session_id);
     decisions.noteSnapshot(command.session_id, context);
+    // Row 175 F18: a team host's snapshot names who views the conversation now (the driver is `control.member_id`).
+    if (redo) { redo.noteViewer(command.session_id, context, command.client_id); value.viewers = approvals?.viewers.membersOf(command.session_id) ?? []; }
     return { ok: true, snapshot: value };
   }
 
@@ -338,7 +360,8 @@ function createCommandRouter({
     const failure = mutationGuard(command, context); if (failure) return failure;
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
-      const value = await backend.setSessionPreferences(command.session_id, preferencesFor(command, teamHost));
+      const value = await backend.setSessionPreferences(command.session_id,
+        preferencesFor(command, teamHost, { backend, author: trustedAuthor(context), busy: sessionBusy(command.session_id) }));
       assertPostAwaitAuthority(command, context);
       const session = safeSession(unwrapData(value));
       if (!session) return hostFailure('persistence', 'session_preferences_failed', command.request_id);
@@ -349,6 +372,10 @@ function createCommandRouter({
   }
 
   const sessionBusy = (id) => Boolean(backend.sessionTurnActors?.hasActiveLifecycle?.(id) || backend.sessionStore?.getActiveTurn?.(id));
+  // Row 175 item 6, F13, F18: regenerate, edit and resend, branch, ask a teammate, hand the driver seat (team host only).
+  const redo = teamHost ? createRedoHandlers({ backend, leases, identity, allows, authorize, receipts, runReceipt,
+    queue: mutationQueue, approvals, teamCommands, trustedAuthor, publish, bumpRevision, chatOptions: trustedChatOptions,
+    sessionBusy, canAdmit }) : null;
   // Every conversation delete (also the team project delete, which holds no lease): null during a turn;
   // the scope is taken before the delete; `afterDelete` (the caller's post-await check) runs before the
   // revision entry is dropped and `session_changed` goes to that scope.
@@ -377,17 +404,13 @@ function createCommandRouter({
 
   function trustedChatOptions(command) {
     const session = backend.sessionStore?.getSession?.(command.session_id) || {};
+    const toolPreferences = turnToolPreferences(session, { teamHost, catalog: backend.currentStatus?.tools_status });
     return {
       preferredModel: text(backend.options?.modelEndpoint?.model || session.preferred_model || session.last_model_used, 240),
       reasoningEffort: text(session.reasoning_effort, 80),
       planMode: session.plan_mode === true,
       contextPreferences: isRecord(session.context_preferences) ? structuredClone(session.context_preferences) : undefined,
-      ...(isRecord(session.tool_category_overrides) || isRecord(session.tool_connection_overrides) ? {
-        toolPreferences: {
-          ...(isRecord(session.tool_category_overrides) ? { families: structuredClone(session.tool_category_overrides) } : {}),
-          ...(isRecord(session.tool_connection_overrides) ? { connections: structuredClone(session.tool_connection_overrides) } : {}),
-        },
-      } : {}),
+      ...(toolPreferences ? { toolPreferences } : {}),
       approvalMode: 'prompt',
     };
   }
@@ -472,6 +495,12 @@ function createCommandRouter({
     });
   }
 
+  async function viewAndNote(command, context) {
+    const answer = await decisions.view(command, context);
+    if (answer?.ok === true && answer.viewing === true) redo?.noteViewer(command.session_id, context, command.client_id);
+    return answer;
+  }
+
   async function dispatch(rawCommand, context = {}) {
     const checked = validateCommand(rawCommand);
     if (!checked.ok) return hostFailure('invalid', checked.reason, rawCommand?.request_id);
@@ -479,6 +508,7 @@ function createCommandRouter({
     const authFailure = identity(command, context);
     if (authFailure) return authFailure;
     try {
+      if (redo?.handles(command.operation)) return await redo.dispatch(command, context);
       if (teamCommands && command.operation.startsWith('team.')) {
         return await teamCommands.dispatch(command, context, { runReceipt, canAdmit, publish });
       }
@@ -505,7 +535,7 @@ function createCommandRouter({
         case 'requests.status': return receipts.status(command.params.request_id, context.deviceId);
         case 'sessions.create': return createSession(command, context);
         case 'sessions.snapshot': return snapshot(command, command.params, context);
-        case 'session.view': return decisions.view(command, context);
+        case 'session.view': return viewAndNote(command, context);
         case 'control.acquire': return control.acquire(command, context);
         case 'control.heartbeat': return control.heartbeat(command, context);
         case 'control.release': return control.release(command, context);
@@ -526,7 +556,8 @@ function createCommandRouter({
 
   function getSnapshot(sessionId, options = {}) {
     const value = buildSessionSnapshot({ backend, eventStream, decisionAdapter, sessionId,
-      revision: currentRevision(sessionId), options: { ...options, boot_epoch: bootEpoch }, prompterOf });
+      revision: currentRevision(sessionId), options: { ...options, boot_epoch: bootEpoch }, prompterOf, teamFields,
+      receiptsOf: receiptsReader(teamHost, approvals) });
     if (!value) return null;
     value.control = leases.get(sessionId);
     return value;
@@ -535,6 +566,7 @@ function createCommandRouter({
   function dispose() {
     if (disposed.value) return;
     disposed.value = true;
+    if (backend.emitSessionsChanged === emitRenamed) delete backend.emitSessionsChanged;
     if (typeof backend.off === 'function') {
       for (const [type, listener] of listeners) backend.off(type, listener);
     }

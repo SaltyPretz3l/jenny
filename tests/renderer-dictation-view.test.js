@@ -147,3 +147,23 @@ test('clock formats minutes and seconds', () => {
   assert.equal(view.clock(9500), '0:09');
   assert.equal(view.clock(120000), '2:00');
 });
+
+// Row 175 item 16: a data-dictation-target field has no .composer-main; its line sits in its parent, its popover in the box.
+function teamBox() {
+  const dom = new JSDOM('<!doctype html><body><div class="team-composer"><div class="team-field"><textarea id="teamInput" data-dictation-target="x"></textarea></div><div class="team-bar"><button id="teamMic" data-dictation-button="true"></button></div></div></body>');
+  const doc = dom.window.document;
+  return { doc, input: doc.getElementById('teamInput'), button: doc.getElementById('teamMic') };
+}
+
+test('a generic field gets the live line above itself and the first-use popover in its box', () => {
+  const { doc, input, button } = teamBox();
+  view.showListening(input, { mode: 'hold', startedAt: 0, now: () => 3000 });
+  const line = doc.querySelector('.team-field > .composer-dictation-line');
+  assert.ok(line, 'the line is in the field\'s parent, before the field');
+  assert.equal(line.nextElementSibling, input);
+  view.clearLine(input);
+  assert.equal(doc.querySelector('.composer-dictation-line'), null);
+  view.openSetup(button, { getState: () => ({ state: 'not_installed' }), api: {} });
+  assert.ok(doc.querySelector('.team-composer > .composer-dictation-popover'), 'anchored on the nearest ancestor that holds the field');
+  view.closeSetup();
+});

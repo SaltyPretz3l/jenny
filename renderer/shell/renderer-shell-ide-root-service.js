@@ -581,6 +581,11 @@
       });
     }
 
+    // Row 178: the chat's Terminal panel reaches the IDE terminal pool here; nothing loads until ensure().
+    let terminalPool = null;
+    const poolSeam = Object.freeze({ peek: () => terminalPool, ensure: async () => { try { if (!windowRef.jennyShell?.workspacePty || !(await ensureIdeLoaded())) return null; terminalPool = (await (await ensureIdeController())?.getTerminalPool?.()) || null; return terminalPool; } catch (_error) { return null; } } });
+    windowRef.rendererIdeTerminalPool = poolSeam;
+    registerCleanup(() => { terminalPool = null; if (windowRef.rendererIdeTerminalPool === poolSeam) delete windowRef.rendererIdeTerminalPool; });
     bindExternalTransitionRequests();
     bindPresentationInbox();
     if (state.ui?.activeView === 'ide') ensureIdeLoaded();

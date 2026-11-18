@@ -8,6 +8,8 @@ const {
   MAX_FOLLOW_UP_LABEL_CHARS,
 } = require('../shell-config-followups-schema');
 const { normalizeDelegateChildren } = require('./delegate-active-turn-children');
+const { allowedNodesField } = require('./session-allowed-nodes');
+const { memberAuthor } = require('./message-author');
 
 const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
@@ -202,7 +204,119 @@ function normalizeSessionStartDate(value, createdAt = '') {
   return localIsoDateFromTimestamp(createdAt);
 }
 
+// Row 172: a team conversation's model, thinking effort and tool switches, set only by the team host's
+// `sessions.preferences` (server/team-conversation-preferences.js), which hands the change over under this symbol key:
+// no IPC payload or JSON body can carry it (structured clone and JSON drop symbol keys), as with
+// session-allowed-nodes.js. The record keeps the existing `preferred_model` and `reasoning_effort`, plus
+// `team_tool_switches` ({ read, write }) and a bounded `preference_log`; a record without them reads as the team
+// default, both switches on and an empty log. `team_tool_switches` present marks the pick as the team's own: from then
+// on only this key changes `preferred_model` or `reasoning_effort` (a turn's echo of its routing alias never does).
+const TEAM_CONVERSATION_PREFERENCES = Symbol('team_conversation_preferences');
+// The pool gateway's model alias (server/team/pool-gateway.js `POOL_MODEL_ALIAS`), restated: with Team off desktop
+// main loads no server/team module (tests/team-off.test.js). Stored, it means the team default.
+const TEAM_POOL_MODEL_ALIAS = 'team-pool';
+const TEAM_EFFORTS = Object.freeze(['default', 'low', 'medium', 'high']);
+const TEAM_MODEL_NAME = /^[\x21-\x7e][\x20-\x7e]{0,255}$/u;
+const TEAM_LOG_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/u;
+const PREFERENCE_LOG_MAX = 50;
+
+function isRecordValue(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** The conversation's own model, or null for the team default (empty, the alias, or not a model name). */
+function teamModelPick(value) {
+  const model = typeof value === 'string' ? value.trim() : '';
+  return model && model !== TEAM_POOL_MODEL_ALIAS && TEAM_MODEL_NAME.test(model) ? model : null;
+}
+
+function teamEffort(value) {
+  return TEAM_EFFORTS.includes(value) ? value : 'default';
+}
+
+// Absent switches are on; a stored switch that is not exactly true is off (fail closed).
+function normalizeTeamToolSwitches(value) {
+  const source = isRecordValue(value) ? value : {};
+  return { read: !Object.hasOwn(source, 'read') || source.read === true,
+    write: !Object.hasOwn(source, 'write') || source.write === true };
+}
+
+function teamPreferenceState(record = {}) {
+  const switches = normalizeTeamToolSwitches(record?.team_tool_switches);
+  return { model: teamModelPick(record?.preferred_model), effort: teamEffort(record?.reasoning_effort),
+    read: switches.read, write: switches.write, plan: record?.plan_mode === true };
+}
+
+function checkedLogState(value) {
+  if (!isRecordValue(value) || typeof value.read !== 'boolean' || typeof value.write !== 'boolean'
+    || !TEAM_EFFORTS.includes(value.effort)) return null;
+  if (value.model !== null && teamModelPick(value.model) !== value.model) return null;
+  // Row 175 item 7: `plan` (Plan mode on or off) is optional; an entry an older host wrote has none.
+  return { model: value.model, effort: value.effort, read: value.read, write: value.write,
+    ...(typeof value.plan === 'boolean' ? { plan: value.plan } : {}) };
+}
+
+function checkedLogEntry(value) {
+  if (!isRecordValue(value) || typeof value.at !== 'string' || !TEAM_LOG_STAMP.test(value.at)) return null;
+  const by = value.by === null ? null : memberAuthor(value.by)?.member_id ?? undefined;
+  const from = checkedLogState(value.from);
+  const to = checkedLogState(value.to);
+  return by === undefined || !from || !to ? null : { at: value.at, by, from, to };
+}
+
+/** The stored log: its valid entries, the newest 50. */
+function normalizePreferenceLog(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(checkedLogEntry).filter(Boolean).slice(-PREFERENCE_LOG_MAX);
+}
+
+/** The team-only fields a stored record keeps (the allowed-node list included); none for a desktop record. */
+function teamConversationFields(input = {}) {
+  const log = normalizePreferenceLog(input.preference_log);
+  return { ...allowedNodesField(input.allowed_nodes),
+    ...(Object.hasOwn(input, 'team_tool_switches') ? { team_tool_switches: normalizeTeamToolSwitches(input.team_tool_switches) } : {}),
+    ...(log.length ? { preference_log: log } : {}) };
+}
+
+/**
+ * The patch for a team change `{ model?, effort?, tools?: { read?, write? }, by, at }` against the current record: the
+ * given values, the switches (always written, which marks the pick as the team's), and one log entry when the result
+ * differs from what was there. A change that changes nothing appends nothing.
+ */
+function teamPreferencesPatch(change, record = {}) {
+  const from = teamPreferenceState(record);
+  const tools = isRecordValue(change.tools) ? change.tools : {};
+  const to = {
+    model: Object.hasOwn(change, 'model') ? teamModelPick(change.model) : from.model,
+    effort: Object.hasOwn(change, 'effort') ? teamEffort(change.effort) : from.effort,
+    read: typeof tools.read === 'boolean' ? tools.read : from.read,
+    write: typeof tools.write === 'boolean' ? tools.write : from.write,
+    // Row 175 item 7: Plan mode is logged like the other team keys (the store write itself is `plan_mode`).
+    plan: typeof change.plan === 'boolean' ? change.plan : from.plan,
+  };
+  const patch = { team_tool_switches: { read: to.read, write: to.write } };
+  if (Object.hasOwn(change, 'model')) patch.preferred_model = to.model ?? '';
+  if (Object.hasOwn(change, 'effort')) patch.reasoning_effort = to.effort;
+  const changed = ['model', 'effort', 'read', 'write', 'plan'].some((key) => from[key] !== to[key]);
+  // `plan` is written only on an entry that changes it, so an entry for another key reads as before.
+  const logged = (state) => {
+    const { plan, ...rest } = state;
+    return from.plan === to.plan ? rest : { ...rest, plan };
+  };
+  const entry = changed ? checkedLogEntry({ at: change.at, by: change.by ?? null, from: logged(from), to: logged(to) }) : null;
+  if (changed && !entry) throw Object.assign(new RangeError('team_preferences_invalid'), { reason: 'team_preferences_invalid' });
+  if (entry) patch.preference_log = [...normalizePreferenceLog(record.preference_log), entry].slice(-PREFERENCE_LOG_MAX);
+  return patch;
+}
+
 module.exports = {
+  TEAM_CONVERSATION_PREFERENCES,
+  normalizePreferenceLog,
+  normalizeTeamToolSwitches,
+  teamConversationFields,
+  teamEffort,
+  teamModelPick,
+  teamPreferencesPatch,
   TOOL_CONNECTION_OVERRIDES_MAX,
   activeTurnClearMatchIsExplicit,
   activeTurnMatchesRequest,

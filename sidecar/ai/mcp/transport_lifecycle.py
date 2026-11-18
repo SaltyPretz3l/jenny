@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import uuid
 from typing import Any
@@ -18,6 +19,7 @@ from sidecar.ai.tools.sanitization import sanitize_tool_output
 TOOL_STARTED_NOTIFICATION_METHOD = "tool/started"
 MCP_STDERR_TAIL_MAX_CHARS = 4096
 _LIFECYCLE_ID_MAX_CHARS = 256
+_HOSTED_FILES_REASON = re.compile(r"^file_access_[a-z_]{1,48}$")
 ProcessContainment = _MCPProcessContainment
 
 
@@ -33,10 +35,22 @@ def sanitize_mcp_detail(text: object) -> str:
     )
 
 
+def _hosted_files_state(value: object) -> dict[str, object] | None:
+    """The worker's answer, kept only in its closed shape; a reason is a fixed word."""
+    if not isinstance(value, dict):
+        return None
+    reason = value.get("reason")
+    reason = reason if isinstance(reason, str) and _HOSTED_FILES_REASON.match(reason) else None
+    available = value.get("available") is True and reason is None
+    return {"available": available, "reason": reason}
+
+
 class ToolLifecycleTracker:
     def __init__(self) -> None:
         self.started_supported = False
         self.generation_id: str | None = None
+        # A root-boundary worker's file tools state: {"available", "reason"} or None.
+        self.hosted_files: dict[str, object] | None = None
         self._events: dict[int, threading.Event] = {}
         self._operation_ids: dict[int, str] = {}
 
@@ -53,6 +67,9 @@ class ToolLifecycleTracker:
         self.started_supported = bool(
             isinstance(lifecycle, dict)
             and lifecycle.get("started_notification") == TOOL_STARTED_NOTIFICATION_METHOD
+        )
+        self.hosted_files = _hosted_files_state(
+            experimental.get("jenny_hosted_files") if isinstance(experimental, dict) else None
         )
         generation = initialize_result.get("generationId")
         self.generation_id = (

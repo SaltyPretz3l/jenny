@@ -21,6 +21,8 @@ const TEAM_RULE_SCOPE = 'team_rule';
 // The rule that answers this call ({ rule_seq }), or null.
 function teamRuleApproves(service, { toolName, sessionId, input, oneOffOnly = false, executionAuthority = null } = {}) {
   if (service?.hostMode !== 'server' || oneOffOnly !== false) return null;
+  // D5 (the team host file tools plan): while file tools are on, every write and edit asks a person.
+  if (service.hostRootBoundary) return null;
   const { isRuleTool } = require('../../server/team/project-rules-match');
   if (!isRuleTool(toolName)) return null;
   try {

@@ -258,3 +258,41 @@ test('a malformed page never throws and never invents a row', () => {
   assert.equal(digest.rows[0].key, 'work:ok');
   assert.equal(digest.rows[0].sessionId, 's1');
 });
+
+// Row 175 F10 (D16): Team turns from the Team notifier's accessor join the list by time.
+const teamNotice = (id, notice, msAgo, over = {}) => ({ notice, teamId: 'team_one', projectId: 'project_p1', sessionId: 'sess_' + id, title: 'Team chat ' + id,
+  where: 'Palette', at: NOW - msAgo, id, ...over });
+
+test('Team turns interleave with local work by time, named Team · project, finished or failed', () => {
+  const digest = build({
+    work: [work({ work_id: 'a', updated_at: at(60000) }), work({ work_id: 'c', session_id: 's2', updated_at: at(300000) })],
+    sessions: [session('s1', 'Chat one'), session('s2', 'Chat two')],
+    team: { key: 'k', waiting: [], notices: [teamNotice('2', 'failed', 120000), teamNotice('1', 'finished', 240000)] },
+  });
+  assert.deepEqual(digest.rows.map((row) => row.key), ['work:a', 'team:team_one:2', 'team:team_one:1', 'work:c']);
+  const [, failed, finished] = digest.rows;
+  assert.deepEqual([failed.team, failed.outcome, failed.marker, failed.sessionTitle, failed.workId, failed.sessionGone],
+    [true, 'failed', 'Team · Palette', 'Team chat 2', '', false]);
+  assert.deepEqual([finished.outcome, finished.finishedAt], ['completed', at(240000)]);
+  assert.equal(digest.unseenCount, 4);
+  assert.equal(digest.newestAt, at(60000));
+  assert.equal(Object.isFrozen(failed), true);
+  assert.deepEqual(digest.outcomeBySession, { s1: 'completed', s2: 'completed' }, 'a Team session never marks a local chat');
+});
+
+test('Team turns obey the Mark all seen cursor, the per-session cursor and the row limit', () => {
+  const team = { key: 'k', waiting: [], notices: [teamNotice('1', 'finished', 60000), teamNotice('2', 'finished', 120000), teamNotice('3', 'failed', 180000)] };
+  assert.deepEqual(build({ team, seenAt: at(100000) }).rows.map((row) => row.key), ['team:team_one:1']);
+  assert.deepEqual(build({ team, seenBySession: { sess_2: at(1000) } }).rows.map((row) => row.key), ['team:team_one:1', 'team:team_one:3']);
+  const limited = build({ team, limit: 2 });
+  assert.deepEqual([limited.rows.length, limited.unseenCount, limited.truncated], [2, 3, true]);
+});
+
+test('Team turns without a name, an id or a time are dropped, and no accessor means none', () => {
+  const team = { key: 'k', waiting: [], notices: [null, teamNotice('', 'finished', 1000), teamNotice('1', 'text', 1000), teamNotice('2', 'finished', 1000, { at: 'x' }),
+    teamNotice('3', 'finished', 1000, { sessionId: '' }), teamNotice('4', 'finished', 1000, { where: '', title: '' })] };
+  const rows = build({ team }).rows;
+  assert.deepEqual(rows.map((row) => [row.key, row.marker, row.sessionTitle]), [['team:team_one:4', 'Team', 'A project conversation']]);
+  assert.deepEqual(build({ team: null }).rows, []);
+  assert.deepEqual(build({}).rows, [], 'with no Team notifier loaded the digest is the local one');
+});

@@ -44,9 +44,9 @@ function releaseOnce(handle) {
  * Acquires the turn route for one chat.send and puts its token on `params`.
  * Returns `{ release({ ok }) }`, which runs at most once. A refusal, an abort or
  * a malformed token throws, after releasing: a routed backend never sends
- * without its token.
+ * without its token. `wait: false` refuses a busy pool at once (`pool_busy`) instead of queueing.
  */
-async function acquireTurnRoute(service, { params, sessionSummary, author, signal }) {
+async function acquireTurnRoute(service, { params, sessionSummary, author, signal, wait }) {
   const route = service.turnRoute;
   let handle;
   try {
@@ -59,6 +59,8 @@ async function acquireTurnRoute(service, { params, sessionSummary, author, signa
       // The conversation's allowed-node list (null is any node; [] is a damaged list no node satisfies).
       allowedNodes: Array.isArray(sessionSummary?.allowed_nodes) ? sessionSummary.allowed_nodes : null,
       signal,
+      // A background caller (the conversation's automatic title) asks never to queue behind a busy pool.
+      ...(wait === false ? { wait: false } : {}),
     });
   } catch (error) {
     if (signal?.aborted) throw createCancellationError(signal.reason);

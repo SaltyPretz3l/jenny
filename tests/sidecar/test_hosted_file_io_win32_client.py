@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import gc
 import json
 import logging
 import os
@@ -519,3 +520,47 @@ def test_posix_hosts_never_import_the_client() -> None:
     completed = subprocess.run([sys.executable, "-c", script, str(ROOT)], cwd=ROOT,
                                capture_output=True, text=True, timeout=60, check=False)
     assert completed.returncode == 0, completed.stderr
+
+
+# W14 review, findings 2 to 4: an asynchronous exception (KeyboardInterrupt here)
+# at any point after the library hands out a pin or a file token. The fixtures
+# assert that no pin and no token stays open.
+
+def test_an_interrupt_out_of_the_wrap_never_asks_the_library_to_close_the_handle(
+        fake: FakeLibrary, root: Path, pin: client.Win32Pin, monkeypatch) -> None:
+    def interrupted(handle: int) -> int:
+        raise KeyboardInterrupt  # the descriptor may already own the handle
+
+    monkeypatch.setattr(client, "_open_osfhandle", interrupted)
+    with pytest.raises(KeyboardInterrupt), client.open_file(pin, root, root / "f.txt", "rb"):
+        pytest.fail("opened")
+    assert [reclaim for _, reclaim in fake.file_closes] == [0]
+
+
+def test_an_interrupt_right_after_the_open_still_closes_the_token(
+        fake: FakeLibrary, root: Path, pin: client.Win32Pin) -> None:
+    fake.open_file_raises = KeyboardInterrupt()  # after the fake issued the token
+    with pytest.raises(KeyboardInterrupt), client.open_file(pin, root, root / "f.txt", "rb"):
+        pytest.fail("opened")
+    assert [reclaim for _, reclaim in fake.file_closes] == [0]
+
+
+def test_an_interrupt_right_after_the_root_open_still_closes_the_pin(
+        fake: FakeLibrary, root: Path) -> None:
+    fake.root_open_raises = KeyboardInterrupt()  # after the fake issued the pin
+    with pytest.raises(KeyboardInterrupt):
+        client.open_root(root, "7", "9")
+    assert len(fake.closed_pins) == 1
+
+
+def test_a_pin_dropped_unclosed_is_closed_once(fake: FakeLibrary, root: Path) -> None:
+    dropped = client.open_root(root, "7", "9")
+    token = dropped.token
+    del dropped
+    gc.collect()
+    assert fake.closed_pins == [token]
+    closed = client.open_root(root, "7", "9")
+    closed.close()
+    del closed
+    gc.collect()
+    assert len(fake.closed_pins) == 2, "a closed pin is not closed again when dropped"

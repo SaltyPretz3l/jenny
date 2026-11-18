@@ -536,14 +536,18 @@ def build_tool_use_nudge(
 # ---------------------------------------------------------------------------
 
 
-def _apply_tool_fields(entry: EngineMessage, message: dict[str, object]) -> None:
+def _apply_row_fields(entry: EngineMessage, message: dict[str, object], images: list[Any]) -> None:
+    """Tool-row fields; the turn's *images* plus a steered user row's own (row 180)."""
     tool_call_id, name = message.get("tool_call_id"), message.get("name")
-    if isinstance(tool_call_id, str):
+    if entry["role"] == "tool" and isinstance(tool_call_id, str):
         entry["tool_call_id"] = tool_call_id
-    if isinstance(name, str):
+    if entry["role"] == "tool" and isinstance(name, str):
         entry["name"] = name
-    if message.get("is_error") is True:
+    if entry["role"] == "tool" and message.get("is_error") is True:
         entry["is_error"] = True
+    own = message.get("images") if entry["role"] == "user" else None
+    if all_images := [*images, *(own if isinstance(own, list) else [])]:
+        entry["images"] = all_images
 
 
 def engine_messages(
@@ -553,11 +557,9 @@ def engine_messages(
     vision_images: Sequence[Any] = (),
     vision_anchor_text: str | None = None,
 ) -> list[EngineMessage]:
-    anchor_index = (
-        current_turn_anchor_index(messages, anchor_text=vision_anchor_text)
-        if vision_images
-        else None
-    )
+    anchor_index = None
+    if vision_images:
+        anchor_index = current_turn_anchor_index(messages, anchor_text=vision_anchor_text)
     pre_demotion_messages = messages
     messages = demote_non_leading_system_messages(messages)
     if vision_images and len(messages) != len(pre_demotion_messages):
@@ -589,11 +591,9 @@ def engine_messages(
         entry: EngineMessage = {"role": role, "content": content}
         if role == "assistant" and has_tool_calls:
             entry["tool_calls"] = cast(list[EngineToolCall], raw_tool_calls)
-        if role == "tool":
-            _apply_tool_fields(entry, message)
-        if vision_images and source_index == anchor_index:
-            entry["images"] = list(vision_images)
-            attached_images = True
+        anchored = bool(vision_images) and source_index == anchor_index
+        _apply_row_fields(entry, message, list(vision_images) if anchored else [])
+        attached_images = attached_images or anchored
         normalized.append(entry)
     if vision_images and not attached_images:
         raise VisionAnchorError(VISION_ANCHOR_MESSAGE)

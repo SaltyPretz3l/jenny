@@ -142,3 +142,81 @@ test('Activity subscribes when flags arrive after IDE binding, and stays inert w
  }finally{harness.dispose();}
  assert.equal(disposed,1);
 });
+
+// terminal_run (runInTaskTerminal): the controller drives a fake terminal set through the module table's global seam.
+async function withFakeTerminalSet(results, run) {
+  const calls = [];
+  let failure = null;
+  const queue = results.slice();
+  const fakeSet = new Proxy({
+    openTaskTerminal: async (...args) => { calls.push(args); const next = queue.length > 1 ? queue.shift() : queue[0]; failure = next.failure || null; return next.task; },
+    lastTaskStartFailure: () => (failure ? { ...failure } : null),
+  }, { get: (target, key) => (key in target ? target[key] : () => undefined) }); // every other set method is an inert no-op
+  const previous = globalThis.rendererIdeTerminalSet;
+  globalThis.rendererIdeTerminalSet = { createIdeTerminalSet: () => fakeSet };
+  const harness = createHarness();
+  try {
+    await run(harness, calls);
+  } finally {
+    harness.dispose();
+    if (previous === undefined) delete globalThis.rendererIdeTerminalSet; else globalThis.rendererIdeTerminalSet = previous;
+  }
+}
+
+test('runInTaskTerminal waits for the IDE activation before it opens a task terminal', async () => {
+  const task = { getSessionId: () => 'pty-2', sendCommand: async () => true };
+  await withFakeTerminalSet([{ task }], async (harness, calls) => {
+    let finishHydrate;
+    harness.bridge.jennyShell.workspaceIde.getState = () => new Promise((resolve) => { finishHydrate = resolve; });
+    const running = harness.controller.runInTaskTerminal('npm test');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls.length, 0, 'nothing opened while the IDE is still activating');
+    finishHydrate({ ok: true, context: { rootPath: 'G:/fake-root', rootId: 'root_fake', generation: 0, phase: 'ready' }, openTabs: [], activeTabPath: '', expandedDirs: [] });
+    assert.deepEqual(await running, { ok: true, session_id: 'pty-2' });
+    assert.equal(calls.length, 1);
+  });
+});
+
+test('runInTaskTerminal passes the start_folder place only when asked, and sends the command to the terminal', async () => {
+  const sent = [];
+  const task = { getSessionId: () => 'pty-2', sendCommand: async (command) => { sent.push(command); return true; } };
+  await withFakeTerminalSet([{ task }], async (harness, calls) => {
+    await harness.controller.runInTaskTerminal('ls', { place: 'start_folder' });
+    await harness.controller.runInTaskTerminal('pwd', { place: 'elsewhere' });
+    await harness.controller.runInTaskTerminal('whoami');
+    assert.deepEqual(calls, [[undefined, { place: 'start_folder' }], [undefined, undefined], [undefined, undefined]]);
+    assert.deepEqual(sent, ['ls', 'pwd', 'whoami']);
+  });
+});
+
+test('runInTaskTerminal retries once when the first start is false with no recorded failure', async () => {
+  const task = { getSessionId: () => 'pty-3', sendCommand: async () => true };
+  await withFakeTerminalSet([{ task: false }, { task }], async (harness, calls) => {
+    assert.deepEqual(await harness.controller.runInTaskTerminal('ls', { place: 'start_folder' }), { ok: true, session_id: 'pty-3' });
+    assert.equal(calls.length, 2, 'one retry');
+    assert.deepEqual(calls[1], [undefined, { place: 'start_folder' }], 'the retry asks for the same place');
+  });
+  await withFakeTerminalSet([{ task: false }], async (harness, calls) => {
+    assert.deepEqual(await harness.controller.runInTaskTerminal('ls'), { ok: false, reason: 'start_failed' });
+    assert.equal(calls.length, 2, 'a second false is final: only one retry');
+  });
+});
+
+test('runInTaskTerminal does not retry a start that failed with a code, and maps the code to a reason', async () => {
+  for (const [code, reason] of [['CMP-TERMINAL-0006', 'start_folder_unavailable'], ['CMP-TERMINAL-0002', 'root_missing'], ['CMP-TERMINAL-0099', 'start_failed'], ['', 'start_failed']]) {
+    await withFakeTerminalSet([{ task: false, failure: { status: 'failed', code } }], async (harness, calls) => {
+      assert.deepEqual(await harness.controller.runInTaskTerminal('ls'), { ok: false, reason }, code || 'no code');
+      assert.equal(calls.length, 1, 'a recorded failure is not retried');
+    });
+  }
+});
+
+test('runInTaskTerminal answers no_free_terminal for null, and send_failed when the line is not accepted', async () => {
+  await withFakeTerminalSet([{ task: null }], async (harness, calls) => {
+    assert.deepEqual(await harness.controller.runInTaskTerminal('ls'), { ok: false, reason: 'no_free_terminal' });
+    assert.equal(calls.length, 1, 'null is not retried');
+  });
+  await withFakeTerminalSet([{ task: { getSessionId: () => 'pty-2', sendCommand: async () => false } }], async (harness) => {
+    assert.deepEqual(await harness.controller.runInTaskTerminal('ls'), { ok: false, reason: 'send_failed' });
+  });
+});

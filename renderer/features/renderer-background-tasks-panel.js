@@ -23,7 +23,7 @@
   const SUMMARY_DELAY_MS = 120;
   const COPIED_MS = 1600;
   const FOCUS_KEYS = ['data-bgt-open', 'data-bgt-stop', 'data-bgt-fold', 'data-bgt-clear', 'data-bgt-back', 'data-bgt-copy-command',
-    'data-bgt-copy-output', 'data-bgt-open-full', 'data-bgt-open-chat', 'data-bgt-jump', 'data-value'];
+    'data-bgt-copy-output', 'data-bgt-open-address', 'data-bgt-copy-address', 'data-bgt-open-full', 'data-bgt-open-chat', 'data-bgt-jump', 'data-value'];
   function noop() {}
 
   /* Stops a linked chat's turn: the renderer's own Stop first, else the turn the main process knows. Truthy when stopped. */
@@ -176,6 +176,7 @@
       host.innerHTML = `<div class="background-tasks-panel" data-bgt-page="detail">${rr.detailHtml(task, out, following)}</div>`;
       lastListHtml = '';
       painted.set(host.querySelector('[data-bgt-status]'), rr.statusLineHtml(task));
+      painted.set(host.querySelector('[data-bgt-facts]'), rr.factsHtml(task));
       painted.set(host.querySelector('[data-bgt-foot]'), rr.footHtml(task, out, following));
     }
 
@@ -183,6 +184,7 @@
       const detail = rootEl()?.querySelector('[data-bgt-detail]');
       if (!detail) return;
       swap('[data-bgt-status]', rr.statusLineHtml(task));
+      swap('[data-bgt-facts]', rr.factsHtml(task));
       swapFoot(task);
       if (wasLive && !task.live) {
         const words = detail.querySelector('[data-bgt-status] > span:not(.background-tasks-actions)')?.textContent || '';
@@ -397,6 +399,13 @@
       win.dispatchEvent(new win.CustomEvent('ide:open-file-at-line', { detail: { path: target, line: null, column: null, preferIde: true }, bubbles: true, cancelable: true }));
     }
 
+    // Row 176: a serving job's address opens in the user's own browser (window.open, which the main window turns into
+    // the OS default browser), and only a loopback http(s) address does.
+    function openAddress() {
+      const href = rr.loopbackUrl(currentTask()?.serving?.url);
+      if (href && typeof win.open === 'function') win.open(href, '_blank', 'noopener,noreferrer');
+    }
+
     function jumpToLatest() {
       const pre = rootEl()?.querySelector('[data-bgt-output]');
       following = true;
@@ -422,6 +431,8 @@
       if ((node = hit('[data-bgt-open]'))) return void openTask(node.getAttribute('data-bgt-open'));
       if ((node = hit('[data-bgt-copy-command]'))) return copy(node, currentTask()?.text || '');
       if ((node = hit('[data-bgt-copy-output]'))) return copy(node, out?.failed ? '' : out?.text || '');
+      if (hit('[data-bgt-open-address]')) return openAddress();
+      if ((node = hit('[data-bgt-copy-address]'))) return copy(node, currentTask()?.serving?.url || '');
       if (hit('[data-bgt-open-full]')) return openFull();
       if ((node = hit('[data-bgt-open-chat]'))) return void openSession(node.getAttribute('data-bgt-open-chat'));
       if (hit('[data-bgt-jump]')) return jumpToLatest();

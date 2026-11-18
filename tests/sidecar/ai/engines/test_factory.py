@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import socket
 from dataclasses import dataclass
 from typing import Any
+
+import pytest
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.engines.factory import create_engine
@@ -366,6 +369,27 @@ def test_create_engine_openai_compatible_without_model_on_a_dead_port_falls_back
     assert selection.engine_type == "mock"
     assert selection.fallback_from == "openai-compatible"
     assert "not reachable" in str(selection.fallback_reason or "")
+
+
+@pytest.mark.parametrize(("idle", "level"), [(True, logging.INFO), (False, logging.WARNING)])
+def test_openai_compatible_dead_port_logs_an_idle_local_server_at_info(monkeypatch, caplog, idle, level) -> None:
+    # A refused loopback port is a stopped server ("Load model at startup" off): INFO keeps it
+    # out of Diagnostics issues. Any other unreachable endpoint still warns.
+    class _Idle(_ProbedOpenAICompat):
+        def probe_reachable(self) -> None:
+            error = ConnectionError("OpenAI-compatible server is not reachable.")
+            error.idle_local_server = idle
+            raise error
+
+    monkeypatch.setattr("sidecar.ai.engines.factory.OpenAICompatibleEngine", _Idle)
+    with caplog.at_level(logging.INFO, logger="sidecar.ai.engines.factory"):
+        selection = create_engine(
+            RuntimeConfig(engine_type="openai-compatible", model="", api_url="http://127.0.0.1:8033")
+        )
+
+    assert selection.fallback_from == "openai-compatible"
+    records = [r for r in caplog.records if "falling back to MockEngine" in r.getMessage()]
+    assert [r.levelno for r in records] == [level]
 
 
 def test_create_engine_codex_cli_success(monkeypatch, tmp_path) -> None:

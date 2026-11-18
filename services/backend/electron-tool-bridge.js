@@ -419,7 +419,7 @@ async function executeElectronToolRequest(
         canonicalReadOnly, projectAuthority: trustedExecution?.authority || null, executionAuthority, beforeProducer });
     }
   }
-  if (service?.hostMode === 'server' && !['ask_user', 'exit_plan_mode'].includes(toolName)) {
+  if (service?.hostMode === 'server' && !['ask_user', 'exit_plan_mode', 'jenny_help'].includes(toolName)) {
     return bridgeFailure(toolName, 'Tool is unavailable in the hosted execution policy.', TOOL_ERROR_CODES.DISABLED);
   }
 

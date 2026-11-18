@@ -39,6 +39,7 @@ from sidecar.runtime.turn_state import (
     admit_mail_arrived,
     apply_run_mode_update,
 )
+from sidecar.runtime.turn_steers import STEER_NOTIFICATION_HANDLERS, PendingSteerQueue
 
 SubAgentSlotAllocator = _subagent_slots.SubAgentSlotAllocator
 SubAgentSlotLease = _subagent_slots.SubAgentSlotLease
@@ -63,6 +64,7 @@ _SESSION_TURN_NOTIFICATIONS = {
     SESSION_RUN_MODE_UPDATED_METHOD: apply_run_mode_update,
     SESSION_MAIL_ARRIVED_METHOD: admit_mail_arrived,
     SESSION_JOB_SETTLED_METHOD: admit_job_settled,
+    **STEER_NOTIFICATION_HANDLERS,
 }
 
 
@@ -104,6 +106,7 @@ class TurnCancellationHandle:
     live_run_mode: LiveRunModeState = field(default_factory=LiveRunModeState)
     pending_mail: PendingMailQueue = field(default_factory=PendingMailQueue)
     pending_job_notices: PendingJobNoticeQueue = field(default_factory=PendingJobNoticeQueue)
+    pending_steers: PendingSteerQueue = field(default_factory=PendingSteerQueue)
     reason: str = "chat_cancelled"
     cancel_reasons: frozenset[str] = CANCELLED_TERMINAL_SUBCODES
     _event: threading.Event = field(default_factory=threading.Event)

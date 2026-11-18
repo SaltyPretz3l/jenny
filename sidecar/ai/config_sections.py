@@ -40,6 +40,12 @@ from sidecar.ai.config_parsing import (
     parse_conversation_index_config,
     parse_semantic_catalog_config,
 )
+from sidecar.ai.engines.provider_descriptor_v6 import (
+    ProviderDescriptorError,
+    validate_model_id,
+    validate_model_limits,
+)
+from sidecar.ai.local_subagent_endpoint import parse_local_subagent_engine
 from sidecar.ai.mode_policy import normalize_mode
 from sidecar.ai.personality import normalize_assistant_name
 
@@ -48,11 +54,34 @@ from sidecar.ai.personality import normalize_assistant_name
 _COMPACTION_CUSTOM_PROMPT_MAX_CHARS = 20_000
 
 _DRAWING_INSTRUCTIONS = ("short", "full", "mermaid")
+_API_PROVIDER_SUBAGENT_MODELS_MAX = 64
 
 
 def _normalize_drawing_instructions(value: Any) -> str:
     """The "Drawing instructions" setting; any other stored value means ``short``."""
     return value if isinstance(value, str) and value in _DRAWING_INSTRUCTIONS else "short"
+
+
+def _normalize_api_provider_subagent_models(value: Any) -> tuple[dict[str, Any], ...]:
+    """The selected instance's enabled models (short id plus admitted limits) for delegation.
+
+    Anything that is not a list gives an empty tuple; an invalid or repeated row is dropped.
+    """
+    if not isinstance(value, list):
+        return ()
+    rows: dict[str, dict[str, Any]] = {}
+    for item in value:
+        if len(rows) >= _API_PROVIDER_SUBAGENT_MODELS_MAX:
+            break
+        if not isinstance(item, dict):
+            continue
+        try:
+            model_id = validate_model_id(item.get("id"))
+            limits = validate_model_limits(item.get("limits"))
+        except ProviderDescriptorError:
+            continue
+        rows.setdefault(model_id, {"id": model_id, "limits": limits})
+    return tuple(rows.values())
 
 
 def parse_engine_fields(raw_config: dict[str, Any], engine_type: str) -> dict[str, Any]:
@@ -125,6 +154,12 @@ def parse_engine_fields(raw_config: dict[str, Any], engine_type: str) -> dict[st
     api_provider_descriptor = _as_mapping(raw_config.get("api_provider_descriptor")) or None
     api_provider_model_limits = _as_mapping(raw_config.get("api_provider_model_limits")) or None
     api_provider_key = _as_nullable_string(raw_config.get("api_provider_key"))
+    api_provider_subagent_models = _normalize_api_provider_subagent_models(
+        raw_config.get("api_provider_subagent_models")
+    )
+    local_subagent_engine = parse_local_subagent_engine(
+        raw_config.get("local_subagent_engine"), raw_config.get("local_subagent_api_key")
+    )
     chatgpt_account_id = _as_nullable_string(raw_config.get("chatgpt_account_id"))
     chatgpt_model_catalog = normalize_chatgpt_model_catalog(raw_config.get("chatgpt_model_catalog"))
     chatgpt_base_url = _as_nullable_string(raw_config.get("chatgpt_base_url"))
@@ -181,6 +216,8 @@ def parse_engine_fields(raw_config: dict[str, Any], engine_type: str) -> dict[st
         api_provider_descriptor=api_provider_descriptor,
         api_provider_model_limits=api_provider_model_limits,
         api_provider_key=api_provider_key,
+        api_provider_subagent_models=api_provider_subagent_models,
+        local_subagent_engine=local_subagent_engine,
         managed_prefill_progress=raw_config.get("managed_prefill_progress") is True,
         json_schema_response_format=raw_config.get("json_schema_response_format") is True,
         chatgpt_account_id=chatgpt_account_id,

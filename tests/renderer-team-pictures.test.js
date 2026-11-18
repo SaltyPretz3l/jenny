@@ -338,3 +338,154 @@ test('a thread composer opened and closed leaves no empty stash behind (S14)', a
   await flush();
   assert.equal(attach._state().stashes, 1);
 });
+
+// ------------------------------------------------------------------ file previews (row 167): GIFs, the name button, the peek
+
+const doc = (n, name, size = 2048, mime = 'text/markdown') => ({ id: ATT(n), name, mime, size_bytes: size, kind: 'file' });
+const LINES = ['# Release notes', 'Two fixes and a note', 'for the team.'];
+
+test('a .md attachment shows a peek of its first three lines once near the viewport', async (t) => {
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'notes.md')] })], answers: { chatAttachmentText: { ok: true, lines: LINES } } });
+  t.after(h.restore);
+  const line = row(h, 1).querySelector('.team-file');
+  assert.equal(line.querySelector('.team-file__open').textContent, 'notes.md');
+  assert.equal(row(h, 1).querySelector('.team-peek').textContent, LINES.join('\n'));
+  assert.deepEqual(h.sent('chatAttachmentText').map((c) => c.payload), [{ team_id: OTHER, channel_id: CHAN, attachment_id: ATT(1), peek: true, name: 'notes.md' }]);
+});
+
+test('the peek has its place before its lines arrive; a .zip has no name button or peek, and a 600,000-byte .log has the button but no peek and no fetch', async (t) => {
+  const gate = held(t);
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'notes.md')] }),
+    message(2, { attachments: [doc(2, 'bundle.zip', 2048, 'application/zip')] }), message(3, { attachments: [doc(3, 'big.log', 600000, 'text/plain')] })],
+  answers: { chatAttachmentText: gate.answer } });
+  t.after(h.restore);
+  assert.equal(row(h, 1).querySelector('.team-peek').textContent, '', 'empty, but there');
+  assert.equal(row(h, 1).querySelector('.team-peek').getAttribute('aria-label'), 'Preview notes.md');
+  assert.equal(row(h, 2).querySelector('.team-file__open, .team-peek'), null);
+  assert.equal(row(h, 2).querySelector('.team-file__name').textContent, 'bundle.zip');
+  assert.equal(row(h, 3).querySelector('.team-file__open').textContent, 'big.log');
+  assert.equal(row(h, 3).querySelector('.team-peek'), null);
+  assert.deepEqual(gate.calls.map((c) => c.attachment_id), [ATT(1)], 'only the small text file is asked about');
+  gate.release({ ok: true, lines: LINES });
+  await flush();
+  assert.equal(row(h, 1).querySelector('.team-peek').textContent, LINES.join('\n'));
+  assert.equal(h.sent('chatAttachmentText').length, 1, 'once');
+});
+
+test('peek lines are text, never markup, with control characters out; a failed peek is not drawn and is not asked again', async (t) => {
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'a.html', 100, 'text/html'), doc(2, 'b.txt', 100, 'text/plain')] })],
+    answers: { chatAttachmentText: (p) => (p.attachment_id === ATT(1) ? { ok: true, lines: ['<img src=x onerror=alert(1)>', 'tab\u0007bell', 'c'] } : refused('team_not_connected')) } });
+  t.after(h.restore);
+  const peeks = row(h, 1).querySelectorAll('.team-peek');
+  assert.equal(peeks.length, 1, 'the failed one is not drawn');
+  assert.equal(peeks[0].querySelector('img'), null);
+  assert.equal(peeks[0].textContent, ['<img src=x onerror=alert(1)>', 'tabbell', 'c'].join('\n'));
+  assert.equal(row(h, 1).querySelectorAll('.team-file__open').length, 2, 'the names stay');
+  h.view.q('.team-scroll').dispatchEvent(new h.window.Event('scroll'));
+  await frame();
+  await flush();
+  assert.equal(h.sent('chatAttachmentText').length, 2, 'not asked again');
+});
+
+test('a refusal as not text removes the peek and the name button; gone is the file line as for a picture', async (t) => {
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'data.txt', 100, 'text/plain'), doc(2, 'old.txt', 100, 'text/plain')] })],
+    answers: { chatAttachmentText: (p) => refused(p.attachment_id === ATT(1) ? 'team_attachment_not_text' : 'team_chat_not_found') } });
+  t.after(h.restore);
+  assert.equal(row(h, 1).querySelector('.team-peek'), null);
+  assert.equal(row(h, 1).querySelector('.team-file__open'), null);
+  assert.deepEqual([...row(h, 1).querySelectorAll('.team-file__name')].map((el) => el.textContent), ['data.txt', 'old.txt']);
+  assert.equal(row(h, 1).querySelectorAll('.team-file')[1].dataset.gone, 'true');
+  assert.equal(h.sent('chatAttachmentText').length, 2);
+});
+
+test('offline, a text file has its name button and no peek, and nothing is fetched', async (t) => {
+  const { h } = await openChat({ messages: [message(1)], answers: { chatAttachmentText: { ok: true, lines: LINES } } });
+  t.after(h.restore);
+  h.listeners.state({ teams: [memberTeam({ state: 'offline', since: 5 })] });
+  await flush();
+  pushMessages(h, [message(2, { attachments: [doc(1, 'notes.md')] })]);
+  await flush();
+  assert.ok(row(h, 2).querySelector('.team-file__open'));
+  assert.equal(row(h, 2).querySelector('.team-peek'), null);
+  assert.equal(h.sent('chatAttachmentText').length, 0);
+});
+
+test('a peek already read stays when the team goes offline', async (t) => {
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'notes.md')] })], answers: { chatAttachmentText: { ok: true, lines: LINES } } });
+  t.after(h.restore);
+  const text = LINES.join('\n');
+  assert.equal(row(h, 1).querySelector('.team-peek').textContent, text);
+  h.listeners.state({ teams: [memberTeam({ state: 'offline', since: 5 })] });
+  await flush();
+  assert.equal(row(h, 1).querySelector('.team-peek').textContent, text, 'still there offline');
+  assert.equal(h.sent('chatAttachmentText').length, 1);
+});
+
+test('the name button and the peek each send one team:file-preview event, with who, when and which file', async (t) => {
+  const { h } = await openChat({ messages: [message(1, { attachments: [doc(1, 'notes.md', 4096)] }),
+    message(2, { author: { kind: 'member', member_id: 'member_me' }, attachments: [doc(2, 'mine.py', 10, 'text/x-python')] })],
+  answers: { chatAttachmentText: { ok: true, lines: LINES } } });
+  t.after(h.restore);
+  const seen = [];
+  h.view.q('.team-scroll').parentElement.addEventListener('team:file-preview', (event) => { seen.push({ target: event.target, detail: event.detail }); });
+  const name = row(h, 1).querySelector('.team-file__open');
+  name.click();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].target, name);
+  assert.deepEqual(seen[0].detail, { teamId: OTHER, channelId: CHAN, messageId: msgId(1), attachment: { id: ATT(1), name: 'notes.md', mime: 'text/markdown', size_bytes: 4096 },
+    authorName: 'Dot', own: true, createdAt: message(1).created_at });
+  const peek = row(h, 1).querySelector('.team-peek');
+  peek.click();
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].target, peek);
+  assert.deepEqual(seen[1].detail, seen[0].detail);
+  row(h, 2).querySelector('.team-file__open').click();
+  assert.equal(seen[2].detail.own, false);
+  assert.equal(seen[2].detail.authorName, 'Olive Owner');
+  assert.equal(seen[2].detail.attachment.id, ATT(2));
+  assert.equal(seen.length, 3, 'nothing else sends it');
+});
+
+test('a GIF the host kept as a file is drawn as a picture; one main refuses is a file line; the viewer offers no Copy for it', async (t) => {
+  const opened = [];
+  const saved = globalThis.rendererImageViewerController;
+  globalThis.rendererImageViewerController = { open: (arg) => { opened.push(arg); return Promise.resolve(true); } };
+  t.after(() => { if (saved === undefined) delete globalThis.rendererImageViewerController; else globalThis.rendererImageViewerController = saved; });
+  const gif = (n) => ({ id: ATT(n), name: `g${n}.gif`, mime: 'image/gif', size_bytes: 2048, kind: 'file' });
+  const png = { id: ATT(9), name: 'p.png', mime: 'image/png', size_bytes: 2048, kind: 'image' };
+  const GIF_URL = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  const { h } = await openChat({ messages: [message(1, { attachments: [gif(1), gif(2), png] })],
+    answers: { chatAttachmentImage: (p) => (p.attachment_id === ATT(2) ? refused('team_attachment_not_image') : { ok: true, data_url: p.attachment_id === ATT(9) ? DATA : GIF_URL }) } });
+  t.after(h.restore);
+  assert.equal(h.sent('chatAttachmentImage').length, 3);
+  assert.equal(row(h, 1).querySelectorAll('button.team-img').length, 2, 'two pictures drawn');
+  assert.equal(row(h, 1).querySelector('button.team-img img').getAttribute('src'), GIF_URL);
+  assert.equal(row(h, 1).querySelector('.team-file__name').textContent, 'g2.gif', 'the refused one is a file line');
+  assert.equal(row(h, 1).querySelector('.team-file__open, .team-peek'), null);
+  row(h, 1).querySelector('button.team-img').click();
+  await flush();
+  assert.deepEqual(opened[0].items.map((i) => [i.title, Object.keys(i.actions)]), [['g1.gif', ['save-as']], ['p.png', ['save-as', 'copy']]]);
+});
+
+test('at most 3 fetches are out at once across 2 pictures and 5 peeks, oldest first', async (t) => {
+  let out = 0;
+  let most = 0;
+  const waiting = [];
+  const order = [];
+  const answer = (kind) => (p) => new Promise((resolve) => {
+    out += 1;
+    most = Math.max(most, out);
+    order.push(`${kind}:${p.attachment_id}`);
+    waiting.push(() => { out -= 1; resolve(kind === 'image' ? { ok: true, data_url: DATA } : { ok: true, lines: LINES }); });
+  });
+  t.after(() => { while (waiting.length) waiting.shift()(); });
+  const { h } = await openChat({ messages: [message(1, { attachments: [pic(1, 10), pic(2, 10), ...[3, 4, 5, 6, 7].map((n) => doc(n, `n${n}.md`))] })],
+    answers: { chatAttachmentImage: answer('image'), chatAttachmentText: answer('text') } });
+  t.after(h.restore);
+  assert.equal(out, 3);
+  for (let i = 0; i < 20 && waiting.length; i += 1) { waiting.shift()(); await flush(); }
+  assert.equal(most, 3, 'never more than 3 out');
+  assert.deepEqual(order, [`image:${ATT(1)}`, `image:${ATT(2)}`, ...[3, 4, 5, 6, 7].map((n) => `text:${ATT(n)}`)]);
+  assert.equal(row(h, 1).querySelectorAll('.team-peek').length, 5);
+  assert.equal([...row(h, 1).querySelectorAll('.team-peek')].every((el) => el.textContent === LINES.join('\n')), true);
+});

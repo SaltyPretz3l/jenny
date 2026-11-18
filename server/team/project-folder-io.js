@@ -37,6 +37,8 @@ const DOWNLOAD_CHANGED = 'team_download_changed';
 const READ_FLAGS = fs.constants.O_RDONLY;
 const CREATE_FLAGS = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL;
 const COPY_CHUNK_BYTES = 1024 * 1024;
+// Row 175 round 2: the prefix a read's `limitFor` sees (enough for every picture signature the reader view knows).
+const HEAD_BYTES = 16;
 // The walk yields to the event loop after this many entries.
 const WALK_BATCH = 256;
 const LIST_LIMIT = 4096;
@@ -216,6 +218,18 @@ class InstallStop extends Error {
   }
 }
 
+// The first `length` bytes of an open file by positioned reads (fewer when it ends sooner).
+async function readPrefix(handle, length) {
+  const bytes = Buffer.alloc(length);
+  let done = 0;
+  while (done < length) {
+    const { bytesRead } = await handle.read(bytes, done, length - done, done);
+    if (bytesRead === 0) break;
+    done += bytesRead;
+  }
+  return bytes.subarray(0, done);
+}
+
 /**
  * projects: the projects root. gate(projectId): null or the refusal (the id, then the root). rootReady(): the
  * root is usable. entryCap, fileCap: the walk caps. hardLinks: false forces the copy (a test seam).
@@ -319,6 +333,42 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
     } catch { /* refused below */ }
     if (handle) await handle.close().catch(() => {});
     return refuse(DOWNLOAD_CHANGED);
+  }
+
+  /**
+   * Row 175 wave 5: the first `maxBytes` of one file the download listing would offer, read through `openListed`
+   * (every folder on the way a directory by `lstat`, the file opened without following a link, then re-identified
+   * by device, inode, size and modification time). PATH_INVALID for a path the rules or the sensitive list refuse;
+   * DOWNLOAD_CHANGED for anything else that is not a regular file with one link (missing, a folder, a link, a
+   * junction on the way, a hard-linked file). `{ ok, size, bytes }`.
+   * Row 175 round 2 (D13): `limitFor(head, size)`, when given, sees the file's first HEAD_BYTES (fewer for a shorter
+   * file) through the same open handle and answers how many bytes to read instead of `maxBytes` (0 for none); the
+   * answer then carries `head` too.
+   */
+  async function readListed(projectId, relative, maxBytes, { limitFor = null } = {}) {
+    const refused = gate(projectId);
+    if (refused) return refused;
+    if (!validateRelativePath(relative).ok || sensitiveSegment(relative) !== null) return refuse(PATH_INVALID);
+    let stat;
+    try {
+      stat = fs.lstatSync(path.join(projects, projectId, ...relative.split('/')), { bigint: true });
+    } catch {
+      return refuse(DOWNLOAD_CHANGED);
+    }
+    if (!stat.isFile() || stat.nlink !== 1n) return refuse(DOWNLOAD_CHANGED);
+    const size = Number(stat.size);
+    const opened = await openListed(projectId, relative, { dev: stat.dev, ino: stat.ino, size, mtimeNs: stat.mtimeNs });
+    if (!opened.ok) return opened;
+    try {
+      if (typeof limitFor !== 'function') return { ok: true, size, bytes: await readPrefix(opened.handle, Math.min(size, maxBytes)) };
+      const head = await readPrefix(opened.handle, Math.min(size, HEAD_BYTES));
+      const limit = limitFor(head, size);
+      return { ok: true, size, head, bytes: await readPrefix(opened.handle, Math.min(size, limit)) };
+    } catch {
+      return refuse(DOWNLOAD_CHANGED);
+    } finally {
+      await opened.handle.close().catch(() => {});
+    }
   }
 
   // Holders of a final name the install could not remove (a lock); the sweep tries them again.
@@ -469,7 +519,7 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
     }
   }
 
-  return { childState, measure, listFiles, openListed, sweepInstalls, install };
+  return { childState, measure, listFiles, openListed, readListed, sweepInstalls, install };
 }
 
 module.exports = {

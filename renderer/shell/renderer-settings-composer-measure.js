@@ -14,8 +14,11 @@
       updateComposerSafeOffset,
     } = deps || {};
 
+    let frameQueued = false;
+
     // The predicted height when text prediction is on and can answer, else null.
     function predictedInputHeight() {
+      if (!chatInput.value) return null; // nothing to predict; skip the style read
       const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
       if (!_pretextUtils || !_pretextUtils.isEnabled(state)) return null;
       const pretextFont = _pretextUtils.resolveFontString(chatInput);
@@ -30,6 +33,19 @@
 
     function syncComposerInputHeight() {
       if (!chatInput) {
+        return;
+      }
+      // Off screen there is no height to fit; showing a chat surface calls this again.
+      if (!((globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) ?? (state?.ui?.activeView === 'chat'))) {
+        return;
+      }
+      // Just after Chat is shown, measure in the next frame instead: here the
+      // read would force the whole view's style and layout inside the click.
+      if (state.ui.composerMeasureAfterFrame && typeof requestAnimationFrame === 'function') {
+        if (!frameQueued) {
+          frameQueued = true;
+          requestAnimationFrame(() => { frameQueued = false; state.ui.composerMeasureAfterFrame = false; syncComposerInputHeight(); });
+        }
         return;
       }
       const minHeight = 28;

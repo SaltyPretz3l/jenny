@@ -5,12 +5,14 @@ payload, the adaptive-thinking switches and the request-keyed cache that
 replays signed thinking blocks inside one tool loop. SSE parsing lives in
 ``api_provider_anthropic_stream``; the engine in ``api_provider_anthropic``.
 
-Prompt-cache layout: tools render before ``system``, so one ephemeral
-breakpoint on the single system block caches tools plus system, and the
-top-level ``cache_control`` auto-caches the conversation tail (two breakpoints,
-under the API's limit of four). The leading system run is the only system text;
-later system rows (wind-down and budget nudges) are demoted in place to user
-text so the cached prefix stays byte-stable between iterations.
+Prompt-cache layout: tools render before ``system``. The base prompt and the
+leading system run are two system blocks with an ephemeral breakpoint each, so
+the first caches tools plus the base prompt and a per-turn row in the run (the
+memory recalled for this message, git context) costs only the run. The
+top-level ``cache_control`` auto-caches the conversation tail (three
+breakpoints, under the API's limit of four). Later system rows (wind-down and
+budget nudges) are demoted in place to user text so the cached prefix stays
+byte-stable between iterations.
 """
 
 from __future__ import annotations
@@ -369,11 +371,14 @@ def _merge_turns(turns: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str
     return merged
 
 
-def split_system(system: str, messages: Sequence[EngineMessage]) -> tuple[str, list[EngineMessage]]:
-    """Fold ``system`` and the leading system run into one block; return the remainder."""
+def system_parts(
+    system: str, messages: Sequence[EngineMessage]
+) -> tuple[str, str, list[EngineMessage]]:
+    """``(base, leading_run, remainder)``: the base prompt, the leading system run
+    joined (deduped against the base), and the messages after the run."""
     base = str(system or "")
     base_key = base.strip()
-    segments: list[str] = [base] if base_key else []
+    segments: list[str] = []
     cursor = 0
     for message in messages:
         if _role_of(message) != "system":
@@ -382,7 +387,23 @@ def split_system(system: str, messages: Sequence[EngineMessage]) -> tuple[str, l
         if text.strip() and text.strip() != base_key:
             segments.append(text)
         cursor += 1
-    return _SYSTEM_JOINER.join(segments), list(messages[cursor:])
+    return base, _SYSTEM_JOINER.join(segments), list(messages[cursor:])
+
+
+def system_blocks(base: str, run: str) -> list[dict[str, Any]]:
+    """One cached block for the base prompt and one for the leading run.
+
+    The leading run holds per-turn rows (memory recalled for this message, the
+    tool-set hash, git and active-file context), so folding it into the base
+    block made every turn's first call re-read tools plus the whole system
+    prompt. With its own breakpoint the stable base stays a cache hit (three
+    breakpoints with the top-level one, under the API's four).
+    """
+    return [
+        {"type": "text", "text": text, "cache_control": dict(_EPHEMERAL)}
+        for text in (base, run)
+        if text.strip()
+    ]
 
 
 def build_messages(
@@ -477,7 +498,7 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
     replay: Mapping[str, Sequence[dict[str, Any]]],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """The request body plus the per-request headers (the thinking beta, when requested)."""
-    system_text, remainder = split_system(system, messages or [])
+    system_base, system_run, remainder = system_parts(system, messages or [])
     history = build_messages(
         prompt,
         remainder if messages else None,
@@ -493,10 +514,8 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
         "messages": history,
         "cache_control": dict(_EPHEMERAL),
     }
-    if system_text.strip():
-        payload["system"] = [
-            {"type": "text", "text": system_text, "cache_control": dict(_EPHEMERAL)}
-        ]
+    if blocks := system_blocks(system_base, system_run):
+        payload["system"] = blocks
     tool_payload = build_tools(tools)
     if tool_payload:
         payload["tools"] = tool_payload
@@ -526,7 +545,8 @@ __all__ = [
     "build_tools",
     "model_version",
     "output_cap",
-    "split_system",
+    "system_blocks",
+    "system_parts",
     "static_headers",
     "thinking_plan",
 ]

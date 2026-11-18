@@ -28,6 +28,7 @@ const { handleElectronToolRequest,
   handleRuntimeOperationRequest } = require('./sidecar-client-request-rpc');
 const {
   notificationRequestId, notifyEngineActivity, notifySessionMailArrived, notifySessionRunModeUpdated,
+  notifyUserSteerArrived, notifyUserSteerWithdrawn,
 } = require('./sidecar-client-notifications');
 const { armPendingTimeout, isChatTurnMethod, sendPendingChatCancel, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
 const API_VERSION = '2026-10-15';
@@ -952,6 +953,8 @@ class SidecarClient extends EventEmitter {
   notifySessionMailArrived(params = {}) {
     return notifySessionMailArrived(this, params);
   }
+  notifyUserSteerArrived(params = {}) { return notifyUserSteerArrived(this, params); }
+  notifyUserSteerWithdrawn(params = {}) { return notifyUserSteerWithdrawn(this, params); }
 
   notifySessionRunModeUpdated(params = {}) {
     notifySessionRunModeUpdated(this, params);

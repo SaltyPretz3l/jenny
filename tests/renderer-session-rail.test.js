@@ -502,3 +502,83 @@ test('a rail nobody can see does not refetch on invalidations; it catches up whe
   assert.equal(f.bridge.summaryCalls.length, 2, 'opening the sheet fetches what was missed');
   f.api.dispose();
 });
+
+test('a hidden chat reads no pane width; showing it decides once, after layout, on the stage resize', async () => {
+  let reads = 0;
+  const f = createFixture({ mountOptions: { getPaneWidth: () => { reads += 1; return 1133; } } });
+  await flush();
+  try {
+    const before = reads;
+    f.chatView.classList.add('hidden');
+    await flush();
+    assert.equal(reads, before, 'hidden: no read');
+    f.chatView.classList.remove('hidden');
+    await flush();
+    assert.equal(reads, before, 'just shown: waits for the resize instead of forcing a layout');
+    f.resizeObservers.forEach((observer) => observer.callback([]));
+    await flush();
+    assert.equal(reads, before + 1, 'the resize decides');
+    await new Promise((resolve) => f.window.setTimeout(resolve, 300));
+    assert.equal(reads, before + 1, 'the fallback timer has nothing left to do');
+  } finally {
+    f.api.dispose();
+    f.controller.abort();
+  }
+});
+
+/* Row 176: the Servers section's browser entry (renderer-session-rail.js with the jobs helper). */
+function browserBridge(states = {}) {
+  const bridge = {
+    closes: [], listeners: new Set(), states,
+    getState: async ({ session_id }) => bridge.states[session_id] || { ok: true, open: false },
+    close: async (payload) => { bridge.closes.push(payload); return { ok: true }; },
+    onChanged: (listener) => { bridge.listeners.add(listener); return () => bridge.listeners.delete(listener); },
+    push: (event) => { for (const listener of [...bridge.listeners]) listener(event); },
+  };
+  return bridge;
+}
+
+test('Servers: the chat\'s open browser page is a row that opens the Browser panel and closes itself; its section outlives the page', async (t) => {
+  const bu = browserBridge({ sess_a: { ok: true, open: true, url: 'https://example.com/docs', title: 'Example docs' } });
+  const f = await docked({ mountOptions: { getBrowserUse: () => bu } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.equal(f.value('servers'), '1 up');
+  assert.equal(f.head('servers').getAttribute('aria-expanded'), 'true', 'open by default with an entry');
+  assert.deepEqual([...f.rail().querySelectorAll('[data-section]')].map((node) => node.getAttribute('data-section')).slice(-2), ['background_tasks', 'servers']);
+  const row = f.section('servers').querySelector('[data-rail-surface="browser"]');
+  assert.equal(row.textContent.replace(/\s+/g, ' ').trim(), 'Example docsBrowser');
+  row.click();
+  assert.deepEqual(f.detail.calls.at(-1), { surface: 'browser', ownerSessionId: 'sess_a', opener: row });
+
+  bu.push({ session_id: 'sess_other', open: false });
+  assert.equal(f.value('servers'), '1 up', 'a push for another chat is ignored');
+  f.section('servers').querySelector('[data-rail-server-stop="browser"]').click();
+  await flush();
+  assert.deepEqual(bu.closes, [{ session_id: 'sess_a' }]);
+  bu.states.sess_a = { ok: true, open: false };
+  bu.push({ session_id: 'sess_a', open: false });
+  assert.equal(f.value('servers'), 'None up', 'a chat that had a server keeps the section');
+  assert.match(f.text('servers'), /Nothing this chat started is still serving\./);
+
+  f.changeSession('sess_b');
+  await flush();
+  assert.equal(f.section('servers'), null, 'a chat that never had one has no section');
+  assert.ok(f.section('background_tasks'));
+  f.changeSession('sess_a');
+  await flush();
+  assert.equal(f.value('servers'), 'None up', 'and the first chat still does');
+});
+
+test('Servers: the browser subscription is released on dispose, and a missing browser bridge is simply no page', async () => {
+  const bu = browserBridge({ sess_a: { ok: true, open: true, url: 'https://example.com', title: '' } });
+  const f = await docked({ mountOptions: { getBrowserUse: () => bu } });
+  assert.equal(bu.listeners.size, 1);
+  assert.equal(f.section('servers').querySelector('.session-rail-ellip').textContent, 'example.com', 'no title: the address');
+  f.api.dispose();
+  assert.equal(bu.listeners.size, 0);
+  f.window.close();
+  const bare = await docked();
+  assert.equal(bare.section('servers'), null);
+  bare.api.dispose();
+  bare.window.close();
+});

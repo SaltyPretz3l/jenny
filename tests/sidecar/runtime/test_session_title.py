@@ -338,3 +338,45 @@ def test_method_is_mapped_to_the_inference_worker_family() -> None:
         "inference"
     )
     assert SESSION_GENERATE_TITLE_METHOD in server_auxiliary_workers.AUXILIARY_WORKER_METHODS
+
+
+# ---------------------------------------------------------------------------
+# route token binding (a team host's lease on the title request)
+# ---------------------------------------------------------------------------
+
+_ROUTE_TOKEN = "A" * 43
+
+
+def _seen_tokens(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+    from sidecar.ai.engines.request_route import current_route_token
+
+    seen: list[str | None] = []
+
+    def fake(*_a: Any, **_k: Any) -> str:
+        seen.append(current_route_token())
+        return "Fixing the login bug"
+
+    monkeypatch.setattr(dispatch_mod, "generate_session_title", fake)
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [(_ROUTE_TOKEN, _ROUTE_TOKEN), (None, None), ("short", None), (7, None)],
+)
+def test_process_binds_the_route_token_only_while_generating(
+    monkeypatch: pytest.MonkeyPatch, token: object, expected: str | None
+) -> None:
+    from sidecar.ai.engines.request_route import current_route_token
+
+    seen = _seen_tokens(monkeypatch)
+    params: dict[str, Any] = {"accept_version": API_VERSION, "user_message": "hi"}
+    if token is not None:
+        params["route_token"] = token
+    result = process_session_title_method(
+        SESSION_GENERATE_TITLE_METHOD, 3, params, True, _container(), LOG
+    )
+    assert result is not None
+    assert result.response["result"]["title"] == "Fixing the login bug"
+    assert seen == [expected]
+    assert current_route_token() is None

@@ -2,7 +2,7 @@
 
 // Bounded, append-only audit of what happened inside shared projects
 // (TEAM_PROJECTS_SPEC, Approvals and Audit log): team-project-audit.json,
-// schema 3, read with a 4 MiB cap and written through
+// schema 4, read with a 4 MiB cap and written through
 // `services/host/durable-json.js`. The strict load, the file and `floor_seq`
 // are the shared mechanics in `bounded-log.js`; the bound is the share below.
 //
@@ -13,6 +13,12 @@
 // field can hold a path, a prompt, a file name, a display name or free text.
 // Schema 3 (team boards, plan PROJECT_BOARD_2026-11-13 section 8.6) adds one
 // key, `board_id`, set only by the six board kinds and null on every other.
+// Schema 4 (row 175 item 11) adds three optional keys, each null on every kind
+// that does not name it and on every older entry: `approval_id` (the backend's
+// scoped approval id) and `call_id` (the tool call it belongs to) on the three
+// approval kinds, `call_id` on `question_answered`, and `plan_decision` (one of
+// three words, exit_plan_mode only) on a decided or not-applied approval. An id
+// is a bounded printable word; no answer, question or feedback text has a key.
 // Each kind states which keys must be set and which must be null (the table
 // below); an entry that breaks its kind's rule is refused with a TypeError and
 // nothing is written.
@@ -45,9 +51,9 @@ const {
 } = require('./member-schema');
 
 const PROJECT_AUDIT_FILE = 'team-project-audit.json';
-// Schema 1 (no `project_floors`) and schema 2 (no `board_id` on an entry) are read and upgraded in memory;
-// the next append writes schema 3.
-const PROJECT_AUDIT_SCHEMA_VERSION = 3;
+// Schema 1 (no `project_floors`), schema 2 (no `board_id` on an entry) and schema 3 (no `approval_id`, `call_id` or
+// `plan_decision`) are read and upgraded in memory; the next append writes schema 4.
+const PROJECT_AUDIT_SCHEMA_VERSION = 4;
 const PROJECT_AUDIT_LIMITS = Object.freeze({
   MAX_ENTRIES: 10_000,
   MAX_BYTES: 4 * 1024 * 1024,
@@ -55,7 +61,15 @@ const PROJECT_AUDIT_LIMITS = Object.freeze({
   MAX_TOOL_NAME_CHARS: 64,
   // Live projects are at most 64 (member-schema.js); a host with no liveness check keeps more.
   MAX_PROJECT_FLOORS: 256,
+  // Schema 4: an approval id holds a session id, a stream id and a call id (the bound decision-adapter.js reads).
+  MAX_APPROVAL_ID_CHARS: 512,
+  MAX_CALL_ID_CHARS: 128,
 });
+// A key rule's third value (schema 4): the key may be null or a valid value.
+const OPTIONAL = 'optional';
+// The keys each schema added to an entry, so an older entry is lifted with them null.
+const ADDED_KEYS = Object.freeze([[3, 'board_id'], [4, 'approval_id'], [4, 'call_id'], [4, 'plan_decision']]);
+const APPROVAL_IDS = Object.freeze({ approval_id: OPTIONAL, call_id: OPTIONAL });
 
 function ruleKind(session, detail) {
   return Object.freeze({ session_id: session, board_id: false, actor_member_id: true, prompter_member_id: false,
@@ -70,22 +84,28 @@ function boardKind(detail, proposal = false) {
     tool_name: false, decision: false, detail: detail === null ? null : Object.freeze(detail) });
 }
 
-// `true`: the key must be set; `false`: it must be null. `detail` names the
+// `true`: the key must be set; `false` (or absent): it must be null; OPTIONAL: either. `detail` names the
 // exact numeric keys of the kind's detail record, or null for no detail.
 // `approval_expired` means "ended unanswered by a timeout": the approval's own 10-minute wait, or the
 // turn's timeout that ended the wait (the backend reports both as `timeout`).
 const PROJECT_AUDIT_KIND_RULES = Object.freeze({
   approval_decided: Object.freeze({
     session_id: true, board_id: false, actor_member_id: true, prompter_member_id: true, tool_name: true, decision: true,
-    detail: null,
+    ...APPROVAL_IDS, plan_decision: OPTIONAL, detail: null,
   }),
   approval_not_applied: Object.freeze({
     session_id: true, board_id: false, actor_member_id: true, prompter_member_id: true, tool_name: true, decision: true,
-    detail: Object.freeze(['ref_seq']),
+    ...APPROVAL_IDS, plan_decision: OPTIONAL, detail: Object.freeze(['ref_seq']),
   }),
   approval_expired: Object.freeze({
     session_id: true, board_id: false, actor_member_id: false, prompter_member_id: true, tool_name: true,
-    decision: false, detail: null,
+    decision: false, ...APPROVAL_IDS, detail: null,
+  }),
+  // Schema 4: a member answered Jenny's questions (the answering member, the turn's prompter when the turn has a member
+  // author, the question's call id). No question, option or answer text is in any key.
+  question_answered: Object.freeze({
+    session_id: true, board_id: false, actor_member_id: true, prompter_member_id: OPTIONAL, tool_name: false,
+    decision: false, call_id: OPTIONAL, detail: null,
   }),
   files_uploaded: Object.freeze({
     session_id: false, board_id: false, actor_member_id: true, prompter_member_id: false, tool_name: false,
@@ -123,15 +143,24 @@ const PROJECT_AUDIT_KIND_RULES = Object.freeze({
 // Not the membership log's `PROJECT_AUDIT_KINDS` (audit-log.js), a different list.
 const PROJECT_AUDIT_ENTRY_KINDS = Object.freeze(Object.keys(PROJECT_AUDIT_KIND_RULES));
 const DECISIONS = Object.freeze(['approved', 'denied']);
+// exit_plan_mode's decisions a team member may give (server/api-contract.js `approval.resolve`).
+const PLAN_DECISIONS = Object.freeze(['approved', 'accepted', 'rejected']);
 
 const ENTRY_KEYS = Object.freeze(['seq', 'at', 'kind', 'project_id', 'session_id', 'board_id', 'actor_member_id',
-  'prompter_member_id', 'tool_name', 'decision', 'detail']);
+  'prompter_member_id', 'tool_name', 'decision', 'approval_id', 'call_id', 'plan_decision', 'detail']);
 const INPUT_KEYS = Object.freeze(ENTRY_KEYS.filter((key) => key !== 'seq' && key !== 'at'));
 
 // A built-in tool id: lower case, digits and underscores. No dot, slash, space
 // or upper case, so no path, file name, sentence or display name fits. Team
 // mode has no third-party MCP tools (AGENTS.md, team hosting boundary).
 const TOOL_NAME_PATTERN = new RegExp(`^[a-z][a-z0-9_]{0,${PROJECT_AUDIT_LIMITS.MAX_TOOL_NAME_CHARS - 1}}$`, 'u');
+// Schema 4: an approval or tool call id, a printable word with no space or slash.
+const idWord = (max) => {
+  const pattern = new RegExp(`^[A-Za-z0-9_.:-]{1,${max}}$`, 'u');
+  return (value) => typeof value === 'string' && pattern.test(value);
+};
+const isAuditApprovalId = idWord(PROJECT_AUDIT_LIMITS.MAX_APPROVAL_ID_CHARS);
+const isAuditCallId = idWord(PROJECT_AUDIT_LIMITS.MAX_CALL_ID_CHARS);
 
 const FIELD_CHECKS = Object.freeze({
   session_id: isSessionId,
@@ -140,7 +169,16 @@ const FIELD_CHECKS = Object.freeze({
   prompter_member_id: (value) => isId('member', value),
   tool_name: (value) => typeof value === 'string' && TOOL_NAME_PATTERN.test(value),
   decision: (value) => DECISIONS.includes(value),
+  approval_id: isAuditApprovalId,
+  call_id: isAuditCallId,
+  plan_decision: (value) => PLAN_DECISIONS.includes(value),
 });
+
+// One key against its kind's rule: set and valid, null, or (OPTIONAL) either.
+function fieldPasses(want, value, check) {
+  if (want === OPTIONAL) return value === null || check(value);
+  return want ? check(value) : value === null;
+}
 
 function validDetail(entry, keys) {
   if (keys === null) return entry.detail === null;
@@ -157,7 +195,7 @@ function validEntry(entry) {
     ? PROJECT_AUDIT_KIND_RULES[entry.kind] : null;
   if (!rule || !isProjectId(entry.project_id)) return false;
   for (const [key, check] of Object.entries(FIELD_CHECKS)) {
-    if (rule[key] ? !check(entry[key]) : entry[key] !== null) return false;
+    if (!fieldPasses(rule[key], entry[key], check)) return false;
   }
   return validDetail(entry, rule.detail);
 }
@@ -176,27 +214,32 @@ function validFloors(floors, doc) {
   return doc.entries.every((entry) => !Object.hasOwn(floors, entry.project_id) || entry.seq >= floors[entry.project_id]);
 }
 
-// An entry of schema 1 or 2 has no `board_id`; it gains a null one. One that already has the key is not of
-// that schema: it becomes null, which no entry check passes, so the file is refused.
-function withBoardKey(entries) {
-  if (!Array.isArray(entries)) return entries;
-  return entries.map((entry) => (isPlainObject(entry) && !Object.hasOwn(entry, 'board_id') ? { ...entry, board_id: null } : null));
+// An entry of an older schema gains each key a later schema added, null (`board_id` before schema 3; `approval_id`,
+// `call_id` and `plan_decision` before schema 4). One that already has such a key is not of its file's schema: it
+// becomes null, which no entry check passes, so the file is refused.
+function liftEntries(entries, version) {
+  const keys = ADDED_KEYS.filter(([since]) => version < since).map(([, key]) => key);
+  if (!Array.isArray(entries) || keys.length === 0) return entries;
+  const nulls = Object.fromEntries(keys.map((key) => [key, null]));
+  return entries.map((entry) => (isPlainObject(entry) && keys.every((key) => !Object.hasOwn(entry, key))
+    ? { ...entry, ...nulls } : null));
 }
 
 // The document to hold, or null to refuse the file. A schema 1 file is upgraded with no project floors, and a
-// schema 1 or 2 file with a null `board_id` on every entry.
+// schema 1, 2 or 3 file with each key a later schema added null on every entry. A newer schema is refused.
 function parseDocument(stored) {
   if (!isPlainObject(stored)) return null;
   const version = stored.schema_version;
   if (version === 1) {
-    const lifted = { ...stored, entries: withBoardKey(stored.entries) };
+    const lifted = { ...stored, entries: liftEntries(stored.entries, 1) };
     return validBase(lifted, 1) ? { ...lifted, schema_version: PROJECT_AUDIT_SCHEMA_VERSION, project_floors: {} } : null;
   }
   if (!Object.hasOwn(stored, 'project_floors')) return null;
   const { project_floors: floors, ...rest } = stored;
-  const base = version === 2 ? { ...rest, entries: withBoardKey(rest.entries) } : rest;
-  if (!validBase(base, version === 2 ? 2 : PROJECT_AUDIT_SCHEMA_VERSION) || !validFloors(floors, base)) return null;
-  return version === 2 ? { ...base, schema_version: PROJECT_AUDIT_SCHEMA_VERSION, project_floors: floors } : stored;
+  const older = version === 2 || version === 3;
+  const base = older ? { ...rest, entries: liftEntries(rest.entries, version) } : rest;
+  if (!validBase(base, older ? version : PROJECT_AUDIT_SCHEMA_VERSION) || !validFloors(floors, base)) return null;
+  return older ? { ...base, schema_version: PROJECT_AUDIT_SCHEMA_VERSION, project_floors: floors } : stored;
 }
 
 function emptyDocument() {
@@ -401,5 +444,5 @@ class ProjectAudit {
 
 module.exports = {
   PROJECT_AUDIT_FILE, PROJECT_AUDIT_SCHEMA_VERSION, PROJECT_AUDIT_LIMITS, PROJECT_AUDIT_ENTRY_KINDS,
-  PROJECT_AUDIT_KIND_RULES, ProjectAudit,
+  PROJECT_AUDIT_KIND_RULES, PLAN_DECISIONS, ProjectAudit, isAuditApprovalId, isAuditCallId,
 };

@@ -460,3 +460,53 @@ test('consumed mid-turn mail rides the terminal mutation ahead of the assistant 
   assert.equal(refused.ctx.midTurnMail.settled, true);
   assert.equal(refused.ctx.midTurnMail.reserved.size, 0);
 });
+
+test('unconsumed steered messages are released before the terminal on every settle path, with the right reason (row 180)', async () => {
+  const { createUserSteerState } = require('../services/backend/user-steer-mid-turn');
+  const arm = (made) => {
+    const emitted = [];
+    made.ctx.service.emit = (name, payload) => { made.order.push('release'); emitted.push([name, payload]); };
+    made.ctx.userSteer = createUserSteerState();
+    made.ctx.userSteer.reserved.set('outbox_a', { prompt: 'a', attachments: [] });
+    made.ctx.userSteer.reserved.set('outbox_b', { prompt: 'b', attachments: [] });
+    made.ctx.userSteer.consumed.add('outbox_b');
+    return emitted;
+  };
+  const released = (reason) => [['chat-stream', {
+    type: 'user_steer_released', streamId: 'stream_1', sessionId: 'session_1', itemIds: ['outbox_a'], reason }]];
+
+  const success = context();
+  const successEvents = arm(success);
+  await settleManagedAssistantCompletion(success.ctx);
+  assert.deepEqual(successEvents, released('terminal'));
+  assert.deepEqual(success.order.filter((step) => step !== 'retarget'), ['release', 'settle'], 'released before the terminal commits');
+  assert.equal(success.ctx.userSteer.settled, true);
+
+  const cancelled = context();
+  const cancelEvents = arm(cancelled);
+  await settleManagedFailureTerminal(cancelled.ctx, { message: 'stopped' }, {
+    status: 'cancelled', terminalSubcode: '', persistAssistantFailure: false,
+  });
+  assert.deepEqual(cancelEvents, released('cancel'));
+
+  const failed = context();
+  const failEvents = arm(failed);
+  await settleManagedFailureTerminal(failed.ctx, { message: 'engine stalled' }, {
+    status: 'error', terminalSubcode: '', persistAssistantFailure: false,
+  });
+  assert.deepEqual(failEvents, released('terminal'));
+
+  const refused = context();
+  const refusedEvents = arm(refused);
+  refused.ctx.unfinishedToolRepairFailure = 'tool_repair_refused';
+  await settleManagedAssistantCompletion(refused.ctx);
+  assert.deepEqual(refusedEvents, released('refused'));
+  assert.equal(refused.captured.length, 0);
+
+  // Nothing unconsumed: no event, and a ctx without steering state settles as before.
+  const quiet = context();
+  const quietEvents = arm(quiet);
+  quiet.ctx.userSteer.consumed.add('outbox_a');
+  await settleManagedAssistantCompletion(quiet.ctx);
+  assert.deepEqual(quietEvents, []);
+});

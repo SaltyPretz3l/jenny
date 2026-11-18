@@ -554,10 +554,11 @@ test('readOutput reads live-output.json beside the registered status path and ma
   statusByPath.set(statusPath(), { state: 'running' });
   tracker.pollNow();
   assert.deepEqual(tracker.readOutput(JOB_ID), { ok: true, state: 'running', live: true, text: '', truncated: false, fullOutputPath: '', stale: true });
-  assert.deepEqual(reads, [{ livePath: path.join(path.dirname(statusPath()), 'live-output.json'), jobId: JOB_ID }]);
+  // The poll's serving check (row 176) reads the same file once, then readOutput does.
+  assert.deepEqual(reads, Array(2).fill({ livePath: path.join(path.dirname(statusPath()), 'live-output.json'), jobId: JOB_ID }));
   statusByPath.set(statusPath(), { state: 'completed', exit_code: 0, stdout: 'done\n' });
   tracker.pollNow();
   const finished = tracker.readOutput(JOB_ID);
   assert.deepEqual([finished.ok, finished.live, finished.text], [true, false, 'done']);
-  assert.equal(reads.length, 1, 'a finished job never reads the live file');
+  assert.equal(reads.length, 2, 'a finished job never reads the live file');
 });

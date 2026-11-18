@@ -157,6 +157,16 @@ function readProjectsRoot(options) {
   return value;
 }
 
+// Team host file tools (row 123): the root boundary the sidecar's worker binds request roots under, the projects
+// root of a team host whose owner turned the setting on; null otherwise (and for every single-owner host).
+function readRootBoundary(options, projectsRoot) {
+  if (options.hostFileTools !== true) return null;
+  if (projectsRoot === null || options.memberTurns !== true) {
+    throw invalidHostOption('file_tools_projects_root_required', 'hostFileTools needs a team host projects root.');
+  }
+  return projectsRoot;
+}
+
 function configureWorkspaceRoot(configService, options) {
   if (!Object.prototype.hasOwnProperty.call(options, 'workspaceRoot')) return;
   const value = normalizeWorkspaceRoot(options.workspaceRoot, options);
@@ -194,6 +204,7 @@ function createHostedBackend(options = {}) {
     credentialService: options.credentialService,
   });
   const projectsRoot = readProjectsRoot(options);
+  const rootBoundary = readRootBoundary(options, projectsRoot);
   const noModel = options.modelOptional === true && options.modelEndpoint === null;
   const modelEndpoint = noModel ? null : normalizeModelEndpoint(options.modelEndpoint);
   const configService = new ShellConfigService({
@@ -243,7 +254,7 @@ function createHostedBackend(options = {}) {
   const toolPermissionStore = new ToolPermissionStore(path.join(userDataPath, 'tool-permissions.json'),
     { logger: serviceLog });
   const toolExecutor = createConversationToolExecutor({ configService,
-    permissionStore: toolPermissionStore, logger: serviceLog });
+    permissionStore: toolPermissionStore, logger: serviceLog, appGuide: true });
   backend = new BackendService({
     appVersion: String(options.appVersion || 'hosted').trim() || 'hosted',
     userDataPath,
@@ -283,6 +294,8 @@ function createHostedBackend(options = {}) {
   // A host's turn route (services/backend/turn-route.js); null leaves every chat.send as before.
   backend.turnRoute = options.turnRoute || null;
   backend.hostExecutionStagingRoot = options.executionStagingRoot || null;
+  // Read by managed-sidecar-config.js (the worker's boundary) and team-rule-gate.js (rules paused, D5).
+  backend.hostRootBoundary = rootBoundary;
   // Propose mode (row 35): the same suggestion record and journaled apply as desktop.
   backend.suggestedChanges = createSuggestedChangesService({ backendService: backend, log });
 

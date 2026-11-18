@@ -16,6 +16,10 @@
  * show() also hands it the document, and the view redraws on the editor's own changes (an optimistic
  * edit repaints before the store answers).
  *
+ * Following the arrows: the card under the pointer (or the one selected card) keeps its connectors and the cards
+ * they reach lit while the rest step back. When connected cards appear together on a board already shown (an
+ * accepted proposal, a paste, an undo), they arrive in the order the arrows give and each line is drawn from its start, once.
+ *
  * show(null, { message, actions }) puts buttons under the message (slice B11: a read-only board's Show file and Remove
  * from list): [{ id, label, title, disabled, onClick }]. While one runs, every button waits; a board or a new message clears them. */
 (function (root, factory) {
@@ -29,6 +33,10 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const FIT_PADDING = 48;
+  const HOVER_MS = 90; // the pointer rests this long on a card before its arrows light
+  const ARRIVE_STEP_MS = 260; // between a card and the card it points at
+  const ARRIVE_MAX_MS = 1500; // the last card of a long chain starts no later than this
+  const ARRIVE_CLEAR_MS = 700;
 
   function baseName(path) {
     const parts = String(path || '').split(/[\\/]/).filter(Boolean);
@@ -131,6 +139,13 @@
     let model = null;
     let pendingFit = false;
     let disposed = false;
+    let visible = true; // false while the page is parked
+    // Parked (false) or shown again (true): the kinds and the gestures stop reacting meanwhile.
+    function setShown(isShown) {
+      visible = isShown !== false;
+      if (kinds) kinds.setShown(visible);
+      if (interactions) interactions.setShown(visible);
+    }
     let editor = null;
     let unsubscribe = null;
     let interactions = null;
@@ -142,6 +157,12 @@
     let selectedConnector = '';
     let matches = null; // find: the ids that stay lit, or null
     let live = null; // id -> rect while a drag or resize is under way, so connectors follow
+    let hovered = ''; // the card under the pointer
+    let hoverTimer = 0;
+    let arriveTimer = 0;
+    let litKey = ''; // the lit connectors' ids, so a redraw with the same ones lit touches nothing
+    const arriving = new Set(); // the card elements that carry the arriving mark
+    const view = doc.defaultView || globalThis;
 
     function bounds() {
       let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
@@ -244,16 +265,84 @@
 
     function drawConnectors(board) {
       const list = [];
+      const at = (card) => (live && live.get(card.id)) || rect(card);
       Object.values(board.connectors).forEach((connector) => {
         const from = board.cards[connector.from];
         const to = board.cards[connector.to];
         if (!from || !to) return;
         list.push({
-          id: connector.id, from: (live && live.get(from.id)) || rect(from), to: (live && live.get(to.id)) || rect(to),
+          id: connector.id, from: at(from), to: at(to),
           label: connector.label, style: connector.style, tone: connector.tone, ends: connector.ends, selected: connector.id === selectedConnector,
         });
       });
-      connectors.render(list);
+      connectors.render(list, list.length ? Object.values(board.cards).map(at) : []); // a line goes round the other cards
+    }
+
+    /** Lights the connectors of the card under the pointer, or of the one selected card, and the cards they reach. */
+    function applyFocus() {
+      const one = selected.size === 1 ? selected.values().next().value : '';
+      const at = model && !live ? (model.cards[hovered] ? hovered : model.cards[one] ? one : '') : '';
+      const lines = [];
+      const cards = new Set();
+      if (at) {
+        Object.values(model.connectors).forEach((connector) => {
+          if ((connector.from !== at && connector.to !== at) || !model.cards[connector.from] || !model.cards[connector.to]) return;
+          lines.push(connector.id);
+          cards.add(connector.from).add(connector.to);
+        });
+      }
+      const on = lines.length > 0;
+      const key = lines.join(' ');
+      if (key === litKey) return;
+      litKey = key;
+      connectors.setLit(on ? lines : null);
+      element.toggleAttribute('data-board-focus', on);
+      items.forEach((el, id) => el.toggleAttribute('data-board-lit', on && cards.has(id)));
+    }
+
+    function onHover(event) {
+      const el = event.type === 'pointerover' && event.buttons === 0 && event.target && event.target.closest ? event.target.closest('[data-card-id]') : null;
+      const id = el && el.getAttribute('data-card-kind') !== 'group' ? el.getAttribute('data-card-id') : '';
+      if (id === hovered) return;
+      hovered = id;
+      view.clearTimeout(hoverTimer);
+      hoverTimer = view.setTimeout(applyFocus, HOVER_MS);
+    }
+    surface.layer.addEventListener('pointerover', onHover);
+    surface.layer.addEventListener('pointerleave', onHover);
+
+    /** Cards that came together with arrows between them arrive in the arrows' order; each line is drawn after its source. */
+    function arrive(board, had) {
+      const fresh = new Set(Object.keys(board.cards).filter((id) => !had.has(id)));
+      const lines = fresh.size > 1 ? Object.values(board.connectors).filter((c) => fresh.has(c.from) && fresh.has(c.to)) : [];
+      if (!lines.length) return;
+      const depth = new Map();
+      let deepest = 0;
+      for (let pass = 0, moved = true; moved && pass < 12; pass += 1) {
+        moved = false;
+        lines.forEach((c) => {
+          const next = (depth.get(c.from) || 0) + 1;
+          if ((depth.get(c.to) || 0) >= next || next > 12) return;
+          depth.set(c.to, next);
+          deepest = Math.max(deepest, next);
+          moved = true;
+        });
+      }
+      const step = Math.min(ARRIVE_STEP_MS, ARRIVE_MAX_MS / Math.max(1, deepest));
+      const delays = {};
+      fresh.forEach((id) => {
+        const el = items.get(id);
+        el.style.setProperty('--board-arrive-delay', `${Math.round((depth.get(id) || 0) * step)}ms`);
+        el.setAttribute('data-board-arriving', '');
+        arriving.add(el);
+      });
+      lines.forEach((c) => { delays[c.id] = Math.round((depth.get(c.from) || 0) * step + step / 2); });
+      connectors.drawIn(delays);
+      view.clearTimeout(arriveTimer);
+      arriveTimer = view.setTimeout(() => { // one clean-up for every batch still marked: a second batch does not strand the first
+        arriving.forEach((el) => { el.removeAttribute('data-board-arriving'); el.style.removeProperty('--board-arrive-delay'); });
+        arriving.clear();
+      }, deepest * step + ARRIVE_CLEAR_MS);
     }
 
     function readSelection() {
@@ -272,6 +361,7 @@
         deps.boardCard.update(el, props);
       });
       if (model) drawConnectors(model);
+      applyFocus();
     }
 
     /** Draws a document. Ports and grips show only while the editor says the board can be edited. */
@@ -282,12 +372,15 @@
       let minZ = Infinity;
       Object.values(board.cards).forEach((card) => { if (card.z < minZ) minZ = card.z; });
       const wanted = new Map();
+      const had = board.id === shownId ? new Set(items.keys()) : null; // what was drawn of this board before this change
       Object.values(board.groups).forEach((group) => wanted.set(group.id, Object.assign(groupProps(group), { selected: selected.has(group.id), resizable: edit })));
       // A card's z can be zero or below (after Send back); the primitive floors at 1, so the lowest card sits there.
       Object.values(board.cards).forEach((card) => wanted.set(card.id, Object.assign(cardProps(card), kinds ? kinds.props(card) : null, { z: card.z - minZ + 1, selected: selected.has(card.id), resizable: edit, connectable: edit })));
       sync(wanted);
       if (kinds) Object.values(board.cards).forEach((card) => kinds.decorate(items.get(card.id), card, { editable: edit }));
       drawConnectors(board);
+      if (had) arrive(board, had);
+      applyFocus();
       hint.hidden = wanted.size > 0;
       if (editing) editing.prune();
     }
@@ -368,7 +461,12 @@
       const host = {
         itemElement: (id) => items.get(id) || null,
         getBoard: () => editor.getBoard(),
-        setLive(map) { live = map; if (model) drawConnectors(model); },
+        setLive(map) {
+          const changed = Boolean(live) !== Boolean(map);
+          live = map;
+          if (model) drawConnectors(model);
+          if (changed) applyFocus(); // nothing is lit while a card is dragged
+        },
         startEdit,
         focusItem,
         reveal,
@@ -394,6 +492,7 @@
         element.appendChild(chrome.element);
       }
       unsubscribe = editor.onChange(onEditorChange);
+      if (!visible) setShown(false);
       if (kinds && model) draw(model);
     }
 
@@ -409,6 +508,7 @@
       activate,
       setEditor,
       reveal,
+      setShown,
       // find: only these ids stay lit; null clears it.
       setMatches(ids) {
         matches = Array.isArray(ids) ? new Set(ids) : null;
@@ -427,6 +527,10 @@
         if (chrome) chrome.dispose();
         if (kinds) kinds.dispose();
         if (editor) editor.dispose();
+        view.clearTimeout(hoverTimer);
+        view.clearTimeout(arriveTimer);
+        surface.layer.removeEventListener('pointerover', onHover);
+        surface.layer.removeEventListener('pointerleave', onHover);
         zoombar.removeEventListener('click', onClick);
         noteActions.removeEventListener('click', onNoteAction);
         connectors.dispose();

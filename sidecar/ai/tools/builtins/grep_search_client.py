@@ -31,6 +31,7 @@ from sidecar.ai.tools.builtins.grep_search_worker import (
     encode_worker_message as _encode_worker_message,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.hosted_file_io import FILE_ACCESS_LATCHED_FIELD, latch_hosted_file_access
 
 REGEX_SEARCH_TIMEOUT_SECONDS = 5.0
 REGEX_WORKER_STARTUP_TIMEOUT_SECONDS = 15.0
@@ -167,6 +168,8 @@ class _RegexSearchWorker:
                 )
             raise FutureTimeoutError()
         self._outstanding = max(0, self._outstanding - 1)
+        if isinstance(response, dict) and response.get(FILE_ACCESS_LATCHED_FIELD) is True:
+            latch_hosted_file_access()  # the child's library latched: this process's latches too
         return response
 
     def abandon_pending(self) -> None:

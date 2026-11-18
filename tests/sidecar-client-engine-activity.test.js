@@ -115,6 +115,47 @@ test('notifySessionMailArrived writes the mid-turn rows for the live request and
   assert.equal(writes.length, 1);
 });
 
+test('notifyUserSteerArrived and notifyUserSteerWithdrawn write id-less steering notifications for the live request', () => {
+  const client = new SidecarClient();
+  const proc = createMockProcess();
+  const writes = [];
+  proc.stdin.write = (chunk) => {
+    writes.push(Buffer.from(chunk));
+    return true;
+  };
+  client.attachProcess(proc);
+  const items = [{ item_id: 'outbox_a1', content: 'also check the logs', images: [] }];
+  const bodyOf = (index) => {
+    const payload = writes[index].toString('utf8');
+    return JSON.parse(payload.slice(payload.indexOf('\r\n\r\n') + 4));
+  };
+
+  assert.equal(client.notifyUserSteerArrived({ sessionId: ' session-1 ', requestId: 'req-1', items }), true);
+  assert.equal(client.notifyUserSteerWithdrawn({ sessionId: 'session-1', requestId: 'req-1', itemIds: ['outbox_a1'] }), true);
+  assert.equal(writes.length, 2);
+  assert.equal(bodyOf(0).method, 'session.user_steer_arrived');
+  assert.equal(bodyOf(0).id, undefined, 'a notification: no response expected');
+  assert.deepEqual(bodyOf(0).params, { session_id: 'session-1', request_id: 'req-1', items });
+  assert.equal(bodyOf(1).method, 'session.user_steer_withdrawn');
+  assert.deepEqual(bodyOf(1).params, { session_id: 'session-1', request_id: 'req-1', item_ids: ['outbox_a1'] });
+
+  for (const bad of [{ requestId: 'r', items }, { sessionId: 's', items }, { sessionId: 's', requestId: 'r', items: [] },
+    { sessionId: 's', requestId: 'r', items: 'x' }]) {
+    assert.equal(client.notifyUserSteerArrived(bad), false, JSON.stringify(bad));
+  }
+  for (const bad of [{ requestId: 'r', itemIds: ['a'] }, { sessionId: 's', itemIds: ['a'] }, { sessionId: 's', requestId: 'r', itemIds: [] }]) {
+    assert.equal(client.notifyUserSteerWithdrawn(bad), false, JSON.stringify(bad));
+  }
+  proc.stdin.write = () => { throw new Error('pipe closed'); };
+  assert.equal(client.notifyUserSteerArrived({ sessionId: 's', requestId: 'r', items }), false, 'a throwing write is not a hand-off');
+  client._setSidecarFeatureFlags({ multiplexer: false, chat_cancel: true });
+  assert.equal(client.notifyUserSteerWithdrawn({ sessionId: 's', requestId: 'r', itemIds: ['a'] }), false, 'never without the multiplexer');
+  client._setSidecarFeatureFlags({ multiplexer: true, chat_cancel: true });
+  client.detachProcess();
+  assert.equal(client.notifyUserSteerArrived({ sessionId: 's', requestId: 'r', items }), false);
+  assert.equal(writes.length, 2);
+});
+
 test('notifyJobSettled writes the mid-turn background-job notice for the live request and reports the hand-off', () => {
   const client = new SidecarClient();
   const proc = createMockProcess();

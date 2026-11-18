@@ -54,6 +54,14 @@ test('the popover ready line gains the build suffix only for a build label', () 
     `stopped unexpectedly (${TAG})`);
 });
 
+test('boundedErrorMessage drops Electron\'s IPC wrapper; a wrapper with nothing after it is the fallback', () => {
+  const { boundedErrorMessage } = formatUtils;
+  assert.equal(boundedErrorMessage(new Error("Error invoking remote method 'models.use': Error: The model could not load."), 'fb'), 'The model could not load.');
+  assert.equal(boundedErrorMessage(new Error("Error invoking remote method 'models.use': TypeError: bad"), 'fb'), 'bad');
+  assert.equal(boundedErrorMessage(new Error("Error invoking remote method 'models.use': "), 'fb'), 'fb');
+  assert.equal(boundedErrorMessage(new Error('Plain failure'), 'fb'), 'Plain failure', 'no wrapper: unchanged');
+});
+
 test('llamaServerFailureText maps the three launch codes and passes everything else through', () => {
   const { llamaServerFailureText } = formatUtils;
   assert.equal(typeof llamaServerFailureText, 'function');

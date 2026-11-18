@@ -605,6 +605,7 @@ retired in post-1.2.0 sweep S8.
 | `TERMINAL_ERROR_CODES.NO_SESSION` | `CMP-TERMINAL-0003` | write/resize arrived with no running session, or spawn after dispose | No | `runtime_error` | "No terminal session is running." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 | `TERMINAL_ERROR_CODES.MODULE_LOAD_FAILED` | `CMP-TERMINAL-0004` | The `@lydell/node-pty` native module failed to load (missing prebuild / ABI mismatch) | No | `runtime_error` | "The terminal engine could not be loaded." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 | `TERMINAL_ERROR_CODES.CWD_OUTSIDE_ROOT` | `CMP-TERMINAL-0005` | A requested start folder (spawn `cwd`) is absolute, escapes the workspace root after realpath, or is not an existing directory | No | `runtime_error` | "The terminal can only start in a folder inside the workspace." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
+| `TERMINAL_ERROR_CODES.START_FOLDER_UNAVAILABLE` | `CMP-TERMINAL-0006` | A Jenny-chat `terminal_run` spawn (`place: 'start_folder'`) found neither the chosen start folder nor the Downloads folder as an existing local folder | No | `runtime_error` | "The start folder for Jenny's commands is not an existing folder. Choose one in Settings > Editor > Terminal." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 
 ## GIT - `CMP-GIT-NNNN` (9 Node codes, 0 dead)
 

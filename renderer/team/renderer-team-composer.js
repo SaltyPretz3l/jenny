@@ -24,6 +24,8 @@
  *   empty composer. The typing line above the composer has a fixed height
  *   and shows who is typing, never you.
  * - A read-only member sees one sentence naming the owner instead (and saying they can download files).
+ * - Row 173: in an archived channel nobody can post, so the composer is one line saying so with an Unarchive button (greyed
+ *   with its reason for anyone but the owner). It follows the channel's row: archiving or unarchiving swaps it in place.
  * - Files (slice 2c renderer): renderer-team-attach.js owns the paperclip, paste, the drop, the chips and why Send
  *   is greyed; here the hint and Send's tooltip say that reason, Enter does nothing while it applies, and a post
  *   carries the files' ids in chip order. A message with files is never queued: offline it waits greyed.
@@ -34,11 +36,11 @@
  * picked name is inserted as text, never as markup. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-team-chat-store'), require('./renderer-team-chat-writes'), require('./renderer-team-attach'));
+    module.exports = factory(require('./renderer-team-chat-store'), require('./renderer-team-chat-writes'), require('./renderer-team-attach'), require('./renderer-team-channel-menu'));
     return;
   }
-  root.rendererTeamComposer = factory(root.rendererTeamChatStore, root.rendererTeamChatWrites, root.rendererTeamAttach);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (chatStore, chatWrites, attachModule) {
+  root.rendererTeamComposer = factory(root.rendererTeamChatStore, root.rendererTeamChatWrites, root.rendererTeamAttach, root.rendererTeamChannelMenu);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (chatStore, chatWrites, attachModule, channelMenu) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -110,6 +112,19 @@
       return '<div class="team-typing" aria-live="polite"></div><p class="team-composer team-composer--closed">' + escapeHtml(readText(c)) + '</p>';
     }
 
+    const archivedText = (c) => jt('team.channels.composer.archived', '#{channel} is archived. Its messages stay readable; nobody can post in it.', { channel: c.channelName });
+    function archivedHtml(c) {
+      return '<div class="team-typing" aria-live="polite"></div><div class="team-composer team-composer--closed"><div class="team-closed__row"><span class="team-closed__text" dir="auto">'
+        + escapeHtml(archivedText(c)) + '</span>' + inv().actionButton({ label: jt('team.channels.composer.unarchive', 'Unarchive'), size: 'sm', dataset: { 'chan-composer': 'unarchive' },
+          disabled: Boolean(c.unarchiveWhy), title: c.unarchiveWhy || '' }) + '</div><p class="team-closed__error team-set-note" role="alert" hidden></p></div>';
+    }
+    // Unarchive: the row's push swaps this line for the composer; a refusal is said under the line.
+    async function unarchive() {
+      const answer = await chat.manageChannel('chatChannelArchive', { team_id: teamId, channel_id: channelId, on: false });
+      const note = disposed ? null : q('.team-closed__error');
+      if (note) { note.textContent = answer.ok ? '' : channelMenu.failText(answer); note.hidden = Boolean(answer.ok); }
+    }
+
     // ------------------------------------------------------------ state lines
 
     function hintText(c) {
@@ -121,7 +136,11 @@
     function setText(el, text) { if (el && el.textContent !== text) el.textContent = text; }
     function refresh() {
       const c = ctx();
-      if (mode === 'read') setText(q('.team-composer--closed'), readText(c));
+      if (mode === 'archived') {
+        setText(q('.team-closed__text'), archivedText(c));
+        const button = q('[data-chan-composer="unarchive"]');
+        if (button) { button.disabled = Boolean(c.unarchiveWhy); button.title = c.unarchiveWhy || ''; }
+      } else if (mode === 'read') setText(q('.team-composer--closed'), readText(c));
       else {
         const reason = blocked();
         const hint = q('.team-composer__hint');
@@ -288,8 +307,9 @@
     function onClick(event) {
       const option = event.target.closest && event.target.closest('[role="option"]');
       if (option && menu.open) { pickMention(Number(option.id.slice((id + '-opt').length))); return; }
-      const control = event.target.closest && event.target.closest('[data-team-composer]');
+      const control = event.target.closest && event.target.closest('[data-team-composer], [data-chan-composer]');
       if (!control || control.disabled) return;
+      if (control.dataset.chanComposer === 'unarchive') { void unarchive(); return; }
       if (attach.onClick(control)) return;
       const action = control.dataset.teamComposer;
       if (action === 'send') void send();
@@ -310,11 +330,11 @@
 
     function build() {
       const c = ctx();
-      const next = c.canWrite ? 'write' : 'read';
+      const next = c.archived ? 'archived' : c.canWrite ? 'write' : 'read';
       if (next === mode) { refresh(); return; }
       if (mode === 'write') { draft.final = chatWrites.toWire(input.value, names); void saveDraft(); attach.unmount(); }
       mode = next;
-      root.innerHTML = next === 'write' ? writeHtml(c) : readHtml(c);
+      root.innerHTML = next === 'write' ? writeHtml(c) : next === 'archived' ? archivedHtml(c) : readHtml(c);
       input = q('.team-composer__input');
       if (input) attach.mount();
       touched = false; // a composer entering write mode reads its draft as a fresh one does

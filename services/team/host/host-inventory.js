@@ -242,4 +242,12 @@ async function projectFacts(root) {
     bytes: folders.reduce((sum, p) => sum + p.bytes, 0) };
 }
 
-module.exports = { projectFacts, readInventory, savedMembers };
+/** The Team server page's counts from the saved member store: { members, pending, projects }, each null when it does not read. */
+function memberCounts(root, now = Date.now()) {
+  const doc = readMembers(root, []);
+  if (!doc) return { members: null, pending: null, projects: null };
+  const who = people(doc, now);
+  return { members: who.members.length, pending: who.pending, projects: list(doc.projects).filter(projectIdOf).length };
+}
+
+module.exports = { memberCounts, projectFacts, readInventory, savedMembers };

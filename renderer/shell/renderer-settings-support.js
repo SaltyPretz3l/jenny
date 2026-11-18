@@ -300,7 +300,7 @@
       // Main's E50 answer for Settings > Team and the top rail: a boolean, or absent when main said nothing.
       ...(typeof source.teamData === 'boolean' ? { teamData: source.teamData } : {}),
       tools: isPlainObject(source.tools) ? { ...source.tools } : {},
-      subagentRouting: Object.fromEntries(['chatgpt', 'codex-cli'].map((provider) => {
+      subagentRouting: Object.fromEntries(['chatgpt', 'codex-cli', 'api-provider'].map((provider) => {
         const row = source.subagentRouting?.[provider] || {};
         return [provider, { defaultModel: String(row.defaultModel || ''), defaultEffort: String(row.defaultEffort || ''),
           preferredModels: Array.isArray(row.preferredModels) ? [...row.preferredModels] : [],

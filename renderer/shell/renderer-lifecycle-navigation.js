@@ -111,19 +111,19 @@
         hydrateHomeView();
       }
       if (viewId === 'chat') {
+        state.ui.composerMeasureAfterFrame = true; // the composer measures next frame
         const catchup = fwd.flushPendingStreamCommitsForSession(state.currentSessionId);
         fwd.renderMessages({ reason: catchup?.catchupRequired ? 'view_catchup' : 'view_activation' });
         fwd.renderComposerState();
         fwd.renderSessions();
         const activatedSessionId = state.currentSessionId;
         requestAnimationFrame(() => {
+          const owed = state.ui.composerMeasureAfterFrame; // false once the composer's own pass ran (it measures with force)
+          state.ui.composerMeasureAfterFrame = false;
           if (isDisposed() || state.ui.activeView !== 'chat' || state.currentSessionId !== activatedSessionId) return;
           // Split view: the focused pane's composer, not pane 0's #chatInput.
           if (!globalThis.rendererAppPaneComposition?.getPaneComposition?.()?.focusComposer?.()) chatInput.focus();
-          fwd.updateComposerSafeOffset({
-            force: true,
-            syncViewport: true,
-          });
+          if (owed) fwd.updateComposerSafeOffset({ force: true, syncViewport: true });
           fwd.updateAssistantSpritePosition();
 
           // The rail owns presence. Do not hide it behind a second, timed avatar.

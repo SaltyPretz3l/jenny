@@ -160,3 +160,19 @@ test('a narrow window shows the clamped sidebar width and restores the chosen on
 // UIUX-038 (Artifacts view aria-labelledby / focus landing) was deleted in
 // W1-5: the Artifacts studio view no longer exists, so the dangling-reference
 // concern it guarded is void. The review panel carries its own labels.
+
+// Row 175 F11: the Team project page's Boards line opens the Board tab through the shell.
+test('openBoardView: false while the Board flag is off, a dry ask never switches, and the call shows the Board view', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  await waitForUi(window, 60);
+  const controller = window.rendererTopNavShellController;
+  const state = window.__rendererState;
+  state.features.featureFlags.project_boards = false;
+  assert.equal(controller.openBoardView(), false);
+  assert.equal(state.ui.activeView, 'chat');
+  state.features.featureFlags.project_boards = true;
+  assert.equal(controller.openBoardView({ dry: true }), true);
+  assert.equal(state.ui.activeView, 'chat', 'a dry ask changes nothing');
+  assert.equal(controller.openBoardView(), true);
+  assert.equal(state.ui.activeView, 'board');
+});

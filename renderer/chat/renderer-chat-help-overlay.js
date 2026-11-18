@@ -87,6 +87,13 @@
       ['deleteAfter', jt('help.shortcut.deleteAfter', 'Delete selected and everything after'), [['Delete']]],
       ['cancelSelect', jt('help.shortcut.cancelSelect', 'Cancel'), [['Esc']]],
     ]),
+    group('team', jt('help.group.team', 'Team'), 2, [
+      ['teamNextRegion', jt('help.shortcut.teamNextRegion', 'Next region'), [['F6']]],
+      ['teamPrevRegion', jt('help.shortcut.teamPrevRegion', 'Previous region'), [['Shift', 'F6']]],
+      ['teamSearch', jt('help.shortcut.teamSearch', 'Search Team'), [['Ctrl', 'F']]],
+      ['teamRowUpDown', jt('help.shortcut.teamRowUpDown', 'Previous or next row in the column'), [['Alt', '↑'], ['Alt', '↓']]],
+      ['teamMessageMenu', jt('help.shortcut.teamMessageMenu', 'Message menu'), [['Shift', 'F10']]],
+    ]),
   ];
 
   const PLUS_HTML = '<span class="chat-help-overlay-plus" aria-hidden="true">+</span>';

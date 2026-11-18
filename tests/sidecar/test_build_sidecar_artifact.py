@@ -76,3 +76,40 @@ def test_model_recommendation_catalog_is_bundled_in_config() -> None:
     module = _load_module()
     catalog_entry = (module.ROOT / "config" / "model-recommendation-catalog.json", "config")
     assert catalog_entry in module.BUNDLED_DATA_FILES
+
+
+def test_clean_removes_only_its_own_outputs_and_keeps_native_binaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_module()
+    artifact_dir = tmp_path / "build" / "sidecar"
+    temp_dir = tmp_path / "build" / ".sidecar-packaging"
+    artifact_dir.mkdir(parents=True)
+    (temp_dir / "work").mkdir(parents=True)
+    monkeypatch.setattr(module, "ARTIFACT_DIR", artifact_dir)
+    monkeypatch.setattr(module, "TEMP_BUILD_DIR", temp_dir)
+    own = [
+        artifact_dir / "sidecar.exe",
+        artifact_dir / "sidecar",
+        artifact_dir / module.MANIFEST_NAME,
+    ]
+    native = [
+        artifact_dir / name
+        for name in (
+            "jenny-team-bridge.exe",
+            "jenny-team-bridge.manifest.json",
+            "jenny-launch.exe",
+            "jenny-launch.manifest.json",
+            "jenny_file_access.dll",
+            "jenny_file_access.manifest.json",
+        )
+    ]
+    for path in own + native:
+        path.write_text("x", encoding="utf-8")
+
+    module._clean_previous_outputs()
+
+    assert [path.name for path in own if path.exists()] == []
+    assert [path.name for path in native if not path.exists()] == []
+    assert not temp_dir.exists()
+    module._clean_previous_outputs()  # nothing left to remove is not an error

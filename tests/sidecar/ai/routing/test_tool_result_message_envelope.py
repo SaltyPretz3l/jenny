@@ -9,6 +9,7 @@ from blocked-outcome output (the envelope carries retry/fix instead).
 
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -214,6 +215,7 @@ def test_turn_and_renderer_agree_byte_for_byte() -> None:
         failed_phase="execute",
         elapsed_ms=41,
         trace="t_1.call_1",
+        ran_on=date.today().isoformat(),  # the live render stamps today's date, as history does
     )
     assert message["content"] == expected
 

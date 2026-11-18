@@ -217,6 +217,9 @@ async function overviewChannels(store, memberId, visible, audienceOf) {
       // Slice 2b-3: a project channel names who can read it now, the asker included, in code-unit order (at most
       // eight: the team's size). The same Set decides `reads` above; a team or direct row carries none.
       ...(info.kind === 'project' ? { audience: [...audience].sort(byId) } : {}),
+      // Row 173: the team channel and a custom channel carry their profile; `archived` stays a boolean.
+      ...(info.kind === 'team' || info.kind === 'channel' ? { name: info.name, topic: info.topic,
+        created_by: info.created_by, archived_by: info.archived_by, changes: info.changes } : {}),
     });
   }
   return { ok: true, channels };

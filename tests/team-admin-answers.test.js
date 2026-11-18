@@ -211,6 +211,7 @@ test('each admin answer of an honest host comes back equal to the host\'s own vi
   assert.deepEqual(await call('memberSetRole', { member_id: pending.member_id, role: 'read_only' }),
     { ok: true, member_id: pending.member_id, role: 'read_only' });
   assert.deepEqual(await call('rename', { name: 'Studio Two' }), { ok: true });
+  assert.deepEqual(await call('profileSet', { display_name: 'Olive Two', label: 'Desk' }), { ok: true });
   const page = host.env.store.audit.read({});
   assert.deepEqual(await call('auditRead'), { ok: true, entries: page.entries, next_cursor: page.next_cursor });
   assert.ok(page.entries.length >= 5);

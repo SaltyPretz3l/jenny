@@ -15,9 +15,16 @@
 // client holds the lease, `control.heartbeat` goes every 20 s, inside the host's 60 s TTL. It stops the moment
 // `control_changed` names another client or a release this client did not send, or when a heartbeat is refused (a
 // role change drops the lease and the host sends no event for it) with one of LEASE_ENDING's reasons; a rate refusal
-// (the host's or the manager's own hold) or no answer keeps it. Close releases a held lease. A send, cancel,
-// rename or delete takes the lease first when it is not held; a refusal is answered as it is, never retried.
+// (the host's or the manager's own hold) or no answer keeps it. Close releases a held lease. A send or cancel
+// takes the lease first when it is not held; a refusal is answered as it is, never retried.
 // Lease commands carry the control generation and the conversation's last revision (snapshot, events, answers).
+//
+// Row 169, the list's row menu: a rename or delete while this client does not hold the lease borrows it for the one
+// command and hands it back (`borrowed`): no heartbeat, no `lease` push, so renaming never makes the member the
+// driver. The conversation need not be open: its revision is read first (one message), nothing is viewed and none of
+// the eight slots is used. A refusal (another member drives, a turn runs, the role) is answered as it is.
+// `conversationOpen` with `before_message_id` reads the page of messages before that one for an open conversation
+// (the host's own paging; the answer's `has_more` and `next_before_message_id` lead on); it is not pushed.
 //
 // The project list's roles (`reconcile`, after each projects read): an open conversation whose project this member no
 // longer has is forgotten and pushed `closed`; one whose project role is now reader drops a held lease.
@@ -27,7 +34,7 @@
 //
 // Slice 3-10: the screen needs what only a snapshot carries. A live `tool_approval_needed` has no decision revision
 // (approval.resolve requires it) and no prompter; another member's prompt reaches no event; a finished reply is
-// saved without one. So after a forwarded `session_changed` with reason `chat_saved`, and a `chat_stream` of type
+// saved without one; a rename carries no title (row 169). So after a forwarded `session_changed` with reason `chat_saved` or `renamed`, and a `chat_stream` of type
 // `tool_approval_needed`, `question_batch`, `complete` or `error`, one `sessions.snapshot` (20 messages) is read and
 // pushed whole as `snapshot`, as after a resync. One read per conversation is in flight; a trigger meanwhile reads once
 // more after it. A refused read changes nothing (logged by reason word).
@@ -46,15 +53,25 @@ const MAX_OPEN = 8;
 const VIEW_INTERVAL_MS = 20_000;
 const LEASE_INTERVAL_MS = 20_000;
 const SNAPSHOT_MESSAGES = 20;
+// Row 172: `conversationPreferences` (the conversation's model, effort and tool switches) takes the lease as a send does.
 const LEASED = Object.freeze({ conversationSend: 'chat.send', conversationCancel: 'chat.cancel',
-  conversationRename: 'sessions.rename', conversationDelete: 'sessions.delete' });
+  conversationRename: 'sessions.rename', conversationDelete: 'sessions.delete', conversationPreferences: 'sessions.preferences' });
+const ROW_ACTIONS = new Set(['conversationRename', 'conversationDelete']);
 const DECISIONS = Object.freeze({ conversationDecide: 'approval.resolve', conversationAnswer: 'questions.answer',
   conversationDecline: 'questions.decline' });
 const FORWARDED = new Set(['chat_stream', 'session_changed', 'control_changed', 'decision_changed', 'approval_unattended']);
 // Slice 3-10: the forwarded events after which the snapshot is read again (see above).
-const REREAD_STREAM = new Set(['tool_approval_needed', 'question_batch', 'complete', 'error']);
-const rereads = (type, checked) => (type === 'session_changed' && checked.reason === 'chat_saved')
-  || (type === 'chat_stream' && REREAD_STREAM.has(checked.event.type));
+// `started` too (2026-11-16): the prompt is saved when its turn starts, so every viewer sees it then, not at the end;
+// and every way a turn ends, so a stopped or failed turn's saved row replaces the running one. Row 171: each tool call
+// and result too, so the turn's transcript shows the saved tool rows while it runs (one read in flight, one after it).
+// Row 175: `stream_reset` too, so a discarding reset's deleted drafts leave the popover with the snapshot.
+const REREAD_STREAM = new Set(['started', 'tool_use', 'tool_result', 'tool_approval_needed', 'question_batch', 'stream_reset', 'complete', 'error', 'cancelled', 'canceled', 'failed']);
+// Row 172: `preferences` too, so every viewer reads the conversation's new model, effort, switches and change log.
+const REREAD_SESSION = new Set(['chat_saved', 'renamed', 'preferences']);
+const rereads = (type, checked) => (type === 'session_changed' && REREAD_SESSION.has(checked.reason))
+  || (type === 'chat_stream' && REREAD_STREAM.has(checked.event.type)
+    // Row 175: a reset that discards nothing (a tool continuation) has nothing for a re-read to remove.
+    && !(checked.event.type === 'stream_reset' && checked.event.discard_scope === 'none'));
 // The heartbeat refusals that end a held lease (fix 1b): the host no longer has it, or this member may no longer
 // drive here. Every other answer (a rate limit, the manager's hold, no link) keeps the lease until the host says so.
 const LEASE_ENDING = Object.freeze(new Set(['control_lease_required', 'control_generation_required',
@@ -63,6 +80,14 @@ const LEASE_ENDING = Object.freeze(new Set(['control_lease_required', 'control_g
 // The view refusals that close a conversation (fix 1c): it is gone, or this member may no longer read it.
 const VIEW_ENDING = Object.freeze(new Set(['team_not_found', 'session_not_found', 'project_not_found', 'role_forbidden',
   'member_revoked', 'member_pending', 'device_revoked']));
+
+// The validated payload's preference keys, rebuilt field by field (ipc-methods.js checked each one).
+function preferenceParams({ preferred_model: model, reasoning_effort: effort, team_tools: tools, plan_mode: plan }) {
+  return { ...(model !== undefined ? { preferred_model: model } : {}), ...(effort !== undefined ? { reasoning_effort: effort } : {}),
+    ...(typeof plan === 'boolean' ? { plan_mode: plan } : {}), // row 175 item 7
+    ...(tools ? { team_tools: Object.fromEntries(['read', 'write'].filter((name) => typeof tools[name] === 'boolean')
+      .map((name) => [name, tools[name]])) } : {}) };
+}
 
 function createProjectConversations({
   manager, teamId, push = () => {}, log = () => {}, isHeld = () => false, online = () => false,
@@ -146,14 +171,17 @@ function createProjectConversations({
       { control_generation: lease.generation }));
   }
 
-  async function openConversation(sessionId) {
+  async function openConversation(sessionId, before) {
+    if (before !== undefined && !open.has(sessionId)) return invalidRequest('team_conversation_not_open');
     if (!open.has(sessionId) && open.size >= MAX_OPEN) return invalidRequest('team_conversation_limit');
-    const answer = snapshotOf(sessionId, await command(sessionId, 'sessions.snapshot', { max_messages: SNAPSHOT_MESSAGES }));
+    const answer = snapshotOf(sessionId, await command(sessionId, 'sessions.snapshot',
+      { max_messages: SNAPSHOT_MESSAGES, ...(before !== undefined ? { before_message_id: before } : {}) }));
     if (answer.ok !== true || stopped) return answer.ok === true ? invalidRequest('team_disposed') : answer;
     const known = open.get(sessionId);
     if (known) {
       known.revision = answer.snapshot.session.revision;
-      void view(sessionId);
+      // An older page is not a new look at the conversation.
+      if (before === undefined) void view(sessionId);
       return answer;
     }
     if (open.size >= MAX_OPEN) return invalidRequest('team_conversation_limit');
@@ -229,10 +257,49 @@ function createProjectConversations({
     }
   }
 
+  // Row 169: a rename or delete without the lease held (see the header). `entry` is null for a conversation that is
+  // not open.
+  async function borrowed(method, value, entry) {
+    const sessionId = value.session_id;
+    let revision = entry ? entry.revision : null;
+    if (!entry) {
+      const read = snapshotOf(sessionId, await command(sessionId, 'sessions.snapshot', { max_messages: 1 }));
+      if (read.ok !== true) return read;
+      revision = read.snapshot.session.revision;
+    }
+    const taken = await command(sessionId, 'control.acquire', {});
+    const refusal = projectAnswer('control.acquire', taken);
+    if (refusal.ok !== true) return refusal;
+    const generation = taken?.lease?.generation;
+    if (!Number.isSafeInteger(generation)) return invalidRequest('team_answer_invalid');
+    const operation = LEASED[method];
+    let raw;
+    let answer;
+    let gone = false;
+    try {
+      raw = await command(sessionId, operation, method === 'conversationRename' ? { title: value.title } : {},
+        { control_generation: generation, expected_revision: revision });
+      answer = projectAnswer(operation, raw);
+      gone = method === 'conversationDelete' && answer.ok === true;
+    } finally {
+      // The host drops a deleted conversation's lease itself; every other end, a throw included, hands the borrowed
+      // one back.
+      if (!gone && live()) await command(sessionId, 'control.release', {}, { control_generation: generation });
+    }
+    const now = open.get(sessionId);
+    if (now && gone) forget(sessionId, now);
+    else if (now) {
+      noteRevision(now, answer);
+      if (raw?.ok !== true && raw?.error?.reason === 'revision_conflict') await freshRevision(sessionId, now);
+    }
+    return answer;
+  }
+
   // A lease command: the lease is taken first when this client does not hold it.
   async function leased(method, value) {
     const sessionId = value.session_id;
     const entry = open.get(sessionId);
+    if (ROW_ACTIONS.has(method) && !entry?.lease) return borrowed(method, value, entry || null);
     if (!entry) return invalidRequest('team_conversation_not_open');
     if (!entry.lease) {
       const taken = await acquire(sessionId, entry, false);
@@ -243,7 +310,8 @@ function createProjectConversations({
     const operation = LEASED[method];
     const params = method === 'conversationSend' ? { prompt: value.prompt, ...(value.board_id ? { board_id: value.board_id } : {}) }
       : method === 'conversationCancel' ? { stream_id: value.stream_id }
-        : method === 'conversationRename' ? { title: value.title } : {};
+        : method === 'conversationRename' ? { title: value.title }
+          : method === 'conversationPreferences' ? preferenceParams(value) : {};
     const raw = await command(sessionId, operation, params,
       { control_generation: lease.generation, expected_revision: entry.revision });
     const answer = projectAnswer(operation, raw);
@@ -258,7 +326,7 @@ function createProjectConversations({
   async function call(method, value) {
     if (isHeld()) return forceLocalFailure();
     const sessionId = value.session_id;
-    if (method === 'conversationOpen') return openConversation(sessionId);
+    if (method === 'conversationOpen') return openConversation(sessionId, value.before_message_id);
     if (method === 'conversationClose') return closeConversation(sessionId);
     if (method === 'conversationCloseAll') return closeAll();
     if (method === 'conversationControl') {
@@ -271,7 +339,9 @@ function createProjectConversations({
       const operation = DECISIONS[method];
       const params = method === 'conversationDecide'
         ? { stream_id: value.stream_id, approval_id: value.approval_id, decision_revision: value.decision_revision,
-          approved: value.approved, ...(value.always ? { always: value.always } : {}) }
+          approved: value.approved, ...(value.always ? { always: value.always } : {}),
+          ...(value.plan_decision ? { plan_decision: value.plan_decision } : {}), // row 175 (D14)
+          ...(typeof value.feedback === 'string' ? { feedback: value.feedback } : {}) }
         : method === 'conversationAnswer'
           ? { stream_id: value.stream_id, question_ref: value.question_ref, answers: value.answers }
           : { stream_id: value.stream_id, question_ref: value.question_ref };

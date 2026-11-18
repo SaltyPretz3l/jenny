@@ -41,7 +41,7 @@ test('a viewing writer answers without a lease; the lease holder who is not view
   const [entry] = s.entries(s.P);
   assert.deepEqual({ ...entry, at: 0 }, { seq: 1, at: 0, kind: 'approval_decided', project_id: s.P, session_id: s.sP, board_id: null,
     actor_member_id: s.member('carl'), prompter_member_id: s.member('alice'), tool_name: 'write_file',
-    decision: 'approved', detail: null });
+    decision: 'approved', approval_id: approval.approvalId, call_id: 'call_1', plan_decision: null, detail: null });
 });
 
 test('pending, removed, other-project and actor-less callers get the identity answers, for questions too', BOUNDED, async (t) => {
@@ -71,7 +71,7 @@ test('pending, removed, other-project and actor-less callers get the identity an
   assert.deepEqual(s.entries(s.P), []);
 });
 
-test('questions follow the rule: not viewing is refused, a viewing writer answers and nothing is audited', BOUNDED, async (t) => {
+test('questions follow the rule: not viewing is refused, a viewing writer answers and only the answer is audited', BOUNDED, async (t) => {
   const s = await setup(t);
   const ref = s.openQuestions(s.sP);
   assert.equal(reasonOf(await s.answerQ('carl', s.sP, ref)), 'approval_not_viewing');
@@ -84,7 +84,7 @@ test('questions follow the rule: not viewing is refused, a viewing writer answer
   assert.equal(reasonOf(await s.declineQ('carl', s.sP, ref)), 'question_batch_stale');
   assert.deepEqual(s.decided, [[ref, 'answered']]);
   assert.deepEqual(frames(events, 'decision_changed').map((f) => f.prompter_member_id), [s.member('alice')]);
-  assert.deepEqual(s.entries(s.P), []);
+  assert.deepEqual(s.entries(s.P).map((entry) => [entry.kind, entry.actor_member_id, entry.call_id]), [['question_answered', s.member('carl'), 'call_q']]);
 });
 
 // ---- One answer wins, audit first ----------------------------------------------------
@@ -246,7 +246,7 @@ test('a timeout writes approval_expired with the prompter and no approver', BOUN
   s.h.backend.emit('chat-stream', { type: 'tool_use', sessionId: s.sP, streamId: STREAM, approvalId: approval.approvalId,
     toolName: 'write_file', status: 'timeout' });
   assert.deepEqual(s.entries(s.P), [{ seq: 1, at: now, kind: 'approval_expired', project_id: s.P, session_id: s.sP, board_id: null,
-    actor_member_id: null, prompter_member_id: s.member('alice'), tool_name: 'write_file', decision: null, detail: null }]);
+    actor_member_id: null, prompter_member_id: s.member('alice'), tool_name: 'write_file', decision: null, approval_id: approval.approvalId, call_id: 'call_1', plan_decision: null, detail: null }]);
 });
 
 test('an approval with no writer viewing publishes one approval_unattended; with a writer viewing, none', BOUNDED, async (t) => {
@@ -579,4 +579,22 @@ test('session.view has its own limit; the decisions keep theirs, and a refused d
   assert.equal(s.h.backend.pendingToolApprovals.has(approval.approvalId), true);
   assert.deepEqual(await s.send('alice', 'session.view', {}, { session_id: s.sP }),
     { ok: true, viewing: true, viewers: [s.member('carl'), s.member('alice')] }, 'another member is unaffected');
+});
+
+test('row 175 (D1): a waiting approval publishes approval_unattended again each time its last viewing writer leaves', BOUNDED, async (t) => {
+  const s = await setup(t);
+  const rae = s.h.attach('rae');
+  await s.look('carl', s.sP);
+  const approval = s.openApproval(s.sP);
+  const sent = () => frames(rae, 'approval_unattended').map((f) => [f.approval_id, f.prompter_member_id]);
+  const recheck = async () => { s.h.approvals.recheckUnattended(); await new Promise(setImmediate); };
+  await recheck(); assert.deepEqual(sent(), [], 'opened while a writer views: none');
+  s.advance(46_000);
+  for (let i = 0; i < 2; i += 1) await recheck();
+  assert.deepEqual(sent(), [[approval.approvalId, s.member('alice')]], 'the writer left: one, and no more while nobody views');
+  await s.look('carl', s.sP);
+  await recheck();
+  s.advance(46_000); // the record lapses without its heartbeat
+  await recheck();
+  assert.equal(sent().length, 2, 'joined and left again: one more');
 });

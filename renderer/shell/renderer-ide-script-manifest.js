@@ -69,6 +69,7 @@
     Object.freeze(['renderer/features/renderer-ide-pty-terminal-panel.js', 'rendererIdePtyTerminalPanel']),
     Object.freeze(['renderer/features/renderer-ide-terminal-profile-menu.js', 'rendererIdeTerminalProfileMenu']),
     Object.freeze(['renderer/features/renderer-ide-terminal-set.js', 'rendererIdeTerminalSet']),
+    Object.freeze(['renderer/features/renderer-ide-terminal-pool.js', 'rendererIdeTerminalPoolUtils']),
     Object.freeze(['renderer/features/renderer-ide-theme-bridge.js', 'rendererIdeThemeBridge']),
     Object.freeze(['renderer/features/renderer-ide-icons.js', 'rendererIdeIcons']),
     Object.freeze(['renderer/features/renderer-ide-statusbar.js', 'rendererIdeStatusBar']),

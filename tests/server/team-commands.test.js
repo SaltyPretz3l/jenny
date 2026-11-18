@@ -68,6 +68,7 @@ const MATRIX = [
   ['team.member.revoke', 'O', (c) => ({ member_id: c.carl.member_id })],
   ['team.audit.read', 'O', () => ({})],
   ['team.rename', 'O', () => ({ name: 'Renamed Studio' })],
+  ['team.member.profile', 'OMR', (_c, seat) => ({ display_name: `Renamed ${seat}` })],
   // Last: the owner seat hands ownership to Dana and is a member afterwards.
   ['team.owner.transfer', 'O', (c) => ({ member_id: c.dana.member_id })],
 ];
@@ -108,8 +109,8 @@ test('every team operation gives each seat exactly the outcome the table promise
     }
   }
   assert.equal(outcomes.length, 4 * MATRIX.length);
-  // Owner: all 14. Member and read-only: members.list, device.invite, device.list, device.revoke.
-  assert.equal(outcomes.filter((line) => line.endsWith(' ok')).length, 14 + 4 + 4);
+  // Owner: all 15. Member and read-only: members.list, device.invite, device.list, device.revoke, member.profile.
+  assert.equal(outcomes.filter((line) => line.endsWith(' ok')).length, 15 + 5 + 5);
 });
 
 // ----------------------------------------------------------------- invites
@@ -279,6 +280,99 @@ test('a member cannot rename; a name that is not clean text is team_name_invalid
   assert.equal(f.store.audit.read({}).entries.some((entry) => entry.kind === 'team_renamed'), false);
 });
 
+// ------------------------------------------------------------- own profile
+
+const profileEntries = (f) => f.store.audit.read({}).entries.filter((entry) => entry.kind === 'member_profile_changed');
+const storeRev = (f) => JSON.parse(fs.readFileSync(f.fx.memberFile, 'utf8')).rev;
+
+test('a member changes their own display name; the roster shows it and one audit entry names it', async (t) => {
+  const f = await createTeamCommandsFixture(t);
+  const { owner, alice } = f.seats;
+  const before = storeRev(f);
+  const events = [];
+  f.store.onMembershipChange((event) => events.push(event.kind));
+  const cmd = command(alice.auth, 'team.member.profile', { display_name: 'Alicia' });
+  assert.deepEqual(await f.dispatch(alice, cmd), { ok: true });
+  // An exact retry answers from the receipt and changes nothing twice.
+  assert.deepEqual(await f.dispatch(alice, cmd), { ok: true });
+  const names = (await f.send(owner, 'team.members.list')).members.map((member) => member.display_name);
+  assert.deepEqual(names, ['Olive Owner', 'Alicia', 'Rae', 'Pat']);
+  assert.equal(storeRev(f), before + 1);
+  assert.deepEqual(events, [], 'no event: others see it at their next read');
+  const entries = profileEntries(f).map(({ seq: _seq, at: _at, ...rest }) => rest);
+  assert.deepEqual(entries, [{ kind: 'member_profile_changed', actor_member_id: alice.member_id,
+    subject_member_id: alice.member_id, subject_device_id: null, name: 'Alicia', detail: 'name', store_rev: before + 1,
+    applied: true, project_id: null }]);
+});
+
+test('a name a pending or active member holds is taken, in any case or spacing; a revoked one and the caller\'s own are free', async (t) => {
+  const f = await createTeamCommandsFixture(t);
+  const { owner, alice } = f.seats;
+  for (const name of ['Rae', 'pat', 'OLIVE OWNER', 'Olive  Owner', 'R AE']) {
+    const refused = await f.send(alice, 'team.member.profile', { display_name: name });
+    assert.equal(refused.error.code, 'CMP-HOST-0004', name);
+    assert.equal(refused.error.reason, 'team_display_name_taken', name);
+  }
+  const quinn = await f.join('Quinn');
+  assert.equal((await f.send(owner, 'team.member.revoke', { member_id: quinn.member_id })).ok, true);
+  assert.deepEqual(await f.send(alice, 'team.member.profile', { display_name: 'Quinn' }), { ok: true });
+  assert.deepEqual(await f.send(alice, 'team.member.profile', { display_name: 'QUINN' }), { ok: true });
+  assert.equal(f.store.getMember(alice.member_id).display_name, 'QUINN');
+  assert.deepEqual(profileEntries(f).map((entry) => entry.name), ['Quinn', 'QUINN']);
+});
+
+test('a label change touches only the calling device; unchanged values write and audit nothing', async (t) => {
+  const f = await createTeamCommandsFixture(t);
+  const { owner, alice } = f.seats;
+  const phone = await f.spareDevice(alice);
+  const labels = async (seat) => (await f.send(seat, 'team.device.list')).devices.map((device) => [device.device_id, device.label]);
+  const ownerBefore = (await labels(owner)).filter(([deviceId]) => deviceId === owner.device_id);
+  assert.deepEqual(await f.send(alice, 'team.member.profile', { label: 'Desk PC' }), { ok: true });
+  const mine = await labels(alice);
+  assert.deepEqual(mine.filter(([deviceId]) => deviceId === alice.device_id || deviceId === phone.device_id).sort(),
+    [[alice.device_id, 'Desk PC'], [phone.device_id, 'Phone']].sort());
+  assert.deepEqual((await labels(owner)).filter(([deviceId]) => deviceId === owner.device_id), ownerBefore);
+  const phoneSeat = f.seatOf({ ...alice, device_id: phone.device_id });
+  assert.deepEqual(await f.send(phoneSeat, 'team.member.profile', { display_name: 'Ali', label: 'Pocket' }), { ok: true });
+  assert.deepEqual(profileEntries(f).map((entry) => [entry.subject_device_id, entry.name, entry.detail]),
+    [[alice.device_id, null, 'label'], [phone.device_id, 'Ali', 'name,label']]);
+
+  const rev = storeRev(f);
+  assert.deepEqual(await f.send(phoneSeat, 'team.member.profile', { display_name: 'Ali', label: 'Pocket' }), { ok: true });
+  assert.deepEqual(await f.send(alice, 'team.member.profile', { label: 'Desk PC' }), { ok: true });
+  assert.equal(storeRev(f), rev, 'no write');
+  assert.equal(profileEntries(f).length, 2, 'no audit entry');
+});
+
+test('a pending caller, unclean text, another device and any extra key are refused and change nothing', async (t) => {
+  const f = await createTeamCommandsFixture(t);
+  const { owner, alice, pat } = f.seats;
+  const rev = storeRev(f);
+  assert.equal(f.reasonOf(await f.send(pat, 'team.member.profile', { display_name: 'Patty' })), 'member_pending');
+  assert.equal((await f.store.changeProfile({ actorMemberId: pat.member_id, actorDeviceId: pat.device_id,
+    displayName: 'Patty' })).error.reason, 'member_pending');
+  for (const [params, reason] of [[{ display_name: ' padded' }, 'team_display_name_invalid'],
+    [{ display_name: 'x'.repeat(41) }, 'team_display_name_invalid'], [{ label: 'line\nbreak' }, 'team_label_invalid'],
+    [{}, 'invalid_command_parameters'], [{ display_name: '' }, 'invalid_command_parameters'],
+    [{ display_name: 'Alicia', member_id: owner.member_id }, 'invalid_command_parameters'],
+    [{ label: 'Desk', device_id: owner.device_id }, 'invalid_command_parameters']]) {
+    assert.equal(f.reasonOf(await f.send(alice, 'team.member.profile', params)), reason, JSON.stringify(params));
+  }
+  assert.equal(storeRev(f), rev);
+  // The store matches the label's device to the caller: another member's device, or a revoked one, is not found.
+  const spare = await f.spareDevice(alice);
+  assert.equal((await f.store.revokeDevice({ actorMemberId: alice.member_id, deviceId: spare.device_id })).ok, true);
+  const later = storeRev(f);
+  for (const deviceId of [owner.device_id, spare.device_id, 'device_unknown']) {
+    const refused = await f.store.changeProfile({ actorMemberId: alice.member_id, actorDeviceId: deviceId,
+      displayName: 'Alicia', label: 'Mine' });
+    assert.equal(refused.error.reason, 'team_not_found', deviceId);
+  }
+  assert.equal(f.store.getMember(alice.member_id).display_name, 'Alice', 'a refused label keeps the name too');
+  assert.equal(storeRev(f), later);
+  assert.equal(profileEntries(f).length, 0);
+});
+
 // ------------------------------------------------------------------- audit
 
 test('the audit log pages with a cursor and a limit; the owner alone reads it', async (t) => {
@@ -340,6 +434,23 @@ test('a limiter that refuses everything denies every command', async (t) => {
   }
 });
 
+// Owner, 2026-11-16: a page's list re-reads used up the 30 a minute and the next change was refused.
+test('list reads take the list counter and spend none of the changes; a used-up change counter stops no list read', async (t) => {
+  const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, maxKeys: 8 });
+  const listLimiter = createRateLimiter({ limit: 5, windowMs: 60_000, maxKeys: 8 });
+  const f = await createTeamCommandsFixture(t, { limiter, listLimiter });
+  const { owner } = f.seats;
+  for (const operation of ['team.members.list', 'team.invite.list', 'team.device.list', 'team.members.list']) {
+    assert.equal((await f.send(owner, operation)).ok, true, operation);
+  }
+  assert.equal((await f.send(owner, 'team.rename', { name: 'Second' })).ok, true);
+  assert.equal((await f.send(owner, 'team.rename', { name: 'Third' })).ok, true);
+  assert.equal(f.reasonOf(await f.send(owner, 'team.rename', { name: 'Fourth' })), 'team_rate_limit', 'the third change');
+  assert.equal((await f.send(owner, 'team.members.list')).ok, true, 'the fifth list read, with the changes used up');
+  assert.equal(f.reasonOf(await f.send(owner, 'team.members.list')), 'team_rate_limit', 'the list counter is bounded too');
+  assert.equal(f.store.snapshot().team.name, 'Third');
+});
+
 // ------------------------------------------------------------------ schema
 
 test('every team schema is closed, the transfer schema included', async (t) => {
@@ -350,7 +461,8 @@ test('every team schema is closed, the transfer schema included', async (t) => {
     'team.invite.revoke': { invite_id: 'invite_a' }, 'team.invite.list': {}, 'team.device.invite': {},
     'team.device.list': {}, 'team.device.revoke': { device_id: 'device_a' }, 'team.member.admit': { member_id: 'member_a' },
     'team.member.setRole': { member_id: 'member_a', role: 'member' }, 'team.member.revoke': { member_id: 'member_a' },
-    'team.audit.read': {}, 'team.rename': { name: 'Harbor' }, 'team.owner.transfer': { member_id: 'member_a' },
+    'team.audit.read': {}, 'team.rename': { name: 'Harbor' }, 'team.member.profile': { display_name: 'Harbor' },
+    'team.owner.transfer': { member_id: 'member_a' },
   };
   assert.deepEqual(Object.keys(base), MATRIX.map(([operation]) => operation));
   for (const [operation, params] of Object.entries(base)) {
@@ -360,7 +472,7 @@ test('every team schema is closed, the transfer schema included', async (t) => {
   }
   const missing = [['team.invite.create', {}], ['team.invite.reveal', {}], ['team.device.revoke', {}],
     ['team.member.admit', {}], ['team.member.setRole', { member_id: 'member_a' }], ['team.rename', {}],
-    ['team.owner.transfer', {}]];
+    ['team.member.profile', {}], ['team.owner.transfer', {}]];
   for (const [operation, params] of missing) {
     assert.equal(f.reasonOf(await f.send(owner, operation, params)), 'invalid_command_parameters', operation);
   }
@@ -409,11 +521,14 @@ test('the team host gives its router the team commands, the live address hints a
   const revealed = await send('team.invite.reveal', { invite_id: created.invite_id });
   assert.deepEqual(parseInvite(revealed.invite).hints, ['192.0.2.7:4242', '[2001:db8::7]:4242']);
 
-  // Thirty commands a minute per member: three are spent, 27 more pass, the next is limited.
-  for (let used = 4; used <= 30; used += 1) assert.equal((await send('team.invite.list')).ok, true);
-  const limited = await send('team.invite.list');
+  // Thirty commands a minute per member: the create and the reveal are two, 28 more pass, the next is limited.
+  for (let used = 3; used <= 30; used += 1) assert.equal((await send('team.rename', { name: `Team ${used}` })).ok, true);
+  const limited = await send('team.rename', { name: 'One more' });
   assert.equal(limited.error.code, 'CMP-HOST-0007');
   assert.equal(limited.error.reason, 'team_rate_limit');
+  // The list reads count apart (the roster read above spent none of the thirty): they still answer.
+  assert.equal((await send('team.invite.list')).ok, true);
+  assert.equal((await send('team.members.list')).ok, true);
 });
 
 // An invite made a moment after internet joining went on waits for the router's answer, so it carries the mapped address.

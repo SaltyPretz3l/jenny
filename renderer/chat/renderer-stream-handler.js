@@ -439,6 +439,8 @@
     const handleApprovalNeeded = toolHandlers.handleApprovalNeeded || noopStreamHandler;
     const handleUserQuestionsRequested = toolHandlers.handleUserQuestionsRequested || noopStreamHandler;
     const handleToolResult = toolHandlers.handleToolResult || noopStreamHandler;
+    const handleUserSteer = toolHandlers.handleUserSteer || noopStreamHandler;
+    const handleUserSteerReleased = toolHandlers.handleUserSteerReleased || noopStreamHandler;
     const terminalHandlers = createStreamTerminalHandlers({
       state,
       chatInput,
@@ -608,6 +610,8 @@
         handleToolProgress,
         handleToolTestProgress,
         handleToolResult,
+        handleUserSteer,
+        handleUserSteerReleased,
         handleStreamReset,
         handleContextCompacted,
         handleContextUsage,

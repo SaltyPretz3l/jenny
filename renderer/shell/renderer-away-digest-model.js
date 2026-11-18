@@ -18,7 +18,11 @@
  *   - tokens are joined on demand through `tokensForStream`, re-projected out
  *     of the usage record so no dollar field can ride along;
  *   - a work id whose session is no longer listed says so instead of being
- *     titled by invention.
+ *     titled by invention;
+ *   - a Team turn (row 175 F10, from renderer-team-notify.js `attention()`) joins
+ *     the same list by time, named `Team · <project>`, under the same cursors. It is
+ *     a finished or a failed turn of this member's own, never a message's text; it
+ *     has no work id, so no tokens and no "started" line.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -39,6 +43,7 @@
   var IN_PROGRESS = new Set(IN_PROGRESS_STATUSES);
   /* One screenful, not a history view: Home keeps its room. */
   var DEFAULT_ROW_LIMIT = 8;
+  var USAGE_LIMIT = 200;
 
   /* Chronological, never lexicographic: the store writes one ISO-8601 shape
    * today, but the projection accepts any parseable timestamp, and mixed
@@ -73,6 +78,49 @@
     return Object.prototype.hasOwnProperty.call(source, key) ? source[key] : undefined;
   }
 
+  /* The Team notifier's finished and failed turns, as rows: read at the call (`options.team`, else the notifier's accessor). */
+  function teamNotices(option) {
+    var source = option !== undefined ? option : (globalThis.rendererTeamNotify && typeof globalThis.rendererTeamNotify.attention === 'function'
+      ? globalThis.rendererTeamNotify.attention() : null);
+    return source && Array.isArray(source.notices) ? source.notices : [];
+  }
+
+  function teamRows(notices, seenAt, seenBySession) {
+    var rows = [];
+    notices.forEach(function addNotice(notice) {
+      if (!notice || (notice.notice !== 'finished' && notice.notice !== 'failed') || !text(notice.sessionId) || !text(notice.id)) return;
+      var at = Number(notice.at);
+      if (!Number.isFinite(at)) return;
+      var finishedAt = new Date(at).toISOString();
+      var sessionSeenAt = text(lookup(seenBySession, text(notice.sessionId)));
+      if ((seenAt && !isAfter(finishedAt, seenAt)) || (sessionSeenAt && !isAfter(finishedAt, sessionSeenAt))) return;
+      var where = text(notice.where);
+      rows.push(Object.freeze({
+        key: 'team:' + text(notice.teamId) + ':' + text(notice.id),
+        team: true,
+        teamId: text(notice.teamId),
+        projectId: text(notice.projectId),
+        workId: '',
+        sessionId: text(notice.sessionId),
+        sessionTitle: text(notice.title) || jt('team.notify.projectUntitled', 'A project conversation'),
+        marker: where ? jt('team.home.marker', 'Team · {project}', { project: where }) : jt('team.home.markerBare', 'Team'),
+        sessionGone: false,
+        outcome: notice.notice === 'failed' ? 'failed' : 'completed',
+        startedAt: '',
+        finishedAt: finishedAt,
+        olderThanRetention: false,
+      }));
+    });
+    return rows;
+  }
+
+  /* A Team turn opens its conversation in the Team tab, by the intent a toast's click runs. */
+  function openTeamConversation(row) {
+    var notify = globalThis.rendererTeamNotify;
+    if (!row || !notify || typeof notify.request !== 'function') return false;
+    return notify.request({ kind: 'conversation', teamId: row.teamId, projectId: row.projectId || '', sessionId: row.sessionId }) === true;
+  }
+
   function buildSessionIndex(sessions) {
     var index = new Map();
     (Array.isArray(sessions) ? sessions : []).forEach(function addSession(summary) {
@@ -100,6 +148,106 @@
     var input = nonNegativeInt(record.input != null ? record.input : record.input_tokens);
     var output = nonNegativeInt(record.output != null ? record.output : record.output_tokens);
     return Object.freeze({ input: input, output: output });
+  }
+
+  /* The tokens of a finished row, joined on demand: the work's stream id, then the usage record of that stream. One page of
+   * usage is read once and kept; a failed read is dropped by `retry()` (the next arrival read) so it can be tried again. A
+   * failure is logged once per work id and never throws: a row without tokens simply shows none. */
+  function createTokenReader(deps) {
+    var runtimeBridge = deps.runtimeBridge;
+    var usageBridge = deps.usageBridge;
+    var log = deps.log;
+    var usagePromise = null;
+    var workStreamPromises = new Map();
+    var tokenValues = new Map();
+    var tokenWarnings = new Set();
+    var usageFailed = false;
+    var disposed = false;
+
+    function warnTokens(workId, error) {
+      if (tokenWarnings.has(workId)) return;
+      tokenWarnings.add(workId);
+      log('WARN', 'chat.away_digest_tokens_failed', {
+        workId: workId,
+        message: String(error && error.message || error || ''),
+      });
+    }
+
+    function readWorkStream(workId) {
+      if (workStreamPromises.has(workId)) return workStreamPromises.get(workId);
+      var runtime = runtimeBridge();
+      if (!runtime || typeof runtime.getWork !== 'function') {
+        warnTokens(workId, new Error('runtime_work_unavailable'));
+        var missing = Promise.resolve(null);
+        workStreamPromises.set(workId, missing);
+        return missing;
+      }
+      var promise = Promise.resolve().then(function readWork() {
+        return runtime.getWork({ work_id: workId });
+      }).then(function workResult(result) {
+        var streamId = result && result.ok === true && result.work && result.work.attempt
+          ? String(result.work.attempt.stream_id || '') : '';
+        if (!streamId) throw new Error(String(result && result.error || 'runtime_work_refused'));
+        return streamId;
+      }).catch(function workError(error) {
+        warnTokens(workId, error);
+        return null;
+      });
+      workStreamPromises.set(workId, promise);
+      return promise;
+    }
+
+    function readUsage() {
+      if (usagePromise) return usagePromise;
+      var usage = usageBridge();
+      if (!usage || typeof usage.getSnapshot !== 'function') return Promise.reject(new Error('usage_bridge_unavailable'));
+      usagePromise = Promise.resolve().then(function readUsagePage() {
+        return usage.getSnapshot({ limit: USAGE_LIMIT });
+      }).then(function usageResult(result) {
+        if (!result || !Array.isArray(result.recent_turns)) throw new Error('usage_snapshot_refused');
+        var byStream = new Map();
+        result.recent_turns.forEach(function index(record) {
+          var streamId = String(record && record.stream_id || '');
+          if (streamId && !byStream.has(streamId)) byStream.set(streamId, record);
+        });
+        return byStream;
+      }).catch(function usageError(error) {
+        usageFailed = true; // retained until the next arrival read
+        throw error;
+      });
+      return usagePromise;
+    }
+
+    function readTokens(row) {
+      if (disposed || !row || !row.workId) return Promise.resolve(null);
+      var workId = String(row.workId);
+      if (tokenValues.has(workId)) return Promise.resolve(tokenValues.get(workId));
+      return readWorkStream(workId).then(function withStream(streamId) {
+        if (!streamId) return null;
+        return readUsage().then(function withUsage(usageByStream) {
+          var tokens = usageByStream ? tokensForStream(usageByStream, streamId) : null;
+          tokenValues.set(workId, tokens);
+          return tokens;
+        }).catch(function tokensError(error) {
+          warnTokens(workId, error);
+          return null;
+        });
+      });
+    }
+
+    function retry() {
+      if (usageFailed) { usagePromise = null; usageFailed = false; }
+    }
+
+    function dispose() {
+      disposed = true;
+      usagePromise = null;
+      workStreamPromises.clear();
+      tokenValues.clear();
+      tokenWarnings.clear();
+    }
+
+    return { readTokens: readTokens, retry: retry, dispose: dispose };
   }
 
   /* Terminal rows only, newer than the cursor, first projection of a work id
@@ -139,6 +287,7 @@
    * @param {number|Date|string} [options.now] - Injected clock for the 30-day derivation
    * @param {Array<Object>} [options.sessions] - Session summaries (state.sessions)
    * @param {number} [options.limit] - Positive row limit, or Infinity
+   * @param {Object|null} [options.team] - The Team notifier's `attention()` (default: read from it when loaded)
    * @returns {Object} frozen Home widget model
    */
   function buildAwayDigest(options) {
@@ -172,7 +321,7 @@
         outcomeBySession[sessionId] = summary.status;
       }
     });
-    var rows = matched.slice(0, limit).map(function project(summary) {
+    var localRows = matched.map(function project(summary) {
       var workId = text(summary.work_id);
       var sessionId = text(summary.session_id);
       var sessionSummary = sessionIndex.get(sessionId);
@@ -190,16 +339,23 @@
         olderThanRetention: nowMs - Date.parse(finishedAt) > RETENTION_MS,
       });
     });
+    // Team turns interleave by time, newest first; at one instant the local row leads (the sort is stable).
+    var all = localRows.concat(teamRows(teamNotices(input.team), text(input.seenAt), input.seenBySession))
+      .sort(function newestFirstAll(left, right) {
+        if (isAfter(left.finishedAt, right.finishedAt)) return -1;
+        return isAfter(right.finishedAt, left.finishedAt) ? 1 : 0;
+      });
+    var rows = all.slice(0, limit);
     return Object.freeze({
       rows: Object.freeze(rows),
       // Everything the page carried that is newer than the cursor, not just
       // the rows on screen: the header says how much finished, and the list
       // says which of it fits.
-      unseenCount: matched.length,
+      unseenCount: all.length,
       // The cursor "Mark all seen" would write: the newest row displayed.
       newestAt: rows.length ? rows[0].finishedAt : '',
       hidden: rows.length === 0,
-      truncated: matched.length > rows.length,
+      truncated: all.length > rows.length,
       runningCount: runningIds.size,
       outcomeBySession: Object.freeze(outcomeBySession),
       latestTerminalBySession: Object.freeze(latestTerminalBySession),
@@ -284,6 +440,8 @@
   return {
     buildAwayDigest: buildAwayDigest,
     tokensForStream: tokensForStream,
+    createTokenReader: createTokenReader,
+    openTeamConversation: openTeamConversation,
     sessionTitleFor: sessionTitleFor,
     isAfter: isAfter,
     createSettleReads: createSettleReads,

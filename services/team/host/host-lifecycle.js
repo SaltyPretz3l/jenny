@@ -29,21 +29,25 @@
 // zeroed once used; no answer, log line or failure carries a key, token, invite, password or path, except the
 // export folder the owner picked and the backup's file name, which the page shows.
 
+const fs = require('node:fs');
 const path = require('node:path');
 
 const { teamFailure, invalidRequest, failureOf } = require('../team-errors');
 const { loadClientFile } = require('../client-file');
 const { peekBackup, isBackupPassword } = require('./host-backup');
-const { projectFacts, readInventory, savedMembers } = require('./host-inventory');
+const { memberCounts, projectFacts, readInventory, savedMembers } = require('./host-inventory');
+const { writeAutostart } = require('./host-autostart');
 const {
   checkDeletable, listOldTeams, oldFolder, oldProjectsFolder, removeOldTeam, removeTeamFiles, setAsideTeam,
 } = require('./host-delete');
 const { exportTeam } = require('./host-export');
 const { restoreTeam } = require('./host-restore');
 const { deleteMarked, finishDelete, sweepLeftovers, teamHostRoot, teamIdOfKey } = require('./host-sweep');
-const { realInside } = require('./host-files');
+const { realInside, walkTreeAsync } = require('./host-files');
 const { notDeployedReason, readSavedHostConfig, savedDirectPort, savedInternet, savedTeamName } = require('./host-layout');
 
+// The most entries the server page's size walks; a larger folder shows no size rather than holding the main process.
+const SUMMARY_WALK_LIMIT = 200_000;
 // The time the running server gets to carry "deleted by its owner" to connected members before it stops.
 const NOTICE_MS = 1500;
 // What the owner types to delete an old team whose name could not be read.
@@ -183,6 +187,45 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     return opened === false ? fail('team_open_failed') : { ok: true };
   }
 
+  // Start with Jenny: the saved setting, then every window is told. No lock: one small file, written whole.
+  function autostart({ enabled }) {
+    if (teamHostRoot(userDataPath) === 'link') return fail('team_host_link');
+    const real = realRoot();
+    if (!real || !savedTeamName(readSavedHostConfig(userDataPath))) return fail(notDeployedReason(userDataPath));
+    try { writeAutostart(real, enabled); } catch { return fail('team_autostart_write_failed'); }
+    host.push();
+    return { ok: true, host: host.state() };
+  }
+
+  // The stopped (or running) server's facts for the Team server page: counts only, a part that cannot be read is null.
+  // The size is one walk of the folder, bounded, and shared by the calls that arrive while it runs (the tab and Settings).
+  let sizing = null;
+  async function summary() {
+    if (teamHostRoot(userDataPath) === 'link') return fail('team_host_link');
+    const real = realRoot();
+    if (!real || !savedTeamName(readSavedHostConfig(userDataPath))) return fail(notDeployedReason(userDataPath));
+    let bytes = null;
+    try {
+      sizing = sizing || walkTreeAsync(real, { limit: SUMMARY_WALK_LIMIT }).finally(() => { sizing = null; });
+      const walked = await sizing;
+      if (!walked.truncated && walked.links === 0) bytes = walked.bytes;
+    } catch { /* a folder that does not walk: unknown */ }
+    let lastRan = null;
+    try {
+      const log = fs.lstatSync(path.join(real, 'logs', 'host.log'));
+      if (log.isFile() && Number.isFinite(log.mtimeMs)) lastRan = Math.max(0, Math.floor(log.mtimeMs));
+    } catch { /* no log yet */ }
+    return { ok: true, summary: { ...memberCounts(real, now()), bytes, last_ran: lastRan } };
+  }
+
+  async function openFolder() {
+    if (teamHostRoot(userDataPath) === 'link') return fail('team_host_link');
+    const real = realRoot();
+    if (!real) return fail('team_host_not_deployed');
+    if (typeof pick.open !== 'function') return fail('team_open_failed');
+    return (await pick.open(real)) === false ? fail('team_open_failed') : { ok: true };
+  }
+
   // The checks an export makes before its picker opens, and again under the lock: an answer, or null to go on.
   function exportRefusal() {
     if (teamHostRoot(userDataPath) === 'link') return fail('team_host_link');
@@ -282,6 +325,9 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
   async function handle(method, value, { exclusive, sender = null }) {
     if (method === 'hostRestorePick') return restorePick(sender);
     if (method === 'hostOldShow') return oldShow(value);
+    if (method === 'hostAutostart') return autostart(value);
+    if (method === 'hostSummary') return summary();
+    if (method === 'hostOpenFolder') return openFolder();
     if (method === 'hostExport') {
       if (!isBackupPassword(value.password)) return invalidRequest('team_backup_password_short');
       const refused = exportRefusal();

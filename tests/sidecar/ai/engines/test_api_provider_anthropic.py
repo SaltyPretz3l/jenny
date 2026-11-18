@@ -25,7 +25,8 @@ from sidecar.ai.engines.api_provider_anthropic_wire import (
     build_messages,
     build_tools,
     model_version,
-    split_system,
+    system_blocks,
+    system_parts,
 )
 from sidecar.ai.engines.provider_descriptor_v6 import ProviderDescriptorError
 from sidecar.ai.engines.provider_http import ProviderHttpError, is_retryable_http_status
@@ -702,11 +703,11 @@ def test_history_mapping_system_demotion_images_and_pairing() -> None:
         {"role": "system", "content": "Wrap up now."},
     ]
 
-    system, remainder = split_system("Base rules.", history)
+    base, run, remainder = system_parts("Base rules.", history)
     messages = build_messages("", remainder, vision=True, replay={})
 
     # Leading run folded once (deduped against the base), later system rows demoted.
-    assert system == "Base rules.\n\nBe brief."
+    assert (base, run) == ("Base rules.", "Be brief.")
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw=="}},
@@ -724,6 +725,23 @@ def test_history_mapping_system_demotion_images_and_pairing() -> None:
         {"type": "text", "text": "Wrap up now."},
     ]
     assert len(messages) == 3
+
+
+def test_base_prompt_and_leading_run_are_separately_cached_blocks() -> None:
+    # A per-turn row (recalled memory) in the leading run must not cost the cached base.
+    turn_one = [{"role": "system", "content": "Recalled: tea"}, {"role": "user", "content": "hi"}]
+    turn_two = [{"role": "system", "content": "Recalled: cats"}, {"role": "user", "content": "yo"}]
+    first = system_blocks(*system_parts("Base rules.", turn_one)[:2])
+    second = system_blocks(*system_parts("Base rules.", turn_two)[:2])
+    ephemeral = {"type": "ephemeral"}
+    assert first[0] == second[0] == {"type": "text", "text": "Base rules.", "cache_control": ephemeral}
+    assert first[1] == {"type": "text", "text": "Recalled: tea", "cache_control": ephemeral}
+    assert second[1]["text"] == "Recalled: cats"
+    # No leading run (or a run that only repeats the base): one block, as before.
+    assert system_blocks(*system_parts("Base rules.", [{"role": "system", "content": "Base rules."}])[:2]) == [
+        {"type": "text", "text": "Base rules.", "cache_control": ephemeral}
+    ]
+    assert system_blocks("", "") == []
 
 
 def test_history_starting_with_assistant_drops_to_the_first_user_turn() -> None:

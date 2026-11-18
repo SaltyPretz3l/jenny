@@ -51,12 +51,13 @@
 
     /* The Team tab (row 123, slice 1g-2). The rail entry below and these delegates are all the shell
      * holds: the gate (renderer/team/renderer-team-tab-gate.js) loads after first paint, and only
-     * while the `team` flag is exactly true. Until it is there the tab does not exist.
+     * while the `team` flag is exactly true. Row 168: the tab is in the rail whenever the flag is exactly
+     * true (with no team it opens on the start page), unless the gate failed to load.
      * E50: main's `teamData: false` (no team data on disk) holds the gate back too, until the first Join,
-     * Deploy or Recover succeeds (`noteTeamData`, or `openTeamView({ wait: true })`); no key reads as yes. */
+     * Deploy or Recover succeeds (`noteTeamData`, or `openTeamView({ wait: true })`) or the Team view is
+     * opened, when the gate starts the store quiet and nothing is asked of main; no key reads as yes. */
     let teamGate = null;
     let teamDataSeen = false;
-    let pendingOpen = null;
     let teamGateLoad = null;
     let teamGateFailed = false;
     let teamActions = null;
@@ -77,7 +78,7 @@
           teamGateFailed = !ok;
           if (ok) {
             teamGate = windowRef[name].createTeamTabGate({
-              state, windowRef, setActiveView,
+              state, windowRef, setActiveView, teamData: teamDataOn,
               onChange: () => railController?.renderTopRail?.(),
               onBadge: () => railController?.syncBadges?.(),
               focusTab: (viewId) => railController?.focusRailTab?.(viewId),
@@ -85,9 +86,6 @@
             teamGate.setActions(teamActions);
           }
           syncTeamTab();
-          const asked = pendingOpen;
-          pendingOpen = null;
-          if (asked && teamGate) teamGate.open(asked);
         });
     }
 
@@ -158,41 +156,58 @@
         if (onBoard && state.features?.availabilityResolved === true) { setActiveView?.('chat'); return; }
       } else if (onBoard) { showBoardView(); return; }
       if (!onBoard) boardFailed = false;
-      windowRef.rendererBoardPage?.hideBoardPage?.();
+      // Flag on: parked (built, idle) so a return does not rebuild it; flag off: disposed.
+      const page = windowRef.rendererBoardPage;
+      if (boardFlagOn() && page?.parkBoardPage) page.parkBoardPage();
+      else page?.hideBoardPage?.();
     }
 
     const teamDataOn = () => teamDataSeen || state.features?.teamData !== false;
+    const teamFlagOn = () => state.features?.featureFlags?.team === true;
+    // The rail's Team tab: the flag exactly true and a gate that did not fail to load (the gate need not be there yet).
+    const teamTabOn = () => teamFlagOn() && !teamGateFailed;
     function syncTeamTab() {
       teamGate?.sync();
-      const flagOn = state.features?.featureFlags?.team === true;
+      const flagOn = teamFlagOn();
+      const onTeam = state.ui.activeView === 'team';
       // `availabilityResolved` is documented as display-only (renderer-bootstrap-utils.js). Reading it
       // here gates nothing: it only holds back this one fallback until the real flags have merged, so a
       // saved Team view is not thrown away on the boot seed. The worst a wrong value can do is show Chat.
-      const noTab = flagOn ? (teamGateFailed || (!teamGate && !teamDataOn())) : state.features?.availabilityResolved === true;
-      if (noTab && state.ui.activeView === 'team') { setActiveView?.('chat'); return; }
-      if (flagOn && teamDataOn() && !teamGate && !teamGateLoad) loadTeamGate();
+      const noTab = flagOn ? teamGateFailed : state.features?.availabilityResolved === true;
+      if (noTab && onTeam) { setActiveView?.('chat'); return; }
+      // With no team data the gate waits for the Team view itself (E50): opening it is the first use.
+      if (flagOn && (teamDataOn() || onTeam) && !teamGate && !teamGateLoad) loadTeamGate();
     }
 
     // The first Join, Deploy or Recover succeeded with no team data before: load and start the gate.
     function noteTeamData() {
-      if (state.features?.featureFlags?.team !== true) return;
+      if (!teamFlagOn()) return;
       teamDataSeen = true;
       syncTeamTab();
     }
 
     // Ctrl+6 and "joining ends in the tab". A gate that failed to load is asked for again here, not on render passes.
+    // With the gate absent or still loading the view opens now (row 168); the gate loads for it and shows it.
     function openTeamView(options) {
       if (teamGate) return teamGate.open(options);
       if (teamGateFailed) {
         teamGateFailed = false;
         teamGateLoad = null;
         syncTeamTab();
-      } else if (options?.wait === true && state.features?.featureFlags?.team === true) {
-        // A join that ends in the tab while the gate is absent or still loading: it opens once the gate is there.
-        pendingOpen = options;
-        noteTeamData();
+        return false;
       }
-      return false;
+      if (!teamFlagOn()) return false;
+      if (options?.wait === true) noteTeamData(); // a join just answered: there is team data now
+      setActiveView?.('team');
+      railController?.focusRailTab?.('team');
+      return true;
+    }
+
+    // Row 175 F11: the Board tab; false with its flag off, `{ dry: true }` only asks.
+    function openBoardView(options) {
+      if (!boardFlagOn()) return false;
+      if (options?.dry !== true) { setActiveView?.('board'); railController?.focusRailTab?.('board'); }
+      return true;
     }
 
     const railController = (rootRef.rendererTopRailUtils || {}).createTopRailController?.({
@@ -200,7 +215,7 @@
       staticModel: { tabs: DEFAULT_VIEW_TABS.concat({
         id: 'board', label: jt('board.tab.label', 'Board'), isAvailable: () => boardFlagOn(),
       }, {
-        id: 'team', label: jt('team.tab.label', 'Team'), isAvailable: () => teamGate?.exists() === true, getBadge: () => teamGate?.badge() || null,
+        id: 'team', label: jt('team.tab.label', 'Team'), isAvailable: () => teamTabOn(), getBadge: () => teamGate?.badge() || null,
       }) },
       dom: {
         topRail: deps.dom.topRail,
@@ -536,8 +551,11 @@
       syncTeamTab,
       // Board tab (slice B4): the page shows while the view is the Board's and stops when it is not.
       syncBoardTab,
-      isTeamTabAvailable: () => teamGate?.exists() === true, // for tests
+      // True while this Jenny has joined or hosts a team (the notification settings' `team` condition and tests).
+      // Row 168: the rail tab itself is there whenever the flag is on, so this no longer says the tab is shown.
+      isTeamTabAvailable: () => teamGate?.exists() === true,
       openTeamView,
+      openBoardView,
       noteTeamData,
       setTeamTabActions: (actions) => { teamActions = actions; teamGate?.setActions(actions); },
       bind,

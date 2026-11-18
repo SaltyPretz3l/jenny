@@ -1,5 +1,70 @@
 # Release Notes
 
+## 1.8.6 - 2026-11-17
+
+Everything landed since 1.8.0, through private `main` on 2026-11-17: 79
+commits over two days.
+The headline is Team chats that work like the local chat: a project
+conversation now reads like a channel, with Jenny's work one click away,
+approvals that show the exact change, plan mode, find, export, a file explorer
+and a message menu, and a team host on Windows can now turn project files on.
+The local chat gains a Terminal side panel, messages you send while Jenny works
+are taken at her next step, and the session rail lists the servers a chat
+started. Boards lay cards out along their arrows, and all 18 languages are level
+with English again.
+
+### Changelog
+
+**Features**
+
+- Team project conversations read like the `#team` channel: members' messages are channel rows and Jenny has one row per turn with a chip saying what she is doing (thinking, the tool and its file, writing, waiting for an answer) and how the turn ended, with Stop while it runs and Send again after a failure. The chip opens her full transcript in a panel on the right. Whoever may send can queue up to three messages while a turn runs. A question Jenny asks can be answered or skipped by any member with write access, and it goes for everyone once somebody does.
+- Team chats as solid as the local chat: an approval card shows the exact change and refuses if it cannot, with Allow all for a round of edits; a failed turn says why; edits show their diff; plan mode shows the plan with Keep planning, Looks good, not yet, and Build it; find searches Jenny's work too; a conversation can be exported; a message menu offers copy, copy as Markdown, copy link, branch, regenerate, and edit and resend for the author; Ask a teammate and Hand to pass a question or the driver's seat to another member; approval receipts stay under their turn after a reopen. Drafts are kept on this PC, the Team box takes dictation, and the conversation you had open comes back after a restart.
+- Team project files from the conversation: a file explorer with picture preview, path chips in answers and tool rows that open it, a Files button and an @file picker.
+- Team conversations outside the Team tab: desktop notifications for project activity, Team rows in Needs you and the away digest on Home, Post to Team on a local answer, a project's boards listed on its page and Open in Team from the Board, and Team keys in the shortcuts overlay.
+- Model-written titles for team conversations: a team host names a conversation after its first answer, never over a manual rename. Kill switch `JENNY_ENABLE_TEAM_TITLES=0`.
+- Per-conversation model, thinking and tools in Team: a Tools chip and a model and thinking pill that only the driver can change and that lock while a turn runs; an offline model shows a red dot and offers the team default, and the host refuses a missing model by name instead of swapping one in. The channel shows a quiet line when they change.
+- Team channels: members create channels from a + beside Channels, and a channel's menu renames it, sets a topic, archives or deletes it, greyed with the reason when not allowed. The creator or the owner manages a channel; only the owner unarchives or deletes; `#team` stays.
+- Team project files on the host: the host's owner turns Project files on in Settings > Team (off by default), and the model then gets typed read, search, write and edit inside each project's folder, nothing else. Windows hosts may now turn it on. The page says whether members really get the tools and why not. While it is on, project "Always allowed" rules are paused, and a turn that may read project files only runs on a member's PC whose owner can already read that conversation. An edit leaves no copy of project text outside the project folder.
+- Jenny knows when she is in a team conversation: who can read it, what a team server offers and what she cannot see, and she can look up the Team guide pages on the host.
+- Team server page: a stopped, starting or failed server this PC hosts gets a page of its own with its state, people, projects, when it last ran and Start. A Start with Jenny setting (off by default) starts it at launch, never under Force local. Members can change their display name and their PC's name after joining.
+- Team chat file previews: a text or code attachment opens read-only beside the channel, with Rendered and Source for Markdown, Copy text and Download; a small file shows its first three lines under its name; GIFs play inline. Team message text can now be selected.
+- Chat terminal panel: the chat's side panel gains a Terminal mode showing the same terminals as the Workspace, with tabs, new shell, rename, clear, kill, Show in Workspace and Maximize. It opens from the More menu or Ctrl+backquote. Add to message puts a selection into the message box, never sends it. A project chat may run `terminal_run` in its own project while the Workspace has that project open, with a card every time and no Always allow, and a finished run offers Open in terminal. A project chat never sees another project's terminal. Kill switch `JENNY_ENABLE_CHAT_TERMINAL_PANEL=0`.
+- Agent steering: a message you send while Jenny works is taken at her next step and shown in place with a "Sent while Jenny was working" caption; text and pictures both work, and it ends a wait on a background command early. Anything she does not take becomes the next turn, as before. Kill switch `JENNY_ENABLE_MID_TURN_STEER=0`.
+- Servers in the session rail: a Servers section after Background tasks lists the browser tool's page and background commands serving on a local port, each with Stop or Close. The Background tasks panel gains a Servers filter, the address and port, Open in browser and Copy address. Only local addresses are ever checked.
+- Delegation from a cloud model: when the main chat runs on an API provider, a subagent task can use another model enabled on that provider, and a stale paid default fails the task instead of quietly running on the main model. Groundwork for handing a task to a local helper model is in place but has no Settings yet. Kill switch `JENNY_ENABLE_LOCAL_SUBAGENT_ENGINE=0`.
+- Commands from the Jenny chat: `terminal_run` starts in its own terminal in a start folder, set in Settings > Editor > Terminal (Downloads by default), and refuses if the folder no longer matches the card you approved.
+- Settings > About has a "Built with" list naming each third-party project Jenny uses, what it does and its licence, and the installers now ship the NOTICE and LICENSE files.
+
+**Reworks**
+
+- Boards follow their arrows: new cards an arrow touches sit after the card that points at them, the most connected group becomes the spine with the others beside it, and Tidy on a whole board does the same, then packs the rest underneath. Connectors are straight runs with rounded corners that avoid other cards, with a larger head and labels on pills. The card under the pointer or the selected card keeps its connectors and the cards they reach lit while the rest step back, with a short light along the lines (off under reduced motion). A note still at its first size grows to fit its text, and a proposed note is previewed with its text.
+- The Team tab is always in the header while Team is on. With no team it shows a start page with Host a team and Join a team, and still opens no team connection until you do. A connected team opens on an Overview: who needs the owner, the server and sharing facts with Stop, Invite and the GPU switch, people and recent activity. Settings > Team gains a summary line, folds the rarely used groups, and has a "This server" group.
+- Team conversations can be renamed and deleted from the list's row menu without opening them; delete is for project admins and is refused while a turn runs. "Show earlier messages" reads older pages, and a running conversation shows a dot.
+- Approval receipts in Team read "You allowed this at 09:28, in Lena's turn", and the Team box's placeholder quotes the conversation title.
+- Switching views is quicker: the Board stays built and quiet while you are elsewhere instead of being rebuilt, and opening Chat takes under 30 ms instead of 60 to 90 ms.
+- Tool results tell the model when you approved its card, and a refused app action reads as refused, with a reason, instead of as done; a command that timed out is reported as unconfirmed so it is not run twice. Tool rows in history carry the date they ran.
+- Requests to Claude through an API key cache the base prompt and the leading system text separately.
+- Sketch drawings no longer carry the drawing library's watermark; it is credited in Settings > About instead.
+
+**Fixes**
+
+- Team host file tools: in 1.8.0 no team host registered the file tools on any platform, Linux and macOS included; they now work once the owner turns them on.
+- With "Load model at startup" off, a launch now reads ready instead of showing "Model failed" and a "Model failed to load" toast, and a Default send loads the configured default model. Diagnostics no longer reports "Jenny can't reach your model server" for a local server that is simply stopped, or for a missing Ollama the chat engine does not need.
+- Team: saved teams now load on a launch with no model loaded, so the team row, names and Start work; this PC connects to its own team server as soon as it is running instead of after a backoff of up to a minute; a renamed team shows its new name at once; a new project's channel reaches its members at once; and paging through lists no longer trips "Too many changes in a minute".
+- Team turns: models a member shares now carry their thinking and vision support, so team conversations offer Thinking; a High turn on an Ollama node no longer fails; a turn no longer fails at a thinking checkpoint; and a project conversation says when nobody shares a GPU, with a button to the share switch.
+- Team messages: file paths no longer show as links that did nothing.
+- Boards: a double-click edits the note under the pointer instead of adding a new one, a new board opens with its name ready to rename, and Ask Jenny puts the caret in the message box when the chat column is already open.
+- The composer lists a downloaded NInfer model while its server is stopped or another engine is active.
+
+### Migration and qualification
+
+- Canonical sessions stay at schema 29, the memory store at 10 and shell configuration at 59. The sidecar `API_VERSION` stays `2026-10-15`: agent steering adds two optional notifications and one acknowledgement behind a negotiated capability; Electron and its sidecar still ship together. On a team host, the team audit log moves to schema 5, the project audit log to 4 and channel files to 3; older files are upgraded when they are read.
+- New default-on flags with kill switches: `CHAT_TERMINAL_PANEL`, `MID_TURN_STEER`, `TEAM_TITLES` and `LOCAL_SUBAGENT_ENGINE`, each as `JENNY_ENABLE_<name>=0`. A team host's Project files switch and Start with Jenny are both off until the owner turns them on.
+- A translation pass brought all 18 shipped languages level with English, with no native-speaker review. The prompt for deleting a team conversation now has its own string, apart from the project delete prompt, so every language shows it again.
+- The candidate passed the full local CI gate on the cut tree: 47 policy checks, 3,425 Node test files, 17,861 Python tests, 284 backend contracts, lint, typing, 92.4% sidecar coverage and the packaged-flow smoke. Before the cut, the full gate found one team connection test that read its baseline before setup finished under load, and the public-export probe found six shipped comments citing unshipped documents and four personal paths in one test. All are fixed. The real-app GUI suite and the packaged smoke in a Linux container were not run for this cut.
+- Not yet covered by a person: team host file tools on Windows across two machines, and on OneDrive, ReFS or Dev Drive folders, an elevated launch and a signed build; the two-member runs of Team chat parity (the transcript panel while a turn streams, a notification that reopens a conversation, the file explorer and a picture, find over Jenny's work, plan mode's three choices, Regenerate, Edit and resend, Branch, Ask a teammate, Hand to, receipts after a reopen, dictation); the new Team screens (file previews, Overview and start page, conversation as a channel, model and tools controls, channels) with two members at three widths, light and dark, and in the Board's conversation column; Start with Jenny across a restart and a name change seen from a second PC; boards laid out along their arrows in the real app and with a real model; the chat terminal panel's Show in Workspace, a wrong-project chat and Add to message, and switching terminal tabs in the panel, where agent runs found the second terminal still shows the first; the look of agent steering's caption and of Servers in the session rail; an app-side refusal seen by the model in the Jenny chat; and delegation from a cloud model on a paid key. Agent runs on a local model have exercised agent steering, Servers, the chat terminal panel and the Jenny chat start folder.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
+
 ## 1.8.0 - 2026-11-15
 
 Everything landed since 1.7.0, through private `main` on 2026-11-15: 713

@@ -119,6 +119,7 @@ const { normalizePerformanceTelemetry } = require('./shell-config-performance');
 const { normalizePrimaryChat } = require('./shell-config-primary-chat');
 const { normalizeApiProvidersConfig } = require('./backend/api-provider-config');
 const { normalizeSubagentRouting } = require('./subagent-routing-settings');
+const { normalizeLocalSubagentEngine } = require('./backend/local-subagent-engine');
 const { CONFIG_VERSION, migrateState } = require('./shell-config-migrations');
 const WORKSPACE_WRITE_DELAY_MS = 500;
 const DEFAULT_CHAT_UI = Object.freeze({
@@ -168,6 +169,7 @@ function normalizeState(value = {}, options = {}) {
     primaryChat: normalizePrimaryChat(source.primaryChat), // row 76: additive, no version bump
     apiProviders: normalizeApiProvidersConfig(source.apiProviders), // row 78: additive, no version bump
     subagentRouting: normalizeSubagentRouting(source.subagentRouting),
+    localSubagentEngine: normalizeLocalSubagentEngine(source.localSubagentEngine), // row 179: additive
     toolsWorkspaceRoot: normalizeWorkspaceRoot(source.toolsWorkspaceRoot || source.tools_workspace_root),
     // maxBudgetUsd is stored in the owned engineTuning block like every other
     // tuning knob, but stays readable at the top level because callers (and the
@@ -237,6 +239,7 @@ function cloneState(state) {
     primaryChat: normalizePrimaryChat(state.primaryChat),
     apiProviders: normalizeApiProvidersConfig(state.apiProviders),
     subagentRouting: normalizeSubagentRouting(state.subagentRouting),
+    localSubagentEngine: normalizeLocalSubagentEngine(state.localSubagentEngine),
     maxBudgetUsd: normalizeMaxBudgetUsd(state.maxBudgetUsd ?? state.max_budget_usd),
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),
@@ -321,6 +324,7 @@ function serializeState(state) {
     primaryChat: normalizePrimaryChat(state.primaryChat),
     apiProviders: normalizeApiProvidersConfig(state.apiProviders),
     subagentRouting: normalizeSubagentRouting(state.subagentRouting),
+    localSubagentEngine: normalizeLocalSubagentEngine(state.localSubagentEngine),
     toolsWorkspaceRoot: state.toolsWorkspaceRoot,
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),

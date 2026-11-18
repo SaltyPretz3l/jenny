@@ -484,3 +484,116 @@ test('global API: loads the panel lazily, open, toggle, close and isOpen per mod
   assert.equal(win.rendererBackgroundTasksPanel, undefined, 'removed on dispose');
   win.close();
 });
+
+/* Row 176: servers in the Background tasks panel (the Servers filter, a serving job's page) and the Browser panel seam. */
+const statusWords = (h) => h.$('[data-bgt-status] > span:not(.status-dot):not(.background-tasks-actions)');
+const serving = (jobId, extra = {}) => job(jobId, 'running', { serving: { url: 'http://localhost:5173', host: 'localhost', port: 5173, sinceMs: NOW - 125_000 }, ...extra });
+
+test('Servers filter: lists only serving jobs, by address in mono; empty it says nothing is serving', async () => {
+  const h = harness({ jobs: [serving('aaaaaaaaaaaa'), job('bbbbbbbbbbbb', 'running'), serving('cccccccccccc', { state: 'completed', endedAtMs: NOW - 1000 })] });
+  await h.panel.open({ sessionId: 's1' });
+  assert.deepEqual([...h.panelEl.querySelectorAll('[data-value]')].map((node) => node.getAttribute('data-value')), ['all', 'commands', 'chats', 'servers']);
+  assert.equal(h.$('[data-value="servers"]').textContent, 'Servers');
+  const row = h.$('[data-bgt-open="job:aaaaaaaaaaaa"]');
+  assert.equal(row.querySelector('.session-rail-ellip').textContent, 'localhost:5173');
+  assert.ok(row.querySelector('.session-rail-ellip--addr'));
+  assert.equal(row.title, 'cmd aaaaaaaaaaaa on localhost:5173');
+  assert.equal(h.$('[data-bgt-open="job:bbbbbbbbbbbb"] .session-rail-ellip').textContent, 'cmd bbbbbbbbbbbb', 'a plain command keeps its command text');
+  h.$('[data-value="servers"]').click();
+  assert.deepEqual([...h.panelEl.querySelectorAll('[data-bgt-open]')].map((node) => node.getAttribute('data-bgt-open')), ['job:aaaaaaaaaaaa'],
+    'a stopped server is no longer serving');
+  h.push([job('bbbbbbbbbbbb', 'running')]);
+  assert.equal(h.$('.background-tasks-empty').textContent, 'Nothing this chat started is still serving.');
+  h.close();
+});
+
+test('serving page: Address, Port and Up with its clock under the status; foot has Open in browser and Copy address first', async () => {
+  const h = harness({ jobs: [serving('aaaaaaaaaaaa')] });
+  await h.panel.open({ sessionId: 's1', taskId: 'job:aaaaaaaaaaaa' });
+  const status = statusWords(h);
+  assert.equal(status.querySelector('[data-bgt-started-at]').getAttribute('data-bgt-started-at'), String(NOW - 125_000), 'the clock runs from when it came up');
+  assert.equal(statusWords(h).textContent, 'Up · 2:05');
+  const facts = [...h.$('[data-bgt-facts]').children].map((node) => node.textContent);
+  assert.deepEqual(facts, ['Address', 'http://localhost:5173', 'Port', '5173, this PC only']);
+  assert.equal(h.$('.background-tasks-status').nextElementSibling, h.$('[data-bgt-facts]'), 'under the status line');
+  assert.deepEqual([...h.$('[data-bgt-foot]').querySelectorAll('.background-tasks-link')].map((node) => node.textContent).slice(0, 3), ['Open in browser', 'Copy address', 'Copy command']);
+  h.close();
+});
+
+test('serving page: it appears and leaves with the serving fact; a plain job page has no facts or address links', async () => {
+  const h = harness({ jobs: [job('aaaaaaaaaaaa', 'running')] });
+  await h.panel.open({ sessionId: 's1', taskId: 'job:aaaaaaaaaaaa' });
+  assert.equal(h.$('[data-bgt-facts]').children.length, 0);
+  assert.equal(h.$('[data-bgt-open-address]'), null);
+  assert.match(statusWords(h).textContent, /^Running · /);
+  h.push([serving('aaaaaaaaaaaa')]);
+  assert.equal(h.$('[data-bgt-facts]').children.length, 4);
+  assert.ok(h.$('[data-bgt-open-address]'));
+  h.push([job('aaaaaaaaaaaa', 'running')]);
+  assert.equal(h.$('[data-bgt-facts]').children.length, 0);
+  assert.equal(h.$('[data-bgt-open-address]'), null);
+  h.close();
+});
+
+test('serving page: Copy address writes the url; Open in browser opens a loopback address in the user\'s browser only', async () => {
+  const h = harness({ jobs: [serving('aaaaaaaaaaaa')] });
+  const opened = [];
+  h.win.open = (...args) => { opened.push(args); return null; };
+  await h.panel.open({ sessionId: 's1', taskId: 'job:aaaaaaaaaaaa' });
+  h.$('[data-bgt-open-address]').click();
+  assert.deepEqual(opened, [['http://localhost:5173/', '_blank', 'noopener,noreferrer']]);
+  h.$('[data-bgt-copy-address]').click();
+  await flush();
+  assert.equal(h.calls.copied, 'http://localhost:5173');
+  h.close();
+});
+
+test('serving page: an address that is not this PC, or not http(s), has no Open in browser and opens nothing', async () => {
+  for (const url of ['http://192.168.1.4:5173', 'file:///C:/secrets.txt', 'javascript:alert(1)', 'https://example.com', 'not a url']) {
+    const h = harness({ jobs: [serving('aaaaaaaaaaaa', { serving: { url, host: 'x', port: 5173, sinceMs: NOW } })] });
+    const opened = [];
+    h.win.open = (...args) => { opened.push(args); return null; };
+    await h.panel.open({ sessionId: 's1', taskId: 'job:aaaaaaaaaaaa' });
+    assert.equal(h.$('[data-bgt-open-address]'), null, url);
+    assert.ok(h.$('[data-bgt-copy-address]'), 'copying is still offered');
+    h.$('[data-bgt-foot]').dispatchEvent(new h.win.MouseEvent('click', { bubbles: true }));
+    assert.deepEqual(opened, [], url);
+    h.close();
+  }
+  for (const url of ['http://127.0.0.1:3000', 'https://localhost:8443/x', 'http://[::1]:5173']) assert.ok(rr.loopbackUrl(url), url);
+  assert.equal(rr.loopbackUrl('http://localhost.evil.test:5173'), '');
+  assert.equal(rr.loopbackUrl('http://user@192.168.1.4:5173'), '');
+});
+
+test('serving page: a hostile address is text, never markup', async () => {
+  const h = harness({ jobs: [serving('aaaaaaaaaaaa', { serving: { url: 'http://localhost:1/"><img src=x onerror=alert(1)>', port: 1, sinceMs: NOW } })] });
+  await h.panel.open({ sessionId: 's1', taskId: 'job:aaaaaaaaaaaa' });
+  assert.equal(h.$('[data-bgt-facts] img, [data-bgt-foot] img'), null);
+  assert.ok(h.$('[data-bgt-facts]').textContent.includes('<img src=x onerror=alert(1)>'));
+  h.close();
+});
+
+test('browser seam: published with the rails, false until the Browser panel has loaded, then opens it; removed on dispose', async () => {
+  const h = harness();
+  h.panel.dispose();
+  const win = h.win;
+  const opens = [];
+  const cleanups = [];
+  win.scriptLoaderUtils = { ensureScript: async () => true };
+  Object.assign(win, { rendererBrowserUsePlacement: {}, rendererBrowserUseStatus: {}, rendererBrowserUseBar: {} });
+  win.rendererBrowserUsePanel = { connectBrowserUsePanel: () => ({ sync() {}, open: (options) => { opens.push(options); return true; } }) };
+  createShellArtifactRails({
+    state: h.state, windowRef: win, escapeHtml: (value) => String(value), callbacks: {}, codeReviewRailDeps: {}, registerCleanup: (fn) => cleanups.push(fn),
+    sidePanel: { claim: () => true, getSessionId: () => 's1' }, appendClientLog: () => {}, showToastMessage: () => {},
+    renderAll: () => {}, setActiveView: () => {}, getSurface: () => null, ensureArtifactSurface: () => null, resolveArtifactReviewPanelEl: () => h.panelEl,
+  });
+  assert.equal(typeof win.rendererOpenBrowserUsePanel, 'function');
+  assert.equal(win.rendererOpenBrowserUsePanel(), false, 'nothing loaded yet: nothing opens');
+  win.rendererSyncBrowserUse({ sessionId: 's1', enabled: true });
+  await flush();
+  assert.equal(win.rendererOpenBrowserUsePanel(), true);
+  assert.equal(opens.length, 1);
+  for (const fn of cleanups.reverse()) fn();
+  assert.equal(win.rendererOpenBrowserUsePanel, undefined, 'removed on dispose');
+  win.close();
+});

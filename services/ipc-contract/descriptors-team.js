@@ -43,7 +43,8 @@
  * the team (the renderer sends it once when its project store is built, after a reload).
  *
  * Slice 2c renderer adds chat attachments: chatUpload (bytes of at most 4 MiB), chatUploadCancel, chatAttachPick
- * (the file dialog opens in main), chatAttachmentImage (a picture as a data: URL, images only), chatAttachmentCopy,
+ * (the file dialog opens in main), chatAttachmentImage (a picture as a data: URL, images only), chatAttachmentText (a text file as UTF-8 text, or its first
+ * lines with peek), chatAttachmentCopy,
  * chatAttachmentSave (the save dialog opens in main) and chatAttachmentReveal; chatPost may carry attachment_ids.
  *
  * Slice 6-5 adds model sharing: the `model…` methods (services/team/model-ipc.js) and one push channel
@@ -79,6 +80,7 @@ module.exports = Object.freeze({
   'team.ownerTransfer': invokeMethod('team:owner-transfer'),
   'team.auditRead': invokeMethod('team:audit-read'),
   'team.rename': invokeMethod('team:rename'),
+  'team.profileSet': invokeMethod('team:profile-set'),
   'team.onState': subscribeMethod('team:state'),
   // Slice 1f-2: the team host this Jenny runs. Its state never carries a key, an invite or an address.
   'team.hostDeploy': invokeMethod('team:host-deploy'),
@@ -110,12 +112,18 @@ module.exports = Object.freeze({
   'team.chatPins': invokeMethod('team:chat-pins'),
   // Slice 2d: open a direct conversation (services/team/chat-dm.js).
   'team.chatDmOpen': invokeMethod('team:chat-dm-open'),
+  // Row 173: create, rename or set the topic of, archive and delete a custom channel (services/team/chat-channels.js).
+  'team.chatChannelCreate': invokeMethod('team:chat-channel-create'),
+  'team.chatChannelUpdate': invokeMethod('team:chat-channel-update'),
+  'team.chatChannelArchive': invokeMethod('team:chat-channel-archive'),
+  'team.chatChannelDelete': invokeMethod('team:chat-channel-delete'),
   // Slice 2c renderer: chat attachments (services/team/chat-attachments.js). Bytes cross at most 4 MiB a file; the
   // file and save dialogs open in main; no answer carries a path.
   'team.chatUpload': invokeMethod('team:chat-upload'),
   'team.chatUploadCancel': invokeMethod('team:chat-upload-cancel'),
   'team.chatAttachPick': invokeMethod('team:chat-attach-pick'),
   'team.chatAttachmentImage': invokeMethod('team:chat-attachment-image'),
+  'team.chatAttachmentText': invokeMethod('team:chat-attachment-text'),
   'team.chatAttachmentCopy': invokeMethod('team:chat-attachment-copy'),
   'team.chatAttachmentSave': invokeMethod('team:chat-attachment-save'),
   'team.chatAttachmentReveal': invokeMethod('team:chat-attachment-reveal'),
@@ -127,6 +135,8 @@ module.exports = Object.freeze({
   'team.hostInternet': invokeMethod('team:host-internet'),
   // Slice 6-7: the owner's model relay setting for this Jenny's own host (services/team/host/host-model-relay.js).
   'team.hostModelRelay': invokeMethod('team:host-model-relay'),
+  // Row 123: the owner's project files setting for this Jenny's own host (services/team/host/host-file-tools.js).
+  'team.hostFileTools': invokeMethod('team:host-file-tools'),
   // Slice 4e: sharing this PC's GPU (services/team/node/team-sharing.js) and the team's GPUs (pool-view.js).
   'team.shareStatus': invokeMethod('team:share-status'),
   'team.shareSet': invokeMethod('team:share-set'),
@@ -144,6 +154,10 @@ module.exports = Object.freeze({
   'team.hostExport': invokeMethod('team:host-export'),
   'team.hostRestorePick': invokeMethod('team:host-restore-pick'),
   'team.hostRestore': invokeMethod('team:host-restore'),
+  // Row 170: the server page (services/team/host/host-lifecycle.js, host-autostart.js).
+  'team.hostAutostart': invokeMethod('team:host-autostart'),
+  'team.hostSummary': invokeMethod('team:host-summary'),
+  'team.hostOpenFolder': invokeMethod('team:host-open-folder'),
   // Slice 3-9: shared projects, their conversations and file transfers (services/team/team-projects.js).
   'team.projectList': invokeMethod('team:project-list'),
   'team.projectCreate': invokeMethod('team:project-create'),
@@ -170,10 +184,25 @@ module.exports = Object.freeze({
   'team.conversationDecide': invokeMethod('team:conversation-decide'),
   'team.conversationAnswer': invokeMethod('team:conversation-answer'),
   'team.conversationDecline': invokeMethod('team:conversation-decline'),
+  // Row 172: the conversation's model, thinking effort and tool switches (host op sessions.preferences, leased); row 175
+  // item 7: and Plan mode (`plan_mode`). conversationDecide may carry `plan_decision` and `feedback` (row 175, D14).
+  'team.conversationPreferences': invokeMethod('team:conversation-preferences'),
   'team.uploadFolder': invokeMethod('team:upload-folder'),
   'team.uploadCancel': invokeMethod('team:upload-cancel'),
   'team.downloadProject': invokeMethod('team:download-project'),
   'team.downloadCancel': invokeMethod('team:download-cancel'),
+  // Row 175 wave 5: the reader view of a team project's files (host ops team.project.files.list / .read).
+  'team.projectFiles': invokeMethod('team:project-files'),
+  'team.projectFileRead': invokeMethod('team:project-file-read'),
+  // Row 175 item 6, F13, F18: regenerate, edit and resend, branch, ask a teammate, hand the driver seat (team.project.*).
+  'team.projectRegenerate': invokeMethod('team:project-regenerate'),
+  'team.projectEditResend': invokeMethod('team:project-edit-resend'),
+  'team.projectBranch': invokeMethod('team:project-branch'),
+  'team.projectAskTeammate': invokeMethod('team:project-ask-teammate'),
+  'team.projectHandDriver': invokeMethod('team:project-hand-driver'),
+  // Row 175 F6: the conversation box's unsent text, kept on this PC (services/team/project-drafts.js).
+  'team.projectDraftGet': invokeMethod('team:project-draft-get'),
+  'team.projectDraftSet': invokeMethod('team:project-draft-set'),
   // Slice 3-10: "Always allowed" (team.project.rules.*).
   'team.projectRules': invokeMethod('team:project-rules'),
   'team.projectRuleAdd': invokeMethod('team:project-rule-add'),

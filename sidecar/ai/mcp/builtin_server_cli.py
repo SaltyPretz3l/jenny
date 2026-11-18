@@ -21,6 +21,7 @@ def default_builtin_tool_config() -> dict[str, Any]:
         "host_execution_policy_version": None,
         "desktop_execution_policy_version": None,
         "pre_change_snapshot_root": None,
+        "hosted_root_boundary": None,
         "tools_glob_enabled": True,
         "tools_grep_enabled": True,
         "tools_edit_file_enabled": True,
@@ -94,6 +95,7 @@ def builtin_tool_config(
         "host_execution_policy_version": host_execution_policy_version,
         "desktop_execution_policy_version": desktop_execution_policy_version,
         "pre_change_snapshot_root": str(args.pre_change_snapshot_root).strip() or None,
+        "hosted_root_boundary": getattr(args, "hosted_root_boundary", None) or None,
         "tools_glob_enabled": _parse_bool_arg(args.glob_enabled),
         "tools_grep_enabled": _parse_bool_arg(args.grep_enabled),
         "tools_edit_file_enabled": _parse_bool_arg(args.edit_enabled),
@@ -339,8 +341,11 @@ def _add_host_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_workspace_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", dest="workspace_root", default=None)
-    # Windows hosted file tools (W14, E9): absent means off. Nothing passes it yet.
+    # Windows hosted file tools (W14, E9): absent means off. Sent only with a boundary.
     parser.add_argument("--hosted-win32-files", dest="hosted_win32_files", action="store_true")
+    # A rootless server worker binds request roots only directly under this folder;
+    # absent means none. Checked in builtin_server_hosted.root_boundary_argument.
+    parser.add_argument("--hosted-root-boundary", dest="hosted_root_boundary", default=None)
     parser.add_argument("--owned-process-ledger-path", default="")
     parser.add_argument("--owned-process-owner-pid", type=int, default=0)
     parser.add_argument(

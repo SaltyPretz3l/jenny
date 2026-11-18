@@ -86,7 +86,8 @@ class BuiltinRequestScope:
         self._stack.__exit__(exc_type, exc_value, traceback)
 
 
-def _normalized_path(path: Path) -> str:
+def normalized_path(path: Path) -> str:
+    """The one normalizer for request roots and the root boundary."""
     return os.path.normcase(os.path.normpath(str(path)))
 
 
@@ -95,7 +96,17 @@ def _root_id(path: Path) -> str:
     return "root_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
 
 
-def _bound_workspace(value: dict[str, Any]) -> tuple[WorkspaceGuard, str | None, str | None]:
+def _boundary(host_config: Any) -> tuple[bool, str | None]:
+    """(whether a root boundary is set, the boundary resolved at worker start)."""
+    if not isinstance(host_config, dict) or host_config.get("hosted_root_boundary") is None:
+        return False, None
+    resolved = host_config.get("hosted_root_boundary_resolved")
+    return True, resolved if isinstance(resolved, str) and resolved else None
+
+
+def _bound_workspace(
+    value: dict[str, Any], host_config: Any = None,
+) -> tuple[WorkspaceGuard, str | None, str | None]:
     root_path = value.get("root_path")
     root_id = value.get("root_id")
     device_id = value.get("device_id")
@@ -104,6 +115,10 @@ def _bound_workspace(value: dict[str, Any]) -> tuple[WorkspaceGuard, str | None,
         if any(item is not None for item in (root_id, device_id, inode)):
             raise _invalid()
         return WorkspaceGuard(None), None, None
+    boundary_set, boundary = _boundary(host_config)
+    if boundary_set and (boundary is None or device_id is None):
+        # I2: with a boundary, every request root carries its pair, on every platform.
+        raise _invalid()
     if (
         not isinstance(root_path, str)
         or not root_path.strip()
@@ -129,7 +144,7 @@ def _bound_workspace(value: dict[str, Any]) -> tuple[WorkspaceGuard, str | None,
         raise _invalid() from None
     if (
         not resolved_root.is_dir()
-        or _normalized_path(raw_root) != _normalized_path(resolved_root)
+        or normalized_path(raw_root) != normalized_path(resolved_root)
         or root_id != _root_id(resolved_root)
         or (
             device_id is not None
@@ -137,10 +152,14 @@ def _bound_workspace(value: dict[str, Any]) -> tuple[WorkspaceGuard, str | None,
         )
     ):
         raise _invalid()
+    if boundary is not None and normalized_path(resolved_root.parent) != normalized_path(
+        Path(boundary)
+    ):
+        raise _invalid()  # I2: only a direct child of the boundary.
     workspace = WorkspaceGuard(str(resolved_root))
     if (
         workspace.root is None
-        or _normalized_path(workspace.root) != _normalized_path(resolved_root)
+        or normalized_path(workspace.root) != normalized_path(resolved_root)
     ):
         raise _invalid()
     return workspace, device_id, inode
@@ -192,7 +211,7 @@ def builtin_request_scope(
         or value.get("schema_version") != 1
     ):
         raise _invalid()
-    workspace, device_id, inode = _bound_workspace(value)
+    workspace, device_id, inode = _bound_workspace(value, host_config)
     _attach_recovery_owner(workspace, host_config)
     raw_roots = value.get("knowledge_roots")
     if (
@@ -214,4 +233,4 @@ def builtin_request_scope(
     )
 
 
-__all__ = ["TRUSTED_EXECUTION_CONTEXT_KEY", "builtin_request_scope"]
+__all__ = ["TRUSTED_EXECUTION_CONTEXT_KEY", "builtin_request_scope", "normalized_path"]

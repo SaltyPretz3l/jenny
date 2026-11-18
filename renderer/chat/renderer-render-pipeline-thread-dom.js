@@ -224,9 +224,18 @@ root.rendererRenderPipelineThreadDomUtils = factory();
       // dot below the coalesced turn. Only decided while expanded: a collapsed
       // node renders empty childrenMarkup, which must not be read as "nothing
       // visible" or the expand control for real content would vanish.
+      const subtreeHasArticle = childrenMarkup.indexOf('<article') !== -1;
       const compatOnlySubtree = expanded
         && articleHtml.indexOf('data-thread-compat-enveloped="true"') !== -1
-        && childrenMarkup.indexOf('<article') === -1;
+        && !subtreeHasArticle;
+      // The coalesced turn article's own node: when every child below it is an
+      // envelope compat anchor (a step that issued several tool calls at once),
+      // its row list already shows those rows, so the toggle would collapse
+      // nothing visible and strand a ringed dot on the sprite's rail axis.
+      const childrenAllCompat = expanded
+        && !subtreeHasArticle
+        && childrenMarkup.indexOf('data-thread-compat-enveloped="true"') !== -1;
+      const dropToggle = compatOnlySubtree || childrenAllCompat;
 
       if (!parentId && role === 'user') {
         // Dims this root's replies and every later root (chat-bubble-editor-v2.css).
@@ -280,7 +289,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
           data-thread-node-kind="${nodeKind}"${compatOnlySubtree ? ' data-thread-compat-only="true"' : ''}
         >
           <div class="chat-thread-node-row">
-            ${compatOnlySubtree ? '' : buildThreadToggleMarkup(node, expanded, childContainerId)}
+            ${dropToggle ? '' : buildThreadToggleMarkup(node, expanded, childContainerId)}
             <div class="chat-thread-node-article">
               ${articleHtml}
             </div>

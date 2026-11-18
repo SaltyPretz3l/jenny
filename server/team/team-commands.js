@@ -1,7 +1,7 @@
 'use strict';
 
 // The team.* commands that travel through POST /api/v1/commands: roster,
-// invites, devices, admit, role, revoke, audit, rename and owner transfer. The router has
+// invites, devices, admit, role, revoke, audit, rename, own profile and owner transfer. The router has
 // already validated the closed params schema and run the one authorization
 // function (`identity`) for the command; the store repeats the owner-only rules
 // behind it. A handler therefore adds no role check of its own: it passes the
@@ -57,8 +57,17 @@ const USAGE_TOTALS_MS = 7 * 24 * 60 * 60 * 1000;
 // supplies it): null while off, so invites stay version 1 with today's hints, byte for byte.
 // `usage()` answers the team engine usage log (usage-log.js) or null (slice 4e, read lazily: the log
 // is opened after the commands are built).
+// The list reads a page repeats on its own (after each push, on each poll): 240 per member per minute, apart from
+// the 30 a minute every other team command shares. Whatever reveals, creates, changes or relays stays on the
+// shared counter. One counter for both let a page's re-reads refuse the owner's next change (owner, 2026-11-16).
+const TEAM_LIST_LIMIT = Object.freeze({ limit: 240, windowMs: 60_000, maxKeys: 64 });
+const LIST_READS = new Set(['team.members.list', 'team.invite.list', 'team.device.list', 'team.audit.read', 'team.pool.usage',
+  'team.project.audit.read', 'team.project.members.list', 'team.project.unjoined', 'team.project.rules.list',
+  // Row 175 wave 5: the reader view's pages and file reads.
+  'team.project.files.list', 'team.project.files.read']);
+
 function createTeamCommands({
-  store, invites, directory, addresses = () => [], internet = () => null, settle = null, limiter = null, clock = Date.now,
+  store, invites, directory, addresses = () => [], internet = () => null, settle = null, limiter = null, listLimiter = null, clock = Date.now,
   logger = null, chat = null, projects = null, nodes = null, usage = () => null, projectAudit = () => null,
   files = null, models = null, rules = null, boards = null, admitChatBoard = null,
 } = {}) {
@@ -207,6 +216,12 @@ function createTeamCommands({
       const renamed = await store.rename({ actorMemberId: actor.member_id, name: params.name });
       return renamed.ok ? { ok: true } : renamed;
     },
+    // Row 170: the caller's own display name and the label of the device this request came from.
+    'team.member.profile': async ({ params, actor }) => {
+      const changed = await store.changeProfile({ actorMemberId: actor.member_id, actorDeviceId: actor.device_id,
+        displayName: params.display_name, label: params.label });
+      return changed.ok ? { ok: true } : changed;
+    },
     // Slice 4e: the team model (null is Automatic), stored beside the team's name; the GPU list carries it.
     'team.pool.model.set': async ({ params, actor }) => {
       const set = await store.setTeamModel({ actorMemberId: actor.member_id, model: params.model });
@@ -255,7 +270,8 @@ function createTeamCommands({
     // A family's fixed refusal (model sharing off or stopped) costs no rate-limit token.
     const refused = owner?.preflight ? owner.preflight() : null;
     if (refused) return withRequestId(refused, requestId);
-    if (limiter && limiter.take(live.member_id) !== true) {
+    const counter = listLimiter && LIST_READS.has(operation) ? listLimiter : limiter;
+    if (counter && counter.take(live.member_id) !== true) {
       log('WARN', 'team_command.rate_limited', { operation });
       return hostFailure('limit', 'team_rate_limit', requestId);
     }
@@ -285,8 +301,15 @@ function createTeamCommands({
     return { filesSupported, roleOf };
   }
 
+  // Row 175 F13: a member's effective role in an active project of the team, by member id; null when they hold no row,
+  // are pending or revoked (the asked member of `team.project.ask`, command-router-redo.js).
+  function projectRoleOf(memberId, projectId) {
+    try { return effectiveProjectRole(directory, directory.memberActor?.(memberId) ?? null, projectId); } catch { return null; }
+  }
+
   // Row 151 T5: `chat.send` with a board id asks the board host (boards/board-turn-ports.js `admitChat`).
-  return Object.freeze({ dispatch, projectListExtras, ...(typeof admitChatBoard === 'function' ? { admitChatBoard } : {}) });
+  return Object.freeze({ dispatch, projectListExtras, projectRoleOf,
+    ...(typeof admitChatBoard === 'function' ? { admitChatBoard } : {}) });
 }
 
-module.exports = { createTeamCommands };
+module.exports = { createTeamCommands, TEAM_LIST_LIMIT };

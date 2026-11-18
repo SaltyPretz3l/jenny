@@ -11,6 +11,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { LIMITS } = require('../../server/team/member-schema');
+const { dataFrames } = require('./helpers/session-scope-fixture');
 const { createTeamProjectFixture } = require('./helpers/team-project-fixture');
 
 const changed = (projectId, reason) => ({ project_id: projectId, reason });
@@ -88,6 +89,21 @@ test('a channel that cannot be made leaves a usable project and answers channel:
   assert.equal(h.fx.logs.filter((entry) => entry.event === 'team_project.channel_failed').length, 1);
   h.state.chat = null;
   assert.equal((await h.ok(h.send('alice', 'team.project.create', { name: 'No chat' }))).channel, false);
+});
+
+// Owner report (team overview B3): the channel is announced as a direct conversation's is, to its audience only.
+test('create announces the project channel to its audience only; a failed channel announces nothing', async (t) => {
+  const h = await createTeamProjectFixture(t);
+  const streams = Object.fromEntries(['alice', 'owner', 'bob'].map((who) => [who, h.attach(who)]));
+  const channelFrames = (who) => dataFrames(streams[who].frames).filter((frame) => frame.event_type === 'team_chat_channel')
+    .map((frame) => [frame.channel_id, frame.reason, frame.floor_seq, frame.channel_rev, frame.pin_count]);
+  const id = (await h.ok(h.send('alice', 'team.project.create', { name: 'Apollo' }))).project_id;
+  assert.deepEqual(channelFrames('alice'), [[`chan_${id}`, 'created', 1, 0, 0]]);
+  assert.deepEqual(channelFrames('owner'), [], 'the team owner outside the project hears nothing');
+  assert.deepEqual(channelFrames('bob'), []);
+  h.state.chat.fail = true;
+  assert.equal((await h.ok(h.send('alice', 'team.project.create', { name: 'No room' }))).channel, false);
+  assert.equal(channelFrames('alice').length, 1, 'a failed channel publishes no channel event');
 });
 
 test('rename: an admin renames and publishes renamed; nobody else may', async (t) => {

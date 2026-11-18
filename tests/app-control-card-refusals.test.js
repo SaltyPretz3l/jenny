@@ -5,6 +5,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { appControlCardRefusal, appControlCardStep, hasCardStep } = require('../services/backend/app-control-card-refusals');
+const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
+const { NEVER_PERSIST_ALWAYS_ALLOW } = require('../services/tools/tool-permission-store');
 
 const EXPORT_NOTE = 'The app refused this before asking the user; nothing was saved.';
 const RUN_NOTE = 'The app refused this before asking the user; nothing was run.';
@@ -75,7 +77,11 @@ test('an unknown reason, a non-string extra, a throwing or missing port all beco
 test('terminal_run: prepareRun gets the caller, call id and command; ok shows the card', async () => {
   const { service, calls } = terminalService({ ok: true });
   assert.equal(await appControlCardRefusal(service, 'terminal_run', 'p1', 'call-7', { command: 'npm test', purpose: 'x' }), null);
-  assert.deepEqual(calls, [{ session_id: 'p1', tool_call_id: 'call-7', command: 'npm test' }]);
+  assert.equal(await appControlCardRefusal(service, 'terminal_run', 'p1', 'call-8', { command: 'npm test', where: 'project' }), null);
+  assert.deepEqual(calls, [
+    { session_id: 'p1', tool_call_id: 'call-7', command: 'npm test', where: undefined },
+    { session_id: 'p1', tool_call_id: 'call-8', command: 'npm test', where: 'project' },
+  ], 'the service reads where; no where is the start folder');
 });
 
 test('an accepted request adds where the result lands to the card: the Downloads name, the terminal folder', async () => {
@@ -108,4 +114,35 @@ test('terminal_run: known reasons pass through with the nothing-was-run note and
   const thrown = terminalService(() => { throw new Error('x'); });
   assert.equal(JSON.parse(await appControlCardRefusal(thrown.service, 'terminal_run', 'p1', 'c', { command: 'x' })).reason, 'unavailable');
   assert.equal(JSON.parse(await appControlCardRefusal({}, 'terminal_run', 'p1', 'c', { command: 'x' })).reason, 'unavailable');
+});
+
+// Row 178, owner pick D4: a project chat may use terminal_run on its own project; every run is carded.
+const { REFUSAL_SENTENCES } = require('../services/tools/builtin/session-directory-tool-support');
+test('terminal_run: a project chat that is not on the open project, or asks for the start folder, is refused with a sentence the model can read', async () => {
+  const notOpen = terminalService({ ok: false, reason: 'not_in_project' });
+  const first = JSON.parse(await appControlCardRefusal(notOpen.service, 'terminal_run', 'c1', 'call-1', { command: 'npm test' }));
+  assert.deepEqual(first, {
+    ok: false, reason: 'not_in_project', note: RUN_NOTE,
+    message: REFUSAL_SENTENCES.not_in_project,
+  });
+  const startFolder = terminalService({ ok: false, reason: 'project_chat_runs_in_project' });
+  const second = JSON.parse(await appControlCardRefusal(startFolder.service, 'terminal_run', 'c1', 'call-2', { command: 'npm test', where: 'start_folder' }));
+  assert.deepEqual(second, {
+    ok: false, reason: 'project_chat_runs_in_project', note: RUN_NOTE,
+    message: REFUSAL_SENTENCES.project_chat_runs_in_project,
+  });
+  assert.deepEqual(startFolder.calls, [{ session_id: 'c1', tool_call_id: 'call-2', command: 'npm test', where: 'start_folder' }]);
+  // The reasons that need no extra sentence carry none.
+  assert.equal('message' in JSON.parse(await appControlCardRefusal(terminalService({ ok: false, reason: 'not_allowed' }).service, 'terminal_run', 'c1', 'c', { command: 'x' })), false);
+});
+
+test('terminal_run: a project chat on its open project reaches a card that names the project folder, and the policy asks every time', async () => {
+  const { service } = terminalService({ ok: true, folder: 'G:\\work\\pr1', where: 'project' });
+  assert.deepEqual(await appControlCardStep(service, 'terminal_run', 'c1', 'call-1', { command: 'npm test', purpose: 'x' }),
+    { refusal: null, cardNote: 'Runs in a new Jenny terminal tab in G:\\work\\pr1.' });
+  // The approval policy is by tool name, so it holds for a project chat as for the Jenny chat: ask, and never always-allowed.
+  const descriptor = { name: 'terminal_run', side_effecting: true, read_only: false };
+  const decision = evaluatePolicy({ descriptor, args: { command: 'npm test', purpose: 'x' }, mode: 'auto', snapshot: undefined });
+  assert.equal(decision.decision, 'ask');
+  assert.equal(NEVER_PERSIST_ALWAYS_ALLOW.has('terminal_run'), true);
 });

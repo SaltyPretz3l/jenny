@@ -207,3 +207,15 @@ test('a Default turn the catalog cannot vouch for loads nothing; the kill switch
   assert.equal(await resolveModel(off.service, ''), BUILT_IN);
   assert.deepEqual(off.calls.loads, [BUILT_IN]);
 });
+
+test('after a startup-load-off boot a Default turn loads the default, never the fallback engine model', async () => {
+  // The boot started no server by choice, so the sidecar holds only its mock fallback and lists that as active.
+  const listing = { primary_available: true, active_model: 'mock-v1', data: OLLAMA_CATALOG };
+  const idle = defaultTurnService({ settingsDefault: 'qwen3:8b', listing });
+  idle.service._startupIdleByChoice = true;
+  assert.equal(await resolveModel(idle.service, ''), 'qwen3:8b');
+  assert.deepEqual(idle.calls.loads, ['qwen3:8b']);
+
+  const plain = defaultTurnService({ settingsDefault: 'qwen3:8b', listing });
+  assert.equal(await resolveModel(plain.service, ''), 'mock-v1', 'without the idle flag the listed active model wins');
+});

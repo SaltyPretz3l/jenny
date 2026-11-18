@@ -118,6 +118,26 @@ def hosted_win32_files_enabled() -> bool:
     return _win32_files
 
 
+_LIBRARY_MODULE = "sidecar.ai.tools.hosted_file_io_win32_library"
+# A grep worker message field: set when the sender's Windows file access library
+# has latched off, so the latch reaches the other side (W14 review, finding 1).
+FILE_ACCESS_LATCHED_FIELD = "file_access_latched"
+
+
+def hosted_file_access_latched() -> bool:
+    """Whether this process's Windows file access library has latched off. Loads
+    nothing: a process that never loaded the library has not latched."""
+    module = sys.modules.get(_LIBRARY_MODULE)
+    return module is not None and bool(module.shared_library_latched())
+
+
+def latch_hosted_file_access() -> None:
+    """Latch this process's Windows file access library off, loaded or not."""
+    from sidecar.ai.tools import hosted_file_io_win32_library
+
+    hosted_file_io_win32_library.latch_shared_library()
+
+
 def _win32_client() -> ModuleType | None:
     """The Windows client module; a failed import is no backend. Importing it
     loads no library. A plain import, so the reachability check follows it."""
@@ -222,17 +242,22 @@ def scoped_hosted_file_io(
         _install_hosted_store()
     operation = HostedFileIOOperation(enabled=enabled, root=None, pin=None)
     selected = select_backend(_platform()) if enabled and workspace_root is not None else None
-    if workspace_root is not None and selected is not None:
-        root, pin, backend = _pin_root(selected, workspace_root, expected_device_id, expected_inode)
-        operation = HostedFileIOOperation(
-            enabled=True, root=root, pin=pin, backend=backend,
-            expected_device_id=expected_device_id, expected_inode=expected_inode,
-        )
-    token = _operation_io.set(operation)
+    # The pin is this scope's from the moment `_pin_root` returns: the `finally`
+    # starts before the call (W14 review, finding 4).
     try:
-        yield
+        if workspace_root is not None and selected is not None:
+            root, pin, backend = _pin_root(
+                selected, workspace_root, expected_device_id, expected_inode)
+            operation = HostedFileIOOperation(
+                enabled=True, root=root, pin=pin, backend=backend,
+                expected_device_id=expected_device_id, expected_inode=expected_inode,
+            )
+        token = _operation_io.set(operation)
+        try:
+            yield
+        finally:
+            _operation_io.reset(token)
     finally:
-        _operation_io.reset(token)
         if operation.pin is not None:
             operation.pin.close()
 

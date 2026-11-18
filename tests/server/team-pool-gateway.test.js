@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const test = require('node:test');
 
-const { createPoolGateway, POOL_MODEL_ALIAS, ROUTE_TOKEN_HEADER } = require('../../server/team/pool-gateway');
+const { createPoolGateway, fitThinking, POOL_MODEL_ALIAS, ROUTE_TOKEN_HEADER } = require('../../server/team/pool-gateway');
 const {
   DONE_LINE, activeLease, createLoggerSpy, createScheduler, model, registerNode, sseData,
 } = require('./helpers/team-pool-fixture');
@@ -256,7 +256,8 @@ test('a comment line is written while waiting for the claim and the first byte',
   assert.equal(fx.gateway.resources().timers, 0, 'the comment timer stops with the stream');
 });
 
-test('the client closing cancels the job and fails the lease', async (t) => {
+// The sidecar closes a request it replaces (a thinking-budget checkpoint); the turn's next request uses the same lease.
+test('the client closing cancels the job and keeps the lease for the next request of the turn', async (t) => {
   const fx = await setup(t);
   const { lease, token } = activeLease(fx.scheduler);
   const stream = openStream(fx.port, authHeaders(token), chatBody());
@@ -265,8 +266,11 @@ test('the client closing cancels the job and fails the lease', async (t) => {
   await stream.until((s) => s.text.includes('"x"'), 'first chunk');
   stream.request.destroy();
   await waitFor(() => fx.scheduler.getJob(job.job_id).state === 'cancelled', 'job cancelled');
-  assert.equal(fx.scheduler.getLease(lease.lease_id).state, 'failed');
-  assert.equal(fx.scheduler.getLease(lease.lease_id).reason, 'cancelled');
+  assert.equal(fx.scheduler.getLease(lease.lease_id).state, 'active');
+  const next = openStream(fx.port, authHeaders(token), chatBody());
+  const second = await claimFor(fx, fx.nodeIds[0], lease.lease_id, 2);
+  assert.notEqual(second.job_id, job.job_id, 'a second job on the same lease');
+  next.request.destroy();
 });
 
 test('a failure after headers and before data is one error frame, then close', async (t) => {
@@ -343,6 +347,23 @@ test('thinking fields are dropped for a model without thinking and kept for one 
   assert.equal(seen.thinker.reasoning_effort, 'high');
   assert.equal(seen.thinker.thinking_budget_tokens, 2048);
   assert.deepEqual(seen.thinker.chat_template_kwargs, { enable_thinking: true, reasoning_effort: 'high', other: 1 });
+});
+
+test('a thinking model\'s top-level xhigh or max is held to high; the template kwargs keep what was sent', async () => {
+  // Live run 2026-11-16: a host's qwen3.8 request carries `xhigh`; an Ollama node's OpenAI endpoint passed it on as
+  // the template's `max` and the qwen3.8 template refused the turn.
+  for (const [sent, kept] of [['xhigh', 'high'], ['MAX', 'high'], ['high', 'high'], ['low', 'low'], ['none', 'none']]) {
+    const body = { reasoning_effort: sent, chat_template_kwargs: { enable_thinking: true, reasoning_effort: 'xhigh' } };
+    fitThinking(body, { thinking: true });
+    assert.equal(body.reasoning_effort, kept, sent);
+    assert.deepEqual(body.chat_template_kwargs, { enable_thinking: true, reasoning_effort: 'xhigh' });
+  }
+  const off = { reasoning_effort: 'xhigh', thinking_budget_tokens: 4096, chat_template_kwargs: { enable_thinking: true } };
+  fitThinking(off, { thinking: false });
+  assert.deepEqual(off, { chat_template_kwargs: {} });
+  const missing = { reasoning_effort: 'max' };
+  fitThinking(missing, null);
+  assert.deepEqual(missing, {}, 'no model info is a model that does not think');
 });
 
 test('stop() closes every socket and timer, including an open stream', async (t) => {

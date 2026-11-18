@@ -37,6 +37,7 @@
     if (!(state.sendOutboxBySession instanceof Map)) state.sendOutboxBySession = new Map();
     if (!(state.queuedSendBySession instanceof Map)) state.queuedSendBySession = new Map();
     const capturePromises = new Map();
+    const removeListeners = new Set();
     let disposed = false;
 
     function normalizeSessionId(value) { return String(value || '').trim(); }
@@ -99,21 +100,26 @@
       return true;
     }
 
+    // A 'taken' row (row 180) is never the head the composer or the drain restores.
+    const isEcho = (entry) => entry?.status === 'taken';
+
     function syncLegacyHead(sessionId, queue) {
       const id = normalizeSessionId(sessionId);
       if (!id) return;
-      if (queue.length) state.queuedSendBySession.set(id, queue[0]);
+      const head = queue.find((entry) => !isEcho(entry));
+      if (head) state.queuedSendBySession.set(id, head);
       else state.queuedSendBySession.delete(id);
       if (queue.length) state.sendOutboxBySession.set(id, queue);
       else state.sendOutboxBySession.delete(id);
     }
 
     function list(sessionId) { return queueFor(sessionId).slice(); }
-    function peek(sessionId) { return queueFor(sessionId)[0] || null; }
+    function peek(sessionId) { return queueFor(sessionId).find((entry) => !isEcho(entry)) || null; }
     function firstDispatchable(sessionId) {
       for (const entry of queueFor(sessionId)) {
-        if (['needs_review', 'sent'].includes(entry.status)) continue;
-        if (['capturing_context', 'ready', 'waiting_for_turn', 'failed'].includes(entry.status)) return entry;
+        if (['needs_review', 'sent', 'taken'].includes(entry.status)) continue;
+        // 'offered' is dispatchable: a terminal that outruns main's release still sends it.
+        if (['capturing_context', 'ready', 'waiting_for_turn', 'failed', 'offered'].includes(entry.status)) return entry;
         return null;
       }
       return null;
@@ -176,7 +182,40 @@
       cancelCapture(entry.id);
       syncLegacyHead(entry.sessionId, next);
       releaseOwnedAttachments(queue[index]);
+      for (const listener of [...removeListeners]) {
+        try { listener(entry.sessionId, queue[index]); } catch (_error) { /* listeners never break a removal */ }
+      }
       return true;
+    }
+
+    // Row 180: the drain may still take it, so its files stay held until a user_steer
+    // claims them or the turn's end releases them.
+    const heldBySession = new Map();
+    function removeHolding(entry) {
+      const current = entry ? queueFor(entry.sessionId).find((candidate) => candidate.id === entry.id) : null;
+      if (!current || current.attachmentOwner !== 'outbox') return remove(entry);
+      const handed = replace(current, { attachmentOwner: 'none' });
+      if (!handed || !remove(handed)) return false;
+      if (!heldBySession.has(current.sessionId)) heldBySession.set(current.sessionId, new Map());
+      heldBySession.get(current.sessionId).set(current.id, current);
+      return true;
+    }
+    function claimHeld(sessionId, itemId) {
+      return Boolean(heldBySession.get(normalizeSessionId(sessionId))?.delete(String(itemId || '')));
+    }
+    function releaseHeld(sessionId) {
+      const id = normalizeSessionId(sessionId);
+      const held = heldBySession.get(id);
+      if (!held) return 0;
+      heldBySession.delete(id);
+      for (const entry of held.values()) releaseOwnedAttachments(entry);
+      return held.size;
+    }
+
+    function onRemove(listener) {
+      if (typeof listener !== 'function') return () => {};
+      removeListeners.add(listener);
+      return () => removeListeners.delete(listener);
     }
 
     function edit(entry, prompt) {
@@ -256,6 +295,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      removeListeners.clear();
       clearAll();
     }
 
@@ -278,6 +318,7 @@
 
     return {
       awaitContextCapture,
+      claimHeld,
       clearAll,
       clearSession,
       dispose,
@@ -285,8 +326,11 @@
       enqueue,
       firstDispatchable,
       list,
+      onRemove,
       peek,
+      releaseHeld,
       remove,
+      removeHolding,
       rekeySession,
       replace,
       retry,

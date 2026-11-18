@@ -43,7 +43,8 @@ address and fetches nothing at run time.
 - Sketchy 0.2.0 (commit c246cd47) — MIT License, Copyright (c) 2026 ddkbs:
   https://github.com/ddkbs/sketchy. Its licence and notices are kept beside the
   code as `vendor/sketchy/LICENSE` and `vendor/sketchy/THIRD_PARTY_NOTICES.md`.
-  The faint "sketchy" mark it draws on every picture credits the author and is kept.
+  Jenny credits it in Settings > About instead of the faint "sketchy" mark
+  upstream draws on every picture; the mark is taken off after drawing.
 - elkjs 0.12.1 — Eclipse Public License 2.0, Copyright (c) the Kieler project and
   contributors. It is included in the bundle unmodified (its published
   `lib/elk.bundled.js`). Source: https://github.com/kieler/elkjs, and the

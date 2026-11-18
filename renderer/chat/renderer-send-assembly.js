@@ -23,7 +23,7 @@
     const {
       state, chatInput, sendOutbox, sendSlashDispatch, stashQueuedSendForSession, canQueueForSession,
       consumePromptBlock, appendClientLog, setComposerStatusNotice, renderComposerState,
-      syncComposerInputHeight, syncComposerVisualState,
+      syncComposerInputHeight, syncComposerVisualState, offerSteer = () => {},
     } = env;
     return function queueBusySend(c) {
       const {
@@ -102,7 +102,7 @@
         });
         // Backfill the resolved @-mention contents once the (time-boxed) reads
         // settle, and apply the resolved-mention dedupe to the active-file slice.
-        sendOutbox.settleContextCapture(queuedEntry, queuedMentionContentsPromise.then((contents) => {
+        const contextSettled = sendOutbox.settleContextCapture(queuedEntry, queuedMentionContentsPromise.then((contents) => {
           const capturedContents = Array.isArray(contents) ? contents : [];
           const norm = (path) => String(path || '').trim().replace(/\\/g, '/');
           const activePath = queuedActiveFileContext?.path ? norm(queuedActiveFileContext.path) : '';
@@ -111,6 +111,8 @@
             : queuedActiveFileContext;
           return { mentionContentsSnapshot: capturedContents, activeFileContextSnapshot };
         }));
+        // Row 180: may offer it to the live turn (never awaited).
+        Promise.resolve(contextSettled).then(() => offerSteer(requestedSessionId)).catch(() => { /* an offer never breaks a send */ });
         const queuedResult = { queued: true, sessionId: requestedSessionId };
         sendSlashDispatch.clearAcceptedImagePrompt(queuedResult, imagePromptPin, requestedSessionId, settings);
         return queuedResult;

@@ -44,6 +44,7 @@ function createFixture({
   clearTimeoutImpl,
   terminationTimeoutMs,
   detectShellProfiles = () => [],
+  startFolder,
 } = {}) {
   const spawns = [];
   const events = [];
@@ -73,6 +74,7 @@ function createFixture({
     clearTimeoutImpl,
     terminationTimeoutMs,
     detectShellProfiles,
+    startFolder,
   });
   return {
     service, spawns, events, logs, ptys,
@@ -119,6 +121,25 @@ test('spawn shape: cwd is root, env scrubbed, cols/rows forwarded and clamped', 
   assert.equal(opts.env.MY_API_KEY, undefined, 'credential-shaped keys scrubbed');
   assert.equal(opts.cols, 500, 'cols clamped to max 500');
   assert.equal(opts.rows, 40);
+});
+
+// 4b. place 'start_folder' (the Jenny chat's terminal_run): main's resolved folder, no workspace root needed,
+// and a caller cwd cannot steer it; an unresolvable folder refuses before native code loads.
+test('spawn at the start folder uses the resolved folder, ignores cwd, and needs no workspace root', async () => {
+  const { service, spawns } = createFixture({ root: '', startFolder: () => ({ ok: true, folder: 'C:/Users/me/Downloads' }) });
+  const result = await service.spawn({ cols: 80, rows: 24, slot: 3, cwd: '..\\..\\Windows', place: 'start_folder' });
+  assert.equal(result.ok, true);
+  assert.equal(spawns[0].opts.cwd, 'C:/Users/me/Downloads');
+  for (const startFolder of [() => ({ ok: false, reason: 'start_folder_unavailable' }), () => { throw new Error('C:/private'); }, undefined]) {
+    const refused = await createFixture({ ptyModuleLoader: THROWING_LOADER, startFolder }).service.spawn({ cols: 80, rows: 24, place: 'start_folder' });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, TERMINAL_ERROR_CODES.START_FOLDER_UNAVAILABLE);
+    assert.match(refused.message, /Settings > Editor > Terminal/);
+    assert.equal(refused.message.includes('private'), false);
+  }
+  const elsewhere = createFixture({ startFolder: () => ({ ok: true, folder: 'C:/Users/me/Downloads' }) });
+  await elsewhere.service.spawn({ cols: 80, rows: 24, place: 'project' });
+  assert.equal(elsewhere.spawns[0].opts.cwd, 'G:/fake-root', 'any other place is the workspace root');
 });
 
 // 5. single-session: second spawn -> alreadyRunning, same id, no re-spawn.

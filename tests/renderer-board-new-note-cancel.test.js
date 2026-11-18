@@ -159,3 +159,18 @@ test('a note that was already on the board is never removed by its editor: Escap
   await flush();
   assert.deepEqual(h.cards(), [A, made].sort(), 'once saved, a note is no longer new: Escape on a later edit keeps it');
 });
+
+test('a double-click the captured pointer aims at the canvas edits the note under it and adds no note', async (t) => {
+  const h = await env(t);
+  // A press on a card captures the pointer on the canvas, so the browser aims the double-click there; jsdom has no layout.
+  h.doc.elementFromPoint = (x, y) => (x >= 100 && x <= 300 && y >= 100 && y <= 200 ? h.el(A).querySelector('[data-card-text]') || h.el(A) : h.surface);
+  h.el(A).dispatchEvent(new h.window.PointerEvent('pointerdown', { bubbles: true, pointerId: 1, isPrimary: true, button: 0, clientX: 150, clientY: 120 }));
+  h.surface.dispatchEvent(new h.window.PointerEvent('pointerup', { bubbles: true, pointerId: 1, isPrimary: true, button: 0, clientX: 150, clientY: 120 }));
+  await h.dbl(h.surface, 150, 120);
+  assert.deepEqual(h.sent, [], 'no new note');
+  assert.equal(h.field().value, 'alpha');
+  h.key(h.field(), 'Escape');
+  await flush();
+  await h.dbl(h.surface, 600, 400);
+  assert.deepEqual(h.sent, [['card.add']], 'empty canvas still adds a note');
+});

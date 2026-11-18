@@ -13,7 +13,7 @@
  *       from the same chat become `superseded`. A reply with no block stores nothing.
  *   list({ boardId })
  *       { ok, proposals } newest first, each without its operations; the newest open one carries
- *       `preview`: where its new cards, groups and connections would land on the board as it stands.
+ *       `preview`: where its new cards, groups and connections would land on the board as it stands (a note with its text).
  *   decide({ boardId, proposalId, action, n })
  *       accept_additions  every pending addition as ONE batch (one Undo step)
  *       accept            the edit or removal numbered `n`, as its own batch (D16)
@@ -207,7 +207,7 @@ function createBoardProposals(options = {}) {
       const op = applied.has(change.n) && Array.isArray(change.ops) ? change.ops[0] : null;
       if (op && op.op === 'card.add') {
         const card = plan.board.cards[op.card.id];
-        if (card) preview.cards.push({ n: change.n, kind: card.kind, x: card.x, y: card.y, w: card.w, h: card.h, groupId: card.group_id || '' });
+        if (card) preview.cards.push({ n: change.n, kind: card.kind, x: card.x, y: card.y, w: card.w, h: card.h, groupId: card.group_id || '', text: card.kind === 'note' ? String(card.data.text || '') : '' });
       } else if (op && op.op === 'group.add') {
         const group = plan.board.groups[op.group.id];
         if (group) preview.groups.push({ n: change.n, id: group.id, x: group.x, y: group.y, w: group.w, h: group.h });

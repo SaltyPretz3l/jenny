@@ -58,6 +58,15 @@
     return withPinMenu(win, (menu) => (typeof menu.open === 'function' ? menu.open(call) : undefined));
   }
 
+  // Post to Team (row 175 D5): an answer's hover action.
+  const postModule = () => globalThis.rendererChatPostToTeam?.getDefault?.({ canQueue: true }) || null;
+  // { visible, enabled, reason } for the button; null while the Team flag is off.
+  function postToTeamState(message) {
+    if (pinHolder.state?.features?.featureFlags?.team !== true || !message?.id || !String(message.content || '').trim()) return null;
+    const verdict = postModule()?.availability(message.content) || { ok: false, reason: jt('chat.postToTeam.reason.noTeam', 'Join a team to post there.') };
+    return { visible: true, enabled: verdict.ok, reason: verdict.reason };
+  }
+
   // The named board under a sent prompt opens that board (saved as the project's open one, then the Board view).
   function openBoardFromMark(args) {
     const options = args || {};
@@ -115,10 +124,20 @@
       return inside(selection.anchorNode) && inside(selection.focusNode) ? selection.toString().trim() : '';
     }
 
+    function messageOf(chatId, messageId) {
+      const list = state && state.messagesBySession && typeof state.messagesBySession.get === 'function' ? state.messagesBySession.get(chatId) : null;
+      return Array.isArray(list) ? list.find((entry) => String(entry && entry.id || '').trim() === messageId) : null;
+    }
+
+    // The selection inside the answer, else the whole answer.
+    function postToTeamMessage(messageId, button) {
+      const message = messageOf(String(state?.currentSessionId || '').trim(), messageId);
+      if (message) postModule()?.open({ text: selectedTextIn(button.closest('.chat-entry')) || String(message.content || ''), trigger: button });
+    }
+
     function pinMessage(messageId, button) {
       const chatId = String(state && state.currentSessionId || '').trim();
-      const list = state && state.messagesBySession && typeof state.messagesBySession.get === 'function' ? state.messagesBySession.get(chatId) : null;
-      const message = Array.isArray(list) ? list.find((entry) => String(entry && entry.id || '').trim() === messageId) : null;
+      const message = messageOf(chatId, messageId);
       if (!message || !chatId) return;
       const selected = selectedTextIn(button.closest('.chat-entry'));
       const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => String(entry && entry.id || '').trim() === chatId);
@@ -266,6 +285,10 @@
           pinMessage(messageId, actionButton);
           return true;
         }
+        if (messageAction === 'post-to-team') {
+          postToTeamMessage(messageId, actionButton);
+          return true;
+        }
         if (messageAction === 'regenerate') {
           handleRegenerateMessage(messageId).catch((error) => {
             showComposerActionError(error, jt('chat.transcript.regenerateFailedTitle', 'Regenerate Failed'));
@@ -316,5 +339,5 @@
     return { handleMessageActionClick };
   }
 
-  return { createMessageActionBindings, openPinMenu, openBoardFromMark, pinMenuItem, pinEnabled };
+  return { createMessageActionBindings, openPinMenu, openBoardFromMark, pinMenuItem, pinEnabled, postToTeamState };
 });

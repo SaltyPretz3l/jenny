@@ -55,8 +55,15 @@
     { src: 'renderer/features/renderer-dictation-view.js', global: 'rendererDictationView' },
   ];
 
+  // The composer, or a field that opts in with data-dictation-target (its mic: data-dictation-button), as the Team box does.
   function isComposerInput(el) {
-    return Boolean(el && typeof el.matches === 'function' && el.matches('textarea.composer-input'));
+    return Boolean(el && typeof el.matches === 'function' && el.matches('textarea.composer-input, [data-dictation-target]'));
+  }
+  const MIC = '.composer-dictate-button, [data-dictation-button]';
+  // The first `selector` match in the nearest ancestor holding one (a generic field and its mic share no `.composer`).
+  function near(node, selector) {
+    for (let el = node && node.parentElement; el; el = el.parentElement) { const hit = el.querySelector(selector); if (hit) return hit; }
+    return null;
   }
   function isUsable(el) {
     return isComposerInput(el) && el.disabled !== true && el.readOnly !== true
@@ -125,7 +132,8 @@
 
     function resolveTarget(fromButton) {
       if (fromButton) {
-        const input = fromButton.closest && fromButton.closest('.composer') && fromButton.closest('.composer').querySelector('textarea.composer-input');
+        const composer = fromButton.closest && fromButton.closest('.composer');
+        const input = composer ? composer.querySelector('textarea.composer-input') : near(fromButton, '[data-dictation-target]');
         return isUsable(input) ? input : null;
       }
       const active = documentRef.activeElement;
@@ -140,7 +148,7 @@
 
     function buttonFor(input) {
       const composer = input && input.closest && input.closest('.composer');
-      return composer ? composer.querySelector('.composer-dictate-button') : null;
+      return composer ? composer.querySelector('.composer-dictate-button') : near(input, '[data-dictation-button]');
     }
     function setPressed(pressed) {
       const button = buttonFor(target);
@@ -303,16 +311,16 @@
       if (heldBy === 'key' && (event.code === 'Space' || event.key === 'Control')) release('key');
     }
     function onPointerDown(event) {
-      const button = event.target && event.target.closest && event.target.closest('.composer-dictate-button');
-      if (!button || event.button !== 0) return;
+      const button = event.target && event.target.closest && event.target.closest(MIC);
+      if (!button || button.disabled || event.button !== 0) return;
       event.preventDefault(); // keep the caret in the composer
       press('pointer', button);
     }
     function onPointerUp() { release('pointer'); }
     // Keyboard activation of the focused mic button (Enter/Space): a toggle.
     function onClick(event) {
-      const button = event.target && event.target.closest && event.target.closest('.composer-dictate-button');
-      if (!button || event.detail !== 0) return;
+      const button = event.target && event.target.closest && event.target.closest(MIC);
+      if (!button || button.disabled || event.detail !== 0) return;
       event.preventDefault();
       if (phase === 'idle' && press('pointer', button)) { heldBy = ''; mode = 'handsfree'; } else if (phase === 'listening') finish(true);
     }
@@ -378,6 +386,7 @@
       bind,
       dispose,
       syncAvailability,
+      isEnabled,
       press,
       release,
       cancel: () => finish(false),

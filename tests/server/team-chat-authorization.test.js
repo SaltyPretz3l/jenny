@@ -14,7 +14,8 @@ const { createTeamChatCommandsFixture } = require('./helpers/team-chat-commands-
 const FORBIDDEN = 'CMP-HOST-0003';
 const DM = `chan_dm_${'a'.repeat(64)}`;
 
-// operation, who may (O owner, M member, R read-only), params(context, seat)
+// operation, who may (O owner, M member, R read-only), params(context, seat), and the answer a permitted seat gets
+// when it is not ok (the registry passed it and the dispatcher's own rule answered)
 const MATRIX = [
   ['team.chat.overview', 'OMR', () => ({})],
   ['team.chat.history', 'OMR', () => ({ channel_id: 'chan_team', limit: 10 })],
@@ -40,13 +41,21 @@ const MATRIX = [
   ['team.chat.pins', 'OMR', () => ({ channel_id: 'chan_team' })],
   // Slice 2d: a direct conversation with Bob, who is neither the owner nor Alice.
   ['team.chat.dm_open', 'OM', (c) => ({ member_ids: [c.bob] })],
+  // Row 173: each seat makes a channel, sets the topic of its own and archives its own archived one again (a repeat
+  // needs no audit entry). Delete is the owner's alone (a member is refused by the dispatcher); a live channel is
+  // refused after the registry passed.
+  ['team.chat.channel_create', 'OM', (c, seat) => ({ name: `room of ${seat}` })],
+  ['team.chat.channel_update', 'OM', (c, seat) => ({ channel_id: c.mine(seat).live, topic: `topic of ${seat}`,
+    expected_rev: c.rev(c.mine(seat).live) })],
+  ['team.chat.channel_archive', 'OM', (c, seat) => ({ channel_id: c.mine(seat).archived, on: true })],
+  ['team.chat.channel_delete', 'O', (c) => ({ channel_id: c.mine('owner').live }), 'team_chat_channel_live'],
 ];
 
 test('the matrix covers every team.chat operation and the presence report in the closed vocabulary', () => {
   const chatOperations = Object.keys(PARAM_SCHEMAS)
     .filter((operation) => operation.startsWith('team.chat.') || operation.startsWith('team.presence.'));
   assert.deepEqual(chatOperations.sort(), MATRIX.map(([operation]) => operation).sort());
-  assert.equal(chatOperations.length, 18);
+  assert.equal(chatOperations.length, 22);
 });
 
 test('matrix: every chat operation by owner, member, read-only, pending, invite principal and revoked device', async (t) => {
@@ -56,23 +65,31 @@ test('matrix: every chat operation by owner, member, read-only, pending, invite 
   for (const seat of ['owner', 'alice']) own[seat] = await f.post(f.seats[seat], `mine ${seat}`);
   // Seats that may not post still need ids for their rows; the call is refused before the store.
   for (const seat of ['rae', 'pat', 'invite', 'revoked']) own[seat] = root;
-  const context = { root, own, bob: f.seats.bob.member_id };
+  const channels = {};
+  for (const seat of ['owner', 'alice']) {
+    const make = async (name) => (await f.chat.store.createCustomChannel({ actorId: f.seats[seat].member_id,
+      deviceId: f.seats[seat].device_id, requestId: `make_${seat}_${name}`, name: `${name} ${seat}` })).channel_id;
+    channels[seat] = { live: await make('live'), archived: await make('old') };
+    assert.equal((await f.chat.store.archiveChannel({ channelId: channels[seat].archived })).ok, true);
+  }
+  const context = { root, own, bob: f.seats.bob.member_id, mine: (seat) => channels[seat] || channels.owner,
+    rev: (channelId) => f.chat.store.channelHeader(channelId).rev };
   const letters = { owner: 'O', alice: 'M', rae: 'R', pat: 'P', invite: 'I', revoked: 'X' };
   const denied = { P: 'member_pending', X: 'member_revoked' };
   let allowed = 0;
   for (const [seat, letter] of Object.entries(letters)) {
-    for (const [operation, who, params] of MATRIX) {
+    for (const [operation, who, params, passed = 'ok'] of MATRIX) {
       const answer = await f.send(f.seats[seat], operation, params(context, seat));
-      const expected = who.includes(letter) ? 'ok' : (denied[letter] || 'role_forbidden');
+      const expected = who.includes(letter) ? passed : (denied[letter] || 'role_forbidden');
       assert.equal(f.reasonOf(answer), expected, `${seat} ${operation}`);
       if (expected === 'ok') { allowed += 1; continue; }
       assert.equal(answer.error.code, FORBIDDEN, `${seat} ${operation}`);
       assert.match(answer.error.request_id, /^request_\d+$/u, `${seat} ${operation}`);
     }
   }
-  // Owner and member: all eighteen. Read-only: the four reads, the three read-state
-  // writes, search, the presence report, the edit history and the pinned list.
-  assert.equal(allowed, 18 + 18 + 11);
+  // Owner and member: the eighteen and three channel operations (delete answers the live refusal). Read-only: the
+  // four reads, the three read-state writes, search, the presence report, the edit history and the pinned list.
+  assert.equal(allowed, 21 + 21 + 11);
 });
 
 test('a refused command reaches no store: a read-only post leaves the channel unchanged', async (t) => {

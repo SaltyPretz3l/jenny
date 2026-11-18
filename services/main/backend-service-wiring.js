@@ -227,8 +227,8 @@ function createBackendServiceWithDeps({
   backendService.ninferRuntime = createNinferRuntime({
     userDataPath: app.getPath('userData'), flags: initialFeatureFlags, platform: processRef.platform, log,
   });
-  // Renderers refetch ninfer.getState() on any change; the payload only says what moved.
-  backendService.ninferRuntime.on('changed', (state) => sendBridgeEvent('ninfer.onChanged', { source: 'runtime', ...state }));
+  // Renderers refetch ninfer.getState() on any change (it also changes the composer's model list).
+  backendService.ninferRuntime.on('changed', (state) => { require('../backend/backend-model-list').clearModelListCaches(backendService); sendBridgeEvent('ninfer.onChanged', { source: 'runtime', ...state }); });
   const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
   backendService.commandSandbox = new DesktopSandboxService({
     userDataPath: app.getPath('userData'),

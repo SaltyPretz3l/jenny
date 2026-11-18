@@ -54,7 +54,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.8.0"
+SERVER_VERSION = "1.8.6"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -140,21 +140,6 @@ def _tools_status_payload(router: Any) -> dict[str, dict[str, Any]]:
     return payload
 
 
-def _configured_mcp_servers_payload(runtime_config: Any) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for config in getattr(runtime_config, "mcp_servers", ()) or ():
-        name = str(getattr(config, "name", "") or "").strip()
-        if not name:
-            continue
-        rows.append(
-            {
-                "name": name,
-                "transport": str(getattr(config, "transport", "") or "").strip() or "stdio",
-            }
-        )
-    return rows
-
-
 def _tools_available_from_status(
     tools_status: dict[str, dict[str, Any]],
 ) -> list[str]:
@@ -196,6 +181,9 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     notification_writer: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    # Imported per call, not at module load: the sidecar's startup import budget.
+    from sidecar.runtime import capabilities_mcp
+
     raw_config = _runtime_initialize_config(params)
     secrets = initialize_secrets(params)
     latch_session_messages(brain_container, False)  # a failed re-initialize keeps it closed
@@ -275,7 +263,7 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
             "tools_status": tools_status,
             "tools_available": tools_available,
             "mcp_servers_connected": list(diagnostics.connected),
-            "mcp_servers": _configured_mcp_servers_payload(runtime_config),
+            "mcp_servers": capabilities_mcp.configured_mcp_servers_payload(runtime_config),
             "mcp_servers_failed": [
                 {"name": failure.name, "code": failure.code, "message": failure.message}
                 for failure in diagnostics.failures
@@ -311,6 +299,7 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
             "hardware_summary": _cached_hardware_summary(),
         },
     }
+    result["result"].update(capabilities_mcp.hosted_files_result(runtime_config, stack.mcp_client))
     if host_policy_is_enforced(runtime_config):
         # Echo the validated declaration so desktop/host lifecycle code can
         # reject a stale or downgraded sidecar instead of accepting the latest
@@ -594,7 +583,10 @@ def initialize_secrets(params: Any) -> dict[str, Any]:
             continue
         secrets[key] = (
             str(value)
-            if key in {"chatgpt_access_token", "openai_compatible_api_key", "api_provider_key"}
+            if key in {
+                "chatgpt_access_token", "openai_compatible_api_key", "api_provider_key",
+                "local_subagent_api_key",
+            }
             else value
         )
     return secrets

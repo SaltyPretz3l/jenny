@@ -70,7 +70,7 @@ test('browser send utils fail clearly when completion has not loaded', () => {
     rendererSendFlowHelpers: flowHelpers,
     rendererSendMessageActions: { createSendMessageActions: fn },
     rendererNavigationIntent: { getOrCreateNavigationIntentOwner: fn },
-    rendererSendOutboxDispatch: { createQueuedSendDispatcher: fn },
+    rendererSendOutboxDispatch: { createQueuedSendDispatcher: fn, createSteerController: fn },
     rendererSendPreflightUtils: { createSendPreflightUtils: fn },
   });
 

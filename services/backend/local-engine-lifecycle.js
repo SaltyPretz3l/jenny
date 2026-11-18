@@ -254,7 +254,10 @@ async function startBackendService(service, options) {
   }
   if (engineUsesOllamaDaemon) {
     onProgress('ollama_start');
-    localEngineReadyPromise = service.ollamaManager.start().catch((error) => {
+    // Ollama also starts for its own models and blob discovery when another
+    // server is the chat engine; there a missing install is not a fault.
+    const optional = !initializeNeedsOllama(service);
+    localEngineReadyPromise = service.ollamaManager.start({ optional }).catch((error) => {
       service._emitServiceLog('WARN', 'ollama.auto_start_failed', {
         message: String(error.message || error),
       });
@@ -339,6 +342,7 @@ async function startBackendService(service, options) {
         onProgress('model_unavailable');
         service._emitServiceLog('WARN', 'backend.start_model_unavailable', {
           model: String(service._modelLifecycle?.requested_model || service.defaultModel || ''),
+          engine: String(service._modelLifecycle?.engine || ''),
           message: String(error?.message || error),
           errorCode: String(error?.error_code || ''),
         });

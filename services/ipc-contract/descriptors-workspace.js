@@ -97,6 +97,7 @@ module.exports = Object.freeze({
   'workspaceGit.discardFiles': invokeMethod('workspace-git:discard-files'),
   'workspaceIde.getState': invokeMethod('workspace-ide:get-state'),
   'workspaceIde.updateSettings': invokeMethod('workspace-ide:update-settings'),
+  'workspaceIde.chooseTerminalStartFolder': invokeMethod('workspace-ide:choose-terminal-start-folder'),
   'workspaceIde.updateState': invokeMethod('workspace-ide:update-state'),
   'workspaceIde.onPreferencesChanged': subscribeMethod('workspace-ide:preferences-changed'), // row 88 D6
   // Row 82 E3 hot exit backups

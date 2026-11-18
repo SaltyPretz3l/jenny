@@ -6,7 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { createFixture } = require('./helpers/team-store-fixture');
-const { AUDIT_KINDS, AUDIT_LIMITS, AuditLog } = require('../../server/team/audit-log');
+const { AUDIT_KINDS, AUDIT_LIMITS, AuditLog, CHAT_AUDIT_KINDS } = require('../../server/team/audit-log');
 const { LOCAL_COMMAND } = require('../../server/team/member-schema');
 
 function entry(overrides = {}) {
@@ -68,7 +68,7 @@ test('entries have exactly the documented fields and persist across a reopen', (
   assert.equal(saved.applied, true);
   assert.equal(saved.store_rev, 4);
   assert.equal(saved.subject_member_id, null);
-  assert.deepEqual(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
+  assert.deepEqual(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 5);
 });
 
 test('entries never hold a key, an address or an invite string; bad entries are refused', (t) => {
@@ -93,7 +93,7 @@ test('entries never hold a key, an address or an invite string; bad entries are 
   assert.throws(() => log.append(Array.from({ length: 9 }, () => entry())), TypeError);
   assert.equal(fs.existsSync(fx.auditFile), false, 'refused entries write nothing');
   assert.ok(AUDIT_KINDS.includes('recovery_used') && AUDIT_KINDS.includes('team_renamed') && AUDIT_KINDS.includes('audit_log_reset')
-    && AUDIT_KINDS.includes('invite_name_taken') && AUDIT_KINDS.length === 14);
+    && AUDIT_KINDS.includes('invite_name_taken') && AUDIT_KINDS.includes('member_profile_changed') && AUDIT_KINDS.length === 15);
 });
 
 // ------------------------------------------------------------------ bounds
@@ -148,7 +148,7 @@ test('an unreadable or invalid audit log is never rewritten and refuses appends'
   const cases = [
     Buffer.from([0x00, 0xff, 0x80]),
     '[]',
-    JSON.stringify({ schema_version: 4, floor_seq: 1, next_seq: 1, entries: [] }),
+    JSON.stringify({ schema_version: 6, floor_seq: 1, next_seq: 1, entries: [] }),
     JSON.stringify({ schema_version: 1, floor_seq: 1, next_seq: 1, entries: [], extra: true }),
     JSON.stringify({ schema_version: 1, floor_seq: 1, next_seq: 2, entries: [{ seq: 1 }] }),
     JSON.stringify({ schema_version: 1, floor_seq: 3, next_seq: 2, entries: [] }),
@@ -403,7 +403,7 @@ test('a schema 1 audit file loads, reads and is written as schema 3 by its first
   assert.equal(log.reconcile(3).marked, 0);
   assert.equal(log.append([project({ store_rev: 4 })]).ok, true);
   const doc = JSON.parse(fs.readFileSync(fx.auditFile, 'utf8'));
-  assert.equal(doc.schema_version, 3);
+  assert.equal(doc.schema_version, 5);
   assert.deepEqual(doc.entries.map((item) => [item.seq, item.kind, item.project_id, item.name]),
     [[1, 'member_admitted', null, 'Mina'], [2, 'project_created', 'project_p1', null]]);
 });
@@ -498,7 +498,7 @@ test('a reconcile that upgrades a schema 1 file at the byte cap stays inside it 
   assert.equal(tail.ok, true, 'the log is still readable');
   assert.deepEqual(tail.entries.map((item) => item.applied), [false, false, false]);
   assert.ok(tail.floor_seq > 10000, 'the oldest entries were dropped to fit');
-  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 5);
 });
 
 test('a schema 2 audit file loads and is written as schema 3; one holding the schema 3 kind is refused', (t) => {
@@ -511,11 +511,59 @@ test('a schema 2 audit file loads and is written as schema 3; one holding the sc
   const log = openLog(fx);
   assert.deepEqual(log.read({ cursor: 0 }).entries, [stored('team_renamed')]);
   assert.equal(log.append([entry()]).ok, true);
-  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 3);
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 5);
 
   const bad = createFixture(t);
   const bytes = JSON.stringify({ schema_version: 2, floor_seq: 1, next_seq: 2, entries: [stored('audit_log_reset')] });
   fs.writeFileSync(bad.auditFile, bytes);
   assert.equal(openLog(bad).read({ cursor: 0 }).error.reason, 'team_unavailable');
   assert.equal(fs.readFileSync(bad.auditFile, 'utf8'), bytes);
+});
+
+// Row 170: schema 4 brought `member_profile_changed`; a schema 3 file loads and is written as schema 4, and an
+// older file holding the new kind is refused and never rewritten.
+test('a schema 3 audit file loads and is written as schema 4; an older one holding the schema 4 kind is refused', (t) => {
+  const stored = (kind) => ({
+    seq: 1, at: 1, kind, actor_member_id: null, subject_member_id: null, subject_device_id: null,
+    name: null, detail: null, store_rev: 3, applied: true, project_id: null,
+  });
+  const fx = createFixture(t);
+  fs.writeFileSync(fx.auditFile, JSON.stringify({ schema_version: 3, floor_seq: 1, next_seq: 2, entries: [stored('audit_log_reset')] }));
+  const log = openLog(fx);
+  assert.deepEqual(log.read({ cursor: 0 }).entries, [stored('audit_log_reset')]);
+  assert.equal(log.append([entry({ kind: 'member_profile_changed', detail: 'name,label' })]).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 5);
+  for (const version of [2, 3]) {
+    const bad = createFixture(t);
+    const bytes = JSON.stringify({ schema_version: version, floor_seq: 1, next_seq: 2, entries: [stored('member_profile_changed')] });
+    fs.writeFileSync(bad.auditFile, bytes);
+    assert.equal(openLog(bad).read({ cursor: 0 }).error.reason, 'team_unavailable', String(version));
+    assert.equal(fs.readFileSync(bad.auditFile, 'utf8'), bytes);
+  }
+});
+
+// Row 173: schema 5 brought the chat channel kinds; a schema 4 file loads and is written as schema 5, and an older
+// file holding one of them is refused and never rewritten.
+test('a schema 4 audit file loads and is written as schema 5; an older one holding a chat channel kind is refused', (t) => {
+  const stored = (kind) => ({
+    seq: 1, at: 1, kind, actor_member_id: null, subject_member_id: null, subject_device_id: null,
+    name: null, detail: null, store_rev: 3, applied: true, project_id: null,
+  });
+  assert.deepEqual(CHAT_AUDIT_KINDS, ['chat_channel_archived', 'chat_channel_unarchived', 'chat_channel_deleted']);
+  const fx = createFixture(t);
+  fs.writeFileSync(fx.auditFile, JSON.stringify({ schema_version: 4, floor_seq: 1, next_seq: 2,
+    entries: [stored('member_profile_changed')] }));
+  const log = openLog(fx);
+  assert.deepEqual(log.read({ cursor: 0 }).entries, [stored('member_profile_changed')]);
+  for (const kind of CHAT_AUDIT_KINDS) {
+    assert.equal(log.append([entry({ kind, name: 'Design', detail: 'channel_id=chan_c_abcdefghijklmnop' })]).ok, true, kind);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(fx.auditFile, 'utf8')).schema_version, 5);
+  for (const version of [2, 3, 4]) {
+    const bad = createFixture(t);
+    const bytes = JSON.stringify({ schema_version: version, floor_seq: 1, next_seq: 2, entries: [stored('chat_channel_deleted')] });
+    fs.writeFileSync(bad.auditFile, bytes);
+    assert.equal(openLog(bad).read({ cursor: 0 }).error.reason, 'team_unavailable', String(version));
+    assert.equal(fs.readFileSync(bad.auditFile, 'utf8'), bytes);
+  }
 });

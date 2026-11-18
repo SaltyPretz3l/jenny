@@ -104,6 +104,8 @@
     let block = null;
     let paletteKey = '';
     let disposed = false;
+    let hidden = false;
+    let owed = false; // a theme change the hidden page skipped
 
     const keyFor = (scene) => `${paletteKey}\u0000${scene}`;
     const wanted = (scene) => Array.from(holders.values()).some((holder) => holder.scene === scene);
@@ -164,6 +166,7 @@
 
     function onTheme() {
       if (disposed || !host) return;
+      if (hidden) { owed = true; return; }
       const next = readPaletteKey();
       if (next === paletteKey) return;
       paletteKey = next;
@@ -394,6 +397,11 @@
       release,
       ensureHost,
       outline,
+      /** The page was hidden (false) or shown again (true): a theme change is swept once, when it is back. */
+      shown(isShown) {
+        hidden = !isShown;
+        if (isShown && owed) { owed = false; onTheme(); }
+      },
       dispose,
       /** For the tests: how many pictures are cached, and how many scenes wait. */
       sizes: () => ({ cached: cache.size, waiting: queue.length, drawing: job ? job.scene : '' }),

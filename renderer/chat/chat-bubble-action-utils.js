@@ -177,9 +177,11 @@
 
     // F36: the latest plan decision between a message and the user message
     // before it (Build it resolves inside the turn and adds no user message).
+    // A steer row is never a replay's prompt.
+    const isOpeningUserMessage = (entry) => normalizeString(entry?.role) === 'user' && normalizeString(entry?.kind) !== 'steer';
     const readPlanState = (fromIndex) => {
       for (let index = fromIndex; index >= 0; index -= 1) {
-        if (normalizeString(list[index]?.role) === 'user') return { state: '', userIndex: index };
+        if (isOpeningUserMessage(list[index])) return { state: '', userIndex: index };
         if (normalizeString(list[index]?.kind) === 'plan_document') {
           const plan = list[index]?.plan_document;
           return { state: normalizeString(plan?.state || plan?.transition), userIndex: -1 };
@@ -191,7 +193,7 @@
     const buildPrompt = jt('chat.planDocument.buildAcceptedMessage', 'Build the accepted plan.');
     let sourceIndex = -1;
     for (let index = targetIndex - 1; index >= 0; index -= 1) {
-      if (normalizeString(list[index]?.role) === 'user') {
+      if (isOpeningUserMessage(list[index])) {
         sourceIndex = index;
         break;
       }
@@ -278,6 +280,7 @@
     const role = normalizeString(source.role);
     const messageId = normalizeId(source.id);
     const kind = normalizeString(source.kind);
+    const isSteer = kind === 'steer';
     const status = normalizeMessageStatus(source);
     const latestReplyAssistantMessageId = normalizeId(settings.latestReplyAssistantMessageId);
     const followUpActionsBusy = settings.followUpActionsBusy === true;
@@ -340,7 +343,7 @@
       }
     }
     // Pin to board (row 150 slice C5): only when the caller says the `project_boards` flag is on, so a row without it is unchanged.
-    const pinVisible = settings.pinToBoard === true && !!messageId && !!normalizeString(source.content)
+    const pinVisible = settings.pinToBoard === true && !isSteer && !!messageId && !!normalizeString(source.content)
       && (isUser || isReplyEligibleAssistantMessage(source));
     return {
       role,
@@ -356,7 +359,7 @@
       },
       actions: {
         edit: {
-          visible: isUser && !applicationTurnOf(source),
+          visible: isUser && !isSteer && !applicationTurnOf(source),
           enabled: editEnabled,
           reason: editReason,
         },

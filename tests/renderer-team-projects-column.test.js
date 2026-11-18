@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { P1, P2, P3, S1, S2, OTHER, project, listAnswer, rulesAnswer, openProjects, projectRow, region, flush, memberTeam } = require('./helpers/team-project-renderer-host');
-const { shell, heldAnswers } = require('./helpers/team-settings-harness');
+const { shell, heldAnswers, chatPush, chatChannel } = require('./helpers/team-settings-harness');
 
 const sectionOrder = (h) => [...h.view.q('[data-team-region="lists"]').children].map((el) => el.className.split(' ')[0]);
 const kids = (h, id) => h.view.q(`[data-team-project="${id}"]`);
@@ -338,4 +338,39 @@ test('fix list T6: the narrow layout (E43): a project or conversation opens the 
   h.view.q(`[data-session-id="${S1}"]`).click();
   await flush();
   assert.equal(screen(), 'channel');
+});
+
+// Owner report (team overview B3): a project channel the chat rows do not hold yet would open #team; it is drawn, not
+// as a link, until the rows hold it.
+test('a project channel the chat rows do not hold is drawn as a row that is not a link, then a normal row once listed', async (t) => {
+  const { h } = await openProjects();
+  t.after(h.restore);
+  const loading = () => kids(h, P2).querySelector(`[data-team-channel-loading="chan_${P2}"]`);
+  assert.equal(kids(h, P2).querySelector(`[data-team-channel="chan_${P2}"]`), null, 'no link to a channel that cannot open');
+  assert.equal(loading().getAttribute('aria-disabled'), 'true');
+  assert.equal(loading().getAttribute('title'), 'This channel is still loading.');
+  assert.ok(loading().textContent.includes('palette-tools'), 'named by the project');
+  const shown = () => h.view.q('[data-team-channel][aria-current="true"]')?.dataset.teamChannel ?? null;
+  const before = shown();
+  loading().click();
+  await flush();
+  assert.equal(shown(), before, 'a click opens nothing');
+  chatPush(h, { type: 'channels', channels: [chatChannel(), chatChannel({ channel_id: 'chan_' + P1, kind: 'project' }),
+    chatChannel({ channel_id: 'chan_' + P2, kind: 'project' })] });
+  await flush();
+  assert.ok(kids(h, P2).querySelector(`[data-team-channel="chan_${P2}"]`), 'a normal row once the chat rows hold it');
+  assert.equal(loading(), null);
+});
+
+test('row 175 F9: the counts main seeded from the host list show at the first draw; question batches are kept per conversation', async (t) => {
+  const { h, push } = await openProjects({ list: listAnswer({ activity: { [S1]: { approvals: 2, running: false, questions: 1 } } }) });
+  t.after(h.restore);
+  const row = () => h.view.q(`[data-session-id="${S1}"]`);
+  assert.equal(label(row()), 'Palette loader cleanup, 2 approvals waiting', 'known before any event');
+  const { getProjectStore } = require('../renderer/team/renderer-team-project-store');
+  assert.deepEqual(getProjectStore().team(OTHER).activity[S1], { approvals: 2, running: false, questions: 1 });
+  push({ kind: 'activity', session_id: S1, running: false, approvals: 0, questions: 1 });
+  assert.deepEqual(getProjectStore().team(OTHER).activity[S1], { running: false, approvals: 0, questions: 1 });
+  push({ kind: 'activity', session_id: S1, running: false, approvals: 0 });
+  assert.equal(getProjectStore().team(OTHER).activity[S1], undefined);
 });

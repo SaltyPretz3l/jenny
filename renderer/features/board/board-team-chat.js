@@ -15,6 +15,9 @@
  * change; and when what had the focus goes (the conversation shown deleted, the column
  * collapsed or left with the picker open), the focus moves to the project button, or the page's first control, once the page has drawn.
  *
+ * "Open in Team" (header, beside History) opens the conversation shown in the Team tab through the Team notifier's conversation intent
+ * (`rendererTeamNotify.request`); it is greyed with the reason while no conversation is shown or the team is offline.
+ *
  * createTeamChat({ ctx, windowRef, jt, data }) -> { sync(), focus(), rescue(), push(change), refresh(change), dispose() }. sync() does nothing when the
  * project, the column and the conversation shown are unchanged. */
 (function (root, factory) {
@@ -28,6 +31,7 @@
 
   const CHEVRON = '<svg class="board-team-conv__chevron" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>';
   const HISTORY = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>';
+  const OPEN_TEAM = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5"/></svg>';
   const COLLAPSE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 4 4-4 4"/></svg>';
   const chosen = new WeakMap(); // window -> Map(team|project -> session id): the conversation last chosen (memory only)
   const ROWS_MAX = 200; // conversations offered in the picker, newest first
@@ -39,6 +43,7 @@
     let aside = null;
     let trigger = null;
     let historyBtn = null;
+    let openTeamBtn = null;
     let label = null;
     let viewersEl = null;
     let liveEl = null;
@@ -97,10 +102,13 @@
         ariaHaspopup: 'menu', ariaExpanded: false, dataset: { 'board-team-conv': 'pick' }, trustedHtml: '<span class="ide-chat-dock-label"></span>' + CHEVRON }));
       const collapse = jt('board.team.collapseChat', 'Collapse chat');
       const history = jt('board.team.history.button', 'History');
-      aside.querySelector('.ide-chat-dock-header-actions').insertAdjacentHTML('beforeend', inv().actionButton({ plain: true, className: 'ide-chat-dock-action', ariaLabel: history,
+      const openTeam = jt('board.team.openInTeam', 'Open in Team');
+      aside.querySelector('.ide-chat-dock-header-actions').insertAdjacentHTML('beforeend', inv().actionButton({ plain: true, className: 'ide-chat-dock-action', ariaLabel: openTeam,
+        title: openTeam, dataset: { 'board-team-conv': 'open-team' }, trustedHtml: OPEN_TEAM }) + inv().actionButton({ plain: true, className: 'ide-chat-dock-action', ariaLabel: history,
         title: history, dataset: { 'board-team-conv': 'history' }, trustedHtml: HISTORY }) + inv().actionButton({ plain: true, className: 'ide-chat-dock-action',
         ariaLabel: collapse, title: collapse, dataset: { 'board-team-conv': 'collapse' }, trustedHtml: COLLAPSE }));
       historyBtn = aside.querySelector('[data-board-team-conv="history"]');
+      openTeamBtn = aside.querySelector('[data-board-team-conv="open-team"]');
       trigger = aside.querySelector('[data-board-team-conv="pick"]');
       label = trigger.querySelector('.ide-chat-dock-label');
       viewersEl = aside.querySelector('.board-team-conv__viewers');
@@ -120,7 +128,7 @@
       source = null;
       if (pickerOpen) { const menu = data.contextMenu(); if (menu) menu.hide({ restoreFocus: false }); pickerOpen = false; }
       if (aside) { aside.removeEventListener('click', onClick); aside.removeEventListener('keydown', onKeyDown); aside.remove(); }
-      aside = trigger = historyBtn = label = viewersEl = liveEl = body = emptyEl = null;
+      aside = trigger = historyBtn = openTeamBtn = label = viewersEl = liveEl = body = emptyEl = null;
       key = '';
       session = '';
       boardSeen = '';
@@ -208,6 +216,26 @@
       if (historyBtn.title !== title) historyBtn.title = title;
     }
 
+    // Open in Team needs a conversation shown and the team online; otherwise it is greyed with the reason.
+    function teamOnline(teamId) {
+      const store = windowRef.rendererTeamStore && windowRef.rendererTeamStore.getTeamStore();
+      const row = store ? ((store.snapshot() || {}).teams || []).find((team) => team && team.team_id === teamId) : null;
+      return Boolean(row && row.state === 'online');
+    }
+    function drawOpenTeamButton(project, id) {
+      let why = '';
+      if (!id) why = jt('board.team.openInTeamNone', 'There is no conversation to open.');
+      else if (!teamOnline(project.team.id)) why = jt('board.team.openInTeamOffline', 'The team is offline. Open it in the Team tab when it is back.');
+      const title = why || jt('board.team.openInTeam', 'Open in Team');
+      if (openTeamBtn.disabled !== Boolean(why)) openTeamBtn.disabled = Boolean(why);
+      if (openTeamBtn.title !== title) openTeamBtn.title = title;
+    }
+    function openInTeam(project) {
+      const notify = windowRef.rendererTeamNotify;
+      if (!session || !notify || typeof notify.request !== 'function') { ctx.notify(jt('board.team.openInTeamFailed', 'The Team tab could not be opened.'), { tone: 'warning' }); return; }
+      notify.request({ kind: 'conversation', teamId: project.team.id, projectId: project.id, sessionId: session });
+    }
+
     function draw(project) {
       watchPresence();
       drawHistoryButton();
@@ -216,6 +244,7 @@
       const id = currentOf(project.team.id, project.id, rows);
       const title = id ? titleOf(rows, id) : jt('board.team.conversations', 'Conversations');
       if (label.textContent !== title) { label.textContent = title; trigger.setAttribute('title', title); }
+      drawOpenTeamButton(project, id);
       const stale = !id && emptyEl && emptyEl.nextElementSibling && emptyEl.nextElementSibling.disabled !== Boolean(reason());
       if (id !== session || (!id && !emptyEl) || stale) mountConversation(project, id);
       else if (conv && String(ctx.getOpenBoardId() || '') !== boardSeen) { boardSeen = String(ctx.getOpenBoardId() || ''); conv.update({ type: 'board', team_id: project.team.id }); }
@@ -267,6 +296,7 @@
       switch (target.getAttribute('data-board-team-conv')) {
         case 'pick': openPicker(project); break;
         case 'new': void create(project); break;
+        case 'open-team': openInTeam(project); break;
         case 'history': data.openHistory(); break;
         case 'collapse': ctx.chat.setOpen(false); sync(); break;
         default:

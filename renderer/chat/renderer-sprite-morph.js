@@ -187,7 +187,8 @@
         el.style.transform = '';
         el.style.opacity = '';
       }
-      void dot.offsetWidth;
+      // Under display:none nothing transitions, so no (costly) flush is needed.
+      if (!dot.closest?.('.hidden, [hidden]')) void dot.offsetWidth;
       for (const el of els) el.style.transition = '';
       options.onLoopsReleased?.(); // CSS loops just restarted: a mirror re-aligns its phase here
     }

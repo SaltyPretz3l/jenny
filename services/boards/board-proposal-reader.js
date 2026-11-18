@@ -331,7 +331,7 @@ function readBlock(ctx, body, blockIndex) {
   for (const change of out) {
     const name = change.asName;
     delete change.asName;
-    if (!name || used[name] || change.state !== 'pending' || MADE_UP_RE.test(name)) continue;
+    if (!name || used[name] || change.state !== 'pending' || name.length === 1 || MADE_UP_RE.test(name)) continue; // one letter is a name: no sentence ends "as c"
     const op = change.ops && change.ops[0];
     const holder = op && op.op === 'card.add' && op.card.kind === 'note' ? op.card.data : op && op.op === 'group.add' ? op.group : null;
     const field = holder && (op.op === 'group.add' ? 'title' : 'text');

@@ -14,6 +14,11 @@
 // revision only moves past revisions it holds: a live event advances it only
 // when it was level with the channel, so revisions owed a sync stay owed.
 //
+// Row 173: a `team` and a `channel` row also hold `name`, `topic`, `created_by`, `archived_by` and `changes` (an older
+// host's row takes the defaults, a present field of the wrong shape makes the row invalid; chat-shapes.js). A
+// `team_chat_channel` event `updated`, `archived` or `unarchived` replaces them under the usual revision rules, and
+// `removed` drops the row.
+//
 // A channel row also holds `reads` (another listed member's read position, at most one each, by member id) and
 // `pin_count` (null while unknown). An overview replaces both; `team_chat_read` moves one position up, or this
 // member's own back and forth like an answered read; a message or channel event not older than the channel's
@@ -38,7 +43,7 @@
 
 const { LIMITS, channelKind, dmChannelId, isCount, isMemberId, isParticipantList, isPositive, validateMessage } = require('../host/team-chat-schema');
 const { byMemberId, checkedRead, checkedReads, isPinCount } = require('./chat-live');
-const { isNotify } = require('./chat-shapes');
+const { channelFieldsCopy, checkedChannelFields, isNotify } = require('./chat-shapes');
 const counts = require('./chat-thread-counts');
 
 const CHANNELS_MAX = LIMITS.CHANNELS_MAX;
@@ -50,6 +55,11 @@ const isOwnParticipants = (value, memberId) => isParticipantList(value.participa
   && dmChannelId(value.participants) === value.channel_id;
 
 const AUDIENCE_MAX = 8;
+
+// The kinds whose rows carry the channel fields (row 173).
+const hasChannelFields = (kind) => kind === 'team' || kind === 'channel';
+// The events that replace those fields.
+const FIELD_REASONS = new Set(['updated', 'archived', 'unarchived']);
 
 // A project row's audience as this member keeps it, or undefined: ascending member ids, this member among them.
 function checkedAudience(value, memberId) {
@@ -64,7 +74,8 @@ function isOverviewChannel(value, memberId) {
     && typeof value.archived === 'boolean' && isCount(value.rev) && isCount(value.last_seq)
     && isCount(value.floor_seq) && isCount(value.last_read_seq) && isNotify(value.notify) && isCount(value.unread)
     && typeof value.unread_capped === 'boolean' && typeof value.mention === 'boolean'
-    && (value.kind !== 'dm' || isOwnParticipants(value, memberId));
+    && (value.kind !== 'dm' || isOwnParticipants(value, memberId))
+    && (!hasChannelFields(value.kind) || checkedChannelFields(value) !== null);
 }
 
 // A row from its known fields only, holding the given `reads` list and `pin_count` (and a dm's own copy of
@@ -72,6 +83,7 @@ function isOverviewChannel(value, memberId) {
 const channelRow = (value, reads, pinCount) => ({ channel_id: value.channel_id, kind: value.kind, archived: value.archived,
   rev: value.rev, last_seq: value.last_seq, floor_seq: value.floor_seq, last_read_seq: value.last_read_seq, notify: value.notify,
   unread: value.unread, unread_capped: value.unread_capped, mention: value.mention, reads, pin_count: pinCount,
+  ...(hasChannelFields(value.kind) ? channelFieldsCopy(value) : {}),
   ...(value.kind === 'dm' ? { participants: [...value.participants] } : {}),
   ...(value.kind === 'project' && Array.isArray(value.audience) ? { audience: [...value.audience] } : {}) });
 
@@ -187,7 +199,8 @@ function createChatCache({ memberId }) {
         if (next.size >= CHANNELS_MAX) break;
         if (!isOverviewChannel(value, memberId) || next.has(value.channel_id)) continue;
         const threads = counts.heldThreads(value);
-        next.set(value.channel_id, { ...channelRow({ ...value, audience: checkedAudience(value, memberId) }, checkedReads(value.reads, memberId),
+        const fields = hasChannelFields(value.kind) ? checkedChannelFields(value) : {};
+        next.set(value.channel_id, { ...channelRow({ ...value, ...fields, audience: checkedAudience(value, memberId) }, checkedReads(value.reads, memberId),
           isPinCount(value.pin_count) ? value.pin_count : null), threads, own_mention: counts.ownMentionOf(value, threads) });
         for (const rootId of threads ? threads.keys() : []) known.learn(value.channel_id, rootId, true, false);
       }
@@ -270,14 +283,26 @@ function createChatCache({ memberId }) {
       return { status: 'applied', changed: fresh || cachedChange ? record : null };
     },
 
-    /** One `team_chat_channel` event: { status, reload } (reload: the floor passed the cached window). */
+    /**
+     * One `team_chat_channel` event: { status, reload, removed? } (reload: the floor passed the cached window;
+     * removed: the row and its open entry are gone, so the channel list changed).
+     */
     applyChannel(event) {
       const channel = channels.get(event.channel_id);
       // A conversation's `created` is news only when its row is not cached yet (chatDmOpen's resync may be first).
       if (channel && event.reason === 'created') return { status: 'applied', reload: false };
-      if (!channel || !isPositive(event.channel_rev) || (event.reason !== 'pruned' && event.reason !== 'archived')) {
-        return { status: 'gap' };
+      // A removal is final (the id is never reused): the row goes whatever revision it held.
+      if (channel && event.reason === 'removed') {
+        channels.delete(event.channel_id);
+        open.delete(event.channel_id);
+        return { status: 'applied', reload: false, removed: true };
       }
+      // Fields replace on a team or channel row, checked first (a wrong shape is a gap); a project or direct row
+      // only follows `pruned` and `archived`.
+      const ownsFields = Boolean(channel) && hasChannelFields(channel.kind);
+      const fields = ownsFields && FIELD_REASONS.has(event.reason) ? checkedChannelFields(event, true) : null;
+      const applies = event.reason === 'pruned' || (event.reason === 'archived' && !ownsFields) || fields !== null;
+      if (!channel || !isPositive(event.channel_rev) || !applies) return { status: 'gap' };
       const before = channel.rev;
       if (event.channel_rev > before + 1) return { status: 'gap' };
       if (event.channel_rev >= before && isPinCount(event.pin_count)) channel.pin_count = event.pin_count;
@@ -286,7 +311,10 @@ function createChatCache({ memberId }) {
         const entry = open.get(event.channel_id);
         if (entry && entry.rev === before) entry.rev = event.channel_rev;
       }
+      // An event older than the held revision never replaces what a later one set.
+      if (fields && event.channel_rev >= before) Object.assign(channel, fields);
       if (event.reason === 'archived') channel.archived = true;
+      else if (event.reason === 'unarchived' && event.channel_rev >= before) channel.archived = false;
       if (isCount(event.floor_seq) && event.floor_seq > channel.floor_seq) {
         channel.floor_seq = event.floor_seq;
         // Pruned messages no longer count: at most one unread per seq still held after the last read.

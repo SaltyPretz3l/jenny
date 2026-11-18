@@ -136,7 +136,8 @@ test('each decision is the deciding member\'s batch and one audit entry, written
   assert.ok((await h.get()).cards[uid(2)], 'a rejected removal removes nothing');
   assert.deepEqual(h.seen[2], { kind: 'board_proposal_rejected', rev: 3, proposals: afterEdit });
 
-  const base = { project_id: P, session_id: SESSION, board_id: h.board.id, prompter_member_id: ALICE, tool_name: null, decision: null };
+  const base = { project_id: P, session_id: SESSION, board_id: h.board.id, prompter_member_id: ALICE, tool_name: null, decision: null,
+    approval_id: null, call_id: null, plan_decision: null };
   assert.deepEqual(h.entries().map(({ seq: _seq, at: _at, ...entry }) => entry), [
     { ...base, kind: 'board_proposal_accepted', actor_member_id: BOB, detail: { change: 0, count: 2 } },
     { ...base, kind: 'board_proposal_accepted', actor_member_id: CAROL, detail: { change: 3, count: 1 } },

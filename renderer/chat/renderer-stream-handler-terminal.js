@@ -205,6 +205,8 @@
       isPostworkContinuationValid,
     });
     const { beginMessageUpdate, createTerminalContinuation } = continuationOwner;
+    // Row 180: offered items return to ready before the drain.
+    const releaseOfferedSteers = (payload) => { try { state.sendSteerController?.handleTerminal?.(payload); } catch (_error) { /* queue keeps its own state */ } };
     function resolvePayloadTurnId(payload) {
       return normalizeId(payload?.turnId) || normalizeId(payload?.turn_id)
         || normalizeId(payload?.streamId || payload?.requestId || payload?.request_id);
@@ -626,6 +628,7 @@
     }
 
     async function handleComplete(payload, callOptions = {}) {
+      releaseOfferedSteers(payload);
       completeThinkingIndicator(payload.sessionId, payload.streamId);
       const durability = normalizeUnsavedDurability(payload.durability);
       const draftCount = Number.isInteger(payload.discardedDrafts?.count) ? payload.discardedDrafts.count : 0;
@@ -801,6 +804,7 @@
     }
 
     async function handleError(payload, callOptions = {}) {
+      releaseOfferedSteers(payload);
       resetThinkingIndicator(payload.sessionId, payload.streamId);
       const durability = normalizeUnsavedDurability(payload.durability);
       let index = ensurePendingStreamEntry(payload);

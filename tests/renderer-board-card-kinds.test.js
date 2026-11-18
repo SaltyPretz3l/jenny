@@ -133,6 +133,27 @@ test('a part that throws costs only itself: the others run and the failure is lo
   ]);
 });
 
+test('setShown reaches every part, a throwing part costs only itself, and a repeated value is ignored', () => {
+  const logs = [];
+  const seen = [];
+  const factories = new Map([
+    ['broken', () => ({ shown() { throw new Error('boom'); } })],
+    ['fine', () => ({ shown: (value) => seen.push(value) })],
+    ['mute', () => ({})],
+  ]);
+  const kinds = cardKinds.createBoardCardKinds({ factories, log: (level, event, data) => logs.push(`${event}:${data.name}:${data.step}`) });
+  kinds.setShown(true);
+  assert.deepEqual(seen, [], 'shown from the start: nothing to say');
+  kinds.setShown(false);
+  kinds.setShown(false);
+  kinds.setShown(true);
+  assert.deepEqual(seen, [false, true]);
+  assert.deepEqual(logs, ['board.card_kind_failed:broken:shown', 'board.card_kind_failed:broken:shown']);
+  kinds.dispose();
+  kinds.setShown(false);
+  assert.deepEqual(seen, [false, true], 'nothing after dispose');
+});
+
 test('activate asks the parts of the card kind in order and stops at the first that takes it', () => {
   const asked = [];
   const factories = new Map([

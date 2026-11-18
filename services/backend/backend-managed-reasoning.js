@@ -4,7 +4,14 @@ const {
   normalizeManagedReasoningEffort,
   normalizeModelCapabilities,
 } = require('./backend-service-utils');
-const { normalizeReasoningEffortForModel } = require('../../reasoning-effort-profiles');
+const { normalizeReasoningEffort, normalizeReasoningEffortForModel } = require('../../reasoning-effort-profiles');
+
+// Row 172 finding 2: a host whose turns go through a turn route (the team pool) asks for the pool's alias, which names
+// no model, so nothing here can tell whether the model the pool leases thinks: the stored effort rides the request and
+// the pool gateway drops it for a leased model that does not (server/team/pool-gateway.js `dropThinking`).
+function routedPoolHost(service) {
+  return service?.hostMode === 'server' && Boolean(service.turnRoute);
+}
 
 // The catalog's engine for a listed model, then the running backend's for the
 // model it serves; a bare llama-server alias would otherwise infer as Ollama.
@@ -73,6 +80,7 @@ function findCatalogEntry(service, modelId, engineType) {
 // The effort one outgoing request carries: the stored choice clamped to the
 // turn's model and engine. Never persisted (gate C4 F5).
 function resolveRequestReasoningEffort(service, reasoningEffort, requestedModel = '', requestedEngine = '') {
+  if (routedPoolHost(service)) return normalizeReasoningEffort(reasoningEffort);
   const preferredModel = String(requestedModel || '').trim();
   const activeModel = String(
     service.currentStatus?.model

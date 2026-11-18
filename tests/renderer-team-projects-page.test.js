@@ -140,6 +140,9 @@ test('files_supported false: the sentence, no upload or download; a refusal that
   assert.match(text(pageSection(h, 'files')), /This team’s host cannot give Jenny confined access to files yet, so Jenny can talk in this project but cannot read, change, upload or download its files\. Conversations and the channel work\./);
   assert.equal(act(h, 'upload'), null);
   assert.equal(act(h, 'download'), null);
+  // Row 175 round 2 (D13): Browse files stays, greyed, with the same sentence as its reason.
+  assert.equal(act(h, 'browse-files').disabled, true);
+  assert.match(act(h, 'browse-files').getAttribute('title'), /^This team’s host cannot give Jenny confined access to files yet/);
   act(h, 'rename').click();
   act(h, 'rename-save').click();
   await flush();
@@ -351,4 +354,70 @@ test('the owner\'s delete of a project they are not in has no count, and the hea
   assert.match(confirm, /Delete release-notes\? Its conversations are deleted and its channel is archived for everyone\./);
   assert.doesNotMatch(confirm, /\d+ conversation/);
   assert.equal(owner.h.window.document.activeElement, region(owner.h).querySelector('[data-project-action="delete-cancel"]'), 'the confirm\'s Cancel has the focus');
+});
+
+// Row 175 F11 (Team side): a project's boards, listed on its page, open in the Board tab.
+const BOARD_ROWS = (n) => Array.from({ length: n }, (_x, i) => ({ id: `board_${i}`, name: i === 0 ? 'Plan <b>' : `Board ${i}`, rev: 1 }));
+function boardsOn(t, { flag = true, asked = true } = {}) {
+  const calls = { requests: [], views: [] };
+  globalThis.rendererTopNavShellController = { openBoardView: (options) => { calls.views.push(options || null); return flag; } };
+  globalThis.rendererBoardTeam = { requestOpen: (request) => { calls.requests.push(request); return asked; } };
+  t.after(() => { delete globalThis.rendererTopNavShellController; delete globalThis.rendererBoardTeam; });
+  return calls;
+}
+
+test('the Boards line: the project\'s boards by name, each with Open, which asks the Board page and switches to it', async (t) => {
+  const calls = boardsOn(t);
+  const { h } = await openPage(P1, { answers: { boardList: { ok: true, boards: BOARD_ROWS(3) } } });
+  t.after(h.restore);
+  assert.deepEqual(h.sent('boardList').map((c) => c.payload), [{ team_id: OTHER, project_id: P1 }]);
+  assert.deepEqual(sections(h).slice(0, 3), ['files', 'boards', 'members']);
+  const rows = [...pageSection(h, 'boards').querySelectorAll('li')];
+  assert.deepEqual(rows.map((li) => li.querySelector('.team-set-person__name').textContent), ['Plan <b>', 'Board 1', 'Board 2'], 'names are text');
+  assert.equal(pageSection(h, 'boards').querySelector('.team-set-count').textContent, '3');
+  const open = act(h, 'board-open', '[data-board-id="board_1"]');
+  assert.deepEqual([open.textContent.trim(), open.disabled, open.title], ['Open', false, 'Open Board 1 in the Board tab']);
+  open.click();
+  await flush();
+  assert.deepEqual(calls.requests, [{ teamId: OTHER, projectId: P1, boardId: 'board_1' }]);
+  assert.deepEqual(calls.views.slice(-1), [null], 'the real switch, not the dry ask');
+  assert.equal(pageSection(h, 'boards').querySelector('.team-set-note'), null);
+});
+
+test('the Boards line: nothing without boards, with the Board tab off or past 20, and a refused open says so', async (t) => {
+  boardsOn(t);
+  const none = await openPage(P1, { answers: { boardList: { ok: true, boards: [] } } });
+  assert.equal(pageSection(none.h, 'boards'), null);
+  none.h.restore();
+  const failed = await openPage(P1, { answers: { boardList: { ok: false, error: { reason: 'team_unavailable' } } } });
+  assert.equal(pageSection(failed.h, 'boards'), null, 'an unread list shows nothing');
+  failed.h.restore();
+  const many = await openPage(P1, { answers: { boardList: { ok: true, boards: BOARD_ROWS(30) } } });
+  assert.equal(pageSection(many.h, 'boards').querySelectorAll('li').length, 20);
+  many.h.restore();
+  const off = boardsOn(t, { flag: false });
+  const closed = await openPage(P1, { answers: { boardList: { ok: true, boards: BOARD_ROWS(2) } } });
+  t.after(closed.h.restore);
+  assert.equal(pageSection(closed.h, 'boards'), null, 'the Board flag is off');
+  assert.ok(off.views.every((v) => v && v.dry === true));
+  const refused = boardsOn(t, { asked: false });
+  const page = await openPage(P1, { answers: { boardList: { ok: true, boards: BOARD_ROWS(2) } } });
+  t.after(page.h.restore);
+  act(page.h, 'board-open', '[data-board-id="board_0"]').click();
+  await flush();
+  assert.equal(refused.views.every((v) => v && v.dry === true), true, 'no switch after a refused request');
+  assert.match(text(pageSection(page.h, 'boards')), /The Board tab could not be opened\. Try again\./);
+});
+
+test('the Boards line: while the team is offline its boards are greyed with the reason', async (t) => {
+  boardsOn(t);
+  const { h, push } = await openPage(P1, { answers: { boardList: { ok: true, boards: BOARD_ROWS(2) } } });
+  t.after(h.restore);
+  assert.equal(act(h, 'board-open', '[data-board-id="board_0"]').disabled, false, 'online: usable');
+  h.store.seed({ teams: [memberTeam({ state: 'offline' })] });
+  push({ kind: 'projects', ...listAnswer() });
+  await flush();
+  const open = act(h, 'board-open', '[data-board-id="board_0"]');
+  assert.deepEqual([open.disabled, open.title], [true, 'Boards open when the team is online.']);
+  assert.match(text(pageSection(h, 'boards')), /Boards open when the team is online\./);
 });

@@ -332,3 +332,36 @@ test('the named board under a sent prompt opens that board in the chat\'s projec
   await h.flush();
   assert.equal(boards.length, 1, 'and nothing opens');
 });
+
+// Post to Team (row 175 D5): the answer's hover action posts the selection inside it, else the whole answer.
+test('Post to Team: the state follows the Team flag and the module; a click opens the dialog with the selection or the answer', (t) => {
+  const dom = new JSDOM(`<article class="chat-entry" data-message-id="m1"><div id="body">Hello big world</div>
+    <div class="chat-hover-row" data-hover-row="true"><button id="team" data-message-action="post-to-team" data-message-id="m1">Post</button></div></article><p id="elsewhere">Elsewhere</p>`, { url: 'https://jenny.invalid/' });
+  t.after(() => { dom.window.close(); delete globalThis.rendererChatPostToTeam; });
+  const { window } = dom;
+  const doc = window.document;
+  const answer = { id: 'm1', role: 'assistant', content: 'Hello big world' };
+  const state = { currentSessionId: 's1', features: { featureFlags: { team: true } }, sessions: [], messagesBySession: new Map([['s1', [answer]]]) };
+  const bindings = pinModule.createMessageActionBindings({ state, doc, appendClientLog() {}, showComposerActionError() {} });
+  const click = () => bindings.handleMessageActionClick({ target: doc.getElementById('team'), preventDefault() {}, stopPropagation() {} });
+  // Module not loaded (no team joined yet): greyed with the Join-a-team reason; a click opens nothing and says nothing.
+  assert.deepEqual(pinModule.postToTeamState(answer), { visible: true, enabled: false, reason: 'Join a team to post there.' });
+  assert.equal(click(), true);
+  const opened = [];
+  let usable = true;
+  globalThis.rendererChatPostToTeam = { getDefault: (deps) => ({ availability: () => (usable ? { ok: true, reason: '' } : { ok: false, reason: 'You are offline.' }), open: (args) => { opened.push([deps.canQueue, args.text, args.trigger.id]); return usable; } }) };
+  assert.deepEqual(pinModule.postToTeamState(answer), { visible: true, enabled: true, reason: '' });
+  assert.equal(pinModule.postToTeamState({ id: 'm2', role: 'assistant', content: '  ' }), null, 'no text, no button');
+  click();
+  const range = doc.createRange();
+  range.setStart(doc.getElementById('body').firstChild, 6);
+  range.setEnd(doc.getElementById('body').firstChild, 9);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+  click();
+  assert.deepEqual(opened, [[true, 'Hello big world', 'team'], [true, 'big', 'team']]);
+  usable = false;
+  assert.deepEqual(pinModule.postToTeamState(answer), { visible: true, enabled: false, reason: 'You are offline.' }, 'the module own reason');
+  state.features.featureFlags.team = false;
+  assert.equal(pinModule.postToTeamState(answer), null, 'Team off: no button');
+});

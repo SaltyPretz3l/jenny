@@ -18,6 +18,7 @@
   const { button, group, note, textInput, fieldRow, confirmBlock, row, codeBlock, ownDevicesOf, stopConfirm } = view;
   const TTL_OPTIONS = [3_600_000, 86_400_000, 604_800_000];
   const ACTIVITY_PREVIEW = 5;
+  const MAX_DEVICES = 3;
 
   function inv() { return globalThis.inventory || {}; }
   function segmented() { return inv().segmentedControl || globalThis.inventorySegmentedControl; }
@@ -172,18 +173,45 @@
     });
   }
 
+  // The facts of the summary line under the server status (row 168), each with the group it jumps to; one that cannot be
+  // told is left out. `has` says which groups the page drew: `network` (the Network group), `share` (Share this PC's GPU).
+  function summaryFacts(vm, hosted, data, has) {
+    const facts = [];
+    if (hosted.roster) {
+      const waiting = hosted.roster.filter((member) => member.state === 'pending').length;
+      facts.push({ id: 'people', label: jt('settings.team.summary.people', 'People'),
+        value: jt('settings.team.people.count', '{count} of {max}', { count: hosted.roster.length, max: vm.maxMembers })
+          + (waiting ? ' · ' + jt('settings.team.people.waiting', '{count} waiting', { count: waiting }) : '') });
+    }
+    if (has.network && vm.host) {
+      facts.push({ id: 'network', label: jt('settings.team.summary.joining', 'Joining'),
+        value: vm.host.internet ? jt('settings.team.summary.overInternet', 'Over the internet') : jt('settings.team.summary.networkOnly', 'This network only') });
+    }
+    if (has.share) {
+      const mine = data.sharing && (data.teams || []).find((team) => team.team_id === data.sharing.team_id);
+      facts.push({ id: 'share', label: jt('settings.team.summary.gpu', 'This PC’s GPU'),
+        value: mine && mine.role !== 'read_only' ? jt('settings.team.summary.shared', 'Shared') : jt('settings.team.summary.notShared', 'Not shared') });
+    }
+    if (hosted.devices) {
+      facts.push({ id: 'devices', label: jt('settings.team.summary.devices', 'Your devices'),
+        value: jt('settings.team.people.count', '{count} of {max}', { count: ownDevicesOf(hosted.team, hosted.devices).length, max: MAX_DEVICES }) });
+    }
+    return facts;
+  }
+
   // The hosted team's groups in page order, up to Activity; Join and Ownership are placed by the page.
   // `gpuHtml` (slice 4e: Share this PC's GPU, Team GPUs, GPU use) goes after Your devices, before Activity.
-  function hostedGroups(vm, hosted, gpuHtml = '') {
+  // `fold(id, html)` (row 168) wraps Activity on the connected owner's page.
+  function hostedGroups(vm, hosted, gpuHtml = '', fold = (id, html) => html) {
     let html = '';
     if (hosted.owner) html += teamNameRow(vm, hosted) + inviteGroup(vm, hosted);
     html += peopleGroup(vm, hosted);
     if (hosted.team.state === 'online') html += devicesGroup(vm, hosted.team, hosted.devices);
     html += gpuHtml;
-    if (hosted.owner) html += activityGroup(vm, hosted);
+    if (hosted.owner) html += fold('activity', activityGroup(vm, hosted));
     return html;
   }
 
   // `pendingRow` is shared with the Team tab's "Wants to join" (slice 1g-2).
-  return { hostedGroups, ownershipGroup, pendingRow };
+  return { hostedGroups, ownershipGroup, pendingRow, summaryFacts };
 });

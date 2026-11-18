@@ -60,6 +60,10 @@ Other build requirements, all in the plugin or `build-sketch.js`, none touching 
 - a define for `import.meta.url` (it only feeds the `createRequire` call above);
 - a `tsconfigRaw` override, so upstream's tsconfig (not vendored) can never be picked up;
 - `scripts/build/sketch/theme-override.css`, appended after `styles.css`, which repeats the selectors that hold a literal colour and reads the palette variables (the fallbacks are upstream's cream values);
+- no watermark (owner, 2026-11-16): `entry-frame.ts` removes upstream's `.watermark` text from each drawing after
+  `mountScene` (the SVG and PNG exports clone that SVG) and filters the `sketchy-watermark` element out of
+  `toExcalidraw`; Sketchy is credited in Settings > About and `NOTICE` instead. A re-sync that renames the class or
+  the element id fails `tests/sketch-frame-contract.test.js`;
 - a refusal: the build fails with a clear message if `src/parts/index.ts` is ever imported for a value (today it is imported for types only, which esbuild drops).
 
 ## Bundles

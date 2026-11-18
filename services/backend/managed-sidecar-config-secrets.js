@@ -5,6 +5,7 @@
 const { managedServerApiKey } = require('./managed-server-owner');
 const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 const { buildApiProviderSidecarSecrets } = require('./api-provider-sidecar-config');
+const { buildLocalSubagentSidecarSecrets } = require('./local-subagent-engine');
 const {
   WEB_SEARCH_PROVIDER_KEY_IDS,
 } = require('./secure-store');
@@ -182,6 +183,8 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
       secrets.openai_compatible_api_key = apiKey;
     }
   }
+  // Row 179: the local subagent engine's key, only while it is ready and same-origin.
+  Object.assign(secrets, buildLocalSubagentSidecarSecrets(service));
   return secrets;
 }
 

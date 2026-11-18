@@ -1,12 +1,15 @@
 'use strict';
 
 const { CONFIG_ERROR_CODES } = require('./backend/error-codes');
+const { parseNamespacedModelId } = require('./backend/api-provider-config');
 
-const PROVIDERS = Object.freeze(['chatgpt', 'codex-cli']);
+const PROVIDERS = Object.freeze(['chatgpt', 'codex-cli', 'api-provider']);
 const EFFORTS = new Set(['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const MODEL_IDS = {
   chatgpt: /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/,
   'codex-cli': /^(?:codex-cli\/)?[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/,
+  // Full namespaced ids, api-provider/<instance>/<model>: two instances can share a short id.
+  'api-provider': { test: (value) => parseNamespacedModelId(value) !== null },
 };
 const MAX_PREFERRED_MODELS = 16;
 const ROUTING_FIELDS = ['defaultModel', 'defaultEffort', 'preferredModels', 'allowedModels', 'maxEffort'];

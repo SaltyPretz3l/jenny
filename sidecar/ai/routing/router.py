@@ -193,12 +193,20 @@ class AgentKernel:
     def create_subagent_router(self, config: RuntimeConfig) -> AgentKernel:
         """Own a child engine while sharing only the existing read-only service seams."""
         from sidecar.ai.engines.factory import create_engine
+        from sidecar.ai.model_profile_resolution import _sync_engine_with_effective_config
         from sidecar.ai.routing.subagent_model_routing import close_subagent_engine
 
+        # The parent's provider descriptor and authority belong to its engine
+        # type; a child on another engine (row 179's local helper) gets neither.
+        same_engine = config.engine_type == self._config.engine_type
         selection = create_engine(
             config,
-            provider_descriptor=getattr(self._engine, "provider_descriptor", None),
-            provider_authority_check=getattr(self._engine, "_authority_check", None),
+            provider_descriptor=(
+                getattr(self._engine, "provider_descriptor", None) if same_engine else None
+            ),
+            provider_authority_check=(
+                getattr(self._engine, "_authority_check", None) if same_engine else None
+            ),
         )
         try:
             if (
@@ -206,6 +214,9 @@ class AgentKernel:
                 or selection.fallback_from is not None
             ):
                 raise RuntimeError("Subagent engine failed to initialize the selected model")
+            if not same_engine:
+                # The child's model profile resolved before its engine existed.
+                _sync_engine_with_effective_config(selection.engine, config)
             diagnostics = getattr(self._engine, "_turn_diagnostics_store", None)
             setter = getattr(selection.engine, "set_turn_diagnostics_store", None)
             if callable(setter):

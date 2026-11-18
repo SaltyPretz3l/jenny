@@ -97,6 +97,7 @@ function createControllerHarness(messages, options = {}) {
     jennyShell: {
       ...(options.shell || {}),
       chat: {
+        ...(options.chatBridge || {}),
         async startStream(payload) {
           calls.startStream.push(payload);
           if (typeof options.startStream === 'function') return options.startStream(payload);

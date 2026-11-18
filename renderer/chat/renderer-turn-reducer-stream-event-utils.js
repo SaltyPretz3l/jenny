@@ -98,6 +98,36 @@
           sort_key: sortKey,
         };
       }
+      if (type === 'user_steer') {
+        // A steer row: the user_prompt (+ attachment_cluster) pair of a hydrated user row.
+        const message = payload && payload.message && typeof payload.message === 'object' ? payload.message : null;
+        const messageId = normalizeId(message && message.id);
+        if (!message || !messageId || message.role !== 'user') return null;
+        const attachments = Array.isArray(message.attachments)
+          ? message.attachments.map((attachment) => deepCloneJsonValue(attachment)) : [];
+        const stable = `${turnId}:user_steer:${messageId}`;
+        const events = [{
+          event_id: stable,
+          turn_id: turnId,
+          kind: 'user_prompt',
+          primary_message_id: messageId,
+          source_message_ids: [messageId],
+          sort_key: sortKey,
+          payload: { content: String(message.content || ''), attachments },
+        }];
+        if (attachments.length) {
+          events.push({
+            event_id: `${stable}:attachments`,
+            turn_id: turnId,
+            kind: 'attachment_cluster',
+            primary_message_id: messageId,
+            source_message_ids: [messageId],
+            sort_key: cloneSortKey([sortKey[0], sortKey[1] + 1, sortKey[2]]),
+            payload: { attachments },
+          });
+        }
+        return events;
+      }
       if (type === 'phase_started' || type === 'phase_completed') {
         const phaseId = normalizeId(payloadPhase && payloadPhase.phase_id || payload && payload.phaseId);
         return {

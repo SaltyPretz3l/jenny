@@ -227,3 +227,30 @@ test('the Tidy tool registers itself with the card kinds seam as one toolbar too
   assert.equal(createTidyTool({}), null, 'no editor, no tool');
   assert.equal(createTidyTool(null), null);
 });
+
+test('a board with arrows is tidied along them: the pointed-at card comes after, a note at its first size fits its text, the rest pack below', () => {
+  const fresh240 = (id, text, extra = {}) => ({ op: 'card.add', card: { id, kind: 'note', data: { text, tone: null }, x: 0, y: 0, w: 240, h: 160, ...extra } });
+  const link = (id, from, to) => ({ op: 'connector.add', connector: { id, from, to, label: '', style: 'dashed', ends: 'end' } });
+  const board = apply(fresh(), [
+    group(G, 900, 500, 600, 400), group(G2, 0, 0, 300, 300),
+    fresh240(uid(901), 'short', { group_id: G, x: 920, y: 560 }),
+    note(uid(902), 1200, 560, { group_id: G }),
+    note(uid(903), 20, 60, { group_id: G2 }),
+    note(uid(904), 2000, 900), note(uid(905), 400, 40),
+    link(uid(950), uid(903), uid(901)), link(uid(951), uid(901), uid(902)),
+  ]).board;
+  const result = tidy.tidyOps(board, {});
+  const after = applyOps(board, result);
+  const c = (n) => after.cards[uid(n)];
+  assert.deepEqual([c(901).w, c(901).h], [240, 68], 'the untouched note is as tall as its text');
+  assert.deepEqual([c(902).w, c(902).h], [200, 100], 'a sized card keeps its size');
+  assert.ok(c(901).y >= c(903).y + c(903).h || c(901).x >= c(903).x + c(903).w, '901 comes after 903, which points at it');
+  assert.ok(c(902).y >= c(901).y + c(901).h || c(902).x >= c(901).x + c(901).w, '902 comes after 901');
+  const boxes = [after.groups[G], after.groups[G2], c(904), c(905)];
+  boxes.forEach((a, i) => boxes.slice(i + 1).forEach((b) => assert.equal(hit(a, b), false, JSON.stringify([a, b]))));
+  [901, 902].forEach((n) => assert.equal(c(n).x >= after.groups[G].x + 16 && c(n).x + c(n).w <= after.groups[G].x + after.groups[G].w - 16, true));
+  assert.ok(c(905).y >= Math.max(after.groups[G].y + after.groups[G].h, after.groups[G2].y + after.groups[G2].h), 'cards no arrow touches go under');
+  assert.deepEqual(tidy.tidyOps(after, {}), { ok: true, ops: [] }, 'a second tidy changes nothing');
+  const ring = apply(after, [note(uid(906), 0, 0, { group_id: G }), link(uid(952), uid(902), uid(901)), link(uid(953), uid(902), uid(906)), link(uid(954), uid(906), uid(903))]).board;
+  assert.deepEqual(tidy.tidyOps(applyOps(ring, tidy.tidyOps(ring, {})), {}), { ok: true, ops: [] }, 'nor when the arrows run in a circle');
+});

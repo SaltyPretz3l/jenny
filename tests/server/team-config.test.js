@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { loadHostConfig, normalizeHostConfig } = require('../../server/config');
+const { TEAM_FILE_TOOLS_WINDOWS_REVIEWED, loadHostConfig, normalizeHostConfig } = require('../../server/config');
 const { FileSecretStore, TEAM_HOST_SECRET_FILES } = require('../../server/file-secret-store');
 const { keyPairFromSeed } = require('../../server/team/ids');
 const { linkDirectory } = require('../helpers/platform-skips');
@@ -475,3 +475,49 @@ test('3-13/3-14: the two setup mounts in the config are optional, absolute and a
   assert.equal(reasonFor({ import_dir: fx.importDir, exchange_dir: path.join(fx.importDir, 'x') }), 'team_mount_overlap');
   assert.equal(reasonFor({ import_dir: path.join(fx.root, 'not-made-yet') }), 'loaded', 'never existence-checked');
 });
+
+// Team host file tools (row 123, docs/plans/TEAM_HOST_FILE_TOOLS_2026-11-16.md): the optional `team.file_tools`.
+function fileToolsReason(configPath, options) {
+  try {
+    loadHostConfig(configPath, options);
+  } catch (error) {
+    assert.equal(error.code, 'CMP-HOST-0001');
+    return error.reason;
+  }
+  return null;
+}
+
+test('team.file_tools is optional: absent and false load off, true needs a projects root', () => withFixture((fixture) => {
+  const projects = path.join(fixture.root, 'projects');
+  const posix = { platform: 'linux' };
+  fixture.write(rootSource(fixture, projects));
+  assert.equal(loadHostConfig(fixture.configPath, posix).team.fileTools, undefined, 'absent is off');
+  fixture.write(rootSource(fixture, projects, { file_tools: false }));
+  assert.equal(loadHostConfig(fixture.configPath, posix).team.fileTools, false);
+  fixture.write(rootSource(fixture, projects, { file_tools: true }));
+  assert.equal(loadHostConfig(fixture.configPath, posix).team.fileTools, true);
+  fixture.write(rootSource(fixture, undefined, { file_tools: true }));
+  assert.equal(fileToolsReason(fixture.configPath, posix), 'team_file_tools_no_projects_root');
+  fixture.write(rootSource(fixture, undefined, { file_tools: false }));
+  assert.equal(fileToolsReason(fixture.configPath, posix), null, 'false needs no projects root');
+  for (const value of [1, 'true', null, {}]) {
+    fixture.write(rootSource(fixture, projects, { file_tools: value }));
+    assert.equal(fileToolsReason(fixture.configPath, posix), 'team_file_tools_invalid', String(value));
+  }
+}));
+
+test('on win32 team.file_tools loads only while the reviewed constant is true (W14 passed)', () => withFixture((fixture) => {
+  const projects = path.join(fixture.root, 'projects');
+  fixture.write(rootSource(fixture, projects, { file_tools: true }));
+  assert.equal(TEAM_FILE_TOOLS_WINDOWS_REVIEWED, true, 'flipped in slice 4 when the owner said W14 passed (2026-11-17)');
+  assert.equal(loadHostConfig(fixture.configPath, { platform: 'win32' }).team.fileTools, true, 'the reviewed default');
+  assert.equal(fileToolsReason(fixture.configPath, { platform: 'win32', windowsFileToolsReviewed: false }),
+    'team_file_tools_windows_unreviewed', 'setting the constant back refuses it again');
+  fixture.write(rootSource(fixture, projects, { file_tools: false }));
+  assert.equal(fileToolsReason(fixture.configPath, { platform: 'win32', windowsFileToolsReviewed: false }), null,
+    'off loads on win32 either way');
+  if (process.platform === 'win32') {
+    fixture.write(rootSource(fixture, projects, { file_tools: true }));
+    assert.equal(fileToolsReason(fixture.configPath), null, 'the default platform');
+  }
+}));

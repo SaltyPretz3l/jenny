@@ -57,7 +57,12 @@ const TOP_LEVEL_FIELDS = new Set([
 const TEAM_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS, 'team']);
 const TEAM_FIELDS = new Set(['name', 'key_source', 'direct_port']);
 const TEAM_OPTIONAL_FIELDS = new Set([...TEAM_FIELDS, 'pool', 'projects_root', 'internet', 'model_relay_flowing',
-  'import_dir', 'exchange_dir']);
+  'import_dir', 'exchange_dir', 'file_tools']);
+// Team host file tools (row 123, the team host file tools plan): whether the Windows file access
+// library has passed W14 (the independent review and the race loop). The loader refuses `team.file_tools: true` on
+// win32 while this is false, whatever wrote the file. Flipped in that plan's slice 4 when the owner said W14 passed
+// (2026-11-17); setting it back to false turns project files off for every Windows host at its next start.
+const TEAM_FILE_TOOLS_WINDOWS_REVIEWED = true;
 // Model sharing (slice 6-3): transfers the relay lets flow at once, 0 to 4 (absent: 2); 0 turns model sharing off.
 // The relay's own ceiling on flowing transfers (one source: model-manifest.js).
 const TEAM_MODEL_RELAY_FLOWING_MAX = MODEL_TRANSFER_LIMITS.maxFlowingPerHost;
@@ -321,8 +326,19 @@ function normalizeTeam(value) {
   if (hasFlowing && !(Number.isSafeInteger(flowing) && flowing >= 0 && flowing <= TEAM_MODEL_RELAY_FLOWING_MAX)) {
     throw invalid('team_model_relay_flowing_invalid');
   }
+  // Absent is off; the normalized block carries the field only when the file does.
+  const hasFileTools = Object.hasOwn(value, 'file_tools');
+  if (hasFileTools && typeof value.file_tools !== 'boolean') throw invalid('team_file_tools_invalid');
   return Object.freeze({ name: value.name, keySource: value.key_source, directPort: port, ...(pool ? { pool } : {}),
-    ...(internet ? { internet } : {}), ...(hasFlowing ? { modelRelayFlowing: flowing } : {}) });
+    ...(internet ? { internet } : {}), ...(hasFlowing ? { modelRelayFlowing: flowing } : {}),
+    ...(hasFileTools ? { fileTools: value.file_tools } : {}) });
+}
+
+// `team.file_tools: true` needs the projects root it binds and, on win32, the reviewed library (W14).
+function assertTeamFileTools(team, projectsRoot, { platform, windowsFileToolsReviewed }) {
+  if (team?.fileTools !== true) return;
+  if (!projectsRoot) throw invalid('team_file_tools_no_projects_root');
+  if (platform === 'win32' && windowsFileToolsReviewed !== true) throw invalid('team_file_tools_windows_unreviewed');
 }
 
 // A team host is loopback-only with no command execution, no workspace and no browser surface.
@@ -403,12 +419,13 @@ function readConfig(filePath) {
   return source;
 }
 
-function loadHostConfig(filePath, { allowPendingSetup = false } = {}) {
+function loadHostConfig(filePath, { allowPendingSetup = false, platform = process.platform,
+  windowsFileToolsReviewed = TEAM_FILE_TOOLS_WINDOWS_REVIEWED } = {}) {
   if (!allowPendingSetup && typeof filePath === 'string'
     && fs.existsSync(path.join(path.dirname(filePath), SETUP_PENDING_FILE))) {
     throw invalid('setup_incomplete');
   }
-  const config = normalizeHostConfig(readConfig(filePath));
+  const config = normalizeHostConfig(readConfig(filePath), { platform, windowsFileToolsReviewed });
   // The desktop rule, which only a config file can carry: a parent_channel host's projects root is
   // exactly `<directory of the config file>/projects`.
   if (config.team?.keySource === 'parent_channel' && config.team.projectsRoot) {
@@ -421,7 +438,8 @@ function loadHostConfig(filePath, { allowPendingSetup = false } = {}) {
   return config;
 }
 
-function normalizeHostConfig(source) {
+function normalizeHostConfig(source, { platform = process.platform,
+  windowsFileToolsReviewed = TEAM_FILE_TOOLS_WINDOWS_REVIEWED } = {}) {
   const schemaVersion = source?.schema_version;
   assertClosed(source, topLevelFields(schemaVersion), 'config_unknown_field');
   if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== HOST_CONFIG_SCHEMA_VERSION) {
@@ -490,6 +508,7 @@ function normalizeHostConfig(source) {
   }
   const projectsRoot = team && Object.hasOwn(source.team, 'projects_root')
     ? normalizeProjectsRoot(source.team.projects_root, [userDataPath, secretsDir, runtimeHome]) : null;
+  assertTeamFileTools(team, projectsRoot, { platform, windowsFileToolsReviewed });
   const mounts = team ? normalizeTeamMounts(source.team,
     [userDataPath, secretsDir, runtimeHome, ...(projectsRoot ? [path.dirname(projectsRoot)] : [])]) : {};
   const pythonExecutable = source.python_executable === undefined
@@ -527,6 +546,7 @@ module.exports = {
   loadHostConfig,
   normalizeHostConfig,
   SETUP_PENDING_FILE,
+  TEAM_FILE_TOOLS_WINDOWS_REVIEWED,
   TEAM_MAX_CONCURRENT_REQUESTS,
   TEAM_POOL_CONTEXT_MAX,
   TEAM_POOL_CONTEXT_MIN,

@@ -16,10 +16,12 @@ const {
   normalizeLinkedSessionIds,
 } = require('./session-store-migrations');
 const {
+  TEAM_CONVERSATION_PREFERENCES,
   TOOL_CONNECTION_OVERRIDES_MAX,
   normalizeSessionStartDate,
   normalizeToolCategoryOverrides,
   normalizeToolConnectionOverrides,
+  teamPreferencesPatch,
 } = require('./session-normalizers');
 const { allowedNodesPatch } = require('./session-allowed-nodes');
 
@@ -107,6 +109,14 @@ function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
     }
     patch.tool_connection_overrides = overrides;
   }
+  // Row 172 (session-normalizers.js): a team change under its symbol key; once the record holds the team's switches,
+  // a plain `preferred_model` or `reasoning_effort` (a turn's echo of the pool alias or of an older value) changes neither.
+  const teamChange = Object.hasOwn(source, TEAM_CONVERSATION_PREFERENCES) ? source[TEAM_CONVERSATION_PREFERENCES] : null;
+  if (teamChange || Object.hasOwn(record, 'team_tool_switches')) {
+    delete patch.preferred_model;
+    delete patch.reasoning_effort;
+  }
+  if (isPlainObject(teamChange)) Object.assign(patch, teamPreferencesPatch(teamChange, record));
   // The allowed-node list (session-allowed-nodes.js).
   return Object.assign(patch, allowedNodesPatch(source));
 }

@@ -453,3 +453,114 @@ test('terminal scrollback (row 82 T1) renders as a number row and writes an inte
     assert.match(container.textContent, /about 1\.5 MB per 1,000 lines/);
   });
 });
+
+// The Terminal "Start folder for Jenny's commands" row: a read-only path, Browse, and Use Downloads.
+const START_FOLDER_ROW = '[data-settings-field="editorTerminalStartFolderField"]';
+const BROWSE = '[data-action="terminal-start-folder-browse"]';
+const USE_DOWNLOADS = '[data-action="terminal-start-folder-default"]';
+
+function bindStartFolder(chooser, saved) {
+  const { dom, container } = makeContainer();
+  globalThis.window = dom.window;
+  const patches = [];
+  const workspaceIde = {
+    async getState() { return {}; },
+    async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; },
+  };
+  if (chooser) workspaceIde.chooseTerminalStartFolder = chooser;
+  dom.window.jennyShell = { workspaceIde };
+  const state = { ui: { ide: ideState.createIdeUiState() } };
+  if (saved) state.ui.ide.terminalStartFolder = saved;
+  editorSection.renderEditorSection({ container, ide: state.ui.ide });
+  editorSection.bindEditorSection({
+    container,
+    state,
+    renderSettings: () => {},
+    registerListener: (target, event, handler, options) => {
+      target.addEventListener(event, handler, options);
+      return true;
+    },
+  });
+  return { container, state, patches };
+}
+const errorLine = (container) => container.querySelector(START_FOLDER_ROW + ' .settings-field-error');
+
+test('the Terminal group lists the start folder row between the shell and scrollback rows', () => {
+  withGlobals(() => {
+    const { container } = makeContainer();
+    editorSection.renderEditorSection({ container, ide: {} });
+    const terminal = container.querySelector('[data-editor-group="terminal"]');
+    assert.deepEqual([...terminal.querySelectorAll('[data-settings-field]')].map((row) => row.getAttribute('data-settings-field')),
+      ['editorTerminalProfileSelect', 'editorTerminalStartFolderField', 'editorTerminalScrollbackInput']);
+    const row = terminal.querySelector(START_FOLDER_ROW);
+    assert.match(row.textContent, /Start folder for Jenny's commands/);
+    assert.match(row.textContent, /Downloads land here\./);
+    assert.equal(row.querySelector('input[readonly]').value, 'Downloads folder (default)');
+    assert.equal(row.querySelector(BROWSE).textContent, 'Browse…');
+    assert.equal(row.querySelector(USE_DOWNLOADS), null, 'nothing to reset while the default is in use');
+
+    editorSection.renderEditorSection({ container, ide: { terminalStartFolder: 'D:\\Installs' } });
+    const saved = container.querySelector(START_FOLDER_ROW);
+    assert.equal(saved.querySelector('input[readonly]').value, 'D:\\Installs');
+    assert.equal(saved.querySelector(USE_DOWNLOADS).textContent, 'Use Downloads');
+    editorSection.renderEditorSection({ container, ide: { terminalStartFolder: 'relative\\path' } });
+    assert.equal(container.querySelector(START_FOLDER_ROW + ' input[readonly]').value, 'Downloads folder (default)', 'an invalid stored value reads as the default');
+  });
+});
+
+test('Browse saves the picked folder and does nothing on cancel or a failed picker', async () => {
+  await withGlobalsAsync(async () => {
+    const picked = bindStartFolder(async () => ({ ok: true, picked: true, path: 'D:\\Installs' }));
+    picked.container.querySelector(BROWSE).click();
+    await flush();
+    assert.deepEqual(picked.patches, [{ terminalStartFolder: 'D:\\Installs' }]);
+    assert.equal(picked.state.ui.ide.terminalStartFolder, 'D:\\Installs');
+
+    const cancelled = bindStartFolder(async () => ({ ok: true, picked: false }));
+    cancelled.container.querySelector(BROWSE).click();
+    await flush();
+    assert.deepEqual(cancelled.patches, []);
+    assert.equal(errorLine(cancelled.container).hidden, true, 'a cancel says nothing');
+
+    const network = bindStartFolder(async () => ({ ok: false, picked: false, reason: 'network_path' }));
+    network.container.querySelector(BROWSE).click();
+    await flush();
+    assert.deepEqual(network.patches, []);
+    assert.equal(errorLine(network.container).hidden, false);
+    assert.equal(errorLine(network.container).textContent, 'Choose a folder on this PC; network folders are not supported.');
+
+    for (const chooser of [undefined, async () => ({ ok: false, picked: false, reason: 'unavailable' }), async () => { throw new Error('boom'); }, async () => null]) {
+      const failed = bindStartFolder(chooser, 'D:\\Installs');
+      failed.container.querySelector(BROWSE).click();
+      await flush();
+      assert.deepEqual(failed.patches, []);
+      assert.equal(failed.state.ui.ide.terminalStartFolder, 'D:\\Installs', 'the value is unchanged');
+      assert.equal(errorLine(failed.container).textContent, 'The folder picker is not available.');
+    }
+  });
+});
+
+test('a picker note survives a repaint and clears on the next pick', async () => {
+  await withGlobalsAsync(async () => {
+    let answer = { ok: false, picked: false, reason: 'network_path' };
+    const { container, state } = bindStartFolder(async () => answer);
+    container.querySelector(BROWSE).click();
+    await flush();
+    editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    assert.match(errorLine(container).textContent, /network folders are not supported/);
+    answer = { ok: true, picked: false };
+    container.querySelector(BROWSE).click();
+    await flush();
+    assert.equal(errorLine(container).hidden, true);
+  });
+});
+
+test('Use Downloads saves an empty start folder', async () => {
+  await withGlobalsAsync(async () => {
+    const { container, state, patches } = bindStartFolder(async () => ({ ok: true, picked: false }), 'D:\\Installs');
+    container.querySelector(USE_DOWNLOADS).click();
+    await flush();
+    assert.deepEqual(patches, [{ terminalStartFolder: '' }]);
+    assert.equal(state.ui.ide.terminalStartFolder, '');
+  });
+});

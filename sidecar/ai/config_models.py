@@ -6,11 +6,29 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from sidecar.ai.engines.provider_descriptor_v6 import ProviderDescriptorError, validate_model_id
+from sidecar.ai.local_subagent_endpoint import LocalSubagentEngine
 from sidecar.ai.personality import DEFAULT_ASSISTANT_NAME, DEFAULT_PERSONALITY_BASE_PROMPT
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE
 
 SYSTEM_PROMPT_DEFAULT = DEFAULT_PERSONALITY_BASE_PROMPT
 MAX_SUBAGENT_PREFERRED_MODELS = 16
+_API_PROVIDER_MODEL_PREFIX = "api-provider/"
+_API_PROVIDER_INSTANCE_RE = re.compile(r"[a-z][a-z0-9-]{1,31}\Z")
+
+
+def _valid_api_provider_model(value: Any) -> bool:
+    """A full ``api-provider/<instance>/<model>`` id; the model id may itself hold ``/``."""
+    if not isinstance(value, str) or not value.startswith(_API_PROVIDER_MODEL_PREFIX):
+        return False
+    instance, separator, model = value[len(_API_PROVIDER_MODEL_PREFIX):].partition("/")
+    if not separator or not _API_PROVIDER_INSTANCE_RE.fullmatch(instance):
+        return False
+    try:
+        validate_model_id(model)
+    except ProviderDescriptorError:
+        return False
+    return True
 
 
 def normalize_subagent_routing(value: Any) -> dict[str, dict[str, Any]]:
@@ -19,9 +37,10 @@ def normalize_subagent_routing(value: Any) -> dict[str, dict[str, Any]]:
         return {}
     result: dict[str, dict[str, Any]] = {}
     efforts = {"", "default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
-    for provider in ("chatgpt", "codex-cli"):
+    for provider in ("chatgpt", "codex-cli", "api-provider"):
         prefix = r"(?:codex-cli/)?" if provider == "codex-cli" else ""
-        identifier = re.compile(prefix + r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+        pattern = re.compile(prefix + r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+        valid_id = _valid_api_provider_model if provider == "api-provider" else pattern.fullmatch
         row = value.get(provider)
         if not isinstance(row, dict):
             continue
@@ -34,15 +53,13 @@ def normalize_subagent_routing(value: Any) -> dict[str, dict[str, Any]]:
             set(row) - {
                 "defaultModel", "defaultEffort", "preferredModels", "allowedModels", "maxEffort"
             }
-            or not isinstance(model, str) or (model and not identifier.fullmatch(model))
+            or not isinstance(model, str) or (model and not valid_id(model))
             or not isinstance(effort, str) or effort not in efforts
             or not isinstance(maximum, str) or maximum not in efforts - {"default"}
             or not isinstance(allowed, list) or len(allowed) > MAX_SUBAGENT_PREFERRED_MODELS
-            or any(not isinstance(item, str) or not identifier.fullmatch(item) for item in allowed)
+            or any(not isinstance(item, str) or not valid_id(item) for item in allowed)
             or not isinstance(preferred, list) or len(preferred) > MAX_SUBAGENT_PREFERRED_MODELS
-            or any(
-                not isinstance(item, str) or not identifier.fullmatch(item) for item in preferred
-            )
+            or any(not isinstance(item, str) or not valid_id(item) for item in preferred)
         ):
             continue
         result[provider] = {
@@ -271,6 +288,12 @@ class RuntimeConfig:
     api_provider_descriptor: dict[str, Any] | None = None
     api_provider_model_limits: dict[str, Any] | None = None
     api_provider_key: str | None = field(default=None, repr=False)
+    # Row 179: the validated ``{"id": short model id, "limits": {...}}`` rows of the
+    # selected instance's enabled models; ids and limits only, never a key.
+    api_provider_subagent_models: tuple[dict[str, Any], ...] = ()
+    # Row 179: the ready local server a cloud primary's delegate children may
+    # run on (model "local"); its brokered key hides from repr.
+    local_subagent_engine: LocalSubagentEngine | None = None
     managed_prefill_progress: bool = False
     # Opt-in llama.cpp ``json_schema`` response_format for a ResponseFormat that
     # carries a schema. Electron sets it only for the managed llama-server; any
@@ -425,6 +448,11 @@ class RuntimeConfig:
     cloud_max_web_tool_calls_per_turn: int = 30
     cloud_tools_execution_timeout_seconds: float = 1_800.0
     tools_workspace_root: str | None = None
+    # A rootless server host whose built-in worker binds request roots only
+    # directly under this folder; None is no boundary. Validated in config.parse_runtime_config.
+    hosted_root_boundary: str | None = None
+    # The Windows hosted file tools switch (W14, E9); only with a boundary.
+    hosted_win32_files: bool = False
     agent_workspace_root: str | None = None
     electron_state_root: str | None = None
     electron_shell_config_path: str | None = None

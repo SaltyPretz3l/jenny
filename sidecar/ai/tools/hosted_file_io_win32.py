@@ -13,7 +13,7 @@ import importlib
 import logging
 import os
 import struct
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, NamedTuple
@@ -87,6 +87,17 @@ class Win32Pin:
         self._closed = True
         if self.lib.call("jfa_pin_close", self.token) != _OK:
             _log.warning("hosted_file.library_pin_close_failed")
+
+    def __del__(self) -> None:
+        # A pin dropped unclosed (an asynchronous exception between `open_root`
+        # and its owner's `finally`) is closed when its last reference goes, so
+        # its table slot comes back (W14 review, finding 4). A token is checked
+        # by generation, so a close that loses a race answers a refusal, never
+        # another pin.
+        if not self._closed:
+            self._closed = True
+            with suppress(Exception):
+                self.lib.call("jfa_pin_close", self.token)
 
 
 class _EntryStat(NamedTuple):
@@ -177,23 +188,30 @@ def _identity(device: str | None, inode: str | None) -> tuple[int, int] | None:
     return pair if all(value <= _U64_MAX for value in pair) else None
 
 
-def _open_pin(lib: library.FileAccessLibrary, root: Path,
-              pair: tuple[int, int]) -> tuple[int, int]:
-    """`jfa_root_open`'s status and pin. A pin issued by a call that then raised
-    is closed before the exception goes on."""
+def _open_pin(lib: library.FileAccessLibrary, root: Path, pair: tuple[int, int],
+              out_pin: ctypes.c_uint64) -> int:
+    """`jfa_root_open`'s status; the pin lands in the caller's `out_pin`, which
+    the library zeroes first and writes only on success. The caller owns that
+    holder from before the call, so a pin issued by a call that then raised,
+    or followed by an asynchronous exception, is still the caller's to close
+    (W14 review, finding 4)."""
     units, count = _u16_array(_units(str(root)))
-    out_pin = ctypes.c_uint64()
+    return lib.call("jfa_root_open", units, count, pair[0], pair[1], out_pin,
+                    (ctypes.c_uint32 * 2)())
+
+
+def _close_issued(lib: library.FileAccessLibrary, out_pin: ctypes.c_uint64) -> bool:
+    """Close the pin in `out_pin`, if one was issued, and empty the holder. False
+    when the close failed."""
+    token = int(out_pin.value)
+    if not token:
+        return True
+    out_pin.value = 0
     try:
-        status = lib.call("jfa_root_open", units, count, pair[0], pair[1], out_pin,
-                          (ctypes.c_uint32 * 2)())
-    except BaseException:
-        if out_pin.value:
-            try:
-                lib.call("jfa_pin_close", int(out_pin.value))
-            except Exception:  # noqa: BLE001 - the first exception is the one to report.
-                _log.warning("hosted_file.library_pin_close_failed")
-        raise
-    return status, int(out_pin.value)
+        return lib.call("jfa_pin_close", token) == _OK
+    except Exception:  # noqa: BLE001 - the first exception is the one to report.
+        _log.warning("hosted_file.library_pin_close_failed")
+        return False
 
 
 def availability(root: Path | None = None, expected_device_id: str | None = None,
@@ -217,15 +235,18 @@ def _start_reason(lib: library.FileAccessLibrary, root: Path, expected_device_id
     pair = _identity(expected_device_id, expected_inode)
     if pair is None:
         return ROOT_IDENTITY
+    out_pin = ctypes.c_uint64()
     try:
-        status, pin = _open_pin(lib, root, pair)
+        status = _open_pin(lib, root, pair, out_pin)
         if status != _OK:
             return _START_REASONS.get(status, SELFCHECK_FAILED)
-        return None if lib.call("jfa_pin_close", pin) == _OK else SELFCHECK_FAILED
+        return None if _close_issued(lib, out_pin) else SELFCHECK_FAILED
     except ToolExecutionFailure:
         return ROOT_INVALID  # the root path cannot be encoded
     except Exception:  # noqa: BLE001 - a check that cannot tell refuses.
         return SELFCHECK_FAILED
+    finally:
+        _close_issued(lib, out_pin)  # a no-op unless a pin is still held: any early exit
 
 
 def unavailable_reason(root: Path | None = None, expected_device_id: str | None = None,
@@ -244,10 +265,15 @@ def open_root(root: Path, expected_device_id: str | None,
     pair = _identity(expected_device_id, expected_inode)
     if pair is None:
         raise path_failure()
-    status, pin = _open_pin(lib, root, pair)
-    if status != _OK:
-        raise path_failure()
-    return Win32Pin(pin, lib)
+    out_pin = ctypes.c_uint64()
+    try:
+        if _open_pin(lib, root, pair, out_pin) != _OK:
+            raise path_failure()
+        pin = Win32Pin(int(out_pin.value), lib)
+        out_pin.value = 0  # from here the Win32Pin owns it (closed by its owner, else when dropped)
+        return pin
+    finally:
+        _close_issued(lib, out_pin)  # a no-op unless the call issued a pin no Win32Pin took
 
 
 def _pinned(pin: HostedPin) -> tuple[library.FileAccessLibrary, int]:
@@ -268,33 +294,45 @@ def open_file(pin: HostedPin, root: Path, path: Path, mode: str, **kwargs: Any) 
         raise path_failure()
     lib, pin_token = _pinned(pin)
     segments, count = _segments(root, path)
+    # The token's holder exists before the call and the `finally` covers the call
+    # itself: the library zeroes `out_token` first and writes it only on success,
+    # so a token followed by an asynchronous exception is still closed (W14 review,
+    # finding 3).
     out_token, detail = ctypes.c_uint64(), (ctypes.c_uint32 * 2)()
-    status = lib.call("jfa_open_file", pin_token, segments, count, out_token, detail)
-    if status != _OK:
-        raise _failure(status, _detail(detail))
-    token = int(out_token.value)
     reclaim = 0
+    fd = -1
     try:
+        status = lib.call("jfa_open_file", pin_token, segments, count, out_token, detail)
+        if status != _OK:
+            raise _failure(status, _detail(detail))
+        token = int(out_token.value)
         out_handle = ctypes.c_size_t()
         status = lib.call("jfa_file_take", token, out_handle)
         if status != _OK:
             raise _failure(status, (0, 0))
         try:
             fd = _open_osfhandle(int(out_handle.value))
-        except BaseException:
-            reclaim = 1  # no descriptor owns the taken handle: the library closes it
+        except Exception:
+            # The wrap failed, so no descriptor owns the taken handle and the
+            # library closes it. An asynchronous exception (a BaseException that
+            # is not an Exception, such as KeyboardInterrupt) is never read as
+            # that: the descriptor may already own the handle, and a handle left
+            # open until the worker exits is safe where a second close is not
+            # (W14 review, finding 2).
+            reclaim = 1
             raise
-        try:
-            with os.fdopen(fd, mode, closefd=False, **kwargs) as handle:
-                yield handle
-                status = lib.call("jfa_file_check", token)
-                if status != _OK:
-                    raise _failure(status, (0, 0))
-        finally:
-            os.close(fd)
+        with os.fdopen(fd, mode, closefd=False, **kwargs) as handle:
+            yield handle
+            status = lib.call("jfa_file_check", token)
+            if status != _OK:
+                raise _failure(status, (0, 0))
     finally:
-        if lib.call("jfa_file_close", token, reclaim) != _OK:
-            _log.warning("hosted_file.library_file_close_failed")
+        try:
+            if fd >= 0:
+                os.close(fd)
+        finally:
+            if out_token.value and lib.call("jfa_file_close", int(out_token.value), reclaim) != _OK:
+                _log.warning("hosted_file.library_file_close_failed")
 
 
 class Win32Directory:

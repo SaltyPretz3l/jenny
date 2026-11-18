@@ -168,7 +168,8 @@ test('T5: a writer viewing the board decides; every decision is audited with pro
   assert.equal((await decide(s, 'carl', 'reject', id)).error?.reason, 'team_board_proposal_closed');
   assert.equal((await decide(s, 'carl', 'accept', `${s.sX}:nobody:1`)).error?.reason, 'team_board_proposal_not_found');
 
-  const base = { project_id: X.id, session_id: s.sX, board_id: X.live, prompter_member_id: s.id('carl'), tool_name: null, decision: null };
+  const base = { project_id: X.id, session_id: s.sX, board_id: X.live, prompter_member_id: s.id('carl'), tool_name: null, decision: null,
+    approval_id: null, call_id: null, plan_decision: null };
   assert.deepEqual(s.audit(X).map(({ seq: _seq, at: _at, ...entry }) => entry), [
     { ...base, kind: 'board_proposal_accepted', actor_member_id: s.id('alice'), detail: { change: 0, count: 2 } },
     { ...base, kind: 'board_proposal_accepted', actor_member_id: s.id('carl'), detail: { change: 3, count: 1 } },
@@ -241,7 +242,7 @@ test('T5: revert is a project admin\'s; revert, delete, restore and a bulk remov
   gate.fail = false;
   const removed = await s.h.ok(apply('carl', ...ids.slice(1).map((cardId) => ({ op: 'card.remove', id: cardId }))));
   const actor = (who, kind, detail = null) => ({ kind, project_id: X.id, session_id: null, board_id: X.live, actor_member_id: s.id(who),
-    prompter_member_id: null, tool_name: null, decision: null, detail });
+    prompter_member_id: null, tool_name: null, decision: null, approval_id: null, call_id: null, plan_decision: null, detail });
   const entries = () => s.audit(X).map(({ seq: _seq, at: _at, ...entry }) => entry);
   assert.deepEqual(entries(), [actor('carl', 'board_bulk_removed', { items: 20 })]);
 

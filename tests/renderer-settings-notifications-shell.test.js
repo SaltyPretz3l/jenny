@@ -17,7 +17,7 @@ function toggle(document, id) {
   return document.querySelector(`#notificationsSettingsSection [data-inv-toggle="${id}"]`);
 }
 
-test('Settings › Notifications renders its ten switches from the persisted windowUi block and writes the whole object back', async (t) => {
+test('Settings › Notifications renders its switches from the persisted windowUi block and writes the whole object back', async (t) => {
   const updateCalls = [];
   const { window, waitForSettingsRender } = await loadRendererTestApp(t, {
     shell: { windowUi: {
@@ -42,7 +42,7 @@ test('Settings › Notifications renders its ten switches from the persisted win
   assert.ok(card, 'the Notifications card exists');
   assert.equal(card.getAttribute('data-settings-section'), 'notifications');
   // Ten switches plus the team row, shown greyed out and off while the Team feature is off (2a-6c fix list item 3).
-  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 11);
+  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 12);
   const teamRow = toggle(document, 'notificationsCategoryTeamToggle');
   assert.equal(teamRow.getAttribute('aria-checked'), 'false');
   assert.equal(teamRow.getAttribute('aria-disabled') === 'true' || teamRow.disabled === true, true, 'the team row is not operable');
@@ -65,7 +65,7 @@ test('Settings › Notifications renders its ten switches from the persisted win
   assert.deepEqual(updateCalls, [{
     notifications: {
       enabled: true, onlyWhenUnfocused: true, sound: false, replyPreview: false,
-      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true, jenny: true, team: true },
+      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true, jenny: true, team: true, teamProject: true },
     },
   }]);
   assert.equal(toggle(document, 'notificationsCategoryQuestionsToggle').getAttribute('aria-checked'), 'false');

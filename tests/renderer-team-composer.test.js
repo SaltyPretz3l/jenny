@@ -306,7 +306,7 @@ test('edit in place: own messages only, with the row’s rev; Up opens the last 
   key(h, row(h, 3), 'e');
   assert.equal(editBox(h, 3), null, 'not on someone else’s message');
   row(h, 3).querySelector('[data-team-msg-action="more"]').click();
-  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Mark unread'], 'no Edit or Delete on someone else’s message for a member');
+  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Copy with source', 'Mark unread'], 'no Edit or Delete on someone else’s message for a member');
   key(h, doc.activeElement, 'Escape');
   key(h, input(h), 'ArrowUp');
   const box = editBox(h, 2);
@@ -370,7 +370,7 @@ test('delete: your own message through the two-step confirm; Cancel sends nothin
   assert.equal(row(h, 2).querySelector('.team-confirm'), null);
   assert.equal(h.sent('chatDelete').length, 0, 'Cancel sends nothing');
   row(h, 2).querySelector('[data-team-msg-action="more"]').click();
-  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Edit', 'Delete', 'Mark unread']);
+  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Copy with source', 'Edit', 'Delete', 'Mark unread']);
   pick(h, 'Delete');
   row(h, 2).querySelector('[data-team-msg-action="delete-confirm"]').click();
   await flush();
@@ -382,7 +382,7 @@ test('the team owner can delete anyone’s message, through the confirm', async 
   const { h } = await openChat({ teams: [snapshot()], host: hostState(), messages: [message(1)] }); // by Dot; this Jenny is Olive, the owner
   t.after(h.restore);
   row(h, 1).querySelector('[data-team-msg-action="more"]').click();
-  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Delete', 'Mark unread'], 'no Edit on someone else’s message');
+  assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Copy with source', 'Delete', 'Mark unread'], 'no Edit on someone else’s message');
   key(h, h.window.document.activeElement, 'Escape');
   row(h, 1).focus();
   key(h, row(h, 1), 'Delete');
@@ -444,7 +444,7 @@ test('a read-only member’s action row offers Mark unread only, and E and Delet
   const { h } = await openChat({ teams: [memberTeam({ role: 'read_only' })], messages: [message(1)] });
   t.after(h.restore);
   row(h, 1).querySelector('[data-team-msg-action="more"]').click();
-  assert.deepEqual(menuLabels(h), ['Add reactionRead-only members cannot react.', 'PinRead-only members cannot pin.P', 'Mark unread'], 'greyed with the reason (2b-2)');
+  assert.deepEqual(menuLabels(h), ['Add reactionRead-only members cannot react.', 'PinRead-only members cannot pin.P', 'Copy with source', 'Mark unread'], 'greyed with the reason (2b-2)');
   key(h, h.window.document.activeElement, 'Escape');
   row(h, 1).focus();
   key(h, row(h, 1), 'e');
@@ -518,7 +518,7 @@ test('a message whose edit or delete is still queued offers neither Edit nor Del
   t.after(h.restore);
   for (const seq of [1, 2]) {
     row(h, seq).querySelector('[data-team-msg-action="more"]').click();
-    assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Mark unread'], 'message ' + seq);
+    assert.deepEqual(menuLabels(h), ['Add reaction', 'PinP', 'Copy with source', 'Mark unread'], 'message ' + seq);
     key(h, h.window.document.activeElement, 'Escape');
     row(h, seq).focus();
     key(h, row(h, seq), 'e');

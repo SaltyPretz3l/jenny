@@ -187,12 +187,12 @@ class OllamaProcessManager {
     }
   }
 
-  start() {
+  start({ optional = false } = {}) { // optional: another server is the chat engine, so a missing Ollama is no fault
     const generation = this._lifecycleGeneration;
     if (this._startFlight && this._startFlightGeneration === generation) {
       return this._startFlight;
     }
-    const flight = this._serializeLifecycle(() => this._startFlightRun(generation));
+    const flight = this._serializeLifecycle(() => this._startFlightRun(generation, { optional }));
     this._startFlight = flight;
     this._startFlightGeneration = generation;
     const release = () => {
@@ -210,7 +210,7 @@ class OllamaProcessManager {
     return run;
   }
 
-  async _startFlightRun(generation) {
+  async _startFlightRun(generation, { optional = false } = {}) {
     const cancelled = { started: false, external: false, cancelled: true };
     const isCurrent = () => this._lifecycleGeneration === generation;
     if (!isCurrent()) return cancelled;
@@ -290,8 +290,8 @@ class OllamaProcessManager {
     const command = await this._resolveCommand();
     if (!isCurrent()) return cancelled;
     if (!command) {
-      this._log('WARN', 'ollama.not_found', {
-        message: 'ollama executable not found on PATH; skipping auto-start',
+      this._log(optional ? 'INFO' : 'WARN', 'ollama.not_found', {
+        message: 'ollama executable not found on PATH; skipping auto-start', ...(optional ? { reason: 'not_needed_by_chat_engine' } : {}),
       });
       this._lastFailure = {
         reason: 'not_found',

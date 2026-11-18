@@ -21,6 +21,7 @@
 
   const COLUMN_CHANGES = new Set(['projects', 'activity', 'unjoined', 'requests']);
   const BORN_MAX = 8;
+  const LIST_WAIT_MS = 10_000;
 
   function createProjectTab({ data, store, chat, words, teamStore, rows, rosterOf, timelineContext, selectedTeam, CHANNEL, tab }) {
     const projects = () => projectStores.getProjectStore();
@@ -51,8 +52,33 @@
       return '';
     }
 
+    // Row 175 F16: the shown conversation is kept in the shown-channel preference (renderer-team-channels.js) and opened once per
+    // app start, when the list is read and it is still listed; leaving it puts the channel back. Nothing is said when it is gone.
+    const channelsModule = () => { if (globalThis.rendererTeamChannels) return globalThis.rendererTeamChannels; try { return require('./renderer-team-channels'); } catch (_error) { return null; } };
+    const CONVERSATION = column.conversationPage('');
+    const kept = new Map(); // team id -> the session id this tab kept
+    function restore(team) {
+      const state = team ? projects().team(team.team_id) : null;
+      const channels = state && state.projects ? channelsModule() : null;
+      const was = channels ? channels.takeConversation(team.team_id) : null;
+      if (!was || column.viewOf(team.team_id)) return;
+      if (state.conversations.some((r) => r.session_id === was.sessionId && r.project_id === was.projectId)) column.show(team.team_id, column.conversationPage(was.sessionId));
+      else channels.forgetConversation(team.team_id);
+    }
+    function keep(team, page) {
+      const channels = team ? channelsModule() : null;
+      if (!channels) return;
+      const sessionId = page.startsWith(CONVERSATION) ? column.idOf(page) : '';
+      if (!sessionId || kept.get(team.team_id) === sessionId) return; // already kept: no walk over the list
+      const projectId = (listedConversation(team.team_id, sessionId) || {}).project_id || born.get(sessionId);
+      if (projectId) { kept.set(team.team_id, sessionId); channels.rememberConversation(team.team_id, projectId, sessionId); }
+      else if (!sessionId && kept.delete(team.team_id)) channels.forgetConversation(team.team_id);
+    }
+
     function listing(team, base) {
+      restore(team);
       const page = shownPage(team);
+      keep(team, page);
       return page ? { ...base, channelId: page, direct: null, notifyReady: false } : base;
     }
 
@@ -153,19 +179,171 @@
         }
         case 'project-create': void createProject(teamId); return true;
         case 'project-create-cancel': column.closeCreate(teamId); render(); return true;
+        case 'conv-menu': if (target.getAttribute('aria-expanded') === 'true' && menuApi()) menuApi().hide(); else openMenu(team, sessionId, { anchorEl: target }); return true;
+        case 'conv-delete-yes': void deleteConversation(teamId, sessionId); return true;
+        case 'conv-delete-no': column.closeRow(teamId); render(); focusControl('conv-open', sessionId); return true;
         default: return false;
       }
     }
 
-    // The create field: typing is kept without a redraw; Enter creates, Escape closes it.
+    // ---------------------------------------------- the conversation row's menu, rename and delete (row 169)
+
+    const menuApi = () => (globalThis.inventory && globalThis.inventory.contextMenu) || globalThis.inventoryContextMenu || null;
+    let menuFor = ''; // the session whose menu is open
+    // A control of one conversation row, by its action; session ids are host text, so they are compared, not put in a selector.
+    function controlOf(name, sessionId) {
+      const root = tab.container();
+      return root ? [...root.querySelectorAll('[data-team-tab-action="' + name + '"]')].find((el) => el.dataset.sessionId === sessionId) || null : null;
+    }
+    function focusControl(name, sessionId) { const el = controlOf(name, sessionId); if (el) el.focus(); }
+    function listedConversation(teamId, sessionId) {
+      const state = projects().team(teamId);
+      return state && state.conversations ? state.conversations.find((r) => r.session_id === sessionId) || null : null;
+    }
+    // Rename shows the field on the title, selected; Delete shows the confirm with Cancel focused.
+    function startRow(teamId, sessionId, conversation, rename) {
+      column.openRow(teamId, sessionId, rename ? 'rename' : 'confirm', rename ? column.clean(conversation.title) : '');
+      render();
+      const el = rename ? tab.container().querySelector('#' + column.RENAME_ID) : controlOf('conv-delete-no', sessionId);
+      if (el) { el.focus(); if (rename) el.select(); }
+    }
+    function openMenu(team, sessionId, where) {
+      const menu = menuApi();
+      const teamId = team.team_id;
+      if (!menu || !tab.container()) return;
+      const noted = column.rowOf(teamId);
+      if (noted && noted.mode === 'note') { column.closeRow(teamId); render(); }
+      const conversation = listedConversation(teamId, sessionId);
+      const project = conversation ? projects().project(teamId, conversation.project_id) : null;
+      const button = controlOf('conv-menu', sessionId);
+      if (!project || !button) return;
+      const activity = (projects().team(teamId).activity || {})[sessionId];
+      const items = column.rowMenu({ role: project.role, owner: team.role === 'owner', running: Boolean(activity && activity.running) })
+        .map((item) => ({ label: item.label, description: item.description, disabled: item.disabled, danger: item.danger,
+          action: () => startRow(teamId, sessionId, conversation, item.id === 'rename') }));
+      menuFor = sessionId;
+      button.setAttribute('aria-expanded', 'true');
+      menu.show({ ...where, items, ariaLabel: button.getAttribute('aria-label'), restoreFocusTo: button, onHide: () => {
+        menuFor = '';
+        const again = controlOf('conv-menu', sessionId);
+        if (again) again.setAttribute('aria-expanded', 'false');
+        if (again && !button.isConnected && again.ownerDocument.activeElement === again.ownerDocument.body) again.focus();
+      } });
+    }
+    // Right-click on a row. The keyboard's own contextmenu event (not button 2) after the key opened the menu is the same ask.
+    function onContextMenu(event) {
+      const team = tab.container() ? selectedTeam() : null;
+      const target = event.target && event.target.closest ? event.target : null;
+      const row = team && target ? target.closest('[data-conv-row]') : null;
+      if (!row || target.closest('input, textarea') || (event.button !== 2 && menuFor === row.dataset.convRow)) return;
+      event.preventDefault();
+      openMenu(team, row.dataset.convRow, { anchorX: event.clientX, anchorY: event.clientY });
+    }
+    function onMenuKey(event, team) {
+      const row = event.target.closest ? event.target.closest('[data-conv-row]') : null;
+      if (!row || event.target.closest('input, textarea') || !((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu')) return false;
+      event.preventDefault();
+      const button = controlOf('conv-menu', row.dataset.convRow);
+      if (button) openMenu(team, row.dataset.convRow, { anchorEl: button });
+      return true;
+    }
+    function onRenameKey(event, team) {
+      const state = column.rowOf(team.team_id);
+      if (!state || state.mode !== 'rename') return;
+      if (event.type === 'input') { state.value = event.target.value; return; }
+      if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void renameConversation(team.team_id); }
+      if (event.key === 'Escape') { event.preventDefault(); column.closeRow(team.team_id); render(); focusControl('conv-open', state.sessionId); }
+    }
+    // The field losing focus (still in the page) saves a changed name and otherwise closes; focus stays where the person put
+    // it. Decided after the focus has moved (a redraw inside the event would put the focus back on a node that is going).
+    function onFocusOut(event) {
+      const team = tab.container() ? selectedTeam() : null;
+      const state = team ? column.rowOf(team.team_id) : null;
+      if (!state || state.mode !== 'rename' || state.busy || !event.target || event.target.id !== column.RENAME_ID || !event.target.isConnected) return;
+      setTimeout(() => {
+        const root = tab.container();
+        const now = root ? root.querySelector('#' + column.RENAME_ID) : null;
+        if (column.rowOf(team.team_id) === state && !state.busy && !(now && now === root.ownerDocument.activeElement)) void renameConversation(team.team_id, { focus: false });
+      }, 0);
+    }
+
+    async function renameConversation(teamId, { focus = true } = {}) {
+      const state = column.rowOf(teamId);
+      if (!state || state.mode !== 'rename' || state.busy) return;
+      const { sessionId } = state;
+      const title = state.value.trim();
+      const listed = listedConversation(teamId, sessionId);
+      if (!title || !listed || title === column.clean(listed.title)) { column.closeRow(teamId); render(); if (focus) focusControl('conv-open', sessionId); return; }
+      Object.assign(state, { busy: true, note: '' });
+      render();
+      const still = shownNow(teamId);
+      const answer = await projects().call('conversationRename', { team_id: teamId, session_id: sessionId, title });
+      if (!tab.container()) return;
+      if (answer.ok) projects().reread(teamId);
+      if (column.rowOf(teamId) !== state) return;
+      if (answer.ok) column.closeRow(teamId); else Object.assign(state, { busy: false, note: errorText(answer.error) });
+      render();
+      if (focus && still()) { const el = answer.ok ? controlOf('conv-open', sessionId) : tab.container().querySelector('#' + column.RENAME_ID); if (el) el.focus(); }
+    }
+
+    async function deleteConversation(teamId, sessionId) {
+      const state = column.rowOf(teamId);
+      if (!state || state.sessionId !== sessionId || state.mode !== 'confirm' || state.busy) return;
+      const projectId = (listedConversation(teamId, sessionId) || {}).project_id;
+      state.busy = true;
+      render();
+      const answer = await projects().call('conversationDelete', { team_id: teamId, session_id: sessionId });
+      if (!tab.container()) return;
+      const mine = column.rowOf(teamId) === state;
+      if (answer.ok) {
+        if (mine) column.closeRow(teamId);
+        projects().reread(teamId);
+        if (column.viewOf(teamId) === column.conversationPage(sessionId)) column.show(teamId, '');
+        render();
+        // The row is going: the focus goes to its project's row, which stays.
+        const opener = [...tab.container().querySelectorAll('[data-team-tab-action="project-open"]')].find((el) => el.dataset.projectId === projectId);
+        if (opener && (selectedTeam() || {}).team_id === teamId) opener.focus();
+        return;
+      }
+      if (!mine) return;
+      Object.assign(state, { mode: 'note', busy: false, note: errorText(answer.error) });
+      render();
+      focusControl('conv-open', sessionId);
+    }
+
+    // The create and rename fields: typing is kept without a redraw; Enter creates or renames, Escape closes. The menu keys
+    // (Shift+F10, the Menu key) on a conversation row open its menu.
     function onField(event) {
       const team = tab.container() ? selectedTeam() : null;
-      if (!team || !event.target || event.target.id !== column.CREATE_ID) return;
+      if (!team || !event.target) return;
+      if (event.type === 'keydown' && onMenuKey(event, team)) return;
+      if (event.target.id === column.RENAME_ID) { onRenameKey(event, team); return; }
+      if (event.target.id !== column.CREATE_ID) return;
       const field = column.createOf(team.team_id);
       if (!field) return;
       if (event.type === 'input') { field.name = event.target.value; return; }
       if (event.key === 'Enter') { event.preventDefault(); void createProject(team.team_id); }
       if (event.key === 'Escape') { event.preventDefault(); column.closeCreate(team.team_id); render(); }
+    }
+
+    // Row 175 F1: a toast, a palette row or a link asks for a conversation from outside the tab (renderer-team-notify.js).
+    // The team is selected first (the intent does it). A list not read yet is waited for (at most LIST_WAIT_MS); then the
+    // conversation opens if it is listed. Answers true when it was shown, false when it is no longer listed.
+    function whenListed(teamId) {
+      const read = () => { const state = projects().team(teamId); return !state || Boolean(state.projects || state.error); };
+      if (read()) return Promise.resolve();
+      return new Promise((resolve) => {
+        let off = () => {};
+        const done = () => { clearTimeout(timer); off(); resolve(); };
+        const timer = setTimeout(done, LIST_WAIT_MS);
+        off = projects().subscribe((change) => { if (change && change.team_id === teamId && (change.type === 'projects' || change.type === 'gone')) done(); });
+      });
+    }
+    async function openConversation(teamId, sessionId) {
+      await whenListed(teamId);
+      if (!tab.container() || !listedConversation(teamId, sessionId)) return false;
+      showPage(teamId, column.conversationPage(sessionId));
+      return true;
     }
 
     function onProjects(change) {
@@ -188,10 +366,15 @@
     }
 
     return {
-      projectNameOf, listing, columnView, mount, action, onField, isPage: column.isPage, afterWrite: column.afterWrite,
+      projectNameOf, listing, columnView, mount, action, onField, openConversation, isPage: column.isPage, afterWrite: column.afterWrite,
       leavePage: (teamId) => column.show(teamId, ''),
       sync: () => projects().sync(data().teams),
-      hold: () => [projects().use(), projects().subscribe(onProjects)],
+      hold: () => {
+        const root = tab.container();
+        const listeners = root ? [['contextmenu', onContextMenu], ['focusout', onFocusOut]] : [];
+        for (const [type, handler] of listeners) root.addEventListener(type, handler);
+        return [projects().use(), projects().subscribe(onProjects), ...listeners.map(([type, handler]) => () => root.removeEventListener(type, handler))];
+      },
     };
   }
 

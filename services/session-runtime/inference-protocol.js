@@ -120,6 +120,11 @@ function supportsMidTurnMail(client) {
   return negotiatedChatWorkspaceCapabilities(client).mid_turn_mail === true;
 }
 
+// Mid-turn steering (row 180): `session.user_steer_arrived` into a live turn of this process.
+function supportsMidTurnSteer(client) {
+  return negotiatedChatWorkspaceCapabilities(client).mid_turn_steer === true;
+}
+
 // The first-turn handoff context kind (cp5a): without it the handoff turn fails closed.
 function supportsSessionHandoffContext(client) {
   return negotiatedChatWorkspaceCapabilities(client).context_kinds.includes(SESSION_HANDOFF_CONTEXT_KIND);
@@ -140,4 +145,4 @@ module.exports = { RUNTIME_INFERENCE_ADMISSION_VERSION, beginRuntimeInferenceIni
   assertRuntimeBudgetProtocol, assertCommandProposalProtocol, supportsCommandProposalProtocol,
   supportsInferencePerformanceProtocol,
   negotiatedChatWorkspaceCapabilities, supportsSessionMessageContext, supportsSessionHandoffContext,
-  supportsProducerTool, supportsMidTurnMail };
+  supportsProducerTool, supportsMidTurnMail, supportsMidTurnSteer };

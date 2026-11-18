@@ -570,3 +570,21 @@ test('an over-cap query surfaces the omitted-matches state in the search bar', a
   assert.equal(count.textContent, '1 of 500+', 'the bar says the list is capped, not a fabricated exact total');
   overlay.dispose();
 });
+
+test('Ctrl+F and Escape typed in the chat Terminal panel stay with the shell', () => {
+  const { dom, overlay } = buildEnv(FIXTURE);
+  overlay.attach();
+  const doc = dom.window.document;
+  doc.body.insertAdjacentHTML('beforeend', '<div class="chat-terminal-panel"><div class="xterm"><textarea id="xtermInput"></textarea></div></div>');
+  const press = (target, init) => {
+    const event = new dom.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(press(doc.getElementById('xtermInput'), { key: 'f', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(overlay.isOpen(), false);
+  overlay.open();
+  assert.equal(press(doc.getElementById('xtermInput'), { key: 'Escape' }).defaultPrevented, false);
+  assert.equal(overlay.isOpen(), true, 'Escape in the terminal does not close the chat search');
+  overlay.dispose();
+});

@@ -26,6 +26,7 @@ from sidecar.ai.context.builder_shared import (
     _sanitize_bootstrap_content,
     _skill_dedupe_key,
     _split_frontmatter,
+    first_filter_sighting,
 )
 from sidecar.ai.context.context_io import (
     discover_skill_files,
@@ -535,7 +536,9 @@ class _BuilderSkillsMixin:
                 omitted_tools = tuple(
                     tool_name for tool_name in allowed_tools if tool_name not in executable_tools
                 )
-                if omitted_tools:
+                if omitted_tools and first_filter_sighting(
+                    entry.scope, entry.rel_path, omitted_tools
+                ):
                     _builder_hub.log_event(
                         LOGGER,
                         logging.INFO,

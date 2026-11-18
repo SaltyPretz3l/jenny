@@ -2,7 +2,8 @@
  *
  * Split out of renderer-shell-artifact-bridge.js (which builds one per bridge): the Changes undo controller,
  * the code-review, file-preview, task, subagent and project-notes rails, the memory chip / notes entries, and the
- * lazily loaded Background tasks panel with its always-present global API (window.rendererBackgroundTasksPanel).
+ * lazily loaded Background tasks panel with its always-present global API (window.rendererBackgroundTasksPanel), and the
+ * lazily loaded chat Terminal panel (row 178, window.rendererChatTerminalPanel while the flag and the pty bridge exist).
  * Each is built once on first use, bound to the stable #artifactReviewPanel container and torn down through
  * registerCleanup; a construction failure is logged and degrades to "no owner". The artifact surface stays
  * with the bridge and is read through getSurface().
@@ -64,6 +65,12 @@
       ['renderer/features/renderer-background-tasks-panel.js', 'rendererBackgroundTasksPanelOwner'],
     ];
     let backgroundTasksPanel = null;
+    // Row 178: the chat Terminal panel loads on first open; its global API exists from startup (with the pty bridge and the flag).
+    const TERMINAL_PANEL_SCRIPTS = [
+      ['renderer/chat/renderer-chat-terminal-panel-render.js', 'rendererChatTerminalPanelRender'],
+      ['renderer/chat/renderer-chat-terminal-panel.js', 'rendererChatTerminalPanelOwner'],
+    ];
+    let terminalPanel = null;
 
     // One Changes undo controller for both hosts (row 34 S5): the IDE chat
     // dock and the side panel. Created once its lazily loaded script is ready.
@@ -416,6 +423,67 @@
       registerCleanup(() => { if (windowRef.rendererBackgroundTasksPanel === backgroundTasksApi) delete windowRef.rendererBackgroundTasksPanel; });
     }
 
+    const terminalOffered = () => state.features?.featureFlags?.chat_terminal_panel !== false && Boolean(windowRef?.jennyShell?.workspacePty);
+
+    function ensureTerminalPanel() {
+      const owner = windowRef?.rendererChatTerminalPanelOwner;
+      if (terminalPanel || typeof owner?.createChatTerminalPanel !== 'function') return terminalPanel;
+      try {
+        const panel = owner.createChatTerminalPanel({
+          state,
+          windowRef,
+          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
+          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
+          renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
+          toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
+          toggleMaximize: () => ensureArtifactSurface()?.toggleArtifactReviewMaximized?.(),
+          isMaximized: () => ensureArtifactSurface()?.isArtifactReviewMaximized?.() === true,
+          claimOwner: (sessionId) => sidePanel.claim(sessionId),
+          getPanelSessionId: () => sidePanel.getSessionId(),
+          getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
+          setActiveView: (...args) => setActiveView(...args),
+          appendClientLog: (...args) => appendClientLog(...args),
+        });
+        panel.bind();
+        registerCleanup(() => panel.dispose());
+        terminalPanel = panel;
+      } catch (error) {
+        appendClientLog('ERROR', 'chat_terminal.panel_init_failed', { message: error?.message || String(error) });
+      }
+      return terminalPanel;
+    }
+
+    async function loadTerminalPanel() {
+      for (const [src, name] of TERMINAL_PANEL_SCRIPTS) {
+        if (!await windowRef?.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef?.[name]), log: appendClientLog })) return null;
+      }
+      return ensureTerminalPanel();
+    }
+
+    // The More menu, Ctrl+` and the approval cards call this; it loads the panel on first use.
+    const terminalApi = {
+      isAvailable: () => terminalOffered(),
+      async open(options) {
+        if (!terminalOffered()) return false;
+        if (!ensureTerminalPanel()) await loadTerminalPanel().catch(() => null);
+        if (!terminalPanel) {
+          appendClientLog('WARN', 'chat_terminal.panel_load_failed', {});
+          showToastMessage(jt('chatTerminal.loadFailed', 'The terminal panel is unavailable right now.'));
+          return false;
+        }
+        const sessionId = String(options?.sessionId || state.currentSessionId || '').trim();
+        return terminalPanel.open({ ...options, sessionId });
+      },
+      toggle: (options) => (terminalApi.isOpen() ? Promise.resolve(!terminalApi.close()) : terminalApi.open(options)),
+      close: () => terminalPanel?.close?.() === true,
+      isOpen: () => terminalPanel?.isOpen?.() === true,
+      titleHtml: () => terminalPanel?.titleHtml?.() || '', // the panel chrome's title: the tab strip and actions
+    };
+    if (windowRef && typeof windowRef === 'object' && terminalOffered()) {
+      windowRef.rendererChatTerminalPanel = terminalApi;
+      registerCleanup(() => { if (windowRef.rendererChatTerminalPanel === terminalApi) delete windowRef.rendererChatTerminalPanel; });
+    }
+
     async function loadBrowserPanel() {
       try {
         for (const [src, name] of BROWSER_PANEL_SCRIPTS) {
@@ -439,12 +507,18 @@
     };
     registerCleanup(() => delete windowRef.rendererSyncBrowserUse);
 
+    // The session rail's Servers row opens the Browser panel; false while it has not loaded (nothing to show yet).
+    const openBrowserUsePanel = () => (browserPanel ? browserPanel.open() !== false : false);
+    windowRef.rendererOpenBrowserUsePanel = openBrowserUsePanel;
+    registerCleanup(() => { if (windowRef.rendererOpenBrowserUsePanel === openBrowserUsePanel) delete windowRef.rendererOpenBrowserUsePanel; });
+
     return {
       getBrowserPanel: () => browserPanel,
       getCodeReviewRailController: () => codeReviewRailController,
       getFilePreviewController: () => filePreviewController,
       getSubagentRailController: () => subagentRailController,
       renderBackgroundTasksSurface: (surface) => backgroundTasksPanel?.renderRailContent?.(surface) === true,
+      renderTerminalSurface: (surface) => terminalPanel?.renderRailContent?.(surface) === true,
       backgroundTasksApi,
       ensureCodeReviewRail,
       ensureFilePreviewController,

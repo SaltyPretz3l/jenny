@@ -116,6 +116,10 @@ class FileAccessLibrary:
     def latched(self) -> bool:
         return self._latched
 
+    def latch(self) -> None:
+        """Latch off because another process's copy latched (`latch_shared_library`)."""
+        self._latched = True
+
     def call(self, name: str, *args: Any) -> int:
         if self._latched:
             return STATUS["internal"]
@@ -200,6 +204,25 @@ def shared_library() -> FileAccessLibrary:
         if isinstance(_loaded, str):
             raise ComponentMissing(_loaded)
         return _loaded
+
+
+def shared_library_latched() -> bool:
+    """Whether this process's library is loaded and latched off. Never loads it."""
+    with _lock:
+        return isinstance(_loaded, FileAccessLibrary) and _loaded.latched
+
+
+def latch_shared_library() -> None:
+    """Latch this process's library off because a copy in a related process (a
+    grep worker child, or its parent) latched: a latch then holds for the worker
+    and every child it starts, not only the process where the fault happened
+    (W14 review, finding 1). A library not loaded yet stays refused."""
+    global _loaded  # noqa: PLW0603 - one library per worker process.
+    with _lock:
+        if isinstance(_loaded, FileAccessLibrary):
+            _loaded.latch()
+        elif _loaded is None:
+            _loaded = "internal"
 
 
 def reset_shared_library(replacement: FileAccessLibrary | None = None) -> None:

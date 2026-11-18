@@ -33,7 +33,7 @@ const PROJECT_METHODS = Object.freeze(['projectList', 'projectCreate', 'projectR
   'projectAudit', 'projectConversations', 'conversationCreate', 'conversationOpen', 'conversationClose', 'conversationCloseAll', 'conversationSend',
   'conversationCancel', 'conversationRename', 'conversationDelete', 'conversationControl', 'conversationDecide',
   'conversationAnswer', 'conversationDecline', 'uploadFolder', 'uploadCancel', 'downloadProject', 'downloadCancel',
-  'projectRules', 'projectRuleAdd', 'projectRuleRemove', 'projectRuleAnswer']);
+  'projectRules', 'projectRuleAdd', 'projectRuleRemove', 'projectRuleAnswer', 'conversationPreferences']);
 
 /**
  * `core()` answers the live host core (a restart replaces it), `leases()` its control leases. Answers what
@@ -54,15 +54,18 @@ async function createProjectParts(t, { fx, store, config, logger, core, leases, 
   const app = fakeApplicationProjects();
   const chat = fakeChatStore();
   const remover = fakeRecordRemover(app);
+  // A test that attaches the real team chat (team-chat-hook.js) sets `parts.chatStore` to that host's store, so a
+  // project's channel is made where the chat commands read it; unset, the fixture's fake.
+  const chatOf = () => parts.chatStore ?? chat;
   const publish = (type, payload, options) => core()?.events.publish(type, payload, options);
   const announce = createProjectAnnouncer({ directory: store.directory, logger, publish });
   // Row 151: the board host as team-main.js builds it (the store, its commands, routes and events).
   const boards = createTeamBoardHost({ userDataPath: fs.realpathSync.native(config.userDataPath), directory: store.directory,
     sessionProject, publish, logger, audit: approvals.append });
   const deleter = createProjectDeleter({ store, folders, router: () => core()?.router ?? null,
-    sessionStore: () => core()?.composition?.backend?.sessionStore ?? null, records: () => remover, chat: () => chat, logger,
+    sessionStore: () => core()?.composition?.backend?.sessionStore ?? null, records: () => remover, chat: chatOf, logger,
     boards: () => boards.store });
-  const projects = createTeamProjectCommands({ store, directory: store.directory, projects: () => app, chat: () => chat,
+  const projects = createTeamProjectCommands({ store, directory: store.directory, projects: () => app, chat: chatOf,
     announce, logger, folders, deleter });
   const files = createTeamProjectFiles({ userDataPath: fs.realpathSync.native(config.userDataPath), folders, store, authorize,
     logger, serialized: projects.serialized, audit: approvals.audit, backend: () => core()?.composition?.backend ?? null,
@@ -88,7 +91,7 @@ async function createProjectParts(t, { fx, store, config, logger, core, leases, 
     return composition;
   };
   const parts = {
-    authorizer, approvals, app, chat, folders, files, projectsRoot, createBackend, rules, boards,
+    authorizer, approvals, app, chat, chatStore: null, folders, files, projectsRoot, createBackend, rules, boards,
     commandOptions: { projects, projectAudit: approvals.audit, files: files.commands, rules: rules.commands,
       boards: boards.commands, admitChatBoard: boards.admitChat },
     coreOptions: { sessionScope: authorizer.sessionScope, teamApprovals: rules.withApprovals(approvals) },

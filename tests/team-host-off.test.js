@@ -143,3 +143,31 @@ test('the shutdown task waits for both stops even when one of them fails', async
   await assert.doesNotReject(shutdown[0]());
   assert.equal(serviceStopped, true, 'the member client stop finished');
 });
+
+// Owner report: Start left this PC's own team Reconnecting until its backoff ran out. A move to running asks the
+// loaded service to dial that one team now; any other state, a repeat, or a service not loaded yet asks nothing.
+test('the host going running asks the loaded team service to retry the host team once per transition', async (t) => {
+  const dir = tempProfile(t, 'jenny-host-off-');
+  clearModules();
+  const { registerTeam } = require('../services/main/team-registration');
+  const ipcMain = fakeIpcMain();
+  const retries = [];
+  const pushed = [];
+  let loads = 0;
+  let hostSend = null;
+  const fakeService = { handle: async () => ({ ok: true }), startExisting: async () => {}, stopAll: async () => {},
+    retryTeam: (...args) => { retries.push(args); } };
+  const fakeHost = { handle: async () => ({ ok: true }), stop: async () => {} };
+  registerTeam(ipcMain, { featureFlags: { team: true }, backendService: fakeBackend({ team: true }), userDataPath: dir,
+    getSecureStore: () => createMemorySecureStore(), sendBridgeEvent: (channel) => pushed.push(channel),
+    loadService: () => { loads += 1; return { createTeamService: () => fakeService }; },
+    loadHost: () => ({ createHostController: (options) => { hostSend = options.sendState; return fakeHost; } }),
+    loadHostLaunch: () => ({ hostEnvironment: () => ({}) }), readOfflineMode: () => 'disabled' });
+  await ipcMain.handlers.get('team:host-status')({ sender: {} }, undefined);
+  hostSend({ state: 'running', team_id: 'team_a' });
+  assert.equal(loads, 0, 'a host state never loads the team service');
+  await ipcMain.handlers.get('team:status')({ sender: {} }, undefined);
+  for (const state of ['stopped', 'starting', 'running', 'running', 'stopping', 'stopped', 'running']) hostSend({ state, team_id: 'team_a' });
+  assert.deepEqual(retries, [['team_a', 'host_running'], ['team_a', 'host_running']]);
+  assert.equal(pushed.filter((channel) => channel === 'team.onHostState').length, 8, 'every state still reaches the renderer');
+});

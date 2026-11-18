@@ -33,6 +33,14 @@ const COMMAND_LIMITS = Object.freeze({
   'team.project.upload.begin': Object.freeze({ maxRequestBytes: MIB, timeoutMs: 60_000 }),
   'team.project.upload.commit': Object.freeze({ timeoutMs: 130_000 }),
   'team.project.download.manifest': Object.freeze({ maxResponseBytes: 2 * MIB, timeoutMs: 130_000 }),
+  // Row 175 wave 5: one file as text (at most 256 KiB read; JSON escapes a control character in six bytes, so 1.5 MiB at
+  // most) or, round 2 (D13), one picture of at most 4 MiB as base64 (5,592,408 characters) with its path and size: 6 MiB,
+  // under the host's 8 MiB answer cap (server/config.js maxResponseBytes) and this client's 8 MiB ceiling. 4 MiB over
+  // a slow relay needs more than the default 15 s; the host walks no tree for it.
+  'team.project.files.read': Object.freeze({ maxResponseBytes: 6 * MIB, timeoutMs: 45_000 }),
+  // Row 175 round 2: a list page walks the project once (up to 50,000 entries) and lists at most 500 paths of up to 1,024
+  // characters each (3 bytes a character as UTF-8: about 1.5 MiB); later pages reuse the walk for a few seconds.
+  'team.project.files.list': Object.freeze({ maxResponseBytes: 2 * MIB, timeoutMs: 60_000 }),
   'sessions.snapshot': Object.freeze({ maxResponseBytes: 8 * MIB, timeoutMs: 30_000 }),
   // 2,000 rows of up to about 1.5 KiB each (a 240-character title escaped) need about 3 MiB; 8 MiB is the host's own
   // answer cap, so any list the host can send arrives and the client keeps its first 2,000 rows (fix 11).

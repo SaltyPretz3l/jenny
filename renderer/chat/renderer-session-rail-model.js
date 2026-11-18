@@ -5,7 +5,9 @@
    workspace view it returns the five section view models the renderer paints, with the PO's
    words, disclosure defaults and data-state rules:
 
-   - Sections in order Environment, Context, Outputs, Changes, Background tasks.
+   - Sections in order Environment, Context, Outputs, Changes, Background tasks, then Servers (row 176:
+     the chat's browser page and its run_command jobs that serve on a loopback port; left out until
+     one is up or has been, and a serving job is listed there, not under Background tasks).
    - Checking, unavailable and stale are muted words, never zero. Unknown is never 0.
    - A summary that belongs to another session is never shown (it reads as checking).
    - Disclosure defaults apply only where the persisted disclosure is null: Environment open;
@@ -25,7 +27,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (contextPreview) {
   'use strict';
 
-  const SECTION_KEYS = Object.freeze(['environment', 'context', 'outputs', 'changes', 'background_tasks']);
+  const SECTION_KEYS = Object.freeze(['environment', 'context', 'outputs', 'changes', 'background_tasks', 'servers']);
   const RAIL_WIDTH_PX = 280;
   const DOCK_MIN_WIDTH_PX = 920;
   const DOCK_MIN_WIDTH_WITH_PANEL_PX = 640;
@@ -33,6 +35,7 @@
   const MAX_BACKGROUND_ROWS = 5;
   const MAX_FINISHED_ROWS = 20;
   const FINISHED_DISCLOSURE = 'background_tasks_finished';
+  const MAX_SERVER_CHATS = 64;
   const DISCLOSURE_KEYS = Object.freeze([...SECTION_KEYS, FINISHED_DISCLOSURE]);
 
   function fallbackJt(key, fallback, params) {
@@ -155,6 +158,7 @@
       case 'context': return jt('chat.sessionRail.section.context', 'Context');
       case 'outputs': return jt('chat.sessionRail.section.outputs', 'Outputs');
       case 'changes': return jt('chat.sessionRail.section.changes', 'Changes');
+      case 'servers': return jt('chat.sessionRail.section.servers', 'Servers');
       default: return jt('chat.sessionRail.section.backgroundTasks', 'Background tasks');
     }
   }
@@ -332,14 +336,63 @@
       text: command, meta, title: `${command} (${taskPhaseLabel(phase, jt)})`, surface: 'background_tasks', resourceRef: `job:${jobId}` };
   }
 
+  /* Row 176: Servers lists what this chat started that is still serving: its browser page, then run_command jobs
+     with a loopback address (oldest first). A serving job is listed here, not as a Background tasks running row. */
+  const SERVER_DOT = Object.freeze({ tone: 'active', pulse: false });
+  const isServing = (item) => text(item.source_kind) === 'background_job' && taskPhase(item.state) === 'running' && Boolean(text(item.serving_url));
+  const bareAddress = (url) => text(url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/$/, '');
+
+  function serverEntries(wrapper, browser, jt) {
+    const items = ['available', 'stale'].includes(text(wrapper?.state)) && Array.isArray(wrapper.data?.items) ? wrapper.data.items.filter(isObject) : [];
+    const rows = [];
+    const page = isObject(browser) && browser.open === true ? text(browser.url) : '';
+    if (page) {
+      const name = text(browser.title) || bareAddress(page);
+      rows.push({ kind: 'server', key: 'server:browser', serverKind: 'browser', dot: SERVER_DOT, text: name, meta: jt('chat.sessionRail.servers.browser', 'Browser'),
+        title: `${name} (${page})`, surface: 'browser', resourceRef: '', stopLabel: jt('chat.sessionRail.servers.close', 'Close'),
+        stopAria: jt('chat.sessionRail.servers.closeAria', 'Close the browser: {title}', { title: name }) });
+    }
+    for (const item of items.filter(isServing).sort((a, b) => (Number(a.serving_since_ms) || 0) - (Number(b.serving_since_ms) || 0))) {
+      const jobId = text(item.job_id);
+      const address = bareAddress(item.serving_url);
+      const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
+      const killing = text(item.state) === 'killing';
+      rows.push({ kind: 'server', key: `server:job:${jobId}`, serverKind: 'job', jobId, dot: SERVER_DOT, text: address, addr: true,
+        meta: killing ? jt('chat.sessionRail.servers.stopping', 'Stopping')
+          : (Number.isInteger(item.serving_port) ? jt('chat.sessionRail.servers.port', 'Port {port}', { port: item.serving_port }) : ''),
+        title: jt('chat.sessionRail.servers.jobTitle', '{command} on {address}', { command, address }), surface: 'background_tasks', resourceRef: `job:${jobId}`,
+        stopLabel: jt('chat.backgroundJobs.stop', 'Stop'), stopTitle: jt('chat.backgroundJobs.stopTitle', 'Stop this background job'),
+        stopAria: jt('chat.sessionRail.servers.stopAria', 'Stop server: {address}', { address }), stopping: killing });
+    }
+    return rows;
+  }
+
+  function buildServers(data, jt, entries) {
+    const up = entries.length > 0;
+    return {
+      valueText: up ? jt('chat.sessionRail.servers.up', '{count} up', { count: entries.length }) : jt('chat.sessionRail.servers.none', 'None up'),
+      parts: null, dot: up ? SERVER_DOT : null, defaultOpen: up,
+      rows: up ? entries : [{ kind: 'note', key: 'none', text: jt('chat.sessionRail.servers.empty', 'Nothing this chat started is still serving.') }],
+    };
+  }
+
+  /* The controller remembers (bounded) which chats ever had a server, so the section can read "None up" after. */
+  function rememberServers(seen, sessionId, vm) {
+    if (!(seen instanceof Map) || !text(sessionId) || vm?.hasServers !== true) return;
+    seen.delete(sessionId);
+    seen.set(sessionId, true);
+    while (seen.size > MAX_SERVER_CHATS) seen.delete(seen.keys().next().value);
+  }
+
   function buildBackgroundTasks(data, jt) {
     const counts = isObject(data.counts) ? data.counts : {};
-    const active = count(counts.active);
     const waiting = count(counts.waiting);
     const failed = count(counts.failed);
     const completed = count(counts.completed);
     const items = Array.isArray(data.items) ? data.items.filter(isObject) : [];
-    const itemPhases = items.map((item) => taskPhase(item.state));
+    const serving = items.filter(isServing).length;
+    const active = count(counts.active) === null ? null : Math.max(0, counts.active - serving);
+    const itemPhases = items.map((item) => (isServing(item) ? 'serving' : taskPhase(item.state))); // row 176: Servers lists them
     const anyActive = (active !== null && active > 0) || itemPhases.includes('running');
     let valueText;
     let dot = null;
@@ -354,6 +407,8 @@
       dot = taskDot('failed');
     } else if (data.failed_sources?.length) {
       valueText = jt('chat.sessionRail.state.unavailable', 'Unavailable');
+    } else if (serving > 0 && active === 0) { // row 176: its live work is all under Servers
+      valueText = jt('chat.sessionRail.tasks.noneRunning', 'None running');
     } else if (active === null || waiting === null) {
       valueText = !items.length && data.coverage === 'partial'
         && Array.isArray(data.unsupported_sources) && data.unsupported_sources.length < 3
@@ -372,6 +427,7 @@
       const id = text(item.operation_id) || `row-${index}`;
       if (seen.has(id)) return;
       const phase = itemPhases[index];
+      if (phase === 'serving') return;
       const finished = phase === 'finished' || phase === 'failed';
       const target = finished ? finishedRows : rows;
       if (target.length >= (finished ? MAX_FINISHED_ROWS : MAX_BACKGROUND_ROWS)) return;
@@ -417,6 +473,7 @@
     outputs: buildOutputs,
     changes: buildChanges,
     background_tasks: buildBackgroundTasks,
+    servers: buildServers,
   };
 
   function checkingSection(key, jt) {
@@ -437,14 +494,14 @@
   }
 
   /* One section's view model from its summary wrapper. */
-  function buildSection(key, wrapper, jt) {
+  function buildSection(key, wrapper, jt, entries) {
     if (!isObject(wrapper)) return checkingSection(key, jt);
     const state = text(wrapper.state);
     if (state === 'checking' && !(key === 'context' && wrapper.data?.scope === 'next_send')) return checkingSection(key, jt);
     if (state === 'available' || state === 'stale' || (key === 'context' && wrapper.data?.scope === 'next_send')
       || (key === 'background_tasks' && wrapper.data?.failed_sources?.length)) {
       if (!isObject(wrapper.data)) return unavailableSection(key, jt, 'unavailable', text(wrapper.reason));
-      const built = BUILDERS[key](wrapper.data, jt);
+      const built = BUILDERS[key](wrapper.data, jt, entries);
       const stale = state === 'stale';
       const staleWord = jt('chat.sessionRail.state.stale', 'stale');
       return {
@@ -487,21 +544,31 @@
        status         'checking' | 'ready' | 'unavailable' (a failed fetch is unavailable)
        sessionId      the pane's session now; a summary for any other session reads as checking
        workspaceView  the persisted { rail_visible, disclosures, children_expanded }
-       overrides      optimistic disclosure toggles not yet confirmed (key -> boolean) */
-  function buildRailViewModel({ summary, status = 'ready', sessionId = '', workspaceView = null, overrides = null, jt = defaultJt() } = {}) {
+       overrides      optimistic disclosure toggles not yet confirmed (key -> boolean)
+       browser        the chat's browser { open, url, title }, or null (Servers lists it while open)
+       everHadServer  this chat had a server before: Servers then stays as "None up" */
+  function buildRailViewModel({ summary, status = 'ready', sessionId = '', workspaceView = null, overrides = null, jt = defaultJt(), browser = null, everHadServer = false } = {}) {
     const belongs = isObject(summary) && text(summary.session_id) === text(sessionId) && text(sessionId) !== '';
     const view = isObject(workspaceView) ? workspaceView : {};
     const disclosures = isObject(view.disclosures) ? view.disclosures : {};
     const pending = isObject(overrides) ? overrides : {};
+    let hasServers = false;
     const sections = SECTION_KEYS.map((key) => {
+      const wrapper = belongs ? summary[key === 'servers' ? 'background_tasks' : key] : null;
+      const entries = key === 'servers' ? serverEntries(wrapper, browser, jt) : null;
+      if (entries) hasServers = entries.length > 0;
+      if (entries && !hasServers && everHadServer !== true) return null;
       let section;
-      if (belongs) section = buildSection(key, summary[key], jt);
+      // Row 176: a server that is up shows even while the summary is checking or failed (the browser needs no summary).
+      if (entries?.length && !['available', 'stale'].includes(text(wrapper?.state))) {
+        section = { key, title: sectionTitle(key, jt), state: 'available', stateWord: '', ...buildServers(null, jt, entries), stale: false };
+      } else if (belongs) section = buildSection(key, wrapper, jt, entries);
       else if (status === 'unavailable') section = unavailableSection(key, jt, 'unavailable', '');
       else section = checkingSection(key, jt);
       const resolved = { ...section, open: resolveOpen(section, disclosures, pending[key]) };
       return key === 'background_tasks' ? withFinishedDisclosure(resolved, disclosures, pending[FINISHED_DISCLOSURE]) : resolved;
-    });
-    return { sessionId: text(sessionId), status: belongs ? 'ready' : status, sections };
+    }).filter(Boolean);
+    return { sessionId: text(sessionId), status: belongs ? 'ready' : status, sections, hasServers };
   }
 
   return {
@@ -524,5 +591,7 @@
     isDisclosureOpen,
     buildSection,
     buildRailViewModel,
+    rememberServers,
+    bareAddress,
   };
 });

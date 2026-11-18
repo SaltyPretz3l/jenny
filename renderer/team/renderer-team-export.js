@@ -17,7 +17,10 @@
  * (services/team-export-format.js, through services/save-file-handler.js). Every history read names a top bound,
  * so even the first page goes straight to the host instead of opening the channel in the live cache. The host
  * does not limit history or thread reads; the overview asked first is limited, so a second export started at once
- * can fail with the generic line. */
+ * can fail with the generic line.
+ *
+ * Row 175 item 8 (D15): "This conversation…" also exports the open project conversation (page id `conv:<session>`):
+ * the prompts under their askers and each turn's last words under "Jenny", paged by `conversationOpen`; no reasoning or tool row. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-team-store'), require('./renderer-team-channels'));
@@ -32,8 +35,11 @@
   const TOP = Number.MAX_SAFE_INTEGER; // the first page's bound: the newest messages
   const OFFLINE = new Set(['team_not_connected', 'team_offline', 'team_connecting']);
   const BOTTOM_SLACK_PX = 48;
+  const CONV = 'conv:'; // a project conversation's page id (renderer-team-project-column.js)
+  const CONV_PAGES = 200; // the most pages of one conversation (about 4,000 messages)
 
   const tag = () => (globalThis.jennyI18n && typeof globalThis.jennyI18n.tag === 'function' ? globalThis.jennyI18n.tag() : undefined);
+  const timeline = () => globalThis.rendererTeamProjectTimeline || require('./renderer-team-project-timeline');
   const isTimeline = (m) => m && typeof m === 'object' && typeof m.id === 'string' && Number.isSafeInteger(m.seq);
   const bySeq = (a, b) => a.seq - b.seq;
 
@@ -72,6 +78,42 @@
       if (!message.deleted || message.replies.length) kept.push(message);
     }
     return kept;
+  }
+
+  // A host message time as the document wants it: an ISO string.
+  const isoOf = (v) => (typeof v === 'number' && Number.isFinite(v) ? new Date(v).toISOString() : typeof v === 'string' ? v : '');
+  const spoken = (m) => m.role === 'user' || (m.role === 'assistant' && (!m.kind || m.kind === 'message') && typeof m.content === 'string' && m.content.trim() !== '');
+
+  // One project conversation (newest page, then older ones): its prompts and each turn's last words, oldest first; null when `step` stopped it.
+  async function gatherConversation({ call, teamId, sessionId, step, nameOf, onTitle }) {
+    const ids = { team_id: teamId, session_id: sessionId };
+    let held = [];
+    let before = '';
+    let title = '';
+    for (let pages = 0; pages < CONV_PAGES; pages += 1) {
+      const answer = await call('conversationOpen', before ? { ...ids, before_message_id: before } : ids);
+      if (!step(answer)) return null;
+      const snap = answer.snapshot && typeof answer.snapshot === 'object' ? answer.snapshot : {};
+      const known = new Set(held.map((m) => m.id));
+      const page = (Array.isArray(snap.messages) ? snap.messages : []).filter((m) => m && typeof m === 'object' && typeof m.id === 'string' && !known.has(m.id));
+      if (!title && snap.session && typeof snap.session.title === 'string') { title = snap.session.title.replace(/\s+/g, ' ').trim().slice(0, 120); if (title) onTitle(title); }
+      held = page.concat(held);
+      step(null, page.filter(spoken).length);
+      if (snap.has_more !== true || !page.length || typeof snap.next_before_message_id !== 'string' || !snap.next_before_message_id) break;
+      before = snap.next_before_message_id;
+    }
+    const jenny = jt('team.conv.jenny', 'Jenny');
+    const messages = [];
+    for (const item of timeline().groupTurns(held)) {
+      if (item.kind === 'member') {
+        const m = item.message;
+        if (typeof m.content === 'string' && m.content.trim()) messages.push({ id: m.id, sender: nameOf(m.author && m.author.member_id), sent_at: isoOf(m.timestamp), edited: false, text: m.content, replies: [] });
+      } else if (item.kind === 'turn' && item.text.trim()) {
+        const last = item.messages.findLast((m) => m && m.role === 'assistant' && m.content === item.text);
+        messages.push({ id: String(item.id), sender: jenny, sent_at: isoOf((last && last.timestamp) || item.startedAt), edited: false, text: item.text, replies: [] });
+      }
+    }
+    return { name: title || jt('team.projects.untitled', 'Untitled conversation'), kind: 'channel', messages };
   }
 
   // "{team} {channel} {yyyy-mm-dd}.md" (or "{team} {yyyy-mm-dd}.md"), safe as a Windows file name.
@@ -126,11 +168,19 @@
       const rows = (Array.isArray(overview.channels) ? overview.channels : []).filter((r) => r && typeof r.channel_id === 'string' && (r.kind !== 'dm' || channels.isDirect(r)));
       const ordered = rows.filter((r) => r.channel_id === channels.CHANNEL).concat(rows.filter((r) => r.channel_id !== channels.CHANNEL && !channels.isDirect(r)),
         rows.filter(channels.isDirect).sort((a, b) => titleOf(a).localeCompare(titleOf(b), tag(), { sensitivity: 'base' })));
-      const chosen = scope === 'one' ? ordered.filter((r) => r.channel_id === channelId) : ordered;
+      const conv = scope === 'one' && String(channelId).startsWith(CONV);
+      const chosen = conv ? [{ channel_id: channelId }] : scope === 'one' ? ordered.filter((r) => r.channel_id === channelId) : ordered;
       if (!chosen.length) return stopped({ ok: false, error: { reason: 'team_chat_not_found' } });
-      set({ ...state, total: chosen.length, label: scope === 'one' ? titleOf(chosen[0]) : '' });
+      set({ ...state, total: chosen.length, label: conv ? jt('team.projects.untitled', 'Untitled conversation') : scope === 'one' ? titleOf(chosen[0]) : '' });
       const conversations = [];
       for (const row of chosen) {
+        if (conv) {
+          const one = await gatherConversation({ call, teamId, sessionId: channelId.slice(CONV.length), step, nameOf, onTitle: (label) => set({ ...state, label }) });
+          if (!one) return false;
+          conversations.push(one);
+          set({ ...state, done: state.done + 1 });
+          continue;
+        }
         const messages = await gather({ call, teamId, channelId: row.channel_id, step });
         if (!messages) return false;
         // A deleted root carries who deleted it and never its text.
@@ -217,7 +267,7 @@
     const offline = !team || team.state !== 'online';
     const entry = { label: jt('team.export.menu', 'Export'), value: 'export', disabled: offline || exporter.running(),
       description: offline ? jt('team.export.needsOnline', 'Needs the team online') : '',
-      items: [{ label: jt('team.export.menuOne', 'This conversation…'), value: 'export-one', disabled: !String(channelId || '').startsWith('chan_'), action: () => onPick('one', channelId) },
+      items: [{ label: jt('team.export.menuOne', 'This conversation…'), value: 'export-one', disabled: !/^(chan_|conv:)/.test(String(channelId || '')), action: () => onPick('one', channelId) },
         { label: jt('team.export.menuAll', 'Every conversation…'), value: 'export-all', action: () => onPick('all', '') }] };
     return [{ separator: true }, entry];
   }

@@ -572,3 +572,29 @@ test('a repair whose save fails is tried once per connection manager', async (t)
     [['WARN', false, 'team_client_write_failed']], 'one attempt, one warning');
   assert.equal(Object.hasOwn(s.saved(), 'label'), false);
 });
+
+// Owner report: the team server on this PC started, yet its own row said Reconnecting until the backoff wait ran out.
+test('retryTeam ends a long wait between dials at once; online or for an unknown team it does nothing', async (t) => {
+  const host = await createTeamClientHost(t);
+  const timers = countingTimers();
+  const service = host.createService({ timers, backoff: { initialMs: 30_000, maxMs: 60_000 } });
+  const me = await joinAs(host, service, { owner: await host.ownerDirect() });
+  await host.waitForState(me.teamId, 'online');
+  // Setup sockets close just after "online" (later under a loaded run): baseline once two reads 100 ms apart agree.
+  let online = JSON.stringify(service.resources());
+  for (let i = 0, prev = ''; i < 30 && online !== prev; i += 1) { prev = online; await pause(100); online = JSON.stringify(service.resources()); }
+  service.retryTeam(me.teamId, 'host_running');
+  service.retryTeam('team_unknown', 'host_running');
+  await pause(100);
+  assert.equal(JSON.stringify(service.resources()), online, 'online: nothing dialled, nothing scheduled');
+  await host.stopHostBridge();
+  await host.waitForState(me.teamId, 'reconnecting');
+  await host.startHostBridge();
+  await pause(300);
+  assert.equal(host.lastState(me.teamId).state, 'reconnecting', 'the host is back; the wait is not over');
+  service.retryTeam(me.teamId, 'host_running');
+  await host.waitForState(me.teamId, 'online', { attempts: 100 });
+  assert.ok(timers.delays.every((ms) => ms >= 24_000), `no short wait was scheduled: ${timers.delays}`);
+  assert.deepEqual(host.logs.filter((line) => line.event === 'team.connection.retry_now').map((line) => line.fields),
+    [{ team_id: me.teamId, reason: 'host_running' }]);
+});

@@ -2,7 +2,7 @@
 
 // Where the `jenny-team-bridge` binary is: `<resources>/sidecar/` in a packaged
 // app, `build/sidecar/` in a source checkout. No binary means the transport is
-// unavailable, which the team host reports as `team_transport_down`.
+// unavailable, which the team host reports as `team_transport_missing`.
 
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');

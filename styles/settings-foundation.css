@@ -37,6 +37,16 @@
 
 /* Avoid stacking the field label's default top margin with the group's spacing. */
 .settings-group > .settings-field-label:first-of-type,
+/* Settings > About credits: a plain list in the group copy's type. */
+.settings-credits {
+  margin: var(--space-3) 0 0;
+  padding-inline-start: 1.2em;
+  max-width: 62ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  line-height: 1.55;
+}
+
 .settings-group-copy + .settings-field-label {
   margin-top: var(--space-6);
 }

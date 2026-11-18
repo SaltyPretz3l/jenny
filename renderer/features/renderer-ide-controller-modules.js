@@ -72,6 +72,7 @@
     symbolNavUtils: ['rendererIdeSymbolNav', './renderer-ide-symbol-nav'],
     tabRestoreUtils: ['rendererIdeTabRestore', './renderer-ide-tab-restore'],
     terminalSetUtils: ['rendererIdeTerminalSet', './renderer-ide-terminal-set'],
+    terminalPoolUtils: ['rendererIdeTerminalPoolUtils', './renderer-ide-terminal-pool'],
     ptyTerminalPanelUtils: ['rendererIdePtyTerminalPanel', './renderer-ide-pty-terminal-panel'],
     editorGroupsWiringUtils: ['rendererIdeEditorGroupsWiring', './renderer-ide-editor-groups-wiring'],
     runScriptsUtils: ['rendererIdeRunScripts', './renderer-ide-run-scripts'],

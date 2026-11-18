@@ -58,11 +58,23 @@ const STATE_TRANSITIONS = Object.freeze({
 });
 const nextState = (state, event) => (Object.hasOwn(STATE_TRANSITIONS, state) ? STATE_TRANSITIONS[state][event] ?? null : null);
 const refusedCall = () => ({ ok: false, reason: 'node_agent_state' });
+const CAPABILITIES_TIMEOUT_MS = 3_000;
+
+// The engine's rows with what the member's Jenny says each model can do: `capabilities` maps a model name to
+// `{ vision, thinking }`; only a literal `true` turns one on, and a model it does not name keeps the engine's row.
+function withCapabilities(models, capabilities) {
+  if (!(capabilities instanceof Map) || capabilities.size === 0) return models;
+  return models.map((entry) => {
+    const known = capabilities.get(entry.name);
+    if (!known || typeof known !== 'object') return entry;
+    return { ...entry, vision: known.vision === true, thinking: known.thinking === true };
+  });
+}
 
 function createNodeAgent({
   link, resolveEngineUrl, engine = createEngineClient(), isBusy, slots = 1, engineInfo = DEFAULT_ENGINE,
   timers = { setTimeout, clearTimeout }, now = Date.now, clock = () => performance.now(), logger = null,
-  protocolVersion = NODE_PROTOCOL_VERSION, seqFloor = 0,
+  protocolVersion = NODE_PROTOCOL_VERSION, seqFloor = 0, readCapabilities = null,
 } = {}) {
   if (!link || !['command', 'fetchRequest', 'postChunk'].every((name) => typeof link[name] === 'function')) {
     throw new TypeError('The node agent needs a team link.');
@@ -135,6 +147,22 @@ function createNodeAgent({
 
   // ----------------------------------------------------------------- register
 
+  // The member's own Jenny knows what each local model can do (Ollama reports vision and thinking); the engine's
+  // `/v1/models` does not say. A read that fails, answers nothing usable or takes longer than the bound leaves every
+  // model at no vision and no thinking, as before: the host drops what a model does not claim.
+  async function capabilitiesNow() {
+    if (typeof readCapabilities !== 'function') return null;
+    let bound = null;
+    try {
+      return await Promise.race([Promise.resolve(readCapabilities()).catch(() => null),
+        new Promise((resolve) => { bound = tracked.setTimeout(() => resolve(null), CAPABILITIES_TIMEOUT_MS); })]);
+    } catch (_error) {
+      return null;
+    } finally {
+      tracked.clearTimeout(bound);
+    }
+  }
+
   // A run that ended (stop, then start at once) writes nothing into the next run.
   async function registerOnce(run) {
     const { signal } = loopAbort;
@@ -143,10 +171,12 @@ function createNodeAgent({
     if (run !== gen) return gone;
     if (!read.ok) return { ok: false, reason: read.reason };
     if (read.models.length === 0) return { ok: false, reason: 'engine_no_models' };
+    const models = withCapabilities(read.models, await capabilitiesNow());
+    if (run !== gen) return gone;
     let answer;
     try {
       answer = await command('team.node.register', { protocol_version: protocolVersion,
-        engine: { kind: engineInfo.kind, version: engineInfo.version }, slots, models: read.models },
+        engine: { kind: engineInfo.kind, version: engineInfo.version }, slots, models },
       COMMAND_TIMEOUT_MS, signal);
     } catch (_error) {
       return run === gen ? { ok: false, reason: 'team_unreachable' } : gone;
@@ -157,7 +187,8 @@ function createNodeAgent({
       offered = read.models.map((entry) => entry.name);
       const beat = Number.isSafeInteger(answer.heartbeat_ms) ? answer.heartbeat_ms : 10_000;
       heartbeatMs = Math.min(HEARTBEAT_MAX_MS, Math.max(HEARTBEAT_MIN_MS, beat));
-      log('INFO', 'team.node.registered', { slots, models: read.models.length });
+      log('INFO', 'team.node.registered', { slots, models: models.length,
+        thinking: models.filter((entry) => entry.thinking).length, vision: models.filter((entry) => entry.vision).length });
       return { ok: true };
     }
     const word = reasonWord(answer, 'team_refused');

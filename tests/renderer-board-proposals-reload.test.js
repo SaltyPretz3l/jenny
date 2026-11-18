@@ -42,7 +42,7 @@ function harness(t, proposals) {
   const dispose = () => { if (!disposed) { disposed = true; part.dispose(); } };
   t.after(() => { dispose(); window.close(); });
   const live = () => waits.filter((entry) => entry.live);
-  return { source, dispose, live, fire: () => live().forEach((entry) => { entry.live = false; entry.fn(); }), applied: () => source.emit({ boardId: BOARD, kind: 'applied' }) };
+  return { part, source, dispose, live, fire: () => live().forEach((entry) => { entry.live = false; entry.fn(); }), applied: () => source.emit({ boardId: BOARD, kind: 'applied' }) };
 }
 
 test('a burst of applied batches reads the open proposal once at its start and once after the wait, and a proposals event reads at once', async (t) => {
@@ -81,4 +81,20 @@ test('with no proposal open an applied batch reads nothing and starts no wait', 
   h.applied();
   await flush();
   assert.deepEqual([h.source.reads, h.live().length], [1, 0]);
+});
+
+test('a parked page reads no proposals; showing it again reads once', async (t) => {
+  const h = harness(t, [OPEN]);
+  await flush();
+  h.part.shown(false);
+  h.source.emit({ boardId: BOARD, kind: 'proposals' });
+  h.source.emit({ boardId: BOARD, kind: 'proposals' });
+  await flush();
+  assert.equal(h.source.reads, 1, 'hidden: no read');
+  h.part.shown(true);
+  await flush();
+  assert.equal(h.source.reads, 2, 'shown: one read for both');
+  h.part.shown(true);
+  await flush();
+  assert.equal(h.source.reads, 2, 'nothing owed: nothing read');
 });

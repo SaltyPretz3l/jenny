@@ -10,6 +10,7 @@
 const { BACKGROUND_JOB_ID_PATTERN } = require('./chat-stream-background-jobs');
 const { acceptMailConsumedNotification, liveManagedStream } = require('./session-mail-mid-turn');
 const { notifyJobSettled } = require('./sidecar-client-notifications');
+const { acceptUserSteerConsumedNotification } = require('./user-steer-mid-turn');
 
 const COMMAND_PROMPT_CHARS = 120;
 const MAX_JOBS_PER_FRAME = 8;
@@ -101,10 +102,12 @@ function acceptJobNoticeConsumedNotification(ctx, params) {
 }
 
 // Acknowledgement methods the managed stream routes by name (chat-stream-managed-runtime-notifications.js):
-// ids only, no rows or text; mail rows persist at the terminal settle, job ids become reads.
+// ids only, no rows or text; mail rows persist at the terminal settle, job ids become reads, and a steered
+// message's row persists live at its ack (user-steer-mid-turn.js).
 const MID_TURN_ACKS = new Map([
   ['session.mail_consumed', acceptMailConsumedNotification],
   ['session.job_notice_consumed', acceptJobNoticeConsumedNotification],
+  ['session.user_steer_consumed', acceptUserSteerConsumedNotification],
 ]);
 
 module.exports = {

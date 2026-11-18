@@ -323,6 +323,15 @@ test('a theme change drops the cache and draws the cards on screen again with th
   assert.equal(h.sketch.requests.length, 4, 'a change that is not the palette draws nothing');
 });
 
+test('a parked page draws nothing on a theme change and sweeps once when it is shown again', async (t) => {
+  const h = await env(t);
+  await finish(h); await finish(h);
+  h.canvas.setShown(false); h.doc.documentElement.setAttribute('data-theme', 'dark'); await flush();
+  assert.equal(h.sketch.requests.length, 2, 'hidden: nothing drawn');
+  h.canvas.setShown(true); await flush();
+  assert.equal(h.sketch.requests.length, 3, 'shown: the theme is swept once');
+});
+
 test('Enter and a double-click open the drawing live, on a read-only board too; the outline sends no card to return to', async (t) => {
   const h = await env(t);
   await h.dbl(h.el(ONE));

@@ -40,6 +40,26 @@
   white-space: nowrap;
 }
 
+/* While you were away: a Team row names its project after the title, in the meta line's own type. A local row has no
+   such label, so the label is what tells them apart. The title gives way first, then the project, never the outcome. */
+.away-digest__row--team .away-digest__title {
+  flex: 0 1 auto;
+}
+
+.away-digest__where {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.away-digest__row--team .away-digest__meta {
+  margin-inline-start: auto;
+}
+
 .away-digest__outcome--failed {
   color: var(--text-danger-emphasis);
 }

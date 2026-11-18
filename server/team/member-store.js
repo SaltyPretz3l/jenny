@@ -375,6 +375,9 @@ class MemberStore {
 
   rename(input) { return this._mutate(transitions.rename, input); }
 
+  // Row 170: the caller's own display name and the label of the device it asks from.
+  changeProfile(input) { return this._mutate(transitions.changeProfile, input); }
+
   // Slice 4e: the owner's team model (null is Automatic).
   setTeamModel(input) { return this._mutate(transitions.setTeamModel, input); }
 

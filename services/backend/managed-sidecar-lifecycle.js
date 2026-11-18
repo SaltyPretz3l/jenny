@@ -295,6 +295,7 @@ function applyManagedInitializePayload(service, payload = {}) {
     mcp_servers: payload.mcp_servers,
     mcp_server_cooldowns: payload.mcp_server_cooldowns,
     schema_versions: payload.schema_versions,
+    hosted_files: payload.hosted_files, // team host file tools (row 123): absent on every other host
   });
   return payload;
 }
@@ -374,6 +375,7 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
   const prevEngineFallback = service._lastEngineFallback;
   const prevPendingModel = service._managedPendingModel;
   const prevModelLifecycle = service._modelLifecycle;
+  const prevStartupIdleByChoice = service._startupIdleByChoice;
   const refreshProcess = service.sidecarManager?.process || null;
   try {
     const payload = await service._initializeManagedSidecar({
@@ -411,6 +413,7 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
     service._lastEngineFallback = prevEngineFallback;
     service._managedPendingModel = prevPendingModel;
     service._modelLifecycle = prevModelLifecycle;
+    service._startupIdleByChoice = prevStartupIdleByChoice;
     service._emitServiceLog('ERROR', 'sidecar.config_refresh_failed', {
       reason,
       message: String(error && error.message || error),

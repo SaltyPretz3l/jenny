@@ -61,7 +61,7 @@
     for (const id of view.scroll.keys()) if (!queues.has(id)) view.scroll.delete(id);
     const session = state.sessions?.find((entry) => entry.id === sessionId);
     const signature = JSON.stringify([sessionId, session?.title, view.collapsed.has(sessionId),
-      items.map((item) => [item.id, item.revision, item.prompt, item.status, item.attachments?.length])]);
+      items.map((item) => [item.id, item.revision, item.prompt, item.status, item.attachments?.length, item.steerReason])]);
     const sameActions = view.actions?.edit === actions.edit && view.actions?.cancel === actions.cancel && view.actions?.retry === actions.retry;
     // Streaming chrome refreshes must not rebuild an unchanged editor (IME, focus, selection).
     if (view.signature === signature && sameActions) return items.length;
@@ -123,6 +123,19 @@
     return items.length;
   }
 
+  // Row 180 wait reasons; literal keys (the i18n scanner rejects computed ones).
+  function waitingStatusText(reason) {
+    const why = {
+      slash_command: () => jt('chat.outbox.steer.reason.slashCommand', 'slash command'),
+      model_change: () => jt('chat.outbox.steer.reason.modelChange', 'changes the model'),
+      mode_change: () => jt('chat.outbox.steer.reason.modeChange', 'changes the mode'),
+      mentions: () => jt('chat.outbox.steer.reason.mentions', 'has @-mentions'),
+      needs_new_turn: () => jt('chat.outbox.steer.reason.needsNewTurn', 'needs a new turn'),
+      behind_waiting_item: () => jt('chat.outbox.steer.reason.behindWaitingItem', 'waits for the message above'),
+    }[reason];
+    return why ? jt('chat.outbox.steer.waiting', 'Sends after this turn · {reason}', { reason: why() }) : '';
+  }
+
   function renderRow({ item, index, key, sessionId, view, actions, doc, list, redraw }) {
     const row = element(doc, 'div', `send-outbox__row send-outbox__row--${item.status}`);
     row.id = `send-outbox-row-${key}`;
@@ -172,7 +185,10 @@
         ? jt('chat.outbox.viewMessage', 'Queued message {position}: {prompt}', { position: index + 1, prompt })
         : jt('chat.outbox.editMessage', 'Edit queued message {position}: {prompt}', { position: index + 1, prompt }));
     }
-    const label = { failed: jt("sendOutboxRender.couldNotSend", "Could not send"), needs_review: jt("sendOutboxRender.needsReview", "Needs review"), capturing_context: jt("sendOutboxRender.preparingContext", "Preparing context…"), sending: jt('chat.send.sendingStatus', 'Sending…') }[item.status];
+    const label = { failed: jt("sendOutboxRender.couldNotSend", "Could not send"), needs_review: jt("sendOutboxRender.needsReview", "Needs review"), capturing_context: jt("sendOutboxRender.preparingContext", "Preparing context…"), sending: jt('chat.send.sendingStatus', 'Sending…'),
+      offered: jt('chat.outbox.steer.offered', 'Jenny reads this at the next step'),
+      taken: jt('chat.outbox.steer.taken', 'Jenny already read this'),
+      ready: waitingStatusText(item.steerReason), waiting_for_turn: waitingStatusText(item.steerReason) }[item.status];
     if (label) {
       const status = element(doc, 'div', 'send-outbox__status', label);
       content.appendChild(status);
@@ -180,10 +196,13 @@
         button(doc, content, `send-outbox-retry-${key}`, jt('common.retry', 'Retry'), 'send-outbox__action--retry', () => actions.retry?.(item), view.cleanup, !actions.retry);
       }
     }
+    // An offered row's × withdraws the offer.
+    const steer = item.status === 'offered' ? view.options.state?.sendSteerController : null;
+    const withdraw = typeof steer?.withdraw === 'function' ? steer.withdraw.bind(steer) : null;
     const cancel = button(doc, row, `send-outbox-cancel-${key}`, '×', 'send-outbox__action--cancel', () => {
-      actions.cancel?.(item);
+      if (withdraw) withdraw(item); else actions.cancel?.(item);
       redraw('send-outbox-toggle');
-    }, view.cleanup, locked || !actions.cancel);
+    }, view.cleanup, withdraw ? false : (locked || !actions.cancel));
     cancel.setAttribute('aria-label', jt("sendOutboxRender.cancelQueuedMessageValue", "Cancel queued message {value1}", { value1: String(index + 1) }));
     cancel.title = jt("sendOutboxRender.cancelQueuedMessage", "Cancel queued message");
     list.appendChild(row);

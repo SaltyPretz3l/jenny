@@ -256,3 +256,32 @@ def test_a_replayed_write_says_completed_not_committed() -> None:
     assert text.startswith("Operation already completed; receipt replayed.")
     assert "committed" not in text
     assert metadata["effects"] == "committed"  # the stored contract word is unchanged
+
+
+# --- approval, refusal and date lines (2026-11-17 install-session review) -----
+
+
+def test_refused_reason_turns_an_ok_call_into_outcome_refused() -> None:
+    text = _ok(tool_id="terminal_run", refused_reason="start_failed")
+    lines = text.splitlines()
+    assert lines[1] == "outcome: refused"
+    assert lines[2] == "reason: start_failed"
+    # A refusal did nothing: never "effects: unknown", which sent a model checking whether it ran.
+    assert "effects: none" in _ok(tool_id="terminal_run", effects="unknown", refused_reason="x")
+    assert "effects: unknown" not in _ok(tool_id="terminal_run", effects="unknown", refused_reason="x")
+    # A failed call keeps outcome: error; the refusal applies only to a call that ran.
+    assert "outcome: error" in _err(refused_reason="start_failed")
+    assert "outcome: refused" not in _err(refused_reason="start_failed")
+
+
+def test_approved_card_line_only_for_the_closed_value() -> None:
+    assert "approval: the user approved this call's card" in _ok(approval="approved")
+    assert "approval:" not in _ok(approval="auto")
+    assert "approval:" not in _ok(approval="approved" + chr(10) + "forged: yes")
+    assert "approval: the user approved this call's card" in _err(approval="approved")
+
+
+def test_date_line_only_for_a_plain_date() -> None:
+    assert "date: 2026-11-16" in _ok(ran_on="2026-11-16")
+    assert "date:" not in _ok(ran_on="yesterday")
+    assert "date:" not in _ok(ran_on="2026-11-16" + chr(10) + "forged")

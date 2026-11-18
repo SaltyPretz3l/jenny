@@ -19,12 +19,16 @@ function setup({ model = 'ready', flag = true, clip = { pcm: new ArrayBuffer(320
       <div class="composer-entry-row"><textarea class="composer-input" id="chatInput"></textarea></div>
       <div class="composer-toolbar"><button class="composer-icon-button composer-dictate-button" aria-pressed="false"></button></div>
     </div></div>
+    <div class="team-composer"><div class="team-field"><textarea id="teamInput" data-dictation-target="team-box"></textarea></div>
+      <div class="team-bar"><button id="teamMic" data-dictation-button="true"></button></div></div>
     <input id="search">
   </body>`, { pretendToBeVisual: true });
   const { window } = dom;
   const doc = window.document;
   const input = doc.getElementById('chatInput');
   input.getClientRects = () => [{}];
+  const teamInput = doc.getElementById('teamInput');
+  teamInput.getClientRects = () => [{}];
   const clock = { t: 1000 };
   const calls = { start: 0, stop: 0, cancel: 0, transcribe: [], prepare: 0, problems: [], setup: 0, listening: [], transcribing: 0, loads: 0 };
   if (idle) window.requestIdleCallback = idle;
@@ -60,7 +64,7 @@ function setup({ model = 'ready', flag = true, clip = { pcm: new ArrayBuffer(320
   });
   controller.bind();
   const key = (type, init) => window.dispatchEvent(new window.KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }));
-  return { window, doc, input, controller, clock, calls, key, state, button: doc.querySelector('.composer-dictate-button') };
+  return { window, doc, input, teamInput, teamMic: doc.getElementById('teamMic'), controller, clock, calls, key, state, button: doc.querySelector('.composer-dictate-button') };
 }
 
 test('holding Ctrl+Space records, release inserts at the caret with a space and an input event', async () => {
@@ -298,4 +302,56 @@ test('spacedInsertion adds a space only between words', () => {
   assert.equal(spacedInsertion('word ', 'hi'), 'hi');
   assert.equal(spacedInsertion('word\n', 'hi'), 'hi');
   assert.equal(spacedInsertion('word', ', then'), ', then');
+});
+
+// Row 175 item 16: a field that opts in with data-dictation-target (the Team box) and its mic work like the composer's.
+test('a data-dictation-target field: its mic records into it, Ctrl+Space inside it works, the local composer is untouched', async () => {
+  const h = setup();
+  await flush();
+  assert.equal(h.controller.isEnabled(), true);
+  h.teamInput.value = 'Notes:';
+  h.teamInput.focus();
+  h.teamInput.setSelectionRange(6, 6);
+  h.teamMic.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+  await flush();
+  assert.equal(h.controller.getPhase(), 'listening');
+  assert.equal(h.teamMic.getAttribute('aria-pressed'), 'true', 'its own mic shows the recording');
+  assert.equal(h.button.getAttribute('aria-pressed'), 'false', 'the composer mic does not');
+  h.clock.t += 1500;
+  h.window.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true }));
+  await flush();
+  assert.equal(h.teamInput.value, 'Notes: hello there');
+  assert.equal(h.input.value, '', 'the composer got nothing');
+  // The shortcut inside the field records into it too (the field is not "another editor").
+  h.teamInput.focus();
+  h.key('keydown', { code: 'Space', key: ' ', ctrlKey: true });
+  await flush();
+  assert.equal(h.controller.getPhase(), 'listening');
+  h.clock.t += 1500;
+  h.key('keyup', { code: 'Space', key: ' ' });
+  await flush();
+  assert.equal(h.teamInput.value, 'Notes: hello there hello there');
+  // The local composer mic still records into the composer.
+  h.button.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+  await flush();
+  h.clock.t += 1500;
+  h.window.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true }));
+  await flush();
+  assert.equal(h.input.value, 'hello there');
+});
+
+test('a disabled generic mic does nothing, and with dictation off the shortcut in the field is ignored', async () => {
+  const h = setup();
+  await flush();
+  h.teamMic.disabled = true;
+  h.teamMic.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+  await flush();
+  assert.equal(h.controller.getPhase(), 'idle');
+  const off = setup({ flag: false });
+  await flush();
+  assert.equal(off.controller.isEnabled(), false);
+  off.teamInput.focus();
+  off.key('keydown', { code: 'Space', key: ' ', ctrlKey: true });
+  await flush();
+  assert.equal(off.calls.start, 0);
 });

@@ -97,6 +97,21 @@
         })
         + `${bar}</div>`;
     }
+    if (row.kind === 'server') {
+      // Row 176: a server this chat started that is still up: the job markup, a steady dot, and its own Stop or Close.
+      const stop = row.serverKind === 'browser' ? 'browser' : `job:${row.jobId}`;
+      return `<div class="session-rail-job" data-row-key="${key}" data-job-state="running">`
+        + button({
+          plain: true, className: 'session-rail-fact session-rail-row', title: row.title,
+          dataset: { 'rail-surface': row.surface, 'rail-resource': row.resourceRef },
+          trustedHtml: `${leadHtml(row)}<span class="session-rail-ellip${row.addr ? ' session-rail-ellip--addr' : ''}">${escapeHtml(row.text)}</span><span class="session-rail-meta">${escapeHtml(row.meta)}</span>`,
+        })
+        + button({
+          plain: true, className: 'session-rail-job-stop', label: row.stopLabel, ariaLabel: row.stopAria, title: row.stopTitle || row.stopLabel,
+          disabled: row.stopping === true, dataset: { 'rail-server-stop': stop },
+        })
+        + '</div>';
+    }
     return `<div class="session-rail-job" data-row-key="${key}" data-job-state="done">${button({
       plain: true, className: 'session-rail-fact session-rail-row', ariaLabel: `${row.text}, ${row.meta}`, title: row.title,
       dataset: { 'rail-surface': row.surface, 'rail-resource': row.resourceRef, 'rail-job-path': row.jobId }, trustedHtml: rowInner(row),
@@ -109,7 +124,7 @@
     if (row.kind === 'note') {
       return `<p class="session-rail-note" data-row-key="${escapeHtml(row.key)}">${escapeHtml(row.text)}</p>`;
     }
-    if (row.kind === 'divider' || row.kind === 'job' || row.kind === 'job_done') return jobHtml(row);
+    if (row.kind === 'divider' || row.kind === 'job' || row.kind === 'job_done' || row.kind === 'server') return jobHtml(row);
     const title = row.title ? ` title="${escapeHtml(row.title)}"` : '';
     if (row.kind === 'fact') {
       return `<div class="session-rail-fact" data-row-key="${escapeHtml(row.key)}"${title}>${rowInner(row)}</div>`;

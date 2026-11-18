@@ -106,7 +106,7 @@ test('member side: the host refusal reaches the renderer as its sentence, never 
 
 const { dmChannelId } = require('../services/host/team-chat-schema');
 const {
-  OTHER, ME, DOT, MAYA, CHAN, flush, memberTeam, harness, layout, shell, chatChannel, chatMember, message, overview, key, msgId, searchField,
+  OTHER, ME, DOT, MAYA, CHAN, flush, memberTeam, harness, layout, shell, chatChannel, chatMember, message, overview, key, msgId, searchField, menu,
 } = require('./helpers/team-settings-harness');
 
 const LENA = 'member_lena';
@@ -269,6 +269,36 @@ test('no Copy link in a direct conversation; a reference to one renders as text'
   key(h, timeline().querySelector('.team-msg'), 'l');
   await flush();
   assert.deepEqual(h.copied, [], 'L copies nothing there');
+});
+
+test('Copy with source (row 175 F12): a Markdown quote of name, channel or conversation and date, tokens gone, in a channel and a conversation', async (t) => {
+  const link = `jenny-team:${OTHER}/${CHAN}/1/${msgId(1)}`;
+  const when = '2026-11-17T12:00:00.000Z';
+  const day = new Date(when);
+  const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  const text = `first line\n\nsecond ${link} line`;
+  const h = await openDm({ answers: { chatHistory: (p) => ({ ok: true, has_more: false,
+    messages: [message(1, { channel_id: p.channel_id, author: { kind: 'member', member_id: ME }, created_at: when, text })] }) } });
+  t.after(h.restore);
+  const copyFrom = async () => {
+    h.view.q('[data-team-region="timeline"] .team-msg [data-team-msg-action="more"]').click();
+    const item = [...menu(h).querySelectorAll('.inv-context-menu-item')].find((el) => el.textContent.trim() === 'Copy with source');
+    assert.ok(item, 'More offers Copy with source');
+    item.click();
+    await flush();
+  };
+  await copyFrom();
+  assert.deepEqual(h.copied, [`> **Olive Owner**, #team, ${date}\n> first line\n> \n> second  line`], 'in #team');
+  assert.equal(h.view.q('.team-copied .inv-toast__message').textContent, 'Copied with source');
+  await show(h, DM_TWO);
+  await copyFrom();
+  assert.equal(h.copied.at(-1), `> **Olive Owner**, Olive Owner, ${date}\n> first line\n> \n> second  line`, 'in a conversation (its people stand where a channel name would)');
+});
+
+test('buildQuote is exported for the Jenny-turn menus: a header without a place, an empty text, Windows line ends', () => {
+  const { buildQuote } = require('../renderer/team/renderer-team-message-actions');
+  assert.equal(buildQuote({ name: 'Ana', where: '', date: '2026-01-02', text: 'a\r\nb' }), '> **Ana**, 2026-01-02\n> a\n> b');
+  assert.equal(buildQuote({ name: 'Ana', where: 'Plans', date: '', text: '' }), '> **Ana**, Plans');
 });
 
 test('New message: the picker lists the others, filters, picks, says when the conversation exists and opens it', async (t) => {

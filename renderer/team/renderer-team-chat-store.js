@@ -29,6 +29,9 @@
  * - A post that settled before its message arrived stays listed as landing
  *   (with its message id) until the message is here, at most a minute, so the
  *   timeline draws it once in either push order.
+ * - Row 173: a custom channel's row carries its `name`, `topic`, `created_by`, `archived_by` and `changes`; `nameOf` finds a
+ *   channel's name in any held team, and `manageChannel` sends the four channel operations (create, update, archive and
+ *   delete are online only: the answer is the host's, the new rows arrive on the channel push).
  * - Every bridge call goes through the team store's bounded `call`. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -45,6 +48,7 @@
   const OLDER_PAGE = 50;
   const RETRY_MS = 10_000;
   const NOTIFY_LEVELS = new Set(['all', 'mentions', 'none']);
+  const CHANNEL_CALLS = new Set(['chatChannelCreate', 'chatChannelUpdate', 'chatChannelArchive', 'chatChannelDelete']);
   const TYPING_MS = 6_000;
   const LANDING_MS = 60_000;
   const SETTLED_KEEP = 100;
@@ -380,6 +384,10 @@
       return answer;
     }
 
+    function manageChannel(method, payload) {
+      return CHANNEL_CALLS.has(method) ? send(method, payload) : Promise.resolve({ ok: false, error: teamStore.NO_ANSWER });
+    }
+
     // ----------------------------------------------------------------- pushes
 
     function mergeChannels(state, list, partial) {
@@ -483,6 +491,14 @@
       const state = stateOf(teamId);
       return (state && state.channels.find((c) => c.channel_id === channelId)) || null;
     }
+    // The name a held team's row gives a channel, or ''.
+    function nameOf(channelId) {
+      for (const state of teams.values()) {
+        const row = state.channels.find((c) => c && c.channel_id === channelId);
+        if (row && typeof row.name === 'string' && row.name) return row.name;
+      }
+      return '';
+    }
     function timeline(teamId, channelId) {
       const state = stateOf(teamId);
       return (state && state.timelines.get(channelId)) || emptyTimeline();
@@ -532,7 +548,7 @@
     }
 
     return { use, subscribe, sync, retryOverview, team, channel, timeline, member, typing, pending, emoji, settledId, mentionCount, openChannel,
-      closeChannel, loadOlder, loadNewer, trim, markRead, markThreadRead, markUnread, threadUnread, threadCounts, setNotify, watchThread, dispose };
+      closeChannel, loadOlder, loadNewer, trim, markRead, markThreadRead, markUnread, threadUnread, threadCounts, setNotify, manageChannel, nameOf, watchThread, dispose };
   }
 
   let shared = null;

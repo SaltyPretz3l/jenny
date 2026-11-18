@@ -92,6 +92,28 @@ test('recovery: the new key and file replace the old ones only after the redeem 
   assert.equal(team.device_id, newRecord.device_id);
 });
 
+// Owner, 2026-11-16: a launch that had started no saved team answered Start as a member (the folder on disk counts as
+// held) with no team loaded, so the tab had no row and asked the owner to reclaim a place this Jenny still held.
+test('a Start from a launch that started no saved team loads them first: the member it is, and no recovery to ask for', async (t) => {
+  const { host, service, controller, plans, teamId, old, snapshotOld } = await deployedOwner(t);
+  assert.equal((await controller.handle('hostStop', {})).ok, true);
+  await service.stopAll();
+  // The next launch: its service has not run startExisting.
+  const next = host.createService();
+  assert.equal(next.holds(teamId), true, 'the saved membership counts as held');
+  assert.deepEqual((await next.handle('status', {})).teams, [], 'and no team is loaded yet');
+  plans.next = {};
+  const fake = createFakeFork({ script: scriptedHost(teamId, () => plans.next) });
+  const { controller: second } = createTestHostController(t, { userDataPath: host.userData, secureStore: host.secureStore,
+    service: next, fork: fake.fork });
+  const answer = await second.handle('hostDeploy', { name: 'Studio', display_name: 'Olive Owner', label: 'Desk' });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.deepEqual(answer.owner, { state: 'member', team_id: teamId });
+  assert.deepEqual(fake.last().args.slice(2), [], 'no first-owner flag and no recovery flag');
+  assert.deepEqual((await next.handle('status', {})).teams.map((team) => team.team_id), [teamId], 'the team is loaded: the tab has its row');
+  assert.equal(snapshotOld().key, old.key, 'the device key is the one it had');
+});
+
 test('recovery: a failed redeem leaves the old key and file byte-identical', async (t) => {
   const { host, controller, plans, teamId, old, snapshotOld } = await deployedOwner(t);
   const recovery = await host.invite({ kind: 'recovery' });

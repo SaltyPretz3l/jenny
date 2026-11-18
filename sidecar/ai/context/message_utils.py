@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -230,6 +231,7 @@ def ensure_tool_result_pairing(messages: list[dict[str, object]]) -> list[dict[s
 _ENVELOPE_TEXT_LIMIT = 240
 _ENVELOPE_JSON_LIMIT = 2000
 _ENVELOPE_EFFECTS_VOCABULARY = frozenset({"none", "committed", "partial", "unknown"})
+_ENVELOPE_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def admit_tool_envelope(envelope_value: Any) -> dict[str, object] | None:
@@ -265,6 +267,17 @@ def admit_tool_envelope(envelope_value: Any) -> dict[str, object] | None:
         if key == "effects" and text not in _ENVELOPE_EFFECTS_VOCABULARY:
             continue
         envelope[key] = text
+    # Approval and refusal facts the in-turn envelope showed, and the result's local
+    # date: history rows carry no time, so a model mixed yesterday's result into now.
+    approval = envelope_value.get("approval")
+    if approval == "approved":
+        envelope["approval"] = approval
+    refused = envelope_value.get("refused_reason")
+    if isinstance(refused, str) and refused.strip():
+        envelope["refused_reason"] = refused.strip()[:_ENVELOPE_TEXT_LIMIT]
+    ran_on = envelope_value.get("ran_on")
+    if isinstance(ran_on, str) and _ENVELOPE_DATE_RE.fullmatch(ran_on):
+        envelope["ran_on"] = ran_on
     elapsed_value = envelope_value.get("elapsed_ms")
     if type(elapsed_value) is int and elapsed_value >= 0:
         envelope["elapsed_ms"] = elapsed_value

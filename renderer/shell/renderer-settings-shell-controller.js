@@ -422,6 +422,9 @@
     function navigateSettingsSection(sectionId, options = {}) {
       const normalizedSectionId = normalizeSettingsSectionId(sectionId);
       const previousSectionId = state.ui.activeSettingsSection;
+      // The rail's flagged items are shown only by the Settings render; until Settings has been on screen once,
+      // a deep link (Team tab > Open Team settings) would resolve a flagged page as hidden. Apply the flags first.
+      settingsNavUtils.syncFeatureFlaggedSettings?.(globalDocument, state.features?.featureFlags);
       if ((settingsNavController?.resolveSectionId?.(normalizedSectionId) ?? normalizedSectionId) !== normalizedSectionId) return false;
       setActiveView('settings');
       if (settingsNavController?.setActiveSection?.(normalizedSectionId) === false) return false;

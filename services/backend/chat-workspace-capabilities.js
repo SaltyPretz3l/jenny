@@ -5,15 +5,16 @@
 // Stage flags advertise only implemented, qualified operations (never the whole
 // roadmap): cp4 requests addressed session messages as a context kind; cp5a adds
 // the session_handoff context kind and the two session producer tools; row 70 W2a
-// adds mid_turn_mail (session.mail_arrived into a working chat's live turn).
+// adds mid_turn_mail (session.mail_arrived into a working chat's live turn); row 180 adds
+// mid_turn_steer (session.user_steer_arrived: the person's message taken at the next tool-loop step).
 // session_message_receipt is never a wire context kind.
 
 const CHAT_WORKSPACE_VERSION = 1;
 const SESSION_MESSAGE_CONTEXT_KIND = 'session_message';
 const SESSION_HANDOFF_CONTEXT_KIND = 'session_handoff';
 const CAPABILITY_KEYS = Object.freeze(['schema_version', 'producer_tools', 'context_kinds', 'session_messages']);
-// Optional in the closed shape: an acknowledgment without it grants no mid-turn mail.
-const OPTIONAL_CAPABILITY_KEYS = Object.freeze(['mid_turn_mail']);
+// Optional in the closed shape: an acknowledgment without one grants neither mid-turn mail nor steering.
+const OPTIONAL_CAPABILITY_KEYS = Object.freeze(['mid_turn_mail', 'mid_turn_steer']);
 
 function freezeCapabilities(value) {
   return Object.freeze({
@@ -22,11 +23,12 @@ function freezeCapabilities(value) {
     context_kinds: Object.freeze([...value.context_kinds]),
     session_messages: value.session_messages === true,
     mid_turn_mail: value.mid_turn_mail === true,
+    mid_turn_steer: value.mid_turn_steer === true,
   });
 }
 
 const EMPTY_CHAT_WORKSPACE_CAPABILITIES = freezeCapabilities({
-  producer_tools: [], context_kinds: [], session_messages: false, mid_turn_mail: false,
+  producer_tools: [], context_kinds: [], session_messages: false, mid_turn_mail: false, mid_turn_steer: false,
 });
 
 const REQUESTED_CHAT_WORKSPACE_CAPABILITIES = freezeCapabilities({
@@ -34,6 +36,7 @@ const REQUESTED_CHAT_WORKSPACE_CAPABILITIES = freezeCapabilities({
   context_kinds: [SESSION_MESSAGE_CONTEXT_KIND, SESSION_HANDOFF_CONTEXT_KIND],
   session_messages: true,
   mid_turn_mail: true,
+  mid_turn_steer: true,
 });
 
 function isStringList(value) {
@@ -48,6 +51,7 @@ function isClosedCapabilities(value) {
   if (!CAPABILITY_KEYS.every(key => keys.includes(key))
     || !keys.every(key => CAPABILITY_KEYS.includes(key) || OPTIONAL_CAPABILITY_KEYS.includes(key))) return false;
   if (value.mid_turn_mail !== undefined && typeof value.mid_turn_mail !== 'boolean') return false;
+  if (value.mid_turn_steer !== undefined && typeof value.mid_turn_steer !== 'boolean') return false;
   return value.schema_version === 1 && isStringList(value.producer_tools)
     && isStringList(value.context_kinds) && typeof value.session_messages === 'boolean';
 }
@@ -67,6 +71,8 @@ function intersectCapabilities(requested, ack) {
     context_kinds: contextKinds,
     session_messages: sessionMessages,
     mid_turn_mail: sessionMessages && requested.mid_turn_mail === true && ack.mid_turn_mail === true,
+    // Unlike mail, steering needs no session messages: it rides the user's own words.
+    mid_turn_steer: requested.mid_turn_steer === true && ack.mid_turn_steer === true,
   });
 }
 

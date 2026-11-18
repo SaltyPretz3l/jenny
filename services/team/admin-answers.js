@@ -82,6 +82,7 @@ const ANSWERS = Object.freeze({
   'team.owner.transfer': { member_id: id('member') },
   'team.audit.read': { entries: list(record(ENTRY), AUDIT_LIMITS.MAX_PAGE), next_cursor: nullable(count) },
   'team.rename': {},
+  'team.member.profile': {},
 });
 
 /** The host's answer to `operation` as the renderer may see it: rebuilt, a checked failure, or the invalid failure. */

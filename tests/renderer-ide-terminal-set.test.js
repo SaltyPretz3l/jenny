@@ -43,6 +43,7 @@ function harness(opts = {}) {
         deps,
         state,
         getSessionId: () => state.sessionId,
+        getLastStartFailure: () => (opts.startFailure ? { ...opts.startFailure } : null),
         getSlot: () => slot,
         isRunning: () => Boolean(state.sessionId),
         async startSession(startOpts) {
@@ -388,6 +389,38 @@ test('openTaskTerminal resolves false (not null) when the session cannot start',
   assert.equal(await h.set.openTaskTerminal(), false, 'the caller can tell a failed start from no free terminal');
 });
 
+test('openTaskTerminal always starts the panel with an explicit place: start_folder when asked, else empty', async () => {
+  const h = harness();
+  h.set.sync();
+  await h.set.openTaskTerminal(undefined, { place: 'start_folder' });
+  assert.deepEqual(h.calls.starts.map((s) => s.opts), [{ place: 'start_folder' }]);
+  h.set.panelFor('terminal-2').state.sessionId = ''; // idle again: the reused terminal must not keep the earlier place
+  await h.set.openTaskTerminal();
+  assert.deepEqual(h.calls.starts[1].opts, { place: '' }, 'no options asks for the workspace root');
+  h.set.panelFor('terminal-2').state.sessionId = '';
+  await h.set.openTaskTerminal(undefined, { place: 'elsewhere' });
+  assert.deepEqual(h.calls.starts[2].opts, { place: '' }, 'only the closed word start_folder is passed on');
+});
+
+test('a false task start exposes the panel failure through lastTaskStartFailure, and the next call resets it', async () => {
+  const opts = { startFails: true, startFailure: { status: 'failed', code: 'CMP-TERMINAL-0006' } };
+  const h = harness(opts);
+  h.set.sync();
+  assert.equal(h.set.lastTaskStartFailure(), null, 'nothing failed yet');
+  assert.equal(await h.set.openTaskTerminal(undefined, { place: 'start_folder' }), false);
+  assert.deepEqual(h.set.lastTaskStartFailure(), { status: 'failed', code: 'CMP-TERMINAL-0006' });
+  h.set.lastTaskStartFailure().code = 'changed';
+  assert.equal(h.set.lastTaskStartFailure().code, 'CMP-TERMINAL-0006', 'the caller gets a copy');
+  opts.startFails = false;
+  const task = await h.set.openTaskTerminal();
+  assert.ok(task, 'the next start works');
+  assert.equal(h.set.lastTaskStartFailure(), null, 'a successful call resets the record');
+  opts.startFails = true;
+  opts.startFailure = null;
+  assert.equal(await h.set.openTaskTerminal(), false);
+  assert.equal(h.set.lastTaskStartFailure(), null, 'a false start with no panel failure leaves no record');
+});
+
 test('openTaskTerminal reuses its own idle task terminal before taking a new slot', async () => {
   const h = harness();
   h.set.sync();
@@ -461,4 +494,35 @@ test('T12: a workbench re-render mid-rename keeps the field and its text', () =>
   } finally {
     dom.window.close();
   }
+});
+
+test('row 178: onChange fires on a session, a label and a layout change; reveal:false adds without revealing; viewIds and isTaskView answer the pool', async () => {
+  const h = harness({ views: ['terminal'] });
+  let changes = 0;
+  const unsubscribe = h.set.onChange(() => { changes += 1; });
+  h.set.sync();
+  assert.equal(changes, 1, 'the first panel appearing is a change');
+  h.set.sync();
+  assert.equal(changes, 1, 'an idempotent sync is not');
+
+  const quiet = h.set.newTerminal({ reveal: false });
+  assert.equal(quiet, 'terminal-2');
+  assert.deepEqual(h.calls.revealed, [], 'reveal:false never reveals the view');
+  h.set.newTerminal();
+  assert.equal(h.calls.revealed.length, 1, 'the default still reveals it');
+  assert.deepEqual(h.set.viewIds(), ['terminal', 'terminal-2', 'terminal-3']);
+
+  const before = changes;
+  h.set.setLabel('terminal', 'main');
+  assert.equal(changes, before + 1, 'a label change');
+  await h.panels.get(1).startSession();
+  assert.equal(changes, before + 2, 'a session start');
+  assert.equal(h.set.isTaskView('terminal-2'), false);
+  h.set.closeTerminal('terminal-3');
+  const task = await h.set.openTaskTerminal();
+  assert.equal(h.set.isTaskView(task.viewId), true, 'a terminal opened for a tool is a task terminal');
+  const settled = changes;
+  unsubscribe();
+  h.set.setLabel('terminal', 'again');
+  assert.equal(changes, settled, 'an unsubscribed listener hears nothing more');
 });

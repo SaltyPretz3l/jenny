@@ -26,7 +26,12 @@ const readMethods = {
     return { channel_id: doc.channel_id, kind: doc.kind, rev: doc.rev, last_seq: doc.next_seq - 1,
       floor_seq: doc.floor_seq, archived: doc.archived !== null, broken: state.broken !== null, pin_count: doc.pins.length,
       // A direct conversation's stored participants (2d); no other channel has the key.
-      ...(doc.participants ? { participants: doc.participants } : {}) };
+      ...(doc.participants ? { participants: doc.participants } : {}),
+      // The team channel's and a custom channel's profile (row 173); a project or direct channel has none.
+      ...(doc.kind === 'team' || doc.kind === 'channel' ? {
+        name: doc.name, topic: doc.topic, created_by: doc.created_by, archived_by: doc.archived ? doc.archived.by : null,
+        changes: doc.changes.map((change) => ({ ...change })),
+      } : {}) };
   },
 
   // The channel document's view without loading a segment (typing's existence check).

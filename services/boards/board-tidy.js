@@ -9,17 +9,19 @@
  *   { ids }      the same grid for chosen cards, from the top-left corner of their box; cards that belong to a group are left
  *                out unless every listed card sits in one group: those are arranged where they are (from their own corner,
  *                so members that were not listed are not covered from the group's corner) and the group is resized
- *   {}           every group tidied, then groups and loose cards packed as blocks into rows
+ *   {}           groups and loose cards that an arrow touches follow their arrows (board-flow-layout.js arrowLayout), and a
+ *                note still at the size it was added with becomes as tall as its text; under them, every other group tidied,
+ *                then those groups and loose cards packed as blocks into rows. A board with no arrows is only the second part
  *
  * Reading order is top to bottom, then left to right: cards whose tops are within half a card height share a row.
  * Pure geometry: no DOM, no IO, no clock. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./board-flow-layout'));
     return;
   }
-  root.jennyBoardTidy = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.jennyBoardTidy = factory(root.jennyBoardFlowLayout);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (flow) {
   'use strict';
 
   // These three must stay equal to GAP, PAD and HEADER of board-placement.js (a test pins them against a group the model placed).
@@ -28,6 +30,8 @@
   var HEADER = 40;
   var BATCH_OPS = 200; // LIMITS.batch_ops of board-model.js
   var ROW_WIDTH = 1600;
+  var NOTE_W = 240; // DEFAULT_SIZES.note of board-placement.js: a note nobody has resized
+  var NOTE_H = 160;
   var COORD_MAX = 1e6;
 
   function fail(reason) { return { ok: false, reason: reason }; }
@@ -52,9 +56,15 @@
       var card = board.cards[ids[c]];
       if (!key(ids[c]) || !isObj(card) || card.id !== ids[c] || !num(card.x) || !num(card.y) || !size(card.w) || !size(card.h)) return null;
       var groupId = typeof card.group_id === 'string' && groups[card.group_id] ? card.group_id : null;
-      cards[ids[c]] = { id: card.id, alias: card.alias, x: card.x, y: card.y, w: card.w, h: card.h, group_id: groupId };
+      cards[ids[c]] = { id: card.id, alias: card.alias, x: card.x, y: card.y, w: card.w, h: card.h, group_id: groupId,
+        text: card.kind === 'note' && isObj(card.data) && typeof card.data.text === 'string' ? card.data.text : null };
     }
-    return { cards: cards, groups: groups };
+    var edges = [];
+    Object.keys(isObj(board.connectors) ? board.connectors : {}).forEach(function (id) {
+      var con = board.connectors[id];
+      if (isObj(con) && cards[con.from] && cards[con.to]) edges.push({ from: con.from, to: con.to });
+    });
+    return { cards: cards, groups: groups, edges: edges };
   }
 
   function aliasNumber(item) {
@@ -169,7 +179,43 @@
     return ops;
   }
 
-  /** Every group tidied, then groups and loose cards packed into rows from the top-left corner of the board's content. */
+  /** The groups and loose cards an arrow touches, laid out along their arrows from (ox, oy): the operations, what was
+   *  placed and how far down it reaches; null when the board has no arrows. */
+  function arrowPart(model, cards, blocks, ox, oy) {
+    if (!model.edges.length || !flow || typeof flow.arrowLayout !== 'function') return null;
+    var tied = Object.create(null); // the groups and loose cards an arrow touches
+    model.edges.forEach(function (edge) {
+      [edge.from, edge.to].forEach(function (id) { tied[model.cards[id].group_id || id] = true; });
+    });
+    var list = [];
+    // In the order they were made, not where they are now: a second Tidy must read the same order as the first.
+    blocks.filter(function (block) { return tied[block.id]; }).sort(byId).forEach(function (block) {
+      var members = block.card ? [block.card] : cards.filter(function (card) { return card.group_id === block.id; }).sort(byId);
+      members.forEach(function (card) {
+        var fresh = card.text !== null && card.w === NOTE_W && card.h === NOTE_H;
+        list.push({ id: card.id, w: card.w, h: fresh ? flow.fitNote(card.text, card.w).h : card.h, group: card.group_id || '' });
+      });
+    });
+    var laid = flow.arrowLayout({ cards: list, edges: model.edges });
+    var ops = [];
+    Object.keys(laid.cards).forEach(function (id) {
+      var card = model.cards[id];
+      var r = laid.cards[id];
+      var op = { op: 'card.place', id: id };
+      if (card.x !== r.x + ox || card.y !== r.y + oy) { op.x = r.x + ox; op.y = r.y + oy; }
+      if (card.h !== r.h) { op.w = card.w; op.h = r.h; }
+      if (Object.keys(op).length > 2) ops.push(op);
+    });
+    Object.keys(laid.groups).forEach(function (id) {
+      var r = laid.groups[id];
+      var place = boxOp(model.groups[id], { x: r.x + ox, y: r.y + oy, w: r.w, h: r.h });
+      if (place) ops.push(place);
+    });
+    return Object.keys(laid.cards).length ? { ops: ops, cards: laid.cards, groups: laid.groups, h: laid.h } : null;
+  }
+
+  /** Arrows first (arrowPart), then every other group tidied and packed with the loose cards into rows, from the top-left
+   *  corner of the board's content. */
   function tidyBoard(model) {
     var groups = Object.keys(model.groups).map(function (id) { return model.groups[id]; });
     var cards = Object.keys(model.cards).map(function (id) { return model.cards[id]; });
@@ -187,10 +233,14 @@
     cards.filter(function (card) { return card.group_id === null; }).forEach(function (card) {
       blocks.push({ id: card.id, card: card, x: card.x, y: card.y, w: Math.ceil(card.w), h: Math.ceil(card.h), alias: card.alias });
     });
-    var width = Math.max(ROW_WIDTH, Math.max.apply(null, blocks.map(function (block) { return block.w; })));
-    var ops = [];
+    ox = Math.round(ox);
+    oy = Math.round(oy);
+    var arrows = arrowPart(model, cards, blocks, ox, oy);
+    if (arrows) blocks = blocks.filter(function (block) { return !(block.card ? arrows.cards[block.id] : arrows.groups[block.id]); });
+    var width = Math.max.apply(null, [ROW_WIDTH].concat(blocks.map(function (block) { return block.w; })));
+    var ops = arrows ? arrows.ops : [];
     var cx = ox;
-    var cy = oy;
+    var cy = arrows ? oy + arrows.h + 2 * GAP : oy;
     var rowH = 0;
     reading(blocks).forEach(function (block) {
       if (cx > ox && cx + block.w > ox + width) { cx = ox; cy += rowH + GAP; rowH = 0; }

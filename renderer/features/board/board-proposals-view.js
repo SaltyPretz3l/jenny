@@ -12,7 +12,7 @@
  *                change, or the Undo, it is an ordinary proposal again (or no bar, when nothing is left).
  *   the list     fills the Changes view's host: Additions, Edits and Removals, one row per change, a row's outcome when it
  *                is decided, and the line Jenny wrote struck through with the reason when it could not be used.
- *   the ghosts   a dashed outline for each new card and group at the place the main process says it would land, in board
+ *   the ghosts   a dashed outline for each new card and group (a note: the card itself, with its text) at the place the main process says it would land, in board
  *                coordinates inside the surface's layer (so they pan and zoom), above the cards, never taking the pointer.
  *                A new connection between two of them is drawn too (the connector primitive's ghost line).
  *
@@ -50,11 +50,12 @@
     return null;
   }
 
-  function resolveConnectorLayer(ctx) {
-    if (ctx && typeof ctx.connectorLayer === 'function') return ctx.connectorLayer;
-    if (typeof globalThis.inventoryConnectorLayer === 'function') return globalThis.inventoryConnectorLayer;
+  /** An inventory primitive: the one handed in, else the page's global, else the module (tests). */
+  function resolvePrimitive(ctx, name, globalName, file) {
+    if (ctx && typeof ctx[name] === 'function') return ctx[name];
+    if (typeof globalThis[globalName] === 'function') return globalThis[globalName];
     if (typeof require === 'function') {
-      try { return require('../../inventory/connector-layer'); } catch (_error) { /* not loadable here */ }
+      try { return require(`../../inventory/${file}`); } catch (_error) { /* not loadable here */ }
     }
     return null;
   }
@@ -64,7 +65,8 @@
     const { editor, source, surface } = ctx || {};
     const context = (ctx && ctx.context) || {};
     const words = resolveText();
-    const connectorLayer = resolveConnectorLayer(ctx);
+    const connectorLayer = resolvePrimitive(ctx, 'connectorLayer', 'inventoryConnectorLayer', 'connector-layer');
+    const boardCard = resolvePrimitive(ctx, 'boardCard', 'inventoryBoardCard', 'board-card');
     const host = typeof context.getChangesHost === 'function' ? context.getChangesHost() : null;
     if (!doc || !editor || !source || typeof source.listProposals !== 'function' || !surface || !surface.element || !host || !words) return null;
     const actionButton = ctx.actionButton;
@@ -267,8 +269,20 @@
       markGhosting(false);
     }
 
+    /** A proposed note as it will look: the card primitive's ghost state with the note's text, and nothing to click or focus. */
+    function noteGhost(place) {
+      const el = boardCard({ id: `ghost-${place.n}`, kind: 'note', text: place.text, rich: true, ghost: true, x: place.x, y: place.y, w: place.w, h: place.h }, { document: doc });
+      el.querySelectorAll('a').forEach((a) => a.replaceWith(doc.createTextNode(a.textContent)));
+      [el, ...el.querySelectorAll('[tabindex], [role], [aria-label]')].forEach((node) => ['tabindex', 'role', 'aria-label'].forEach((name) => node.removeAttribute(name)));
+      el.setAttribute('data-board-ghost', '');
+      el.setAttribute('data-kind', 'card');
+      el.setAttribute('data-n', String(place.n));
+      ghostHolder.appendChild(el);
+    }
+
     function ghost(place, kind, label) {
       if (![place.x, place.y, place.w, place.h].every(Number.isFinite)) return;
+      if (kind === 'card' && typeof place.text === 'string' && place.text && boardCard) { noteGhost(place); return; } // only a note has text
       const el = made('div', `board-ghost board-ghost--${kind}`);
       el.setAttribute('data-board-ghost', '');
       el.setAttribute('data-kind', kind);
@@ -299,7 +313,8 @@
       if (lines.length && connectorLayer) {
         const drawn = connectorLayer({ document: doc });
         ghostHolder.appendChild(drawn.element);
-        drawn.render(lines.map((line, i) => ({ id: `ghost-${i}`, from: line.from, to: line.to, label: line.label, style: line.style, ends: line.ends, ghost: true })));
+        drawn.render(lines.map((line, i) => ({ id: `ghost-${i}`, from: line.from, to: line.to, label: line.label, style: line.style, ends: line.ends, ghost: true })),
+          Array.isArray(preview.cards) ? preview.cards : []);
       }
       markGhosting(ghostHolder.childElementCount > 0);
     }
@@ -313,9 +328,11 @@
 
     /* ---------------------------------------------------------------- reading and deciding */
 
+    let away = false, owed = false; // parked page: one read when it is back
     async function load() {
       const wanted = boardId;
       if (!wanted || disposed) return;
+      if (away) { owed = true; return; }
       const mine = ++token;
       const result = await Promise.resolve().then(() => source.listProposals({ boardId: wanted })).catch(() => null);
       if (disposed || mine !== token || wanted !== boardId) return; // a board that is no longer open is not drawn
@@ -426,6 +443,7 @@
 
     return {
       reload: load,
+      shown(isShown) { away = !isShown; if (isShown && owed) { owed = false; void load(); } },
       dispose() {
         if (disposed) return;
         disposed = true;

@@ -137,9 +137,12 @@ def _init_or_fallback(
         reason = f"{display_name} engine failed to initialize: {type(exc).__name__}"
         if include_exc_detail:
             reason += f": {exc}"
+        # A refused loopback port is a stopped local server (startup model loading
+        # off), not a failing one: INFO, so Diagnostics does not list it as an issue.
+        idle = getattr(exc, "idle_local_server", False) is True
         log_event(
             logger,
-            logging.WARNING,
+            logging.INFO if idle else logging.WARNING,
             component="ai.engines.factory",
             event="ai.engines.factory.init_failed",
             message=f"{display_name} engine initialization failed; falling back to MockEngine",

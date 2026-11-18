@@ -386,3 +386,30 @@ test('hostile team, project, member and board names appear as text and make no e
   assert.equal(m.q('[data-board-team-foot]').textContent, `Shared with the members of ${iso(evil)}. The host can read it.`);
   assert.equal(m.qa('img').length, 0, 'no element was made from a name');
 });
+
+// Row 175 F11 (Team side): rendererBoardTeam.requestOpen asks the Board page to show a team board.
+const until = async (m, check) => { for (let i = 0; i < 40 && !check(); i += 1) { await m.flush(); await frame(); } return check(); };
+
+test('requestOpen: a request that names no team, project or board is refused', () => {
+  assert.deepEqual([{}, null, { teamId: TEAM, projectId: PROJECT }, { teamId: TEAM, boardId: 'b' }, { teamId: 5, projectId: PROJECT, boardId: 'b' }].map((r) => boardTeam.requestOpen(r)), [false, false, false, false, false]);
+});
+
+test('requestOpen on a live page: its team project is shown and the named board opens', async (t) => {
+  const m = await mount(t, { boards: [teamBoard(1, 'Plan'), teamBoard(2, 'Ideas')] });
+  assert.equal(m.page.getProject().team, undefined, 'the member\'s own project first');
+  assert.equal(boardTeam.requestOpen({ teamId: TEAM, projectId: PROJECT, boardId: boardId(2) }), true);
+  assert.equal(await until(m, () => m.page.getOpenBoardId() === boardId(2)), true);
+  assert.deepEqual([m.page.getProject().team.id, m.page.getProject().id], [TEAM, PROJECT]);
+  // Already on that project: another board of it opens without a second pick.
+  boardTeam.requestOpen({ teamId: TEAM, projectId: PROJECT, boardId: boardId(1) });
+  assert.equal(await until(m, () => m.page.getOpenBoardId() === boardId(1)), true);
+});
+
+test('requestOpen with no page up waits for the next Board page that attaches the team', async (t) => {
+  const m = await mount(t, { boards: [teamBoard(1, 'Plan'), teamBoard(2, 'Ideas')] });
+  m.page.dispose();
+  assert.equal(boardTeam.requestOpen({ teamId: TEAM, projectId: PROJECT, boardId: boardId(2) }), true);
+  await m.again();
+  assert.equal(await until(m, () => m.page.getProject().team && m.page.getOpenBoardId() === boardId(2)), true);
+  assert.equal(m.page.getProject().team.id, TEAM);
+});

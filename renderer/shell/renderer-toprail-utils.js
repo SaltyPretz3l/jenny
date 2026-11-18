@@ -180,9 +180,10 @@
       topRailIndicator.style.transform = `translateX(${activeTab.offsetLeft - scrollLeft}px)`;
     }
 
-    // rAF-coalesced re-measure for continuous signals (scroll, resize).
-    function syncIndicatorToLayout() {
-      _suppressIndicatorTransition = true;
+    // rAF-coalesced re-measure for continuous signals (scroll, resize), and
+    // after a render with `slide` (a read inside a view switch forced a layout).
+    function syncIndicatorToLayout(slide) {
+      if (slide !== true) _suppressIndicatorTransition = true;
       const raf = typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
         ? window.requestAnimationFrame.bind(window)
         : null;
@@ -193,10 +194,13 @@
       if (_indicatorRaf) {
         return;
       }
-      _indicatorRaf = raf(() => {
+      let ran = false; // a frame that runs at once must not leave its handle behind
+      const handle = raf(() => {
+        ran = true;
         _indicatorRaf = 0;
         updateIndicator();
       });
+      if (!ran) _indicatorRaf = handle;
     }
 
     function observeRailLayout() {
@@ -291,14 +295,17 @@
         // roving-tabindex stop) identical to the full-markup build above.
         const elements = getRailTabElements();
         const hasMatch = elements.some((tab) => tab.dataset.tabId === state.ui.activeView);
+        // Writes only what changed: a tabindex write costs a style pass.
         elements.forEach((tab, index) => {
           const isActive = tab.dataset.tabId === state.ui.activeView;
-          tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
-          tab.tabIndex = resolveTabbable(hasMatch, isActive, index) ? 0 : -1;
+          const selected = isActive ? 'true' : 'false';
+          const tabindex = resolveTabbable(hasMatch, isActive, index) ? '0' : '-1';
+          if (tab.getAttribute('aria-selected') !== selected) tab.setAttribute('aria-selected', selected);
+          if (tab.getAttribute('tabindex') !== tabindex) tab.setAttribute('tabindex', tabindex);
         });
       }
       syncBadges();
-      updateIndicator();
+      syncIndicatorToLayout(true);
     }
 
     // Returns false when no matching rail tab exists so callers can use their fallback.
@@ -317,11 +324,26 @@
     }
 
     function activateRailTab(tabId) {
+      // The view already showing: a switch would only redraw it.
+      if (tabId === state.ui.activeView) {
+        focusRailTab(tabId);
+        return;
+      }
       if (typeof setActiveView === 'function') {
         setActiveView(tabId);
       }
-      renderTopRail();
+      // For a host whose setActiveView does not render the rail.
+      if (!getRailTabElements().some((tab) => tab.dataset.tabId === tabId && tab.getAttribute('aria-selected') === 'true')) {
+        renderTopRail();
+      }
       focusRailTab(tabId);
+    }
+
+    // Arrows, Home and End move focus; Enter or Space opens (opening on every
+    // arrow built each area on the way past).
+    function moveRailFocus(tabs, nextTab) {
+      tabs.forEach((tab) => { tab.tabIndex = tab === nextTab ? 0 : -1; });
+      nextTab.focus();
     }
 
     function handleRailClick(event) {
@@ -361,7 +383,7 @@
       event.preventDefault();
       const nextTab = tabs[nextIndex];
       if (nextTab) {
-        activateRailTab(nextTab.dataset.tabId);
+        moveRailFocus(tabs, nextTab);
       }
     }
 

@@ -575,3 +575,24 @@ test('team messages in one channel share one counted toast naming three senders,
   const bytes = JSON.stringify(h.notifications.map((n) => n.options)) + JSON.stringify(h.logs);
   for (const secret of ['member_', 'jteam1_', 'device_']) assert.equal(bytes.includes(secret), false, secret);
 });
+
+// Row 175: project activity (`teamProject`): a host conversation, the Team switch too, and a click that names it.
+test('row 175: a project toast needs its team and host conversation, passes the gates with Team on, and its click names only them', () => {
+  const SID = 'sess_' + 'a'.repeat(32);
+  const project = (over = {}) => candidate({ category: 'teamProject', key: 'teamProject:x:1', sessionId: SID, teamId: TEAM_ID, projectId: 'project_aaaa',
+    title: 'Release notes', body: 'Jenny finished your turn.', preview: 'secret line', channelId: 'chan_team', ...over });
+  assert.deepEqual(normalizeNotificationCandidate(project()), { category: 'teamProject', key: 'teamProject:x:1', sessionId: SID, title: 'Release notes',
+    body: 'Jenny finished your turn.', teamId: TEAM_ID, projectId: 'project_aaaa' }, 'no preview, no channel');
+  for (const over of [{ sessionId: 'session-1' }, { sessionId: SID + '/x' }, { teamId: '' }]) assert.equal(normalizeNotificationCandidate(project(over)), null);
+  const h = createHarness({ primarySessionId: SID, chatUi: { digestQuietStart: '00:00', digestQuietEnd: '23:30' } });
+  h.state.childSessions.add(SID);
+  assert.equal(h.notifier.notify(project()), true, 'the local-chat gates do not read a host conversation');
+  h.notifications[0].click();
+  assert.deepEqual(h.bridgeEvents.at(-1).payload, { sessionId: SID, category: 'teamProject', key: 'teamProject:x:1', teamId: TEAM_ID, projectId: 'project_aaaa' });
+  const teamOff = createHarness({ settings: { categories: { team: false } } });
+  assert.equal(teamOff.notifier.notify(project()), false);
+  assertSuppressed(teamOff, 'category_off', 'teamProject');
+  const projectOff = createHarness({ settings: { categories: { teamProject: false } } });
+  assert.equal(projectOff.notifier.notify(project()), false, 'its own switch');
+  assert.equal(projectOff.notifier.notify(teamMessage(1)), true, 'team messages still toast');
+});

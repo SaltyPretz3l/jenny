@@ -32,13 +32,15 @@ from sidecar.ai.engines.catalog import ModelCatalogResult
 from sidecar.runtime.capabilities import (
     _cached_hardware_summary,
     _codex_cli_models,
-    _configured_mcp_servers_payload,
     _initialize_visible_provider_capabilities,
     _normalized_engine_type,
     _runtime_api_url_for_engine,
     _tools_status_payload,
     initialize_response,
     models_list_result,
+)
+from sidecar.runtime.capabilities_mcp import (
+    configured_mcp_servers_payload as _configured_mcp_servers_payload,
 )
 from sidecar.runtime.provider_capabilities import ProviderCapability
 

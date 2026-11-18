@@ -33,7 +33,11 @@ from sidecar.ai.mcp.builtin_server_cli import (
     builtin_tool_config,
     default_builtin_tool_config,
 )
-from sidecar.ai.mcp.builtin_server_hosted import report_hosted_file_reason, start_hosted_file_io
+from sidecar.ai.mcp.builtin_server_hosted import (
+    RootBoundaryArgumentError,
+    report_hosted_file_reason,
+    start_worker_file_access,
+)
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
     configure_stdio,
@@ -543,6 +547,12 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
     return _result_response(message_id, result_payload)
 
 
+def _hosted_files_capability(host_config: Any) -> dict[str, Any]:
+    """A worker with a root boundary says whether its file tools started, and why not."""
+    state = host_config.get("hosted_files") if isinstance(host_config, dict) else None
+    return {"jenny_hosted_files": dict(state)} if isinstance(state, dict) else {}
+
+
 def _dispatch_message(
     payload: dict[str, Any],
     tools: dict[str, BuiltinTool],
@@ -561,7 +571,8 @@ def _dispatch_message(
                     "experimental": {
                         "jenny_tool_lifecycle": {
                             "started_notification": TOOL_STARTED_NOTIFICATION_METHOD
-                        }
+                        },
+                        **_hosted_files_capability(host_config),
                     },
                 },
                 "serverInfo": {"name": "jenny-builtin-tools", "version": "1"},
@@ -615,8 +626,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     configure_operation_ledger(ledger_root_arg or resolve_operation_ledger_root())
     start_background_compaction()
     workspace = _build_workspace_guard(args)
-    hosted_file_reason = start_hosted_file_io(workspace.root, server_mode=host_policy.mode
-                                              == "server", win32_files=args.hosted_win32_files)
+    try:
+        hosted_file_reason, boundary_config = start_worker_file_access(
+            args, workspace.root, server_mode=host_policy.mode == "server")
+    except RootBoundaryArgumentError:
+        parser.error("invalid hosted root boundary")
+    host_config.update(boundary_config)
     configure_catalog_reader_from_cli(
         db_path=str(args.semantic_catalog_db or ""),
         base_url=str(args.semantic_catalog_url or ""),
@@ -632,7 +647,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             host_execution_policy_version=host_policy.version,
             desktop_execution_policy_version=desktop_policy.version,
         ),
-        workspace_root_present=workspace.root is not None and hosted_file_reason is None,
+        workspace_root_present=(
+            (workspace.root is not None or "hosted_root_boundary" in boundary_config)
+            and hosted_file_reason is None
+        ),
         request_scoped_authority=True,
     )
 

@@ -169,6 +169,22 @@ test('leaving Workspace restores the nodes into #chatView before #artifactReview
   assert.equal(dock.reconcile(), false, 'restore is idempotent too');
 });
 
+test('with no chat surface on screen (Home) a docked transcript stays docked; Chat takes it back', () => {
+  const { byId, state, dock, calls } = setupDock();
+  dock.reconcile();
+  state.ui.activeView = 'home';
+  assert.equal(dock.reconcile(), false, 'nothing moves while Home is shown');
+  assert.equal(byId('chatThreadStage').parentNode.id, 'ideChatDockBody');
+  state.ui.activeView = 'ide';
+  assert.equal(dock.reconcile(), false, 'back on the page: still in place, nothing re-laid');
+  assert.equal(calls.layout, 1);
+  state.ui.activeView = 'home';
+  dock.reconcile();
+  state.ui.activeView = 'chat';
+  assert.equal(dock.reconcile(), true, 'Chat takes it back');
+  assert.equal(byId('chatThreadStage').parentNode.id, 'chatView');
+});
+
 test('each real host move asks the subagent monitor to re-pick its host; no-op reconciles do not', () => {
   const { dom, state, dock } = setupDock();
   let rehosts = 0;

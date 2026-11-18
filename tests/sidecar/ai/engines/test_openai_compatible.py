@@ -29,7 +29,7 @@ from sidecar.ai.engines.openai_compatible import (
     _OPENAI_COMPAT_DEFAULT_BASE_URL,
     OpenAICompatibleEngine,
 )
-from sidecar.ai.engines.provider_http import ProviderHttpService
+from sidecar.ai.engines.provider_http import ProviderHttpError, ProviderHttpService
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.engines.vllm_engine import VLLMEngine
 from sidecar.runtime.vllm_engine_support import EngineConnectionError
@@ -265,6 +265,33 @@ class TestProbeReachable:
         engine = OpenAICompatibleEngine()
         engine.probe_reachable()
         assert engine.model_name is None
+
+    @pytest.mark.parametrize(
+        ("classification", "host", "idle"),
+        [
+            ("connection_error", None, True),
+            ("api_timeout", None, False),
+            ("connection_error", "http://192.168.1.20:8033/v1", False),
+        ],
+    )
+    def test_probe_marks_only_a_refused_loopback_port_as_an_idle_local_server(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        classification: str,
+        host: str | None,
+        idle: bool,
+    ) -> None:
+        def _fail(*_a: Any, **_kw: Any) -> None:
+            raise ProviderHttpError(
+                provider="openai-compatible", status_code=None, code="x",
+                message="unreachable", retryable=True, classification=classification,
+            )
+
+        _patch_models_probe(monkeypatch, _fail)
+        engine = OpenAICompatibleEngine(host=host) if host else OpenAICompatibleEngine()
+        with pytest.raises(EngineConnectionError) as excinfo:
+            engine.probe_reachable()
+        assert excinfo.value.idle_local_server is idle
 
 
 def test_context_window_hint_uses_props_without_configured_or_native_window(

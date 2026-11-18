@@ -105,7 +105,10 @@ def _find_task_index(rows: list[dict[str, Any]], task_content: str | None) -> in
     prompt is known.
     """
     user_indexes = [
-        index for index in range(len(rows) - 1, -1, -1) if _row_role(rows[index]) == "user"
+        index
+        for index in range(len(rows) - 1, -1, -1)
+        # A message the person sent mid-turn (row 180) is never the turn's task.
+        if _row_role(rows[index]) == "user" and not rows[index].get("steer")
     ]
     if not user_indexes:
         return None

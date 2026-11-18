@@ -518,7 +518,7 @@ test('the session gives each heavy command its limits and nothing else any', asy
   const session = createTeamSession({ http: fakeHttp, appVersion: '1.7.0' });
   const base = { client: { client_id: 'cid', client_token: 't' }, bootEpoch: 'b', requestId: 'r' };
   for (const operation of ['team.members.list', 'team.project.upload.begin', 'team.project.upload.commit',
-    'team.project.download.manifest', 'sessions.snapshot', 'sessions.list', 'team.board.apply']) await session.command(operation, {}, base);
+    'team.project.download.manifest', 'sessions.snapshot', 'sessions.list', 'team.board.apply', 'team.project.files.read']) await session.command(operation, {}, base);
   const limits = calls.map(({ timeoutMs, maxResponseBytes, maxRequestBytes }) => ({ timeoutMs, maxResponseBytes, maxRequestBytes }));
   assert.deepEqual(limits, [
     { timeoutMs: undefined, maxResponseBytes: undefined, maxRequestBytes: undefined },
@@ -528,9 +528,9 @@ test('the session gives each heavy command its limits and nothing else any', asy
     { timeoutMs: 30_000, maxResponseBytes: 8 * 1024 * 1024, maxRequestBytes: undefined },
     { timeoutMs: 30_000, maxResponseBytes: 8 * 1024 * 1024, maxRequestBytes: undefined },
     { timeoutMs: undefined, maxResponseBytes: undefined, maxRequestBytes: 256 * 1024 + 4096 },
-  ]);
+    { timeoutMs: 45_000, maxResponseBytes: 6 * 1024 * 1024, maxRequestBytes: undefined }]); // row 175: a file read, up to a 4 MiB picture
   assert.deepEqual(Object.keys(COMMAND_LIMITS).sort(), ['sessions.list', 'sessions.snapshot', 'team.board.apply',
-    'team.project.download.manifest', 'team.project.upload.begin', 'team.project.upload.commit']);
+    'team.project.download.manifest', 'team.project.files.list', 'team.project.files.read', 'team.project.upload.begin', 'team.project.upload.commit']);
   // Row 151: a board batch as large as the host takes can be sent, with the longest envelope around it.
   const pad = { batch_id: `b-${crypto.randomUUID()}`, ops: [{ op: 'card.edit', id: crypto.randomUUID(), content_rev: 0, data: { text: '' } }] };
   pad.ops[0].data.text = 'x'.repeat(BATCH_MAX_BYTES - Buffer.byteLength(JSON.stringify(pad)));

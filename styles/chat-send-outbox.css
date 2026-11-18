@@ -72,6 +72,8 @@
   outline-offset: -2px;
 }
 .send-outbox .send-outbox__action:disabled { cursor: default; opacity: 0.55; }
+/* An offered message is locked for editing but is the live text: it keeps full strength. */
+.send-outbox .send-outbox__row--offered .send-outbox__preview:disabled { opacity: 1; }
 .send-outbox .send-outbox__action--cancel { font-size: var(--font-size-title); padding: 0; }
 .send-outbox .send-outbox__action--cancel:hover:not(:disabled) { color: var(--state-danger); }
 .send-outbox__input {

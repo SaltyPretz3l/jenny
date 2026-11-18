@@ -192,6 +192,13 @@
     }
 
     function updateComposerSafeOffset(options = {}) {
+      // No chat on screen, or entering Chat (rects still zero, or the composer's next-frame
+      // pass measures with force): reads here would force a layout mid-switch.
+      const live = (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) ?? (state.ui.activeView === 'chat');
+      if (!live || (state.ui.activeView === 'chat' && (state.ui.composerMeasureAfterFrame || chatView?.classList?.contains('hidden')))) {
+        updateAppWindowHeight();
+        return;
+      }
       const panelHost = chatView?.closest?.('.chat-view') || chatView;
       if (panelHost?.querySelector?.('.artifact-review-overlay:not(.hidden)')) {
         const bounds = panelHost.getBoundingClientRect();
@@ -206,10 +213,11 @@
       }
       const viewportHeightChanged = updateAppWindowHeight();
       const preserveSurfaceEffectWidths = options && options.preserveSurfaceEffectWidths === true;
+      // Every read before the effect widths are written: one layout, not two.
+      const nextSafeOffset = measureComposerSafeOffset();
       const chatSurfaceEffectWidthsChanged = preserveSurfaceEffectWidths
         ? false
         : updateChatSurfaceEffectWidths();
-      const nextSafeOffset = measureComposerSafeOffset();
       if (!chatView || !nextSafeOffset) {
         return;
       }
@@ -224,11 +232,8 @@
       chatView.style.setProperty('--empty-hero-stage-bottom', `${nextSafeOffset}px`);
       // Row 101 live box: the reasoning box fills the visible thread height.
       chatView.style.setProperty('--chat-thread-viewport-h', `${layoutRuntime.stageHeight}px`);
-      // Widened render gate (ide_chat_dock): viewport sync also runs while the
-      // Workspace dock is the live chat surface (falls back flag-off).
-      const chatSurfaceLive = (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
-        ?? (state.ui.activeView === 'chat');
-      if (options.syncViewport && chatSurfaceLive && state.ui.chatMode === 'thread') {
+      // A chat surface is live here (the guard at the top), docked ones included.
+      if (options.syncViewport && state.ui.chatMode === 'thread') {
         scheduleMessageViewportSync(getCurrentSessionMessages(), {
           preserveFollowLatest: true,
           preserveSurfaceEffectWidths,

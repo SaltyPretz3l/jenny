@@ -26,7 +26,7 @@ const { createFixture } = require('./team-store-fixture');
 // `nodes({ store, authorize, logger })` builds the team.node.* module the commands hand off to.
 // `usage` answers the host's usage log (slice 4e GPU use; null is no pool).
 async function createTeamCommandsFixture(t, {
-  addresses = [], limiter = null, withTeamCommands = true, storeOverrides = {}, internet = () => null, settle = null, nodes = null, usage = null,
+  addresses = [], limiter = null, listLimiter = null, withTeamCommands = true, storeOverrides = {}, internet = () => null, settle = null, nodes = null, usage = null,
 } = {}) {
   const fx = createFixture(null);
   const store = fx.openStore(storeOverrides);
@@ -47,7 +47,7 @@ async function createTeamCommandsFixture(t, {
   if (withTeamCommands) {
     const { createTeamCommands } = require('../../../server/team/team-commands');
     teamCommands = createTeamCommands({
-      store, invites, directory: store.directory, addresses: () => addresses, internet, settle, limiter, clock: fx.clock,
+      store, invites, directory: store.directory, addresses: () => addresses, internet, settle, limiter, listLimiter, clock: fx.clock,
       logger: fx.logger, ...(nodes ? { nodes: nodes({ store, authorize, logger: fx.logger }) } : {}), ...(usage ? { usage } : {}),
     });
   }

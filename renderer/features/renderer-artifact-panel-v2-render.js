@@ -234,10 +234,13 @@
         : mode === 'file_preview' ? (previewName || jt('ide.filePreviewLabel', 'File preview'))
         : mode === 'notes' ? jt('projectNotes.title', 'Notes')
         : mode === 'background_tasks' ? jt('backgroundTasks.title', 'Background tasks')
+        : mode === 'terminal' ? jt('chatTerminal.title', 'Terminal')
         : mode === 'browser' ? (browserHost?.panelTitle?.() || jt('composer.toolFamily.browser.label', 'Browser'))
         : jt('artifactPanelV2Render.tasks', 'Tasks');
       // Row 138: an open background task turns the title into its Back control (the panel's own markup).
-      const ownTitleHtml = mode === 'background_tasks' ? String(windowRef?.rendererBackgroundTasksPanel?.titleHtml?.() || '') : '';
+      // Row 178: the Terminal panel's tab strip and actions are its title (the chrome keeps Close).
+      const ownTitleHtml = mode === 'background_tasks' ? String(windowRef?.rendererBackgroundTasksPanel?.titleHtml?.() || '')
+        : mode === 'terminal' ? String(windowRef?.rendererChatTerminalPanel?.titleHtml?.() || '') : '';
       const glyphHtml = mode === 'browser' ? browserHost?.glyphHtml
         : previewName ? chromeRender.kindGlyphHtml(filePreview.payload?.kind
           || globalThis.rendererArtifactFilePreviewRender?.resolveFilePreviewKind?.(previewPath)) : '';

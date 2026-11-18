@@ -4,6 +4,7 @@ const {
 } = require('../../backend/generated-chat-lifecycle-contract');
 const { CHAT_PROTOCOL_ERROR_CODES } = require('../../backend/error-codes');
 const { createAttachmentIpcHandlers } = require('../attachment-ipc-handlers');
+const { STEER_ITEM_ID_PATTERN, offerUserSteer, withdrawUserSteer } = require('../../backend/user-steer-mid-turn');
 
 // Chat domain IPC: the chat-surface owners (suggested changes, chat workspace,
 // proposals, messaging, primary chat, performance, tools settings, session
@@ -71,6 +72,58 @@ function assertChatStartIpcPayload(payload, { requireEditedMessageId = false, lo
   throw error;
 }
 
+function invalidSteerPayload(path, reason) {
+  const error = new TypeError(`Invalid chat IPC payload: ${reason} at ${path}`);
+  error.code = CHAT_PROTOCOL_ERROR_CODES.INVALID_PAYLOAD;
+  error.path = path;
+  error.reason = reason;
+  return error;
+}
+
+// Row 180: a steering offer is `{sessionId, itemId, prompt, attachments}`. The session, prompt and attachments
+// pass the chat:start-stream validator (structure, budgets, identifier grammar); the item id is the outbox id.
+function assertChatSteerIpcPayload(payload, { log = null } = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw invalidSteerPayload('$', 'payload_not_object');
+  if (Object.keys(payload).some((key) => !['sessionId', 'itemId', 'prompt', 'attachments'].includes(key))) {
+    throw invalidSteerPayload('$.[unknown]', 'unknown_field');
+  }
+  if (typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) throw invalidSteerPayload('$.sessionId', 'identifier_empty');
+  if (typeof payload.itemId !== 'string' || !STEER_ITEM_ID_PATTERN.test(payload.itemId)) throw invalidSteerPayload('$.itemId', 'identifier_invalid_grammar');
+  const { sessionId, prompt, attachments } = assertChatStartIpcPayload(
+    { sessionId: payload.sessionId, prompt: payload.prompt, attachments: payload.attachments ?? [] }, { log }
+  );
+  return { sessionId, itemId: payload.itemId, prompt, attachments };
+}
+
+function assertChatSteerWithdrawIpcPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw invalidSteerPayload('$', 'payload_not_object');
+  if (Object.keys(payload).some((key) => !['sessionId', 'itemId'].includes(key))) throw invalidSteerPayload('$.[unknown]', 'unknown_field');
+  if (typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) throw invalidSteerPayload('$.sessionId', 'identifier_empty');
+  if (typeof payload.itemId !== 'string' || !STEER_ITEM_ID_PATTERN.test(payload.itemId)) throw invalidSteerPayload('$.itemId', 'identifier_invalid_grammar');
+  return { sessionId: payload.sessionId, itemId: payload.itemId };
+}
+
+// A refusal is an answer, never a rejected invoke: the renderer keeps the item queued for the next turn.
+function offerChatSteer(backendService, payload, log) {
+  let request;
+  try {
+    request = assertChatSteerIpcPayload(payload, { log });
+  } catch {
+    return { ok: false, reason: 'invalid' };
+  }
+  return offerUserSteer(backendService, request);
+}
+
+function withdrawChatSteer(backendService, payload) {
+  let request;
+  try {
+    request = assertChatSteerWithdrawIpcPayload(payload);
+  } catch {
+    return { ok: false, reason: 'unknown' };
+  }
+  return withdrawUserSteer(backendService, request);
+}
+
 function registerChatStreamIpcHandlers(ipcMainLike, {
   backendService,
   shellConfigService,
@@ -99,6 +152,8 @@ function registerChatStreamIpcHandlers(ipcMainLike, {
         ? (options.cancel_reason || options.cancelReason || options.reason)
         : ''
     ),
+    'chat.offerSteer': (_, payload) => offerChatSteer(backendService, payload, log),
+    'chat.withdrawSteer': (_, payload) => withdrawChatSteer(backendService, payload),
     'chat.compactNow': (_, sessionId) => backendService.compactContextNow(sessionId),
     // Row 136: reads which chat goes first on the model; `set` and `clear` are the person's pick.
     'chat.firstSession': (_, request) => backendService.firstChatSession({
@@ -117,6 +172,8 @@ function registerChatStreamIpcHandlers(ipcMainLike, {
 
 module.exports = {
   assertChatStartIpcPayload,
+  assertChatSteerIpcPayload,
+  assertChatSteerWithdrawIpcPayload,
   registerChatStreamIpcHandlers,
   registerChatSurfaceIpcHandlers,
   registerChatUserQuestionIpcHandlers,

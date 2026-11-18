@@ -43,6 +43,7 @@ const { LIMITS } = require('../host/team-chat-schema');
 const { fieldsAnswer, historyAnswer, searchAnswer } = require('./chat-answers');
 const { CHANNELS_MAX, createChatCache } = require('./chat-cache');
 const { checkedMembers, checkedPresence, checkedTyping, createPresenceHold, createTypingGate } = require('./chat-live');
+const { createChatChannels } = require('./chat-channels');
 const { createChatDm } = require('./chat-dm');
 const { createChatMarks } = require('./chat-marks');
 const { createChatOutbox } = require('./chat-outbox');
@@ -110,8 +111,10 @@ function createChatClient({
   const readMarks = createChatReadMarks({ cache, ready, direct, pushTouched, timers,
     failure: teamFailure('CONNECTION_FAILED', 'team_unavailable') });
   const marks = createChatMarks({ cache, ready, direct, syncChannel });
-  const dms = createChatDm({ memberId, cache, ready, direct, resync: { ask: () => { if (!syncing) needResync = true; pump(); },
-    pending: () => active && !stopped && online() && (needResync || syncing || resyncTimer !== null), next: () => new Promise((resolve) => { snapshotWaiters.push(resolve); }) } });
+  const resyncHook = { ask: () => { if (!syncing) needResync = true; pump(); },
+    pending: () => active && !stopped && online() && (needResync || syncing || resyncTimer !== null), next: () => new Promise((resolve) => { snapshotWaiters.push(resolve); }) };
+  const channelOps = createChatChannels({ cache, ready, direct, resync: resyncHook });
+  const dms = createChatDm({ memberId, cache, ready, direct, resync: resyncHook });
 
   const outbox = createChatOutbox({
     store, timers, now, ...(randomId ? { randomId } : {}), recordOf: cache.record, reconcile: marks.reconcile,
@@ -147,6 +150,7 @@ function createChatClient({
   function apply(events) {
     const changed = new Map();
     const touched = new Set();
+    let listChanged = false;
     for (const event of events) {
       if (typeof event.boot_epoch === 'string') {
         if (lastEpoch !== null && event.boot_epoch !== lastEpoch) needResync = true;
@@ -167,6 +171,7 @@ function createChatClient({
         const result = cache.applyChannel(event);
         if (result.status === 'gap') { needResync = true; continue; }
         touched.add(event.channel_id);
+        if (result.removed) listChanged = true;
         if (result.reload) reloads.add(event.channel_id);
       } else if (event.event_type === 'team_presence') {
         const changed = checkedPresence(event);
@@ -184,7 +189,8 @@ function createChatClient({
         if (readChannel) touched.add(readChannel);
       }
     }
-    pushTouched(touched);
+    // A removed channel is no longer in the cache to be touched: the whole list goes.
+    if (listChanged) pushChannels(); else pushTouched(touched);
     for (const [channelId, messages] of changed) pushMessages(channelId, messages);
   }
 
@@ -498,7 +504,7 @@ function createChatClient({
     chatSearch: (value) => search(value),
     chatTyping: (value) => typing(value),
     presenceSet: (value) => presenceSet(value),
-    ...marks.methods, ...dms.methods, ...readMarks.methods,
+    ...marks.methods, ...dms.methods, ...channelOps.methods, ...readMarks.methods,
   };
 
   return {

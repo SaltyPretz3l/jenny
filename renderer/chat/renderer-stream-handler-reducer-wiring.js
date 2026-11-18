@@ -109,7 +109,7 @@
       const messages = getSessionMessages(sessionId);
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
-        if (normalizeString(message?.role) === 'user') {
+        if (normalizeString(message?.role) === 'user' && normalizeString(message?.kind) !== 'steer') {
           return normalizeId(message?.id);
         }
       }

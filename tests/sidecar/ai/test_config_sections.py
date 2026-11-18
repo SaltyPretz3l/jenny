@@ -23,7 +23,7 @@ def test_sections_and_limits_cover_every_parsed_field_exactly_once() -> None:
         "engine_type", "host_mode", "host_execution_policy_version",
         "host_execution_worker_enabled", "desktop_execution_policy_version",
         "desktop_command_workspace", "auto_approve_streak_cap", "ui_language", "fallback_models", "app_profile",
-        "feature_flags",
+        "feature_flags", "hosted_root_boundary", "hosted_win32_files",
     }
     # Resolved after parsing, never read from the raw payload.
     resolved_later = {"resolved_user_max_output_tokens"}

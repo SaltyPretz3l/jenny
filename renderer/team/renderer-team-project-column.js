@@ -10,10 +10,11 @@
  *
  * A project row has a chevron (fold), its name (opens the page), "being deleted" where the data says so, and an
  * admin's waiting always-allow requests as a count. Under it, indented: its channel ("#{project}", the existing
- * project channel row), its conversations ("running", an approval count) and "New conversation" (writers and
- * admins). The team owner's projects they are not in are muted rows, name only, "You are not in this project". The
- * plus on the label (owners and members, E22) opens the create field in place. Every name is drawn escaped, bidi
- * isolated (dir="auto") and cut by CSS; a name the host gave longer than 80 characters is cut here too.
+ * project channel row; while the chat rows do not hold it yet, a row that opens nothing: "still loading"), its
+ * conversations ("running", an approval count) and "New conversation" (writers and admins). The team owner's
+ * projects they are not in are muted rows, name only, "You are not in this project". The plus on the label (owners
+ * and members, E22) opens the create field in place. Every name is drawn escaped, bidi isolated (dir="auto") and cut
+ * by CSS; a name the host gave longer than 80 characters is cut here too.
  *
  * Shared by the project views (no script file of their own): `button` and `confirmBlock`, `plain` (host text with
  * bidi and zero-width characters removed and cut, for an approval's summary and a saved path), and the checks main
@@ -39,9 +40,12 @@
   const NAME_MAX = 80;
   const FOLDS_MAX = 512;
   const CREATE_ID = 'teamProjectNewName';
+  const RENAME_ID = 'teamConversationRename';
+  const TITLE_MAX = 80;
   const SVG = (paths) => '<svg viewBox="0 0 16 16" aria-hidden="true">' + paths + '</svg>';
   const CHEVRON = SVG('<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>');
   const PLUS = SVG('<path d="M8 3.5v9M3.5 8h9"/>');
+  const DOTS = SVG('<circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>');
   const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
   const HIDDEN = /[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
 
@@ -53,8 +57,9 @@
   function plain(text, max) { return cut(String(text == null ? '' : text).replace(HIDDEN, '').trim(), max); }
 
   // The one button of the project views: an action on `data-project-action`, a tooltip on every one.
-  function button(action, label, { variant = 'secondary', title = label, disabled = false, dataset = {}, ariaLabel = '' } = {}) {
-    return inv().actionButton({ label, variant, size: 'sm', title, disabled, dataset: { 'project-action': action, ...dataset }, ...(ariaLabel ? { ariaLabel } : {}) });
+  function button(action, label, { variant = 'secondary', title = label, disabled = false, dataset = {}, ariaLabel = '', ariaDescription = '' } = {}) {
+    return inv().actionButton({ label, variant, size: 'sm', title, disabled, dataset: { 'project-action': action, ...dataset },
+      ...(ariaLabel ? { ariaLabel } : {}), ...(ariaDescription ? { ariaDescription } : {}) });
   }
   // The one confirm of the project views: a named group, its sentence, its buttons (the first is focused on open).
   function confirmBlock(label, text, actions, className = 'team-set-confirm') {
@@ -137,6 +142,7 @@
   const folds = new Map(); // team|member|project -> open
   const creating = new Map(); // team id -> { name, error, busy }
   const fresh = new Map(); // team id -> a page just opened whose row has not arrived yet
+  const rowing = new Map(); // team id -> { sessionId, mode: 'rename' | 'confirm' | 'note', value, busy, note }: one conversation row
 
   const isPage = (id) => typeof id === 'string' && (id.startsWith(PROJECT) || id.startsWith(CONVERSATION));
   const projectPage = (projectId) => PROJECT + projectId;
@@ -172,7 +178,24 @@
   function openCreate(teamId) { if (!creating.has(teamId)) creating.set(teamId, { name: '', error: '', busy: false }); }
   function closeCreate(teamId) { creating.delete(teamId); }
   // A team left or gone: its pages and its field go; the folds are the member's own and stay for the session.
-  function forgetTeam(teamId) { views.delete(teamId); creating.delete(teamId); fresh.delete(teamId); }
+  function forgetTeam(teamId) { views.delete(teamId); creating.delete(teamId); fresh.delete(teamId); rowing.delete(teamId); }
+  function rowOf(teamId) { return rowing.get(teamId) || null; }
+  function openRow(teamId, sessionId, mode, value = '') { rowing.set(teamId, { sessionId, mode, value, busy: false, note: '' }); }
+  function closeRow(teamId) { rowing.delete(teamId); }
+
+  // What the row's menu offers this member (role: the project role, the team owner counts as an admin). A choice the
+  // member may not use stays, disabled, with the reason.
+  function rowMenu({ role, owner = false, running = false }) {
+    const admin = owner || role === 'admin' || role === 'owner';
+    const mayRename = admin || role === 'writer';
+    let reason = '';
+    if (!admin) reason = jt('team.projects.deleteAdmins', 'Only the project’s admins can delete');
+    else if (running) reason = jt('team.projects.deleteRunning', 'A turn is running. Stop it first');
+    return [
+      { id: 'rename', label: jt('team.projects.convRename', 'Rename'), disabled: !mayRename, danger: false, description: mayRename ? '' : jt('team.projects.renameReader', 'Only writers and admins can rename') },
+      { id: 'delete', label: jt('team.projects.convDelete', 'Delete'), disabled: Boolean(reason), danger: true, description: reason },
+    ];
+  }
 
   // --------------------------------------------------------------- markup
 
@@ -180,30 +203,69 @@
     return inv().actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: label, title: label, dataset: { 'team-tab-action': action, ...dataset }, trustedHtml: svg });
   }
 
-  function rowButton(action, { name, title, current = false, muted = false, trailing = '', dataset = {}, extraClass = '' }) {
+  function rowButton(action, { name, title, current = false, muted = false, trailing = '', dataset = {}, extraClass = '', plus = false }) {
     const html = inv().actionButton({
       plain: true, className: 'team-row team-row--link' + extraClass, ariaLabel: title, title,
       dataset: { 'team-tab-action': action, 'team-project-row': 'true', ...dataset },
-      trustedHtml: '<span class="team-row__name"' + (muted ? ' data-muted="true"' : '') + ' dir="auto">' + escapeHtml(name) + '</span>' + trailing,
+      trustedHtml: '<span class="team-row__name"' + (muted ? ' data-muted="true"' : '') + ' dir="auto">' + (plus ? '<span aria-hidden="true">+</span> ' : '') + escapeHtml(name) + '</span>' + trailing,
     });
     return current ? html.replace(/^(<[a-z]+)/, '$1 aria-current="true"') : html.replace(/^(<[a-z]+)/, '$1 aria-current="false"');
   }
 
-  function conversationRow(pv, row) {
-    const title = clean(row.title) || jt('team.projects.untitled', 'Untitled conversation');
+  // A project channel the chat rows do not hold yet: drawn (the project exists) but not a link, since opening it would
+  // fall back to #team. It becomes the normal channel row once the chat rows list it.
+  function loadingChannelRow(channelId, name) {
+    const tip = jt('team.projects.channelLoading', 'This channel is still loading.');
+    return inv().actionButton({ plain: true, className: 'team-row', ariaLabel: jt('team.projects.rowWith', '{name}, {facts}', { name: '#' + name, facts: tip }), title: tip, dataset: { 'team-channel-loading': channelId },
+      trustedHtml: '<span class="team-row__glyph" aria-hidden="true">#</span><span class="team-row__name" dir="auto">' + escapeHtml(name) + '</span>' }).replace(/^(<[a-z]+)/, '$1 aria-disabled="true"');
+  }
+
+  // A conversation row's link: the title, then (running dot, approvals count) at the end; its name says what the dot shows.
+  function conversationLink(pv, row, title) {
     const activity = pv.activity[row.session_id] || null;
     const words = [];
     let trailing = '';
     if (activity && activity.running) {
-      words.push(jt('team.projects.running', 'running'));
-      trailing += '<span class="team-row__role" aria-hidden="true">' + escapeHtml(jt('team.projects.running', 'running')) + '</span>';
+      const running = jt('team.projects.running', 'running');
+      words.push(running);
+      trailing += '<span class="status-dot status-dot--active" role="img" aria-label="' + escapeHtml(running) + '"></span>';
     }
     if (activity && activity.approvals > 0) {
       words.push(jtn('team.projects.approvalsWaiting', activity.approvals, {}, '{count} approval waiting', '{count} approvals waiting'));
       trailing += '<span class="team-count" aria-hidden="true">' + escapeHtml(String(activity.approvals)) + '</span>';
     }
     const label = words.length ? jt('team.projects.rowWith', '{name}, {facts}', { name: title, facts: words.join(', ') }) : title;
-    return rowButton('conv-open', { name: title, title: label, current: pv.current === conversationPage(row.session_id), trailing, dataset: { 'session-id': row.session_id } });
+    return rowButton('conv-open', { name: title, title: label, current: pv.current === conversationPage(row.session_id), trailing: trailing ? '<span class="team-row__trail">' + trailing + '</span>' : '',
+      dataset: { 'session-id': row.session_id } });
+  }
+
+  function conversationMenuButton(row, project, title) {
+    const label = jt('team.projects.rowActions', 'Actions for {title}', { title });
+    return inv().actionButton({ plain: true, className: 'team-icon-btn team-row__menu', ariaLabel: label, title: label, ariaHaspopup: 'menu', ariaExpanded: false,
+      dataset: { 'team-tab-action': 'conv-menu', 'session-id': row.session_id, 'project-id': project.id }, trustedHtml: DOTS });
+  }
+
+  function deleteConfirm(state, title, project) {
+    const label = jt('team.projects.deleteConversation', 'Delete conversation');
+    const cancel = jt('team.projects.cancel', 'Cancel');
+    const dataset = (action) => ({ 'team-tab-action': action, 'session-id': state.sessionId });
+    const sentence = jt('team.projects.deleteConversationConfirm', 'Delete “{title}” for everyone in {project}? This cannot be undone.', { title, project: clean(project.name) });
+    return '<div class="team-row__confirm" role="group" aria-label="' + escapeHtml(label) + '"><p dir="auto">' + escapeHtml(sentence) + '</p><div>'
+      + inv().actionButton({ label: jt('team.projects.convDelete', 'Delete'), variant: 'danger', size: 'sm', title: label, dataset: dataset('conv-delete-yes'), disabled: state.busy })
+      + inv().actionButton({ label: cancel, variant: 'ghost', size: 'sm', title: cancel, dataset: dataset('conv-delete-no') }) + '</div></div>';
+  }
+
+  // The row: its link and menu button, or the rename field in their place; a delete confirm and a refusal's sentence under it.
+  function conversationRow(pv, row, project) {
+    const title = clean(row.title) || jt('team.projects.untitled', 'Untitled conversation');
+    const state = pv.rowing && pv.rowing.sessionId === row.session_id ? pv.rowing : null;
+    const rename = state && state.mode === 'rename';
+    const inside = rename
+      ? globalThis.inventoryTextField({ id: RENAME_ID, value: state.value, ariaLabel: jt('team.projects.convNameLabel', 'Conversation name'), maxLength: TITLE_MAX, disabled: state.busy })
+      : conversationLink(pv, row, title) + conversationMenuButton(row, project, title);
+    return '<div class="team-row--conv' + (rename ? ' team-inline-name' : '') + '" data-conv-row="' + escapeHtml(row.session_id) + '">' + inside + '</div>'
+      + (state && state.mode === 'confirm' ? deleteConfirm(state, title, project) : '')
+      + (state && state.note ? '<p class="team-set-note team-proj__note" role="status">' + escapeHtml(state.note) + '</p>' : '');
   }
 
   function projectBlock(pv, row, index, helpers) {
@@ -226,11 +288,12 @@
     const chevron = inv().actionButton({ plain: true, className: 'team-proj__chev', ariaLabel: fold, title: fold, ariaExpanded: open,
       dataset: { 'team-tab-action': 'project-fold', 'project-id': row.id, 'project-index': String(index) }, trustedHtml: CHEVRON });
     const channelId = 'chan_' + row.id;
-    const channel = helpers.channelRow(pv.channelRowOf(channelId), { name, title: '#' + name });
+    const listed = pv.channelRowOf(channelId);
+    const channel = listed ? helpers.channelRow(listed, { name, title: '#' + name }) : loadingChannelRow(channelId, name);
     const writes = row.role === 'admin' || row.role === 'writer' || row.role === 'owner';
-    const kids = channel + pv.conversationsOf(row.id).map((conversation) => conversationRow(pv, conversation)).join('')
+    const kids = channel + pv.conversationsOf(row.id).map((conversation) => conversationRow(pv, conversation, row)).join('')
       + (writes && !deleting ? rowButton('conv-new', { name: jt('team.projects.newConversation', 'New conversation'), title: jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name }),
-        extraClass: ' team-proj__new', dataset: { 'project-id': row.id } }) : '');
+        extraClass: ' team-proj__new', plus: true, dataset: { 'project-id': row.id } }) : '');
     return '<div class="team-proj" data-open="' + open + '" data-team-project="' + escapeHtml(row.id) + '"><div class="team-proj__head">' + chevron
       + rowButton('project-open', { name, title: label, current: pv.current === projectPage(row.id), trailing, dataset: { 'project-id': row.id } })
       + '</div><div class="team-proj__kids">' + kids + '</div></div>';
@@ -275,29 +338,34 @@
 
   // The section's view model for one team from the project store's state, or null when the team is not online (Force
   // local takes the team out of `online`, so the section goes with it). `channelRows`: the chat store's rows of the
-  // team (a project channel row may not be there yet).
+  // team (a project channel row may not be there yet: `channelRowOf` answers null for it).
   function columnView({ team, state, current = '', channelRows = [], errorText = () => '' }) {
     if (!team || team.state !== 'online') return null;
     const mayCreate = team.role === 'owner' || team.role === 'member';
     if (!state) return { teamId: team.team_id, mayCreate, loaded: false };
     const byChannel = new Map((channelRows || []).filter(Boolean).map((row) => [row.channel_id, row]));
     const joined = new Set((state.projects || []).map((row) => row.id));
+    // A row whose conversation is no longer listed loses its state.
+    let open = rowOf(team.team_id);
+    if (open && !(state.conversations || []).some((row) => row.session_id === open.sessionId)) { closeRow(team.team_id); open = null; }
     return {
       teamId: team.team_id, me: team.member_id, mayCreate, current, loaded: Array.isArray(state.projects),
       error: state.error && !state.projects ? errorText(state.error) : '',
       projects: state.projects || [], unjoined: team.role === 'owner' ? state.unjoined.filter((row) => !joined.has(row.project_id)) : [],
-      activity: state.activity || {}, requests: state.requests || {}, deleting: state.deleting || new Set(), create: createOf(team.team_id),
+      activity: state.activity || {}, requests: state.requests || {}, deleting: state.deleting || new Set(), create: createOf(team.team_id), rowing: open,
       conversationsOf: (projectId) => state.conversations.filter((row) => row.project_id === projectId),
-      channelRowOf: (id) => byChannel.get(id) || { channel_id: id, kind: 'project', notify: 'all', unread: 0, mention: false, unread_capped: false },
+      channelRowOf: (id) => byChannel.get(id) || null,
     };
   }
 
-  // The create field keeps its caret at the end after the lists were written again under it.
+  // The create and rename fields keep their caret at the end after the lists were written again under them.
   function afterWrite(root) {
-    const input = root && root.querySelector ? root.querySelector('#' + CREATE_ID) : null;
-    if (input && input.ownerDocument.activeElement === input && typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+    for (const id of [CREATE_ID, RENAME_ID]) {
+      const input = root && root.querySelector ? root.querySelector('#' + id) : null;
+      if (input && input.ownerDocument.activeElement === input && typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+    }
   }
 
-  return { PROJECT, CREATE_ID, clean, plain, button, confirmBlock, writeKeeping, checkName, checkFolder, checkReason, isPage, projectPage, conversationPage, idOf, viewOf, show, isFresh, settle,
-    toggle, pruneFolds, createOf, openCreate, closeCreate, forgetTeam, sectionHtml, columnView, afterWrite };
+  return { PROJECT, CREATE_ID, RENAME_ID, TITLE_MAX, clean, plain, button, confirmBlock, writeKeeping, checkName, checkFolder, checkReason, isPage, projectPage, conversationPage, idOf, viewOf, show, isFresh, settle,
+    toggle, pruneFolds, createOf, openCreate, closeCreate, rowOf, openRow, closeRow, rowMenu, forgetTeam, sectionHtml, columnView, afterWrite };
 });

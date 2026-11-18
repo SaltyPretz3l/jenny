@@ -169,6 +169,110 @@ test('flag on with a membership: it connects after the backend is ready, not at 
   assert.deepEqual(started, ['start', 'stop']);
 });
 
+// Owner, 2026-11-16: a launch with "Load model at startup" off ended in model_unavailable, never ready, and held no team.
+test('flag on with a membership: a backend up with no model, or failed, starts the saved teams once; a start under way does not', async (t) => {
+  for (const phase of ['model_unavailable', 'failed']) {
+    const dir = profile(t);
+    fs.mkdirSync(path.join(dir, 'team', 'team_abcdefghijklmnopqrstuv'), { recursive: true });
+    clearTeamModules();
+    const { registerTeam } = require('../services/main/team-registration');
+    const backend = fakeBackend({ team: true });
+    const started = [];
+    const opts = options(dir, backend, { loadService: () => ({ createTeamService: () => ({
+      startExisting: async () => { started.push('start'); }, stopAll: async () => {}, handle: async () => ({ ok: true }) }) }) });
+    registerTeam({ handle: () => {} }, opts.value);
+    backend.phase = 'sidecar_spawned';
+    backend.emit('backend-status', { phase: 'sidecar_spawned' });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    assert.deepEqual(started, [], 'not while the start is under way');
+    backend.phase = phase;
+    backend.emit('backend-status', { phase });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    assert.deepEqual(started, ['start'], `${phase}: started`);
+    backend.emit('backend-status', { phase: 'ready' });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    assert.deepEqual(started, ['start'], `${phase}: a later ready starts nothing again`);
+    await opts.shutdown[0]();
+  }
+});
+
+// Start with Jenny (host-autostart.js): a launch that starts the stopped server only when the owner turned it on.
+function autostartWorld(t, { setting, teamDir = true, startExisting = async () => {} }) {
+  const dir = profile(t);
+  if (teamDir) fs.mkdirSync(path.join(dir, 'team', 'team_abcdefghijklmnopqrstuv'), { recursive: true });
+  if (setting) {
+    fs.mkdirSync(path.join(dir, 'team-host'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'team-host', 'autostart.json'), JSON.stringify({ schema_version: 1, enabled: true }));
+  }
+  clearTeamModules();
+  const { registerTeam } = require('../services/main/team-registration');
+  const backend = fakeBackend({ team: true });
+  const row = { team_id: 'team_abcdefghijklmnopqrstuv', display_name: 'Olive Owner', label: 'Desk' };
+  const world = { dir, backend, order: [], created: 0, deploys: [], logs: [] };
+  const hosted = { deployed: true, team_name: 'Studio', team_id: row.team_id, state: 'stopped', key: 'ok', reason: null };
+  const fakeHost = { stop: async () => {}, handle: async (method, payload) => {
+    world.order.push(method);
+    if (method === 'hostDeploy') world.deploys.push(payload);
+    return method === 'hostStatus' ? { ok: true, host: hosted } : { ok: true };
+  } };
+  const opts = options(dir, backend, {
+    log: (level, event) => world.logs.push(`${level} ${event}`),
+    loadService: () => ({ createTeamService: () => ({
+      startExisting: async () => { world.order.push('startExisting'); await startExisting(); }, stopAll: async () => {},
+      handle: async () => ({ ok: true, teams: [row] }) }) }),
+    loadHostLaunch: () => ({ electronIsPackaged: () => true, electronFork: null, HOST_ENTRY: 'host-entry.js',
+      hostEnvironment: () => ({}), desktopPythonExecutable: () => null }),
+    loadHost: () => ({ createHostController: () => { world.created += 1; return fakeHost; } }),
+  });
+  world.shutdown = opts.shutdown;
+  world.registration = registerTeam({ handle: () => {} }, opts.value);
+  return world;
+}
+const settle = () => new Promise((resolve) => { setTimeout(resolve, 30); });
+
+test('Start with Jenny: with the setting on the saved teams load first, then the stopped server is started once with the row\'s names', async (t) => {
+  const world = autostartWorld(t, { setting: true });
+  assert.equal(world.created, 0, 'nothing at registration');
+  world.backend.ready();
+  await settle();
+  assert.deepEqual(world.order, ['startExisting', 'hostStatus', 'hostDeploy']);
+  assert.deepEqual(world.deploys, [{ name: 'Studio', display_name: 'Olive Owner', label: 'Desk' }]);
+  assert.equal(world.created, 1);
+  assert.ok(world.logs.includes('INFO team.host.autostart.started'));
+  await world.shutdown[0]();
+});
+
+test('Start with Jenny: with the setting off, absent or no saved team, the host controller is never created', async (t) => {
+  for (const options_ of [{ setting: false }, { setting: true, teamDir: false }]) {
+    const world = autostartWorld(t, options_);
+    world.backend.ready();
+    await settle();
+    assert.equal(world.created, 0, JSON.stringify(options_));
+    assert.equal(world.registration.getHost(), null);
+    assert.deepEqual(world.order, options_.teamDir === false ? [] : ['startExisting']);
+    await world.shutdown[0]();
+  }
+});
+
+test('Start with Jenny: a saved-team start that fails, or a registration disposed meanwhile, starts no server', async (t) => {
+  const failed = autostartWorld(t, { setting: true, startExisting: async () => { throw new Error('no'); } });
+  failed.backend.ready();
+  await settle();
+  assert.equal(failed.created, 0);
+  assert.ok(failed.logs.includes('WARN team.start_failed'));
+  await failed.shutdown[0]();
+
+  let release = () => {};
+  const gated = autostartWorld(t, { setting: true, startExisting: () => new Promise((resolve) => { release = resolve; }) });
+  gated.backend.ready();
+  await settle();
+  await gated.shutdown[0]();
+  release();
+  await settle();
+  assert.equal(gated.created, 0);
+  assert.deepEqual(gated.deploys, []);
+});
+
 test('the IPC registration path calls the team registration only when the flag is on', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'services', 'main', 'ipc-handler-registration.js'), 'utf8');
   const call = source.match(/if \(backendService\?\.featureFlags\?\.team === true\) \{?\s*require\('\.\/team-registration'\)/);
@@ -296,11 +400,14 @@ test('E50 flag on, empty profile: registration, backend ready, the feature state
   const s = shell(h, { teamData: payload.teamData, activeView: 'team' });
   await flush();
   assert.deepEqual(h.calls, [], 'no team call from the renderer');
-  assert.deepEqual(s.requested, [], 'no team script');
-  assert.equal(h.window.document.querySelector('link[rel="stylesheet"]'), null, 'no team style');
+  // Row 168: a saved Team view opens the tab on its start page, so the tab's own scripts and styles load; main is still asked nothing.
+  const lists = require('../renderer/shell/renderer-settings-script-manifest');
+  const tabSrcs = new Set(['teamGate', 'teamStore', 'teamTab'].flatMap((list) => lists[list].map(([src]) => src)));
+  assert.deepEqual(s.requested.filter((src) => !tabSrcs.has(src)), [], 'no team script but the Team tab\'s');
+  assert.deepEqual([...h.window.document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.getAttribute('href')).filter((href) => !href.startsWith('styles/team-')), [], 'no style but the Team tab\'s');
   assert.equal(h.listeners.state, null);
   assert.equal(h.listeners.host, null);
-  assert.equal(s.state.ui.activeView, 'chat', 'a saved Team view shows Chat');
+  assert.equal(s.state.ui.activeView, 'team', 'a saved Team view opens the start page');
   assert.deepEqual(loadedTeamModules(), [], 'no services/team module in main');
   // Review of 5-6 (item 18): by name, nothing of the lifecycle slice (the sweep runs only once the host controller exists).
   const slice = ['host-lifecycle', 'host-sweep', 'host-delete', 'host-export', 'host-restore', 'host-backup', 'host-inventory', 'team-deleted'];

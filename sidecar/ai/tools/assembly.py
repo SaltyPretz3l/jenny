@@ -514,7 +514,13 @@ def assemble_tool_contract(
             and context.include_deferred_tools
             and descriptor.name in remaining_deferred
             and (
-                descriptor.availability.defer_eligible
+                # Hosted mode offers no tool_search (above), so a tool deferred only
+                # to save its schema could never be loaded: it is offered in full
+                # there. The budget filter still hides tools under context pressure.
+                (
+                    descriptor.availability.defer_eligible
+                    and not host_policy_is_enforced(context.config)
+                )
                 or descriptor.name in budget_filtered_names
             )
         )

@@ -415,9 +415,9 @@
           ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(detailModel.metadata, { escapeHtml }) || ''
           : detailModel.metadata.result_kind === 'memory' // the memory chip shares the notes row slot
             ? memoryChatEntry()?.buildMemoryResultBlockMarkup?.(detailModel.metadata, { escapeHtml, sessionId: detailModel.sessionId }) || ''
-            // Option C: a sent message's receipt lives on its own row (the strip paints it live).
+            // Option C: a sent message's receipt lives on its own row (the strip paints it live); a terminal_run result links to the chat's Terminal panel (row 178).
             : detailModel.metadata.result_kind === 'session_message'
-              ? messageStrip()?.conversationReceiptMarkup?.(detailModel.metadata, { escapeHtml }) || '' : '';
+              ? messageStrip()?.conversationReceiptMarkup?.(detailModel.metadata, { escapeHtml }) || '' : globalThis.rendererApprovalBlockCards?.terminalRunResultLinkMarkup?.(detailModel) || '';
       // Row 64: a report_findings result renders its findings list beside the header.
       const reviewFindings = resultPayload && !resultBodyIsError && normalizeId(toolName) === 'report_findings' ? reviewFindingsModule() : null;
       const reviewFindingsMarkup = reviewFindings

@@ -53,6 +53,21 @@
   const COPIED_MS = 1800;
   const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>';
   const reason = chatWrites.failText;
+  // Copy with source (row 175 F12): a link to another message means nothing in a quote, so `jenny-team:` tokens go.
+  const TEAM_TOKEN = /jenny-team:[A-Za-z0-9_/-]+/gu;
+  const pad = (n) => String(n).padStart(2, '0');
+  function dayOf(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+  }
+  // A Markdown quote: "> **Name**, #channel or project, date", then each line of the text behind "> ". Plain text for
+  // the clipboard (the text's own markup stays as written). Attachments and previews are never part of `text`.
+  function buildQuote({ name, where, date, text }) {
+    const head = '> **' + String(name || '') + '**' + [where, date].filter(Boolean).map((part) => ', ' + part).join('');
+    const body = String(text || '').replace(TEAM_TOKEN, '').replace(/[ \t]+$/gmu, '').trim();
+    const quoted = body ? body.split(/\r\n|\r|\n/u).map((line) => '> ' + line) : [];
+    return [head].concat(quoted).join('\n');
+  }
 
   function inv() { return globalThis.inventory || {}; }
   function menuApi() { return (globalThis.inventory && globalThis.inventory.contextMenu) || globalThis.inventoryContextMenu || null; }
@@ -334,12 +349,29 @@
       return true;
     }
 
+    // ------------------------------------------------------------ copy with source
+
+    async function copyWithSource(id) {
+      const message = messageOf(id);
+      if (!message || message.deleted) return false;
+      const c = ctx();
+      const where = typeof c.channelTitleOf === 'function' ? c.channelTitleOf(message.channel_id || channelId) : c.channelTitle;
+      const text = chatWrites.toDisplay(message.text, c.knownName, new Map());
+      const quote = buildQuote({ name: c.author(message.author).name, where, date: dayOf(message.created_at), text });
+      const clipboard = globalThis.window && globalThis.window.jennyShell && globalThis.window.jennyShell.clipboard;
+      let ok;
+      try { ok = Boolean(clipboard && typeof clipboard.writeText === 'function') && (await clipboard.writeText(quote), true); } catch (_error) { ok = false; }
+      if (!disposed) sayCopied(ok ? jt('team.message.copiedWithSource', 'Copied with source') : jt('team.message.copyFailed', 'The message could not be copied.'));
+      return true;
+    }
+
     // ------------------------------------------------------------ menu and keys
 
     // More's entries for a message: Add reaction and Pin, then Edit, Delete and Mark unread where they apply.
     function moreItems(message, c) {
       const id = message.id;
       const items = [];
+      if (!message.deleted) items.push({ label: jt('team.message.copyWithSource', 'Copy with source'), value: 'copy-source', action: () => { void copyWithSource(id); } });
       if (canEdit(message, c)) items.push({ label: jt('team.acts.edit', 'Edit'), value: 'edit', action: () => { openEdit(id); } });
       if (canDelete(message, c)) items.push({ label: jt('team.acts.delete', 'Delete'), value: 'delete', action: () => { askDelete(id); } });
       if (!inThread) items.push({ label: jt('team.acts.unread', 'Mark unread'), value: 'unread', action: () => { void markUnread(id); } });
@@ -463,5 +495,5 @@
     };
   }
 
-  return { createActions };
+  return { createActions, buildQuote };
 });

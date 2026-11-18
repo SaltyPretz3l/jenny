@@ -191,7 +191,8 @@
       appViewOpeners: {
         openFile: (path, line) => { const event = new CustomEvent('ide:open-file-at-line', { cancelable: true, detail: { path, line: line || 1, column: 1, preferIde: true } }); window.dispatchEvent(event); return event.defaultPrevented; },
         openTerminal: async () => { setActiveView('ide'); return await openIdeTerminalSafe() === true; },
-        runInTerminal: async (command) => { setActiveView('ide'); return await runIdeTaskTerminalSafe(command); }, // row 94 P4 terminal_run
+        // row 94 P4 terminal_run; a failed run returns to the previous view. Row 178: while the chat's Terminal panel is open it shows the new terminal, so the view stays.
+        runInTerminal: async (command, options) => { const before = state.ui?.activeView || ''; const inPanel = window.rendererChatTerminalPanel?.isOpen?.() === true; if (!inPanel) setActiveView('ide'); const answer = await runIdeTaskTerminalSafe(command, options); if (!inPanel && answer?.ok !== true && before && before !== 'ide' && state.ui?.activeView === 'ide') setActiveView(before); return answer; },
         openOutsideFiles: (items, options) => (typeof openIdeOutsideFilesSafe === 'function' ? openIdeOutsideFilesSafe(items, options) : false), // row 137 Open with Jenny
         split: async (sessionId) => {
           if (paneLayoutController?.isSessionInPane?.(sessionId)) return (paneLayoutController.getPaneCount?.() || 1) > 1;

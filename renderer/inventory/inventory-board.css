@@ -390,11 +390,13 @@
 .inv-board-conn-line {
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.5;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .inv-board-conn[data-style="dashed"] .inv-board-conn-line {
-  stroke-dasharray: 5 4;
+  stroke-dasharray: 7 6;
 }
 
 /* A proposed connector keeps full contrast: the accent colour and a finer dash. */
@@ -404,24 +406,95 @@
 
 .inv-board-conn[data-ghost] .inv-board-conn-line {
   stroke-dasharray: 2 4;
-  stroke-linecap: round;
 }
 
 .inv-board-conn-arrow {
   fill: currentColor;
   stroke: currentColor;
-  stroke-width: 1;
+  stroke-width: 1.5;
   stroke-linejoin: round;
+}
+
+/* A label sits on a pill, so the line does not run through the words. */
+.inv-board-conn-pill {
+  fill: var(--bg-base);
+  stroke: var(--border-subtle);
+  stroke-width: 1;
 }
 
 .inv-board-conn-label {
   fill: var(--text-secondary);
   font-family: var(--font-family-body);
   font-size: var(--font-size-caption);
-  paint-order: stroke;
-  stroke: var(--bg-base);
-  stroke-width: 4px;
-  stroke-linejoin: round;
+}
+
+/* While some connectors are lit (connectorLayer.setLit), the rest step back. Paint opacity, not group opacity: a board
+   can hold two thousand connectors, and a faded group is a layer of its own. */
+.inv-board-connectors[data-focus] .inv-board-conn:not([data-lit]) > * {
+  stroke-opacity: 0.28;
+  fill-opacity: 0.28;
+}
+
+.inv-board-conn[data-lit]:not([data-selected]) {
+  color: var(--accent-strong);
+}
+
+.inv-board-conn[data-lit] .inv-board-conn-line {
+  stroke-width: 2.5;
+}
+
+.inv-board-conn[data-lit] .inv-board-conn-pill {
+  stroke: var(--accent-strong);
+}
+
+/* The second path of a lit or arriving connector. It is drawn only while it moves: with reduced motion it stays hidden. */
+.inv-board-conn-trace {
+  fill: none;
+  stroke-linecap: round;
+  stroke-dashoffset: 7; /* the light waits before the start of the line */
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Lit: a short light runs from the start of the line to its end, three times, then rests. No filter and no endless
+     animation: both would repaint every lit line on every frame for as long as a card stays selected. */
+  .inv-board-conn-trace[data-connector-trace="flow"] {
+    stroke: var(--text-primary);
+    stroke-width: 3.5;
+    stroke-dasharray: 7 100;
+    opacity: 1;
+    animation: inv-board-conn-flow 1.5s linear 3;
+  }
+
+  /* Arriving (connectorLayer.drawIn): the line is drawn once from its start, then the resting line takes over. */
+  .inv-board-conn[data-arriving] > :not(.inv-board-conn-trace) {
+    animation: inv-board-conn-show 200ms ease-out both;
+    animation-delay: calc(var(--board-arrive-delay, 0ms) + 380ms);
+  }
+
+  .inv-board-conn-trace[data-connector-trace="draw"] {
+    stroke: var(--accent-strong);
+    stroke-width: 2.5;
+    stroke-dasharray: 100 100;
+    animation: inv-board-conn-draw 420ms ease-out both;
+    animation-delay: var(--board-arrive-delay, 0ms);
+  }
+}
+
+@keyframes inv-board-conn-flow {
+  from { stroke-dashoffset: 7; }
+  to { stroke-dashoffset: -100; }
+}
+
+@keyframes inv-board-conn-show {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes inv-board-conn-draw {
+  0% { stroke-dashoffset: 100; opacity: 1; }
+  85% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -436,6 +509,25 @@
 /* A card the find box does not match steps back; the match keeps full contrast. */
 .inv-board-card[data-board-dim] {
   opacity: 0.4;
+}
+
+/* Following the arrows (board-canvas-view.js): the cards a lit connector does not reach step back; groups stay, and so
+   does a proposal's ghost (it is not a child of the layer). The change is instant: five hundred cards fading at once
+   would each be a layer for the length of the fade. */
+[data-board-focus] .inv-board-layer > .inv-board-card:not([data-card-kind="group"]):not([data-board-lit]) {
+  opacity: 0.4;
+}
+
+.inv-board-card[data-board-lit]:not([data-selected]) {
+  outline: 1px solid var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Cards that came together with arrows between them arrive in the arrows' order. */
+  .inv-board-card[data-board-arriving] {
+    animation: inv-board-conn-show var(--motion-duration-regular) ease-out both;
+    animation-delay: var(--board-arrive-delay, 0ms);
+  }
 }
 
 /* The card a connector would end on while it is dragged out of a port. */

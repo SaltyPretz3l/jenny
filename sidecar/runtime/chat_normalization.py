@@ -362,9 +362,13 @@ CONTEXT_BLOCK_KINDS = frozenset(
         # turn sent from the chat docked beside a board. Per-turn like the row
         # above: trailing turn context on local engines, never compaction input.
         "board",
+        # Where the conversation runs, written by a host composition (a team host)
+        # and absent on desktop. The sidecar only carries it: per-turn like the two
+        # rows above, trailing turn context on local engines, never compaction input.
+        "team",
     }
 )
-MAX_CONTEXT_BLOCKS = 8
+MAX_CONTEXT_BLOCKS = 9
 # Generous by design: Electron already trims these blocks to the model's
 # MEASURED effective window (context-budget-trimmer.js), so these ceilings are a
 # transport-integrity backstop against a runaway block, not a context policy. A

@@ -57,6 +57,16 @@ const noAllowedNode = () => poolError('limit', 'allowed_nodes_unavailable', {
 
 const forbidden = () => poolError('forbidden', 'role_forbidden');
 
+// Row 123 (team host file tools): with project files on, no node whose member may read the conversation is connected.
+const noReaderNode = () => poolError('limit', 'file_tools_no_reader_node', {
+  message: 'Project files are on, so only a PC whose member can read this conversation may answer it, and none is connected. Send again when one is.',
+});
+
+// Row 172: the conversation's own model, offered by no online PC now: said, never swapped for another model.
+const conversationModelOffline = () => poolError('limit', 'conversation_model_offline', {
+  message: "This conversation's model is not offered by any connected PC now. Pick another model or the team default, or send again when it is back.",
+});
+
 // The owner's stored team model, offered by no online node now: said, never swapped for another model.
 const teamModelNotOffered = () => poolError('limit', 'team_model_not_offered', {
   message: "The team's model is not offered by any connected PC now. Pick another model or Automatic, or send again when it is back.",
@@ -89,7 +99,7 @@ function lowerOnly(value, max, name) {
 
 function createPoolComposition({
   contextLength, clock = monotonicClock, randomBytes = crypto.randomBytes, logger, limits = {}, mayUsePool,
-  teamModel = () => null, createScheduler = createPoolScheduler, createGateway = createPoolGateway,
+  nodesMustRead = false, mayReadConversation = null, teamModel = () => null, createScheduler = createPoolScheduler, createGateway = createPoolGateway,
 } = {}) {
   if (!Number.isSafeInteger(contextLength) || contextLength < TEAM_POOL_CONTEXT_MIN || contextLength > TEAM_POOL_CONTEXT_MAX) {
     throw new TypeError(`Pool composition requires a context length from ${TEAM_POOL_CONTEXT_MIN} to ${TEAM_POOL_CONTEXT_MAX}.`);
@@ -97,6 +107,9 @@ function createPoolComposition({
   // Never "missing means allowed".
   if (typeof mayUsePool !== 'function') throw new TypeError('Pool composition requires a pool access function.');
   if (typeof teamModel !== 'function') throw new TypeError('Pool composition requires a team model reader.');
+  if (nodesMustRead === true && typeof mayReadConversation !== 'function') {
+    throw new TypeError('Pool composition requires a conversation read check when nodes must read.');
+  }
   const queueWaitMs = lowerOnly(limits.queueWaitMs, QUEUE_WAIT_MS, 'queue wait');
   const sweepIntervalMs = lowerOnly(limits.sweepIntervalMs, SWEEP_INTERVAL_MS, 'sweep interval');
   const say = safeLogger(logger);
@@ -206,10 +219,14 @@ function createPoolComposition({
   // The lease's model, never the alias: the conversation's own; else the owner's stored team
   // model (read live from the store, each lease) when the pool offers it now, and a stored model
   // nobody offers is refused; else Automatic, by the GPU list's own chooser and views; else the
-  // pool's only model. Both routes (turn and team engine) resolve here.
-  function leaseModel(model) {
-    if (typeof model === 'string' && model.trim() && model !== POOL_MODEL_ALIAS) return model;
+  // pool's only model. Both routes (turn and team engine) resolve here. Row 172: a conversation's own model (the turn
+  // route) must be offered now; the team engine route leaves an unoffered model to the scheduler.
+  function leaseModel(model, { conversation = false } = {}) {
     const models = scheduler.poolSummary().models;
+    if (typeof model === 'string' && model.trim() && model !== POOL_MODEL_ALIAS) {
+      if (conversation && !models.some((entry) => entry.id === model)) throw conversationModelOffline();
+      return model;
+    }
     const stored = teamModel();
     if (typeof stored === 'string' && stored) {
       if (models.some((entry) => entry.id === stored)) return stored;
@@ -252,6 +269,18 @@ function createPoolComposition({
     try { return mayUsePool(memberId, sessionId) === true; } catch (_error) { return false; }
   }
 
+  // Row 123 (team host file tools, review finding 1): with project files on, a tool result can carry a project file
+  // back to the node in the next model request, and reads ask no one. So a conversation's turn is served only by a
+  // node whose member may read that conversation (and so its project's files); the saved list narrows it further.
+  function readersOnly(savedList, sessionId) {
+    if (nodesMustRead !== true || (savedList !== undefined && savedList !== null && !Array.isArray(savedList))) return savedList;
+    const reads = (memberId) => { try { return mayReadConversation(memberId, sessionId) === true; } catch (_error) { return false; } };
+    const readers = scheduler.listNodes().filter((node) => reads(node.member_id)).map((node) => node.node_id);
+    const list = Array.isArray(savedList) ? savedList.filter((id) => readers.includes(id)) : readers;
+    if (list.length === 0) throw noReaderNode();
+    return list;
+  }
+
   // True when this call ended the lease.
   function cancelQuietly(leaseId) {
     const lease = scheduler.getLease(leaseId);
@@ -287,12 +316,13 @@ function createPoolComposition({
   // queued lease that turns active is checked again before anything uses it.
   async function leaseFor({
     memberId, sessionId, model, wantsVision, allowedNodes: savedList, signal, conversationKey, timeoutMs, onQueued,
+    wait = true,
   }) {
     if (!isId('member', memberId)) throw poolError('forbidden', 'member_author_required');
     if (state !== 'started') throw poolError('unavailable', 'team_pool_unavailable');
     if (!allowed(memberId, sessionId)) throw forbidden();
-    const leaseModelId = leaseModel(model);
-    const allowedNodes = allowedNodesFor(savedList);
+    const leaseModelId = leaseModel(model, { conversation: sessionId !== null });
+    const allowedNodes = allowedNodesFor(sessionId === null ? savedList : readersOnly(savedList, sessionId));
     if (signal?.aborted) throw poolError('conflict', 'cancelled');
     const requested = scheduler.requestLease({ conversationKey: conversationKey(), memberId, model: leaseModelId,
       wantsVision: wantsVision === true, allowedNodes });
@@ -300,20 +330,32 @@ function createPoolComposition({
     const leaseId = requested.lease.lease_id;
     leaseSessions.set(leaseId, { sessionId, allowedNodes });
     if (requested.lease.state !== 'active') {
-      if (onQueued) {
-        try { onQueued(requested.lease); } catch (_error) { say('WARN', 'team.pool.on_queued_failed'); }
-      }
-      try { await waitForActive(leaseId, signal, timeoutMs); } catch (error) { cancelQuietly(leaseId); throw error; }
-      if (!allowed(memberId, sessionId)) { cancelQuietly(leaseId); throw forbidden(); }
+      await waitQueued(requested.lease, { memberId, sessionId, signal, timeoutMs, onQueued, wait });
     }
     return leaseId;
   }
 
+  // A lease that was not active at once. `wait` false (a background caller that must never queue, such as the
+  // conversation title) ends it now and refuses pool_busy; otherwise it waits, and is checked again when it turns active.
+  async function waitQueued(lease, { memberId, sessionId, signal, timeoutMs, onQueued, wait }) {
+    const leaseId = lease.lease_id;
+    if (wait === false) {
+      cancelQuietly(leaseId);
+      throw poolError('unavailable', 'pool_busy', { retryable: true });
+    }
+    if (onQueued) {
+      try { onQueued(lease); } catch (_error) { say('WARN', 'team.pool.on_queued_failed'); }
+    }
+    try { await waitForActive(leaseId, signal, timeoutMs); } catch (error) { cancelQuietly(leaseId); throw error; }
+    if (!allowed(memberId, sessionId)) { cancelQuietly(leaseId); throw forbidden(); }
+  }
+
   // `projectId` is the turn's filesystem binding, not its team project; the access
   // function resolves the conversation's project itself. `allowedNodes` is the
-  // conversation's saved list (null or absent: any node).
-  async function acquire({ sessionId, projectId, memberId, model, wantsVision, allowedNodes, signal } = {}) {
-    const leaseId = await leaseFor({ memberId, model, wantsVision, allowedNodes, signal, timeoutMs: queueWaitMs,
+  // conversation's saved list (null or absent: any node). `wait: false` refuses a busy pool with pool_busy
+  // instead of queueing (the conversation's automatic title; it never waits for a slot).
+  async function acquire({ sessionId, projectId, memberId, model, wantsVision, allowedNodes, signal, wait } = {}) {
+    const leaseId = await leaseFor({ memberId, model, wantsVision, allowedNodes, signal, timeoutMs: queueWaitMs, wait,
       sessionId: typeof sessionId === 'string' ? sessionId : '',
       conversationKey: () => `conv:${typeof projectId === 'string' && projectId ? projectId : '-'}:${sessionId}` });
     const info = scheduler.getLease(leaseId)?.model_info || null;
@@ -399,7 +441,8 @@ function createPoolComposition({
     start, stop, bindRuntime, resources, scheduler, recheckLeases,
     // The per-boot key, for the sidecar's initialize secrets only; null after stop.
     modelCredential: () => bootKey,
-    turnRoute: Object.freeze({ acquire }),
+    // Row 172: the model ids offered now, which a conversation may pick (server/team-conversation-preferences.js).
+    turnRoute: Object.freeze({ acquire, offeredModels: () => scheduler.poolSummary().models.map((entry) => entry.id) }),
     engineRoute: Object.freeze({ acquire: acquireEngine }),
   });
 }

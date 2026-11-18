@@ -9,87 +9,26 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
 const { P1, S1, OTHER, DOT, MAYA, LENA, message, approval, snapshot, openProjects, region, flush, rulesAnswer, request, listAnswer, project } = require('./helpers/team-project-renderer-host');
-const { inventory, heldAnswers, memberTeam } = require('./helpers/team-settings-harness');
-const { METHODS, validatePayload } = require('../services/team/ipc-methods');
-const words = require('../renderer/shell/renderer-settings-team-strings');
+const { heldAnswers, memberTeam } = require('./helpers/team-settings-harness');
 
-const NAMES = { [DOT]: 'Dot', [MAYA]: 'Maya', [LENA]: 'Lena' };
-const MINUTE = 60_000;
+const { NAMES, MINUTE, mount, box, field, type } = require('./helpers/team-conversation-mount');
+const queues = require('../renderer/team/renderer-team-project-queue');
 
-// The conversation module alone over a fake project store whose every call must pass main's own check, with names
-// cleaned as the tab's own context does. `restore` is registered with t.after so a failed assertion still puts the
-// globals back.
-function mount(t, { role = 'writer', teamRole = 'member', answers = {}, open = { ok: true, snapshot: snapshot() }, projectName = 'jenny-site', hold = false } = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { pretendToBeVisual: true });
-  const saved = ['window', 'document', 'inventory', 'inventoryTextField', 'markdownUtils'].map((k) => [k, globalThis[k]]);
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.inventory = inventory();
-  dom.window.markdownUtils = require('../renderer/shared/markdown-utils');
-  globalThis.markdownUtils = dom.window.markdownUtils;
-  for (const name of ['project-box', 'project-conversation', 'project-column']) delete require.cache[require.resolve(`../renderer/team/renderer-team-${name}`)];
-  const { createConversation } = require('../renderer/team/renderer-team-project-conversation');
-  const { clean } = require('../renderer/team/renderer-team-project-column');
-  const calls = [];
-  const refused = [];
-  let now = 1_000_000;
-  const timers = new Map();
-  let nextTimer = 1;
-  const frames = new Map();
-  const held = [];
-  const store = {
-    call: (method, payload) => {
-      calls.push({ method, payload });
-      if (!Object.hasOwn(METHODS, method) || !validatePayload(method, payload).ok) refused.push(method);
-      const answer = method === 'conversationOpen' ? (typeof open === 'function' ? open(payload) : open) : answers[method];
-      const value = typeof answer === 'function' ? answer(payload) : (answer || { ok: true });
-      if (hold && method === 'conversationOpen') return new Promise((resolve) => held.push(() => resolve(value)));
-      return Promise.resolve(value);
-    },
-    project: () => ({ id: P1, name: projectName, role }),
-    conversationsOf: () => [{ session_id: S1, project_id: P1, title: 'Palette loader cleanup' }],
-  };
-  const renders = { log: 0, live: 0, box: 0, head: 0 };
-  const root = dom.window.document.getElementById('root');
-  const conv = createConversation({ root, teamId: OTHER, projectId: P1, sessionId: S1, store, renders,
-    ctx: () => ({ team: { team_id: OTHER, member_id: DOT, role: teamRole }, nameOf: (id) => clean(NAMES[id] || 'Former member', 64), errorText: (e) => words.errorText(e) }),
-    clock: () => now, timers: { set: (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, at: now + ms }); return id; }, clear: (id) => timers.delete(id) },
-    frames: { request: (fn) => { const id = nextTimer++; frames.set(id, fn); return id; }, cancel: (id) => frames.delete(id) } });
-  let restored = false;
-  const restore = () => {
-    if (restored) return;
-    restored = true;
-    conv.dispose();
-    for (const [k, v] of saved) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v; }
-    if (refused.length) throw new Error('main would refuse: ' + refused.join(', '));
-  };
-  t.after(restore);
-  const advance = (ms) => { const end = now + ms; for (;;) { const due = [...timers].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0]; if (!due) break; now = Math.max(now, due[1].at); timers.delete(due[0]); due[1].fn(); } now = end; };
-  const frame = () => { for (const [id, fn] of [...frames]) { frames.delete(id); fn(); } };
-  const q = (s) => root.querySelector(s);
-  const text = (s = '[data-conv-region]') => [...root.querySelectorAll(s)].map((el) => el.textContent).join(' ').replace(/\s+/g, ' ');
-  const event = (event_type, event) => conv.push({ kind: 'conversation_event', session_id: S1, event_type, event: { session_id: S1, ...event } });
-  return { conv, root, q, text, calls, renders, timers, frames, advance, frame, restore, event, held, now: () => now, sent: (m) => calls.filter((c) => c.method === m).map((c) => c.payload), window: dom.window };
-}
-
-const box = (m) => [...m.q('[data-conv-region="box"]').children].filter((el) => !el.hidden).map((el) => el.textContent).join(' ').replace(/\s+/g, ' ').trim();
-const field = (m) => m.q('#teamConversationInput');
-function type(m, value) { field(m).value = value; field(m).dispatchEvent(new m.window.Event('input', { bubbles: true })); }
-
-test('open from the snapshot: messages through the markdown path, author lines with You and Former member; close on dispose', async (t) => {
+test('open from the snapshot: #team rows through the markdown path, one Jenny row per turn, names as #team (Former member); close on dispose', async (t) => {
   const m = mount(t, { open: { ok: true, snapshot: snapshot({ has_more: true, messages: [
     message('m1', 'user', 'Why twice?', { author: { kind: 'member', member_id: MAYA } }), message('m2', 'assistant', 'It reads it once in **load**.'),
     message('m3', 'user', 'Make the change', { author: { kind: 'member', member_id: DOT } }), message('m4', 'user', 'Old note', { author: { kind: 'member', member_id: 'member_gone' } }),
     message('m5', 'user', 'Before schema 27') ] }) } });
   await flush();
   assert.deepEqual(m.sent('conversationOpen'), [{ team_id: OTHER, session_id: S1 }]);
-  const authors = [...m.root.querySelectorAll('.chat-author b')].map((el) => el.textContent);
-  assert.deepEqual(authors, ['Maya', 'You', 'Former member'], 'Jenny\'s reply and a message with no author have no line');
-  assert.ok(m.q('[data-message-id="m2"] strong'), 'markdown rendered');
-  assert.match(m.text(), /Earlier messages are not shown here yet\./);
+  const authors = [...m.root.querySelectorAll('.team-msg__author')].map((el) => el.textContent);
+  assert.deepEqual(authors, ['Maya', 'Jenny', 'Dot', 'Former member', 'Former member'], 'a gone member and a message with no author read Former member');
+  assert.ok(m.q('.team-msg[data-turn-id="after:m1"] .team-msg__text strong'), 'markdown rendered in Jenny\'s row');
+  assert.equal(m.root.querySelectorAll('.team-day').length, 1, 'one day divider');
+  assert.equal(m.q('.chat-timeline, .chat-sprite-layer, [data-live="true"], .reasoning-row-block'), null, 'no row 169 look');
+  assert.equal(m.q('[data-project-action="earlier"]').textContent, 'Show earlier messages', 'the snapshot has more: the older page is one click away');
   assert.match(m.q('.team-head__sub').textContent, /jenny-site · nobody is driving · you viewing/);
   m.restore();
   await flush();
@@ -106,10 +45,12 @@ test('fix list M4c: closing before the open answered still sends the close, and 
   assert.equal(m.sent('conversationClose').length, 2, 'an open that landed after the close is closed too');
 });
 
-test('a streamed turn: one paint per frame, a tool line per call; the reply stays until its snapshot lands; same-team pushes repaint nothing', async (t) => {
+test('a streamed turn: one paint per frame, the tool on the chip (no line in the log); the reply stays until its snapshot lands; same-team pushes repaint nothing', async (t) => {
   const m = mount(t);
   await flush();
   const logBefore = m.renders.log;
+  const liveRow = () => m.q('[data-conv-region="live"] .team-msg');
+  const chip = () => liveRow().querySelector('.team-turn-chip__label').textContent;
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'started' } });
   for (const piece of ['Hel', 'lo ', 'there']) m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'delta', content: piece } });
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'tool_use', call_id: 'c1', tool_name: 'edit_file' } });
@@ -117,13 +58,14 @@ test('a streamed turn: one paint per frame, a tool line per call; the reply stay
   const liveBefore = m.renders.live;
   m.frame();
   assert.equal(m.renders.live, liveBefore + 1, 'painted once');
-  assert.match(m.q('[data-live="true"]').textContent, /Hello there/);
-  assert.match(m.text('[data-conv-region="log"]'), /edit_file · running/);
+  assert.match(liveRow().querySelector('.team-msg__text').textContent, /Hello there/);
+  assert.equal(chip(), 'edit_file');
+  assert.doesNotMatch(m.text('[data-conv-region="log"]'), /edit_file/, 'a tool draws no line in the log');
   m.advance(200);
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'delta', aggregate: 'Hello there, done' } });
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'tool_result', call_id: 'c1', tool_name: 'edit_file', status: 'ok' } });
   m.frame();
-  assert.match(m.text('[data-conv-region="log"]'), /edit_file · done/);
+  assert.equal(chip(), 'Writing…');
   type(m, 'half a thought');
   const counts = { ...m.renders };
   m.conv.push({ kind: 'viewers', session_id: S1, viewers: [DOT] });
@@ -133,11 +75,12 @@ test('a streamed turn: one paint per frame, a tool line per call; the reply stay
   assert.deepEqual({ log: m.renders.log, live: m.renders.live, box: m.renders.box }, { log: counts.log, live: counts.live, box: counts.box }, 'nothing repainted');
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'complete' } });
   m.frame();
-  assert.match(m.q('[data-live="true"]').textContent, /Hello there, done/, 'the reply stays at the end');
+  assert.match(liveRow().textContent, /Hello there, done/, 'the reply stays at the end');
+  assert.equal(liveRow().querySelector('.team-turn-chip').dataset.state, 'done');
   m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot({ messages: [message('m9', 'assistant', 'Hello there, done')] }) });
-  assert.equal(m.q('[data-live="true"]'), null, 'the snapshot holds it now');
+  assert.equal(liveRow(), null, 'the snapshot holds it now');
   assert.match(m.text('[data-conv-region="log"]'), /Hello there, done/);
-  assert.doesNotMatch(m.text('[data-conv-region="log"]'), /edit_file/, 'a resync snapshot replaces the state');
+  assert.equal(m.q('[data-conv-region="log"] [data-message-id="m1"]'), null, 'a resync snapshot replaces the state');
   assert.ok(m.renders.log > logBefore);
 });
 
@@ -155,11 +98,12 @@ test('the live reply: parsed again at most every 100 ms, at most 256 KB drawn; k
   m.event('chat_stream', { stream_id: 's', event: { type: 'delta', content: 'b' } });
   m.frame();
   assert.equal(m.renders.live, parsed, 'not again inside 100 ms');
-  assert.equal(m.timers.size, 1, 'one timer paints what came after');
+  assert.equal(m.timers.size, 2, 'the chip\'s next second and one timer that paints what came after');
   m.advance(100);
   m.frame();
   assert.equal(m.renders.live, parsed + 1);
-  assert.match(m.q('[data-live="true"]').textContent, /ab/);
+  const words = () => m.q('[data-conv-region="live"] .team-msg__text').textContent;
+  assert.match(words(), /ab/);
   assert.equal(scroller.scrollTop, height, 'pinned to the bottom');
   scroller.scrollTop = 100;
   scroller.dispatchEvent(new m.window.Event('scroll'));
@@ -171,7 +115,7 @@ test('the live reply: parsed again at most every 100 ms, at most 256 KB drawn; k
   for (let i = 0; i < 6; i += 1) m.event('chat_stream', { stream_id: 's', event: { type: 'delta', content: 'x'.repeat(64 * 1024) } });
   m.advance(100);
   m.frame();
-  assert.ok(m.q('[data-live="true"]').textContent.trim().length <= 256 * 1024, 'the drawn reply is capped');
+  assert.ok(words().trim().length <= 256 * 1024 && words().trim().length > 200 * 1024, 'the drawn reply is capped');
   const cached = m.conv.resources().cached;
   m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot() });
   assert.equal(m.conv.resources().cached, 2, 'one kept string per message held');
@@ -200,7 +144,7 @@ test('fix list M1: a lease the host renews silently keeps its driver for a 3-min
   m.advance(2 * MINUTE);
   await flush();
   assert.match(sub(), /nobody is driving/);
-  assert.equal(m.timers.size, 0, 'no lease shown, no timer');
+  assert.equal(m.conv.resources().timer, false, 'no lease shown, no lease timer');
 });
 
 test('fix list M1: the driver who holds the lease keeps Stop for the whole turn; no expiry is invented; takeover and release', async (t) => {
@@ -209,7 +153,7 @@ test('fix list M1: the driver who holds the lease keeps Stop for the whole turn;
   const sub = () => m.q('.team-head__sub').textContent;
   m.conv.push({ kind: 'lease', session_id: S1, held: true });
   assert.match(sub(), /You are driving/);
-  assert.equal(m.timers.size, 0, 'a held lease has no clock');
+  assert.equal(m.conv.resources().timer, false, 'a held lease has no clock');
   m.advance(3 * MINUTE);
   assert.match(sub(), /You are driving/);
   assert.ok(m.q('[data-project-action="stop"]'), 'Stop, not Send, after three minutes');
@@ -264,6 +208,8 @@ test('the box by state for a writer: nobody, someone running (disabled Take over
   assert.equal(take.getAttribute('title'), 'You can take over when Maya’s turn ends');
   m.event('chat_stream', { stream_id: 'stream_1', event: { type: 'complete' } });
   m.frame();
+  assert.match(box(m), /their turn is running/, 'until the snapshot after the end lands');
+  m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot({ control: { member_id: MAYA, expires_at: 2_000_000 } }) });
   assert.match(box(m), /^Maya is driving\.\s*Take over$/);
   m.q('[data-project-action="takeover"]').click();
   await flush();
@@ -349,21 +295,21 @@ test('answering: the payloads, a losing answer\'s sentence, receipts allowed, de
   m.q('[data-team-always="ask"]').click();
   // decision_changed arrives before the answer: the receipt is whole from what this member asked.
   m.event('decision_changed', { stream_id: 'stream_1', approval_id: 'appr_1', approver_member_id: DOT, prompter_member_id: LENA, approved: true });
-  assert.match(m.q('[data-approval-status="resolved"]').textContent, /You asked the project’s admins to always allow edit_file here\./);
+  assert.match(m.q('[data-approval-status="resolved"]').textContent, /^You allowed this once at .+, in Lena’s turn, and asked the project’s admins to always allow edit_file here\./);
   await flush();
   assert.deepEqual(m.sent('conversationDecide'), [
     { team_id: OTHER, session_id: S1, stream_id: 'stream_1', approval_id: 'appr_1', decision_revision: 'rev_1', approved: true },
     { team_id: OTHER, session_id: S1, stream_id: 'stream_1', approval_id: 'appr_1', decision_revision: 'rev_1', approved: true, always: 'ask' }]);
   const receipt = m.q('[data-approval-status="resolved"]').textContent;
-  assert.match(receipt, /^Allowed by You at .+ · asked by Lena’s turn Allowed once\. This project already has 16 requests waiting for its admins, so no new one was sent\.$/);
+  assert.match(receipt, /^You allowed this at .+, in Lena’s turn Allowed once\. This project already has 16 requests waiting for its admins, so no new one was sent\.$/);
   assert.equal(m.q('.tool-approve-btn'), null, 'the card became the receipt');
   m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot({ pending_approvals: [approval({ approval_id: 'appr_2', call_id: 'call_2' }), approval({ approval_id: 'appr_3', call_id: 'call_3' })] }) });
   m.event('decision_changed', { stream_id: 'stream_1', approval_id: 'appr_2', approver_member_id: MAYA, prompter_member_id: LENA, approved: false });
   m.event('decision_changed', { stream_id: 'stream_1', approval_id: 'appr_3', prompter_member_id: LENA });
-  const log = m.text('[data-conv-region="log"]');
-  assert.match(log, /Denied by Maya at .+ · asked by Lena’s turn/);
+  const log = m.text('[data-conv-region="live"]');
+  assert.match(log, /Maya denied this at .+, in Lena’s turn/);
   assert.match(log, /Withdrawn at .+: the turn no longer asks\./, 'a withdrawal names nobody');
-  assert.doesNotMatch(log, /Allowed by Someone/);
+  assert.ok(m.q('.team-conv__receipts > [data-approval-status="resolved"]'), 'receipts sit in the rows’ text column');
 });
 
 test('the asker\'s outcome line: allowed in a folder, declined with the reason; another member\'s request shows nothing', async (t) => {
@@ -378,17 +324,35 @@ test('the asker\'s outcome line: allowed in a folder, declined with the reason; 
   assert.deepEqual(lines, ['Maya always allowed edit_file in jenny-site, in posts/ only.', 'Maya did not always allow edit_file: “Keep drafts reviewed until the launch.” Each edit still asks.']);
 });
 
-test('caps at the edge and one past: 50 messages, 32 tool lines, 32 receipts, 16 outcome lines, 32 viewers; dispose leaves nothing', async (t) => {
+test('caps at the edge and one past: 400 messages, 32 tools, 32 receipts, 16 outcome lines, 32 viewers, 3 queued; dispose leaves nothing', async (t) => {
+  t.after(() => queues._reset());
   const many = (n) => Array.from({ length: n }, (_v, i) => message('m' + i, 'assistant', 'reply ' + i));
-  const edge = mount(t, { open: { ok: true, snapshot: snapshot({ messages: many(50) }) } });
+  const edge = mount(t, { open: { ok: true, snapshot: snapshot({ messages: many(400) }) } });
   await flush();
-  assert.equal(edge.conv.resources().messages, 50);
+  assert.equal(edge.conv.resources().messages, 400);
+  edge.event('chat_stream', { stream_id: 's', event: { type: 'started' } });
+  edge.frame();
+  for (const text of ['one', 'two', 'three', 'four']) { type(edge, text); field(edge).dispatchEvent(new edge.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); }
+  assert.equal(edge.conv.resources().queued, 3, 'three wait');
+  assert.equal(field(edge).value, 'four', 'the fourth stays in the box');
+  assert.match(box(edge), /Up to 3 messages can wait\. Send or discard one first\./);
+  const chip = edge.q('[data-conv-region="live"] .team-turn-chip');
+  chip.click();
+  assert.ok(edge.q('#teamTurnPop'), 'the popover is open');
   edge.restore();
+  assert.equal(edge.q('#teamTurnPop'), null, 'dispose closes the popover');
+  assert.equal(edge.conv.resources().listeners, 0);
+  chip.click();
+  assert.equal(edge.q('#teamTurnPop'), null, 'no listener answers a click');
+  assert.equal(edge.sent('conversationSend').length, 0, 'nothing queued was sent');
+  queues._reset();
   const outcomes = Array.from({ length: 17 }, (_v, i) => request({ request_seq: i + 1, asker_member_id: DOT, session_id: S1, state: 'allowed', answered_by: MAYA, outcome_tool: 'edit_file', rule_seq: i + 1 }));
-  const m = mount(t, { answers: { projectRules: rulesAnswer({ requests: outcomes }) }, open: { ok: true, snapshot: snapshot({ messages: many(51), control: { member_id: MAYA, expires_at: 2_000_000 } }) } });
+  const m = mount(t, { answers: { projectRules: rulesAnswer({ requests: outcomes }) }, open: { ok: true, snapshot: snapshot({ messages: many(401), control: { member_id: MAYA, expires_at: 2_000_000 } }) } });
   await flush();
-  assert.equal(m.conv.resources().messages, 50, 'one past: the oldest goes');
+  assert.equal(m.conv.resources().messages, 400, 'one past: the oldest goes');
   assert.equal(m.q('[data-message-id="m0"]'), null);
+  assert.equal(m.q('[data-project-action="earlier"]'), null, 'no button for a page this view cannot hold');
+  assert.match(m.text(), /This view holds 400 messages\. The ones before them are not shown here\./);
   m.event('chat_stream', { stream_id: 's', event: { type: 'started' } });
   for (let i = 0; i < 33; i += 1) m.event('chat_stream', { stream_id: 's', event: { type: 'tool_use', call_id: 'c' + i, tool_name: 'read_file' } });
   assert.equal(m.conv.resources().tools, 32);
@@ -404,7 +368,7 @@ test('caps at the edge and one past: 50 messages, 32 tool lines, 32 receipts, 16
   assert.equal(m.conv.resources().frame, true);
   m.restore();
   assert.deepEqual({ ...m.conv.resources(), messages: 0, tools: 0, receipts: 0, outcomes: 0, answered: 0 },
-    { timer: false, frame: false, listeners: 0, messages: 0, tools: 0, receipts: 0, outcomes: 0, answered: 0, cached: 0 });
+    { timer: false, frame: false, listeners: 0, messages: 0, tools: 0, receipts: 0, outcomes: 0, answered: 0, cached: 0, queued: 0 });
   assert.equal(m.timers.size, 0);
   assert.equal(m.frames.size, 0);
 });
@@ -416,11 +380,14 @@ test('hostile text at 500 characters: a project, a title, a tool, a member, a fo
   const m = mount(t, { projectName: evil('em'), answers: { projectRules: rulesAnswer({ requests: [request({ request_seq: 4, asker_member_id: DOT, session_id: S1, state: 'changed', answered_by: 'member_evil',
     outcome_tool: evil('u'), outcome_folder: evil('s'), rule_seq: 2 }), request({ request_seq: 5, asker_member_id: DOT, session_id: S1, state: 'declined', answered_by: MAYA, reason: evil('q') })] }) },
   open: { ok: true, snapshot: snapshot({ session: { session_id: S1, title: evil('script'), revision: 'r', plan_mode: false }, pending_approvals: [approval({ prompter_member_id: 'member_evil', summary: evil('code') })],
-    messages: [message('m1', 'user', 'hi', { author: { kind: 'member', member_id: 'member_evil' } })] }) } });
+    messages: [message('m1', 'user', 'hi', { author: { kind: 'member', member_id: 'member_evil' } }), message('m2', 'assistant', 'ok', { model_used: evil('u') })] }) } });
   await flush();
   m.event('chat_stream', { stream_id: 's', event: { type: 'started' } });
   m.event('chat_stream', { stream_id: 's', event: { type: 'tool_use', call_id: 'c', tool_name: evil('i') } });
   m.frame();
+  // The popover's sub line names whose turn it was and the model that answered.
+  m.q('.team-turn-chip[data-turn-id="after:m1"]').click();
+  assert.match(m.q('#teamTurnPop .team-turn-pop__title span').textContent, /<b data-evil.*’s turn.*<u data-evil/);
   m.conv.push({ kind: 'viewers', session_id: S1, viewers: ['member_evil'] });
   for (const seq of [4, 5]) m.conv.push({ kind: 'rule_answered', session_id: S1, request_seq: seq, outcome: 'allowed' });
   await flush();
@@ -428,6 +395,10 @@ test('hostile text at 500 characters: a project, a title, a tool, a member, a fo
   assert.match(m.q('.team-head__name').textContent, /^<script data-evil/);
   const drawn = [...m.root.querySelectorAll('*')].filter((el) => !el.children.length && el.textContent.includes('‮')).map((el) => el.outerHTML.slice(0, 120));
   assert.deepEqual(drawn, [], 'no bidi control drawn');
+  // The approval answered: the running tool's name is the chip's label, as text.
+  m.event('decision_changed', { stream_id: 's', approval_id: 'appr_1', approver_member_id: MAYA, prompter_member_id: 'member_evil', approved: true });
+  assert.match(m.q('[data-conv-region="live"] .team-turn-chip__label').textContent, /^<i data-evil/);
+  assert.equal(m.root.querySelector('[data-evil], [onclick], [onerror], img, i'), null);
   assert.equal(globalThis.pwned, undefined);
 });
 
@@ -458,7 +429,8 @@ test('fix list M5: New conversation opens with the writer\'s box before any list
   assert.deepEqual(h.sent('conversationOpen').map((c) => c.payload), [{ team_id: OTHER, session_id: NEW }]);
   const composer = region(h).querySelector('[data-conv-box="composer"]');
   assert.equal(composer.hidden, false, 'the box, not the reader\'s line');
-  assert.match(region(h).querySelector('[data-conv-box="bar"]').textContent, /Sending makes you the driver/);
+  assert.match(region(h).querySelector('[data-conv-box="left"]').textContent, /Sending makes you the driver/);
+  assert.match(region(h).querySelector('.team-conv__hero').textContent, /New conversation.*In jenny-site\./, 'an empty conversation says what it is');
 });
 
 // Team review R13-F02: the answer to a New conversation asked in one team lands after another team is shown.
@@ -499,14 +471,130 @@ test('R13-F02: a conversation create answered after a team switch writes no note
   assert.equal(h.window.document.activeElement, before.focused, 'the focus stays where the person put it');
 });
 
-test('E68: a shared conversation has a standing line in its header before any message, saying who can read it, and nothing dismisses it', async (t) => {
+// Row 169 moved the line from the header to under the message box, so the header keeps the title and who drives.
+test('E68: a shared conversation has a standing line under its message box before any message, saying who can read it, and nothing dismisses it', async (t) => {
   const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: [] }) } });
   await flush();
-  const line = m.q('[data-conv-region="head"] .team-head__sub[data-standing="true"]');
-  assert.ok(line, 'the standing line is in the header');
+  const line = m.q('[data-conv-region="box"] .team-conv__standing[data-standing="true"]');
+  assert.ok(line, 'the standing line is under the box');
   assert.equal(line.textContent, 'The team host and the member whose PC answers can read this conversation.');
-  assert.equal(m.q('[data-conv-region="head"] .team-head__sub:not([data-standing])').textContent.includes('can read'), false, 'the driver line stays its own');
-  assert.equal(m.root.querySelectorAll('[data-conv-region="head"] button').length, 1, 'only Back: no control closes the line');
+  assert.equal(m.q('[data-conv-region="head"] [data-standing]'), null, 'said once');
+  assert.equal(line.querySelector('button'), null, 'no control closes the line');
   m.conv.push({ kind: 'viewers', session_id: S1, viewers: [DOT, MAYA] });
-  assert.equal(m.q('[data-conv-region="head"] [data-standing="true"]').textContent, line.textContent, 'it survives a redraw of the header');
+  m.conv.push({ kind: 'closed', session_id: S1, reason: 'team_left' });
+  assert.equal(m.q('[data-conv-box="shell"]').hidden, true, 'the box is gone');
+  assert.equal(m.q('[data-standing="true"]'), line, 'the same line through a redraw and a closed conversation');
+  const reader = mount(t, { role: 'reader' });
+  await flush();
+  assert.ok(reader.q('.team-conv__standing[data-standing="true"]'), 'a reader has it too');
+});
+
+test('host shapes: { id, label } options answer by the picked option\'s id, repeated labels by place, a blank option is not drawn', async (t) => {
+  const twins = { question_ref: 'q_ref_1', stream_id: 'stream_1', call_id: 'call_q', prompter_member_id: MAYA, questions: [{ id: 'pick', prompt: 'Which?', options: [{ id: 'a', label: 'Same' }, { id: 'b', label: 'Same' }, { id: 'c', label: '  ' }] }] };
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ active_turn: { stream_id: 'stream_1', status: 'running' }, pending_questions: [twins] }) } });
+  await flush();
+  const wrap = m.q('.team-conv__question');
+  assert.deepEqual(Array.from(wrap.querySelectorAll('.user-questions-option-label')).map((el) => el.textContent), ['Same', 'Same']);
+  const second = wrap.querySelectorAll('[data-user-question-option]')[1];
+  second.checked = true;
+  second.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  wrap.querySelector('.user-questions-submit-btn').click();
+  await flush();
+  assert.deepEqual(m.sent('conversationAnswer').map((p) => p.answers), [[{ question_id: 'pick', answer: 'b' }]]);
+});
+
+test('the pen is greyed with its reason for a reader and while another member drives', async (t) => {
+  const r = mount(t, { role: 'reader' });
+  await flush();
+  const pen = (m) => m.q('[data-project-action="rename"]');
+  assert.deepEqual([pen(r).disabled, pen(r).getAttribute('title')], [true, 'Only writers and admins can rename']);
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ control: { member_id: MAYA, expires_at: 2_000_000 } }) } });
+  await flush();
+  assert.deepEqual([pen(m).disabled, pen(m).getAttribute('title')], [true, 'Maya is driving. You can rename when their turn ends']);
+  pen(m).click();
+  assert.equal(m.q('#teamConversationTitle'), null);
+  m.event('control_changed', { state: 'released' });
+  assert.equal(pen(m).disabled, false);
+});
+
+// Owner report: a member could not message Jenny. With nobody sharing a GPU a turn cannot be placed, and the box said nothing.
+const NOBODY = 'Nobody is sharing a GPU with Dot lab right now, so Jenny cannot answer here yet.';
+const NODE = { node_id: 'node_maya', member_id: MAYA, label: 'Maya PC', online: true, paused: false, busy_slots: 0, models: [{ name: 'qwen3' }] };
+
+test('no GPU shared: a writer sees why Jenny cannot answer and a button to the share switch; the box stays usable', async (t) => {
+  const m = mount(t, { gpus: { nodes: [] } });
+  await flush();
+  assert.equal(m.q('[data-conv-box="above"] .team-drive').textContent.replace(/\s+/g, ' ').trim(), NOBODY + 'Share this PC’s GPU…');
+  const share = m.q('[data-conv-box="above"] button');
+  assert.equal(share.textContent.trim(), 'Share this PC’s GPU…');
+  assert.equal(share.dataset.teamTabAction, 'share-settings', 'the Team tab opens Settings > Team at the share switch');
+  assert.equal(m.q('[data-conv-box="composer"]').hidden, false);
+  type(m, 'Hello');
+  assert.equal(field(m).value, 'Hello');
+});
+
+test('no hint while the GPU list is unread, the team is not connected, or a GPU is listed', async (t) => {
+  for (const options of [{}, { gpus: { nodes: [] }, teamState: 'connecting' }, { gpus: { nodes: [NODE] } }]) {
+    const m = mount(t, options);
+    await flush();
+    assert.doesNotMatch(box(m), /Nobody is sharing/, JSON.stringify(options));
+    assert.match(box(m), options.teamState ? /Sends when reconnected/ : /Sending makes you the driver/, 'a team that is not online says when Send works (row 175 F7)');
+    m.restore();
+  }
+});
+
+test('no GPU shared: a project reader keeps only the read-only line; a team read-only member gets the sentence without the button', async (t) => {
+  const reader = mount(t, { role: 'reader', gpus: { nodes: [] } });
+  await flush();
+  assert.equal(box(reader), 'You can read this project. Only its writers and admins can send.');
+  reader.restore();
+  const watcher = mount(t, { teamRole: 'read_only', gpus: { nodes: [] } });
+  await flush();
+  assert.equal(watcher.q('[data-conv-box="above"]').textContent.replace(/\s+/g, ' ').trim(), NOBODY);
+  assert.equal(watcher.q('[data-conv-box="above"] button'), null);
+});
+
+test('in the tab: the hint opens Settings > Team, and a GPU appearing removes it with no reload', async (t) => {
+  const { h } = await openProjects({ list: listAnswer({ projects: [project(P1, 'jenny-site', 'writer')] }) });
+  t.after(h.restore);
+  const pools = (nodes) => h.listeners.state({ teams: [memberTeam()], sharing: null, pools: { [OTHER]: { nodes } } });
+  h.view.q(`[data-session-id="${S1}"]`).click();
+  await flush();
+  assert.doesNotMatch(region(h).textContent, /Nobody is sharing/, 'the list is not read yet: nothing is claimed');
+  pools([]);
+  await flush();
+  assert.match(region(h).textContent, /Nobody is sharing a GPU with Dot lab right now/);
+  region(h).querySelector('[data-conv-box="above"] button').click();
+  assert.deepEqual(h.opened, ['team']);
+  const input = region(h).querySelector('#teamConversationInput');
+  pools([NODE]);
+  await flush();
+  assert.doesNotMatch(region(h).textContent, /Nobody is sharing/);
+  assert.equal(region(h).querySelector('#teamConversationInput'), input, 'the same field: no reload');
+  assert.equal(h.sent('conversationOpen').length, 1);
+});
+
+test('row 171 review: Send again queues once; a queued send answered after the view went settles; leaving pauses the waiting rows', async (t) => {
+  t.after(() => queues._reset());
+  let answer = null;
+  const turns = [message('u1', 'user', 'Retry me', { author: { kind: 'member', member_id: DOT }, turn_id: 'tf' }), message('a1', 'assistant', '', { kind: undefined, turn_id: 'tf', status: 'runtime_error' })];
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: turns }) }, answers: { conversationSend: () => new Promise((resolve) => { answer = resolve; }) } });
+  await flush();
+  const ev = (type) => m.event('chat_stream', { stream_id: 's1', event: { type } });
+  const words = (v) => [...v.root.querySelectorAll('[data-conv-region="queued"] .team-queued')].map((el) => el.textContent);
+  ev('started');
+  for (let i = 0; i < 2; i += 1) m.q('[data-project-action="send-again"][data-turn-id="tf"]').click();
+  assert.deepEqual(words(m), ['Waits for Jenny’s turn to end'], 'queued once');
+  ev('complete');
+  m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot({ messages: turns }) }); await flush();
+  assert.deepEqual(m.sent('conversationSend').map((x) => x.prompt), ['Retry me'], 'it went with the idle snapshot');
+  ev('started');
+  type(m, 'Later');
+  field(m).dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  m.restore();
+  answer({ ok: true });
+  await flush();
+  const again = mount(t);
+  await flush();
+  assert.deepEqual(words(again), ['Not sent'], 'the posted one is gone; the waiting one reads Not sent, nothing sends unwatched');
 });

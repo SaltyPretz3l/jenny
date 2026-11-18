@@ -394,7 +394,8 @@
     /* The "While you were away" reader lives on state from boot, because Home
      * may never be visited: the Chats panel's row marks and its arrival reads
      * need it. The Home dashboard adopts this instance when it constructs. Its
-     * changes repaint the chat rows through one coalesced renderAll. */
+     * changes repaint the chat rows through one coalesced renderSessions (Home
+     * repaints itself; a renderAll here slowed view switches). */
     const awayDigestModule = root.rendererDashboardWidgetAwayDigest;
     const awayDigestReader = state.awayDigestReader || awayDigestModule?.createAwayDigestReader?.({
       windowRef, documentRef, state, callbacks: { appendClientLog: (...a) => callbacks.appendClientLog?.(...a) },
@@ -406,7 +407,10 @@
       const unsubscribeAwayDigest = awayDigestReader.subscribe?.(() => {
         if (awayDigestRepaintQueued) return;
         awayDigestRepaintQueued = true;
-        Promise.resolve().then(() => { awayDigestRepaintQueued = false; try { callbacks.renderAll?.(); } catch (_err) { /* noop */ } });
+        Promise.resolve().then(() => {
+          awayDigestRepaintQueued = false;
+          try { if (typeof callbacks.renderSessions === 'function') callbacks.renderSessions(); else callbacks.renderAll?.(); } catch (_err) { /* noop */ }
+        });
       });
       registerCleanup(() => {
         unsubscribeAwayDigest?.();

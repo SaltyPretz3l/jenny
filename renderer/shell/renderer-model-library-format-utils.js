@@ -55,7 +55,9 @@
   }
 
   function boundedErrorMessage(error, fallback) {
-    var message = String(error && error.message ? error.message : error || '').trim();
+    // Electron's IPC wrapper ("Error invoking remote method 'x': Error: ...") is not for the user.
+    var message = String(error && error.message ? error.message : error || '').trim()
+      .replace(/^Error invoking remote method '[^']+':\s*(?:(?:Error|[A-Z]\w*Error): )?/, '').trim();
     if (!message) return fallback;
     return message
       .replace(/\b[A-Za-z]:\\[^\s]+/g, '[local path]')

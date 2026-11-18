@@ -54,7 +54,7 @@ const TAB = '../../renderer/team/renderer-team-tab';
 const MODEL_STORE = '../../renderer/team/renderer-team-model-store';
 const MODULES = ['strings', 'view', 'owner-view', 'gpu', 'network', 'lifecycle', 'models'].map((name) => `../../renderer/shell/renderer-settings-team-${name}`)
   .concat(SECTION, STORE, CHAT_STORE, TAB, MODEL_STORE, '../../renderer/team/renderer-team-tab-gate',
-    ...['channels', 'dm-picker', 'gpus', 'tab-view', 'message-row', 'pop', 'marks', 'receipts', 'pins', 'files', 'timeline', 'attach', 'notice', 'chat-writes', 'message-actions', 'composer', 'presence', 'thread-data', 'thread', 'link', 'search', 'notify', 'export', 'palette'].map((name) => `../../renderer/team/renderer-team-${name}`));
+    ...['channels', 'dm-picker', 'gpus', 'tab-view', 'message-row', 'pop', 'marks', 'receipts', 'pins', 'files', 'timeline', 'attach', 'notice', 'chat-writes', 'message-actions', 'composer', 'presence', 'thread-data', 'thread', 'link', 'search', 'notify', 'export', 'palette', 'server', 'start', 'overview'].map((name) => `../../renderer/team/renderer-team-${name}`));
 
 // Chat fixtures (slice 2a-5a): the team channel, members with presence, and host message records.
 const CHAN = 'chan_team';

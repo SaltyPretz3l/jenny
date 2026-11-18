@@ -34,10 +34,13 @@ async function verifyOllamaGpuEvicted({ fetchImpl = globalThis.fetch,
   }
 }
 
-async function verifyGpuEvictedForEngine({ engineType, ...options } = {}) {
+// `localServerResident`: a managed local server (a cloud primary's local
+// subagent engine, row 179) still holds the GPU, so it is not free by design.
+async function verifyGpuEvictedForEngine({ engineType, localServerResident = false, ...options } = {}) {
   const normalized = String(engineType || '').trim().toLowerCase();
   if (normalized === 'ollama') return verifyOllamaGpuEvicted(options);
   if (GPU_FREE_BY_DESIGN_ENGINES.has(normalized)) {
+    if (localServerResident === true) return { ok: false, reason: 'local_subagent_engine_resident' };
     const ollama = await verifyOllamaGpuEvicted(options);
     return ollama.ok === true
       ? { ...ollama, proof: 'engine_has_no_local_gpu_runtime' }

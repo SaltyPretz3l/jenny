@@ -6,18 +6,59 @@
 // payloads, role boundaries, the list's re-reads, the conversation and lease flow, and that nothing is left running.
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const { CONVERSATION_LIMITS, createProjectConversations } = require('../services/team/project-conversations');
 const { createProjectList } = require('../services/team/project-list');
 const { PROJECT_OPERATIONS } = require('../services/team/ipc-methods');
+const { attachTeamChat } = require('./helpers/team-chat-hook');
 const { pause, waitUntil } = require('./helpers/team-client-host');
 const {
   BACKGROUND, PROJECT_METHODS, drained, fakeTimers, lastPush, online, projectTeam, sentBy,
 } = require('./helpers/team-project-client-host');
 
-test('the method list is the 33 project methods, each with its mapped operation', () => {
-  assert.deepEqual(Object.keys(PROJECT_OPERATIONS), PROJECT_METHODS);
+test('the method list is the 36 project methods, each with its mapped operation', () => {
+  // Row 175 wave 5: the reader view's two methods follow the shared list.
+  // Row 175 round 2b: regenerate, edit and resend, branch, ask a teammate, hand the driver seat.
+  assert.deepEqual(Object.keys(PROJECT_OPERATIONS), [...PROJECT_METHODS, 'projectFiles', 'projectFileRead',
+    'projectRegenerate', 'projectEditResend', 'projectBranch', 'projectAskTeammate', 'projectHandDriver']);
+  assert.equal(PROJECT_OPERATIONS.conversationPreferences, 'sessions.preferences', 'row 172: leased, as conversationSend');
+  assert.deepEqual([PROJECT_OPERATIONS.projectFiles, PROJECT_OPERATIONS.projectFileRead],
+    ['team.project.files.list', 'team.project.files.read']);
+});
+
+// Row 175 wave 5: the reader view through main and the real host: each method's operation and exact params, the answer
+// rebuilt to its fields, a member outside the project refused by the host, a bad path refused in main.
+test('row 175 wave 5: projectFiles and projectFileRead reach the host as their operations; a bad path never leaves main', async (t) => {
+  const f = await projectTeam(t);
+  const { teamId, projectId, seen, reader, outsider } = f;
+  const folder = path.join(f.host.env.parts.projectsRoot, projectId, 'docs');
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'a.md'), '# Atlas');
+  const ids = { team_id: teamId, project_id: projectId };
+  const sentOps = (sent) => sent.map((command) => [command.operation, command.params]);
+  const listed = await sentBy(seen, () => reader.call('projectFiles', { ...ids, dir: 'docs' }), ['team.project.files.list']);
+  assert.deepEqual(sentOps(listed.sent), [['team.project.files.list', { project_id: projectId, dir: 'docs' }]]);
+  assert.deepEqual(listed.answer, { ok: true, entries: [{ path: 'docs/a.md', size: 7, kind: 'file' }], next_cursor: null,
+    total: 1, capped: false });
+  const page = await reader.call('projectFiles', { ...ids, cursor: 0 });
+  assert.deepEqual(page.entries.map((entry) => [entry.path, entry.kind]), [['docs', 'dir'], ['docs/a.md', 'file']]);
+  const read = await sentBy(seen, () => reader.call('projectFileRead', { ...ids, path: 'docs/a.md' }), ['team.project.files.read']);
+  assert.deepEqual(sentOps(read.sent), [['team.project.files.read', { project_id: projectId, path: 'docs/a.md' }]]);
+  assert.deepEqual(read.answer, { ok: true, path: 'docs/a.md', size: 7, text: '# Atlas', truncated: false, binary: false });
+  assert.equal((await outsider.call('projectFileRead', { ...ids, path: 'docs/a.md' })).error.reason, 'team_not_found');
+  const before = seen.length;
+  for (const [method, payload] of [
+    ['projectFileRead', { ...ids, path: '../outside.txt' }], ['projectFileRead', { ...ids, path: '/etc/passwd' }],
+    ['projectFileRead', { ...ids, path: 'docs\\a.md' }], ['projectFileRead', { ...ids, path: '.env' }],
+    ['projectFileRead', { ...ids, path: 'C:/Windows/win.ini' }], ['projectFileRead', { ...ids }],
+    ['projectFileRead', { ...ids, path: 'docs/a.md', cursor: 0 }], ['projectFiles', { ...ids, dir: 'docs/..' }],
+    ['projectFiles', { ...ids, cursor: -1 }], ['projectFiles', { ...ids, path: 'docs/a.md' }]]) {
+    assert.equal((await reader.call(method, payload)).ok, false, `${method} ${JSON.stringify(payload)}`);
+  }
+  assert.deepEqual(seen.slice(before).filter((command) => command.operation.startsWith('team.project.files.')), []);
 });
 
 test('each project method reaches the host as its operation with exactly its params', async (t) => {
@@ -32,9 +73,10 @@ test('each project method reaches the host as its operation with exactly its par
     for (const [name, check] of Object.entries(envelope)) assert.equal(check(mine[0][name]), true, `${method} ${name}`);
     return answer;
   };
-  // A list never read is read; once current, list calls answer from it with no request (fix 15).
-  await expectOne(writer, 'projectList', {}, 'projects.list', {});
+  // Row 175: the list is read when the team comes online, with exactly its params; once current, list calls answer
+  // from it with no request (fix 15).
   await drained(writer, seen);
+  assert.ok(seen.some((c) => c.operation === 'projects.list' && JSON.stringify(c.params) === '{}'), 'read at connect');
   const kept = await sentBy(seen, () => writer.call('projectList', team), ['projects.list', 'sessions.list'], writer);
   assert.deepEqual([kept.answer.ok, kept.sent], [true, []], 'served from the kept list');
   await expectOne(owner, 'projectRename', { project_id: projectId, name: 'Atlas Two' }, 'team.project.rename',
@@ -79,6 +121,24 @@ test('each project method reaches the host as its operation with exactly its par
   assert.equal(del.sent[1].session_id, spare.session.session_id);
   assert.equal(leased.expected_revision(del.sent[1].expected_revision), true);
   assert.equal(del.answer.ok, true, JSON.stringify(del.answer));
+  // Row 169, the list's row menu: a rename of a conversation this client has not open reads its revision, borrows
+  // the lease and hands it back; the host applies the title and the conversation is still not open here.
+  const rowMade = await writer.call('conversationCreate', { ...team, project_id: projectId });
+  const rowIds = { ...team, session_id: rowMade.session.session_id };
+  const rowRenamed = await sentBy(seen, () => writer.call('conversationRename', { ...rowIds, title: 'From the list' }), ['sessions.snapshot']);
+  assert.deepEqual(rowRenamed.sent.map((c) => c.operation), ['sessions.snapshot', 'control.acquire', 'sessions.rename', 'control.release'],
+    JSON.stringify(rowRenamed.answer));
+  assert.equal(rowRenamed.answer.ok, true, JSON.stringify(rowRenamed.answer));
+  assert.equal((await writer.call('conversationSend', { ...rowIds, prompt: 'x' })).error.reason, 'team_conversation_not_open');
+  const rowRead = await writer.call('conversationOpen', rowIds);
+  assert.equal(rowRead.snapshot.session.title, 'From the list');
+  assert.equal(rowRead.snapshot.control, null, 'the borrowed lease was handed back');
+  // Row 169: the page before a message is the host's own paging, for an open conversation.
+  const olderPage = await expectOne(writer, 'conversationOpen', { session_id: rowIds.session_id, before_message_id: 'msg_none' }, 'sessions.snapshot',
+    { max_messages: 20, before_message_id: 'msg_none' }, { session_id: (value) => value === rowIds.session_id });
+  assert.equal(olderPage.error.reason, 'message_cursor_unknown', 'the host answers a cursor it does not know; the conversation stays open');
+  assert.equal((await writer.call('conversationOpen', rowIds)).ok, true);
+  await writer.call('conversationClose', rowIds);
   // Closing a conversation that holds no lease sends nothing.
   const reopened = await writer.call('conversationCreate', { ...team, project_id: projectId });
   await writer.call('conversationOpen', { ...team, session_id: reopened.session.session_id });
@@ -142,6 +202,7 @@ test('a bad payload is refused in main with zero host requests', async (t) => {
     ['projectUnjoined', { team_id: 7 }],
     ['conversationClose', { team_id: teamId, session_id: 'sess_../x' }],
     ['conversationCloseAll', { team_id: teamId, session_id: s }],
+    ['conversationOpen', { team_id: teamId, session_id: s, before_message_id: '' }],
     ['conversationCancel', { team_id: teamId, session_id: s, stream_id: 5 }],
     ['conversationRename', { team_id: teamId, session_id: s, title: '' }],
     ['conversationDelete', { team_id: teamId }],
@@ -153,6 +214,7 @@ test('a bad payload is refused in main with zero host requests', async (t) => {
     ['projectRuleRemove', { team_id: teamId, project_id: projectId, rule_seq: 0 }],
     ['projectRuleAnswer', { team_id: teamId, project_id: projectId, request_seq: 1, outcome: 'decline', reason: 'x'.repeat(201) }],
     ['conversationDecide', { team_id: teamId, session_id: s, stream_id: 'stream_1', approval_id: 'a', decision_revision: 'r', approved: false, always: 'ask' }],
+    ['conversationPreferences', { team_id: teamId, session_id: s }], ['conversationPreferences', { team_id: teamId, session_id: s, team_tools: {} }],
   ];
   const methods = new Set(bad.map(([method]) => method));
   assert.deepEqual(PROJECT_METHODS.filter((method) => !methods.has(method)), [], 'every project method has a bad case');
@@ -204,14 +266,13 @@ test('the list is read again on a project change, a resync, a reconnect, a role 
   const f = await projectTeam(t);
   const { teamId, projectId, writer, owner } = f;
   const team = { team_id: teamId };
-  // Nothing is read for a team whose projects were never asked for, not even on a new event stream.
+  // Row 175: the list is kept from connect (no project call needed), so a new event stream reads it again and pushes it.
   await drained(owner, f.seen); // the owner's own re-reads after setup settle first
   const settled = f.seen.filter((c) => c.operation === 'projects.list').length;
   f.host.dropEventStreams(writer.member.device_id);
   await online(writer, teamId);
-  await drained(writer, f.seen);
-  assert.equal(f.seen.filter((c) => c.operation === 'projects.list').length, settled, 'no read before the first call');
-  assert.equal(writer.pushes.length, 0);
+  assert.ok(await waitUntil(() => f.seen.filter((c) => c.operation === 'projects.list').length > settled), 'read with no project call');
+  assert.ok(await waitUntil(() => Boolean(lastPush(writer, 'projects'))), 'and pushed');
   await writer.call('projectList', team);
   const named = (name) => () => lastPush(writer, 'projects')?.projects.some((row) => row.name === name);
   await owner.call('projectRename', { ...team, project_id: projectId, name: 'Renamed' });
@@ -429,4 +490,43 @@ test('a stale revision is answered as it is, one snapshot read takes the current
   assert.deepEqual(sent.filter(([op]) => op === 'chat.send').at(-1), ['chat.send', 'boot:2']);
   conv.stop();
   assert.equal(timers.size(), 0);
+});
+
+// Owner report (team overview B3): a project's channel reaches its members' chat rows as soon as it exists, with no
+// reconnect (the host announces it with team_chat_channel `created` to the channel's audience); a member outside the
+// project receives no event (its chat client never resyncs for it) and holds no row.
+test('a project created while chat runs is a chat row for its member at once; a member outside it gets nothing', async (t) => {
+  const f = await projectTeam(t);
+  const chat = await attachTeamChat(t, f.host);
+  f.host.env.parts.chatStore = chat.store;
+  const overviews = [];
+  const chatHook = f.host.env.commandHook;
+  f.host.env.commandHook = (command) => {
+    if (command?.operation === 'team.chat.overview') overviews.push(f.host.env.context.clients.clients.get(command.client_id)?.deviceId);
+    return chatHook(command);
+  };
+  const rows = async (one) => (await one.call('chatOverview', { team_id: f.teamId })).channels.map((row) => row.channel_id);
+  for (const one of [f.owner, f.outsider]) assert.ok((await rows(one)).includes('chan_team'), `${one.name} chat loaded`);
+  const readsBy = (one) => overviews.filter((deviceId) => deviceId === (one === f.owner ? f.me : one.member).device_id).length;
+  // The setup's member changes resync the owner's chat once more, a second after its first load (the resync floor):
+  // that resync must be over before the create, or it would bring the channel in by itself.
+  for (let settled = false, i = 0; !settled && i < 5; i += 1) {
+    const reads = readsBy(f.owner) + readsBy(f.outsider);
+    await pause(1200);
+    settled = readsBy(f.owner) + readsBy(f.outsider) === reads;
+  }
+  const before = { owner: readsBy(f.owner), outsider: readsBy(f.outsider) };
+  const created = await f.owner.call('projectCreate', { team_id: f.teamId, name: 'Borealis' });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const channelId = `chan_${created.project_id}`;
+  let held = false;
+  for (let i = 0; i < 150 && !held; i += 1) {
+    held = (await rows(f.owner)).includes(channelId);
+    if (!held) await pause(20);
+  }
+  assert.equal(held, true, 'the creator holds the project channel row without a reconnect');
+  assert.ok(readsBy(f.owner) > before.owner, 'brought by the channel event: one overview resync');
+  await pause(100);
+  assert.equal((await rows(f.outsider)).includes(channelId), false, 'no row outside the project');
+  assert.equal(readsBy(f.outsider), before.outsider, 'no channel event reached the member outside the project');
 });

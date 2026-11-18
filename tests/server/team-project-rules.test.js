@@ -53,6 +53,13 @@ async function rulesSetup(t, options = {}) {
   return { ...s, faults, list, add, answer, remove, ask, kinds, rulesFile };
 }
 
+test('row 123: with project files on, the list says the rules are paused; off, it says nothing', BOUNDED, async (t) => {
+  const s = await rulesSetup(t);
+  assert.equal(Object.hasOwn(await s.h.ok(s.list('carl')), 'paused'), false);
+  s.h.backend.hostRootBoundary = '/srv/team/projects';
+  for (const who of ['alice', 'carl', 'rae']) assert.equal((await s.h.ok(s.list(who))).paused, 'file_tools', who);
+});
+
 test('every command against the role matrix, each with its reason', BOUNDED, async (t) => {
   const s = await rulesSetup(t);
   const added = await s.h.ok(s.add('alice'));

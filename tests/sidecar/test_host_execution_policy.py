@@ -379,3 +379,188 @@ def test_hosted_memory_rpc_allowlist_is_read_only() -> None:
     """Hosted memory stays fail-closed: reads only, no v2 write or lifecycle method."""
     memory_methods = {m for m in HOST_ALLOWED_RPC_METHODS if m.startswith("memory.")}
     assert memory_methods == {"memory.status", "memory.list", "memory.recall"}
+
+
+def test_app_guide_tool_is_allowed_and_offered_in_full_in_hosted_mode() -> None:
+    # A host offers no tool_search, so an always-deferred tool could never be loaded
+    # there: the one allowed Electron tool that is deferred on desktop comes in full.
+    from sidecar.ai.mode_policy import MODE_ASSIST
+    from sidecar.ai.tools.catalog import MANAGED_SIDECAR_SURFACE, build_tool_catalog
+    from sidecar.ai.tools.tool_search import ToolResolutionContext, build_search_index
+
+    config = parse_runtime_config(_host_config(version=1))
+    bridge = [
+        item for item in _electron_bridge_runtime_descriptors(config)
+        if host_tool_decision(item, config)[0]
+    ]
+    assert sorted(item.name for item in bridge) == ["ask_user", "exit_plan_mode", "jenny_help"]
+    assert host_tool_decision("jenny_status", config)[0] is False
+
+    catalog = build_tool_catalog(config=config, runtime_descriptors=bridge)
+    help_tool = next(item for item in catalog if item.name == "jenny_help")
+    assert help_tool.availability.defer_eligible is True
+    deferred = frozenset({"jenny_help"})
+
+    def assemble(raw_config: object):
+        return assemble_tool_contract(
+            catalog,
+            ToolAssemblyContext(
+                surface=MANAGED_SIDECAR_SURFACE,
+                config=raw_config,
+                engine_supports_tool_calling=True,
+                mode=MODE_ASSIST,
+                plan_mode=False,
+                resolution_context=ToolResolutionContext(
+                    deferred_names=deferred,
+                    un_deferred_names=set(),
+                    search_index=build_search_index(deferred, (help_tool,)),
+                ),
+                workspace_root_present=False,
+                include_deferred_tools=True,
+            ),
+        ).entry("jenny_help")
+
+    hosted = assemble(config)
+    assert hosted.available is True
+    assert hosted.deferred is False
+    assert assemble({}).deferred is True
+
+    # Context pressure still hides a tool on a host: the budget filter is not deferral.
+    filtered = ToolResolutionContext(
+        deferred_names=deferred,
+        un_deferred_names=set(),
+        search_index=build_search_index(deferred, (help_tool,)),
+    )
+    filtered.budget_filtered_names = deferred
+    pressed = assemble_tool_contract(
+        catalog,
+        ToolAssemblyContext(
+            surface=MANAGED_SIDECAR_SURFACE, config=config, engine_supports_tool_calling=True,
+            mode=MODE_ASSIST, plan_mode=False, resolution_context=filtered,
+            workspace_root_present=False, include_deferred_tools=True,
+        ),
+    ).entry("jenny_help")
+    assert pressed.deferred is True
+
+
+# --- A team host's root boundary (row 123, team host file tools) ---
+
+_BOUNDARY = str(Path(__file__).resolve().parent / "projects-boundary")
+_TEAM_HOST_TOOLS = frozenset({"read_file", "list_dir", "glob_files", "grep_search", "write_file",
+                              "edit_file", "jenny_help", "ask_user", "exit_plan_mode"})
+
+
+def _team_config(**extra: object) -> dict[str, object]:
+    return {**_host_config(), "electron_state_root": str(Path(_BOUNDARY).parent / "profile"),
+            "hosted_root_boundary": _BOUNDARY, **extra}
+
+
+def test_a_team_host_config_carries_the_boundary_and_the_windows_switch() -> None:
+    config = parse_runtime_config(_team_config(hosted_win32_files=True))
+    assert config.hosted_root_boundary == _BOUNDARY
+    assert config.hosted_win32_files is True
+    plain = parse_runtime_config(_host_config())
+    assert plain.hosted_root_boundary is None and plain.hosted_win32_files is False
+
+
+@pytest.mark.parametrize("raw", [
+    {"hosted_root_boundary": _BOUNDARY},
+    {"hosted_win32_files": True},
+    {"host_mode": "desktop", "hosted_root_boundary": _BOUNDARY},
+    {**_host_config(), "hosted_win32_files": True},
+    {**_host_config(), "hosted_root_boundary": "relative/projects"},
+    {**_host_config(), "hosted_root_boundary": ""},
+    {**_host_config(), "hosted_root_boundary": 7},
+    {**_host_config(workspace=_BOUNDARY), "hosted_root_boundary": _BOUNDARY},
+    {**_team_config(), "hosted_win32_files": "yes"},
+], ids=["desktop-boundary", "desktop-switch", "explicit-desktop", "switch-without-boundary",
+        "relative", "empty", "not-a-string", "with-a-workspace-root", "switch-not-a-bool"])
+def test_the_boundary_and_switch_are_refused_outside_a_rootless_server_host(
+    raw: dict[str, object],
+) -> None:
+    with pytest.raises(HostPolicyError):
+        parse_runtime_config(raw)
+
+
+def _arg(args: tuple[str, ...], flag: str) -> str:
+    return args[args.index(flag) + 1]
+
+
+def test_a_team_host_worker_gets_the_boundary_and_no_store_outside_the_folder() -> None:
+    config = parse_runtime_config(_team_config(hosted_win32_files=True))
+    [server] = _default_mcp_servers(config, None)
+    args = tuple(server.args)
+    assert _arg(args, "--workspace-root") == ""
+    assert _arg(args, "--hosted-root-boundary") == _BOUNDARY
+    assert "--hosted-win32-files" in args
+    assert _arg(args, "--pre-change-snapshot-root") == ""
+    assert _arg(args, "--workspace-recovery-root") == ""
+
+
+def test_a_boundary_forces_redacted_diagnostics_for_the_worker_and_the_sidecar() -> None:
+    config = parse_runtime_config(_team_config(diagnostics_capture_mode="sanitized_snippets"))
+    assert config.diagnostics_capture_mode == "redacted"
+    [server] = _default_mcp_servers(config, None)
+    assert _arg(tuple(server.args), "--diagnostics-capture-mode") == "redacted"
+    plain = parse_runtime_config({**_host_config(), "diagnostics_capture_mode": "sanitized_snippets"})
+    assert plain.diagnostics_capture_mode == "sanitized_snippets", "single owner unchanged"
+
+
+def test_the_windows_switch_is_sent_only_when_on() -> None:
+    [server] = _default_mcp_servers(parse_runtime_config(_team_config()), None)
+    assert "--hosted-win32-files" not in server.args
+    assert _arg(tuple(server.args), "--hosted-root-boundary") == _BOUNDARY
+
+
+def test_without_a_boundary_the_worker_arguments_are_unchanged() -> None:
+    config = parse_runtime_config({**_host_config(), "electron_state_root": "/profile"})
+    [server] = _default_mcp_servers(config, Path("workspace"))
+    args = tuple(server.args)
+    assert "--hosted-root-boundary" not in args and "--hosted-win32-files" not in args
+    assert _arg(args, "--pre-change-snapshot-root").endswith("workspace-snapshots")
+    assert _arg(args, "--workspace-recovery-root") != ""
+
+
+def test_a_boundary_narrows_the_hosted_tool_set_to_the_named_nine() -> None:
+    team = {**_host_config(), "hosted_root_boundary": _BOUNDARY}
+    for name in sorted(HOST_ALLOWED_TOOL_NAMES | {"run_command", "delegate"}):
+        allowed = host_tool_decision(name, team)[0]
+        assert allowed is (name in _TEAM_HOST_TOOLS), name
+    assert host_tool_decision("create_artifact", _host_config())[0] is True, "single owner"
+    v2_team = {**_host_config(version=2, worker=True, shell=True, workspace=None),
+               "hosted_root_boundary": _BOUNDARY}
+    assert host_tool_decision("run_command", v2_team)[0] is False
+
+
+def _initialize_with_hosted_files(config, answer):
+    container = _InitializeContainer(config)
+    real_configure = container.configure
+
+    def configure(raw_config, **kwargs):
+        stack = real_configure(raw_config, **kwargs)
+        stack.mcp_client.server_hosted_files = lambda name: (
+            answer if name == builtin_server_name() else None)
+        return stack
+
+    container.configure = configure
+    return initialize_response(1, {"config": {}}, api_version="2026-03-06",
+                               brain_container=container)["result"]
+
+
+def builtin_server_name() -> str:
+    from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
+
+    return BUILTIN_MCP_SERVER_NAME
+
+
+def test_initialize_reports_the_workers_hosted_files_state_on_a_team_host() -> None:
+    team = parse_runtime_config(_team_config())
+    assert _initialize_with_hosted_files(team, {"available": True, "reason": None})[
+        "hosted_files"] == {"available": True, "reason": None}
+    assert _initialize_with_hosted_files(
+        team, {"available": False, "reason": "file_access_switch_off"})["hosted_files"] == {
+        "available": False, "reason": "file_access_switch_off"}
+    assert _initialize_with_hosted_files(team, None)["hosted_files"] == {
+        "available": False, "reason": None}, "no answer from the worker is not available"
+    assert "hosted_files" not in _initialize_with_hosted_files(
+        parse_runtime_config(_host_config()), {"available": True, "reason": None})

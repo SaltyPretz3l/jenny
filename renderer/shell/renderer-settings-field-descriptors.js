@@ -376,6 +376,8 @@
     copy: { label: jt('settings.editor.terminalScrollback', 'Terminal scrollback'), description: jt('settings.editor.terminalScrollbackHelpCost', 'How many lines each terminal keeps to scroll back through, up to 25,000. Each terminal uses about 1.5 MB per 1,000 lines.'), keywords: [jt('settings.editor.terminalScrollbackKeyword', 'terminal history')] } });
   def({ id: 'editorTerminalProfileSelect', sectionId: 'editor', kind: 'enum', default: '', adapterId: 'workspaceIde', key: 'terminalDefaultProfile', options: 'source:terminalProfiles',
     copy: { label: jt('settings.editor.terminalProfile', 'Terminal shell'), description: jt('settings.editor.terminalProfileHelp', 'The shell a new terminal starts. A shell that is no longer installed falls back to the default.'), keywords: [jt('settings.editor.terminalProfileKeyword', 'shell profile')] } });
+  def({ id: 'editorTerminalStartFolderField', sectionId: 'editor', kind: 'text', default: '', noMeta: true, adapterId: 'workspaceIde', key: 'terminalStartFolder', validation: { maxLength: 512 }, // '' = Downloads; the editor section draws the row
+    copy: { label: jt('settings.editor.terminalStartFolder', "Start folder for Jenny's commands"), description: jt('settings.editor.terminalStartFolderHelp', 'Where commands Jenny runs from the Jenny chat start, such as app installs. Downloads land here.'), keywords: [jt('settings.editor.terminalStartFolderKeyword', 'terminal start folder'), jt('settings.editor.terminalStartFolderKeywordDownloads', 'downloads')] } });
   bool('editorWordWrapToggle', 'editor', 'workspaceIde', 'wordWrap', false);
   bool('editorMinimapToggle', 'editor', 'workspaceIde', 'minimap', true);
   bool('editorLineNumbersToggle', 'editor', 'workspaceIde', 'lineNumbers', true);
@@ -428,10 +430,10 @@
     bool('notificationsCategory' + category[0].toUpperCase() + category.slice(1) + 'Toggle', 'notifications', 'windowUi.notifications', 'categories.' + category, true);
   });
   // Row 123 slice 2a-6c: team messages, greyed out (not hidden) while this Jenny is in no team (owner, 2026-11-12).
-  bool('notificationsCategoryTeamToggle', 'notifications', 'windowUi.notifications', 'categories.team', true, { enabledWhen: 'team', copy: {
-    label: jt('settings.fieldCopy.notificationsCategoryTeamToggle.label', 'Someone messages you in a team'),
-    description: jt('settings.fieldCopy.notificationsCategoryTeamToggle.description', 'A mention, a direct message, or any message in a channel you set to All messages. The bell in each channel chooses which.'),
-    keywords: ['team', 'mention', jt('settings.fieldCopy.notificationsCategoryTeamToggle.keywordDirect', 'direct message'), 'channel'] } });
+  bool('notificationsCategoryTeamToggle', 'notifications', 'windowUi.notifications', 'categories.team', true, { enabledWhen: 'team', copy: { label: jt('settings.fieldCopy.notificationsCategoryTeamToggle.label', 'Someone messages you in a team'),
+    description: jt('settings.fieldCopy.notificationsCategoryTeamToggle.description', 'A mention, a direct message, or any message in a channel you set to All messages. The bell in each channel chooses which.'), keywords: ['team', 'mention', jt('settings.fieldCopy.notificationsCategoryTeamToggle.keywordDirect', 'direct message'), 'channel'] } });
+  // Row 175 (D2): project activity, one row for every team, greyed while the Team row is off.
+  bool('notificationsCategoryTeamProjectToggle', 'notifications', 'windowUi.notifications', 'categories.teamProject', true, { enabledWhen: 'teamProject', copy: { label: jt('settings.fieldCopy.notificationsCategoryTeamProjectToggle.label', 'Project activity'), description: jt('settings.fieldCopy.notificationsCategoryTeamProjectToggle.description', 'In every team: your turn in a project conversation finished, failed or waits on you, or an approval waits and nobody who can answer is viewing.'), keywords: ['team', 'project', jt('settings.fieldCopy.notificationsCategoryTeamProjectToggle.keywordApproval', 'approval')] } });
   bool('notificationsReplyPreviewToggle', 'notifications', 'windowUi.notifications', 'replyPreview', false);
 
   // Offline, Memories (memory v2 switches: shell config `memory`, saved through the features bridge)

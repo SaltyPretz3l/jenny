@@ -1,7 +1,9 @@
 'use strict';
 
 // `terminal_run` (row 94 P4, owner picks T1 and C1): the Jenny chat runs one command line in the user's Workspace IDE,
-// in a terminal of its own (an idle Jenny terminal or a new one, never a shell the user is using). It runs in the
+// in a terminal of its own (an idle Jenny terminal or a new one, never a shell the user is using). A project chat may
+// run one too (row 178, owner pick D4), in its own project folder only, and only while that project is the one the
+// Workspace has open; every run asks the user, in every chat. It runs in the
 // user's environment, outside the sidecar's run_command checks, so it is always carded, even in Auto, and never
 // always-allowed; the approval path checks the line before the card and the port (services/terminal-tools-service.js)
 // runs only under this call's card. The answer comes once the line is sent; there is no exit code, so the model reads
@@ -17,8 +19,9 @@ const SENT = 'Sent to the terminal; it is not finished yet. Read its output with
 const UNCONFIRMED = 'The app did not confirm the command in time; it may still run. Check with terminal_read before trying again.';
 
 function validInput(input) {
-  return plainInput(input, ['command', 'purpose']) && typeof input.command === 'string' && input.command.length >= 1
-    && input.command.length <= 2000 && typeof input.purpose === 'string' && input.purpose.length >= 1 && input.purpose.length <= 200;
+  return plainInput(input, ['command', 'purpose', 'where']) && typeof input.command === 'string' && input.command.length >= 1
+    && input.command.length <= 2000 && typeof input.purpose === 'string' && input.purpose.length >= 1 && input.purpose.length <= 200
+    && (input.where === undefined || input.where === 'start_folder' || input.where === 'project');
 }
 
 function answerOf(answer) {
@@ -41,7 +44,7 @@ module.exports = {
     if (!live.ok || typeof port?.run !== 'function') return result({ ok: false, reason: 'unavailable' });
     try {
       return result(answerOf(await port.run({
-        caller_session_id: live.sessionId, tool_call_id: String(context.callId || ''), command: input.command,
+        caller_session_id: live.sessionId, tool_call_id: String(context.callId || ''), command: input.command, where: input.where,
       })));
     } catch (_error) {
       return result({ ok: false, reason: 'unavailable' });

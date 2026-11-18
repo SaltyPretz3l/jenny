@@ -10,7 +10,9 @@
  * `rule_requests` push keeps it).
  *
  * It holds, per team: the projects (with `files_supported`), their conversations, the per-conversation activity
- * (running, approvals waiting: empty after an app start until the next event, a known limit), the owner's
+ * (running, approvals waiting, question batches waiting; row 175 F9: main seeds the waiting counts from the host's
+ * conversation list at connect, a resync and a reconnect, so they are right before the next event; running still
+ * shows only from the next event), the owner's
  * not-a-member projects, the admin request counts and the last transfer push (an upload's folder name carried from
  * its running pushes to its `done`, which has none). Every value comes from main's rebuilt pushes and answers and is
  * drawn escaped by the views. Bounds: the lists are main's (128 projects, 2,000 conversations a team); this store adds
@@ -40,6 +42,16 @@
   const COUNT_RETRY_MS = 30_000;
   const ACTIVITY_MAX = 2_000;
   const defaultTimers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) };
+
+  // One conversation's counts from main's `activity` push, or null when nothing runs or waits. `questions` (row 175 F9)
+  // is kept only when some wait, so an entry without question batches keeps its two keys.
+  function activityEntry(payload) {
+    const approvals = Number(payload.approvals) || 0;
+    const questions = Number(payload.questions) || 0;
+    if (!payload.running && approvals <= 0 && questions <= 0) return null;
+    return { running: payload.running === true, approvals, ...(questions > 0 ? { questions } : {}) };
+  }
+  const sameActivity = (a, b) => a.running === b.running && a.approvals === b.approvals && (a.questions || 0) === (b.questions || 0);
 
   function createProjectStore({ windowRef = null, teams: teamsOf = null, now = Date.now, timers = defaultTimers } = {}) {
     const win = () => windowRef || (typeof window !== 'undefined' ? window : null);
@@ -191,8 +203,8 @@
         case 'activity': {
           if (typeof payload.session_id !== 'string') return;
           const before = state.activity[payload.session_id];
-          const next = payload.running || payload.approvals > 0 ? { running: payload.running === true, approvals: Number(payload.approvals) || 0 } : null;
-          if (before ? next && before.running === next.running && before.approvals === next.approvals : !next) return;
+          const next = activityEntry(payload);
+          if (before ? next && sameActivity(before, next) : !next) return;
           if (next && !before && Object.keys(state.activity).length >= ACTIVITY_MAX) return;
           if (next) state.activity[payload.session_id] = next; else delete state.activity[payload.session_id];
           emit({ type: 'activity', team_id: teamId, session_id: payload.session_id });

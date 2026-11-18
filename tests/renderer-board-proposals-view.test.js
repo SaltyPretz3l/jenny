@@ -395,7 +395,7 @@ test('a line, a note, a group title and a link title holding markup appear as th
 
 // ------------------------------------------------------------------ ghosts
 
-const preview = { cards: [{ n: 1, kind: 'note', x: 40, y: 50, w: 200, h: 90, groupId: '' }, { n: 2, kind: 'file', x: 300, y: 50, w: 220, h: 70, groupId: '' }], groups: [{ n: 3, id: 'g', x: -10, y: -20, w: 500, h: 300 }],
+const preview = { cards: [{ n: 1, kind: 'note', x: 40, y: 50, w: 200, h: 90, groupId: '', text: '**Decide** [token](https://example.com/) lifetime\nfor a week' }, { n: 2, kind: 'file', x: 300, y: 50, w: 220, h: 70, groupId: '' }], groups: [{ n: 3, id: 'g', x: -10, y: -20, w: 500, h: 300 }],
   connectors: [{ n: 4, from: { x: 40, y: 50, w: 200, h: 90 }, to: { x: 300, y: 50, w: 220, h: 70 }, label: 'blocks', style: 'solid', ends: 'end' }] };
 test('a ghost is drawn at each preview place and size, above the canvas content, and takes nothing', async (t) => {
   const rows = [add(1, 'Decide token lifetime'), change(2, 'file', 'addition', { path: 'src/a.ts', group: '' }), change(3, 'group', 'addition', { title: 'Decisions' })];
@@ -407,7 +407,7 @@ test('a ghost is drawn at each preview place and size, above the canvas content,
   assert.deepEqual(box(ghosts[0]), ['40px', '50px', '200px', '90px']);
   assert.deepEqual(box(ghosts[1]), ['300px', '50px', '220px', '70px']);
   assert.deepEqual(box(ghosts[2]), ['-10px', '-20px', '500px', '300px']);
-  assert.equal(ghosts[0].textContent, 'Decide token lifetime');
+  assert.deepEqual([ghosts[0].querySelector('[data-card-body]').textContent, ghosts[0].hasAttribute('data-ghost'), ghosts[0].querySelector('strong').textContent], ['Decide token lifetime\nfor a week', true, 'Decide'], 'a note is shown whole, as the card it will be');
   assert.equal(ghosts[1].textContent, 'src/a.ts');
   assert.equal(ghosts[2].textContent, 'Decisions');
   const holder = h.layer.querySelector('.board-ghosts');

@@ -429,6 +429,18 @@
   outline-offset: -2px;
 }
 
+/* The chat's Terminal panel hosts this terminal's xterm (row 178): the IDE view only says where it went. */
+.ide-terminal-hosted {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
 /* xterm host for the PTY terminal (workspace_pty_terminal): layout-only —
  * without flex:1 the host collapses to content height and the fit addon
  * measures a degenerate size. xterm paints its own colors inside. */

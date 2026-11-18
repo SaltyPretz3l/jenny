@@ -21,17 +21,26 @@
  *
  * Shared projects (slice 3-10, owner picks picks_3-10.md): the column's "Projects" section between Direct messages
  * and GPUs (renderer-team-project-column.js), and a project page or shared conversation as a frame of its own (the
- * pseudo ids `proj:` and `conv:`), whose one region (`data-team-region="project"`) the page draws with its header. */
+ * pseudo ids `proj:` and `conv:`), whose one region (`data-team-region="project"`) the page draws with its header.
+ *
+ * The Overview (row 168, renderer-team-overview.js): one row above Channels (the pseudo id `channels.OVERVIEW`), its
+ * header, and its region (`data-team-region="overview"`) that the page draws and patches itself.
+ *
+ * Channels (row 173, renderer-team-channel-menu.js and -form.js): a plus on the Channels label (the control Direct messages
+ * has, greyed with its reason for a read-only member), #team then the live custom channels, then a folded "Archived · N"
+ * group. The header's sub line leads with the topic (an archived channel's with who archived it and when), an options button
+ * follows the bell, and a rename or topic edit takes the name or the sub line's place. The New channel view shares the
+ * picker's region. `vm.channelUi` is the controller's part of the view model: the open edit, the menu, the fold. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('../shell/renderer-settings-team-strings'), require('../shell/renderer-settings-team-view'),
       require('../shell/renderer-settings-team-owner-view'), require('./renderer-team-chat-store'), require('./renderer-team-channels'), require('./renderer-team-gpus'),
-      require('./renderer-team-pins'), require('./renderer-team-project-column'));
+      require('./renderer-team-pins'), require('./renderer-team-project-column'), require('./renderer-team-server'), require('./renderer-team-channel-menu'));
     return;
   }
   root.rendererTeamTabView = factory(root.rendererSettingsTeamStrings, root.rendererSettingsTeamView, root.rendererSettingsTeamOwnerView,
-    root.rendererTeamChatStore, root.rendererTeamChannels, root.rendererTeamGpus, root.rendererTeamPins, root.rendererTeamProjectColumn);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, settingsView, ownerView, chatStore, channels, gpus, pins, projectColumn) {
+    root.rendererTeamChatStore, root.rendererTeamChannels, root.rendererTeamGpus, root.rendererTeamPins, root.rendererTeamProjectColumn, root.rendererTeamServer, root.rendererTeamChannelMenu);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, settingsView, ownerView, chatStore, channels, gpus, pins, projectColumn, serverPage, channelMenu) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -49,6 +58,7 @@
   const BELL_OFF = SVG('<path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3zM2.5 2.5l11 11"/>');
   const PLUS = SVG('<path d="M8 3.5v9M3.5 8h9"/>');
   const CLOSE = SVG('<path d="M4 4l8 8M12 4l-8 8"/>');
+  const OVERVIEW_GLYPH = SVG('<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>');
   const MUTED = '<svg class="team-row__muted" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3zM2.5 2.5l11 11"/></svg>';
 
   function inv() { return globalThis.inventory || {}; }
@@ -163,9 +173,21 @@
       + plus + '</h3>' + rows + '</div>';
   }
 
+  // "Channels" with its plus, #team and the live channels, then the folded group of archived ones (muted rows, a fold button
+  // that says how many; open or folded as the controller holds it for this team).
   function channelsHtml(vm) {
-    return '<div class="team-channels">' + label(jt('team.chat.channels', 'Channels'), null)
-      + vm.channels.map((channel) => channelRow(vm, channel)).join('') + '</div>';
+    const blocked = channelMenu.createWhy(vm.team);
+    const add = jt('team.channels.new', 'New channel');
+    const plus = inv().actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: blocked || add, title: blocked || add, disabled: Boolean(blocked),
+      dataset: { 'team-tab-action': 'channel-new' }, trustedHtml: PLUS });
+    const gone = vm.archived || [];
+    const open = Boolean(vm.channelUi && vm.channelUi.foldOpen);
+    const fold = gone.length ? inv().actionButton({ plain: true, className: 'team-arch-fold', ariaExpanded: open, title: jt('team.channels.archivedTitle', 'Show or hide archived channels'), dataset: { 'team-tab-action': 'archived-fold' },
+      trustedHtml: CHEVRON + '<span>' + escapeHtml(jt('team.channels.archivedFold', 'Archived · {count}', { count: gone.length })) + '</span>' })
+      + (open ? gone.map((channel) => channelRow(vm, channel, { className: ' team-row--archived',
+        title: jt('team.channels.row.archived', '{channel}, archived', { channel: '#' + vm.channelName(channel.channel_id) }) })).join('') : '') : '';
+    return '<div class="team-channels">' + overviewRow(vm) + '<h3 class="team-panel__label"><span>' + escapeHtml(jt('team.chat.channels', 'Channels')) + '</span>' + plus + '</h3>'
+      + vm.channels.map((channel) => channelRow(vm, channel)).join('') + fold + '</div>';
   }
 
   function personName(vm, member) {
@@ -213,6 +235,42 @@
       + gpus.sectionHtml(vm.gpus, label) + peopleHtml(vm);
   }
 
+  // ------------------------------------------------------------ the Overview
+
+  // The row above Channels' label, in its block: a page, not a channel, so it has its own action and no unread state. The
+  // count is the people waiting to join, for the owner who lets them in.
+  function overviewRow(vm) {
+    const title = jt('team.ov.title', 'Overview');
+    const waiting = vm.waitingCount || 0;
+    const label = waiting ? jt('team.ov.rowWaiting', 'Overview, {count} waiting to join', { count: waiting }) : title;
+    const button = inv().actionButton({
+      plain: true, className: 'team-row team-row--link team-ov-row', ariaLabel: label, title: label, dataset: { 'team-tab-action': 'overview' },
+      trustedHtml: '<span class="team-row__glyph" aria-hidden="true">' + OVERVIEW_GLYPH + '</span><span class="team-row__name">' + escapeHtml(title) + '</span>'
+        + (waiting ? '<span class="team-count" data-mention="true" aria-hidden="true">' + escapeHtml(String(waiting)) + '</span>' : ''),
+    });
+    return withAttrs(button, { 'aria-current': vm.channelId === channels.OVERVIEW ? 'true' : 'false' });
+  }
+
+  // The Overview's header: its name, where the team is hosted, and Team settings. Back shows under 720 px.
+  function overviewHead(vm) {
+    const name = words.teamName(vm.team);
+    const owner = (vm.people || []).find((member) => member.role === 'owner');
+    const where = vm.hostedHere ? jt('team.ov.subHere', '{team} · hosted on this PC', { team: name })
+      : owner ? jt('team.ov.subBy', '{team} · hosted by {owner}', { team: name, owner: owner.display_name }) : name;
+    const back = jt('team.chat.back', 'Back to the list');
+    return '<header class="team-head">' + inv().actionButton({ plain: true, className: 'team-icon-btn team-back', ariaLabel: back, title: back, dataset: { 'team-tab-action': 'back' }, trustedHtml: BACK })
+      + '<h2 class="team-head__name">' + escapeHtml(jt('team.ov.title', 'Overview')) + '</h2><span class="team-head__sub">' + escapeHtml(where) + '</span>'
+      + '<div class="team-head__actions">' + tabButton('open-settings', jt('team.tab.teamSettings', 'Team settings')) + '</div></header>';
+  }
+
+  // The Overview's People rows (the same dot, name and quiet fact as the column's), online first; null before any list is read.
+  function peopleRows(vm) {
+    const live = (member) => member.state === 'online' || member.state === 'away';
+    const members = vm.presence ? sortPeople(vm.presence.filter(live)).concat(sortPeople(vm.presence.filter((member) => !live(member)))) : vm.people ? sortPeople(vm.people) : null;
+    if (!members) return null;
+    return members.map((member) => ({ key: member.member_id, html: withAttrs(vm.presence ? presenceRow(vm, member) : rosterRow(vm, member), { 'data-ov-key': member.member_id }) }));
+  }
+
   // ------------------------------------------------------------ main area
 
   function subLine(vm) {
@@ -221,19 +279,53 @@
     return jtn('team.chat.subPeople', vm.memberCount, {}, 'Everyone on this team · {count} person', 'Everyone on this team · {count} people');
   }
 
-  // The New message view's header: its name and Close (Esc does the same).
-  function newHeadHtml() {
+  // The New message or New channel view's header: its name and Close (Esc does the same).
+  function newHeadHtml(vm) {
     const back = jt('team.chat.back', 'Back to the list');
     const close = jt('team.dm.close', 'Close (Esc)');
     return '<header class="team-head">' + inv().actionButton({ plain: true, className: 'team-icon-btn team-back', ariaLabel: back, title: back, dataset: { 'team-tab-action': 'back' }, trustedHtml: BACK })
-      + '<h2 class="team-head__name">' + escapeHtml(jt('team.dm.heading', 'New message')) + '</h2><div class="team-head__actions">'
+      + '<h2 class="team-head__name">' + escapeHtml(vm.channelId === channels.NEW_CHANNEL ? jt('team.channels.new', 'New channel') : jt('team.dm.heading', 'New message')) + '</h2><div class="team-head__actions">'
       + inv().actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: close, title: close, dataset: { 'team-tab-action': 'dm-close' }, trustedHtml: CLOSE }) + '</div></header>';
   }
 
+  // A member's name in a sentence: "you" for this member, else the display name.
+  function memberName(vm, id) {
+    if (id && id === vm.team.member_id) return jt('team.channels.you', 'you');
+    const known = (vm.presence || vm.people || []).find((m) => m.member_id === id);
+    return known && known.display_name ? known.display_name : jt('team.chat.formerMember', 'Former member');
+  }
+
+  // Who archived the channel and when, from its last `archived` change; '' for a channel that is not archived.
+  function archivedLine(vm, row) {
+    if (!row.archived) return '';
+    const made = (Array.isArray(row.changes) ? row.changes : []).filter((c) => c && c.kind === 'archived').pop();
+    const by = (made && made.by) || row.archived_by;
+    const at = made ? (typeof made.at === 'number' ? made.at : Date.parse(made.at)) : NaN;
+    if (!by || !Number.isFinite(at)) return jt('team.channels.archivedPlain', 'Archived');
+    return jt('team.channels.archivedBy', 'Archived {date} by {name}', { date: words.dateText(at, true), name: memberName(vm, by) });
+  }
+
+  // The sub line of a channel: the archived note, the topic, then who is in it. Untrusted text is escaped.
+  function channelSub(vm) {
+    const row = vm.row;
+    if (!row || (row.kind !== 'team' && row.kind !== 'channel')) return escapeHtml(subLine(vm));
+    const parts = [];
+    const archived = archivedLine(vm, row);
+    if (archived) parts.push(escapeHtml(archived));
+    if (row.topic) parts.push('<span class="team-head__topic" dir="auto">' + escapeHtml(row.topic) + '</span>');
+    parts.push(escapeHtml(subLine(vm)));
+    return parts.join(' · ');
+  }
+
   // The shown channel's name, or a direct conversation's: the dot for one person, the names (cut, the full list in
-  // the tooltip) and the standing line in the sub line's place, shown at every width.
+  // the tooltip) and the standing line in the sub line's place, shown at every width. A rename or topic edit that is open
+  // takes the name's or the sub line's place.
   function headName(vm) {
-    if (!vm.direct) return '<h2 class="team-head__name">#' + escapeHtml(vm.channelName(vm.channelId)) + '</h2><span class="team-head__sub">' + escapeHtml(subLine(vm)) + '</span>';
+    if (!vm.direct) {
+      const editing = channelMenu.editHtml(vm.channelUi && vm.channelUi.edit);
+      return (editing && editing.name ? editing.name : '<h2 class="team-head__name" dir="auto">#' + escapeHtml(vm.channelName(vm.channelId)) + '</h2>')
+        + (editing ? editing.sub : '<span class="team-head__sub">' + channelSub(vm) + '</span>');
+    }
     const names = vm.titleOf(vm.channelId);
     return personDot(vm, vm.direct, true) + '<h2 class="team-head__name" dir="auto" title="' + escapeHtml(names) + '">' + escapeHtml(names) + '</h2>'
       + '<span class="team-head__sub" data-standing="true">' + escapeHtml(jt('team.dm.standing', 'The team’s host can read direct messages.')) + '</span>';
@@ -241,18 +333,22 @@
 
   function headHtml(vm) {
     if (projectColumn.isPage(vm.channelId)) return ''; // the project page and conversation draw their own header
-    if (vm.channelId === channels.NEW) return newHeadHtml();
+    if (vm.channelId === channels.OVERVIEW) return overviewHead(vm);
+    if (vm.channelId === channels.NEW || vm.channelId === channels.NEW_CHANNEL) return newHeadHtml(vm);
     const level = notifyText(vm.notify);
     const bell = jt('team.chat.notify.label', 'Notifications: {level}', { level });
     const back = vm.searching ? jt('team.search.back', 'Back to the results') : jt('team.chat.back', 'Back to the list');
     const search = jt('team.search.allButton', 'Search messages (Ctrl+F)'); // it searches every channel, as Ctrl+F does
+    const options = jt('team.channels.menu.label', 'Channel options');
+    const manage = !vm.direct && vm.row && (vm.row.kind === 'team' || vm.row.kind === 'channel') ? inv().actionButton({ plain: true, className: 'team-icon-btn', domId: channelMenu.BUTTON_ID,
+      ariaLabel: options, title: options, ariaHaspopup: 'menu', ariaExpanded: Boolean(vm.channelUi && vm.channelUi.menuOpen), dataset: { 'team-tab-action': 'channel-menu' }, trustedHtml: channelMenu.DOTS }) : '';
     return '<header class="team-head">' + inv().actionButton({
       plain: true, className: 'team-icon-btn team-back', ariaLabel: back, title: back, dataset: { 'team-tab-action': 'back' }, trustedHtml: BACK,
     }) + headName(vm) + '<div class="team-head__actions">' + pins.buttonHtml(vm) + inv().actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: search, title: search,
         dataset: { 'team-tab-action': 'search' }, trustedHtml: SEARCH }) + inv().actionButton({
         plain: true, className: 'team-icon-btn', domId: 'teamNotifyButton', ariaLabel: bell, title: bell, ariaHaspopup: 'menu',
         ariaExpanded: vm.notifyOpen === true, dataset: { 'team-tab-action': 'notify' }, trustedHtml: vm.notify === 'none' ? BELL_OFF : BELL, disabled: vm.notifyReady === false,
-      }) + '</div></header>';
+      }) + manage + '</div></header>';
   }
 
   // The words for a team that is not connected ('' when it is); the banner's, and search's when offline.
@@ -284,15 +380,16 @@
       + '<div class="team-slot" data-team-region="export"></div>'
       + '<div class="team-notice" data-team-region="notice"></div>'
       + (projectColumn.isPage(vm.channelId) ? '<div class="team-project-root" data-team-region="project"></div>'
-        : vm.channelId === channels.NEW ? '<div class="team-pick-root" data-team-region="picker"></div>'
+        : vm.channelId === channels.OVERVIEW ? '<div class="team-ov" data-team-region="overview"></div>'
+          : vm.channelId === channels.NEW || vm.channelId === channels.NEW_CHANNEL ? '<div class="team-pick-root" data-team-region="picker"></div>'
           : '<div class="team-timeline" data-team-region="timeline"></div><div class="team-composer-root" data-team-region="composer"></div>')
       + '</div></div>';
   }
 
   // ------------------------------------------------------- whole-view states
 
-  // One heading, one paragraph and at most one button; nothing from the team is shown. A pending team adds one
-  // line with this device's key, from main, never from the host.
+  // One heading, one paragraph and at most one button (this PC's stopped server is a page of its own: `page`); nothing
+  // from the team is shown. A pending team adds one line with this device's key, from main, never from the host.
   function stateContent(vm) {
     const team = vm.team;
     const name = words.teamName(team || { team_name: vm.host && vm.host.team_name });
@@ -319,19 +416,29 @@
         return { heading: jt('team.tab.lost.heading', 'This Jenny is not signed in to its team'),
           copy: jt('team.tab.lost.copy', 'This PC runs the server for {team}, but this Jenny has lost its place in it. Reclaim ownership in Settings.', { team: name }), button: settings };
       default:
-        return { heading: jt('team.tab.stopped.heading', 'The team server on this PC is not running'),
-          copy: jt('team.tab.stopped.copy', 'Start it in Settings to open {team} again.', { team: name }), button: settings };
+        // Row 170: this PC's server, not running, gets a page of its own (renderer-team-server.js). A saved team file that
+        // does not load (needs_repair) with no server here says so and points to Settings.
+        if (vm.host && vm.host.deployed === true && (!team || serverDown(vm))) return { page: serverPage.tab.pageHtml(vm) };
+        return { heading: name, copy: team ? words.repairText(team.reason) : '', button: settings };
     }
   }
 
   function stateHtml(vm) {
     const content = stateContent(vm);
+    if (content.page) return '<div class="team-main">' + content.page + '</div>';
     return '<div class="team-main"><div class="team-state"><h2>' + escapeHtml(content.heading) + '</h2>' + (content.copy ? '<p>' + escapeHtml(content.copy) + '</p>' : '')
       + (content.key ? '<p>' + escapeHtml(content.key) + '</p>' : '') + content.button + settingsView.note(vm.errors.state) + '</div></div>';
   }
 
+  // This PC's own server is not running and the shown team is the one it serves: that row can only be offline, so the
+  // server's page stands in for it (in the app the owner's membership loads at launch, so the row is there).
+  function serverDown(vm) {
+    const host = vm.host;
+    return Boolean(vm.team && host && host.deployed === true && host.state !== 'running' && host.team_id === vm.team.team_id);
+  }
+
   // True when the view is one whole-view state rather than a channel.
-  function isWhole(vm) { return !vm.team || chatStore.LOCKED_STATES.has(vm.state); }
+  function isWhole(vm) { return !vm.team || chatStore.LOCKED_STATES.has(vm.state) || serverDown(vm); }
 
   // A whole-view state. A gated team shows the column's head only, when there is another team to switch to.
   function shellHtml(vm) {
@@ -340,5 +447,5 @@
     return '<div class="team-shell" data-team-state="' + escapeHtml(vm.state) + '"' + (column ? '' : ' data-column="none"') + '>' + column + stateHtml(vm) + '</div>';
   }
 
-  return { shellHtml, frameHtml, panelHeadHtml: panelHead, panelHtml, headHtml, bannerHtml, hostWords, isWhole, teamFact, notifyText };
+  return { shellHtml, frameHtml, panelHeadHtml: panelHead, panelHtml, headHtml, bannerHtml, hostWords, isWhole, teamFact, notifyText, peopleRows };
 });

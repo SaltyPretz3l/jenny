@@ -275,6 +275,48 @@ def test_engine_messages_keeps_images_on_explicit_anchor_before_loop_nudge() -> 
     assert "images" not in result[-1]
 
 
+def test_engine_messages_carries_a_steered_messages_own_images() -> None:
+    """Row 180: a message the person sent mid-turn keeps its images beside the prompt's."""
+    prompt_image, steer_image = _vision_image(), _vision_image()
+    result = engine_messages(
+        [
+            {"role": "user", "content": "current"},
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": "use this one", "images": [steer_image]},
+        ],
+        primary_system_text="system",
+        vision_images=(prompt_image,),
+        vision_anchor_text="current",
+    )
+
+    assert result[0]["images"] == [prompt_image]
+    assert result[-1]["images"] == [steer_image]
+    without_turn_images = engine_messages(
+        [{"role": "user", "content": "use this one", "images": [steer_image]}],
+        primary_system_text="system",
+    )
+    assert without_turn_images[0]["images"] == [steer_image]
+
+
+def test_a_steer_repeating_the_prompt_text_never_takes_the_turns_images() -> None:
+    """Row 180 review: the anchor search skips ``steer`` rows, so the prompt keeps its images."""
+    prompt_image = _vision_image()
+    result = engine_messages(
+        [
+            {"role": "user", "content": "fix this"},
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": "fix this", "steer": True},
+        ],
+        primary_system_text="system",
+        vision_images=(prompt_image,),
+        vision_anchor_text="fix this",
+    )
+
+    assert result[0]["images"] == [prompt_image]
+    assert "images" not in result[-1]
+    assert "steer" not in result[-1], "the marker never reaches a provider"
+
+
 def test_engine_messages_rejects_missing_explicit_vision_anchor() -> None:
     with pytest.raises(VisionAnchorError, match="could not be attached"):
         engine_messages(

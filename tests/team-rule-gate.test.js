@@ -191,3 +191,19 @@ test('a person who answers still settles with their own scope, no rule id and no
   assert.equal(Object.hasOwn(settled, 'teamRuleSeq'), false);
   assert.deepEqual(uses, []);
 });
+
+// D5 (docs/plans/TEAM_HOST_FILE_TOOLS_2026-11-16.md): while the host's file tools are on, no rule answers; a person
+// sees every write and edit.
+test('with file tools on (a root boundary set) a matching rule answers nothing and a person is asked', async () => {
+  const on = matchAll();
+  const { svc, emitted } = service({ port: on.port, hostRootBoundary: '/srv/team/projects' });
+  assert.equal((await run(svc)).outcome, 'asked');
+  assert.equal(on.seen.length, 0, 'the port is never asked');
+  assert.equal(Object.hasOwn(emitted.find((event) => event.type === 'tool_approval_needed'), 'teamRuleSeq'), false);
+  assert.equal(teamRuleApproves({ hostMode: 'server', teamProjectRules: matchAll().port, hostRootBoundary: '/srv/p' },
+    { toolName: 'write_file', input: { path: 'a.md', content: 'x' }, executionAuthority: TURN }), null);
+  const off = matchAll();
+  assert.equal(teamRuleApproves({ hostMode: 'server', teamProjectRules: off.port, hostRootBoundary: null },
+    { toolName: 'write_file', input: { path: 'a.md', content: 'x' }, executionAuthority: TURN })?.rule_seq, 7,
+  'off, the rule answers as before');
+});

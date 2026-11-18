@@ -15,11 +15,19 @@
 //   (each bounded at 4 MiB before reading; a larger one answers its name and size with no bytes), the rest counted.
 // - `image`: one attached file for drawing, answered as a `data:` URL only when the host served it as PNG, JPEG or
 //   WebP, its first bytes match, and its header declares at most 8192 px a side and 40 megapixels (read before
-//   anything decodes it); anything else is refused (`team_attachment_not_image`) and the row draws it as a file.
+//   anything decodes it); anything else is refused (`team_attachment_not_image`) and the row draws it as a file. A GIF
+//   is drawn too, under a stricter 4 megapixels (the host stores it as a file and serves it as octet-stream, so its
+//   own first bytes name it); `copy` never takes a GIF, because the clipboard would keep only its first frame.
+// - `text`: one attached file as UTF-8 text for a read-only preview, only when the served type is text, JSON, XML,
+//   JavaScript or SVG, or the name the renderer gives has a text extension (the host serves every file but a PNG, JPEG
+//   or WebP picture as octet-stream, so with no name the bytes alone decide). A NUL in the first 8 KB or bytes that are
+//   not valid UTF-8 refuse it (`team_attachment_not_text`). A full read answers at most 512,000 bytes, cut on a whole
+//   character, with the file's byte length; a peek answers the first three non-blank lines of a file of at most
+//   64 KiB, each cut to 200 characters (`team_attachment_too_large_for_peek` above that).
 // - `save`: the save dialog, then the file fetched and written to a partial name made exclusively beside the target,
 //   renamed onto the target (the dialog asked before replacing) and removed on any failure or cancel. The folder's own
 //   name is answered; the full path stays here (`reveal` shows the last saved copy of an attachment in its folder).
-// - `copy`: a picture to the clipboard, under the same type and pixel checks as `image`.
+// - `copy`: a picture to the clipboard, under the same type and pixel checks as `image` (never a GIF).
 // - At most 3 picture reads and saves fetch at once; the rest wait their turn.
 // - `post`: `team.chat.post` carrying `attachment_ids`, sent only while online and never queued (a staged upload
 //   lasts an hour; a queued post could come back later as `team_chat_not_found`). It carries a request id, and a
@@ -43,10 +51,21 @@ const DOWNLOADS_AT_ONCE = 3;
 // The largest picture drawn or copied: its header's declared size, checked before any decoder sees the bytes.
 const PICTURE_MAX_SIDE = 8192;
 const PICTURE_MAX_PIXELS = 40_000_000;
+const GIF_MAX_PIXELS = 4_000_000;
+// A text preview: the most bytes decoded, where a NUL means binary, the most a peek reads, and its lines.
+const TEXT_MAX_BYTES = 512_000;
+const TEXT_NUL_SCAN_BYTES = 8192;
+const PEEK_MAX_BYTES = 65_536;
+const PEEK_LINES = 3;
+const PEEK_LINE_CHARS = 200;
 // A send whose answer was lost: these reasons say the request may not have been answered, so it is sent once more.
 const LOST_ANSWER = new Set(['team_not_connected', 'team_connection_reset', 'team_request_timeout', 'team_unavailable']);
 const OCTET = 'application/octet-stream';
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+// Served types, and name extensions, a text preview accepts (a type of `text/*` is accepted too).
+const TEXT_TYPES = new Set(['application/json', 'application/xml', 'application/javascript', 'image/svg+xml']);
+const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'log', 'csv', 'tsv', 'json', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'rs', 'go',
+  'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'rb', 'sh', 'ps1', 'yml', 'yaml', 'toml', 'ini', 'xml', 'html', 'htm', 'css', 'scss', 'sql', 'svg']);
 const UPLOAD_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 // The last saved copy of each attachment `reveal` may show; the oldest goes past this many.
 const SAVED_KEEP = 64;
@@ -82,11 +101,12 @@ function isItem(item) {
     && item.size_bytes <= MAX_BYTES && (item.kind === 'image' || item.kind === 'file');
 }
 
-/** The picture type the first bytes say, or null (PNG, JPEG, WebP only). */
+/** The picture type the first bytes say, or null (PNG, JPEG, WebP and GIF only). */
 function pictureType(bytes) {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if (bytes.length >= 12 && bytes.toString('latin1', 0, 4) === 'RIFF' && bytes.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  if (bytes.length >= 10 && /^GIF8[79]a$/u.test(bytes.toString('latin1', 0, 6))) return 'image/gif';
   return null;
 }
 
@@ -94,6 +114,7 @@ function pictureType(bytes) {
 function pictureSize(bytes) {
   const b = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   const type = pictureType(b);
+  if (type === 'image/gif') return { width: b.readUInt16LE(6), height: b.readUInt16LE(8) };
   if (type === 'image/png') return b.length >= 24 && b.toString('latin1', 12, 16) === 'IHDR' ? { width: b.readUInt32BE(16), height: b.readUInt32BE(20) } : null;
   if (type === 'image/jpeg') {
     for (let i = 2; i + 9 < b.length;) {
@@ -120,7 +141,50 @@ function isDrawable(type, bytes) {
   if (!IMAGE_TYPES.has(type) || pictureType(bytes) !== type) return false;
   const size = pictureSize(bytes);
   return Boolean(size) && size.width >= 1 && size.height >= 1 && size.width <= PICTURE_MAX_SIDE && size.height <= PICTURE_MAX_SIDE
-    && size.width * size.height <= PICTURE_MAX_PIXELS;
+    && size.width * size.height <= (type === 'image/gif' ? GIF_MAX_PIXELS : PICTURE_MAX_PIXELS);
+}
+
+/** A fetched file's picture type: the served one, or GIF for octet-stream bytes that start as a GIF (the host stores it as a file). */
+function servedPicture({ type, bytes }) {
+  return type === OCTET && pictureType(bytes) === 'image/gif' ? 'image/gif' : type;
+}
+
+/**
+ * True when a file may be read as text: a served text type, octet-stream (the host serves every stored file so; the
+ * bytes then decide, so a README or a Makefile reads too), or another type with a name the renderer gave that has a
+ * text extension.
+ */
+function isTextual(type, name) {
+  const served = String(type || '').split(';', 1)[0].trim().toLowerCase();
+  if (served.startsWith('text/') || TEXT_TYPES.has(served) || served === OCTET) return true;
+  return typeof name === 'string' && name !== '' && TEXT_EXTENSIONS.has(path.extname(name).slice(1).toLowerCase());
+}
+
+/**
+ * The text a file's bytes hold, or null when it is not UTF-8 text: no NUL in the first 8 KB, a BOM dropped, at most
+ * 512,000 bytes decoded and cut back to a whole character, strictly valid.
+ */
+function decodeText(bytes) {
+  if (bytes.subarray(0, TEXT_NUL_SCAN_BYTES).includes(0)) return null;
+  const body = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+  let end = Math.min(body.length, TEXT_MAX_BYTES);
+  if (end < body.length) for (let back = 0; back < 3 && end > 0 && (body[end] & 0xc0) === 0x80; back += 1) end -= 1;
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(body.subarray(0, end)), truncated: end < body.length };
+  } catch {
+    return null;
+  }
+}
+
+/** The first `PEEK_LINES` lines of `text` that are not blank, each cut to `PEEK_LINE_CHARS` whole characters. */
+function peekLines(text) {
+  const lines = [];
+  for (const line of text.split(/\r\n|\n|\r/u)) {
+    if (line.trim() === '') continue;
+    lines.push(line.length > PEEK_LINE_CHARS ? Array.from(line).slice(0, PEEK_LINE_CHARS).join('') : line);
+    if (lines.length === PEEK_LINES) break;
+  }
+  return lines;
 }
 
 /**
@@ -279,14 +343,27 @@ function createChatAttachments({ teamId, manager, log = () => {}, dialogs = null
   async function image({ channel_id: channelId, attachment_id: attachmentId }) {
     const got = await fetchFile(channelId, attachmentId);
     if (!got.ok) return got;
-    if (!isDrawable(got.type, got.bytes)) return invalidRequest('team_attachment_not_image');
-    return { ok: true, data_url: `data:${got.type};base64,${got.bytes.toString('base64')}` };
+    const type = servedPicture(got);
+    if (!isDrawable(type, got.bytes)) return invalidRequest('team_attachment_not_image');
+    return { ok: true, data_url: `data:${type};base64,${got.bytes.toString('base64')}` };
+  }
+
+  async function text({ channel_id: channelId, attachment_id: attachmentId, name, peek }) {
+    const got = await fetchFile(channelId, attachmentId);
+    if (!got.ok) return got;
+    if (!isTextual(got.type, name)) return invalidRequest('team_attachment_not_text');
+    if (peek === true && got.bytes.length > PEEK_MAX_BYTES) return invalidRequest('team_attachment_too_large_for_peek');
+    const decoded = decodeText(got.bytes);
+    if (!decoded) return invalidRequest('team_attachment_not_text');
+    if (peek === true) return { ok: true, lines: peekLines(decoded.text) };
+    return { ok: true, text: decoded.text, truncated: decoded.truncated, total_bytes: got.bytes.length };
   }
 
   async function copy(value) {
     const got = await fetchFile(value.channel_id, value.attachment_id);
     if (!got.ok) return got;
-    if (!isDrawable(got.type, got.bytes)) return invalidRequest('team_attachment_not_image');
+    const type = servedPicture(got);
+    if (type === 'image/gif' || !isDrawable(type, got.bytes)) return invalidRequest('team_attachment_not_image');
     try {
       return system.copyImage(got.bytes) ? { ok: true } : invalidRequest('team_attachment_copy_failed');
     } catch {
@@ -374,7 +451,7 @@ function createChatAttachments({ teamId, manager, log = () => {}, dialogs = null
   }
 
   const METHODS = {
-    chatUpload: upload, chatUploadCancel: uploadCancel, chatAttachPick: pick, chatAttachmentImage: image,
+    chatUpload: upload, chatUploadCancel: uploadCancel, chatAttachPick: pick, chatAttachmentImage: image, chatAttachmentText: text,
     chatAttachmentSave: save, chatAttachmentReveal: reveal, chatAttachmentCopy: copy, chatPost: post,
   };
 
@@ -398,7 +475,7 @@ function createChatAttachments({ teamId, manager, log = () => {}, dialogs = null
 }
 
 const ATTACHMENT_METHODS = Object.freeze(['chatUpload', 'chatUploadCancel', 'chatAttachPick', 'chatAttachmentImage',
-  'chatAttachmentSave', 'chatAttachmentReveal', 'chatAttachmentCopy']);
+  'chatAttachmentText', 'chatAttachmentSave', 'chatAttachmentReveal', 'chatAttachmentCopy']);
 
 module.exports = { ATTACHMENT_METHODS, DOWNLOADS_AT_ONCE, PICTURE_MAX_PIXELS, PICTURE_MAX_SIDE, UPLOAD_ID, createChatAttachments, isAttachmentIds,
-  isByteContainer, isFileName, pictureSize, pictureType, saveName };
+  isByteContainer, isDrawable, isFileName, pictureSize, pictureType, saveName };

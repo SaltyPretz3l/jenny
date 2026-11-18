@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from functools import wraps
 from typing import Any, Callable
 
 from sidecar.ai.container import BrainContainer
@@ -38,6 +39,32 @@ def _emit_log_event(logger: logging.Logger, level: int, **kwargs: Any) -> None:
     log_event_fn(logger, level, **kwargs)
 
 
+_Dispatch = Callable[..., ProcessOutcome | None]
+
+
+def _with_route_token_binding(func: _Dispatch) -> _Dispatch:
+    """Bind the request's optional ``route_token`` (a team host's lease) for the call.
+
+    ``with_route_token`` reads the ``params=`` keyword and this dispatcher takes ``params``
+    positionally, so the token is bound here. Loaded on the first request: off the startup
+    graph. A request without a token (desktop) binds nothing, so the provider call carries
+    no route header.
+    """
+
+    @wraps(func)
+    def wrapped(
+        method: str, message_id: Any, params: Any, *args: Any, **kwargs: Any
+    ) -> ProcessOutcome | None:
+        from sidecar.ai.engines.request_route import bind_route_token
+
+        value = params.get("route_token") if isinstance(params, dict) else None
+        with bind_route_token(value):
+            return func(method, message_id, params, *args, **kwargs)
+
+    return wrapped
+
+
+@_with_route_token_binding
 def process_session_title_method(  # noqa: PLR0913 -- uniform request-dispatch hook contract
     method: str,
     message_id: Any,

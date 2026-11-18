@@ -54,6 +54,7 @@ const {
 } = require('./chat-stream-managed-runtime-failure');
 const { CanonicalTurnMetrics } = require('./canonical-turn-metrics');
 const { attachMidTurnMail } = require('./session-mail-mid-turn');
+const { attachUserSteer } = require('./user-steer-mid-turn');
 const { undrawnImagePromptFields } = require('./image-prompt-pin');
 const { applicationTurnEventFields } = require('./application-turns');
 const {
@@ -953,6 +954,7 @@ function createManagedChatStreamRuntime({
     get diagnosticToolNamesByCallId() { return diagnosticToolNamesByCallId; },
   };
   attachMidTurnMail(ctx); // row 70 W2a: ctx.midTurnMail; this chat's live stream for mid-turn mail
+  attachUserSteer(ctx); // row 180: ctx.userSteer; offers and withdrawals for this live stream
 
   return {
     adapter,

@@ -126,6 +126,7 @@
       'tool_approval_needed',
       'user_questions_requested',
       'tool_result',
+      'user_steer',
       'question_batch',
       'message_updated',
       'complete',
@@ -365,6 +366,8 @@
           notifyActivity(payload);
           return result;
         }
+        if (payload.type === 'user_steer') return await handlers.handleUserSteer(payload);
+        if (payload.type === 'user_steer_released') return await handlers.handleUserSteerReleased(payload);
         if (payload.type === 'stream_reset') return await handlers.handleStreamReset(payload);
         if (payload.type === 'context_compacted') return await handlers.handleContextCompacted(payload);
         // model_waiting (row 136): a running reply's model request waits behind another chat.

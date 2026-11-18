@@ -479,6 +479,64 @@
     return change.label ? jt('chat.approval.schedule.subject', '{action}: {label}', { action: actionText, label: change.label }) : actionText;
   }
 
+  // Row 178 (owner pick D4): the link from a `terminal_run` result to the chat's Terminal panel. It shows only while the
+  // panel's API exists and the result names an integer terminal, and a click opens that terminal's tab.
+  const TERMINAL_RUN_TOOL = 'terminal_run';
+  const TERMINAL_SLOT_MAX = 99;
+
+  function terminalSlotOf(value) {
+    return Number.isInteger(value) && value >= 1 && value <= TERMINAL_SLOT_MAX ? value : null;
+  }
+
+  function resolveActionButton() {
+    if (typeof globalThis.inventoryActionButton === 'function') return globalThis.inventoryActionButton;
+    if (typeof require === 'function') {
+      try { return require('../inventory/action-button'); } catch (_error) { /* not available */ }
+    }
+    return null;
+  }
+
+  function terminalOpenLinkMarkup(link) {
+    const slot = terminalSlotOf(link && link.slot);
+    const panel = globalThis.rendererChatTerminalPanel;
+    const button = slot && panel && typeof panel.open === 'function' ? resolveActionButton() : null;
+    if (!button) return '';
+    const sessionId = boundedText(link.sessionId, 200);
+    return button({
+      id: 'terminal-open', label: jt('chatTerminal.openInTerminal', 'Open in terminal'), variant: 'ghost', size: 'sm', className: 'tool-terminal-open',
+      dataset: { 'terminal-open-slot': String(slot), ...(sessionId ? { 'terminal-open-session': sessionId } : {}) },
+    });
+  }
+
+  // The link for a finished tool row's detail model (its result metadata names the terminal), else ''.
+  function terminalRunResultLinkMarkup(detailModel) {
+    const metadata = detailModel && detailModel.metadata;
+    return metadata && metadata.result_kind === TERMINAL_RUN_TOOL
+      ? terminalOpenLinkMarkup({ slot: metadata.terminal, sessionId: detailModel.sessionId }) : '';
+  }
+
+  // One delegated click for every such link; true when it handled the click.
+  function handleTerminalOpenClick(event, windowRef) {
+    const target = event && event.target;
+    const link = target && typeof target.closest === 'function' ? target.closest('[data-terminal-open-slot]') : null;
+    const panel = windowRef && windowRef.rendererChatTerminalPanel;
+    const slot = link ? terminalSlotOf(Number(link.getAttribute('data-terminal-open-slot'))) : null;
+    if (!slot || !panel || typeof panel.open !== 'function') return false;
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    const sessionId = link.getAttribute('data-terminal-open-session') || '';
+    Promise.resolve(panel.open(sessionId ? { slot, sessionId } : { slot })).catch(() => {});
+    return true;
+  }
+
+  const boundDocuments = new WeakSet();
+  function bindTerminalOpenLinks(documentRef, windowRef) {
+    if (!documentRef || typeof documentRef.addEventListener !== 'function' || boundDocuments.has(documentRef)) return false;
+    boundDocuments.add(documentRef);
+    documentRef.addEventListener('click', (event) => { handleTerminalOpenClick(event, windowRef); });
+    return true;
+  }
+  if (typeof document !== 'undefined') bindTerminalOpenLinks(document, globalThis);
+
   return {
     BROWSER_TOOL,
     EXACT_APPROVAL_TOOLS,
@@ -486,7 +544,9 @@
     SESSION_STOP_TOOL,
     SETTINGS_CHANGE_TOOL,
     SCHEDULE_CHANGE_TOOL,
+    bindTerminalOpenLinks,
     browserApprovalCopy,
+    handleTerminalOpenClick,
     normalizeBrowserApproval,
     normalizeExactApproval,
     normalizeRoundApproval,
@@ -507,5 +567,7 @@
     settingName,
     settingValueText,
     settingsChangeSubject,
+    terminalOpenLinkMarkup,
+    terminalRunResultLinkMarkup,
   };
 });

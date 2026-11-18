@@ -26,8 +26,15 @@ const { hostFailure } = require('./api-contract');
  * that cannot take it refuses with `team_audit_unavailable` and resolves nothing. A resolve that then
  * answers not ok, or throws, appends `approval_not_applied` naming the first entry. A turn with no member
  * author cannot have its approval answered (`approval_prompter_unknown`). A conversation in no project
- * (the owner's General) has no project log: its decisions are not audited. Questions write no entry (the
- * log has no kind for them). Every `decision_changed` on a team host carries `prompter_member_id`.
+ * (the owner's General) has no project log: its decisions are not audited. Row 175 item 11 (audit schema 4): the
+ * entry names the approval id and the tool call id, and an answer that applied writes `question_answered` after it
+ * (ids only; a failed write never undoes it). A declined batch writes nothing. Every `decision_changed` on a team host
+ * carries `prompter_member_id`.
+ *
+ * Row 175 (D14): `approval.resolve` may carry `plan_decision` (approved | accepted | rejected) and `feedback` for an
+ * exit_plan_mode approval with `approved: true`; both reach the backend's `approveToolCall`. Anything else refuses
+ * `plan_decision_invalid` and applies nothing (on a team host before the audit). The audited entry keeps its decision
+ * word and names the plan decision (`plan_decision`); the feedback text is in no entry and no log line.
  *
  * Slice 3-12 (E66): `approval.resolve` may carry `always` (`rule` | `ask`) on a team host, with `approved: true`
  * only, for write_file or edit_file in a conversation of a team project. It is checked inside the queue before the
@@ -43,7 +50,8 @@ function createDecisionHandlers({
     const { params } = command;
     if (command.operation === 'approval.resolve') {
       return decisionAdapter.resolveApproval({ sessionId: command.session_id, streamId: params.stream_id,
-        approvalId: params.approval_id, decisionRevision: params.decision_revision, approved: params.approved });
+        approvalId: params.approval_id, decisionRevision: params.decision_revision, approved: params.approved,
+        planDecision: params.plan_decision, feedback: params.feedback });
     }
     if (command.operation === 'questions.answer') {
       return decisionAdapter.answerQuestions({ sessionId: command.session_id, streamId: params.stream_id,
@@ -107,12 +115,21 @@ function createDecisionHandlers({
     return null;
   }
 
+  // Row 175 (D14): a plan decision or feedback that cannot apply to this waiting approval (an adapter without the check
+  // refuses every one).
+  function planRefused(params, toolName) {
+    if (params.plan_decision === undefined && params.feedback === undefined) return false;
+    return decisionAdapter.planDecisionValid?.(toolName, { approved: params.approved, planDecision: params.plan_decision,
+      feedback: params.feedback }) !== true;
+  }
+
   function resolveAudited(command, context) {
     const { session_id: sessionId, params, request_id: requestId } = command;
     // Only an answer that can still apply is written: waiting here, with this revision.
     const waiting = decisionAdapter.peekApproval({ sessionId, streamId: params.stream_id, approvalId: params.approval_id,
       decisionRevision: params.decision_revision });
     if (!waiting) return hostFailure('conflict', 'decision_stale', requestId);
+    if (planRefused(params, waiting.toolName)) return hostFailure('invalid', 'plan_decision_invalid', requestId);
     const prompter = approvals.prompterFor(sessionId, params.approval_id);
     if (!prompter) return hostFailure('conflict', 'approval_prompter_unknown', requestId);
     const approver = trustedAuthor(context)?.member_id ?? null;
@@ -132,7 +149,8 @@ function createDecisionHandlers({
     if (projectId === null) return settle(command, apply(command), prompter, approver);
     const entry = { kind: 'approval_decided', project_id: projectId, session_id: sessionId,
       actor_member_id: approver, prompter_member_id: prompter,
-      tool_name: waiting.toolName, decision: params.approved ? 'approved' : 'denied' };
+      tool_name: waiting.toolName, decision: params.approved ? 'approved' : 'denied',
+      approval_id: params.approval_id, call_id: waiting.callId, plan_decision: params.plan_decision ?? null };
     const first = approvals.append(entry);
     if (first.ok !== true) return hostFailure('unavailable', 'team_audit_unavailable', requestId);
     const notApplied = () => {
@@ -157,8 +175,21 @@ function createDecisionHandlers({
     return runReceipt(command, context, async () => {
       const refused = teamGate(command, context); if (refused) return refused;
       if (command.operation === 'approval.resolve') return resolveAudited(command, context);
+      if (command.operation === 'questions.answer') return answerAudited(command, context);
       return settle(command, apply(command), approvals.prompterOf(command.session_id));
     });
+  }
+
+  // Row 175 item 11: an answer that applied writes `question_answered` (see the header).
+  function answerAudited(command, context) {
+    const { session_id: sessionId, params } = command;
+    const waiting = decisionAdapter.peekQuestions({ sessionId, streamId: params.stream_id, questionRef: params.question_ref });
+    const prompter = approvals.prompterOf(sessionId);
+    const settled = settle(command, apply(command), prompter);
+    if (settled.ok === true && waiting) {
+      approvals.answered?.({ sessionId, memberId: trustedAuthor(context)?.member_id, prompter, callId: waiting.callId });
+    }
+    return settled;
   }
 
   // `session.view`: keeps the caller's viewing record of a conversation it may read. Not a mutation,

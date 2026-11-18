@@ -55,4 +55,26 @@ function resolveLocalEngine(backend, readers = DEFAULT_READERS) {
   return { url, kind: OWNER_KINDS[owner?.kind] || 'local', key };
 }
 
-module.exports = { DEFAULT_READERS, resolveLocalEngine };
+// What each local model can do, from the member's own model list (the sidecar reads Ollama's capabilities and a
+// managed server's flags; the TTL cache answers repeat reads): a Map of model name to `{ vision, thinking }`, or null
+// when the list cannot be read. The node agent merges it into the rows it registers; the engine's `/v1/models` says
+// neither. Only the engine a shared GPU forwards to is read.
+async function readModelCapabilities(backend, list = (service, engineType) => require('../../backend/backend-model-list')
+  .listModelsForEngine(service, engineType)) {
+  if (!backend || typeof backend !== 'object') return null;
+  const engineType = String(backend.currentEngineType || '').trim().toLowerCase();
+  if (!engineType) return null;
+  let answer;
+  try { answer = await list(backend, engineType); } catch (_error) { return null; }
+  if (!answer || !Array.isArray(answer.data)) return null;
+  const capabilities = new Map();
+  for (const entry of answer.data) {
+    const name = entry && typeof entry.id === 'string' ? entry.id : '';
+    const caps = entry && entry.capabilities && typeof entry.capabilities === 'object' ? entry.capabilities : null;
+    if (!name || !caps || capabilities.has(name)) continue;
+    capabilities.set(name, { vision: caps.vision === true, thinking: caps.thinking === true });
+  }
+  return capabilities;
+}
+
+module.exports = { DEFAULT_READERS, readModelCapabilities, resolveLocalEngine };

@@ -203,6 +203,19 @@ test('a new request id after a failed mutation, so the retry is answered afresh'
   assert.equal(third.ok, true, JSON.stringify(third));
 });
 
+test('a rename this device made shows in its own team row at once, without a reconnect', async (t) => {
+  const host = await createTeamClientHost(t);
+  const service = host.createService();
+  const me = await joinAs(host, service, {});
+  await host.waitForState(me.teamId, 'online');
+  const nameNow = async () => (await service.handle('status', {})).teams.find((team) => team.team_id === me.teamId).team_name;
+  const before = await nameNow();
+  assert.notEqual(before, 'Studio Two');
+  const renamed = await service.handle('rename', { team_id: me.teamId, name: 'Studio Two' });
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.equal(await nameNow(), 'Studio Two');
+});
+
 test('a rate-limited call is not sent again within the minute', async (t) => {
   const host = await createTeamClientHost(t);
   const service = host.createService();
@@ -572,4 +585,16 @@ test('the hints are a second set only when they add an address; a zoned address 
   assert.deepEqual(addressSets({ last_addresses: ['198.51.100.2:4455'], address_hints: hints }), [['198.51.100.2:4455'], hints]);
   assert.deepEqual(addressSets({ last_addresses: [], address_hints: hints }), [hints]);
   assert.deepEqual(cleanAddresses(['[fe80::1%5]:4455', '[fe80::1]:4455', '10.0.0.5:4455']), ['[fe80::1]:4455', '10.0.0.5:4455']);
+});
+
+test('retryNow after stop leaves no timer, child or socket', async (t) => {
+  const host = await createTeamClientHost(t);
+  const service = host.createService();
+  const me = await joinAs(host, service, { owner: await host.ownerDirect() }).finally(() => service.stopAll());
+  const manager = namedManager(host, loadClientFile(host.userData, me.teamId).record);
+  manager.start();
+  await manager.stop();
+  assert.equal(manager.retryNow(), false);
+  await pause(50);
+  assert.deepEqual([manager.resources(), host.liveMemberChildren().length], [{ bridges: 0, timers: 0, sockets: 0, streams: 0 }, 0]);
 });

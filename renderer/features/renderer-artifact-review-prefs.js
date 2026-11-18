@@ -93,6 +93,8 @@
     if (raw === 'browser') return 'browser';
     // The Background tasks panel (row 138, renderer-background-tasks-panel.js). Renderer-local like `notes`.
     if (raw === 'background_tasks') return 'background_tasks';
+    // The chat Terminal panel (row 178, renderer-chat-terminal-panel.js). Renderer-local too: its terminals are the Workspace's.
+    if (raw === 'terminal') return 'terminal';
     return 'artifact';
   }
 

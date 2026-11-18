@@ -63,6 +63,12 @@ test('assistant rows and rows without attachments are unchanged', () => {
     ['here is your picture', 'plain', 'empty list']);
 });
 
+test('a steer row (row 180) keeps its attachment note in later history', () => {
+  const rows = [{ id: 'steer_outbox_a', role: 'user', kind: 'steer', content: 'use this one', attachments: [image('ref.png')] }];
+  const [message] = buildPreparedContextHistory(rows, SESSION);
+  assert.match(message.content, /^use this one\n\n\[.*ref\.png \(image\)/);
+});
+
 test('the current prompt is not noted: its files are sent with this turn', () => {
   const messages = buildPreparedMessages([], 'describe it', {
     contextPreferences: SESSION,

@@ -443,3 +443,55 @@ test('a settle heard before the runtime row turns terminal re-reads on a bounded
   assert.deepEqual(h.timers.timeouts.slice(2).map((handle) => handle.delay), [250, 1000, 3000]);
   h.close();
 });
+
+// Row 175 F10 (D16): Team turns in the digest, through the Team notifier's accessor and the conversation intent.
+async function withTeam(notices, run) {
+  const previous = globalThis.rendererTeamNotify;
+  const requests = [];
+  const source = { notices };
+  globalThis.rendererTeamNotify = { attention: () => ({ key: 'k', waiting: [], notices: source.notices }), request: (intent) => { requests.push(intent); return true; } };
+  try { await run(requests, source); } finally { if (previous === undefined) delete globalThis.rendererTeamNotify; else globalThis.rendererTeamNotify = previous; }
+}
+const teamTurn = (id, notice, msAgo, over = {}) => ({ notice, teamId: 'team_one', projectId: 'project_p1', sessionId: 'sess_' + id, title: 'Team chat ' + id,
+  where: 'Palette', at: Date.now() - msAgo, id, ...over });
+
+test('a failed Team turn and a finished one show Team · project, the outcome and open in the Team tab; Mark all seen clears them', async () => {
+  await withTeam([teamTurn('1', 'failed', 60000), teamTurn('2', 'finished', 120000, { title: '<img src=x onerror=alert(1)>' })], async (requests) => {
+    const h = harness({ work: [work({ updated_at: new Date(Date.now() - 90000).toISOString() })], sessions: [session('s1', 'Chat one')] });
+    await h.reader.refresh();
+    h.render();
+    assert.deepEqual(h.rows().map((row) => row.dataset.digestKey), ['team:team_one:1', 'work:w1', 'team:team_one:2']);
+    const failed = h.body.querySelector('[data-digest-key="team:team_one:1"]');
+    assert.equal(failed.querySelector('.away-digest__where').textContent, 'Team · Palette');
+    assert.equal(failed.querySelector('.away-digest__where').getAttribute('dir'), 'auto');
+    assert.equal(failed.querySelector('.away-digest__outcome--failed').textContent, 'Your turn failed');
+    assert.equal(h.row('w1').querySelector('.away-digest__where'), null, 'a local row has no Team label');
+    const finished = h.body.querySelector('[data-digest-key="team:team_one:2"]');
+    assert.equal(finished.querySelector('.away-digest__outcome'), null, 'a finished turn shows no outcome word, as a local one');
+    assert.equal(finished.querySelector('img'), null);
+    assert.equal(finished.querySelector('.away-digest__title').textContent, '<img src=x onerror=alert(1)>');
+    failed.querySelector('[data-digest-action="open"]').click();
+    await flush();
+    assert.deepEqual(requests, [{ kind: 'conversation', teamId: 'team_one', projectId: 'project_p1', sessionId: 'sess_1' }]);
+    assert.deepEqual(h.openCalls, [], 'the local open callback never sees a Team conversation');
+    assert.equal(h.body.querySelector('[data-digest-key="team:team_one:1"]'), null, 'an opened turn is seen');
+    assert.notEqual(h.row('w1'), null);
+    h.button('seen').click();
+    assert.deepEqual(h.rows(), [], 'Mark all seen clears the Team turns too');
+    h.close();
+  });
+});
+
+test('a Team turn announced after the digest drew is added without a read', async () => {
+  await withTeam([], async (_requests, source) => {
+    const h = harness({ work: [], sessions: [] });
+    await h.reader.refresh();
+    h.render();
+    assert.deepEqual(h.rows(), []);
+    source.notices = [teamTurn('9', 'finished', 1000)];
+    h.window.dispatchEvent(new h.window.Event('jenny:team-attention'));
+    assert.deepEqual(h.rows().map((row) => row.dataset.digestKey), ['team:team_one:9']);
+    assert.equal(h.calls.snapshot.length, 1, 'no extra runtime read');
+    h.close();
+  });
+});

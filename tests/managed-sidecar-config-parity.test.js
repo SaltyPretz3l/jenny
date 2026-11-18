@@ -47,7 +47,7 @@ function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
-function emittedManagedConfigKeys() {
+function emittedManagedConfigKeys(extraOptions = {}, prepare = () => {}) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-parity-'));
   trackDirectory(userDataPath);
   const service = new BackendService({
@@ -56,8 +56,27 @@ function emittedManagedConfigKeys() {
     pythonExecutable: process.execPath,
     safeStorage: createFakeSafeStorage(),
     defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+    ...extraOptions,
   });
+  prepare(service);
   return Object.keys(buildManagedSidecarConfig(service)).sort();
+}
+
+// Row 179: a ready local subagent engine under a cloud primary adds `local_subagent_engine`.
+function emittedKeysWithLocalSubagentEngine() {
+  const ninfer = {
+    getStatus: () => ({ state: 'ready', pid: 1, alias: 'helper-model', artifactId: 'helper-model', contextSize: 65536 }),
+    getBaseUrl: () => 'http://127.0.0.1:8034/v1',
+    getApiKey: () => 'helper-launch-key-0123456789',
+  };
+  return emittedManagedConfigKeys({
+    featureFlags: { local_subagent_engine: true },
+    configService: { getState: () => ({ localSubagentEngine: { engine: 'ninfer', model: 'helper-model' } }) },
+    getNinferManager: () => ninfer,
+  }, (service) => {
+    service.currentEngineType = 'codex-cli';
+    service.ninferRuntime = { artifacts: { artifacts: [{ id: 'helper-model', model_id: 'helper-model' }] } };
+  });
 }
 
 function configParserReadKeys() {
@@ -69,6 +88,14 @@ test('every managed sidecar config key is consumed by the sidecar', () => {
   const emitted = emittedManagedConfigKeys();
   const read = configParserReadKeys();
   assert.ok(emitted.length > 50, `expected the full managed config, got ${emitted.length} keys`);
+  const unread = emitted.filter((key) => !read.has(key) && !Object.hasOwn(CONSUMED_ELSEWHERE, key));
+  assert.deepEqual(unread, [], `emitted but never read by ${CONFIG_PARSER}`);
+});
+
+test('the local subagent engine key is consumed by the sidecar', () => {
+  const emitted = emittedKeysWithLocalSubagentEngine();
+  assert.equal(emitted.includes('local_subagent_engine'), true, 'a ready helper is emitted');
+  const read = configParserReadKeys();
   const unread = emitted.filter((key) => !read.has(key) && !Object.hasOwn(CONSUMED_ELSEWHERE, key));
   assert.deepEqual(unread, [], `emitted but never read by ${CONFIG_PARSER}`);
 });

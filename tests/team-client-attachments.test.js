@@ -444,3 +444,112 @@ test('the team chats route attachment calls per team; a hold (detach) and a leav
   assert.equal(fake.calls.length, before + 1);
   held.resolve({ ok: true, bytes: PNG, type: 'image/png' });
 });
+
+// ------------------------------------------------------------------ row 167: text previews and GIF pictures
+
+const OCTET = 'application/octet-stream'; // what the host serves for any file that is not a png, jpeg or webp picture
+const gif = (w, h, sig = 'GIF89a') => { const b = Buffer.alloc(16); b.write(sig, 0, 'latin1'); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); b[10] = 0x80; return b; };
+
+// The module on a fake live link whose file answer is `file` (a value, or a function of the call).
+function fileModule(file, dialogs = fakeDialogs(), log = () => {}) {
+  const fake = fakeLink({ answers: { file } });
+  return { fake, att: createChatAttachments({ teamId: TEAM, manager: fake.manager, dialogs, log }) };
+}
+const textOf = (att, over = {}) => att.handle('chatAttachmentText', { channel_id: 'chan_team', attachment_id: ATT, ...over });
+
+test('chatAttachmentText answers a text file as checked UTF-8 text with its byte length', async () => {
+  const body = Buffer.from('# Title\n\nCafé ☕ notes\n');
+  const { att } = fileModule({ ok: true, bytes: body, type: OCTET });
+  assert.deepEqual(await textOf(att, { name: 'notes.md' }), { ok: true, text: '# Title\n\nCafé ☕ notes\n', truncated: false, total_bytes: body.length });
+  // A served text type needs no name; the host serves octet-stream for every file, so with no name the bytes alone decide.
+  const typed = fileModule({ ok: true, bytes: Buffer.from('a,b\n1,2\n'), type: 'text/csv; charset=utf-8' });
+  assert.equal((await textOf(typed.att)).text, 'a,b\n1,2\n');
+  const bare = fileModule({ ok: true, bytes: Buffer.from('plain words'), type: OCTET });
+  assert.equal((await textOf(bare.att)).text, 'plain words');
+});
+
+test('chatAttachmentText refuses a type or name outside the list, a NUL in the first 8 KB and invalid UTF-8', async () => {
+  const text = Buffer.from('looks like text');
+  const refused = async (bytes, type, over) => (await textOf(fileModule({ ok: true, bytes, type }).att, over)).error?.reason;
+  assert.equal(await refused(text, 'application/zip'), 'team_attachment_not_text');
+  assert.equal(await refused(text, 'application/pdf'), 'team_attachment_not_text');
+  assert.equal((await textOf(fileModule({ ok: true, bytes: text, type: OCTET }).att, { name: 'README' })).ok, true, 'octet-stream: the bytes decide, whatever the name');
+  assert.equal(await refused(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]), OCTET, { name: 'archive.zip' }), 'team_attachment_not_text', 'a real zip has a NUL');
+  assert.equal(await refused(Buffer.concat([Buffer.from('abc'), Buffer.from([0]), Buffer.from('def')]), OCTET, { name: 'a.txt' }), 'team_attachment_not_text');
+  assert.equal(await refused(Buffer.from([0x61, 0xff, 0xfe, 0x62]), 'text/plain'), 'team_attachment_not_text');
+  assert.equal(await refused(Buffer.concat([Buffer.alloc(9000, 0x61), Buffer.from([0xc3])]), 'text/plain'), 'team_attachment_not_text', 'an invalid tail is refused too');
+  const lateNul = Buffer.concat([Buffer.alloc(8192, 0x61), Buffer.from([0]), Buffer.from('x')]);
+  assert.equal((await textOf(fileModule({ ok: true, bytes: lateNul, type: 'text/plain' }).att)).ok, true, 'a NUL after the first 8 KB is text');
+  for (const [name, type] of [['a.json', OCTET], ['a.PS1', OCTET], ['a.svg', OCTET], ['a.bin', 'application/json'], ['a.bin', 'image/svg+xml']]) {
+    assert.equal((await textOf(fileModule({ ok: true, bytes: text, type }).att, { name })).ok, true, `${name} ${type}`);
+  }
+});
+
+test('chatAttachmentText cuts a long file at 512,000 bytes on a whole character and drops a BOM', async () => {
+  // Bytes 511,999 to 512,001 are one 3-byte character, so the cut at 512,000 would split it.
+  const big = Buffer.concat([Buffer.alloc(511_999, 0x61), Buffer.from('€'), Buffer.alloc(600_000 - 512_002, 0x62)]);
+  assert.equal(big.length, 600_000);
+  const answer = await textOf(fileModule({ ok: true, bytes: big, type: 'text/plain' }).att);
+  assert.equal(answer.ok, true);
+  assert.equal(answer.truncated, true);
+  assert.equal(answer.total_bytes, 600_000);
+  assert.ok(Buffer.byteLength(answer.text) <= 512_000);
+  assert.equal(answer.text.length, 511_999, 'the cut character is left out whole');
+  assert.ok(!answer.text.includes('\uFFFD'));
+  const exact = await textOf(fileModule({ ok: true, bytes: Buffer.alloc(512_000, 0x61), type: 'text/plain' }).att);
+  assert.equal(exact.truncated, false);
+  const bom = await textOf(fileModule({ ok: true, bytes: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello')]), type: 'text/plain' }).att);
+  assert.deepEqual(bom, { ok: true, text: 'hello', truncated: false, total_bytes: 8 });
+});
+
+test('chatAttachmentText with peek answers the first three non-blank lines, each cut to 200 characters, and refuses a file over 512 KiB', async () => {
+  const lines = ['', 'first', '   ', 'x'.repeat(250), '🙂'.repeat(210), 'fourth'].join('\r\n');
+  const { att } = fileModule({ ok: true, bytes: Buffer.from(lines), type: 'text/plain' });
+  assert.deepEqual(await textOf(att, { peek: true }), { ok: true, lines: ['first', 'x'.repeat(200), '🙂'.repeat(200)] });
+  const few = fileModule({ ok: true, bytes: Buffer.from('only\n\n'), type: 'text/plain' });
+  assert.deepEqual(await textOf(few.att, { peek: true }), { ok: true, lines: ['only'] });
+  const mixed = fileModule({ ok: true, bytes: Buffer.from('a\rb\nc\r\nd'), type: 'text/plain' });
+  assert.deepEqual((await textOf(mixed.att, { peek: true })).lines, ['a', 'b', 'c']);
+  const large = fileModule({ ok: true, bytes: Buffer.alloc(600_000, 0x61), type: 'text/plain' });
+  assert.equal((await textOf(large.att, { peek: true })).error.reason, 'team_attachment_too_large_for_peek');
+  assert.equal((await textOf(large.att)).ok, true, 'the full read of the same file is allowed');
+});
+
+test('chatAttachmentText passes a failed fetch through, and a name never reaches a log', async () => {
+  const gone = fileModule({ ok: false, error: { code: 'CMP-HOST-0003', reason: 'team_chat_not_found' } });
+  assert.equal((await textOf(gone.att, { peek: true })).error.reason, 'team_chat_not_found');
+  const logged = [];
+  const { att } = fileModule({ ok: true, bytes: Buffer.from([0xff]), type: 'text/plain' }, fakeDialogs(), (...args) => logged.push(JSON.stringify(args)));
+  assert.equal((await textOf(att, { name: 'secret-plan.md' })).error.reason, 'team_attachment_not_text');
+  assert.ok(logged.every((line) => !line.includes('secret-plan')));
+});
+
+test('a GIF is drawn as a data: URL when its header is small enough, and is never copied (row 167)', async () => {
+  const copied = [];
+  const dialogs = { ...fakeDialogs(), copyImage: (bytes) => { copied.push(bytes.length); return true; } };
+  const value = { channel_id: 'chan_team', attachment_id: ATT };
+  const cases = [[gif(2, 2), 'image/gif', true], [gif(2, 2, 'GIF87a'), 'image/gif', true], [gif(2, 2), OCTET, true], // the host serves a GIF as octet-stream
+    [gif(2000, 2000), 'image/gif', true], [gif(3000, 3000), 'image/gif', false], [gif(9000, 1), 'image/gif', false], [gif(0, 5), 'image/gif', false],
+    [Buffer.from('GIF89'), 'image/gif', false], [gif(2, 2), 'image/png', false], [png(8, 8), OCTET, false]];
+  for (const [bytes, type, ok] of cases) {
+    const { att } = fileModule({ ok: true, bytes, type }, dialogs);
+    const drawn = await att.handle('chatAttachmentImage', value);
+    assert.equal(drawn.ok, ok, `${bytes.length} ${type}`);
+    if (ok) assert.equal(drawn.data_url, `data:image/gif;base64,${bytes.toString('base64')}`);
+    else assert.equal(drawn.error.reason, 'team_attachment_not_image');
+    if (bytes.toString('latin1', 0, 3) === 'GIF') assert.equal((await att.handle('chatAttachmentCopy', value)).error.reason, 'team_attachment_not_image', 'a GIF is not copied');
+  }
+  assert.equal(copied.length, 0);
+});
+
+test('chatAttachmentText takes an optional name and peek flag and refuses anything else', () => {
+  const base = { team_id: TEAM, channel_id: 'chan_team', attachment_id: ATT };
+  assert.equal(validatePayload('chatAttachmentText', base).ok, true);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, peek: true }).ok, true);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, peek: false, name: 'notes.md' }).ok, true);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, peek: 'yes' }).ok, false);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, name: '' }).ok, false);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, name: 5 }).ok, false);
+  assert.equal(validatePayload('chatAttachmentText', { ...base, path: 'C:\\x' }).ok, false);
+  assert.equal(validatePayload('chatAttachmentText', { team_id: TEAM, channel_id: 'chan_team' }).ok, false);
+});

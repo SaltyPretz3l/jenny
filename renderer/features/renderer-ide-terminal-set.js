@@ -67,6 +67,10 @@
     let renameRoot = null; // the workbench root carrying the tab click/focus/double-click listeners
     let renaming = null; // { viewId, tab, input } while a tab's inline name field is open
     const taskViews = new Set(); // terminals opened by openTaskTerminal, reused once idle
+    const changeListeners = new Set(); // the terminal pool's subscribers (row 178): a session, label or layout change
+    function notifyChange() {
+      for (const fn of Array.from(changeListeners)) { try { fn(); } catch (error) { logError('DEBUG', 'ide.terminal_set_change', { message: String(error?.message || error) }); } }
+    }
     const profileMenu = resolveModule('rendererIdeTerminalProfileMenu', './renderer-ide-terminal-profile-menu').createIdeTerminalProfileMenu?.({
       getApi, getIde, contextMenu: o.contextMenu, logError, getRootEl: getWorkbenchRoot,
       commitPreference: typeof o.commitPreference === 'function' ? o.commitPreference : undefined,
@@ -137,7 +141,9 @@
           if (typeof o.onSessionChange === 'function') {
             o.onSessionChange(viewId, sessionId);
           }
+          notifyChange();
         },
+        onHostChange: notifyChange,
       }) || null;
     }
 
@@ -149,9 +155,11 @@
       }
       const ids = listed();
       const wanted = new Set(ids);
+      let changed = false;
       for (const viewId of Array.from(panels.keys())) {
         if (!wanted.has(viewId)) {
           disposePanel(viewId);
+          changed = true;
         }
       }
       for (const viewId of ids) {
@@ -159,9 +167,11 @@
           const panel = createPanel(viewId);
           if (panel) {
             panels.set(viewId, panel);
+            changed = true;
           }
         }
       }
+      if (changed) notifyChange();
     }
 
     function renderAll() {
@@ -304,7 +314,7 @@
       addTerminalView(viewId, opts && opts.near, lastNear);
       sync();
       touch(viewId);
-      revealView(viewId, { focus: true });
+      if (!opts || opts.reveal !== false) revealView(viewId, { focus: true }); // the chat's Terminal panel adds one without opening the IDE
       if (opts && opts.start === true) {
         const start = opts.cwd || opts.profileId ? { cwd: opts.cwd || '', profileId: opts.profileId || '' } : undefined;
         panels.get(viewId)?.startSession?.(start).catch?.(noop);
@@ -365,9 +375,12 @@
     // earlier task terminal that has gone idle is reused first, then a NEW
     // terminal; with no free slot, slot 1 is reused only when it is idle.
     // Resolves null when no terminal is free, and false when the session could
-    // not start (the panel has already said why). `bound` (W7c: the terminal bound
+    // not start (lastTaskStartFailure() keeps why). `bound` (W7c: the terminal bound
     // to the focused editor group) is used when idle, else a new one opens beside it.
-    async function openTaskTerminal(bound) {
+    // `options.place` 'start_folder' starts in main's start folder, else the root.
+    let lastTaskFailure = null;
+    async function openTaskTerminal(bound, options) {
+      lastTaskFailure = null;
       if (disposed) {
         return null;
       }
@@ -397,9 +410,11 @@
       if (slotOf(viewId) > 1) {
         taskViews.add(viewId);
       }
-      const started = await panel.startSession();
+      // Explicit, so a reused terminal never keeps an earlier folder.
+      const started = await panel.startSession({ place: options && options.place === 'start_folder' ? 'start_folder' : '' });
       const sessionId = String(panel.getSessionId() || '');
       if (disposed || started !== true || !sessionId || panels.get(viewId) !== panel) {
+        lastTaskFailure = panel.getLastStartFailure?.() || null;
         return false;
       }
       return {
@@ -479,7 +494,7 @@
       const value = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX);
       if (value) labels.set(viewId, value);
       else labels.delete(viewId);
-      requestRender();
+      requestRender(); notifyChange();
       return true;
     }
 
@@ -545,6 +560,7 @@
       unbindRoot();
       renaming = null;
       disposed = true;
+      changeListeners.clear();
     }
 
     return {
@@ -556,12 +572,15 @@
       count,
       dispose,
       focusTerminal,
+      isTaskView: (viewId) => taskViews.has(viewId),
       labelOf,
       menuItems,
       newTerminal,
+      onChange: (fn) => { if (typeof fn !== 'function') return noop; changeListeners.add(fn); return () => { changeListeners.delete(fn); }; },
       openDefaultProfileMenu,
       openProfileMenu,
       openTaskTerminal,
+      lastTaskStartFailure: () => (lastTaskFailure ? { ...lastTaskFailure } : null),
       panelFor,
       profilesAvailable,
       renameTerminal,
@@ -571,6 +590,7 @@
       setLabel,
       sync,
       viewActions,
+      viewIds: () => listed(),
     };
   }
 

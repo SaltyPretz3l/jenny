@@ -41,9 +41,12 @@ const CONTEXT_BLOCK_KINDS = Object.freeze([
   // Row 150: how to propose board changes and the board as text, only on a turn
   // sent from the chat docked beside a board (services/boards/board-turn-context.js).
   'board',
+  // Where the conversation runs, from a host composition's `hostTurnContext` port (a team host:
+  // server/team/turn-context.js). Absent on desktop.
+  'team',
 ]);
 const CONTEXT_BLOCK_KIND_SET = new Set(CONTEXT_BLOCK_KINDS);
-const MAX_CONTEXT_BLOCKS = 8;
+const MAX_CONTEXT_BLOCKS = 9;
 // Generous by design: context-budget-trimmer.js already trims these blocks to
 // the model's MEASURED effective window, so these ceilings are a
 // transport-integrity backstop against a runaway block, not a context policy. A

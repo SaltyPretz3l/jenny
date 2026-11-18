@@ -32,7 +32,9 @@ function attachmentHistoryNote(attachments) {
 // Plain user rows only: kinded rows (recaps, session mail) and assistant rows
 // (generated images) keep their content as it is.
 function projectUserAttachmentNote(message, content) {
-  if (message?.role !== 'user' || String(message.kind || '').trim()) return content;
+  // A steered message (row 180) is the person's own words taken mid-turn; other kinds carry no files of theirs.
+  const kind = String(message?.kind || '').trim();
+  if (message?.role !== 'user' || (kind && kind !== 'steer')) return content;
   const note = attachmentHistoryNote(message.attachments);
   if (!note) return content;
   return content ? `${content}\n\n${note}` : note;

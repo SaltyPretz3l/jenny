@@ -30,11 +30,11 @@ from sidecar.ai.routing.sub_agent_invocation import (
     SubAgentInvocationResult,
     build_sub_agent_identity,
     invoke_sub_agent,
+    subagent_failure_result,
 )
 from sidecar.ai.routing.subagent_model_routing import (
     invoke_routed_task,
     resolve_subagent_model_route,
-    subagent_failure_result,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES

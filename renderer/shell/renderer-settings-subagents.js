@@ -7,10 +7,10 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback
     || ((key, fallback) => fallback);
   const controllers = new WeakMap();
-  const providers = ['chatgpt', 'codex-cli'];
+  const providers = ['chatgpt', 'codex-cli', 'api-provider'];
   const clone = (row) => ({ defaultModel: row?.defaultModel || '', defaultEffort: row?.defaultEffort || '',
-    preferredModels: Array.isArray(row?.preferredModels) ? [...row.preferredModels] : [],
-    allowedModels: Array.isArray(row?.allowedModels) ? [...row.allowedModels] : [], maxEffort: row?.maxEffort || '' });
+    preferredModels: [...(row?.preferredModels || [])], allowedModels: [...(row?.allowedModels || [])],
+    maxEffort: row?.maxEffort || '' });
   const empty = () => clone();
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const effortLabels = () => ({
@@ -104,7 +104,8 @@
           : catalog[provider]?.available === false ? jt('settings.subagents.providerUnavailable', 'This provider is unavailable. Saved preferences apply when it is ready.')
             : catalog[provider]?.stale ? jt('settings.subagents.catalogStale', 'Showing a cached model catalog. Refresh to check availability.') : '';
       const markup = row('subagent-routing-provider', jt('settings.subagents.title', 'Subagent routing'), select('provider', provider,
-        [{ value: 'chatgpt', label: jt('settings.subagents.chatgpt', 'ChatGPT') }, { value: 'codex-cli', label: jt('settings.subagents.codexCli', 'Codex CLI') }]),
+        [{ value: 'chatgpt', label: jt('settings.subagents.chatgpt', 'ChatGPT') }, { value: 'codex-cli', label: jt('settings.subagents.codexCli', 'Codex CLI') },
+          { value: 'api-provider', label: jt('settings.subagents.apiProvider', 'API providers') }]),
       jt('settings.subagents.help', 'Defaults and preferred models guide delegation on the next turn. The primary agent can override them; running subagents keep their selections.'))
         + row('subagent-routing-model', jt('settings.subagents.defaultModel', 'Default model'), select('model', current.defaultModel, modelChoices))
         + row('subagent-routing-effort', jt('settings.subagents.defaultEffort', 'Default effort'), select('effort', current.defaultEffort, effortChoices, !efforts().length && !current.defaultEffort))

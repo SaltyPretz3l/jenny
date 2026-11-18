@@ -3,6 +3,12 @@ const { normalizeSubagentRouting } = require('./subagent-routing-settings');
 const { normalizeMemorySettings } = require('./shell-config-normalizers');
 const { getReasoningEffortProfile } = require('../reasoning-effort-profiles');
 const { WEB_SEARCH_PROVIDER_KEY_IDS } = require('./backend/secure-store');
+const { enabledModels, namespacedModelId } = require('./backend/api-provider-config');
+const {
+  apiProvidersAvailable,
+  readApiProvidersConfig,
+  resolveSelectionLimits,
+} = require('./backend/api-provider-sidecar-config');
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('./ipc-contract');
 const {
   TOOL_CONFIG_SCHEMA_VERSION,
@@ -19,6 +25,30 @@ function resolveConfiguredTools(configState = {}) {
   return normalizeToolSettings(configState.tools, configState);
 }
 
+const API_PROVIDER_EFFORTS = Object.freeze(['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+// Every enabled model of every API provider instance, by namespaced id.
+function buildApiProviderSubagentModels(backendService) {
+  const models = [];
+  for (const instance of readApiProvidersConfig(backendService).instances || []) {
+    for (const model of enabledModels(instance)) {
+      if (models.length >= 128) return models;
+      try {
+        const { reasoning } = resolveSelectionLimits({ instance, modelId: model.id });
+        models.push({
+          id: namespacedModelId(instance.id, model.id),
+          label: `${instance.label} · ${model.id}`,
+          available: true,
+          reasoning_efforts: reasoning ? [...API_PROVIDER_EFFORTS] : ['default'],
+        });
+      } catch (_error) {
+        // A model whose limits cannot be resolved cannot be a delegate target.
+      }
+    }
+  }
+  return models;
+}
+
 // Read existing catalog owners; this payload contains public metadata only.
 function buildSubagentModelCatalogs(backendService) {
   const chatgpt = backendService?.chatgptModelCatalogService?.snapshot?.() || {};
@@ -31,11 +61,14 @@ function buildSubagentModelCatalogs(backendService) {
     reasoning_efforts: [...new Set([...(provider === 'codex-cli' ? ['default'] : []),
       ...(getReasoningEffortProfile(row.id, row.capabilities || row)?.efforts || [])])],
   })).filter((row) => row.id);
+  const apiProviderModels = apiProvidersAvailable(backendService)
+    ? buildApiProviderSubagentModels(backendService) : [];
   return {
     chatgpt: { models: normalize(chatgptModels, 'chatgpt'), stale: chatgpt.stale === true,
       available: backendService?.chatgptAuthService?.hasCredential?.() === true },
     'codex-cli': { models: normalize(codexModels, 'codex-cli'), stale: false,
       available: codexModels.some((row) => row.available !== false) },
+    'api-provider': { models: apiProviderModels, stale: false, available: apiProviderModels.length > 0 },
   };
 }
 
@@ -190,7 +223,7 @@ function buildFeatureStatePayload({
 // would disrupt children already executing under their admitted selections.
 const RUNTIME_SETTINGS_KEYS = ['tools', 'webSearch', 'featureOverrides'];
 // memory stays out of RUNTIME_SETTINGS_KEYS: its policy rides each chat request.
-const FEATURE_SETTINGS_KEYS = [...RUNTIME_SETTINGS_KEYS, 'memory', 'subagentRouting'];
+const FEATURE_SETTINGS_KEYS = [...RUNTIME_SETTINGS_KEYS, 'memory', 'subagentRouting', 'localSubagentEngine'];
 const transactionTails = new WeakMap();
 let awaitedCommitService = null;
 
@@ -315,6 +348,11 @@ async function runFeatureSettingsTransaction({
     if (runtimeSettingsChanged) {
       await Promise.resolve(backendService?.setFeatureFlags?.(nextFlags));
       await refreshUntilPublished(backendService, revision);
+    }
+    // Row 179: a new local subagent engine pick takes effect now under a cloud primary.
+    if (JSON.stringify(previousConfigState.localSubagentEngine)
+      !== JSON.stringify(nextConfigState.localSubagentEngine)) {
+      await backendService?.syncLocalSubagentEngine?.('local_subagent_engine_updated');
     }
     const payload = buildPayload();
     sendToWindow?.(getBridgeChannel('features.onChanged', 'subscribe'), payload);

@@ -1,4 +1,8 @@
-"""Request-local model selection for same-provider read-only delegates."""
+"""Request-local model selection for read-only delegates.
+
+Children run on the parent's provider, or (row 179) a cloud parent's task with
+model ``"local"`` runs on the local subagent engine Electron brokered.
+"""
 
 from __future__ import annotations
 
@@ -14,15 +18,21 @@ from sidecar.ai.engines.chatgpt_subscription import (
     CHATGPT_MODEL_CONTEXT_LENGTHS,
     CHATGPT_MODEL_REASONING_PROFILES,
 )
-from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_SUBAGENT_INVALID_PROMPT
+from sidecar.ai.error_codes import CMP_TOOL_SUBAGENT_INVALID_PROMPT
 from sidecar.ai.routing.delegate_contracts import DelegateTask
-from sidecar.ai.routing.sub_agent_invocation import SubAgentInvocationResult
+from sidecar.ai.routing.subagent_local_engine import (
+    LOCAL_SUBAGENT_ALIAS,
+    LOCAL_SUBAGENT_ENGINE_TYPE,
+    local_child_config,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 logger = logging.getLogger(__name__)
 _EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
-_CLOUD_PROVIDERS = frozenset({"chatgpt", "codex-cli"})
+_CLOUD_PROVIDERS = frozenset({"chatgpt", "codex-cli", "api-provider"})
+_API_PROVIDER_PREFIX = "api-provider/"
+_API_PROVIDER_EFFORTS = ("default", "none", "low", "medium", "high", "xhigh", "max")
 _LOCAL_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
 _CODEX_EFFORTS = ("default", "none", "minimal", "low", "medium", "high", "xhigh")
 
@@ -33,6 +43,8 @@ class SubagentModelRoute:
     model: str
     reasoning_effort: str | None
     context_length: int | None = None
+    # Row 179: the child runs on the local subagent engine, not the parent's provider.
+    local: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -59,32 +71,47 @@ def invoke_routed_task(  # noqa: PLR0913 - explicit scheduler/invocation boundar
             on_task_started(task, identity, route.to_payload())
         if on_task_event is not None:
             invocation_kwargs["event_sink"] = lambda event: on_task_event(task, identity, event)
+        if route.local:
+            # Admitted on the helper's own route (the local lane), not the cloud parent's.
+            invocation_kwargs["inference_provider"] = LOCAL_SUBAGENT_ENGINE_TYPE
         context = replace(parent_context, reasoning_effort=route.reasoning_effort)
         return invoke(router=child_router, parent_context=context, **invocation_kwargs), route
 
 
-def _model_id(provider: str, model: str) -> str:
+def _model_id(provider: str, model: str, instance: str = "") -> str:
     if provider == "codex-cli" and not model.startswith("codex-cli/"):
         return f"codex-cli/{model}"
+    if provider == "api-provider" and instance and not model.startswith(_API_PROVIDER_PREFIX):
+        return f"{_API_PROVIDER_PREFIX}{instance}/{model}"
     return model
 
 
-def subagent_failure_result(
-    identity: Any,
-    *,
-    code: str = CMP_TOOL_EXECUTION_FAILED,
-    message: str = "Sub-agent execution failed.",
-    completion_reason: str | None = None,
-) -> SubAgentInvocationResult:
-    return SubAgentInvocationResult(
-        status="cancelled" if completion_reason == "cancelled" else "failed",
-        agent_id=identity.agent_id,
-        parent_agent_id=identity.parent_agent_id,
-        error_code=code,
-        error_message=message,
-        error_retryable=completion_reason == "capacity_unavailable",
-        completion_reason=completion_reason,
-    )
+def _api_provider_instance(config: Any) -> str:
+    descriptor = getattr(config, "api_provider_descriptor", None)
+    return str(descriptor.get("provider_id") or "") if isinstance(descriptor, dict) else ""
+
+
+def _instance_preferences(
+    preferences: dict[str, Any], instance: str, parent_model: str,
+) -> dict[str, Any]:
+    """Keep only the api-provider preferences that name a model of ``instance``.
+
+    A default that belongs to another instance is dropped with its effort, so the
+    parent's own model and effort apply rather than another provider's choice. An
+    allow-list naming only other instances still restricts this one: delegates
+    may use the parent's own model and nothing pricier.
+    """
+    prefix = f"{_API_PROVIDER_PREFIX}{instance}/"
+    scoped = dict(preferences)
+    for field in ("allowedModels", "preferredModels"):
+        if field in preferences:
+            scoped[field] = [item for item in preferences[field] if item.startswith(prefix)]
+    if preferences.get("allowedModels") and not scoped["allowedModels"]:
+        scoped["allowedModels"] = [_model_id("api-provider", parent_model, instance)]
+    if scoped.get("defaultModel") and not scoped["defaultModel"].startswith(prefix):
+        scoped["defaultModel"] = ""
+        scoped["defaultEffort"] = ""
+    return scoped
 
 
 def subagent_model_catalog(config: Any, engine: Any = None) -> tuple[dict[str, Any], ...]:
@@ -116,6 +143,22 @@ def subagent_model_catalog(config: Any, engine: Any = None) -> tuple[dict[str, A
             }
             for model in dict.fromkeys(models)
         )
+    if provider == "api-provider":
+        instance = _api_provider_instance(config)
+        if not instance:
+            return ()
+        return tuple(
+            {
+                "id": f"{_API_PROVIDER_PREFIX}{instance}/{entry['id']}",
+                "context_length": entry["limits"]["context_length"],
+                "limits": entry["limits"],
+                "reasoning_efforts": (
+                    list(_API_PROVIDER_EFFORTS) if entry["limits"]["reasoning"] else ["default"]
+                ),
+                "default_reasoning_effort": "default",
+            }
+            for entry in getattr(config, "api_provider_subagent_models", ())
+        )
     return ()
 
 
@@ -126,43 +169,42 @@ def resolve_subagent_model_route(
     provider = str(getattr(config, "engine_type", "") or "").lower()
     engine = getattr(router, "_engine", None)
     current_model = _current_model(router, provider)
-    inherited_effort = getattr(parent_context, "reasoning_effort", None)
-    if inherited_effort is None:
-        inherited_effort = getattr(config, "reasoning_effort", None)
+    inherited_effort = _inherited_effort(parent_context, config)
+    if task.model == LOCAL_SUBAGENT_ALIAS and provider in _CLOUD_PROVIDERS:
+        return _helper_route(config, task)
     if provider not in _CLOUD_PROVIDERS:
-        if task.model is not None and task.model != current_model:
-            raise _route_failure("Local delegation must use the loaded model")
-        applies = getattr(engine, "applies_reasoning_effort", None)
-        if task.reasoning_effort is not None and (
-            task.reasoning_effort not in _LOCAL_EFFORTS
-            or (callable(applies) and not applies(task.reasoning_effort))
-        ):
-            raise _route_failure("Requested reasoning effort is unavailable for the loaded model")
-        effort = task.reasoning_effort or inherited_effort
-        if effort is not None and callable(applies) and not applies(effort):
-            # The adapter degrades it to automatic; never report it as applied.
-            _soft_fallback("effort")
-            effort = None
-        return SubagentModelRoute(provider, current_model, effort)
+        return _local_route(engine, provider, current_model, inherited_effort, task)
     preferences = normalize_subagent_routing(
         getattr(parent_context, "subagent_routing", None)
     ).get(provider, {})
+    instance = _api_provider_instance(config) if provider == "api-provider" else ""
+    if instance:
+        preferences = _instance_preferences(preferences, instance, current_model)
     catalog = subagent_model_catalog(config, engine)
-    model = _model_id(provider, task.model or preferences.get("defaultModel") or current_model)
+    model = _model_id(
+        provider, task.model or preferences.get("defaultModel") or current_model, instance
+    )
     profile = next((row for row in catalog if row["id"] == model), None)
     if profile is None:
-        if task.model:
+        if task.model and not (provider == "api-provider" and model == current_model):
             raise _route_failure(
                 "Requested subagent model is unavailable in the active provider catalog"
             )
-        _soft_fallback("model")
-        model = current_model
-        profile = next((row for row in catalog if row["id"] == model), None)
+        if provider == "api-provider":
+            # A paid provider never swaps a stale default for the parent's model.
+            if model != current_model:
+                raise _route_failure("The subagent default model in Settings is unavailable")
+        else:
+            _soft_fallback("model")
+            model = current_model
+            profile = next((row for row in catalog if row["id"] == model), None)
         if profile is None:
             # Account catalogs may omit a parent that is already running. Reuse
             # that engine; its provider resolves the automatic effort.
             profile = {"id": model, "reasoning_efforts": [], "default_reasoning_effort": None}
-    allowed = {_model_id(provider, item) for item in preferences.get("allowedModels", [])}
+    allowed = {
+        _model_id(provider, item, instance) for item in preferences.get("allowedModels", [])
+    }
     if allowed and model not in allowed:
         if task.model:
             raise _route_failure(
@@ -181,13 +223,55 @@ def resolve_subagent_model_route(
     return SubagentModelRoute(provider, model, effort, profile.get("context_length"))
 
 
+def _inherited_effort(parent_context: Any, config: Any) -> Any:
+    effort = getattr(parent_context, "reasoning_effort", None)
+    return getattr(config, "reasoning_effort", None) if effort is None else effort
+
+
+def _helper_route(config: Any, task: DelegateTask) -> SubagentModelRoute:
+    helper = getattr(config, "local_subagent_engine", None)
+    if helper is None:
+        raise _route_failure(
+            'The local subagent engine is not ready; pick it in Settings or omit model "local"'
+        )
+    if task.reasoning_effort is not None and task.reasoning_effort not in _LOCAL_EFFORTS:
+        raise _route_failure("Requested reasoning effort is unavailable for the local model")
+    # The cloud parent's effort is not inherited: the local model keeps its own default.
+    return SubagentModelRoute(
+        helper.provider_kind, helper.model, task.reasoning_effort, helper.context_length,
+        local=True,
+    )
+
+
+def _local_route(
+    engine: Any, provider: str, current_model: str, inherited_effort: Any, task: DelegateTask
+) -> SubagentModelRoute:
+    if task.model is not None and task.model != current_model:
+        raise _route_failure("Local delegation must use the loaded model")
+    applies = getattr(engine, "applies_reasoning_effort", None)
+    if task.reasoning_effort is not None and (
+        task.reasoning_effort not in _LOCAL_EFFORTS
+        or (callable(applies) and not applies(task.reasoning_effort))
+    ):
+        raise _route_failure("Requested reasoning effort is unavailable for the loaded model")
+    effort = task.reasoning_effort or inherited_effort
+    if effort is not None and callable(applies) and not applies(effort):
+        # The adapter degrades it to automatic; never report it as applied.
+        _soft_fallback("effort")
+        effort = None
+    return SubagentModelRoute(provider, current_model, effort)
+
+
 def _resolve_effort(
     task: DelegateTask, preferences: dict[str, Any], profile: dict[str, Any],
     current_model: str, *, inherited_effort: Any,
 ) -> str | None:
     model = profile["id"]
     default_model = preferences.get("defaultModel") or current_model
-    provider = "codex-cli" if model.startswith("codex-cli/") else "chatgpt"
+    if model.startswith("codex-cli/"):
+        provider = "codex-cli"
+    else:
+        provider = "api-provider" if model.startswith(_API_PROVIDER_PREFIX) else "chatgpt"
     effort = (task.reasoning_effort
               or (preferences.get("defaultEffort")
                   if model == _model_id(provider, default_model) else None)
@@ -202,6 +286,9 @@ def _resolve_effort(
         _soft_fallback("effort")
         effort = profile["default_reasoning_effort"]
     maximum = preferences.get("maxEffort")
+    # A model without reasoning has no effort to bound, so the cap cannot apply to it.
+    if provider == "api-provider" and set(supported) <= {"default"}:
+        maximum = None
     if maximum and (effort not in _EFFORT_ORDER
                     or _EFFORT_ORDER.index(effort) > _EFFORT_ORDER.index(maximum)):
         if task.reasoning_effort and task.reasoning_effort != "default":
@@ -234,6 +321,10 @@ def _current_model(router: Any, provider: str) -> str:
 @contextmanager
 def subagent_router_for_route(router: Any, route: SubagentModelRoute) -> Iterator[Any]:
     config = getattr(router, "_config", None)
+    if route.local:
+        with _helper_router(router, config, route) as child_router:
+            yield child_router
+        return
     current_model = _current_model(router, route.provider)
     same_model = route.model == _model_id(route.provider, current_model)
     if same_model and (route.provider not in _CLOUD_PROVIDERS
@@ -243,6 +334,16 @@ def subagent_router_for_route(router: Any, route: SubagentModelRoute) -> Iterato
     creator = getattr(router, "create_subagent_router", None)
     if config is None or route.provider not in _CLOUD_PROVIDERS or not callable(creator):
         raise _route_failure("Subagent model routing is unavailable")
+    catalog = subagent_model_catalog(config, getattr(router, "_engine", None))
+    limits_overrides: dict[str, Any] = {}
+    if route.provider == "api-provider" and not same_model:
+        # The engine sizes every request from its limits, so a model switch swaps them too.
+        row = next((row for row in catalog if row["id"] == route.model), None)
+        if row is None:
+            raise _route_failure(
+                "Requested subagent model is unavailable in the active provider catalog"
+            )
+        limits_overrides["api_provider_model_limits"] = row["limits"]
     child_config = replace(
         config,
         model=route.model,
@@ -253,11 +354,31 @@ def subagent_router_for_route(router: Any, route: SubagentModelRoute) -> Iterato
                                  if same_model else None),
         fallback_models=(),
         chatgpt_model_catalog=(
-            subagent_model_catalog(config, getattr(router, "_engine", None))
-            if route.provider == "chatgpt" else config.chatgpt_model_catalog
+            catalog if route.provider == "chatgpt" else config.chatgpt_model_catalog
         ),
+        **limits_overrides,
     )
     child_router = creator(child_config)
+    try:
+        yield child_router
+    finally:
+        close_subagent_engine(getattr(child_router, "_engine", None))
+
+
+@contextmanager
+def _helper_router(router: Any, config: Any, route: SubagentModelRoute) -> Iterator[Any]:
+    helper = getattr(config, "local_subagent_engine", None)
+    creator = getattr(router, "create_subagent_router", None)
+    if config is None or helper is None or not callable(creator):
+        raise _route_failure("The local subagent engine is not ready")
+    child_config = replace(
+        local_child_config(config, helper), reasoning_effort=route.reasoning_effort or ""
+    )
+    try:
+        child_router = creator(child_config)
+    except Exception as error:  # noqa: BLE001 - the reason is logged; the task fails visibly.
+        logger.info("subagent.routing.local_engine_unavailable error=%s", type(error).__name__)
+        raise _route_failure("The local subagent engine could not start") from None
     try:
         yield child_router
     finally:
@@ -277,6 +398,22 @@ def close_subagent_engine(engine: Any) -> None:
 def render_subagent_model_guidance(
     config: Any, engine: Any = None, subagent_routing: Any = None
 ) -> str:
+    guidance = _render_catalog_guidance(config, engine, subagent_routing)
+    helper = getattr(config, "local_subagent_engine", None)
+    provider = str(getattr(config, "engine_type", "") or "").lower()
+    if helper is None or provider not in _CLOUD_PROVIDERS:
+        return guidance
+    return (
+        f'{guidance}\nLocal engine: a task with model "{LOCAL_SUBAGENT_ALIAS}" runs on '
+        f"{helper.model} on this computer: read-only, no API cost; "
+        "local tasks wait their turn for it. "
+        "Use it only when the user asks for the local model; omit reasoning_effort for it."
+    )
+
+
+def _render_catalog_guidance(
+    config: Any, engine: Any = None, subagent_routing: Any = None
+) -> str:
     catalog = subagent_model_catalog(config, engine)
     if not catalog:
         return "Local delegates reuse the loaded model and run sequentially."
@@ -286,6 +423,26 @@ def render_subagent_model_guidance(
         {key: row[key] for key in ("id", "reasoning_efforts", "default_reasoning_effort")}
         for row in catalog
     ]
+    stale_default = "stale defaults and inherited effort fall back automatically. "
+    short_ids = ""
+    if provider == "api-provider":
+        # The model passes the short id; routing prefixes the parent's provider instance.
+        prefix = f"{_API_PROVIDER_PREFIX}{_api_provider_instance(config)}/"
+        preferences = _instance_preferences(
+            preferences, _api_provider_instance(config), str(getattr(config, "model", "") or ""),
+        )
+        for row in rows:
+            row["id"] = row["id"].removeprefix(prefix)
+        preferences = {
+            key: ([item.removeprefix(prefix) for item in value] if isinstance(value, list)
+                  else value.removeprefix(prefix) if key == "defaultModel" else value)
+            for key, value in preferences.items()
+        }
+        stale_default = (
+            "a stale default model in Settings fails the task, "
+            "and inherited effort falls back automatically. "
+        )
+        short_ids = " Pass the short model id from the catalog as each task's model."
     return (
         "Choose each task's model and reasoning_effort only from the active provider catalog. "
         "Honor the user's explicit model and effort instructions for each task. "
@@ -295,10 +452,9 @@ def render_subagent_model_guidance(
         "Omitting model uses the configured subagent default, then the parent model. "
         "Omitting effort uses an applicable default, then the parent's same-model effort, "
         "otherwise the selected model's catalog default. "
-        "Unavailable explicit choices fail that task; "
-        "stale defaults and inherited effort fall back automatically. "
+        f"Unavailable explicit choices fail that task; {stale_default}"
         "Allowed models and maximum effort "
-        "are enforced Settings limits that task instructions cannot override.\n"
+        f"are enforced Settings limits that task instructions cannot override.{short_ids}\n"
         f"Active provider: {provider}\nCatalog: {json.dumps(rows, separators=(',', ':'))}\n"
         f"Subagent preferences: {json.dumps(preferences, separators=(',', ':'))}"
     )

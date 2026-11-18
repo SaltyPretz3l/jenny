@@ -1,6 +1,7 @@
 // Jenny's entry for the sandboxed frame (sketch-frame.bundle.js): the core plus the viewer, fonts and
 // styles in one script. The bundle's one global is `jennySketch`; this file is its whole surface.
 import { FONT_CSS } from "@sketchy/viewer/src/fonts.js";
+import { toExcalidraw as upstreamToExcalidraw } from "@sketchy/viewer/src/excalidraw.js";
 import { mountScene, type Host } from "@sketchy/viewer/src/scene-view.js";
 import styles from "@sketchy/viewer/src/styles.css?inline";
 import themeOverride from "./theme-override.css?inline";
@@ -14,7 +15,18 @@ export { buildScene, hasIcon, layout, parse, pickPrevious, prepare, previousLayo
 // Export of the drawing that is up. The frame script calls these when the page asks (the viewer's own
 // export buttons are hidden with its toolbar); marks made in drawing mode are in the SVG and PNG only.
 export { slug, toPngBase64, toSvgString } from "@sketchy/viewer/src/export.js";
-export { toExcalidraw } from "@sketchy/viewer/src/excalidraw.js";
+
+// Sketchy is credited in Settings > About and NOTICE instead of upstream's watermark on every drawing (owner,
+// 2026-11-16; MIT allows it). The vendored files stay unedited: the mark is taken off after upstream draws it.
+// The SVG and PNG exports clone the drawn SVG, so removing it from the drawing covers them too.
+const WATERMARK_ELEMENT_ID = "sketchy-watermark";
+
+/** Upstream's Excalidraw export without its watermark text element. */
+export function toExcalidraw(...args: Parameters<typeof upstreamToExcalidraw>): string {
+  const file = JSON.parse(upstreamToExcalidraw(...args)) as { elements: Array<{ id: string }> };
+  file.elements = file.elements.filter((element) => element.id !== WATERMARK_ELEMENT_ID);
+  return JSON.stringify(file, null, 2);
+}
 
 export type RenderOptions = {
   /** Positions of an earlier drawing, so a follow-up keeps its nodes where they were. */
@@ -56,6 +68,7 @@ export async function render(container: HTMLElement, source: string, options: Re
     const scene = await buildScene(prepared.input);
     const laidOut = await layout(scene, options.previous);
     mountScene(container, laidOut, { openLink() {}, ...options.host });
+    container.querySelectorAll("svg .watermark").forEach((mark) => mark.remove());
     return { kind: "drawn", problems: prepared.problems, counts: prepared.counts, laidOut };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

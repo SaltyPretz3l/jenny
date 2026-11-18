@@ -176,6 +176,23 @@ test('a bridge child that cannot bind is team_transport_down and leaves no liste
   assert.equal(fx.backends[0].calls.at(-1), 'dispose');
 });
 
+test('a missing bridge binary is team_transport_missing, not a network failure, and leaves no listener behind', async (t) => {
+  const fx = createTeamHostFixture(t);
+  const missing = () => { throw Object.assign(new Error('transport_unavailable'), { code: 'transport_unavailable' }); };
+  let port = null;
+  await assert.rejects(fx.start(null, {
+    spawnBridge: missing,
+    createListener: async (context) => {
+      const listener = await createClosedListener(context);
+      port = listener.port;
+      return listener;
+    },
+  }), (error) => error.reason === 'team_transport_missing');
+  assert.equal(await fx.isListening(port), false);
+  assert.equal(fx.lock.released, 1);
+  assert.ok(fx.logs.some((entry) => entry.event === 'team.transport_unavailable'));
+});
+
 test('a bridge child that exits after ready reports team_transport_down and stops the host', async (t) => {
   const fx = createTeamHostFixture(t);
   const parent = fx.newParent();

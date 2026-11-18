@@ -169,6 +169,7 @@ def _approval_audit_metadata_map(
     call_ids: frozenset[str] | None = None,
 ) -> dict[str, dict[str, object]]:
     metadata_by_call: dict[str, dict[str, object]] = {}
+    approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
     for frozen_input in plan.frozen_inputs:
         if call_ids is not None and frozen_input.call_id not in call_ids:
             continue
@@ -178,6 +179,8 @@ def _approval_audit_metadata_map(
             if key != PLAN_ARTIFACT_WRITE_ARG
         ]
         metadata_by_call[frozen_input.call_id] = {
+            # The model's result says the user answered the card (it cannot see the card).
+            **({"approval": "approved"} if frozen_input.call_id == approved_call_id else {}),
             "approval_plan_hash": plan.approval_plan_hash,
             "approval_effective_args_fingerprint": frozen_input.effective_args_fingerprint,
             "approval_execution_context_fingerprint": plan.execution_context_fingerprint,

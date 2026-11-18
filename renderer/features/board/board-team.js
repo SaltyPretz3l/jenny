@@ -32,6 +32,16 @@
   const MENU_ROWS = 200; // the most rows one project or copy menu offers
   const LISTS_WAIT_MS = 8000; // the longest a menu waits for the project lists (an answer that is no list is never followed by a better one)
   const remembered = new WeakMap(); // window -> { teamId, projectId }: the last team project shown (memory only)
+  // Row 175 F11: a board another tab asked for, kept for the next Board page to attach the team (a live one takes it now).
+  let pending = null;
+  let liveTake = null;
+  function requestOpen(request) {
+    const { teamId, projectId, boardId } = request || {};
+    if (![teamId, projectId, boardId].every((value) => typeof value === 'string' && value.length > 0 && value.length <= 200)) return false;
+    pending = { teamId, projectId, boardId };
+    if (liveTake) liveTake();
+    return true;
+  }
 
   // The name inside a sentence, set apart so a name that reads right to left cannot reorder the words around it.
   const iso = (text) => `\u2068${text}\u2069`;
@@ -285,12 +295,27 @@
         const check = () => {
           const state = projects.team(mem.teamId);
           const row = projects.project(mem.teamId, mem.projectId);
-          if (row) { void pick({ id: mem.teamId, name: teamName(teamRow(mem.teamId) || team) }, { id: row.id, name: projectName(row.name) }); stop(); return true; }
+          if (row) { void pick({ id: mem.teamId, name: teamName(teamRow(mem.teamId) || team) }, { id: row.id, name: projectName(row.name) }).then(() => openWanted(mem.boardId)); stop(); return true; }
           if (state && Array.isArray(state.projects)) { remembered.delete(windowRef); stop(); return true; }
           return false;
         };
         if (!check()) off = projects.subscribe(() => { if (!disposed) check(); });
       } catch (_error) { stop(); }
+    }
+
+    // A requested board: its project shows as a remembered pick does (restore), then it opens once the list has it (6 s at most).
+    function openWanted(boardId, tries = 0) {
+      if (!boardId || disposed) return;
+      if (ctx.getBoards().some((board) => board.id === boardId)) { void ctx.openBoard(boardId); return; }
+      if (tries < 40) windowRef.setTimeout(() => openWanted(boardId, tries + 1), 150);
+    }
+    function takePending() {
+      if (disposed || !pending) return false;
+      remembered.set(windowRef, { teamId: pending.teamId, projectId: pending.projectId });
+      if (restoreStop) restoreStop();
+      void restore(pending);
+      pending = null;
+      return true;
     }
 
     /* ------------------------------------------------------------ what the page calls */
@@ -336,7 +361,8 @@
     lastHas = activeTeams().length > 0;
     const store = teamStore();
     if (store && typeof store.subscribe === 'function') offTeams = store.subscribe(onTeams);
-    if (mem) void restore(mem);
+    liveTake = takePending;
+    if (!takePending() && mem) void restore(mem);
 
     function openChat() {
       if (disposed || !shownTeam()) return false;
@@ -358,6 +384,7 @@
       dispose() {
         if (disposed) return;
         disposed = true;
+        if (liveTake === takePending) liveTake = null;
         if (typeof offTeams === 'function') offTeams();
         offTeams = null;
         if (restoreStop) restoreStop();
@@ -374,5 +401,5 @@
     };
   }
 
-  return { attachBoardTeam };
+  return { attachBoardTeam, requestOpen };
 });

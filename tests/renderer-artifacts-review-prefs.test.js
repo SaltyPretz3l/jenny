@@ -480,6 +480,21 @@ describe('the background tasks panel mode is renderer-local', () => {
   });
 });
 
+describe('the chat terminal panel mode is renderer-local', () => {
+  const prefsUtils = require('../renderer/features/renderer-artifact-review-prefs');
+
+  test('the normalizer accepts the mode; the loader and the saver never carry it', () => {
+    assert.equal(prefsUtils.normalizeArtifactReviewMode('terminal'), 'terminal');
+    assert.equal(prefsUtils.normalizeArtifactReviewMode(' Terminal '), 'terminal');
+    const windowRef = { localStorage: { getItem: () => JSON.stringify({ enabled: true, mode: 'terminal' }) } };
+    assert.equal(prefsUtils.loadArtifactReviewPreferences(windowRef, 'k').mode, 'artifact');
+    const written = [];
+    prefsUtils.saveArtifactReviewPreferences({ localStorage: { setItem: (key, value) => written.push(value) } }, 'k', { enabled: true, mode: 'terminal' });
+    assert.equal(written.length, 1);
+    assert.doesNotMatch(written[0], /terminal|"mode"/);
+  });
+});
+
 describe('the notes rail mode is renderer-local', () => {
   const prefsUtils = require('../renderer/features/renderer-artifact-review-prefs');
 

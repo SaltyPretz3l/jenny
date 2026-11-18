@@ -833,12 +833,59 @@
       return { buffered: false, terminal: false };
     }
 
+    // Row 180: a steer read at a step closes the reply segment and lands as a user bubble.
+    async function handleUserSteer(payload) {
+      const message = payload && payload.message && typeof payload.message === 'object' ? payload.message : null;
+      const messageId = String(message && message.id || '').trim();
+      if (!message || !messageId || message.role !== 'user') return { buffered: false, terminal: false };
+      const turnId = resolvePayloadTurnId(payload) || String(payload.streamId || '').trim();
+      applyLiveTurnPayload(payload);
+      finishAssistantSegment(payload);
+      const activeMessages = [...getSessionMessages(payload.sessionId)];
+      if (!activeMessages.some((entry) => entry && entry.id === messageId)) {
+        const created = createNormalizedMessage('user', String(message.content || ''), {
+          ...message,
+          id: messageId,
+          kind: 'steer',
+          ...(turnId ? { turn_id: turnId } : {}),
+          attachments: Array.isArray(message.attachments) ? message.attachments : [],
+          status: MESSAGE_STATUS.COMPLETE,
+          finalizedAt: message.finalizedAt || new Date().toISOString(),
+        });
+        activeMessages.push(created);
+        setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
+        try {
+          noteTimelineMessageCreated({
+            sessionId: payload.sessionId, messageId, role: 'user', kind: 'steer', visible: true,
+          });
+        } catch (_error) { /* best-effort */ }
+      }
+      try {
+        state.sendSteerController?.handleUserSteer?.(payload);
+      } catch (_error) { /* a queue-card failure never disturbs the transcript */ }
+      queueToolSessionRender(payload, 'user_steer', {
+        messages: true,
+        composerStatus: true,
+        composer: true,
+      }, { allowLivePatch: false });
+      return { buffered: false, terminal: false };
+    }
+
+    async function handleUserSteerReleased(payload) {
+      try {
+        state.sendSteerController?.handleReleased?.(payload);
+      } catch (_error) { /* the queue keeps its own state */ }
+      return { buffered: false, terminal: false };
+    }
+
     return {
       handleToolUse,
       handleApprovalNeeded,
       handleUserQuestionsRequested,
       handleToolOutputChunk,
       handleToolResult,
+      handleUserSteer,
+      handleUserSteerReleased,
     };
   }
 

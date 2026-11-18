@@ -227,3 +227,133 @@ def test_scoped_recovery_uses_trusted_profile_and_current_project(tmp_path: Path
         assert scope.workspace.mutation_journal.workspace_root == root.resolve()
     assert legacy.root is None
     assert legacy.mutation_journal is None
+
+
+# --- A root boundary (team host file tools, I2 and I3) ---
+
+
+def _scope_envelope(root_path: str, pair: tuple[str | None, str | None]) -> dict[str, object]:
+    identity = root_path.lower() if os.name == "nt" else root_path
+    return {"_jenny_execution_context": {
+        "schema_version": 1, "authority_revision": "rev", "project_id": "project_alpha",
+        "root_path": root_path,
+        "root_id": "root_" + hashlib.sha256(identity.encode()).hexdigest()[:24],
+        "root_revision": 1, "device_id": pair[0], "inode": pair[1],
+        "tool_policy_snapshot": {"version": 1}, "knowledge_roots": [],
+    }}
+
+
+def _null_root_envelope() -> dict[str, object]:
+    return {"_jenny_execution_context": {
+        "schema_version": 1, "authority_revision": "rev", "project_id": "project_general",
+        "root_path": None, "root_id": None, "root_revision": 0, "device_id": None,
+        "inode": None, "tool_policy_snapshot": {"version": 1}, "knowledge_roots": [],
+    }}
+
+
+def _pair_of(path: Path) -> tuple[str, str]:
+    status = path.stat()
+    return str(status.st_dev), str(status.st_ino)
+
+
+def _team_host(boundary: Path, resolved: Path | None | str = "same") -> dict[str, object]:
+    return {
+        "host_mode": "server", "host_execution_policy_version": 1,
+        "hosted_root_boundary": str(boundary),
+        "hosted_root_boundary_resolved": str(boundary) if resolved == "same"
+        else (None if resolved is None else str(resolved)),
+        "pre_change_snapshot_root": "", "workspace_recovery_root": "",
+    }
+
+
+def _bound(arguments: dict[str, object], host: dict[str, object]):
+    return builtin_request_scope(arguments, legacy_workspace=WorkspaceGuard(None),
+                                 host_config=host)
+
+
+def _link(link: Path, target: Path) -> None:
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+@pytest.fixture
+def projects(tmp_path: Path) -> Path:
+    boundary = (tmp_path / "projects").resolve()
+    for name in ("alpha", "beta", "alpha/inner"):
+        (boundary / name).mkdir(parents=True)
+    (tmp_path / "other").mkdir()
+    return boundary
+
+
+def test_a_direct_child_of_the_boundary_is_bound(projects: Path) -> None:
+    child = projects / "alpha"
+    scope = _bound(_scope_envelope(str(child), _pair_of(child)), _team_host(projects))
+    assert scope is not None and scope.workspace.root == child
+    assert (scope.workspace_device_id, scope.workspace_inode) == _pair_of(child)
+
+
+def _refused_spellings(projects: Path) -> dict[str, tuple[str, Path]]:
+    """name -> (the root_path a request carries, the folder whose pair it carries)."""
+    outside = projects.parent / "other"
+    _link(projects / "link", projects / "alpha")
+    spellings = {
+        "the boundary itself": (str(projects), projects),
+        "a grandchild": (str(projects / "alpha" / "inner"), projects / "alpha" / "inner"),
+        "a sibling of the boundary": (str(outside), outside),
+        "a link to a child": (str(projects / "link"), projects / "alpha"),
+        "a case-only variant of another child": (str(projects / "ALPHA"), projects / "beta"),
+        "a case-only variant of a folder outside": (
+            str(projects.parent / "OTHER"), outside),
+        "a trailing dot": (str(projects / "alpha") + ".", projects / "alpha"),
+        "a trailing space": (str(projects / "alpha") + " ", projects / "alpha"),
+        "a dot-dot through the boundary": (
+            str(projects) + os.sep + ".." + os.sep + "other", outside),
+    }
+    return spellings
+
+
+def test_every_other_spelling_is_the_malformed_context_failure(projects: Path) -> None:
+    accepted = []
+    for name, (root_path, owner) in _refused_spellings(projects).items():
+        try:
+            _bound(_scope_envelope(root_path, _pair_of(owner)), _team_host(projects))
+        except ToolExecutionFailure as error:
+            assert error.message == "trusted tool execution context is malformed", name
+            continue
+        accepted.append(name)
+    assert accepted == []
+
+
+def test_a_child_without_its_identity_pair_is_refused_on_every_platform(projects: Path) -> None:
+    child = projects / "alpha"
+    with pytest.raises(ToolExecutionFailure, match="malformed"):
+        _bound(_scope_envelope(str(child), (None, None)), _team_host(projects))
+
+
+def test_a_boundary_that_did_not_resolve_at_start_binds_no_root(projects: Path) -> None:
+    child = projects / "alpha"
+    with pytest.raises(ToolExecutionFailure, match="malformed"):
+        _bound(_scope_envelope(str(child), _pair_of(child)), _team_host(projects, None))
+
+
+def test_a_null_root_is_bound_and_touches_no_file(projects: Path) -> None:
+    from sidecar.ai.tools import hosted_file_io
+
+    (projects / "alpha" / "a.txt").write_bytes(b"alpha")
+    scope = _bound(_null_root_envelope(), _team_host(projects))
+    assert scope is not None and scope.workspace.root is None
+    with scope, pytest.raises(ToolExecutionFailure):
+        with hosted_file_io.open_regular_file(projects / "alpha" / "a.txt") as handle:
+            handle.read()
+
+
+def test_without_a_boundary_a_single_owner_host_keeps_todays_binding(projects: Path) -> None:
+    """The boundary check and the pair rule apply only with a boundary set."""
+    root = projects / "alpha" / "inner"
+    scope = _bound(_scope_envelope(str(root), (None, None)),
+                   {"host_mode": "server", "host_execution_policy_version": 1})
+    assert scope is not None and scope.workspace.root == root

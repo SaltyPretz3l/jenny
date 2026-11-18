@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from sidecar.ai.engines.admitted import InferenceAdmissionRefused
+from sidecar.ai.engines.admitted import InferenceAdmissionRefused, bind_fallback_inference
 from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED,
@@ -84,6 +84,24 @@ class SubAgentInvocationResult:
     observed_tool_names: tuple[str, ...] = ()
     completion_reason: str | None = None
     invocation_kind: str = INVOCATION_KIND_RESEARCH
+
+
+def subagent_failure_result(
+    identity: Any,
+    *,
+    code: str = CMP_TOOL_EXECUTION_FAILED,
+    message: str = "Sub-agent execution failed.",
+    completion_reason: str | None = None,
+) -> SubAgentInvocationResult:
+    return SubAgentInvocationResult(
+        status="cancelled" if completion_reason == "cancelled" else "failed",
+        agent_id=identity.agent_id,
+        parent_agent_id=identity.parent_agent_id,
+        error_code=code,
+        error_message=message,
+        error_retryable=completion_reason == "capacity_unavailable",
+        completion_reason=completion_reason,
+    )
 
 
 def build_delegation_contract_payload(  # noqa: PLR0913
@@ -358,6 +376,7 @@ def _child_loop_runtime(  # noqa: PLR0913 - explicit isolated child runtime depe
     max_runtime_ms: int | None,
     absolute_deadline: float | None = None,
     event_sink: Any | None = None,
+    inference_provider: str | None = None,
 ) -> _loop_runtime.LoopRuntime:
     try:
         max_iterations = int(child_context.sub_agent_iteration_budget or 10)
@@ -385,6 +404,13 @@ def _child_loop_runtime(  # noqa: PLR0913 - explicit isolated child runtime depe
                 request_id=child_context.request_id,
                 session_id=child_context.session_id,
             )
+            if inference_provider is not None:
+                # A child on another engine (row 179: a cloud parent's local
+                # helper) is admitted on that engine's route, which the app
+                # validates independently; without the capability it is refused.
+                child_inference_admission = bind_fallback_inference(
+                    child_inference_admission, inference_provider,
+                )
         else:
             def _refuse_unbound_child(_context: Any) -> None:
                 raise InferenceAdmissionRefused("inference_child_binding_unavailable")
@@ -655,6 +681,7 @@ def invoke_sub_agent(  # noqa: PLR0913
     report_mode: str = SUB_AGENT_REPORT_MODE_STRUCTURED,
     absolute_deadline: float | None = None,
     event_sink: Any | None = None,
+    inference_provider: str | None = None,
 ) -> SubAgentInvocationResult:
     if int(parent_context.agent_depth or 0) >= 1:
         return SubAgentInvocationResult(
@@ -713,6 +740,7 @@ def invoke_sub_agent(  # noqa: PLR0913
         max_runtime_ms=max_runtime_ms,
         absolute_deadline=absolute_deadline,
         event_sink=event_sink,
+        inference_provider=inference_provider,
     )
     child_messages = list(messages)
     try:

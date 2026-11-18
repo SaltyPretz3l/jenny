@@ -123,13 +123,13 @@ function storedParticipants(channelId, participantsOf) {
   }
 }
 
-// The team channel is every active member; a project channel is the members
-// with an effective role in that active project; a direct channel is its
-// participants who are active (storedParticipants).
+// The team channel and a custom channel (row 173) are every active member; a
+// project channel is the members with an effective role in that active project; a
+// direct channel is its participants who are active (storedParticipants).
 function channelVisible(directory, live, channelId, participantsOf) {
   if (!live || live.state !== 'active') return false;
   const kind = channelKind(channelId);
-  if (kind === 'team') return true;
+  if (kind === 'team' || kind === 'channel') return true;
   // The asker is known to be active, so no audience set is built for a single check.
   if (kind === 'dm') return storedParticipants(channelId, participantsOf).includes(live.member_id);
   return kind === 'project' && activeProjectRole(directory, live, channelProject(channelId)) !== null;
@@ -141,7 +141,7 @@ function channelVisible(directory, live, channelId, participantsOf) {
 function channelAudience(directory, channelId, participantsOf) {
   if (typeof directory?.activeMemberIds !== 'function') return new Set();
   const kind = channelKind(channelId);
-  if (kind === 'team') return new Set(directory.activeMemberIds());
+  if (kind === 'team' || kind === 'channel') return new Set(directory.activeMemberIds());
   if (kind === 'dm') {
     const active = new Set(directory.activeMemberIds());
     return new Set(storedParticipants(channelId, participantsOf).filter((memberId) => active.has(memberId)));

@@ -235,6 +235,8 @@ const TERMINAL_ERROR_CODES = Object.freeze({
   // 0005: a requested start folder is not an existing directory inside the
   // workspace root once links are resolved (row 82 T2, "Open in Terminal").
   CWD_OUTSIDE_ROOT: 'CMP-TERMINAL-0005',
+  // 0006: the Jenny chat's terminal start folder (Settings, else Downloads) is not an existing local folder.
+  START_FOLDER_UNAVAILABLE: 'CMP-TERMINAL-0006',
 });
 
 // Workspace IDE SCM foundation (renderer-initiated, root-scoped, default-off).

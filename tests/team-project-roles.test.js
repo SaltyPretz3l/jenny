@@ -59,8 +59,15 @@ test('every refused call through the client names its reason; the final ones are
     assert.deepEqual(answer.error, { code: 'CMP-HOST-0003', reason: 'team_not_found' }, label);
     assert.equal(answer.error.retryable, undefined, label);
   }
-  // A leased call on a conversation this member could not open is the client's own refusal, sent nowhere.
-  assert.equal(reasonOf(await outsider.call('conversationRename', { ...s, title: 'x' })), 'team_conversation_not_open');
+  // A send on a conversation this member has not open is the client's own refusal, sent nowhere.
+  assert.equal(reasonOf(await outsider.call('conversationSend', { ...s, prompt: 'x' })), 'team_conversation_not_open');
+  // Row 169, the list's row menu: a rename or delete of a conversation that is not open goes to the host, which
+  // answers by role. The outsider gets the same not-found as an open; a reader may not write; a writer may not delete.
+  assert.deepEqual((await outsider.call('conversationRename', { ...s, title: 'x' })).error, { code: 'CMP-HOST-0003', reason: 'team_not_found' });
+  assert.equal(reasonOf(await reader.call('conversationRename', { ...s, title: 'x' })), 'team_project_read_only', 'reader rename');
+  assert.equal(reasonOf(await writer.call('conversationDelete', s)), 'role_forbidden', 'writer delete');
+  assert.equal((await writer.call('conversationRename', { ...s, title: 'Renamed from the list' })).ok, true, 'the refused delete handed the lease back');
+  assert.equal((await owner.call('conversationDelete', s)).ok, true, 'a project admin deletes from the list');
   // A team id this device holds no seat in is the client's own refusal.
   assert.equal(reasonOf(await writer.call('projectMembers', { team_id: 'team_unknownTeamId123', project_id: projectId })),
     'team_not_found');

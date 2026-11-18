@@ -17,8 +17,9 @@
 //   edit    the message's segment, then channel.json
 //   prune   channel.json, then unlink the removed segments (best effort); a
 //           prune is a whole commit on its own
-//   create  channel.json, then index.json
-//   remove  index.json, then the channel's folders (a project channel, E67: team-chat-remove.js)
+//   create  channel.json, then index.json (a custom channel too: team-chat-manage.js)
+//   remove  index.json, then the channel's folders (a project channel, E67, or an archived custom channel, row
+//           173: team-chat-remove.js)
 // A crash before channel.json leaves the previous commit: on load a message at
 // or past next_seq is dropped (a retry creates it once), an unreferenced new
 // segment is a stray, a revision past channel.rev rolls forward so none is
@@ -49,6 +50,7 @@ const { loaderMethods, yieldToEventLoop } = require('./team-chat-loader');
 const { blobMethods, createTeamChatBlobs, isIdList, itemOf } = require('./team-chat-blobs');
 const { roomMethods } = require('./team-chat-room');
 const { removeMethods } = require('./team-chat-remove');
+const { manageMethods } = require('./team-chat-manage');
 
 const { LIMITS, SCHEMA_VERSION } = schema;
 const { bytesOf, segmentMeta } = channels;
@@ -353,10 +355,14 @@ class TeamChatStore {
     return state?.doc.participants ?? null;
   }
 
-  _create(channelId, participants) {
+  // `profile(createdAt)` answers a custom channel's own fields (team-chat-manage.js); no other channel takes one.
+  _create(channelId, participants, profile = null) {
     const kind = schema.channelKind(channelId);
     // A direct conversation exists only through openDirect: one made without its participants would show to nobody.
-    if (kind === null || (kind === 'dm' && participants === null)) refuse('forbidden', 'team_chat_not_found');
+    // A custom channel exists only through createCustomChannel: one made without its name would not load.
+    if (kind === null || (kind === 'dm' && participants === null) || (kind === 'channel') !== (profile !== null)) {
+      refuse('forbidden', 'team_chat_not_found');
+    }
     const existing = this._channels.get(channelId);
     if (existing) return { ok: true, channel_id: channelId, kind, created: false, rev: existing.doc.rev };
     const folded = channelId.toLowerCase();
@@ -365,7 +371,8 @@ class TeamChatStore {
     }
     if (this._channels.size >= LIMITS.CHANNELS_MAX) refuse('limit', 'team_chat_storage_limit');
     const createdAt = iso(this._clock());
-    const doc = schema.emptyChannelDoc(channelId, kind, createdAt, participants);
+    const doc = { ...schema.emptyChannelDoc(channelId, kind, createdAt, participants), ...(profile ? profile(createdAt) : {}) };
+    if (!schema.validateChannelDoc(doc, channelId).ok) throw corrupt('channel_build_invalid');
     this._files.write(this._file(channelId, CHANNEL_FILE), doc, LIMITS.CHANNEL_MAX_BYTES);
     const index = { schema_version: SCHEMA_VERSION,
       channels: [...this._index.channels, { channel_id: channelId, kind, created_at: createdAt }] };
@@ -373,17 +380,11 @@ class TeamChatStore {
     this._index = index;
     this._channels.set(channelId, channels.newState(doc));
     this._log('INFO', 'team_chat.channel_created', { kind, channel_id: logChannel(channelId) });
-    return { ok: true, channel_id: channelId, kind, created: true, rev: 0 };
+    return { ok: true, channel_id: channelId, kind, created: true, rev: doc.rev };
   }
 
-  archiveChannel(input = {}) {
-    return this._mutate(() => {
-      const state = this._channelDoc(input.channelId);
-      if (state.doc.archived) return { ok: true, rev: state.doc.rev };
-      this._commitChannel(state, { ...state.doc, archived: { at: iso(this._clock()) }, rev: state.doc.rev + 1 });
-      return { ok: true, rev: state.doc.rev };
-    });
-  }
+  // Custom channels, a channel's name and topic, and archive (`createCustomChannel`, `updateChannel`,
+  // `archiveChannel`): team-chat-manage.js.
 
   // ------------------------------------------------------------ messages
 
@@ -534,6 +535,6 @@ class TeamChatStore {
 }
 
 Object.assign(TeamChatStore.prototype, readStateMethods, readMethods, loaderMethods, marksMethods, blobMethods,
-  roomMethods, removeMethods);
+  roomMethods, removeMethods, manageMethods);
 
 module.exports = { TeamChatStore };

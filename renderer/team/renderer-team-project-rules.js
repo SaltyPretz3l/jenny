@@ -7,6 +7,11 @@
  * `projectRules` when the page opens and again on the project's `rules_changed` and `rule_requests` pushes; nothing
  * is kept after the page closes. One answer wins (the host's rule); a losing answer shows its reason's sentence.
  *
+ * Paused (file tools on a team host, row 123): while the last good answer says `paused: 'file_tools'` the host's owner has
+ * turned project files on, every change asks a person whatever these rules say. The section then says so, keeps the list
+ * (dimmed, `aria-disabled`) and draws every button disabled with the reason as its title; a click does nothing and no
+ * form stays open. Without `paused` the markup is what it was.
+ *
  * Bounds (the host's): 32 rules, 16 open requests. The forms check the folder and the decline reason as main does
  * (column.checkFolder, column.checkReason: `..`, a hidden or absolute folder, a backslash, a trailing slash, more than
  * 8 segments, bidi and zero-width characters; a reason of 1 to 200 visible characters), so a payload main would refuse
@@ -69,6 +74,9 @@
     const busy = new Set();
     let disposed = false;
     const ids = { team_id: teamId, project_id: projectId };
+    const paused = () => Boolean(data && data.paused === 'file_tools');
+    // A section button: while paused it is disabled with the reason as its title.
+    const pausable = (action, label, opts = {}) => button(action, label, paused() ? { ...opts, disabled: true, title: jt('team.rules.pausedTitle', 'Paused while project files are on') } : opts);
 
     function read() {
       if (disposed) return null;
@@ -76,7 +84,7 @@
       reading = call('projectRules', ids).then((answer) => {
         reading = null;
         if (disposed) return;
-        if (answer.ok) { data = answer; error = ''; } else error = errorText(answer.error);
+        if (answer.ok) { data = answer; error = ''; if (paused()) form = null; } else error = errorText(answer.error);
         if (again) { again = false; void read(); }
         onChange();
       });
@@ -116,10 +124,10 @@
         ? jt('team.rules.requestFact', 'always allow {tool} · from “{conversation}” · {time}', { tool: request.tool_name, conversation: column.clean(from), time: timeText(request.asked_at) })
         : jt('team.rules.requestFactNoTitle', 'always allow {tool} · {time}', { tool: request.tool_name, time: timeText(request.asked_at) });
       const open = form && form.request_seq === request.request_seq ? form.kind : '';
-      const acts = button('rule-allow', jt('team.rules.allow', 'Allow'), { variant: 'primary', title: jt('team.rules.allowTitle', 'Always allow {tool} anywhere in this project, as {name} asked', { tool: request.tool_name, name: asker }),
+      const acts = pausable('rule-allow', jt('team.rules.allow', 'Allow'), { variant: 'primary', title: jt('team.rules.allowTitle', 'Always allow {tool} anywhere in this project, as {name} asked', { tool: request.tool_name, name: asker }),
         disabled: busy.has('allow:' + seq), dataset: { 'request-seq': seq } })
-        + button('rule-change', jt('team.rules.change', 'Change…'), { title: jt('team.rules.changeTitle', 'Allow it narrower: another tool, or one folder'), dataset: { 'request-seq': seq } })
-        + button('rule-decline', jt('team.rules.decline', 'Decline…'), { title: jt('team.rules.declineTitle', 'Say no, with a reason {name} sees', { name: asker }), dataset: { 'request-seq': seq } });
+        + pausable('rule-change', jt('team.rules.change', 'Change…'), { title: jt('team.rules.changeTitle', 'Allow it narrower: another tool, or one folder'), dataset: { 'request-seq': seq } })
+        + pausable('rule-decline', jt('team.rules.decline', 'Decline…'), { title: jt('team.rules.declineTitle', 'Say no, with a reason {name} sees', { name: asker }), dataset: { 'request-seq': seq } });
       let extra = '';
       if (open === 'change') extra = formHtml(jt('team.rules.changeHeading', 'Allow {name}’s request as:', { name: asker }), 'rule-change-go', jt('team.rules.allow', 'Allow'));
       if (open === 'decline') extra = formHtml(jt('team.rules.declineHeading', 'Tell {name} why. They see this in the conversation where they asked.', { name: asker }), 'rule-decline-go', jt('team.rules.declineGo', 'Decline'), { decline: true });
@@ -128,7 +136,7 @@
 
     function ruleRow(rule, admin) {
       const fact = jt('team.rules.ruleFact', '{where} · set by {name}', { where: whereText(rule.folder), name: nameOf(rule.set_by) });
-      const remove = admin ? button('rule-remove', jt('team.rules.remove', 'Remove'), { title: jt('team.rules.removeTitle', 'Stop always allowing {tool} {where}', { tool: rule.tool_name, where: whereText(rule.folder) }),
+      const remove = admin ? pausable('rule-remove', jt('team.rules.remove', 'Remove'), { title: jt('team.rules.removeTitle', 'Stop always allowing {tool} {where}', { tool: rule.tool_name, where: whereText(rule.folder) }),
         disabled: busy.has('remove:' + rule.rule_seq), dataset: { 'rule-seq': String(rule.rule_seq) } }) : '';
       return row(rule.tool_name, fact, remove);
     }
@@ -142,10 +150,12 @@
       const requests = admin && data ? data.requests.filter((request) => request.state === 'open') : [];
       const rows = requests.map(requestRow).join('') + rules.map((rule) => ruleRow(rule, admin)).join('');
       const add = admin ? (form && form.kind === 'add' ? formHtml(jt('team.rules.addHeading', 'Always allow in this project:'), 'rule-add-go', jt('team.rules.addGo', 'Add rule'))
-        : '<div class="team-page__acts">' + button('rule-add', jt('team.rules.add', 'Add a rule'), { title: jt('team.rules.addTitle', 'Always allow a file tool in this project, for everyone’s turns'), disabled: rules.length >= 32 }) + '</div>') : '';
+        : '<div class="team-page__acts">' + pausable('rule-add', jt('team.rules.add', 'Add a rule'), { title: jt('team.rules.addTitle', 'Always allow a file tool in this project, for everyone’s turns'), disabled: rules.length >= 32 }) + '</div>') : '';
       const notes = [error, note].filter(Boolean).map((text) => '<p class="team-set-note" role="status">' + escapeHtml(text) + '</p>').join('');
       return '<section data-team-project-section="rules"><h3>' + escapeHtml(jt('team.rules.heading', 'Always allowed')) + ' <span class="team-set-count">' + escapeHtml(data ? count : '') + '</span></h3>'
-        + '<p class="team-page__fact">' + escapeHtml(copy) + '</p>' + (rows ? '<ul class="team-set-list">' + rows + '</ul>' : '') + add + notes + '</section>';
+        + '<p class="team-page__fact">' + escapeHtml(copy) + '</p>'
+        + (paused() ? '<p class="team-page__fact">' + escapeHtml(jt('team.rules.paused', 'Paused while project files are on: every change Jenny makes asks a person, whatever these rules say. The host’s owner turns project files on and off in Settings, Team.')) + '</p>' : '')
+        + (rows ? '<ul class="team-set-list' + (paused() ? ' team-set-list--paused" aria-disabled="true' : '') + '">' + rows + '</ul>' : '') + add + notes + '</section>';
     }
 
     function openForm(kind, seq) {
@@ -158,6 +168,7 @@
     function onClick(target) {
       const action = target.dataset.projectAction;
       const seq = Number(target.dataset.requestSeq) || 0;
+      if (paused() && action && action.startsWith('rule-')) return true; // paused: the buttons are disabled, and nothing runs
       switch (action) {
         case 'rule-allow': void run('allow:' + seq, 'projectRuleAnswer', { request_seq: seq, outcome: 'allow' }); return true;
         case 'rule-change': openForm('change', seq); return true;

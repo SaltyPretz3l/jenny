@@ -33,6 +33,12 @@ const EXPECTED = Object.freeze({
   'project.audit.read': ['OM', 'admin', 'project'],
   'project.files.upload': ['OM', 'writer', 'project'],
   'project.files.download': ['OMR', 'reader', 'project'],
+  // Row 175 wave 5: the reader view of a team project's files.
+  'project.files.read': ['OMR', 'reader', 'project'],
+  // Row 175 item 6, F13, F18: a project conversation's latest turn redone (its prompter, or a project admin by
+  // `project.write`, asked by the router), and a branch, an ask and a handed driver seat.
+  'project.redo': ['OM', 'writer', 'project'],
+  'project.conversation': ['OM', 'writer', 'project'],
   'project.root': ['O', null, 'project'],
   'permission.review': ['O', null, 'project'],
   'events.subscribe': ['OMR', null, 'session'],
@@ -51,6 +57,7 @@ const EXPECTED = Object.freeze({
   'team.owner.transfer': ['O', null, 'member'],
   'team.audit.read': ['O', null, 'team'],
   'team.rename': ['O', null, 'team'],
+  'team.member.profile': ['OMR', null, 'team'],
   'chat.overview': ['OMR', null, 'team'],
   'chat.read': ['OMR', null, 'channel'],
   'chat.mark': ['OMR', null, 'channel'],
@@ -59,6 +66,8 @@ const EXPECTED = Object.freeze({
   'chat.typing': ['OM', null, 'channel'],
   // Slice 2d: opening a direct conversation.
   'chat.dm_open': ['OM', null, 'team'],
+  'chat.channel.create': ['OM', null, 'team'],
+  'chat.channel.manage': ['OM', null, 'channel'],
   'presence.set': ['OMR', null, 'team'],
   // Slice 4b: the team engine routes (node protocol spec N10).
   'engine.use': ['OM', null, 'team'],
@@ -98,6 +107,7 @@ const OWNER_ANY = Object.freeze(['project.delete']);
 const OWNER_SEEN = Object.freeze(['session.takeover_running']);
 // Rows that exist only in an active project of the team (row 151 review): General, a project with no team row and a
 // project being deleted are not found for everyone, the owner included.
-const TEAM_PROJECT_ONLY = Object.freeze(['board.read', 'board.presence', 'board.write', 'board.admin']);
+const TEAM_PROJECT_ONLY = Object.freeze(['board.read', 'board.presence', 'board.write', 'board.admin',
+  'project.files.read', 'project.redo', 'project.conversation']);
 
 module.exports = { EXPECTED, OWNER_ANY, OWNER_SEEN, TEAM_PROJECT_ONLY };

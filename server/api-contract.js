@@ -34,6 +34,8 @@ const boardName = { type: 'string', minLength: 1, maxLength: 200 };
 const boardBatch = object({ batch_id: { type: 'string', maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:@-]*$' },
   ops: { type: 'array', maxItems: 4096, items: { type: 'object' } } }, ['batch_id', 'ops']);
 const teamCount = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+// A conversation message id as the session store keeps it (printable, no space).
+const messageRef = { type: 'string', minLength: 1, maxLength: 256, pattern: '^[!-~]+$' };
 // Row 151 slices T4 and T5: a card, a pointer and a proposal on a team board.
 const boardRef = { project_id: projectId, board_id: boardId };
 const boardKeys = ['project_id', 'board_id'];
@@ -50,6 +52,10 @@ const runtimeControl = { work_id: id, expected_revision: positiveRevision };
 const channelId = { type: 'string', minLength: 6, maxLength: 160, pattern: '^chan_[A-Za-z0-9_-]+$' };
 const chatText = { type: 'string', minLength: 1, maxLength: 32_000 };
 const chatLimit = (maximum) => ({ type: 'integer', minimum: 1, maximum });
+// Row 173: a channel's name and topic on the wire. The host normalizes both and holds a name to 40 code points and
+// a topic to 250 (team-chat-names.js); these bound the raw strings at four UTF-16 units per code point.
+const channelName = { type: 'string', minLength: 1, maxLength: 160 };
+const channelTopic = { type: 'string', maxLength: 1000 };
 // The team chat search cursor (slice 2a-3b): opaque base64url, bounded. The
 // search module checks the same bound and alphabet when it decodes one.
 const CHAT_CURSOR_MAX_CHARS = 512;
@@ -130,9 +136,12 @@ const PARAM_SCHEMAS = Object.freeze({
   'sessions.snapshot': object({
     before_message_id: text(256), max_messages: { type: 'integer', minimum: 1, maximum: 100 },
   }),
-  // allowed_nodes: size bounds only; the router decides (server/command-router-preferences.js).
+  // allowed_nodes: size bounds only; the router decides (server/command-router-preferences.js). Row 172: the team host
+  // alone takes the model (null: the team default), the effort and the tool switches (server/team-conversation-preferences.js).
   'sessions.preferences': { ...object({ plan_mode: { type: 'boolean' }, run_mode: { enum: ['ask', 'auto', 'plan', 'propose'] },
-    allowed_nodes: { anyOf: [{ type: 'null' }, { type: 'array', maxItems: 64, items: text(128) }] } }), minProperties: 1 },
+    allowed_nodes: { anyOf: [{ type: 'null' }, { type: 'array', maxItems: 64, items: text(128) }] },
+    preferred_model: { anyOf: [{ type: 'null' }, printable(256)] }, reasoning_effort: { enum: ['default', 'low', 'medium', 'high'] },
+    team_tools: { ...object({ read: { type: 'boolean' }, write: { type: 'boolean' } }), minProperties: 1 } }), minProperties: 1 },
   // Propose mode (row 35): the suggestion record of the command's session.
   'suggestedChanges.list': object({}),
   'suggestedChanges.decide': object({
@@ -187,9 +196,12 @@ const PARAM_SCHEMAS = Object.freeze({
   'chat.cancel': object({ stream_id: id }, ['stream_id']),
   // Slice 3-12: `always` (team host only, with approved: true) also saves a rule (`rule`, a project admin) or files a
   // request for one (`ask`, a writer or admin) for write_file or edit_file in the conversation's project.
+  // Row 175 (D14): `plan_decision` and `feedback` answer an exit_plan_mode approval (approved: true only; the router
+  // refuses anything else with `plan_decision_invalid`).
   'approval.resolve': object({
     stream_id: id, approval_id: text(512), decision_revision: id,
     approved: { type: 'boolean' }, always: { enum: ['rule', 'ask'] },
+    plan_decision: { enum: ['approved', 'accepted', 'rejected'] }, feedback: text(800),
   }, ['stream_id', 'approval_id', 'decision_revision', 'approved']),
   'questions.answer': object({
     stream_id: id, question_ref: { ...id, maxLength: 512 },
@@ -217,6 +229,9 @@ const PARAM_SCHEMAS = Object.freeze({
   'team.member.revoke': object({ member_id: id }, ['member_id']),
   'team.audit.read': object({ cursor: teamCount, limit: { type: 'integer', minimum: 1, maximum: 100 } }),
   'team.rename': object({ name: { ...text(128), minLength: 1 } }, ['name']),
+  // Row 170: the caller's own display name and the label of the device the request comes from; never an id.
+  'team.member.profile': { ...object({ display_name: { ...text(128), minLength: 1 }, label: { ...text(128), minLength: 1 } }),
+    minProperties: 1 },
   'team.owner.transfer': object({ member_id: id }, ['member_id']),
   // Shared projects (slice 3-4a); the member store re-checks every id against the project.
   'team.project.create': object({ name: projectName }, ['name']),
@@ -244,6 +259,24 @@ const PARAM_SCHEMAS = Object.freeze({
   'team.project.upload.commit': object({ project_id: projectId, upload_id: id }, ['project_id', 'upload_id']),
   'team.project.upload.discard': object({ project_id: projectId, upload_id: id }, ['project_id', 'upload_id']),
   'team.project.download.manifest': object({ project_id: projectId, manifest_id: id, cursor: teamCount }, ['project_id']),
+  // Row 175 wave 5: a page of a team project's files (under one folder) and one file as text; project-files.js applies
+  // the upload path rules to `dir` and `path`.
+  'team.project.files.list': object({ project_id: projectId, cursor: teamCount,
+    dir: { type: 'string', minLength: 1, maxLength: 512 } }, ['project_id']),
+  'team.project.files.read': object({ project_id: projectId, path: { type: 'string', minLength: 1, maxLength: 512 } },
+    ['project_id', 'path']),
+  // Row 175 item 6 (D7), F13 (D8), F18 (server/command-router-redo.js): a project conversation's latest turn redone
+  // (`message_id` is the latest prompt the caller saw), a branch at a message, a teammate asked, the driver seat handed.
+  'team.project.regenerate': object({ project_id: projectId, session_id: id, message_id: messageRef },
+    ['project_id', 'session_id', 'message_id']),
+  'team.project.edit_resend': object({ project_id: projectId, session_id: id, message_id: messageRef,
+    prompt: { ...text(100_000), minLength: 1 } }, ['project_id', 'session_id', 'message_id', 'prompt']),
+  'team.project.branch': object({ project_id: projectId, session_id: id, message_id: messageRef },
+    ['project_id', 'session_id', 'message_id']),
+  'team.project.ask': object({ project_id: projectId, session_id: id, member_id: id, approval_id: text(512) },
+    ['project_id', 'session_id', 'member_id']),
+  'team.project.hand_driver': object({ project_id: projectId, session_id: id, member_id: id },
+    ['project_id', 'session_id', 'member_id']),
   // Slice 3-12: a project's "Always allowed" rules (team-project-rules.js re-checks the folder and the reason).
   'team.project.rules.list': object({ project_id: projectId }, ['project_id']),
   'team.project.rules.add': object({ project_id: projectId, tool_name: ruleTool, folder: ruleFolder },
@@ -319,6 +352,12 @@ const PARAM_SCHEMAS = Object.freeze({
   // Slice 2d: the other members of a direct conversation, 1 to 7 distinct (the caller is the eighth).
   'team.chat.dm_open': object({ member_ids: { type: 'array', minItems: 1, maxItems: 7, uniqueItems: true, items: id } },
     ['member_ids']),
+  // Row 173: custom channels (team-chat-channel-ops.js). An update names at least one of `name` and `topic`.
+  'team.chat.channel_create': object({ name: channelName, topic: channelTopic }, ['name']),
+  'team.chat.channel_update': { ...object({ channel_id: channelId, name: channelName, topic: channelTopic,
+    expected_rev: teamCount }, ['channel_id', 'expected_rev']), anyOf: [{ required: ['name'] }, { required: ['topic'] }] },
+  'team.chat.channel_archive': object({ channel_id: channelId, on: { type: 'boolean' } }, ['channel_id', 'on']),
+  'team.chat.channel_delete': object({ channel_id: channelId }, ['channel_id']),
   'team.presence.set': object({ state: { enum: ['active', 'idle'] } }, ['state']),
   // Slice 4c host: sharing a GPU. No operation takes a node id: the node is the caller's device.
   'team.node.register': object({
@@ -377,17 +416,19 @@ const WITHOUT_SESSION = new Set([
   'permissionReview.getState', 'permissionReview.resolve',
   'team.members.list', 'team.invite.create', 'team.invite.reveal', 'team.invite.revoke', 'team.invite.list',
   'team.device.invite', 'team.device.list', 'team.device.revoke', 'team.member.admit', 'team.member.setRole',
-  'team.member.revoke', 'team.audit.read', 'team.rename', 'team.owner.transfer',
+  'team.member.revoke', 'team.audit.read', 'team.rename', 'team.member.profile', 'team.owner.transfer',
   'team.chat.overview', 'team.chat.history', 'team.chat.sync', 'team.chat.thread', 'team.chat.post',
   'team.chat.edit', 'team.chat.delete', 'team.chat.mark_read', 'team.chat.set_notify', 'team.chat.follow',
   'team.chat.search', 'team.chat.typing', 'team.presence.set', 'team.chat.react', 'team.chat.pin', 'team.chat.edits',
-  'team.chat.pins', 'team.chat.dm_open', 'team.project.create', 'team.project.rename', 'team.project.members.list',
+  'team.chat.pins', 'team.chat.dm_open', 'team.chat.channel_create', 'team.chat.channel_update',
+  'team.chat.channel_archive', 'team.chat.channel_delete', 'team.project.create', 'team.project.rename', 'team.project.members.list',
   'team.project.members.add', 'team.project.members.setRole', 'team.project.members.remove', 'team.project.leave',
   'team.project.unjoined', 'team.project.join', 'team.project.delete', 'team.project.audit.read', 'team.node.register',
   'team.node.claim', 'team.node.fail', 'team.node.pause', 'team.node.unregister', 'team.node.list', 'team.pool.usage',
   'team.pool.model.set',
   'team.project.upload.begin', 'team.project.upload.status', 'team.project.upload.commit', 'team.project.upload.discard',
-  'team.project.download.manifest',
+  'team.project.download.manifest', 'team.project.files.list', 'team.project.files.read',
+  'team.project.regenerate', 'team.project.edit_resend', 'team.project.branch', 'team.project.ask', 'team.project.hand_driver',
   'team.model.offer', 'team.model.withdraw', 'team.model.offers', 'team.model.offer.read', 'team.model.accept',
   'team.model.decline', 'team.model.pause', 'team.model.resume', 'team.model.cancel', 'team.model.complete',
   'team.project.rules.list', 'team.project.rules.add', 'team.project.rules.answer', 'team.project.rules.remove',

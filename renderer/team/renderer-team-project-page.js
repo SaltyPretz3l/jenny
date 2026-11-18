@@ -43,9 +43,10 @@
   const ACTIVE = new Set(['checking', 'running', 'waiting', 'committing']);
   const TEAM_ONLY = new Set(['uploadCancel', 'downloadCancel']);
   const OUTSIDE = Object.freeze(['header', 'notes']);
-  const INSIDE = Object.freeze(['lede', 'files', 'members', 'rules', 'activity', 'delete', 'join']);
+  const INSIDE = Object.freeze(['lede', 'files', 'boards', 'members', 'rules', 'activity', 'delete', 'join']);
 
   function inv() { return globalThis.inventory || {}; }
+  function explorer() { return globalThis.rendererTeamProjectFiles || (typeof require === 'function' ? require('./renderer-team-project-files') : null); }
   const tag = () => globalThis.jennyI18n?.tag?.() || undefined;
   const number = (n) => Number(n || 0).toLocaleString(tag());
   const mb = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toLocaleString(tag(), { maximumFractionDigits: 0 });
@@ -88,6 +89,38 @@
         if (live.again) { live.again = false; readMembers(); }
         draw();
       });
+    }
+
+    // Row 175 F11: the project's boards (20 at most) and the Boards line that opens one.
+    // One read at a time; a refusal reads as no boards, so a projects change does not ask again and again.
+    function readBoards() {
+      if (live.disposed || !row() || live.readingBoards) return;
+      live.readingBoards = true;
+      void store.call('boardList', ids).then((a) => {
+        live.readingBoards = false;
+        if (live.disposed) return;
+        live.boards = a && a.ok && Array.isArray(a.boards) ? a.boards.filter((b) => b && typeof b.id === 'string').slice(0, 20) : [];
+        draw();
+      });
+    }
+    async function openBoard(boardId) {
+      const w = globalThis;
+      const lists = w.rendererSettingsScriptManifest;
+      if (!w.rendererBoardTeam && lists?.teamBoard) await Promise.resolve(w.rendererTeamTabGate?.ensureTeamAssets({ windowRef: w, scripts: lists.teamBoard, styles: ['styles/board-team.css'] })).catch(() => false);
+      if (w.rendererBoardTeam?.requestOpen?.({ teamId, projectId, boardId }) && w.rendererTopNavShellController?.openBoardView?.() === true) return;
+      live.notes.boards = jt('team.projects.boardsFailed', 'The Board tab could not be opened. Try again.');
+      if (!live.disposed) draw();
+    }
+    function boardsSection() {
+      if (!live.boards?.length || globalThis.rendererTopNavShellController?.openBoardView?.({ dry: true }) !== true) return '';
+      const why = ctx().team.state === 'online' ? '' : jt('team.projects.boardsOffline', 'Boards open when the team is online.');
+      const rows = live.boards.map((b) => {
+        const label = column.clean(b.name);
+        const title = why || jt('team.projects.boardsOpenTitle', 'Open {board} in the Board tab', { board: label });
+        return '<li class="team-set-person"><span class="team-set-person__name" dir="auto">' + escapeHtml(label) + '</span><div class="team-set-person__acts">'
+          + button('board-open', jt('team.projects.boardsOpen', 'Open'), { title, ariaLabel: title, disabled: Boolean(why), dataset: { 'board-id': b.id } }) + '</div></li>';
+      }).join('');
+      return section('boards', jt('team.projects.boards', 'Boards'), '<ul class="team-set-list">' + rows + '</ul>' + note(why) + note(live.notes.boards), number(live.boards.length));
     }
 
     // The sections that read on their own come and go with the role: rules for any member, activity for admins.
@@ -180,11 +213,20 @@
       return '';
     }
 
+    // Row 175 round 2 (D13): Browse files shows the project's files in the Team preview column (renderer-team-project-files.js
+    // `open`); greyed with the reason, never hidden, when the host serves no files or the project is being deleted.
+    function browseButton(unsupported = '') {
+      const why = unsupported || (state().deleting.has(projectId) ? jt('team.projects.deletingShort', 'This project is being deleted.') : '');
+      return button('browse-files', jt('team.projectFiles.browse', 'Browse files'), { disabled: Boolean(why),
+        title: why || jt('team.projectFiles.browseTitle', 'Show the project’s files in a column') });
+    }
+
     function filesSection(role, fresh) {
       const s = state();
       if (!s.filesSupported) {
-        return section('files', jt('team.projects.files', 'Files'), '<p class="team-page__fact">' + escapeHtml(jt('team.projects.filesUnsupported',
-          'This team’s host cannot give Jenny confined access to files yet, so Jenny can talk in this project but cannot read, change, upload or download its files. Conversations and the channel work.')) + '</p>');
+        const unsupported = jt('team.projects.filesUnsupported',
+          'This team’s host cannot give Jenny confined access to files yet, so Jenny can talk in this project but cannot read, change, upload or download its files. Conversations and the channel work.');
+        return section('files', jt('team.projects.files', 'Files'), '<p class="team-page__fact">' + escapeHtml(unsupported) + '</p><div class="team-page__acts">' + browseButton(unsupported) + '</div>');
       }
       const deleting = s.deleting.has(projectId);
       const transfer = s.transfer;
@@ -199,7 +241,8 @@
       const start = fresh && writes ? button('conv-new', jt('team.projects.newConversation', 'New conversation'), { title: jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name() }) }) : '';
       const fact = fresh ? jt('team.projects.noFiles', 'No files yet.') : jt('team.projects.filesFact', 'Files are kept on the team’s host, up to 2 GB a project.');
       const limits = fresh ? '<p class="team-page__fact team-progress__note">' + escapeHtml(jt('team.projects.filesLimits', 'Up to 512 MB an upload and 2 GB a project. Files you upload are copied; your own folder is not changed.')) + '</p>' : '';
-      return section('files', jt('team.projects.files', 'Files'), '<p class="team-page__fact">' + escapeHtml(fact) + '</p><div class="team-page__acts">' + upload + download + start + '</div>'
+      const browse = browseButton();
+      return section('files', jt('team.projects.files', 'Files'), '<p class="team-page__fact">' + escapeHtml(fact) + '</p><div class="team-page__acts">' + browse + upload + download + start + '</div>'
         + limits + transferLine(transfer) + note(live.notes.files));
     }
 
@@ -274,7 +317,7 @@
       const lede = fresh ? jt('team.projects.ledeEmpty', 'A new project starts empty. Bring files in, or start a conversation and let Jenny write them.')
         : jt('team.projects.lede', 'Everyone in this project sees its conversations, its channel and its files. Jenny’s file tools reach only this project’s folder on the team’s host.');
       return { header: header(subLine(role)), notes: note(live.notes.header) + deleting, lede: '<p class="team-page__lede">' + escapeHtml(lede) + '</p>',
-        files: filesSection(role, fresh), members: membersSection(role), rules: rules ? rules.html() : '', activity: activity ? activity.html() : '',
+        files: filesSection(role, fresh), boards: boardsSection(), members: membersSection(role), rules: rules ? rules.html() : '', activity: activity ? activity.html() : '',
         delete: role === 'admin' || isOwner() ? deleteSection(conversations) : '' };
     }
 
@@ -334,6 +377,11 @@
 
     // ------------------------------------------------------------ actions
 
+    function browse(target) {
+      const files = explorer();
+      if (files) files.open({ teamId, projectId, projectName: name(), from: target });
+    }
+
     function onClick(event) {
       const target = event.target && event.target.closest ? event.target.closest('[data-project-action]') : null;
       if (!target || target.disabled || !root.contains(target)) return;
@@ -353,6 +401,8 @@
         case 'download': void run('download', 'files', 'downloadProject', {}); return;
         case 'upload-cancel': void run('cancel', 'files', 'uploadCancel', {}); return;
         case 'download-cancel': void run('cancel', 'files', 'downloadCancel', {}); return;
+        case 'browse-files': browse(target); return;
+        case 'board-open': void openBoard(target.dataset.boardId); return;
         case 'member-remove': void run('remove:' + memberId, 'members', 'projectRemoveMember', { member_id: memberId }, () => readMembers()); return;
         case 'member-add': void run('add', 'members', 'projectAddMember', { member_id: live.addWho, role: addRoleOf() }, () => readMembers()); return;
         case 'leave': void run('leave', 'members', 'projectLeave', {}, () => { store.reread(teamId); onClose(); }); return;
@@ -395,6 +445,7 @@
     for (const [type, handler] of listeners) root.addEventListener(type, handler);
     live.rowKey = JSON.stringify(row());
     readMembers();
+    readBoards();
     draw();
 
     return {
@@ -404,7 +455,7 @@
         if (!change || change.team_id !== teamId || live.disposed) return;
         if (change.type === 'projects') {
           const key = JSON.stringify(row());
-          if (key !== live.rowKey) { live.rowKey = key; readMembers(); }
+          if (key !== live.rowKey) { live.rowKey = key; readMembers(); readBoards(); } else if (!live.boards) readBoards();
         }
         if ((change.type === 'rules' || change.type === 'requests') && change.project_id === projectId) {
           if (rules) void rules.refresh();

@@ -57,6 +57,9 @@ class EngineConnectionError(EngineError):
     """Raised when the engine cannot reach its backend (e.g. Ollama server)."""
 
     _default_code = CMP_AI_ENGINE_CONNECTION
+    # Set by a local engine's health probe when its loopback port refused the connection
+    # (a stopped server, not a failing one); the factory reads it to log at INFO.
+    idle_local_server: bool = False
 
     def __init__(
         self,

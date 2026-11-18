@@ -3,7 +3,8 @@
 // Removing project channels from the team chat store (owner decision E67, 2026-11-14; review X3c-F01). Methods
 // installed on TeamChatStore.prototype. Deleting a team project removes its channel: the channel document, every
 // segment, its read state, its attachments and its index row, so the 1,024 channel cap counts live channels only.
-// The team channel and direct conversations are never removed here.
+// Row 173: deleting an archived custom channel removes it the same way (a live one is refused
+// `team_chat_channel_live`), after its audit entry. The team channel and direct conversations are never removed here.
 //
 // Order: index.json without the channel (the commit point), then the channel folder and the attachment folder.
 // Removing files never fails the store: a file that will not go is logged and left, and the folder stays with it.
@@ -11,13 +12,15 @@
 // delete that the host start's reconcile finishes) or the start pass (`removeDeadProjectChannels`) removes it, and
 // the blob open walk already empties an attachment folder no channel names. Every file passes the store's path
 // guard before it is removed, and a folder that is a link or a junction, or is reached through one, is never
-// entered: nothing a link points at is removed. Logs carry ids and counts; the start pass logs counts only.
+// entered: nothing a link points at is removed. Logs carry ids and counts; the start pass logs counts only. A custom
+// channel folder no index row names (a torn create or a cut removal) is a leftover the start pass removes too.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
 const schema = require('./team-chat-schema');
 const { logChannel, refuse } = require('./team-chat-files');
+const { audited } = require('./team-chat-manage');
 const { hostFailure } = require('../../server/api-contract');
 
 const { LIMITS, SCHEMA_VERSION } = schema;
@@ -27,28 +30,39 @@ const PROJECT_PREFIX = 'chan_';
 const LEFTOVER_SCAN_MAX = 2 * LIMITS.CHANNELS_MAX;
 
 const isProjectChannel = (channelId) => schema.channelKind(channelId) === 'project';
+// The kinds a removal takes: a project's channel and a custom channel.
+const isRemovable = (channelId) => ['project', 'channel'].includes(schema.channelKind(channelId));
 
 function lstatOrNull(target) {
   try { return fs.lstatSync(target); } catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
 }
 
 const removeMethods = {
-  // Removes one project channel. A channel the index does not list (never made, or a removal cut after its
-  // commit) answers ok with `removed: false`, after any folder it left is removed.
+  // Removes one project channel, or one archived custom channel (`audit(name)` runs before anything is written; a
+  // custom channel's answer also carries `channel_rev`, its revision plus one for the removal). A channel the index
+  // does not list (never made, or a removal cut after its commit) answers ok with `removed: false`, after any folder
+  // it left is removed.
   removeChannel(input = {}) {
     return this._mutate(() => {
       const channelId = input.channelId;
-      if (!isProjectChannel(channelId)) refuse('forbidden', 'team_chat_not_found');
+      if (!isRemovable(channelId)) refuse('forbidden', 'team_chat_not_found');
+      const state = this._channels.get(channelId);
+      const custom = schema.channelKind(channelId) === 'channel' && state !== undefined;
+      if (custom) {
+        if (state.doc.archived === null) refuse('forbidden', 'team_chat_channel_live');
+        audited(input.audit, state.doc.name);
+      }
+      const channelRev = custom ? state.doc.rev + 1 : null;
       const removed = this._removeIndexed([channelId]);
       const left = this._removeFolders(channelId);
       if (removed > 0) this._log('INFO', 'team_chat.channel_removed', { channel_id: logChannel(channelId), left });
-      return { ok: true, removed: removed > 0 };
+      return { ok: true, removed: removed > 0, ...(custom ? { channel_rev: channelRev } : {}) };
     });
   },
 
   // The host start's pass: every listed project channel whose project `isLive(projectId)` does not hold is removed
-  // in one index write (a lookup that throws keeps the channel), then the project channel folders no index row
-  // names. Bounded by the channel cap and LEFTOVER_SCAN_MAX entries. Answers { ok, removed, leftovers }.
+  // in one index write (a lookup that throws keeps the channel), then the project and custom channel folders no index
+  // row names. Bounded by the channel cap and LEFTOVER_SCAN_MAX entries. Answers { ok, removed, leftovers }.
   removeDeadProjectChannels(input = {}) {
     const isLive = input.isLive;
     if (typeof isLive !== 'function') return Promise.resolve(hostFailure('invalid', 'team_chat_request_invalid'));
@@ -121,14 +135,14 @@ const removeMethods = {
     }
   },
 
-  // Project channel folders, in the chat folder or the attachment folder, that the index does not list.
+  // Project and custom channel folders, in the chat folder or the attachment folder, that the index does not list.
   _unlistedFolders() {
     const found = new Set();
     for (const directory of [this.dir, path.join(this.dir, 'blobs')]) {
       let names = [];
       try { if (lstatOrNull(directory)?.isDirectory()) names = this._files.list(directory); } catch { names = []; }
       for (const name of names.slice(0, LEFTOVER_SCAN_MAX)) {
-        if (isProjectChannel(name) && !this._channels.has(name)) found.add(name);
+        if (isRemovable(name) && !this._channels.has(name)) found.add(name);
       }
     }
     return [...found];

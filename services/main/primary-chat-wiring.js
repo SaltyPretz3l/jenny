@@ -24,6 +24,7 @@ const { createPrimaryChatPlacementService } = require('../primary-chat-placement
 const { createAppViewService } = require('../app-view-service');
 const { createPrimaryChatExportService } = require('../primary-chat-export-service');
 const { createTerminalToolsService } = require('../terminal-tools-service');
+const { createTerminalStartFolder } = require('../terminal-start-folder');
 const { createPrimaryScheduleService } = require('../primary-schedule-service');
 const { createAppearanceRelay } = require('./appearance-relay');
 
@@ -138,6 +139,7 @@ function attachPrimaryChat(backendService, {
     primarySessionId,
     hostMode: () => backendService.hostMode,
     workspaceRoot: () => configService()?.getToolsWorkspaceRoot?.() ?? '',
+    startFolder: createTerminalStartFolder({ config: configService, downloadsDir: getDownloadsDir }), // as the pty's spawn
     sessionSummary: () => (sessionId) => store()?.getSessionSummary?.(sessionId) ?? null,
     projectService: () => backendService.projectService,
     projectApplicationService: () => backendService.projectApplicationService,

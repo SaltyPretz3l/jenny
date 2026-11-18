@@ -398,6 +398,18 @@ test('row 123 2a-6c: notifyTeam sends team candidates only; a team click goes to
   noop.setTeamOpenHandler(() => {});
 });
 
+// Row 175: project activity goes the same way; its click (a host conversation id) reaches the team opener, never a chat.
+test('row 175: a teamProject candidate is sent; its click goes to the team opener even though it names a session', () => {
+  const { controller, sent, opened, emitOpen } = setup();
+  const project = { category: 'teamProject', key: 'teamProject:x:1', teamId: 'team_B', sessionId: 'sess_x', title: 'Notes', body: 'Jenny finished your turn.' };
+  assert.equal(controller.notifyTeam(project).key, 'teamProject:x:1');
+  assert.deepEqual(sent.map((c) => c.category), ['teamProject']);
+  const routed = [];
+  controller.setTeamOpenHandler((payload) => routed.push(payload.sessionId));
+  emitOpen({ sessionId: 'sess_x', category: 'teamProject', key: 'teamProject:x:1', teamId: 'team_B' });
+  assert.deepEqual([routed, opened], [['sess_x'], []]);
+});
+
 test('fix item 6: a team toast clicked when no team is left (no opener) says so where the person lands', () => {
   const { controller, emitOpen, toasts, opened } = setup();
   emitOpen({ sessionId: '', category: 'team', teamId: 'team_B', channelId: 'chan_team' });
@@ -439,11 +451,11 @@ test('a missing or broken bridge never throws; a failing send is logged once per
 });
 
 test('normalizeNotificationSettings is total and fills every default', () => {
-  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team']);
+  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny', 'team', 'teamProject']);
   const defaults = normalizeNotificationSettings(undefined);
   assert.deepEqual(defaults, {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true, team: true, teamProject: true },
   });
   assert.deepEqual(normalizeNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS), defaults);
   const partial = normalizeNotificationSettings({ enabled: false, sound: 'yes', categories: { failures: false, bogus: true } });

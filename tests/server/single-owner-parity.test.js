@@ -67,8 +67,12 @@ test('the constant owner is allowed every operation in the closed vocabulary but
     }
   }
   const boardOnly = Object.keys(PARAM_SCHEMAS).filter(teamProjectOnly);
-  assert.deepEqual([boardOnly.length, boardOnly.every((operation) => operation.startsWith('team.board.'))], [18, true],
-    'the team-project rows are the board operations and nothing else');
+  // Row 175 wave 5: the reader view of a team project's files too; item 6, F13, F18: the five conversation operations.
+  const CONVERSATION_OPS = ['team.project.regenerate', 'team.project.edit_resend', 'team.project.branch', 'team.project.ask',
+    'team.project.hand_driver'];
+  assert.deepEqual([boardOnly.length, boardOnly.every((operation) => operation.startsWith('team.board.')
+    || operation.startsWith('team.project.files.') || CONVERSATION_OPS.includes(operation))], [25, true],
+  'the team-project rows are the board, reader view and project conversation operations');
   // An explicit authorizer makes the check a team check: the same directory
   // allows the same operations once the context carries its actor, and a
   // context without one is refused instead of becoming the owner.

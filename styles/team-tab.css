@@ -243,6 +243,133 @@
   line-height: 1.5;
 }
 
+/* ------------------------------------------------------------ start page */
+
+/* No team yet (row 168, mockup team-overview): the names once, then Host a team and Join a team side by side.
+ * One hairline under the names row is the only rule; no card, no box. 980px is the mockup's measure. */
+.team-start {
+  box-sizing: border-box;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: var(--space-16) var(--space-10);
+  overflow-y: auto;
+}
+
+.team-start h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-title);
+  font-weight: 600;
+}
+
+.team-start__lede {
+  max-width: 60ch;
+  margin: 0 0 var(--space-8);
+  color: var(--text-secondary);
+}
+
+.team-start__held {
+  margin: 0 0 var(--space-8);
+  color: var(--text-secondary);
+}
+
+.team-start__you,
+.team-start__cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-16);
+}
+
+.team-start__you {
+  margin-bottom: var(--space-10);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--line);
+}
+
+.team-start__you > p {
+  grid-column: 1 / -1;
+}
+
+.team-start__col h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-heading);
+  font-weight: 600;
+}
+
+.team-start__col > p {
+  margin: 0 0 var(--space-6);
+  color: var(--text-secondary);
+}
+
+.team-start__field {
+  display: block;
+  margin-bottom: var(--space-5);
+}
+
+.team-start__field .inv-text-field-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.team-start__go {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-6);
+}
+
+.team-start .team-start__fine {
+  margin: var(--space-6) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.team-start__you > .team-start__fine {
+  margin: 0;
+}
+
+.team-start .team-start__note {
+  grid-column: 1 / -1;
+  margin: var(--space-3) 0 0;
+}
+
+.team-start__link {
+  margin-top: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.team-start__link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+@container teamview (max-width: 760px) {
+  .team-start {
+    padding: var(--space-10) var(--space-6);
+  }
+
+  .team-start__you,
+  .team-start__cols {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-12) 0;
+  }
+
+  .team-start__you {
+    gap: 0;
+  }
+}
+
 /* ------------------------------------------------------------ narrow view */
 
 /* Under 720px the column leaves; team-chat.css shows it again as the list screen (slice 2a-5a). */
@@ -310,3 +437,64 @@
   font-size: var(--font-size-caption);
   color: var(--text-primary);
 }
+
+/* ------------------------------------------------------------- Overview */
+
+/* The Overview (row 168, mockup team-overview, layout A): one column, 780px at most, sections divided by space and
+ * hairlines. No card, no box, no side bar; a state is said in words. The row above Channels is one more column row. */
+.team-ov-row { margin-bottom: var(--space-3); }
+.team-ov-row .team-row__glyph svg { display: block; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+.team-ov { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg-base); }
+.team-ov__page { box-sizing: border-box; max-width: 780px; padding: var(--space-8) var(--space-10) var(--space-16); }
+.team-ov__sec + .team-ov__sec { margin-top: var(--space-12); }
+.team-ov__h { display: flex; align-items: baseline; gap: var(--space-4); margin: 0 0 var(--space-3); color: var(--text-secondary); font-size: var(--font-size-footnote); font-weight: 600; letter-spacing: 0.02em; }
+.team-ov__h h3 { margin: 0; font: inherit; }
+.team-ov__h h3 span { color: var(--text-muted); font-weight: 400; }
+.team-ov__h .team-ov__link { margin-inline-start: auto; }
+.team-ov__link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-size-footnote); font-weight: 400; cursor: pointer; }
+.team-ov__link:hover { text-decoration: underline; }
+.team-ov__link:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 1px; }
+.team-ov-facts, .team-ov-log, .team-ov-people { margin: 0; padding: 0; list-style: none; }
+
+/* A fact: what it is, what it is now (600 weight, a muted second line), the one thing that can be done about it. */
+.team-ov-fact { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-6); min-height: 44px; padding: var(--space-2) 0; border-top: 1px solid var(--line); }
+.team-ov-fact:first-child { border-top: 0; }
+.team-ov-fact__k { color: var(--text-secondary); }
+.team-ov-fact__v { min-width: 0; color: var(--text-primary); }
+.team-ov-fact__main { display: block; font-weight: 600; }
+.team-ov-fact__sub { display: block; color: var(--text-muted); font-size: var(--font-size-footnote); font-weight: 400; }
+.team-ov-fact__a { display: flex; align-items: center; gap: var(--space-4); }
+.team-ov-fact--wide { display: block; min-height: 0; padding-top: 0; border-top: 0; }
+.team-ov-fact__wide { padding-bottom: var(--space-4); }
+.team-ov-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 var(--space-8); }
+.team-ov-people .team-row { padding-inline: 0; }
+.team-ov-log { color: var(--text-secondary); }
+.team-ov-log li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--space-6); padding: var(--space-2) 0; }
+.team-ov-log time { color: var(--text-muted); font-size: var(--font-size-footnote); }
+.team-ov__empty { margin: 0; color: var(--text-muted); }
+.team-ov .team-set-note { margin: var(--space-3) 0 0; }
+
+@container teamview (max-width: 760px) {
+  .team-ov__page { padding-inline: var(--space-6); }
+  .team-ov-fact { grid-template-columns: 110px minmax(0, 1fr) auto; }
+  .team-ov-log li { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+/* ------------------------------------------------- the stopped server's page */
+
+/* This PC's server while it is not running (row 170, mockup team-servers, layout A): its name and Start, its state and
+ * facts, then the rows of the Overview's facts list. Hairlines and space only; no card, no side bar. */
+.team-srv { box-sizing: border-box; flex: 1; min-height: 0; width: 100%; max-width: 820px; margin: 0 auto; padding: 7vh var(--space-10) var(--space-16); overflow-y: auto; }
+.team-srv__kicker { margin: 0 0 var(--space-2); color: var(--text-muted); font-size: var(--font-size-footnote); }
+.team-srv__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-6); }
+.team-srv__head h2 { min-width: 0; margin: 0; font-size: var(--font-size-title); font-weight: 600; overflow-wrap: anywhere; }
+.team-srv__acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-inline-start: auto; }
+.team-srv__state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); min-height: var(--space-12); margin: var(--space-3) 0 var(--space-8); color: var(--text-muted); font-size: var(--font-size-footnote); }
+.team-srv__state .inv-status-row { flex: 0 0 auto; }
+.team-srv__note { max-width: 64ch; margin: 0 0 var(--space-8); color: var(--text-secondary); font-size: var(--font-size-footnote); }
+.team-srv .team-set-note { margin: var(--space-2) 0 var(--space-6); }
+.team-srv__h { margin: var(--space-12) 0 var(--space-3); color: var(--text-secondary); font-size: var(--font-size-footnote); font-weight: 600; letter-spacing: 0.02em; }
+.team-srv__more { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-8); margin-top: var(--space-10); }
+.team-srv__link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.team-srv__link:hover { text-decoration: underline; }
+.team-srv__link:focus-visible { outline: var(--focus-ring-width) solid var(--focus-outline); outline-offset: 1px; }

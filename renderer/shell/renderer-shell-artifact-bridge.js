@@ -288,6 +288,7 @@
             renderSubagentsSurface: (surface) => rails.getSubagentRailController()?.renderSubagentsSurface?.(surface) === true,
             renderNotesSurface: (surface) => ensureProjectNotesRail()?.renderRailContent?.(surface) === true,
             renderBackgroundTasksSurface: (surface) => rails.renderBackgroundTasksSurface(surface),
+            renderTerminalSurface: (surface) => rails.renderTerminalSurface(surface), // row 178
             renderBrowserSurface: (surface) => rails.getBrowserPanel()?.renderRailContent?.(surface) === true,
             resetFilePreview: () => rails.getFilePreviewController()?.reset?.(),
             panelV2: panelV2Controller,

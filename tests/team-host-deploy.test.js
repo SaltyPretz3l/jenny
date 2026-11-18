@@ -288,6 +288,7 @@ test('buildHostConfig always writes the pool and never a model endpoint, and the
     const written = buildHostConfig({ layout, name: 'Studio', directPort: 4242, ...options });
     assert.deepEqual(written.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
     assert.equal(Object.hasOwn(written, 'model_endpoint'), false);
+    assert.equal(Object.hasOwn(written.team, 'file_tools'), false, 'I11: a new deploy has file tools off');
   }
   writeHostConfig(layout, buildHostConfig({ layout, name: 'Studio', directPort: 4242 }));
   const loaded = loadHostConfig(layout.configPath);

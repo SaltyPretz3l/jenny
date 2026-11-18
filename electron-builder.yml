@@ -50,6 +50,11 @@ win:
   # Windows v1 ships the verified CPython 3.13 runtime bundle. The package
   # command checks every manifest/hash before electron-builder runs.
   extraResources:
+    # Jenny's licence and third-party notices, named by Settings > About ("Built with").
+    - from: NOTICE
+      to: NOTICE
+    - from: LICENSE
+      to: LICENSE
     - from: Dockerfile.worker
       to: command-worker/Dockerfile.worker
     - from: config/command-worker-image.json
@@ -180,6 +185,11 @@ mac:
       arch:
         - arm64
   extraResources:
+    # Jenny's licence and third-party notices, named by Settings > About ("Built with").
+    - from: NOTICE
+      to: NOTICE
+    - from: LICENSE
+      to: LICENSE
     - from: Dockerfile.worker
       to: command-worker/Dockerfile.worker
     - from: config/command-worker-image.json
@@ -269,6 +279,11 @@ linux:
       arch:
         - x64
   extraResources:
+    # Jenny's licence and third-party notices, named by Settings > About ("Built with").
+    - from: NOTICE
+      to: NOTICE
+    - from: LICENSE
+      to: LICENSE
     - from: Dockerfile.worker
       to: command-worker/Dockerfile.worker
     - from: config/command-worker-image.json

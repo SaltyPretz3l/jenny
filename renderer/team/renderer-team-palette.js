@@ -8,6 +8,9 @@
  *   ranked list (`queryOnly` keeps them out of the empty list). A one-to-one conversation has no row of its own:
  *   the person's row is it. You are not listed. Channels and conversations are also in the Chats scope (`#`).
  * - "Export this conversation" and "Export every conversation", while the team is online.
+ * - Row 175 F1: typed, each listed project conversation of each online team (its title, the project's name beside it,
+ *   in the Chats scope too), at most 200 in all; picking opens it in the Team tab. They come from the project store,
+ *   so they are there once the store has read the team's list (it loads with the Team tab's scripts). 
  * Facts are as of the moment the palette opened, like every other row. Picking runs an intent in the Team tab
  * (renderer-team-notify.js), after the palette's own move to the Team view. */
 (function (root, factory) {
@@ -23,6 +26,8 @@
   const LANDING_MAX = 4;
   const SEP = ' · ';
   const GROUP = 'Team';
+  const CONVERSATION_MAX = 200;
+  const TITLE_MAX = 80;
 
   const unread = (row) => Boolean(row) && row.notify !== 'none' && (row.mention === true || row.unread > 0 || row.unread_capped === true);
   function unreadText(row) {
@@ -32,6 +37,31 @@
     return '';
   }
   const describe = (parts) => parts.filter(Boolean).join(SEP);
+  function clip(text) { const chars = Array.from(String(text == null ? '' : text).replace(/\s+/g, ' ').trim()); return chars.length > TITLE_MAX ? chars.slice(0, TITLE_MAX - 1).join('') + '…' : chars.join(''); }
+
+  // The project store when its script is in (with the Team tab's scripts), else null.
+  function projectStore() {
+    if (globalThis.rendererTeamProjectStore) return globalThis.rendererTeamProjectStore.getProjectStore();
+    try { return typeof require === 'function' ? require('./renderer-team-project-store').getProjectStore() : null; } catch (_error) { return null; }
+  }
+
+  // Row 175 F1: the listed project conversations of the online teams, at most CONVERSATION_MAX, each opening in the tab.
+  function conversationRows(teams, many, go) {
+    const store = projectStore();
+    const rows = [];
+    for (const team of store ? teams : []) {
+      const state = team.state === 'online' ? store.team(team.team_id) : null;
+      const names = new Map(((state && state.projects) || []).map((row) => [row.id, row.name]));
+      for (const row of names.size ? state.conversations || [] : []) {
+        if (rows.length >= CONVERSATION_MAX) return rows;
+        if (!row || typeof row.session_id !== 'string' || !names.has(row.project_id)) continue;
+        rows.push({ id: 'team:conv:' + team.team_id + ':' + row.session_id, group: GROUP, label: clip(row.title) || jt('team.projects.untitled', 'Untitled conversation'),
+          description: describe([many ? (team.team_name || '') : '', clip(names.get(row.project_id))]), tag: jt('team.palette.project', 'Project'), icon: 'chat',
+          scopes: ['chats'], queryOnly: true, run: go({ kind: 'conversation', teamId: team.team_id, projectId: row.project_id, sessionId: row.session_id }) });
+      }
+    }
+    return rows;
+  }
 
   /**
    * @param {{ navigate: Function }} options - `navigate` moves to the Team view (and its focus landing)
@@ -55,7 +85,7 @@
     };
     const titleOf = (team, id) => {
       const row = (chat.team(team.team_id).channels || []).find((c) => c && c.channel_id === id);
-      return row && channels.isDirect(row) ? titleIn(team, row) : '#' + channels.channelName(id === channels.NEW ? channels.CHANNEL : id);
+      return row && channels.isDirect(row) ? titleIn(team, row) : '#' + channels.channelName(channels.asChannel(id));
     };
     items.push({ id: 'team:search', group: GROUP, label: jt('team.search.field', 'Search messages'), description: titleOf(current, shownId), tag: jt('team.palette.action', 'Action'),
       icon: 'search', landing: true, run: go({ kind: 'search' }) });
@@ -88,10 +118,11 @@
     const landing = new Set(rows.filter((r) => unread(r.row)).sort((a, b) => Number(b.row.mention === true) - Number(a.row.mention === true)
       || (b.row.unread || 0) - (a.row.unread || 0)).slice(0, LANDING_MAX).map((r) => r.item.id));
     for (const { item } of rows) items.push(Object.assign(item, landing.has(item.id) ? { landing: true } : { queryOnly: true }));
+    items.push(...conversationRows(teams, many, go));
     // One export at a time: while one runs the actions are not offered (the export module loads with the Team view).
     const exporter = globalThis.rendererTeamExport && globalThis.rendererTeamExport.getExporter();
     if (current.state === 'online' && !(exporter && exporter.running())) {
-      items.push({ id: 'team:export-one', group: GROUP, label: jt('team.palette.exportOne', 'Export this conversation'), description: titleOf(current, shownId === channels.NEW ? channels.CHANNEL : shownId),
+      items.push({ id: 'team:export-one', group: GROUP, label: jt('team.palette.exportOne', 'Export this conversation'), description: titleOf(current, channels.asChannel(shownId)),
         tag: jt('team.palette.action', 'Action'), icon: 'action', queryOnly: true, run: go({ kind: 'export', teamId: current.team_id, scope: 'one' }) },
       { id: 'team:export-all', group: GROUP, label: jt('team.palette.exportAll', 'Export every conversation'), description: current.team_name || '',
         tag: jt('team.palette.action', 'Action'), icon: 'action', queryOnly: true, run: go({ kind: 'export', teamId: current.team_id, scope: 'all' }) });

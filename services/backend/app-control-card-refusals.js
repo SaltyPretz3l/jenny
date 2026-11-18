@@ -4,10 +4,11 @@
 // card, the tool's port checks the request and remembers it under this call (the export port proves the model's
 // `chat_title` names the chat that is exported; the terminal port checks the command line and that the IDE has a
 // project open); each port later acts only under that call's card. A request the port refuses never reaches a card:
-// the approval path ends the call with this refusal as the tool's output, so the model learns the reason and the
-// user is never asked over something that cannot happen. A request the port accepts adds a line to the card's reason
+// the approval path ends the call with this refusal as the tool's output (a step's `messages` add the shared sentence for a
+// reason that needs one), so the model learns the reason and the user is never asked over something that cannot happen. A request the port accepts adds a line to the card's reason
 // naming where the result lands (the Downloads file name, the terminal's folder), so the user approves that too.
 const { sandboxEnabled } = require('../execution/command-bridge');
+const { REFUSAL_SENTENCES } = require('../tools/builtin/session-directory-tool-support');
 
 const SESSION_EXPORT_TOOL = 'session_export';
 const TERMINAL_RUN_TOOL = 'terminal_run';
@@ -24,11 +25,14 @@ const STEPS = Object.freeze({
     note: 'The app refused this before asking the user; nothing was saved.',
   },
   [TERMINAL_RUN_TOOL]: {
-    reasons: new Set(['invalid_command', 'project_not_open', 'sandbox_mode', 'not_allowed', 'disabled', 'unavailable']),
+    reasons: new Set(['invalid_command', 'invalid_input', 'project_not_open', 'start_folder_unavailable', 'sandbox_mode', 'not_allowed', 'disabled', 'unavailable',
+      'not_in_project', 'project_chat_runs_in_project']),
     extras: [],
+    // A project chat may run too (row 178, owner pick D4), on its own project only: these two carry the tools' shared sentence.
+    messages: ['not_in_project', 'project_chat_runs_in_project'],
     // Docker sandbox mode never runs a host terminal (the bridge refuses terminal_run there), so no card asks for one.
     prepare: (service, sessionId, callId, input) => (sandboxEnabled(service) ? { ok: false, reason: 'sandbox_mode' }
-      : service?.terminalTools?.prepareRun?.({ session_id: sessionId, tool_call_id: callId, command: input?.command })),
+      : service?.terminalTools?.prepareRun?.({ session_id: sessionId, tool_call_id: callId, command: input?.command, where: input?.where })),
     cardNote: (answer) => (typeof answer?.folder === 'string' && answer.folder ? `Runs in a new Jenny terminal tab in ${answer.folder}.` : ''),
     note: 'The app refused this before asking the user; nothing was run.',
   },
@@ -53,7 +57,8 @@ async function appControlCardStep(service, toolName, sessionId, callId, input) {
   if (answer?.ok === true) return { refusal: null, cardNote: step.cardNote(answer) };
   const reason = step.reasons.has(answer?.reason) ? answer.reason : 'unavailable';
   const extras = Object.fromEntries(step.extras.filter((key) => typeof answer?.[key] === 'string').map((key) => [key, answer[key]]));
-  return { refusal: JSON.stringify({ ok: false, reason, ...extras, note: step.note }), cardNote: '' };
+  const message = step.messages?.includes(reason) ? { message: REFUSAL_SENTENCES[reason] } : {};
+  return { refusal: JSON.stringify({ ok: false, reason, ...extras, ...message, note: step.note }), cardNote: '' };
 }
 
 /** `null` when the card may show, else the refusal text that ends the call before any card. */

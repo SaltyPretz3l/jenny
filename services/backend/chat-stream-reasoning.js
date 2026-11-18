@@ -12,6 +12,7 @@ const { projectUserSkillInvocation, withSkillCommand } = require('./chat-skill-c
 const { projectUserImagePromptPin, withImagePromptPin } = require('./image-prompt-pin');
 const { projectUserAttachmentNote } = require('./chat-attachment-history-note');
 const { validateEnvelope } = require('./session-message-envelope');
+const { localIsoDateFromTimestamp } = require('./session-normalizers');
 const { validateHandoffRow } = require('./session-handoff-context');
 const { isContextRow, selectContextHistoryMessages, selectRecentTurnGroups } = require('./chat-history-scope');
 const { stubBoardBlocks } = require('../boards/board-fence');
@@ -378,6 +379,17 @@ function convertToolResultToProviderMessage(message) {
   if (Number.isFinite(elapsedMs) && elapsedMs >= 0) {
     providerMessage.tool_envelope.elapsed_ms = elapsedMs;
   }
+  // What the in-turn envelope showed (the user approved the card; the app tool refused),
+  // and the local date the call ran: history rows carry no time otherwise.
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    if (metadata.approval === 'approved') providerMessage.tool_envelope.approval = 'approved';
+    if (metadata.status === 'refused' && tr.is_error !== true) {
+      const reason = typeof metadata.reason === 'string' ? metadata.reason.trim() : '';
+      providerMessage.tool_envelope.refused_reason = reason || 'refused';
+    }
+  }
+  const ranOn = localIsoDateFromTimestamp(message.timestamp); // the sidecar's current_date calendar
+  if (ranOn) providerMessage.tool_envelope.ran_on = ranOn;
   return providerMessage;
 }
 

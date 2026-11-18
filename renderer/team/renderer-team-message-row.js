@@ -31,7 +31,7 @@
   const RUN_MS = 5 * 60 * 1000;
   const MENTION = /<@(member_[A-Za-z0-9_-]{1,64}|jenny|channel)>/g;
   const SKIP_MENTIONS = new Set(['CODE', 'PRE', 'A']);
-  const MARKDOWN_OPTIONS = Object.freeze({ mermaid: 'plain', images: 'omit' });
+  const MARKDOWN_OPTIONS = Object.freeze({ mermaid: 'plain', images: 'omit', inlinePaths: false });
   const CLAIM_SKEW_MS = 60_000;
 
   function inv() { return globalThis.inventory || {}; }
@@ -144,10 +144,11 @@
   function bodyKey(message) { return String(message.edited_at || '') + '\u0000' + String(message.text || ''); }
 
   // Sanitized HTML for a message text; `doc` builds the detached element mentions and chips are marked in.
-  function bodyHtml(text, mentions, ctx, doc) {
+  // `options`: extra markdown options (the Team conversation's live words pass `cachePolicy: 'bypass'`).
+  function bodyHtml(text, mentions, ctx, doc, options) {
     const md = markdown();
     const html = String((md && typeof md.renderMarkdown === 'function'
-      ? md.renderMarkdown(String(text || ''), MARKDOWN_OPTIONS)
+      ? md.renderMarkdown(String(text || ''), options ? { ...MARKDOWN_OPTIONS, ...options } : MARKDOWN_OPTIONS)
       : '<p>' + escapeHtml(String(text || '')) + '</p>') || '');
     const mark = Array.isArray(mentions) && mentions.length > 0 && html.includes('&lt;@');
     const link = Boolean(ctx && ctx.teamId) && html.includes('jenny-team:');
@@ -192,7 +193,7 @@
     return { text: parts.join('') + ' ' + fresher, html: escapeHtml(parts.join('')) + ' ' + words };
   }
 
-  // The row's inner markup. `row` is { message, first, body, files, edit, foot, acts, inThread, fresh }: `files` (slice 2c,
+  // The row's inner markup. `row` is { message, first, lead, body, files, edit, foot, acts, inThread, fresh }: `files` (slice 2c,
   // renderer-team-files.js) goes between the text and the foot, never for a deleted message; `edit` replaces the
   // text while the message is edited; `foot` (outbox words, the delete confirm) and `acts` (the action row) are
   // trusted markup. A root shown inside its own thread (`inThread`) has no replies button; `fresh` is its followed
@@ -229,7 +230,9 @@
         title: words.text, trustedHtml: words.html });
     }
     foot += (row.facts || '') + (row.foot || '');
-    return gutter + '<div class="team-msg__body">' + (row.first ? metaHtml(author, message) : '') + body
+    // `lead` (row 171, trusted markup): a line between the meta line and the text, as Jenny's working chip in a Team
+    // project conversation; at the top of the body on a continuing row. The channel passes none.
+    return gutter + '<div class="team-msg__body">' + (row.first ? metaHtml(author, message) : '') + (row.lead || '') + body
       + (row.files && !message.deleted ? row.files : '')
       + (foot ? '<div class="team-msg__foot">' + foot + '</div>' : '') + '</div>' + (row.acts || '');
   }

@@ -18,7 +18,7 @@ test('narrow panel bounds preserve shortcuts and growing composers in both panes
   setRect(host.querySelector('.chat-timeline-utility-cluster'), { bottom: 90, height: 28 });
   setRect(composers[0], { top: 700, height: 200 });
   setRect(composers[1], { top: 750, height: 150 });
-  const layout = createViewportLayoutUtils({ state: { ui: {} }, dom: { chatView: host } });
+  const layout = createViewportLayoutUtils({ state: { ui: { activeView: 'chat' } }, dom: { chatView: host } });
   layout.updateComposerSafeOffset();
   assert.equal(host.style.getPropertyValue('--artifact-overlay-top'), '48px');
   assert.equal(host.style.getPropertyValue('--artifact-overlay-bottom'), '200px');
@@ -158,4 +158,39 @@ test('disposing the composer layout observer cancels a pending resize frame', ()
     assert.equal(layout.composerLayoutRuntime.pendingResizeFrame, 0, 'dispose clears the tracked handle');
     assert.equal(raf.pendingFrames(), 0, 'dispose cancels the queued frame so it never fires post-dispose');
   });
+});
+
+test('with no chat surface on screen the safe offset measures nothing and writes nothing', () => {
+  const dom = new JSDOM('<main class="chat-view"><div class="composer-wrap"></div></main>');
+  const host = dom.window.document.querySelector('main');
+  let reads = 0;
+  host.getBoundingClientRect = () => { reads += 1; return { top: 0, bottom: 900, height: 900 }; };
+  const state = { ui: { activeView: 'home' } };
+  const layout = createViewportLayoutUtils({ state, dom: { chatView: host, composerWrap: host.querySelector('.composer-wrap'), chatThreadStage: host } });
+  layout.updateComposerSafeOffset({ force: true });
+  assert.equal(reads, 0, 'a hidden chat is not measured');
+  assert.equal(host.style.getPropertyValue('--composer-safe-offset'), '');
+  state.ui.activeView = 'chat';
+  layout.updateComposerSafeOffset({ force: true });
+  assert.ok(reads > 0, 'showing Chat measures again');
+  dom.window.close();
+});
+
+test('entering Chat reads nothing while the view is still hidden or the composer measures next frame', () => {
+  const dom = new JSDOM('<main class="chat-view hidden"><div class="composer-wrap"></div></main>');
+  const host = dom.window.document.querySelector('main');
+  let reads = 0;
+  host.getBoundingClientRect = () => { reads += 1; return { top: 0, bottom: 900, height: 900 }; };
+  const state = { ui: { activeView: 'chat' } };
+  const layout = createViewportLayoutUtils({ state, dom: { chatView: host, composerWrap: host.querySelector('.composer-wrap'), chatThreadStage: host } });
+  layout.updateComposerSafeOffset({ force: true });
+  assert.equal(reads, 0, 'not unhidden yet: every rect would be zero');
+  host.classList.remove('hidden');
+  state.ui.composerMeasureAfterFrame = true;
+  layout.updateComposerSafeOffset({ force: true });
+  assert.equal(reads, 0, 'the next-frame pass measures instead');
+  state.ui.composerMeasureAfterFrame = false;
+  layout.updateComposerSafeOffset({ force: true });
+  assert.ok(reads > 0, 'then it measures');
+  dom.window.close();
 });

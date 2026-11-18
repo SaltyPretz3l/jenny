@@ -113,9 +113,9 @@ test('the shell subscribes to trusted external-transition requests and responds 
     },
   }]);
 
-  // Two cleanups: the lazy project-switcher disposal fence (registered at
-  // creation, Projects v2) and the external-request unsubscribe.
-  assert.equal(cleanups.length, 2);
+  // Three cleanups: the lazy project-switcher disposal fence (registered at
+  // creation, Projects v2), the terminal pool seam (row 178) and the external-request unsubscribe.
+  assert.equal(cleanups.length, 3);
   cleanups.forEach((cleanup) => cleanup());
   assert.equal(unsubscribed, 1);
 });
@@ -286,4 +286,46 @@ test('root service fails closed and reports controller initialization errors', a
   assert.equal(result.error.code, 'controller_fixture_failed');
   assert.match(toasts[0][0], /switch blocked/i);
   assert.equal(logs.some((entry) => entry[1] === 'workspace.root_transition_init_failed'), true);
+});
+
+test('row 178: the root service publishes the terminal pool seam, never loads the IDE for peek, and removes it on cleanup', async () => {
+  const cleanups = [];
+  const pool = { maxTerminals: 4 };
+  const windowRef = { jennyShell: { workspacePty: {} } };
+  let controllerBuilds = 0;
+  createIdeRootService({
+    state: { ui: { ide: { openTabs: [] } } },
+    windowRef,
+    registerCleanup: (fn) => cleanups.push(fn),
+    ideControllerUtils: { createIdeController: () => { controllerBuilds += 1; return { getTerminalPool: async () => pool }; } },
+  });
+  const seam = windowRef.rendererIdeTerminalPool;
+  assert.equal(typeof seam.ensure, 'function');
+  assert.equal(seam.peek(), null, 'peek loads nothing');
+  assert.equal(controllerBuilds, 0);
+  assert.equal(await seam.ensure(), pool);
+  assert.equal(seam.peek(), pool);
+  assert.equal(controllerBuilds, 1);
+  cleanups.forEach((fn) => fn());
+  assert.equal(windowRef.rendererIdeTerminalPool, undefined);
+  assert.equal(seam.peek(), null);
+});
+
+test('row 178: the terminal pool seam resolves null without a pty bridge or when the pool cannot be built', async () => {
+  const hosted = { jennyShell: {} };
+  createIdeRootService({
+    state: { ui: { ide: { openTabs: [] } } },
+    windowRef: hosted,
+    ideControllerUtils: { createIdeController: () => ({ getTerminalPool: async () => ({}) }) },
+  });
+  assert.equal(await hosted.rendererIdeTerminalPool.ensure(), null, 'hosted and team builds have no pty bridge');
+
+  const broken = { jennyShell: { workspacePty: {} } };
+  createIdeRootService({
+    state: { ui: { ide: { openTabs: [] } } },
+    windowRef: broken,
+    ideControllerUtils: { createIdeController: () => ({ getTerminalPool: async () => { throw new Error('boom'); } }) },
+  });
+  assert.equal(await broken.rendererIdeTerminalPool.ensure(), null);
+  assert.equal(broken.rendererIdeTerminalPool.peek(), null);
 });

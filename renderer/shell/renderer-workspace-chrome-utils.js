@@ -586,7 +586,8 @@
       }
 
       publishTabCount();
-      updateOverflowArrows();
+      // Next frame: a read here forced a layout inside every view switch.
+      scheduleOverflowArrowUpdate();
       revealActiveTab(activeId);
     }
 

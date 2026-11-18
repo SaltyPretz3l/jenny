@@ -51,3 +51,17 @@ test('replace journal and search history sanitizers bound what they keep', () =>
   assert.deepEqual(normalizers.normalizeSearchHistory(['a', ' b ', 'a', 3, '']), ['b', 'a']);
   assert.deepEqual(normalizers.normalizeSearchHistory('x'), []);
 });
+
+test('terminalStartFolder keeps a local absolute folder and drops everything else', () => {
+  assert.equal(normalizers.normalizeEditorPrefs({}).terminalStartFolder, '', 'defaults to the Downloads folder');
+  const clean = (value) => normalizers.normalizeEditorPrefs({ terminalStartFolder: value }).terminalStartFolder;
+  assert.equal(clean('C:\\Users\\me\\Downloads'), 'C:\\Users\\me\\Downloads');
+  assert.equal(clean('/home/me/dl'), '/home/me/dl');
+  assert.equal(clean('D:/Installs'), 'D:/Installs');
+  assert.equal(clean('  /home/me/dl  '), '/home/me/dl', 'trimmed, as the main-process cleaner does');
+  assert.equal(clean('C:\\' + 'a'.repeat(509)), 'C:\\' + 'a'.repeat(509), 'exactly 512 characters stays');
+  for (const bad of ['relative\\path', 'relative/path', '\\\\server\\share\\dir', '//server/share', 'C:' + 'a'.repeat(3),
+    'C:\\' + 'a'.repeat(510), '/home/me\0x', '', '   ', 42, null, undefined, {}]) {
+    assert.equal(clean(bad), '', JSON.stringify(bad));
+  }
+});

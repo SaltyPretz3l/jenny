@@ -19,9 +19,10 @@
 
 const { isPublicKey } = require('./ids');
 const projects = require('./project-transitions');
-const { refuse, findMember, activeActor } = require('./transition-common');
+const { changeProfile } = require('./profile-transition');
+const { refuse, findMember, activeActor, nameIsFree } = require('./transition-common');
 const {
-  ASSIGNABLE_ROLES, LOCAL_ACTOR, LOCAL_COMMAND, LIMITS, INVITE_KINDS, displayNameKey, isInputText, isTeamModel,
+  ASSIGNABLE_ROLES, LOCAL_ACTOR, LOCAL_COMMAND, LIMITS, INVITE_KINDS, isInputText, isTeamModel,
 } = require('./member-schema');
 
 function activeDevicesOf(doc, memberId) {
@@ -223,13 +224,8 @@ function redeemInput(doc, input) {
   return null;
 }
 
-// The owner admits a person by reading the name, so a joiner may not take the
-// name of a pending or active member (R01-F04).
-function isNewDisplayName(doc, displayName) {
-  if (!isInputText(displayName)) return false;
-  const key = displayNameKey(displayName);
-  return !doc.members.some((member) => member.state !== 'revoked' && displayNameKey(member.display_name) === key);
-}
+// A joiner may not take the name of a pending or active member (transition-common.js `nameIsFree`).
+const isNewDisplayName = (doc, displayName) => isInputText(displayName) && nameIsFree(doc, displayName);
 
 function redeem(doc, rawInput, ctx) {
   const input = {
@@ -583,6 +579,7 @@ module.exports = {
   revokeDevice,
   transferOwner,
   rename,
+  changeProfile,
   setTeamModel,
   touchDevice,
   prune,

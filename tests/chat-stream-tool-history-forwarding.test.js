@@ -138,3 +138,29 @@ test('rows without a call_id are still rejected', () => {
     null
   );
 });
+
+test('approval, an app refusal and the local run date ride the envelope', () => {
+  const stamp = '2026-11-16T15:37:14.163Z';
+  const message = convertToolResultToProviderMessage({
+    role: 'tool',
+    timestamp: stamp,
+    tool_result: {
+      call_id: 'call_t', tool_name: 'terminal_run', output_text: '{"ok":false,"reason":"start_failed"}',
+      is_error: false, metadata: { approval: 'approved', status: 'refused', reason: 'start_failed' },
+    },
+  });
+  const at = new Date(stamp);
+  const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+  assert.equal(message.tool_envelope.approval, 'approved');
+  assert.equal(message.tool_envelope.refused_reason, 'start_failed');
+  assert.equal(message.tool_envelope.ran_on, day);
+});
+
+test('an error row is never marked refused, and odd values are not forwarded', () => {
+  const message = convertToolResultToProviderMessage(errorRow({
+    metadata: { status: 'refused', reason: 'x', approval: 'auto' },
+  }));
+  assert.equal(message.tool_envelope.refused_reason, undefined);
+  assert.equal(message.tool_envelope.approval, undefined);
+  assert.equal(message.tool_envelope.ran_on, undefined);
+});

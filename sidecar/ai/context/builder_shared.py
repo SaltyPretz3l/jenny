@@ -50,7 +50,8 @@ BACKGROUND_WORK_GUIDANCE = (
     "with run_command run_in_background=true and keep working on steps that do not "
     "depend on them. You are told when a job finishes, so do not poll it or sleep; "
     "block with check_background_job wait_ms only when nothing else can proceed "
-    "without its result."
+    "without its result. The person may send a message while you work: it arrives as a "
+    "user message between your steps, so take it into account before continuing."
 )
 # Row 102 follow-up: a model that wraps `git log` in a Python script gets an approval
 # card for work a single read-only command runs without one.
@@ -361,6 +362,23 @@ def _extract_frontmatter(  # noqa: C901, PLR0912
         if isinstance(always_metadata, dict):
             always = parse_bool(always_metadata.get("always"))
     return name, description, command, when_to_use, allowed_tools, always
+
+
+# "ai.context.skill_tools_filtered" is logged once per (skill, filtered tools), not on every turn
+# (2026-11-17 session review). Bounded, process-local, log-only state: a clear only means the next
+# sighting logs again.
+_MAX_FILTER_LOG_KEYS = 256
+_filter_log_seen: set[tuple[str, str, tuple[str, ...]]] = set()
+
+
+def first_filter_sighting(scope: Any, rel_path: Any, omitted: tuple[str, ...]) -> bool:
+    key = (str(scope), str(rel_path), tuple(omitted))
+    if key in _filter_log_seen:
+        return False
+    if len(_filter_log_seen) >= _MAX_FILTER_LOG_KEYS:
+        _filter_log_seen.clear()
+    _filter_log_seen.add(key)
+    return True
 
 
 def _skill_dedupe_key(skill_path: Path) -> tuple[Any, ...]:

@@ -441,6 +441,15 @@ async function assembleContextForChat(service, options) {
       promptContributions.profile_overview_block = summarizeTextBlock(overview.content);
     }
   }
+  // A host composition may describe where this conversation runs (`service.hostTurnContext`, absent on
+  // desktop; a team host: server/team/turn-context.js). Self-bounded, so it bypasses the trimmer.
+  const hostBlock = service.hostTurnContext?.build?.({
+    sessionId: resolvedSessionId, projectId: projectAuthority.project_id || null, hasProjectFolder: Boolean(projectRoot),
+  });
+  if (hostBlock) {
+    appendContextBlock(hostBlock.kind, hostBlock.content);
+    promptContributions.host_block = summarizeTextBlock(hostBlock.content);
+  }
   // Row 150: a turn sent from the chat docked beside a board (its stamp already checked) carries how to
   // propose changes and the board as text. Self-bounded (board-text.js), so it bypasses the trimmer; last,
   // so it sits nearest the user's message. An unstamped turn loads nothing and gets nothing.

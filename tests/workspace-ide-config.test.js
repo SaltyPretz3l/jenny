@@ -232,7 +232,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     scrollBeyondLastLine: false,
     mouseWheelZoom: true,
     inlineBlame: true,
-    terminalScrollback: 1000,
+    terminalScrollback: 1000, terminalStartFolder: '',
     terminalDefaultProfile: '',
     formatOnSave: false,
     trimTrailingWhitespace: false,

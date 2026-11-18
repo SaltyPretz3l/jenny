@@ -171,30 +171,46 @@ test('clicking a rail tab activates the view and resyncs aria state', async (t) 
   assert.equal(doc.getElementById('homeTopRailTab').getAttribute('aria-selected'), 'false');
 });
 
-test('horizontal arrow keys move and activate; Home/End jump; Enter activates', async (t) => {
+test('arrow keys and Home/End move focus without opening a view; Enter or Space opens the focused one', async (t) => {
   const { window, doc, controller, activations } = await loadAppWithRail(t);
   window.__rendererState.ui.activeView = 'home';
   controller.renderTopRail();
   await waitForUi(window, 20);
+  const tab = (id) => doc.getElementById(`${id}TopRailTab`);
 
-  const homeTab = doc.getElementById('homeTopRailTab');
-  pressKey(window, homeTab, 'ArrowRight');
-  assert.deepEqual(activations, ['chat'], 'ArrowRight advances to the next view');
+  tab('home').focus();
+  pressKey(window, tab('home'), 'ArrowRight');
+  assert.equal(doc.activeElement, tab('chat'), 'ArrowRight moves focus to the next tab');
+  assert.equal(tab('chat').tabIndex, 0, 'the focused tab is the roving stop');
+  assert.equal(tab('home').tabIndex, -1);
+  assert.deepEqual(activations, [], 'moving focus opens nothing');
 
-  pressKey(window, doc.getElementById('chatTopRailTab'), 'ArrowLeft');
-  assert.deepEqual(activations, ['chat', 'home'], 'ArrowLeft goes back');
+  pressKey(window, tab('chat'), 'ArrowLeft');
+  assert.equal(doc.activeElement, tab('home'), 'ArrowLeft goes back');
+  pressKey(window, tab('home'), 'ArrowLeft');
+  assert.equal(doc.activeElement, tab('ide'), 'ArrowLeft wraps from the first tab to the last');
+  pressKey(window, tab('ide'), 'Home');
+  assert.equal(doc.activeElement, tab('home'));
+  pressKey(window, tab('home'), 'End');
+  assert.equal(doc.activeElement, tab('ide'));
+  assert.deepEqual(activations, [], 'still nothing opened');
 
-  pressKey(window, doc.getElementById('homeTopRailTab'), 'ArrowLeft');
-  assert.deepEqual(activations.at(-1), 'ide', 'ArrowLeft wraps from the first tab to the last');
-
-  pressKey(window, doc.getElementById('ideTopRailTab'), 'End');
-  assert.equal(activations.at(-1), 'ide');
-  pressKey(window, doc.getElementById('ideTopRailTab'), 'Home');
-  assert.equal(activations.at(-1), 'home');
-
-  const enterEvent = pressKey(window, doc.getElementById('homeTopRailTab'), 'Enter');
+  const enterEvent = pressKey(window, tab('ide'), 'Enter');
   assert.equal(enterEvent.defaultPrevented, true);
-  assert.equal(activations.at(-1), 'home');
+  assert.deepEqual(activations, ['ide'], 'Enter opens the focused tab');
+  pressKey(window, tab('ide'), 'ArrowLeft');
+  pressKey(window, doc.activeElement, ' ');
+  assert.deepEqual(activations, ['ide', 'chat'], 'Space opens the focused tab');
+});
+
+test('clicking the tab of the view already showing only focuses it', async (t) => {
+  const { window, doc, controller, activations } = await loadAppWithRail(t);
+  window.__rendererState.ui.activeView = 'chat';
+  controller.renderTopRail();
+  doc.getElementById('chatTopRailTab').click();
+  assert.deepEqual(activations, [], 'the view is not switched again');
+  doc.getElementById('homeTopRailTab').click();
+  assert.deepEqual(activations, ['home']);
 });
 
 test('setTopRailVisible toggles the hidden class and renders on show', async (t) => {

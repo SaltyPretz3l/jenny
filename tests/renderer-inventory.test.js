@@ -825,3 +825,9 @@ test('collapsible document handlers ignore a synthetic event without an Element 
   assert.doesNotThrow(() => listeners.keydown({ target: {}, key: 'Escape', preventDefault() {} }));
   assert.doesNotThrow(() => listeners.click({ target: null, preventDefault() {} }));
 });
+
+test('actionButton carries an escaped aria-description when given one (row 175: why a control waits)', () => {
+  const html = actionButton({ label: 'Send', ariaDescription: 'Sends when "reconnected" <now>' });
+  assert.ok(html.includes(' aria-description="Sends when &quot;reconnected&quot; &lt;now&gt;"'), html);
+  assert.ok(!actionButton({ label: 'Send' }).includes('aria-description'));
+});

@@ -304,3 +304,33 @@ test('F2: on a team host, team.pool.model.set changes the next turn\'s model and
   assert.equal(set.ok, true, JSON.stringify(set));
   assert.equal(await turnModel(), 'm2', 'the next turn, with no restart');
 });
+
+// Row 172 finding 3: a conversation's own model that no online PC offers now is refused with its own reason, never
+// leased as given and never swapped for another model. The team engine route keeps its own rules.
+test('row 172: a conversation model the pool does not offer now is refused as conversation_model_offline', async (t) => {
+  const pool = await resolvingPool(t, { value: 'm1' });
+  pool.scheduler.registerNode({ deviceId: 'device_a', memberId: 'member_node', slots: 2, models: [offer('m1'), offer('m2')] });
+  (await pool.turnRoute.acquire(poolTurn('m2'))).release({ ok: true });
+  await assert.rejects(pool.turnRoute.acquire(poolTurn('gone')),
+    (error) => error.reason === 'conversation_model_offline' && error.code === 'CMP-HOST-0007');
+  assert.deepEqual(asked(pool), ['m2'], 'no lease was requested for the missing model');
+  assert.deepEqual(pool.turnRoute.offeredModels(), ['m1', 'm2'], 'what sessions.preferences checks a pick against');
+  await assert.rejects(pool.engineRoute.acquire({ memberId: 'member_alice', model: 'gone' }),
+    (error) => error.reason === 'model_not_in_pool', 'the team engine route keeps the scheduler\'s own reason');
+});
+
+// Row 172 finding 2: on a pool host the turn's model is the alias, so the backend cannot know whether the leased
+// model thinks. The effort rides the request; the gateway drops it for a leased model without thinking
+// (tests/server/team-pool-gateway.test.js). The sidecar's probe of the gateway, made before any thinking node joined,
+// reported no reasoning support: that must not drop the conversation's effort.
+test('row 172: a pool host passes the conversation\'s effort through the alias; a single-owner host still clamps it', () => {
+  const { buildRequestReasoningEffortField } = require('../../services/backend/backend-managed-reasoning');
+  const status = { engine: 'openai-compatible', model: 'team-pool', local_runtime: { reasoning: { support: 'unsupported' } } };
+  const poolHost = { hostMode: 'server', turnRoute: { acquire: async () => ({}) }, currentStatus: status, currentModel: 'team-pool' };
+  for (const effort of ['low', 'medium', 'high']) {
+    assert.deepEqual(buildRequestReasoningEffortField(poolHost, effort, 'team-pool', ''), { reasoning_effort: effort }, effort);
+  }
+  assert.deepEqual(buildRequestReasoningEffortField(poolHost, 'default', 'team-pool', ''), {}, 'Default sends no effort');
+  const singleOwner = { ...poolHost, turnRoute: null };
+  assert.deepEqual(buildRequestReasoningEffortField(singleOwner, 'high', 'team-pool', ''), {}, 'no route: the clamp stands');
+});

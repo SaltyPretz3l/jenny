@@ -50,6 +50,13 @@
   const TERMINAL_SCROLLBACK_MIN = 500;
   const TERMINAL_SCROLLBACK_DEFAULT = 1000;
   const TERMINAL_SCROLLBACK_MAX = 25000;
+  // '' = Downloads; mirrors cleanTerminalStartFolder (services/terminal-start-folder.js).
+  const TERMINAL_START_FOLDER_MAX_CHARS = 512;
+  function normalizeTerminalStartFolder(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text || text.length > TERMINAL_START_FOLDER_MAX_CHARS || text.includes('\0') || /^[\\/]{2}/.test(text)) return '';
+    return /^[A-Za-z]:[\\/]/.test(text) || text.startsWith('/') ? text : '';
+  }
   // '' = use the app mono token. Only plain family-list characters survive; anything else
   // (or an over-long value) collapses to '' rather than reaching Monaco's CSS.
   function normalizeFontFamily(value) {
@@ -88,6 +95,7 @@
       key: 'terminalDefaultProfile', kind: 'text', def: '',
       clean: (value) => (typeof value === 'string' && TERMINAL_PROFILE_ID_RE.test(value) ? value : ''),
     },
+    { key: 'terminalStartFolder', kind: 'text', def: '', clean: normalizeTerminalStartFolder },
   ];
   function normalizeEditorPrefSpec(spec, src) {
     const raw = src[spec.key];

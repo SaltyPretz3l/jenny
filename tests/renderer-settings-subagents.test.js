@@ -246,3 +246,26 @@ test('delayed Settings actions do not steal focus after the user moves elsewhere
     h.controller.dispose();
   }
 });
+
+test('the provider select offers API providers and saves a namespaced default model', async () => {
+  const full = 'api-provider/anthropic-api/claude-sonnet-5-5';
+  const h = harness({ catalogs: {
+    chatgpt: { available: false, models: [] },
+    'api-provider': { available: true, stale: false, models: [
+      { id: full, label: 'Anthropic API · claude-sonnet-5-5', reasoning_efforts: ['default', 'low', 'high'] }] },
+  } });
+  await settle();
+  const options = [...h.container.querySelector('#subagent-provider').options].map((row) => row.value);
+  assert.deepEqual(options, ['chatgpt', 'codex-cli', 'api-provider']);
+  h.change('provider', 'api-provider');
+  assert.deepEqual([...h.container.querySelector('#subagent-model').options].map((row) => row.value), ['', full]);
+  h.change('model', full);
+  h.change('effort', 'low');
+  h.click('save');
+  await settle();
+  assert.deepEqual(h.writes[0].subagentRouting['api-provider'],
+    { defaultModel: full, defaultEffort: 'low', preferredModels: [], allowedModels: [], maxEffort: '' });
+  assert.equal(h.getFeatures().subagentRouting['api-provider'].defaultModel, full);
+  assert.equal(normalizeFeatureState({ subagentRouting: { 'api-provider': { defaultModel: full } } }).subagentRouting['api-provider'].defaultModel, full);
+  h.controller.dispose();
+});

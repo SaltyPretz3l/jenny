@@ -8,7 +8,7 @@
 // no disk.
 
 const {
-  NOTIFY_LEVELS, channelKind, isMessageId, isMessageText, isPositive, isRefList,
+  CHANGE_KINDS, LIMITS, NOTIFY_LEVELS, channelKind, isCount, isMemberId, isMessageId, isMessageText, isPositive, isRefList,
 } = require('../host/team-chat-schema');
 const { isPlainObject } = require('../../server/team/member-schema');
 const { CODE, REASON } = require('./team-errors');
@@ -94,6 +94,55 @@ function isDraftList(value) {
   return new Set(value.map((entry) => draftKey(entry.channel_id, entry.thread_root_id))).size === value.length;
 }
 
+// Row 173: the channel fields a `team` or `channel` row keeps (a name, a topic, who made and archived it, and the last
+// change records). The host's own text rule (NFC, no control characters) is the host's to apply: the client checks
+// the shape and the bounds, in code points.
+const CHANGE_KEYS = Object.freeze(['kind', 'by', 'at', 'seq_after']);
+const codePoints = (value) => (typeof value.isWellFormed !== 'function' || value.isWellFormed() ? [...value].length : 0);
+const isChannelName = (value) => typeof value === 'string' && codePoints(value) >= 1 && codePoints(value) <= LIMITS.CHANNEL_NAME_MAX;
+const isChannelTopic = (value) => typeof value === 'string'
+  && (value === '' || (codePoints(value) >= 1 && codePoints(value) <= LIMITS.CHANNEL_TOPIC_MAX));
+const isMemberOrNull = (value) => value === null || isMemberId(value);
+
+function isChange(value) {
+  if (!isPlain(value) || !CHANGE_KEYS.every((key) => Object.hasOwn(value, key)) || !CHANGE_KINDS.includes(value.kind)) return false;
+  const renamed = value.kind === 'renamed';
+  const extra = Object.keys(value).filter((key) => !CHANGE_KEYS.includes(key));
+  if (renamed ? !(extra.length === 2 && isChannelName(value.from) && isChannelName(value.to)) : extra.length !== 0) return false;
+  // A host archive (no member acting) records `by: null`, as the host schema allows.
+  return (isMemberId(value.by) || (value.by === null && value.kind === 'archived')) && isIso(value.at) && isCount(value.seq_after);
+}
+
+const CHANNEL_FIELD_CHECKS = Object.freeze({
+  name: (value) => value === null || isChannelName(value),
+  topic: isChannelTopic,
+  created_by: isMemberOrNull,
+  archived_by: isMemberOrNull,
+  changes: (value) => Array.isArray(value) && value.length <= LIMITS.CHANNEL_CHANGES_MAX && value.every(isChange),
+});
+const CHANNEL_FIELD_DEFAULTS = Object.freeze({ name: null, topic: '', created_by: null, archived_by: null, changes: [] });
+
+/**
+ * The channel fields of an overview row or a channel event, checked: { name, topic, created_by, archived_by, changes }
+ * (the changes copied), or null when a present field has the wrong shape. An absent field takes its default (an
+ * older host's row); with `partial` (an event) it is left out, so the row keeps what it holds.
+ */
+function checkedChannelFields(value, partial = false) {
+  const out = {};
+  for (const [key, check] of Object.entries(CHANNEL_FIELD_CHECKS)) {
+    if (!Object.hasOwn(value, key)) {
+      if (!partial) out[key] = key === 'changes' ? [] : CHANNEL_FIELD_DEFAULTS[key];
+    } else if (check(value[key])) {
+      out[key] = key === 'changes' ? value[key].map((change) => ({ ...change })) : value[key];
+    } else return null;
+  }
+  return out;
+}
+
+/** A row's own copy of its channel fields. */
+const channelFieldsCopy = (row) => ({ name: row.name, topic: row.topic, created_by: row.created_by, archived_by: row.archived_by,
+  changes: row.changes.map((change) => ({ ...change })) });
+
 /** True for a bounded outbox with unique entry and request ids. */
 function isOutboxList(value) {
   if (!Array.isArray(value) || value.length > OUTBOX_MAX || !value.every(isOutboxEntry)) return false;
@@ -103,6 +152,6 @@ function isOutboxList(value) {
 
 module.exports = {
   DRAFTS_MAX, DRAFT_MAX_BYTES, ENTRY_ID, OUTBOX_ENTRY_MAX_BYTES, OUTBOX_MAX, OUTBOX_OPERATIONS, draftKey, fitsRequest,
-  isChannelId, isDraftEntry, isDraftList, isDraftText, isMessageId, isMessageText, isNotify, isOutboxEntry,
+  channelFieldsCopy, checkedChannelFields, isChannelId, isDraftEntry, isDraftList, isDraftText, isMessageId, isMessageText, isNotify, isOutboxEntry,
   isOutboxList, isRefList,
 };

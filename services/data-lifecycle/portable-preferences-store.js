@@ -92,6 +92,7 @@ const SHELL_CONFIG_PORTABILITY = deepFreeze({
     setup: 'Onboarding progress, including the machine-bound workspace and model steps.',
     offlineIntelligence: 'Offline mode names a locally installed model.',
     localEngines: 'Engine ports, model and runtime paths, managed servers and GPU watchdog.',
+    localSubagentEngine: 'The local subagent engine names a model installed on this machine.',
     lastChatgptModel: 'Last-used model target recorded by this machine.',
     chatgptModelsEnabled: 'Retired-plugin migration marker (null until migrated).',
     codexCli: 'CLI command path and install-dependent enablement.',

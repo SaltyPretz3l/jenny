@@ -21,7 +21,7 @@ const { createAuthorizer } = require('../../../server/team/authorize');
 const { createInviteService } = require('../../../server/team/invites');
 const { createRateLimiter } = require('../../../server/team/rate-limit');
 const { createTeamCommands } = require('../../../server/team/team-commands');
-const { chatRoster, createTeamChatHost } = require('../../../services/host/team-chat-host');
+const { chatAudit, chatRoster, createTeamChatHost } = require('../../../services/host/team-chat-host');
 const { createFixture } = require('./team-store-fixture');
 
 async function createTeamChatCommandsFixture(t, {
@@ -52,7 +52,7 @@ async function createTeamChatCommandsFixture(t, {
     randomBytes: fx.randomBytes, publish: (type, payload, options) => eventStream.publish(type, payload, options),
     ...(maxResponseBytes ? { maxResponseBytes } : {}), ...(storeLimits ? { storeLimits } : {}),
     // Slice 2a-3b: the overview roster as team-main composes it, search and load hooks.
-    roster: chatRoster(store), ...(searchOptions ? { searchOptions } : {}), ...(storeYield ? { storeYield } : {}),
+    roster: chatRoster(store), audit: chatAudit(store), ...(searchOptions ? { searchOptions } : {}), ...(storeYield ? { storeYield } : {}),
   });
   const teamCommands = createTeamCommands({
     store, invites, directory: store.directory, clock: fx.clock, logger: fx.logger, chat: chat.commands,

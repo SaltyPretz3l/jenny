@@ -28,6 +28,15 @@
     return normalizeId(row && (row.render_message_id || row.primary_message_id));
   }
 
+  // A steer bubble renders inside the turn's article, in order.
+  function isSteerBubbleRow(row, messageById) {
+    if (normalizeId(row && row.kind) !== 'user_bubble' || !(messageById instanceof Map)) {
+      return false;
+    }
+    const message = messageById.get(rowRenderMessageId(row));
+    return normalizeId(message && message.kind) === 'steer';
+  }
+
   function readContext(projectionContext) {
     const context = projectionContext && typeof projectionContext === 'object' ? projectionContext : {};
     return {
@@ -48,7 +57,7 @@
   function collectTurnRenderRows(turnId, rows, projectionContext) {
     const normalizedTurnId = normalizeId(turnId);
     const sourceRows = Array.isArray(rows) ? rows : [];
-    const { turnIdByMessageId, rowsByRenderMessageId } = readContext(projectionContext);
+    const { turnIdByMessageId, rowsByRenderMessageId, messageById } = readContext(projectionContext);
     if (!normalizedTurnId || !turnIdByMessageId || !rowsByRenderMessageId) {
       return [];
     }
@@ -62,7 +71,7 @@
     }
     const collected = [];
     for (const row of sourceRows) {
-      if (!row || normalizeId(row.kind) === 'user_bubble') {
+      if (!row || (normalizeId(row.kind) === 'user_bubble' && !isSteerBubbleRow(row, messageById))) {
         continue;
       }
       const renderId = rowRenderMessageId(row);
@@ -114,6 +123,7 @@
   }
 
   return {
+    isSteerBubbleRow,
     collectTurnRenderRows,
     deriveTurnArticleAnchorMessageId,
   };

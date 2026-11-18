@@ -756,9 +756,10 @@ def test_normalize_context_blocks_keeps_every_allowlisted_kind_in_order() -> Non
         {"kind": "workspace_presentation", "content": "## Workspace Presentation Updates"},
         {"kind": "profile_overview", "content": "## Profile Overview"},
         {"kind": "board", "content": "## Board\nBoard now:\nboard Plan"},
+        {"kind": "team", "content": "## Team Conversation\nThis turn:\nTeam: Crew"},
     ]
     assert normalize_context_blocks(blocks) == blocks
-    assert len(blocks) == len(CONTEXT_BLOCK_KINDS) == MAX_CONTEXT_BLOCKS == 8
+    assert len(blocks) == len(CONTEXT_BLOCK_KINDS) == MAX_CONTEXT_BLOCKS == 9
 
 
 def test_session_role_is_a_closed_enum_or_absent() -> None:

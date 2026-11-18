@@ -186,6 +186,23 @@ test('chat_stream events are forwarded in order for an open conversation, rebuil
   conv.stop();
 });
 
+// Owner's live drive, 2026-11-16: the prompt showed only at the turn's end, and a stopped turn's saved row never came.
+test('a turn starting, a tool call and its result, a stream reset (row 175) and a turn stopped, read the snapshot again and push it', async () => {
+  for (const type of ['started', 'tool_use', 'tool_result', 'stream_reset', 'cancelled']) {
+    const manager = fakeManager();
+    const { conv, pushes } = conversations(manager);
+    await conv.call('conversationOpen', { session_id: SESSION });
+    await turn();
+    const before = manager.sent.length;
+    conv.onEvent({ event_type: 'chat_stream', session_id: SESSION, stream_id: 'stream_1', event: { type } });
+    await turn();
+    await turn();
+    assert.deepEqual(operations(manager, before), ['sessions.snapshot'], type);
+    assert.equal(pushes.filter((p) => p.kind === 'snapshot').length, 1, type);
+    conv.stop();
+  }
+});
+
 test('a snapshot naming another conversation is refused (fix 27)', async () => {
   const manager = fakeManager({ 'sessions.snapshot': () => snapshot('sess_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') });
   const { conv, timers } = conversations(manager);
@@ -328,4 +345,255 @@ test('the list is current only while events kept it so; a change this client mad
   assert.equal(list.current(), false);
   await list.refresh();
   assert.equal(list.current(), true);
+});
+
+// Row 169: the list's row menu renames and deletes without making the member the driver, open or not.
+const operations = (manager, from = 0) => manager.sent.slice(from).map((one) => one.operation);
+
+test('row 169: a rename of a conversation that is not open reads its revision, borrows the lease and hands it back', async () => {
+  const manager = fakeManager({ 'sessions.snapshot': () => snapshot(SESSION, 'boot:7'), 'control.acquire': lease('client_me', 4),
+    'sessions.rename': { ok: true, session_id: SESSION, title: 'Plan B', revision: 'boot:8' } });
+  const { conv, pushes } = conversations(manager);
+  const answer = await conv.call('conversationRename', { session_id: SESSION, title: 'Plan B' });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  assert.deepEqual(operations(manager), ['sessions.snapshot', 'control.acquire', 'sessions.rename', 'control.release']);
+  assert.deepEqual(manager.sent[0].params, { max_messages: 1 });
+  assert.deepEqual(manager.sent[2].params, { title: 'Plan B' });
+  assert.deepEqual([manager.sent[2].envelope.control_generation, manager.sent[2].envelope.expected_revision], [4, 'boot:7']);
+  assert.equal(manager.sent[3].envelope.control_generation, 4);
+  assert.deepEqual(conv.resources(), { conversations: 0, timers: 0 }, 'nothing is opened: no viewing, no slot, no heartbeat');
+  assert.deepEqual(pushes, [], 'no lease push: the member is not shown as the driver');
+  conv.stop();
+});
+
+test('row 169: an open conversation without the lease borrows it for a rename; with the lease held nothing is borrowed', async () => {
+  const manager = fakeManager({ 'sessions.rename': { ok: true, session_id: SESSION, title: 'B', revision: 'boot:2' } });
+  const { conv, pushes } = conversations(manager);
+  await conv.call('conversationOpen', { session_id: SESSION });
+  await turn();
+  let from = manager.sent.length;
+  assert.equal((await conv.call('conversationRename', { session_id: SESSION, title: 'B' })).ok, true);
+  assert.deepEqual(operations(manager, from), ['control.acquire', 'sessions.rename', 'control.release']);
+  assert.equal(manager.sent[from + 1].envelope.expected_revision, 'boot:1', 'the open conversation\'s revision, no extra read');
+  assert.equal(pushes.some((p) => p.kind === 'lease'), false);
+  assert.deepEqual(conv.resources(), { conversations: 1, timers: 1 }, 'the view timer only: no heartbeat for a borrowed lease');
+  await conv.call('conversationControl', { session_id: SESSION, action: 'take' });
+  from = manager.sent.length;
+  assert.equal((await conv.call('conversationRename', { session_id: SESSION, title: 'C' })).ok, true);
+  assert.deepEqual(operations(manager, from), ['sessions.rename'], 'the driver renames under the lease it holds and keeps it');
+  assert.equal(manager.sent[from].envelope.expected_revision, 'boot:2', 'the borrowed rename\'s revision was kept');
+  assert.equal([...pushes].reverse().find((p) => p.kind === 'lease').held, true);
+  conv.stop();
+});
+
+test('row 169: a refused borrow sends nothing more; a refused command still hands the lease back', async () => {
+  const taken = fakeManager({ 'control.acquire': hostFailure('control_lease_unavailable') });
+  const first = conversations(taken);
+  const refused = await first.conv.call('conversationRename', { session_id: SESSION, title: 'B' });
+  assert.equal(refused.error.reason, 'control_lease_unavailable');
+  assert.deepEqual(operations(taken), ['sessions.snapshot', 'control.acquire']);
+  const gone = fakeManager({ 'sessions.snapshot': hostFailure('session_not_found') });
+  assert.equal((await conversations(gone).conv.call('conversationDelete', { session_id: SESSION })).error.reason, 'session_not_found');
+  assert.deepEqual(operations(gone), ['sessions.snapshot']);
+  const busy = fakeManager({ 'sessions.delete': hostFailure('session_active') });
+  const second = conversations(busy);
+  assert.equal((await second.conv.call('conversationDelete', { session_id: SESSION })).error.reason, 'session_active');
+  assert.deepEqual(operations(busy), ['sessions.snapshot', 'control.acquire', 'sessions.delete', 'control.release']);
+});
+
+test('row 169: a delete from the list keeps no lease and forgets an open conversation', async () => {
+  const manager = fakeManager({ 'sessions.delete': { ok: true, session_id: SESSION, deleted: true } });
+  const closed = conversations(manager);
+  assert.equal((await closed.conv.call('conversationDelete', { session_id: SESSION })).ok, true);
+  assert.deepEqual(operations(manager), ['sessions.snapshot', 'control.acquire', 'sessions.delete'], 'a deleted conversation has no lease to hand back');
+  const opened = conversations(manager);
+  await opened.conv.call('conversationOpen', { session_id: SESSION });
+  assert.equal((await opened.conv.call('conversationDelete', { session_id: SESSION })).ok, true);
+  assert.equal(opened.conv.isOpen(SESSION), false);
+  assert.deepEqual(opened.conv.resources(), { conversations: 0, timers: 0 });
+});
+
+test('row 169: the page before a message is read for an open conversation only, answered and not pushed', async () => {
+  const older = { ...snapshot().snapshot, messages: [{ id: 'm1', role: 'user', content: 'first' }], message_count: 30, has_more: true,
+    next_before_message_id: 'm1' };
+  const manager = fakeManager({ 'sessions.snapshot': (params) => (params.before_message_id ? { ok: true, snapshot: older } : snapshot()) });
+  const { conv, pushes } = conversations(manager);
+  const early = await conv.call('conversationOpen', { session_id: SESSION, before_message_id: 'm21' });
+  assert.equal(early.error.reason, 'team_conversation_not_open');
+  assert.equal(manager.sent.length, 0, 'a page of a conversation that is not open opens nothing');
+  await conv.call('conversationOpen', { session_id: SESSION });
+  await turn();
+  const from = manager.sent.length;
+  const page = await conv.call('conversationOpen', { session_id: SESSION, before_message_id: 'm21' });
+  assert.equal(page.ok, true, JSON.stringify(page));
+  assert.deepEqual(manager.sent[from].params, { max_messages: 20, before_message_id: 'm21' });
+  assert.deepEqual([page.snapshot.messages.length, page.snapshot.has_more, page.snapshot.next_before_message_id], [1, true, 'm1']);
+  assert.equal(pushes.some((p) => p.kind === 'snapshot'), false);
+  assert.deepEqual(conv.resources(), { conversations: 1, timers: 1 });
+  // A rename by anybody reaches the open view: the event carries no title, so the snapshot is read again and pushed.
+  const before = manager.sent.length;
+  conv.onEvent({ event_type: 'session_changed', session_id: SESSION, revision: 'boot:9', reason: 'renamed' });
+  await turn();
+  await turn();
+  assert.deepEqual(operations(manager, before), ['sessions.snapshot']);
+  assert.equal(pushes.filter((p) => p.kind === 'snapshot').length, 1);
+  conv.stop();
+});
+
+// Owner report (team overview B3): the host names a new conversation while it saves the first turn and sends no
+// `renamed` for it. After a saved turn, or the end of a run, the conversations are read again while the row still
+// carries the title it was first listed with (at most twice per conversation); a title that moved costs no more reads.
+test('a title the host sets while saving a turn reaches the list; a long conversation is not read per turn', async () => {
+  const titles = { 1: 'New Chat', 2: 'New Chat', 3: 'Kept name' };
+  const { manager, list, pushes } = listOf({ 'projects.list': PROJECTS,
+    'sessions.list': () => ({ ok: true, sessions: [1, 2, 3].map((i) => row(i, { title: titles[i] })) }) });
+  await list.refresh();
+  const titleOf = (i) => pushes.filter((p) => p.kind === 'projects').at(-1).conversations.find((c) => c.session_id === row(i).session_id).title;
+  const saved = (i) => ({ event_type: 'session_changed', session_id: row(i).session_id, revision: 'boot:2', reason: 'chat_saved' });
+  const ended = (i) => ({ event_type: 'chat_stream', session_id: row(i).session_id, stream_id: 'stream_1', event: { type: 'complete' } });
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await turn(); };
+  titles[1] = 'Hello';
+  list.onEvent(saved(1));
+  await settle();
+  assert.equal(titleOf(1), 'Hello', 'the first saved turn brings the host title');
+  let reads = manager.count('sessions.list');
+  for (let n = 0; n < 4; n += 1) { list.onEvent(saved(1)); list.onEvent(ended(1)); await settle(); }
+  assert.equal(manager.count('sessions.list'), reads, 'a title that moved costs no read per turn');
+  // Named only as the turn ends: the save reads the default, the end of the run reads the name.
+  list.onEvent(saved(2));
+  await settle();
+  assert.equal(titleOf(2), 'New Chat');
+  titles[2] = 'Late name';
+  list.onEvent(ended(2));
+  await settle();
+  assert.equal(titleOf(2), 'Late name');
+  // A conversation that keeps its first title: two reads at most, then none per turn.
+  reads = manager.count('sessions.list');
+  for (let n = 0; n < 5; n += 1) { list.onEvent(saved(3)); await settle(); }
+  assert.equal(manager.count('sessions.list') - reads, 2, 'bounded for the life of the conversation');
+  list.stop();
+});
+
+// Row 172: the conversation's model, effort and tool switches go as sessions.preferences under the lease, as a send.
+test('row 172: conversationPreferences takes the lease, sends exactly the three keys and answers the revision', async () => {
+  const manager = fakeManager({ 'sessions.preferences': { ok: true, revision: 'boot:2',
+    session: { session_id: SESSION, title: 'T', root_path: '/host/secret' } } });
+  const { conv, last } = conversations(manager);
+  await conv.call('conversationOpen', { session_id: SESSION });
+  const answer = await conv.call('conversationPreferences', { team_id: 'team_a', session_id: SESSION,
+    preferred_model: null, reasoning_effort: 'high', team_tools: { write: false } });
+  assert.deepEqual(answer, { ok: true, revision: 'boot:2' }, 'the session object never reaches the renderer');
+  assert.equal(last('lease').held, true, 'the lease was taken first');
+  const sent = manager.sent.find((one) => one.operation === 'sessions.preferences');
+  assert.deepEqual(sent.params, { preferred_model: null, reasoning_effort: 'high', team_tools: { write: false } });
+  assert.deepEqual([sent.envelope.control_generation, sent.envelope.expected_revision], [1, 'boot:1']);
+  await conv.call('conversationPreferences', { session_id: SESSION, team_tools: { read: true } });
+  assert.equal(manager.sent.filter((one) => one.operation === 'sessions.preferences').at(-1).envelope.expected_revision, 'boot:2',
+    'the answer\'s revision is the next command\'s');
+  conv.stop();
+});
+
+test('row 172: a preferences change re-reads the snapshot for every viewer', async () => {
+  const manager = fakeManager();
+  const { conv, pushes } = conversations(manager);
+  await conv.call('conversationOpen', { session_id: SESSION });
+  await turn();
+  const before = manager.sent.length;
+  conv.onEvent({ event_type: 'session_changed', session_id: SESSION, revision: 'boot:3', reason: 'preferences' });
+  await turn();
+  await turn();
+  assert.deepEqual(operations(manager, before), ['sessions.snapshot']);
+  assert.equal(pushes.filter((p) => p.kind === 'snapshot').length, 1);
+  conv.stop();
+});
+
+// Row 175 (F2, D1, D2): project activity notices and the approvals that wait for this member.
+const stream = (type, over = {}) => ({ event_type: 'chat_stream', session_id: row(1).session_id, stream_id: over.stream || 'stream_1',
+  event: { type, ...over.event } });
+async function noticeList(role = 'writer', viewing = () => false) {
+  const projects = { ...PROJECTS, projects: [{ ...PROJECTS.projects[0], role }] };
+  const f = listOf({ 'projects.list': projects, 'sessions.list': { ok: true, sessions: [row(1)] } }, { isViewing: viewing });
+  await f.list.refresh();
+  return { ...f, notices: () => f.pushes.filter((p) => p.kind === 'project_notice').map((p) => p.notice),
+    waiting: () => f.pushes.filter((p) => p.kind === 'project_waiting').map((p) => p.count) };
+}
+
+test('row 175: this member\'s own turn tells when it waits, asks and ends; each once; a cancel and another turn tell nothing', async () => {
+  const f = await noticeList();
+  const sid = row(1).session_id;
+  f.list.onEvent(stream('started', { stream: 'stream_other' }));
+  f.list.onEvent(stream('complete', { stream: 'stream_other' }));
+  assert.deepEqual(f.notices(), [], 'a turn this app did not send');
+  f.list.sending(sid);
+  f.list.sent(sid, 'turn_1');
+  f.list.onEvent(stream('started', { event: { turn_id: 'turn_1' } }));
+  f.list.onEvent(stream('tool_approval_needed', { event: { approval_id: 'approval_1' } }));
+  f.list.onEvent({ event_type: 'approval_unattended', session_id: sid, stream_id: 'stream_1', approval_id: 'approval_1', prompter_member_id: null });
+  f.list.onEvent(stream('question_batch', { event: { call_id: 'call_q' } }));
+  f.list.onEvent(stream('question_batch', { event: { call_id: 'call_q' } }));
+  f.list.onEvent({ event_type: 'decision_changed', session_id: sid, stream_id: 'stream_1', approval_id: 'approval_1' });
+  f.list.onEvent(stream('complete'));
+  f.list.onEvent(stream('complete'));
+  assert.deepEqual(f.notices(), ['approval', 'question', 'finished'], 'the unattended one shares the approval id');
+  assert.deepEqual(f.waiting(), [1, 0], 'counted while it waits, cleared by the decision');
+  const told = f.pushes.find((p) => p.kind === 'project_notice');
+  assert.deepEqual(Object.keys(told).sort(), ['kind', 'notice', 'notice_id', 'project_id', 'session_id', 'team_id', 'title']);
+  assert.deepEqual([told.project_id, told.title], [PROJECT, 'T1'], 'the title as listed, never message text');
+  f.list.sending(sid);
+  f.list.onEvent(stream('started', { stream: 'stream_2' }));
+  f.list.onEvent(stream('error', { stream: 'stream_2' }));
+  f.list.sending(sid);
+  f.list.onEvent(stream('started', { stream: 'stream_3' }));
+  f.list.onEvent(stream('cancelled', { stream: 'stream_3' }));
+  assert.deepEqual(f.notices().slice(3), ['failed'], 'a failure tells; a cancel does not');
+  f.list.sending(sid);
+  f.list.unsent(sid);
+  f.list.onEvent(stream('started', { stream: 'stream_4' }));
+  f.list.onEvent(stream('complete', { stream: 'stream_4' }));
+  assert.equal(f.notices().length, 4, 'a refused send binds no turn');
+  f.list.stop();
+});
+
+test('row 175: an unattended approval tells a writer, not a reader; never while viewing; a resync clears the count', async () => {
+  const sid = row(1).session_id;
+  const unattended = (id) => ({ event_type: 'approval_unattended', session_id: sid, stream_id: 'stream_1', approval_id: id, prompter_member_id: null });
+  const reader = await noticeList('reader');
+  reader.list.onEvent(unattended('approval_1'));
+  assert.deepEqual([reader.notices(), reader.waiting()], [[], []], 'a reader gets nothing');
+  let viewing = true;
+  const admin = await noticeList('admin', () => viewing);
+  admin.list.onEvent(unattended('approval_1'));
+  assert.deepEqual([admin.notices(), admin.waiting()], [[], [1]], 'viewing: counted, not told');
+  viewing = false;
+  admin.list.onEvent(unattended('approval_1'));
+  admin.list.onEvent(unattended('approval_2'));
+  assert.deepEqual(admin.notices(), ['unattended', 'unattended'], 'reported again after the member left: told once per approval');
+  admin.list.onEvent(stream('tool_use', { event: { approval_id: 'approval_2', status: 'timeout' } }));
+  admin.list.onEvent({ event_type: 'resync_required' });
+  assert.deepEqual(admin.waiting(), [1, 2, 1, 0], 'a timed-out approval goes; a resync clears the rest');
+  admin.list.onEvent(unattended('approval_3')); reader.list.stop(); admin.list.stop();
+  assert.deepEqual(admin.waiting().slice(-2), [1, 0], 'stopping the list sets the count back to zero');
+});
+
+test('row 175: team-projects reads the list at connect, and a send through it is this member\'s turn, told once it is closed', async () => {
+  const { createTeamProjects } = require('../services/team/team-projects');
+  let fire = () => {};
+  const manager = Object.assign(fakeManager({ 'projects.list': PROJECTS, 'sessions.list': { ok: true, sessions: [{ session_id: SESSION, title: 'T', project_id: PROJECT }] },
+    'chat.send': { ok: true, revision: 'boot:2', turn_id: 'turn_9' } }), { snapshot: () => ({ state: 'online', member_state: 'active', role: 'member' }),
+    onEvent: (fn) => { fire = fn; return () => {}; } });
+  const pushes = [];
+  const projects = createTeamProjects({ push: (p) => pushes.push(p), timers: fakeTimers() });
+  projects.connectionChanged('team_a', manager);
+  for (let i = 0; i < 3; i += 1) await turn();
+  assert.deepEqual([manager.count('projects.list'), manager.count('sessions.list')], [1, 1], 'read at connect with no project call');
+  const s = { team_id: 'team_a', session_id: SESSION };
+  const event = (type, over = {}) => fire({ event_type: 'chat_stream', session_id: SESSION, stream_id: 'stream_1', event: { type, ...over } });
+  await projects.call('conversationOpen', s);
+  assert.equal((await projects.call('conversationSend', { ...s, prompt: 'hi' })).ok, true);
+  event('started', { turn_id: 'turn_9' });
+  event('question_batch', { call_id: 'call_1' });
+  await projects.call('conversationClose', s);
+  event('complete');
+  assert.deepEqual(pushes.filter((p) => p.kind === 'project_notice').map((p) => p.notice), ['question', 'finished'], 'told while open too');
+  await projects.stopAll();
 });

@@ -181,6 +181,8 @@ const FEATURE_FLAG_ROWS = [
   { key: 'background_job_wake', env: 'BACKGROUND_JOB_WAKE', default: true, internal: true },
   { key: 'background_job_notices', env: 'BACKGROUND_JOB_NOTICES', default: true, internal: true },
   { key: 'child_auto_resume', env: 'CHILD_AUTO_RESUME', default: true, internal: true },
+  // Row 180: a message sent while a turn works is taken at the model's next tool-loop step (=0: offers refused).
+  { key: 'mid_turn_steer', env: 'MID_TURN_STEER', default: true, internal: true },
   // Default-on kill switches. Row 76 (plan PRIMARY_CHAT_CONTROLS_2026-10-25.md):
   // the primary's standing launch permission, activity log and Pause/Reset/Forget
   // controls; row 88: settings_get/settings_change; row 94: chat_organize/
@@ -203,6 +205,8 @@ const FEATURE_FLAG_ROWS = [
   { key: 'primary_full_auto', env: 'PRIMARY_FULL_AUTO', default: true, internal: true },
   // Row 112: =0 stops the model-written chat name; the clipped first-message title stays.
   { key: 'session_model_titles', env: 'SESSION_MODEL_TITLES', default: true, internal: true },
+  // Row 175 item 10: =0 keeps a Team host conversation's clipped first question as its title (no model call, no pool lease).
+  { key: 'team_titles', env: 'TEAM_TITLES', default: true, internal: true },
   { key: 'terminal_tools', env: 'TERMINAL_TOOLS', default: true, internal: true },
   { key: 'primary_scheduled_checks', env: 'PRIMARY_SCHEDULED_CHECKS', default: true, internal: true },
   // Row 144: =0 lets a scheduled check run on any model again (the model pins still apply).
@@ -407,6 +411,10 @@ const FEATURE_FLAG_ROWS = [
   // since the owner's decision D27 (2026-11-14); =0 leaves no Board tab, no board IPC and
   // no startup read.
   { key: 'project_boards', env: 'PROJECT_BOARDS', default: true, internal: true },
+  // Row 179: a cloud primary keeps the picked local subagent engine (NInfer or
+  // llama-server) running for its delegate children (services/backend/local-subagent-engine.js).
+  // Inert until a model is picked; =0 restores "a cloud load stops every managed server".
+  { key: 'local_subagent_engine', env: 'LOCAL_SUBAGENT_ENGINE', default: true, internal: true },
 
   // ---- Defaults only: in neither exported key list ----
   // Rows 96-97 (2026-11-01): live test-run progress, cross-process work leases on run_command.
@@ -414,6 +422,8 @@ const FEATURE_FLAG_ROWS = [
   { key: 'work_leases', env: 'WORK_LEASES', default: true },
   // Row 138: live output tail for a running background command (live-output.json beside status.json).
   { key: 'background_live_output', env: 'BACKGROUND_LIVE_OUTPUT', default: true },
+  // Row 178: the chat's Terminal side panel (the Workspace's terminals in the chat); =0 removes the More-menu entry and Ctrl+`.
+  { key: 'chat_terminal_panel', env: 'CHAT_TERMINAL_PANEL', default: true },
   // Row 140: Get drafter / Get vision in the Tune drawer (main-process downloads beside the model).
   { key: 'gguf_companions', env: 'GGUF_COMPANIONS', default: true },
 ];

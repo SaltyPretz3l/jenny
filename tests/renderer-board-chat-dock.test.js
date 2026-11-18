@@ -350,7 +350,10 @@ test('context.openChat opens a collapsed chat column and docks the transcript, a
   assert.equal(h.transcriptIn(h.byId('ideChatDockBody')), true);
   assert.equal(h.state.ui.boardChatDockOpen, true);
   assert.equal(h.doc.activeElement, h.byId('chatInput'), 'the caret is in the composer');
+  h.doc.querySelector('.inv-board-canvas').focus(); // the person selects cards: the caret leaves the composer
+  assert.notEqual(h.doc.activeElement, h.byId('chatInput'));
   assert.equal(hooks.openChat(), true, 'already open stays true');
+  assert.equal(h.doc.activeElement, h.byId('chatInput'), 'with the chat already open the caret still goes to the composer');
   h.state.features.featureFlags.project_boards = false;
   assert.equal(hooks.openChat(), false);
 });

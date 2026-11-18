@@ -26,6 +26,10 @@
  *   - a row for the conversation on screen shows its title and one line and
  *     offers no decisions (`onScreen`), because the transcript card beside it
  *     is where that wait is answered; it still counts.
+ *   - a Team row (row 175 F10, from renderer-team-notify.js `attention()`) is
+ *     marked `source: 'team'`, names its project on the muted line and is only
+ *     ever opened: the Team tab is where an approval is answered. It follows the
+ *     local rows of its kind, in arrival order, and never carries a decision.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -280,8 +284,71 @@
     return rows;
   }
 
+  /* Row 175 F10: what the Team notifier says waits on this member, as rows. The source is read at the call, never held:
+   * `options.team` for a caller that has it, else the Team notifier's own accessor (absent until Team has loaded). */
+  function teamSource(option) {
+    if (option !== undefined) return option;
+    var notify = globalThis.rendererTeamNotify;
+    return notify && typeof notify.attention === 'function' ? notify.attention() : null;
+  }
+
+  /* 'Team · <project> · <what waits>': an own approval says whose turn it is, an unattended one says nobody is viewing. */
+  function teamLine(item) {
+    var where = text(item.where);
+    var head = where ? jt('team.home.marker', 'Team · {project}', { project: where }) : jt('team.home.markerBare', 'Team');
+    var count = Math.max(1, Math.floor(Number(item.count)) || 1);
+    var tail;
+    if (item.kind === 'question') {
+      tail = jtn('team.home.questionsWaiting', count, { count: String(count) }, '{count} question waiting', '{count} questions waiting');
+    } else if (!item.unattended) {
+      tail = jt('team.home.yourTurn', 'Your turn');
+    } else if (text(item.prompterName)) {
+      tail = jt('team.home.theirTurnNobodyViewing', "{name}'s turn · Nobody is viewing", { name: text(item.prompterName) });
+    } else {
+      tail = jt('team.home.nobodyViewing', 'Nobody is viewing');
+    }
+    return head + LINE_SEPARATOR + tail;
+  }
+
+  function buildTeamRows(team) {
+    var items = team && Array.isArray(team.waiting) ? team.waiting : [];
+    return items.filter(function valid(item) {
+      return item && (item.kind === 'approval' || item.kind === 'question') && text(item.teamId) && text(item.sessionId);
+    }).map(function teamRow(item) {
+      return {
+        key: 'team_' + item.kind + ':' + text(item.sessionId),
+        kind: item.kind,
+        source: 'team',
+        teamId: text(item.teamId),
+        projectId: text(item.projectId),
+        sessionId: text(item.sessionId),
+        sessionTitle: text(item.title) || jt('team.notify.projectUntitled', 'A project conversation'),
+        teamLine: teamLine(item),
+        questionCount: Math.max(1, Math.floor(Number(item.count)) || 1),
+        canAllow: false,
+        canAlwaysAllow: false,
+        onScreen: item.onScreen === true,
+      };
+    });
+  }
+
+  /* A Team row opens its conversation in the Team tab, by the same intent a toast's click runs. */
+  function openTeamConversation(row) {
+    var notify = globalThis.rendererTeamNotify;
+    if (!row || !notify || typeof notify.request !== 'function') return false;
+    return notify.request({ kind: 'conversation', teamId: row.teamId, projectId: row.projectId || '', sessionId: row.sessionId }) === true;
+  }
+
+  /* What the view's second gate compares: everything a row says, so a source that moved without changing a word touches no DOM. */
+  function rowSignature(row) {
+    return [row.key, row.sessionTitle, row.toolName, row.preview, row.canAllow, row.canAlwaysAllow, row.questionCount,
+      row.introText, row.consequence, row.policyScope, row.failedCount, row.onScreen, row.teamLine,
+      (row.facts || []).map(function labelOf(fact) { return fact.label; })];
+  }
+
   /* The muted line under a row that is not an approval (approvals use policyLine). */
   function rowNote(row) {
+    if (row.source === 'team') return row.teamLine;
     if (row.kind === 'stuck_send') {
       return jt('chat.attentionInbox.stuckSend', "Message waiting to start · last reply's cleanup unconfirmed");
     }
@@ -363,7 +430,7 @@
     }).join(FIELD);
     return [
       extras.collapsed ? '1' : '0', String(state.currentSessionId || ''), String(state.ui && state.ui.activeView || ''),
-      approvalKeys, sessionKeys, cardKeys,
+      approvalKeys, sessionKeys, cardKeys, String((teamSource(extras.team) || {}).key || ''),
       (Array.isArray(extras.stuckSends) ? extras.stuckSends : []).map(function keyOf(entry) { return entry.key + PART + entry.sessionId; }).join(FIELD),
     ].concat(extras.verdicts.map(sortedKeys)).join(GROUP);
   }
@@ -394,6 +461,7 @@
    * @param {Object} [options.facts] - { getApprovalFacts, getApprovalCommandPreview }
    * @param {Array<Object>} [options.stuckSends] - runtimeSendController.listStuckSends()
    * @param {Array<Object>} [options.questionCards] - live ask_user cards { sessionId, callId, questionCount, introText }
+   * @param {Object|null} [options.team] - The Team notifier's `attention()` (default: read from it when loaded)
    * @returns {{rows: Array<Object>, counts: Object, hidden: boolean}} frozen
    */
   function buildAttentionInbox(options) {
@@ -404,16 +472,18 @@
     var context = { sessionIndex: sessionIndex, facts: input.facts, pendingToolApprovals: input.pendingToolApprovals,
       stuckSends: input.stuckSends, questionCards: input.questionCards };
     var rows = buildApprovalRows(context).concat(buildQuestionRows(context), buildDeliveryFailedRows(context),
-      buildStuckSendRows(context));
+      buildStuckSendRows(context), buildTeamRows(teamSource(input.team)));
     // Stable sort: kind first, then the conversation on screen last within its
     // kind (the person is looking elsewhere in the app, so the waits they
     // cannot see come first), then the order the sources produced them in --
-    // approval-map insertion order, which is oldest first.
+    // approval-map insertion order, which is oldest first. A Team row follows the local rows of its kind (F10, D16).
     rows = rows
       .map(function withIndex(row, index) { return { row: row, index: index }; })
       .sort(function compare(left, right) {
         var byKind = KIND_ORDER[left.row.kind] - KIND_ORDER[right.row.kind];
         if (byKind !== 0) return byKind;
+        var byTeam = (left.row.source === 'team' ? 1 : 0) - (right.row.source === 'team' ? 1 : 0);
+        if (byTeam !== 0) return byTeam;
         var leftCurrent = currentSessionId && left.row.sessionId === currentSessionId ? 1 : 0;
         var rightCurrent = currentSessionId && right.row.sessionId === currentSessionId ? 1 : 0;
         if (leftCurrent !== rightCurrent) return leftCurrent - rightCurrent;
@@ -421,7 +491,7 @@
       })
       .map(function freezeRow(entry, order) {
         entry.row.order = order;
-        entry.row.onScreen = currentSessionOnScreen && currentSessionId !== '' && entry.row.sessionId === currentSessionId;
+        if (entry.row.source !== 'team') entry.row.onScreen = currentSessionOnScreen && currentSessionId !== '' && entry.row.sessionId === currentSessionId;
         return Object.freeze(entry.row);
       });
     function countOf(kind) { return rows.filter(function isKind(row) { return row.kind === kind; }).length; }
@@ -441,5 +511,6 @@
   }
 
   return { buildAttentionInbox: buildAttentionInbox, policyLine: policyLine, rowNote: rowNote, waitingStates: waitingStates,
-    snapshotOf: snapshotOf, sourceFingerprint: sourceFingerprint, PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
+    snapshotOf: snapshotOf, sourceFingerprint: sourceFingerprint, rowSignature: rowSignature, openTeamConversation: openTeamConversation,
+    PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
 });

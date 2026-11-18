@@ -1075,6 +1075,7 @@ _CHAT_WORKSPACE_REQUEST = {
     "context_kinds": ["session_message", "session_handoff"],
     "session_messages": True,
     "mid_turn_mail": True,
+    "mid_turn_steer": True,
 }
 # A messages-only request: no producer tools, no handoff context kind, no mid-turn mail.
 _CHAT_WORKSPACE_MESSAGES_ONLY = {
@@ -1083,6 +1084,7 @@ _CHAT_WORKSPACE_MESSAGES_ONLY = {
     "context_kinds": ["session_message"],
     "session_messages": True,
     "mid_turn_mail": False,
+    "mid_turn_steer": False,
 }
 _CHAT_WORKSPACE_EMPTY = {
     "schema_version": 1,
@@ -1090,6 +1092,7 @@ _CHAT_WORKSPACE_EMPTY = {
     "context_kinds": [],
     "session_messages": False,
     "mid_turn_mail": False,
+    "mid_turn_steer": False,
 }
 
 
@@ -1125,6 +1128,7 @@ def test_initialize_drops_unsupported_chat_workspace_requests() -> None:
             "context_kinds": ["session_message", "session_handoff", "session_message_receipt"],
             "session_messages": True,
             "mid_turn_mail": True,
+            "mid_turn_steer": True,
         }
     )
 
@@ -1145,6 +1149,7 @@ def test_initialize_negotiates_each_producer_tool_and_context_kind_independently
             "context_kinds": ["session_handoff"],
             "session_messages": False,
             "mid_turn_mail": False,
+            "mid_turn_steer": False,
         }
     )
     assert handoff_only["chat_workspace_capabilities"] == {
@@ -1153,6 +1158,7 @@ def test_initialize_negotiates_each_producer_tool_and_context_kind_independently
         "context_kinds": ["session_handoff"],
         "session_messages": False,
         "mid_turn_mail": False,
+        "mid_turn_steer": False,
     }
 
 
@@ -1175,6 +1181,32 @@ def test_initialize_negotiates_mid_turn_mail_only_with_session_messages() -> Non
     assert not_requested["chat_workspace_capabilities"]["mid_turn_mail"] is False
 
 
+def test_initialize_negotiates_mid_turn_steer_independently_of_session_messages() -> None:
+    # Row 180: steering needs neither session messages nor the session_message context kind.
+    steer_only = {**_CHAT_WORKSPACE_EMPTY, "mid_turn_steer": True}
+    assert _initialize_requesting(steer_only)["chat_workspace_capabilities"] == steer_only
+
+    no_messages = _initialize_requesting({**_CHAT_WORKSPACE_REQUEST, "session_messages": False})
+    granted = no_messages["chat_workspace_capabilities"]
+    assert granted["session_messages"] is False and granted["mid_turn_mail"] is False
+    assert granted["mid_turn_steer"] is True
+
+    not_requested = _initialize_requesting({**_CHAT_WORKSPACE_REQUEST, "mid_turn_steer": False})
+    assert not_requested["chat_workspace_capabilities"]["mid_turn_steer"] is False
+    assert not_requested["chat_workspace_capabilities"]["mid_turn_mail"] is True
+
+
+def test_initialize_treats_a_missing_mid_turn_steer_key_as_not_requested_and_a_bad_one_as_malformed() -> None:
+    # An older shell that does not know the key still gets the rest of its grant.
+    legacy = {key: value for key, value in _CHAT_WORKSPACE_REQUEST.items() if key != "mid_turn_steer"}
+    assert _initialize_requesting(legacy)["chat_workspace_capabilities"] == {
+        **_CHAT_WORKSPACE_REQUEST,
+        "mid_turn_steer": False,
+    }
+    malformed = {**_CHAT_WORKSPACE_REQUEST, "mid_turn_steer": "true"}
+    assert _initialize_requesting(malformed)["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+
+
 def test_initialize_answers_the_empty_form_without_the_mid_turn_mail_key() -> None:
     # Lockstep: an older request without the key is not the closed shape.
     legacy = {key: value for key, value in _CHAT_WORKSPACE_REQUEST.items() if key != "mid_turn_mail"}
@@ -1188,7 +1220,8 @@ def test_initialize_requires_session_message_kind_for_the_session_messages_flag(
         {**_CHAT_WORKSPACE_REQUEST, "producer_tools": [], "context_kinds": []}
     )
 
-    assert result["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+    # Steering (row 180) does not depend on session messages: it keeps its own grant.
+    assert result["chat_workspace_capabilities"] == {**_CHAT_WORKSPACE_EMPTY, "mid_turn_steer": True}
 
 
 def test_initialize_answers_the_empty_form_when_the_request_is_absent_or_malformed() -> None:

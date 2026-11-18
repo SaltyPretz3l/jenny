@@ -530,3 +530,32 @@ test('E50 the payload says whether there is team data on disk only while the tea
   assert.equal(payload.teamData, false);
   assert.equal(pushed[0].teamData, false, 'the push carries it too');
 });
+
+test('the subagent catalog lists every enabled API provider model by namespaced id with efforts from its limits', () => {
+  const apiProviders = { instances: [
+    { id: 'anthropic-api', presetId: 'anthropic-api', label: 'Anthropic API', models: [
+      { id: 'claude-sonnet-5-5', enabled: true }, { id: 'claude-off', enabled: false }] },
+    { id: 'my-router', presetId: 'custom', label: 'My router', endpoint: 'https://example.com/v1', transport: 'openai_chat_completions_v1',
+      authProfile: 'api_key_bearer', tokenLimitField: 'max_tokens', models: [
+        { id: 'vendor/plain', enabled: true, pin: { reasoning: false } }] },
+  ] };
+  const build = (backendService) => buildFeatureStatePayload({
+    shellConfigService: { getState: () => ({ featureOverrides: {} }), getWorkspaceRootStatus: () => ({ state: 'missing', message: '' }) },
+    backendService, env: {}, platform: 'win32',
+  }).subagentModelCatalogs['api-provider'];
+  const catalog = build({ configService: { getState: () => ({ apiProviders }) }, featureFlags: { api_providers: true } });
+  assert.equal(catalog.available, true);
+  assert.equal(catalog.stale, false);
+  const ids = catalog.models.map((row) => row.id);
+  assert.ok(ids.includes('api-provider/anthropic-api/claude-sonnet-5-5'));
+  assert.ok(ids.includes('api-provider/my-router/vendor/plain'));
+  assert.ok(!ids.includes('api-provider/anthropic-api/claude-off'));
+  const sonnet = catalog.models.find((row) => row.id === 'api-provider/anthropic-api/claude-sonnet-5-5');
+  assert.equal(sonnet.label, 'Anthropic API \u00b7 claude-sonnet-5-5');
+  assert.deepEqual(sonnet.reasoning_efforts, ['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(catalog.models.find((row) => row.id.endsWith('vendor/plain')).reasoning_efforts, ['default']);
+  for (const unavailable of [{ configService: { getState: () => ({ apiProviders }) }, featureFlags: { api_providers: false } },
+    { configService: { getState: () => ({ apiProviders }) }, hostMode: 'server' }, {}]) {
+    assert.deepEqual(build(unavailable), { models: [], stale: false, available: false });
+  }
+});

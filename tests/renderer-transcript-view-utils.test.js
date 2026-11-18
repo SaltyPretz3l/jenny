@@ -401,6 +401,32 @@ test('Background tasks toggles the panel for this pane with the button as opener
   assert.deepEqual(calls.bg, [{ sessionId: 's1', opener: button }]);
 });
 
+function mountTerminalMenu(t, { panel = true, pty = true, flags } = {}) {
+  const saved = { panel: globalThis.rendererChatTerminalPanel, shell: globalThis.jennyShell };
+  t.after(() => { globalThis.rendererChatTerminalPanel = saved.panel; globalThis.jennyShell = saved.shell; });
+  const toggles = [];
+  globalThis.rendererChatTerminalPanel = panel ? { isOpen: () => true, toggle: (arg) => toggles.push(arg) } : undefined;
+  globalThis.jennyShell = pty ? { workspacePty: {} } : {};
+  const ctx = mountPanels(t, { flags });
+  ctx.open();
+  return { ...ctx, toggles };
+}
+
+test('the More menu lists a ticked Terminal toggle after Background tasks, with its shortcut', (t) => {
+  const { rows, menuItem, toggles, button } = mountTerminalMenu(t);
+  assert.equal(rows().indexOf('Terminal'), rows().indexOf('Background tasks') + 1);
+  assert.equal(menuItem('Terminal').getAttribute('aria-checked'), 'true');
+  assert.match(menuItem('Terminal').textContent, /Ctrl\+`/);
+  menuItem('Terminal').click();
+  assert.deepEqual(toggles, [{ sessionId: 's1', opener: button }]);
+});
+
+test('the Terminal entry is absent with the flag off, without the pty bridge, or without the panel', async (t) => {
+  for (const [name, options] of [['flag off', { flags: { chat_terminal_panel: false } }], ['no pty bridge', { pty: false }], ['no panel', { panel: false }]]) {
+    await t.test(name, (sub) => { assert.ok(!mountTerminalMenu(sub, options).rows().includes('Terminal')); });
+  }
+});
+
 test('Subagents opens this pane\'s last card, and a ticked row closes the panel', (t) => {
   const { doc, open, menuItem, rail, calls } = mountPanels(t);
   const clicked = [];

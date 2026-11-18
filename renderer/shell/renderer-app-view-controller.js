@@ -275,7 +275,7 @@
     return { dispose, handleRequest, checkLayout };
   }
 
-  const RUN_REASONS = ['no_free_terminal', 'start_failed', 'send_failed', 'no_ide'];
+  const RUN_REASONS = ['no_free_terminal', 'start_failed', 'send_failed', 'no_ide', 'root_missing', 'start_folder_unavailable'];
   const RUN_COMMAND_MAX = 2000;
 
   function createTerminalRunHandler(deps) {
@@ -295,9 +295,10 @@
       const requestId = typeof p.request_id === 'string' ? p.request_id : ''; // ID_RE bounds it: never truncated
       const command = typeof p.command === 'string' && p.command.length <= RUN_COMMAND_MAX ? p.command : '';
       if (!ID_RE.test(requestId) || !command.trim()) return;
+      const options = p.place === 'start_folder' ? { place: 'start_folder' } : undefined;
       let answer;
       try {
-        answer = runInTerminal ? await runInTerminal(command) : false;
+        answer = runInTerminal ? await runInTerminal(command, options) : false;
       } catch (_error) {
         answer = false;
       }

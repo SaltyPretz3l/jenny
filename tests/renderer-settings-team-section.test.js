@@ -103,7 +103,7 @@ test('no team: the You group, Host a team with Deploy, and Join a team', async (
   assert.deepEqual(h.calls.map((call) => call.method).sort(), ['hostStatus', 'status']);
 });
 
-test('hosting alone: one status line with Stop, owner groups, and no You group', async (t) => {
+test('hosting alone: one status line with Stop, This server, a You row, owner groups, and no first-run names', async (t) => {
   const h = harness({ host: hostState(), teams: [snapshot()], answers: {
     members: { ok: true, team: { team_id: TEAM, name: 'Studio' }, members: [ROSTER[0]] } } });
   t.after(h.restore);
@@ -113,10 +113,11 @@ test('hosting alone: one status line with Stop, owner groups, and no You group',
   assert.match(status.textContent, /Running on this PC/);
   assert.match(status.textContent, /1 of 8 seats/);
   assert.ok(status.querySelector('[data-team-action="stop"]'));
-  assert.deepEqual(h.headings(), ['Invite someone', 'People', 'Your devices', 'Share this PC’s GPU', 'GPU use', 'Activity', 'Join another team',
+  assert.deepEqual(h.headings(), ['This server', 'You', 'Invite someone', 'People', 'Your devices', 'Share this PC’s GPU', 'GPU use', 'Activity', 'Join another team',
     'Ownership and shutdown', 'Delete']);
   assert.match(h.text(), /Only you so far/);
-  assert.equal(h.q('#teamYourName'), null, 'the names come from the team and this device');
+  assert.equal(h.q('#teamYourName'), null, 'the names come from the team and this device: no first-run names, a You row for the team instead');
+  assert.equal(h.q('#teamProfileName-0').value, 'Olive Owner');
   assert.equal(h.q('#teamTeamName').value, 'Studio');
 });
 
@@ -158,6 +159,7 @@ const HOST_REASONS = {
   team_host_exited: /server stopped unexpectedly/,
   team_host_spawn_failed: /could not start the server/,
   team_transport_down: /network connection/,
+  team_transport_missing: /missing its team connection helper/,
   team_key_timeout: /server did not get its key/,
   team_host_key_mismatch: /key does not match/,
   team_store_failed: /could not save/,
@@ -526,7 +528,7 @@ test('E50 no team data: a refused join ends the quiet state: the store follows t
   assert.deepEqual(reads(h), ['hostStatus', 'status'], 'one read of each');
   assert.ok(h.listeners.state && h.listeners.host, 'two listeners');
   assert.equal(require.cache[GATE], undefined, 'no gate');
-  assert.deepEqual(s.tabs(), ['home', 'chat', 'ide']);
+  assert.deepEqual(s.tabs(), ['home', 'chat', 'ide', 'team'], 'row 168: the tab is in the rail, the gate not loaded');
   enter(h, s, 'general');
   enter(h, s, 'team');
   await flush();

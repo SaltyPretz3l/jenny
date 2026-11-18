@@ -2,6 +2,7 @@ const path = require('path');
 const { sameLocalOrigin } = require('../local-origin');
 const { resolveManagedServerOwner } = require('./managed-server-owner');
 const { buildApiProviderSidecarConfig } = require('./api-provider-sidecar-config');
+const { buildLocalSubagentSidecarConfig } = require('./local-subagent-engine');
 const { assertTeamEndpointServes } = require('./team-engine-models');
 const { normalizeDrawingInstructions } = require('../shell-config-state');
 
@@ -133,6 +134,14 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_load_skill_enabled: false,
 });
 
+// Team host file tools (row 123): only a team host (member turns, no workspace root) whose owner turned the setting
+// on sends the boundary and the Windows switch; off, and on every single-owner host, neither key is sent (I5).
+function hostedRootBoundaryConfig(service, hasWorkspaceRoot) {
+  const boundary = service.hostRootBoundary;
+  if (hasWorkspaceRoot || service.options?.memberTurns !== true || typeof boundary !== 'string' || !boundary) return {};
+  return { hosted_root_boundary: boundary, hosted_win32_files: true };
+}
+
 function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   const workspaceRoot = guardedConfiguredWorkspaceRootForSidecar(service, 'managed_sidecar_config');
   const hasWorkspaceRoot = Boolean(workspaceRoot);
@@ -188,6 +197,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
         service.options?.getLlamaServerManager?.()?.getBaseUrl?.()),
     model: configuredModel,
     ...buildApiProviderSidecarConfig(service, engineType, configuredModel), // row 78: descriptor + limits
+    ...buildLocalSubagentSidecarConfig(service), // row 179: a ready helper under a cloud primary only
     // Ollama keeps the deliberate VRAM-conscious shell clamp. Every other
     // engine reports its own window (or uses the sidecar's bounded fallback).
     context_length: engineType === 'ollama'
@@ -437,6 +447,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       tools_shell_enabled: hostExecutionWorkerEnabled,
       electron_tool_bridge_enabled: true,
       repo_delta_resume_enabled: false,
+      ...hostedRootBoundaryConfig(service, hasWorkspaceRoot),
     });
     if (hostedEndpoint?.apiUrl && ['ollama', 'openai-compatible'].includes(engineType)) {
       config.api_url = String(hostedEndpoint.apiUrl).trim();

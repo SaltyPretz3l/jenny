@@ -42,9 +42,7 @@
 // (host-force-local.js). A start the mode cuts (checked again once the child is up and after the invite wait) stops the
 // child and answers `team_host_stopped`.
 //
-// Slice 6-7: `hostModelRelay` saves and applies the owner's model relay setting (host-model-relay.js); the state
-// carries `model_relay` for a deployed team.
-
+// 6-7, row 123: hostModelRelay, hostFileTools (host-model-relay.js, host-file-tools.js); state model_relay, file_tools.
 const fs = require('node:fs');
 
 const { deriveTeamId, keyPairFromSeed } = require('../../../server/team/ids');
@@ -55,21 +53,23 @@ const { createHostKeyStore, createHostRelayTokenStore } = require('./host-key-st
 const {
   buildHostConfig, hostWasDeployed, pickDirectPort: defaultPickDirectPort, prepareHostLayout,
   probeDirectPort: defaultProbeDirectPort, readSavedHostConfig, savedDirectPort, savedInternet, savedTeamName,
-  notDeployedReason, readHostConfigState, writeHostConfig,
+  notDeployedReason, readHostConfigState, writeHostConfig, carryFileTools,
 } = require('./host-layout');
 const { createHostSupervisor } = require('./host-supervisor');
 const { buildHostReconnectCode } = require('../reconnect-code');
 const { readInternetSetting } = require('../../../server/team/invites');
 const { internetFromPayload, internetView, tokenStepOf, withInternet } = require('./host-internet-setting');
 const { createHostLifecycle } = require('./host-lifecycle');
+const { readAutostart } = require('./host-autostart');
 const { createHostModelRelay } = require('./host-model-relay');
+const { createHostFileTools } = require('./host-file-tools');
 const { readInternetDraft, removeInternetDraft } = require('./host-restore');
 const { forceLocalFailure } = require('../force-local-hold');
 const { createHostForceLocal } = require('./host-force-local');
 
-const HELD_METHODS = new Set(['hostDeploy', 'hostRecover', 'hostInternet', 'hostRestore', 'hostStartNew', 'hostModelRelay']);
+const HELD_METHODS = new Set(['hostDeploy', 'hostRecover', 'hostInternet', 'hostRestore', 'hostStartNew', 'hostModelRelay', 'hostFileTools']);
 const LIFECYCLE_METHODS = new Set(['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow', 'hostExport',
-  'hostRestorePick', 'hostRestore']);
+  'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
 
 const OWNER_INVITE_WAIT_MS = 15_000;
 const ROSTER_PUSH_MS = 250;
@@ -137,6 +137,8 @@ function createHostController({
     }
     return storedTeamId;
   }
+  // Is the membership held here? The saved teams load first: a launch that has started none would hold nothing.
+  async function held(teamId) { const service = getTeamService(); await service?.startExisting?.(); return Boolean(service) && service.holds(teamId) === true; }
 
   // Slice 5-6: delete, start a new team, old teams, export and restore (host-lifecycle.js), with this controller's parts.
   const lifecycle = createHostLifecycle({ userDataPath, pick, now, bounds, say, lockPython: () => sourcePython(),
@@ -144,13 +146,13 @@ function createHostController({
       keys, tokens, keyState, running: () => supervisor.snapshot().state === 'running',
       notifyDeleting: () => supervisor.notifyDeleting(), stop: () => stopHost(), deploy: (value) => deploy(value),
       // A restored team starts as a member of it when this Jenny still holds the membership, else through Recover.
-      start: (who) => {
+      start: async (who) => {
         const name = savedTeamName(readSavedHostConfig(userDataPath));
         const teamId = teamIdOfStoredKey();
-        return getTeamService()?.holds(teamId) === true ? deploy({ name, ...who }) : recover(who);
+        return (await held(teamId)) ? deploy({ name, ...who }) : recover(who);
       },
       forgetMembership: (teamId) => getTeamService()?.handle('removeTeam', { team_id: teamId }) ?? null,
-      state: () => publicHostState(supervisor.snapshot()),
+      state: () => publicHostState(supervisor.snapshot()), push: () => { lastPush = null; pushState(); },
     } });
   // The lifecycle call holding the lock, pushed with the state so every page shows it busy (review item 14).
   let lifecycleOperation = null;
@@ -175,10 +177,10 @@ function createHostController({
     return { state: snapshot.state, team_id: snapshot.team_id || (deployed ? teamIdOfStoredKey() : null),
       team_name: lifecycle.teamName(saved) || snapshot.team_name, deployed, reason: snapshot.reason || configReason, since: snapshot.since,
       reach: snapshot.reach, direct_port: savedDirectPort(saved), internet,
-      internet_draft: deployed ? readInternetDraft(userDataPath) : null,
+      internet_draft: deployed ? readInternetDraft(userDataPath) : null, autostart: deployed && readAutostart(userDataPath),
       key: deployed ? keyState() : null, old_teams: lifecycle.oldTeams(), operation: lifecycleOperation,
       owner: deployed && snapshot.state !== 'running' ? lifecycle.ownerHere(snapshot.since) : null,
-      ...(deployed ? { model_relay: modelRelay.view(saved, snapshot) } : {}), ...(gate?.held() === true ? { force_local: true } : {}) };
+      ...(deployed ? { model_relay: modelRelay.view(saved, snapshot), file_tools: fileTools.view(saved, snapshot) } : {}), ...(gate?.held() === true ? { force_local: true } : {}) };
   }
 
   // Slice 5-6: whether a relay token is stored (the page knows only this, never the token). Learned from the
@@ -205,9 +207,9 @@ function createHostController({
 
   const supervisor = createHostSupervisor({ fork, entryPath, env: environment, bounds, log: say });
   const pushState = () => { try { sendState(publicHostState(supervisor.snapshot())); } catch { /* best effort */ } };
-  // Slice 6-7: the owner's model relay setting (host-model-relay.js); a launch's fresh config keeps it.
   const modelRelay = createHostModelRelay({ userDataPath, supervisor, writeConfig, hostState: () => publicHostState(supervisor.snapshot()), pushState, say });
-  writeConfig = modelRelay.carry(writeConfig);
+  writeConfig = carryFileTools(modelRelay.carry(writeConfig), userDataPath); // a launch's fresh config keeps both settings
+  const fileTools = createHostFileTools({ userDataPath, supervisor, platform, writeConfig, restart, generation: () => generation, hostState: () => publicHostState(supervisor.snapshot()), say });
   const forceLocal = createHostForceLocal({ held: () => gate?.held() === true, hostState: () => supervisor.snapshot().state,
     stop: () => stopHost(), push: pushState, say,
     restart: (owner) => {
@@ -397,8 +399,7 @@ function createHostController({
       if (!seed) throw lostHostKey(userDataPath);
       const teamId = deriveTeamId(keyPairFromSeed(seed).publicKey);
       storedTeamId = teamId;
-      const service = getTeamService();
-      const member = Boolean(service) && service.holds(teamId) === true;
+      const member = await held(teamId);
       return await launch({ startGeneration, seed, name, flag: member ? null : '--team-init',
         owner: { teamId, displayName, label, recover: false } });
     } catch (error) {
@@ -560,6 +561,7 @@ function createHostController({
       else if (method === 'hostRecover') answer = await exclusive(() => recover(checked.value));
       else if (method === 'hostReconnectCode') answer = reconnectCode();
       else if (method === 'hostModelRelay') answer = await exclusive(() => modelRelay.set(checked.value));
+      else if (method === 'hostFileTools') answer = await exclusive(() => fileTools.set(checked.value));
       else if (method === 'hostInternet') {
         answer = await exclusive(() => setInternet(checked.value));
         if (answer.ok && (checked.value.public_address || checked.value.relay_url)) removeInternetDraft(userDataPath);

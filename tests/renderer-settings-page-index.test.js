@@ -73,6 +73,12 @@ test('hidden groups, nested groups and headingless groups are left out; a fold i
   assert.deepEqual(ctx.labels(), ['Theme', 'General', 'Effects', 'Advanced']);
 });
 
+test('a count beside a heading is listed after a space', () => {
+  const ctx = setup(group('People<span class="team-set-count">1 of 8</span>') + group('Two') + group('Three') + group('Four'));
+  ctx.index.refresh();
+  assert.equal(ctx.labels()[0], 'People 1 of 8');
+});
+
 test('a wide page marks the list so the stylesheet places it beside the wide width', () => {
   const ctx = setup(group('Your models') + group('Cloud models') + group('Local only') + group('Engines'), 'settings-card--wide');
   ctx.index.refresh();

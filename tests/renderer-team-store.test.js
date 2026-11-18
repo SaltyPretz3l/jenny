@@ -211,21 +211,31 @@ test('pushes are coalesced: several in a row start one list read, a quarter seco
 });
 
 // Two-PC findings, item B: the host controller re-sends an unchanged snapshot when the host's roster moved.
-test('a teams push with an unchanged snapshot re-reads the lists once after the settle time; two inside it, once', async (t) => {
-  const h = harness({ show: false, host: hostState(), teams: [snapshot()] });
-  t.after(h.restore);
+// Owner, 2026-11-16: main pushes on every bridge, node and GPU step, and a list read for each used up the host's limit.
+test('a teams push with an unchanged snapshot re-reads the lists once after the settle time; more inside the gap share one read when it ends', async (t) => {
+  const { h, tick } = timed(t, { host: hostState(), teams: [snapshot()] });
   h.showTab();
-  await flush();
+  await tick(0);
   const before = h.sent('members').length;
   h.listeners.state({ teams: [snapshot()] });
-  await flush();
+  await tick(249);
   assert.equal(h.sent('members').length, before, 'nothing is read before the settle time');
-  await pushed();
+  await tick(1);
   assert.equal(h.sent('members').length, before + 1, 'one re-read for the unchanged push');
-  h.listeners.state({ teams: [snapshot()] });
-  h.listeners.state({ teams: [snapshot()] });
-  await pushed();
-  assert.equal(h.sent('members').length, before + 2, 'two pushes inside the settle time: one re-read');
+  for (let n = 0; n < 5; n += 1) { h.listeners.state({ teams: [snapshot()] }); await tick(300); }
+  assert.equal(h.sent('members').length, before + 1, 'five unchanged pushes inside the gap: no read yet');
+  await tick(3600); // the gap ends
+  await tick(250);
+  assert.equal(h.sent('members').length, before + 2, 'one read for the five, after the gap');
+  h.listeners.state({ teams: [snapshot({ team_name: 'Renamed' })] });
+  await tick(250);
+  assert.equal(h.sent('members').length, before + 3, 'a team that changed is read for after the settle time, gap or not');
+  h.listeners.host(hostState());
+  await tick(250);
+  assert.equal(h.sent('members').length, before + 3, 'the same host state inside the gap waits');
+  h.listeners.host(hostState({ state: 'stopping' }));
+  await tick(250);
+  assert.equal(h.sent('members').length, before + 4, 'a host state that moved is read for after the settle time, gap or not');
 });
 
 test('showing the view re-reads the roster', async (t) => {

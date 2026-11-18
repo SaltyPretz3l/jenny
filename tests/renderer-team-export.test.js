@@ -202,3 +202,32 @@ test('item 9: a deleted message with replies is one line in the app\'s words, it
   const messages = JSON.parse(json).conversations[0].messages;
   assert.deepEqual(messages.map((m) => [m.id, m.deleted === true, m.text, m.replies.length]), [[id(1), true, '', 1], [id(3), false, 'later', 0]], 'a deleted one without replies is left out');
 }));
+
+// Row 175 item 8 (D15): "This conversation…" of an open project conversation.
+test("a project conversation: prompts under their askers and Jenny's last words only, oldest first, paged back by before_message_id; no reasoning or tool row; the same status words", () => withLocale(async () => {
+  const host = (mid, role, content, turn, over = {}) => ({ id: mid, role, content, status: 'complete', turn_id: turn, timestamp: at(12, 9, 30), ...over });
+  const asked = (mid, content, turn, by, minute) => host(mid, 'user', content, turn, { author: { kind: 'member', member_id: by }, timestamp: at(12, 9, minute) });
+  const newest = { ok: true, snapshot: { session: { session_id: 'sess_1', title: 'Hero lines' }, has_more: true, next_before_message_id: 'u2',
+    messages: [asked('u2', 'Warmer, please', 't2', MAYA, 5), host('r2', 'assistant', 'read_file', 't2', { kind: 'tool_use', tool_call: { call_id: 'c1', tool_name: 'read_file', input_json: '{}' } }),
+      host('x2', 'tool', '', 't2', { kind: 'tool_result', tool_result: { call_id: 'c1', tool_name: 'read_file', output_text: 'TOOL OUTPUT' } }),
+      host('a2', 'assistant', 'Come in, we are warm.', 't2', { timestamp: at(12, 9, 6), reasoning: { source: 'p', entries: [{ id: 'e', text: 'PRIVATE THOUGHT' }] } })] } };
+  const older = { ok: true, snapshot: { session: { session_id: 'sess_1', title: 'Hero lines' }, has_more: false,
+    messages: [asked('u1', 'Give me a hero line', 't1', ME, 1), host('a1', 'assistant', 'Less to click.', 't1', { timestamp: at(12, 9, 2) })] } };
+  const bridge = fakeBridge();
+  bridge.answers.conversationOpen = (p) => (p.before_message_id ? older : newest);
+  const saves = [];
+  const exporter = exportModule.createExporter({ call: bridge.call, teamOf: bridge.teamOf, now: () => Date.UTC(2026, 10, 12, 14, 5), saveFile: async (payload) => { saves.push(payload); return { canceled: false, path: 'C:\\x\\Hero lines.md' }; } });
+  assert.equal(await exporter.start({ teamId: TEAM, scope: 'one', channelId: 'conv:sess_1' }), true);
+  assert.deepEqual(bridge.calls.map((c) => [c.method, c.payload.before_message_id || null, c.payload.session_id || null]), [['chatOverview', null, null], ['conversationOpen', null, 'sess_1'], ['conversationOpen', 'u2', 'sess_1']]);
+  const { markdown } = built(saves[0]);
+  assert.ok(markdown.startsWith('# Hero lines\n'));
+  assert.deepEqual(markdown.split('\n').filter((l) => l.startsWith('**')), ['**Brendan** 09:01', '**Jenny** 09:02', '**Maya** 09:05', '**Jenny** 09:06']);
+  assert.ok(markdown.includes('**Brendan** 09:01\nGive me a hero line\n\n**Jenny** 09:02\nLess to click.\n'));
+  for (const never of ['PRIVATE THOUGHT', 'TOOL OUTPUT', 'read_file']) assert.equal(markdown.includes(never) || JSON.stringify(saves[0].document).includes(never), false, never);
+  const s = exporter.state();
+  assert.deepEqual([s.phase, s.count, s.label], ['done', 4, 'Hero lines']);
+  assert.equal(exportModule.lineText(s), 'Exported 4 messages from Hero lines to C:\\x\\Hero lines.md');
+  assert.match(saves[0].defaultName, /^Brendan’s team Hero lines 2026-11-12\.md$/);
+  const items = (id) => exportModule.menuItems({ team: team(), channelId: id, onPick: () => {} })[1].items[0];
+  assert.deepEqual([items('conv:sess_1').disabled, items('proj:p1').disabled], [false, true], 'a conversation page exports; a project page does not');
+}));

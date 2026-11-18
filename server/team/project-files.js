@@ -27,13 +27,27 @@
 //   `team_project_files_unavailable` everywhere.
 //
 // Answers, events, logs and audit entries carry ids, counts and byte totals: never a file name or path, except
-// the manifest page, which hands the reader the relative paths of the files it may download.
+// the manifest page, which hands the reader the relative paths of the files it may download, and the reader view's
+// two answers below.
+//
+// Row 175 wave 5, the reader view (team.project.files.list and team.project.files.read, row project.files.read, a
+// reader on an active team project): no receipt, no audit entry (a member who may download every file is told
+// nothing new), the same availability and project gate as the manifest. The list is the download listing's files
+// (its filters and caps) under an optional folder, with the folders on their way, sorted by path and paged by a
+// count cursor; the read is the first 256 KiB of one such file as UTF-8 text (binary when a NUL is in its first
+// 8 KiB), through the folders' `readListed`.
+//
+// Row 175 round 2 (D13): a PNG, JPEG, GIF or WebP file whose first bytes match the type its extension names (both: the
+// extension alone never, the bytes alone never) answers { path, size, image: { mime, data_base64 } } with all of its
+// bytes, up to 4 MiB; a larger one answers { path, size, too_large: true } and no bytes. The list keeps the walked
+// listing of a project for 30 seconds (keyed by the project and the member store's revision, which moves on every
+// project change; dropped on an install and on every recheck), so the pages of one listing come from one walk.
 
 const crypto = require('node:crypto');
 
 const { hostFailure } = require('../api-contract');
 const { GENERAL_PROJECT_ID } = require('./member-schema');
-const { isSensitiveSegment, sensitiveSegment } = require('./path-segments');
+const { isSensitiveSegment, sensitiveSegment, validateRelativePath } = require('./path-segments');
 const { PATH_INVALID, ROOT_UNAVAILABLE, TARGET_EXISTS } = require('./project-folders');
 const { createProjectManifests } = require('./project-manifests');
 const { createProjectQuota } = require('./project-quota');
@@ -44,10 +58,12 @@ const { TRANSFER_LIMITS, foldKey } = require('./transfer-manifest');
 const RECEIPTED = Object.freeze({
   'team.project.upload.begin': true, 'team.project.upload.status': false, 'team.project.upload.commit': true,
   'team.project.upload.discard': false, 'team.project.download.manifest': false,
+  'team.project.files.list': false, 'team.project.files.read': false,
 });
 const OPERATIONS = Object.freeze(Object.keys(RECEIPTED));
 const UPLOAD = 'project.files.upload';
 const DOWNLOAD = 'project.files.download';
+const VIEW = 'project.files.read';
 const PROGRESS_EVENT = 'team_upload_progress';
 const MIB = 1024 * 1024;
 // Decision 4 and the spec's caps; a caller may pass lower values only (a test seam).
@@ -56,6 +72,31 @@ const FILE_LIMITS = Object.freeze({
   manifestsPerMember: 2, manifestIdleMs: 10 * 60 * 1000, pageSize: 1_000, progressMs: 1_000,
 });
 const FINISHED_LIMIT = 64;
+// Row 175 wave 5: a list page, the bytes a read answers, the prefix searched for a NUL; a caller may pass lower
+// values only (a test seam).
+const VIEW_LIMITS = Object.freeze({ pageSize: 500, readBytes: 256 * 1024, sniffBytes: 8 * 1024, imageBytes: 4 * MIB });
+// Row 175 round 2: how long a walked listing serves pages, and how many projects' listings are kept at once.
+const LIST_CACHE_MS = 30_000;
+const LIST_CACHE_PROJECTS = 4;
+const LIST_CACHE_VIEWS = 16;
+// The picture types the reader view answers as an image: the type an extension names, and its signature.
+const PICTURE_EXTENSIONS = Object.freeze({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' });
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const SIGNATURES = Object.freeze({
+  'image/png': (b) => b.length >= 8 && b.subarray(0, 8).equals(PNG_SIGNATURE),
+  'image/jpeg': (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/gif': (b) => b.length >= 6 && /^GIF8[79]a$/u.test(b.toString('latin1', 0, 6)),
+  'image/webp': (b) => b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP',
+});
+
+/** The picture type of a validated relative path whose first bytes `head` match its extension's type, else null. */
+function pictureMime(relative, head) {
+  const dot = relative.lastIndexOf('.');
+  const extension = dot > relative.lastIndexOf('/') ? relative.slice(dot + 1).toLowerCase() : '';
+  if (!Object.hasOwn(PICTURE_EXTENSIONS, extension)) return null;
+  const mime = PICTURE_EXTENSIONS[extension];
+  return SIGNATURES[mime](head) ? mime : null;
+}
 
 const FORBIDDEN = hostFailure('forbidden', 'team_not_found').error.code;
 const notFound = () => hostFailure('forbidden', 'team_not_found');
@@ -65,15 +106,38 @@ const busy = () => hostFailure('conflict', BUSY);
 const uploadLimit = () => hostFailure('limit', 'team_upload_limit');
 const forbidden = (failure) => failure?.error?.code === FORBIDDEN;
 
-function resolveLimits(limits = {}) {
-  const resolved = { ...FILE_LIMITS };
+function resolveLimits(limits = {}, caps = FILE_LIMITS) {
+  const resolved = { ...caps };
   for (const [key, value] of Object.entries(limits)) {
-    if (!Object.hasOwn(FILE_LIMITS, key) || !Number.isSafeInteger(value) || value < 1 || value > FILE_LIMITS[key]) {
+    if (!Object.hasOwn(caps, key) || !Number.isSafeInteger(value) || value < 1 || value > caps[key]) {
       throw new RangeError('invalid_project_file_limit');
     }
     resolved[key] = value;
   }
   return Object.freeze(resolved);
+}
+
+const byPath = (a, b) => {
+  if (a.path === b.path) return 0;
+  return a.path < b.path ? -1 : 1;
+};
+
+// The reader view's rows: every listed file under `dir` (all of them without one) and every folder on its way below
+// `dir`, as { path, size, kind } sorted by path (code units), so a count cursor stays stable between pages.
+function viewEntries(files, dir) {
+  const prefix = dir === undefined ? '' : `${dir}/`;
+  const first = dir === undefined ? 1 : dir.split('/').length + 1;
+  const rows = new Map();
+  for (const file of files) {
+    if (!file.path.startsWith(prefix)) continue;
+    rows.set(file.path, { path: file.path, size: file.size, kind: 'file' });
+    const segments = file.path.split('/');
+    for (let depth = first; depth < segments.length; depth += 1) {
+      const folder = segments.slice(0, depth).join('/');
+      if (!rows.has(folder)) rows.set(folder, { path: folder, size: 0, kind: 'dir' });
+    }
+  }
+  return [...rows.values()].sort(byPath);
 }
 
 /**
@@ -85,15 +149,18 @@ function resolveLimits(limits = {}) {
 function createProjectFiles({
   core = null, folders, store, authorize, serialized, audit = () => null, turnRunning = () => true,
   publish = () => {}, roots = [], statfs, clock = Date.now,
-  randomBytes = crypto.randomBytes, logger = null, limits,
+  randomBytes = crypto.randomBytes, logger = null, limits, viewLimits,
 } = {}) {
   if (typeof authorize !== 'function' || typeof serialized !== 'function' || !store || !folders) {
     throw new TypeError('createProjectFiles requires folders, store, authorize and serialized.');
   }
   const config = resolveLimits(limits);
+  const view = resolveLimits(viewLimits, VIEW_LIMITS);
   const log = safeLogger(logger);
   const uploads = new Map();
   const finished = new Map();
+  // Row 175 round 2: project id -> { key, at, listed, views: Map(dir -> sorted rows) }, oldest first.
+  const listings = new Map();
 
   // Each entry point calls it once.
   function filesUnavailable() {
@@ -262,6 +329,7 @@ function createProjectFiles({
     forgetUpload(record, { done: true });
     if (!installed.ok) return { answer: installRefusal(installed.reason), cleanup: true };
     quota.installed(record.projectId, installed.bytes, installed.files);
+    listings.delete(record.projectId);
     if (!appended({ kind: 'files_uploaded', project_id: record.projectId, actor_member_id: record.memberId,
       detail: { files: installed.files, bytes: installed.bytes, skipped: 0 } })) {
       log('WARN', 'team.project_files.upload_unrecorded', { project_id: record.projectId, upload_id: record.id });
@@ -302,6 +370,89 @@ function createProjectFiles({
     return manifest ? manifests.page(manifest, params.cursor) : notFound();
   }
 
+  // ---------------------------------------------------------------- row 175 wave 5: the reader view
+
+  // A folders refusal as the member reads it: a bad path, a root the host cannot use, else a missing file.
+  function viewFailure(refusal) {
+    if (refusal?.reason === PATH_INVALID) return hostFailure('invalid', PATH_INVALID);
+    if (refusal?.reason === ROOT_UNAVAILABLE) return hostFailure('unavailable', ROOT_UNAVAILABLE);
+    return notFound();
+  }
+
+  // The member store's revision (it moves on every project change), or null when the store cannot say.
+  function storeRevision() {
+    try { return typeof store.rev === 'function' ? store.rev() : 0; } catch { return null; }
+  }
+
+  // The project's walked listing: the kept one while it is younger than LIST_CACHE_MS and the store has not moved,
+  // else a new walk (kept when it succeeded).
+  async function listing(projectId) {
+    const key = storeRevision();
+    const held = listings.get(projectId);
+    if (held && key !== null && held.key === key && clock() - held.at < LIST_CACHE_MS) return held;
+    const listed = await folders.listFiles(projectId);
+    listings.delete(projectId);
+    const entry = { key, at: clock(), listed, views: new Map() };
+    if (!listed.ok || key === null) return entry;
+    listings.set(projectId, entry);
+    while (listings.size > LIST_CACHE_PROJECTS) listings.delete(listings.keys().next().value);
+    return entry;
+  }
+
+  // The sorted rows under `dir` of one kept listing, sorted once per folder asked for.
+  function rowsOf(entry, dir) {
+    const key = dir === undefined ? '' : `/${dir}`;
+    if (entry.views.has(key)) return entry.views.get(key);
+    const rows = viewEntries(entry.listed.files, dir);
+    if (entry.views.size >= LIST_CACHE_VIEWS) entry.views.delete(entry.views.keys().next().value);
+    entry.views.set(key, rows);
+    return rows;
+  }
+
+  // The walk and the read await: the caller is asked again before anything is answered, as a manifest build does.
+  async function listView({ params, actor }) {
+    const refused = projectGate(params.project_id);
+    if (refused) return refused;
+    const { dir, cursor = 0 } = params;
+    if (dir !== undefined && (!validateRelativePath(dir).ok || sensitiveSegment(dir) !== null)) {
+      return hostFailure('invalid', PATH_INVALID);
+    }
+    const held = await listing(params.project_id);
+    const again = refusalFor(actor.device_id, VIEW, params.project_id);
+    if (again) return again;
+    const { listed } = held;
+    if (!listed.ok) return viewFailure(listed);
+    const entries = rowsOf(held, dir);
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > entries.length) {
+      return hostFailure('invalid', 'team_cursor_invalid');
+    }
+    const end = cursor + view.pageSize;
+    return { ok: true, entries: entries.slice(cursor, end), next_cursor: end < entries.length ? end : null,
+      total: entries.length, capped: listed.capped };
+  }
+
+  async function readView({ params, actor }) {
+    const refused = projectGate(params.project_id);
+    if (refused) return refused;
+    // A picture is read whole up to the image cap (not at all past it); anything else as before.
+    const limitFor = (head, size) => {
+      if (!pictureMime(params.path, head)) return view.readBytes;
+      return size <= view.imageBytes ? size : 0;
+    };
+    const read = await folders.readListed(params.project_id, params.path, view.readBytes, { limitFor });
+    const again = refusalFor(actor.device_id, VIEW, params.project_id);
+    if (again) return again;
+    if (!read.ok) return viewFailure(read);
+    const mime = pictureMime(params.path, read.head);
+    if (mime && read.size > view.imageBytes) return { ok: true, path: params.path, size: read.size, too_large: true };
+    if (mime) return { ok: true, path: params.path, size: read.size, image: { mime, data_base64: read.bytes.toString('base64') } };
+    const truncated = read.size > read.bytes.length;
+    const binary = read.bytes.subarray(0, view.sniffBytes).includes(0);
+    // A character the cut splits is left out (a streamed decode), not replaced; invalid UTF-8 elsewhere is replaced.
+    const text = binary ? '' : new TextDecoder('utf-8').decode(read.bytes, { stream: truncated });
+    return { ok: true, path: params.path, size: read.size, text, truncated, binary };
+  }
+
   // ---------------------------------------------------------------- the route half
 
   function progress(record, force) {
@@ -334,6 +485,7 @@ function createProjectFiles({
     if (event && ['deleting', 'deleted'].includes(event.reason) && typeof event.project_id === 'string') {
       quota.forget(event.project_id);
     }
+    listings.clear();
     let open;
     try { open = store.open().ok === true; } catch { open = false; }
     if (!open) {
@@ -370,6 +522,8 @@ function createProjectFiles({
     'team.project.upload.commit': commit,
     'team.project.upload.discard': discard,
     'team.project.download.manifest': downloadManifest,
+    'team.project.files.list': listView,
+    'team.project.files.read': readView,
   };
 
   // `call` is { params, actor: { member_id, owner, device_id } } from team-commands.js.
@@ -393,4 +547,4 @@ function createProjectFiles({
   });
 }
 
-module.exports = { FILE_LIMITS, OPERATIONS, createProjectFiles };
+module.exports = { FILE_LIMITS, OPERATIONS, VIEW_LIMITS, createProjectFiles };

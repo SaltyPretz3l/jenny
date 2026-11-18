@@ -12,10 +12,10 @@ const test = require('node:test');
 
 const { JENNY_SHELL_BRIDGE_DESCRIPTORS } = require('../services/ipc-contract');
 const TEAM_DESCRIPTORS = require('../services/ipc-contract/descriptors-team');
-const { BOARD_OPERATIONS, CHAT_LOCAL_METHODS, CHAT_OPERATIONS, HOST_METHODS, HOST_OPERATIONS, LOCAL_METHODS, MODEL_OPERATIONS, POOL_OPERATIONS, PROJECT_OPERATIONS, RECONNECT_METHODS, SHARE_METHODS, validatePayload,
+const { BOARD_OPERATIONS, CHAT_LOCAL_METHODS, CHAT_OPERATIONS, HOST_METHODS, HOST_OPERATIONS, LOCAL_METHODS, MODEL_OPERATIONS, POOL_OPERATIONS, PROJECT_DRAFT_METHODS, PROJECT_OPERATIONS, RECONNECT_METHODS, SHARE_METHODS, validatePayload,
 } = require('../services/team/ipc-methods');
 const { registerTeam } = require('../services/main/team-registration');
-const ATTACHMENTS = { chatUpload: 'POST /api/v1/team/chat/uploads/:channel_id', chatUploadCancel: null, chatAttachPick: null, chatAttachmentImage: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentCopy: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentSave: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentReveal: null };
+const ATTACHMENTS = { chatUpload: 'POST /api/v1/team/chat/uploads/:channel_id', chatUploadCancel: null, chatAttachPick: null, chatAttachmentImage: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentText: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentCopy: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentSave: 'GET /api/v1/team/chat/attachments/:channel_id/:id', chatAttachmentReveal: null };
 const { actionForOperation, actionForRoute } = require('../server/team/operation-registry');
 const { parseInvite } = require('../server/team/invites');
 const { keyPairFromSeed } = require('../server/team/ids');
@@ -28,10 +28,10 @@ const { PROJECT_METHODS } = require('./helpers/team-project-client-host'); const
 
 // Slice 5-6: the owner's whole-team operations (tests/team-host-delete.test.js, tests/team-host-export-restore.test.js).
 const LIFECYCLE = ['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow', 'hostExport', 'hostRestorePick',
-  'hostRestore'];
+  'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder'];
 const INVOKE_METHODS = ['join', 'status', 'leave', 'removeTeam', 'members', 'inviteCreate', 'inviteReveal',
   'inviteRevoke', 'inviteList', 'deviceInvite', 'deviceList', 'deviceRevoke', 'memberAdmit', 'memberSetRole',
-  'memberRevoke', 'ownerTransfer', 'auditRead', 'rename', 'hostDeploy', 'hostStop', 'hostStatus', 'hostRecover',
+  'memberRevoke', 'ownerTransfer', 'auditRead', 'rename', 'profileSet', 'hostDeploy', 'hostStop', 'hostStatus', 'hostRecover',
   // Slice 2a-4b: team chat (team.chat.sync is internal to main and has no method).
   'chatOverview', 'chatHistory', 'chatThread', 'chatPost', 'chatEdit', 'chatDelete', 'chatMarkRead', 'chatSetNotify',
   'chatFollow', 'chatDraftGet', 'chatDraftSet', 'chatOutboxDiscard',
@@ -40,15 +40,15 @@ const INVOKE_METHODS = ['join', 'status', 'leave', 'removeTeam', 'members', 'inv
   // Reactions, pins, edit history and pinned messages.
   'chatReact', 'chatPin', 'chatEdits', 'chatPins',
   // Slice 2d: open a direct conversation; slice 2c renderer: chat attachments.
-  'chatDmOpen', 'chatUpload', 'chatUploadCancel', 'chatAttachPick', 'chatAttachmentImage', 'chatAttachmentCopy', 'chatAttachmentSave', 'chatAttachmentReveal',
+  'chatDmOpen', 'chatChannelCreate', 'chatChannelUpdate', 'chatChannelArchive', 'chatChannelDelete', 'chatUpload', 'chatUploadCancel', 'chatAttachPick', 'chatAttachmentImage', 'chatAttachmentText', 'chatAttachmentCopy', 'chatAttachmentSave', 'chatAttachmentReveal',
   // Slice 5-3: the reconnect code.
   'teamReconnectCode', 'hostReconnectCode',
   // Slice 5-5b: the host's internet joining setting; slice 6-7: the host's model relay setting.
-  'hostInternet', 'hostModelRelay',
+  'hostInternet', 'hostModelRelay', 'hostFileTools',
   // Slice 4e: this PC's GPU sharing, the team's GPUs, GPU use and the team model.
-  'shareStatus', 'shareSet', 'sharePause', 'shareStop', 'gpuList', 'gpuUse', 'teamModelSet', ...LIFECYCLE, ...PROJECT_METHODS, ...MODEL_METHODS, ...BOARD_METHODS];
+  'shareStatus', 'shareSet', 'sharePause', 'shareStop', 'gpuList', 'gpuUse', 'teamModelSet', ...LIFECYCLE, ...PROJECT_METHODS, 'projectFiles', 'projectFileRead', 'projectRegenerate', 'projectEditResend', 'projectBranch', 'projectAskTeammate', 'projectHandDriver', 'projectDraftGet', 'projectDraftSet', ...MODEL_METHODS, ...BOARD_METHODS];
 // Slice 1f-2: the team host this Jenny runs, handled in main by services/team/host/.
-const HOST_INVOKE_METHODS = ['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode', 'hostInternet', 'hostModelRelay', ...LIFECYCLE];
+const HOST_INVOKE_METHODS = ['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode', 'hostInternet', 'hostModelRelay', 'hostFileTools', ...LIFECYCLE];
 
 function kebab(name) {
   return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
@@ -67,10 +67,10 @@ test.after(() => Promise.allSettled(shutdowns.flat().map((task) => task())));
 function register(host, { authorization = {}, ipcMain = fakeIpcMain(), extra = {} } = {}) {
   const shutdown = [];
   shutdowns.push(shutdown);
-  const chatPushes = [];
+  const chatPushes = []; const projectPushes = []; // row 175: project pushes (the list is read at connect) are not team state
   const registered = registerTeam(ipcMain, {
     featureFlags: { team: true }, userDataPath: host.userData, getSecureStore: () => host.secureStore, readOfflineMode: () => 'disabled',
-    sendBridgeEvent: (methodPath, payload) => (methodPath === 'team.onChat' ? chatPushes : host.states)
+    sendBridgeEvent: (methodPath, payload) => (methodPath === 'team.onChat' ? chatPushes : methodPath === 'team.onProject' ? projectPushes : host.states)
       .push(JSON.parse(JSON.stringify(payload))),
     authorization, getMainLifecycle: () => ({ registerShutdownTask: (task) => shutdown.push(task) }),
     log: host.log, serviceOptions: { ...host.serviceOptions(), ...extra },
@@ -107,7 +107,7 @@ test('every invoke descriptor has a handler and every handler a descriptor', asy
 test('each method maps to exactly one host operation from a fixed table', () => {
   const mapped = [...Object.keys(HOST_OPERATIONS), ...Object.keys(CHAT_OPERATIONS), ...Object.keys(POOL_OPERATIONS),
     ...Object.keys(PROJECT_OPERATIONS), ...Object.keys(ATTACHMENTS), ...Object.keys(MODEL_OPERATIONS), ...Object.keys(BOARD_OPERATIONS)];
-  assert.deepEqual([...mapped, ...LOCAL_METHODS, ...HOST_METHODS, ...CHAT_LOCAL_METHODS, ...SHARE_METHODS].sort(), [...INVOKE_METHODS].sort());
+  assert.deepEqual([...mapped, ...LOCAL_METHODS, ...HOST_METHODS, ...CHAT_LOCAL_METHODS, ...SHARE_METHODS, ...PROJECT_DRAFT_METHODS].sort(), [...INVOKE_METHODS].sort());
   // Slice 4e: the pool methods each mirror one host operation; the share methods are local to this Jenny.
   assert.deepEqual(POOL_OPERATIONS, { gpuList: 'team.node.list', gpuUse: 'team.pool.usage', teamModelSet: 'team.pool.model.set' });
   for (const operation of Object.values(POOL_OPERATIONS)) assert.ok(actionForOperation(operation, {}), operation);

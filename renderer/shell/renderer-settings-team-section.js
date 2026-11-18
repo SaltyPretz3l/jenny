@@ -14,12 +14,12 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-settings-team-strings'), require('./renderer-settings-team-view'),
       require('./renderer-settings-team-owner-view'), require('../team/renderer-team-store'), require('./renderer-settings-team-gpu'),
-      require('./renderer-settings-team-network'), require('./renderer-settings-team-lifecycle'), require('./renderer-settings-team-models'));
+      require('./renderer-settings-team-network'), require('./renderer-settings-team-lifecycle'), require('./renderer-settings-team-models'), require('../team/renderer-team-server'), require('./renderer-settings-team-files'));
     return;
   }
   root.rendererSettingsTeamSection = factory(root.rendererSettingsTeamStrings, root.rendererSettingsTeamView, root.rendererSettingsTeamOwnerView,
-    root.rendererTeamStore, root.rendererSettingsTeamGpu, root.rendererSettingsTeamNetwork, root.rendererSettingsTeamLifecycle, root.rendererSettingsTeamModels);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, view, ownerView, teamStore, gpu, network, lifecycle, models) {
+    root.rendererTeamStore, root.rendererSettingsTeamGpu, root.rendererSettingsTeamNetwork, root.rendererSettingsTeamLifecycle, root.rendererSettingsTeamModels, root.rendererTeamServer, root.rendererSettingsTeamFiles);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, view, ownerView, teamStore, gpu, network, lifecycle, models, serverRows, files) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -27,12 +27,13 @@
   const ACTIVITY_PAGE = 20;
   const COPIED_MS = 1500;
   const NO_ANSWER = teamStore.NO_ANSWER;
+  const server = serverRows.settings; // row 170: This server and the You rows
 
   function freshDrafts() {
     return { displayName: undefined, label: undefined, teamName: '', invite: '', rename: undefined, inviteRole: 'member', inviteTtl: 86_400_000 };
   }
   function freshLive() {
-    return { busy: new Set(), confirm: '', reveal: null, copied: false, errors: {}, readErrors: {}, readSeen: {},
+    return { busy: new Set(), folds: new Set(), confirm: '', reveal: null, copied: false, errors: {}, readErrors: {}, readSeen: {},
       drafts: freshDrafts(), activity: { expanded: false, pages: [], nextCursor: null } };
   }
 
@@ -150,31 +151,40 @@
 
   function pageHtml(vm) {
     const reveal = (teamId) => (live.reveal && live.reveal.kind === 'device' && live.reveal.teamId === teamId ? view.codeBlock(vm, live.reveal) : '');
-    let html = view.statusLine(vm) + lifecycle.banner();
     // Slice 4e: Share this PC's GPU sits after Your devices on the owner's page, else after the joined teams.
     // Slice 5-6: Network goes first in that place; the lost-key group replaces People; Delete is the last group.
-    const share = gpu.shareGroup(vm, data()) + models.memberGroup(vm, data()); // slice 6-7: a member's Model sharing follows
+    const shareGpu = gpu.shareGroup(vm, data());
+    const share = shareGpu + models.memberGroup(vm, data()); // slice 6-7: a member's Model sharing follows
     const lost = lifecycle.keyLost(vm.host);
     const owner = Boolean(vm.hosted && vm.hosted.owner);
+    // Row 168: the connected owner's page opens with a summary line and folds its rarely used groups. A fold is open
+    // when the person opened it or something in it must be seen: a confirm, a note, a running export.
+    const isOpen = (id, groupHtml) => live.folds.has(id) || /team-set-confirm|team-set-note/.test(groupHtml)
+      || ((id === 'ownership' || id === 'delete') && vm.isBusy('export'));
+    const fold = owner ? (id, groupHtml) => view.fold(id, groupHtml, isOpen) : (id, groupHtml) => groupHtml;
+    const net = owner ? network.networkGroup(vm, data(), vm.hosted.team) : '';
+    const summary = owner ? view.summaryLine(ownerView.summaryFacts(vm, vm.hosted, data(), { network: net !== '', share: shareGpu !== '' })) : '';
+    let html = view.statusLine(vm) + summary + lifecycle.banner();
     if (vm.reclaim) html += view.reclaimGroup(vm);
     if (vm.needNames) html += view.youGroup(vm);
-    html += lifecycle.lostKeyGroup(vm, data());
+    html += lifecycle.lostKeyGroup(vm, data()) + server.groupHtml(vm) + server.profileHtml(vm, data());
     if (vm.hosting && vm.online) {
-      html += ownerView.hostedGroups(vm, vm.hosted, (owner ? network.networkGroup(vm, data(), vm.hosted.team) : '') + share + (owner ? gpu.ownerGroups(vm, data(), vm.hosted) + models.hostGroup(vm, data(), vm.hosted) : ''));
+      html += ownerView.hostedGroups(vm, vm.hosted, net + share + (owner ? view.foldLast('use', gpu.ownerGroups(vm, data(), vm.hosted), isOpen) + models.hostGroup(vm, data(), vm.hosted) + files.hostGroup(vm, data(), vm.hosted) : ''), fold);
     } else if ((vm.hosting || vm.stoppedHere) && !lost) {
       html += view.group('people', jt('settings.team.people.heading', 'People'), {
         copy: vm.hosting ? jt('settings.team.people.connecting', 'People are listed once this Jenny is connected to the server.')
           : jt('settings.team.people.whileRunning', 'Members and invites are listed while the server runs.') });
-      if (vm.stoppedHere) html += network.networkGroup(vm, data(), store().hostedTeam());
+      if (vm.stoppedHere) html += network.networkGroup(vm, data(), store().hostedTeam()) + files.hostGroup(vm, data(), vm.host.owner === true ? { stopped: true } : null);
     }
     vm.restoreHtml = vm.showHost ? lifecycle.restoreRow(vm, data()) : '';
     vm.exportRowHtml = owner ? lifecycle.exportRow(vm, data()) : '';
     html += view.joinedGroup(vm, reveal);
     if (!(vm.hosting && vm.online)) html += share;
-    html += vm.teamCount === 0 && vm.showHost ? view.hostGroup(vm) + view.joinGroup(vm) : view.joinGroup(vm) + (vm.showHost ? view.hostGroup(vm) : '');
-    if (owner) html += ownerView.ownershipGroup(vm);
+    const joinHtml = fold('join', view.joinGroup(vm));
+    html += vm.teamCount === 0 && vm.showHost ? view.hostGroup(vm) + joinHtml : joinHtml + (vm.showHost ? view.hostGroup(vm) : '');
+    if (owner) html += fold('ownership', ownerView.ownershipGroup(vm));
     // Fork 8 on the page too: owner (from the live role while it runs, from main's saved membership while stopped), or the key is lost.
-    return html + lifecycle.deleteGroup(vm, data(), Boolean(vm.host && vm.host.deployed && (lost || owner || (vm.stoppedHere && vm.host.owner === true))));
+    return html + fold('delete', lifecycle.deleteGroup(vm, data(), Boolean(vm.host && vm.host.deployed && (lost || owner || (vm.stoppedHere && vm.host.owner === true)))));
   }
 
   // Writes the page only when its markup changed, so an idle push keeps an open select and the focus.
@@ -184,6 +194,7 @@
     const html = pageHtml(viewModel());
     gpu.after(gpuContext);
     models.after(gpuContext);
+    server.ensure(render);
     if (html === lastHtml) return;
     const doc = target.ownerDocument;
     const active = doc && doc.activeElement && target.contains(doc.activeElement) ? doc.activeElement : null;
@@ -251,27 +262,13 @@
     } catch (_error) {
       answer = null;
     }
-    afterFirstAct(answer);
+    teamStore.afterFirstAct(store(), answer); // E50: the first answered act ends the quiet start
     if (!alive(s)) return null;
     s.busy.delete(key);
     const ok = Boolean(answer && answer.ok === true);
     if (!ok) s.errors[group] = words.errorText((answer && answer.error) || NO_ANSWER);
     render();
     return ok ? answer : null;
-  }
-
-  // With no team data on disk (E50) the first answered Join, Deploy or Recover ends the quiet state, ok or not and
-  // whether the page is still showing: main loaded its team service for it and may have written a team or a host
-  // config before answering (or after a timeout). The store follows the pushes and reads once; the shell loads the
-  // gate when the answer was ok or that read finds a team, a deployed host or one that is not stopped.
-  function afterFirstAct(answer) {
-    if (!store().wake()) return;
-    const note = () => globalThis.rendererTopNavShellController?.noteTeamData?.();
-    if (answer && answer.ok === true) note();
-    void refreshAll().then(() => {
-      const { teams, host } = data();
-      if (teams.length || (host && (host.deployed === true || host.state !== 'stopped'))) note();
-    });
   }
 
   function names(group) {
@@ -417,13 +414,23 @@
     setNote: (group, text) => { live.errors[group] = text; },
   };
 
+  // A fold's own `toggle` (it does not bubble) keeps `live.folds`, so a redraw writes the `open` the person left.
+  function onToggle(event) {
+    const el = event.target;
+    const id = el && el.tagName === 'DETAILS' ? el.getAttribute('data-team-fold') : null;
+    if (id) { if (el.open) live.folds.add(id); else live.folds.delete(id); }
+  }
+
   function onClick(event) {
-    if (gpu.onClick(event, gpuContext) || models.onClick(event, gpuContext) || network.onClick(event, gpuContext) || lifecycle.onClick(event, gpuContext)) return;
+    const jump = event.target.closest && event.target.closest('[data-team-jump]');
+    if (jump) { event.preventDefault(); const opened = view.revealGroup(body(), jump.getAttribute('data-team-jump')); if (opened) live.folds.add(opened); return; }
+    if (gpu.onClick(event, gpuContext) || models.onClick(event, gpuContext) || files.onClick(event, gpuContext) || network.onClick(event, gpuContext) || lifecycle.onClick(event, gpuContext)) return;
     const segment = event.target.closest && event.target.closest('[data-inv-segmented="teamInviteRole"] [data-value]');
     if (segment) { live.drafts.inviteRole = segment.getAttribute('data-value') === 'read_only' ? 'read_only' : 'member'; render(); return; }
     const button = event.target.closest && event.target.closest('[data-team-action]');
     if (!button || button.disabled) return;
     const { teamAction: action, teamId, memberId, deviceId, inviteId } = button.dataset;
+    if (server.action(action, { render, target: button })) return;
     const hosted = store().hostedTeam();
     const hostedId = hosted && hosted.team_id;
     const done = (_answer, s) => { s.confirm = ''; };
@@ -440,7 +447,7 @@
       case 'rename': {
         const name = live.drafts.rename ?? (hosted && hosted.team_name);
         if (!okText(name)) { live.errors.rename = words.errorText({ reason: 'team_name_invalid' }); render(); return; }
-        void command('rename', 'rename', 'rename', { team_id: hostedId, name: name.trim() }, { after: (_a, s) => { s.drafts.rename = undefined; } }); return;
+        void command('rename', 'rename', 'rename', { team_id: hostedId, name: name.trim() }, { after: (_a, s) => { s.drafts.rename = undefined; }, refresh: 'all' }); return; // the name is in the team row and the host status
       }
       case 'invite-create': if (hosted) void createInvite(hosted); return;
       case 'invite-revoke': void command('invite-revoke:' + inviteId, 'invite', 'inviteRevoke', { team_id: hostedId, invite_id: inviteId }); return;
@@ -495,7 +502,7 @@
   const DRAFT_FIELDS = { teamYourName: 'displayName', teamPcName: 'label', teamNewName: 'teamName', teamInviteCode: 'invite', teamTeamName: 'rename' };
 
   function onInput(event) {
-    if (network.onInput(event, gpuContext) || lifecycle.onInput(event, gpuContext)) return;
+    if (network.onInput(event, gpuContext) || lifecycle.onInput(event, gpuContext) || server.onInput(event, { render })) return;
     const field = DRAFT_FIELDS[event.target && event.target.id];
     if (field) live.drafts[field] = String(event.target.value || '');
   }
@@ -522,9 +529,9 @@
     if (container) leaveTeamSection();
     container = next;
     lastHtml = null;
-    for (const [type, handler] of [['click', onClick], ['input', onInput], ['change', onChange]]) {
-      container.addEventListener(type, handler);
-      removeListeners.push(() => next.removeEventListener(type, handler));
+    for (const [type, handler, capture] of [['click', onClick], ['input', onInput], ['change', onChange], ['toggle', onToggle, true]]) {
+      container.addEventListener(type, handler, capture === true);
+      removeListeners.push(() => next.removeEventListener(type, handler, capture === true));
     }
     const quiet = teamData === false && store().startQuiet?.() === true;
     // Holding the store subscribes its pushes; what it already read shows at once, then everything is re-read.
@@ -544,8 +551,10 @@
     copyTimer = null;
     gpu.reset();
     models.reset();
+    files.reset();
     network.reset();
     lifecycle.reset();
+    server.reset();
     const target = body();
     if (target) target.innerHTML = '';
     live = freshLive();

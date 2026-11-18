@@ -175,8 +175,11 @@ function createTeamProjectRules({
     const admin = role === 'admin';
     const requests = current.requests.filter((request) => request.asker_member_id === actor.member_id
       || (admin && request.state === 'open'));
+    // Row 123 (D5): with project files on, the rule gate answers nothing, so the page says the rules are paused.
+    let paused;
+    try { paused = Boolean(backend()?.hostRootBoundary); } catch { paused = false; }
     return { ok: true, project_id: params.project_id, revision: current.revision, rules: current.rules,
-      open_request_count: openCount(current), requests };
+      open_request_count: openCount(current), requests, ...(paused ? { paused: 'file_tools' } : {}) };
   }
 
   function add({ params, actor }) {

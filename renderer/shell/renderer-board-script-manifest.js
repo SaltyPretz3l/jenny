@@ -20,10 +20,11 @@
     ['services/boards/board-model-ops.js', 'jennyBoardModelOps'],
     ['services/boards/board-text.js', 'jennyBoardText'],
     ['services/boards/board-model.js', 'jennyBoardModel'],
+    // A chain of connected cards as a row, and cards that follow their arrows (cards first, 2026-11-15): pure, shared with
+    // the main process, read by Break apart and by Tidy, so it loads before board-tidy.js.
+    ['services/boards/board-flow-layout.js', 'jennyBoardFlowLayout'],
     // Arranging cards in a grid (slice B9): pure, shared with the main process, read by the editor when Tidy runs.
     ['services/boards/board-tidy.js', 'jennyBoardTidy'],
-    // A chain of connected cards as a row (cards first, 2026-11-15): pure, shared with the main process, read by Break apart.
-    ['services/boards/board-flow-layout.js', 'jennyBoardFlowLayout'],
     // The workbench: layout model, solver, ops, then the chrome, sash, tree, focus and drag helpers and the workbench itself.
     ['renderer/shared/workbench-layout-model.js', 'jennyWorkbenchLayoutModel'],
     ['renderer/shared/workbench-layout-solve.js', 'jennyWorkbenchLayoutSolve'],

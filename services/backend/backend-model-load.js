@@ -21,6 +21,7 @@ const {
 const { assertTeamModelUsable, isReservedTeamModelId, liveTeamSelection } = require('./team-engine-models');
 const { pickInstalledDefaultModel } = require('./backend-chat-model-resolution');
 const { checkOllamaLoad, refusalMessageForStatus, vramRefusalError } = require('./vram-load-preflight');
+const { localSubagentEngineLoadPlan, startLocalSubagentEngine } = require('./local-subagent-engine');
 
 // A managed launch the VRAM check refused carries its user copy in the preflight.
 function managedLaunchError(service, kind, model, status) {
@@ -76,6 +77,53 @@ async function loadModel(service, model, options = {}) {
   } catch (error) {
     service._teamEngineSelection = previousSelection;
     throw error;
+  }
+}
+
+// A launch that takes the GPU first evicts the Ollama model the primary held; an
+// eviction that cannot be confirmed aborts the switch so the GPU is not double-loaded.
+async function evictPreviousOllamaModel(service) {
+  const previousModel = String(service.currentModel || '').trim();
+  if (service.currentEngineType === 'ollama' && previousModel) {
+    try {
+      // sidecar-client.js:129 declares no parameter, so this tag is not sent; the sidecar
+      // evicts the stack engine's bound model, which is previousModel during this switch.
+      await service.sidecarClient.modelsUnload(previousModel);
+      service._emitServiceLog?.('INFO', 'backend.engine_switch_unload', {
+        from: 'ollama', model: previousModel,
+      });
+    } catch (error) {
+      service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_failed', {
+        from: 'ollama', model: previousModel, message: String(error?.message || error),
+      });
+      const timedOut = error?.category === 'timeout' || error?.error_code === SIDECAR_ERROR_CODES.TIMEOUT;
+      // Only a daemon that is positively down (its port refuses the
+      // connection) has nothing to evict; any other failure, a hung daemon
+      // included, may leave the old model on the GPU.
+      let daemonDown = false;
+      if (!timedOut) {
+        try {
+          daemonDown = (await service.ollamaManager?.isConfirmedDown?.()) === true;
+        } catch (_probeError) { /* an unanswered probe proves nothing */ }
+      }
+      if (daemonDown) {
+        service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_skipped_daemon_unreachable', {
+          from: 'ollama', model: previousModel,
+        });
+      } else {
+        throw Object.assign(
+          new Error(
+            `Previous model "${previousModel}" could not be confirmed evicted; `
+            + 'the engine switch was aborted so the GPU is not double-loaded.'
+          ),
+          {
+            error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
+            category: 'engine_switch_aborted',
+            retryable: true,
+          }
+        );
+      }
+    }
   }
 }
 
@@ -140,8 +188,10 @@ async function switchModel(service, model, options = {}) {
       && Boolean(manager)
       && managed?.enabled === true
       && perModel?.engine === 'llama-server';
+    // Row 179: a cloud load keeps the picked local subagent engine's manager (null otherwise).
+    const helper = teamSelection ? null : localSubagentEngineLoadPlan(service, requestedEngineType);
     const llamaServerStatus = (!managedLoad && manager) ? (manager.getStatus?.() || {}) : null;
-    const stopsManagedServer = Boolean(llamaServerStatus)
+    const stopsManagedServer = Boolean(llamaServerStatus) && helper?.kind !== 'llama-server'
       && (['ready', 'starting', 'stopping', 'crashed'].includes(llamaServerStatus.state)
         || Boolean(llamaServerStatus.lastError));
     // The managed NInfer runtime (row 54): its own artifact ids load through
@@ -150,7 +200,7 @@ async function switchModel(service, model, options = {}) {
     const ninferArtifact = ninferManager && requestedEngineType === 'openai-compatible'
       ? findNinferArtifactForModel(service, requestedModelName) : null;
     const ninferLoad = Boolean(ninferArtifact);
-    const stopsNinfer = !ninferLoad && ninferServerStops(ninferManager);
+    const stopsNinfer = !ninferLoad && helper?.kind !== 'ninfer' && ninferServerStops(ninferManager);
     // Starting or stopping llama-server takes the GPU over. Doing that under a live
     // response starves the engine still generating on it (2026-09-04: Ollama fell to
     // 2.58 t/s and its blocking HTTP calls then wedged the sidecar loop), so the
@@ -183,7 +233,9 @@ async function switchModel(service, model, options = {}) {
     }
     // A team load, or one that leaves a team model, re-initialises the sidecar under any other live stream.
     const teamSwitch = Boolean(teamSelection || liveTeamSelection(service));
-    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer || teamSwitch) && otherActiveStreams > 0) {
+    // A helper launch counts as a managed launch; one already serving its model does not.
+    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer || teamSwitch || helper?.starts)
+      && otherActiveStreams > 0) {
       service._emitServiceLog?.('WARN', 'backend.engine_switch_refused_stream_active', {
         active_stream_count: otherActiveStreams,
         model: requestedModelName,
@@ -208,48 +260,7 @@ async function switchModel(service, model, options = {}) {
     // left it, and the running engine, as they were.
     service._teamEngineSelection = teamSelection;
     if (managedLoad || ninferLoad) {
-      const previousModel = String(service.currentModel || '').trim();
-      if (service.currentEngineType === 'ollama' && previousModel) {
-        try {
-          // sidecar-client.js:129 declares no parameter, so this tag is not sent; the sidecar
-          // evicts the stack engine's bound model, which is previousModel during this switch.
-          await service.sidecarClient.modelsUnload(previousModel);
-          service._emitServiceLog?.('INFO', 'backend.engine_switch_unload', {
-            from: 'ollama', model: previousModel,
-          });
-        } catch (error) {
-          service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_failed', {
-            from: 'ollama', model: previousModel, message: String(error?.message || error),
-          });
-          const timedOut = error?.category === 'timeout' || error?.error_code === SIDECAR_ERROR_CODES.TIMEOUT;
-          // Only a daemon that is positively down (its port refuses the
-          // connection) has nothing to evict; any other failure, a hung daemon
-          // included, may leave the old model on the GPU.
-          let daemonDown = false;
-          if (!timedOut) {
-            try {
-              daemonDown = (await service.ollamaManager?.isConfirmedDown?.()) === true;
-            } catch (_probeError) { /* an unanswered probe proves nothing */ }
-          }
-          if (daemonDown) {
-            service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_skipped_daemon_unreachable', {
-              from: 'ollama', model: previousModel,
-            });
-          } else {
-            throw Object.assign(
-              new Error(
-                `Previous model "${previousModel}" could not be confirmed evicted; `
-                + 'the engine switch was aborted so the GPU is not double-loaded.'
-              ),
-              {
-                error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
-                category: 'engine_switch_aborted',
-                retryable: true,
-              }
-            );
-          }
-        }
-      }
+      await evictPreviousOllamaModel(service);
       if (ninferLoad) {
         const ninferStatus = await ninferManager.ensureRunning({ artifactId: ninferArtifact.id });
         if (ninferStatus?.state !== 'ready') {
@@ -275,6 +286,7 @@ async function switchModel(service, model, options = {}) {
       // engine. A parked launch failure is cleared too (health pill goes quiet).
       if (stopsManagedServer) await stopManagedServerOrAbort(service, manager, 'llama_server', requestedEngineType);
       if (stopsNinfer) await stopManagedServerOrAbort(service, ninferManager, 'ninfer', requestedEngineType);
+      if (helper?.starts) await evictPreviousOllamaModel(service);
     }
     await service._initializeManagedSidecar({
       reason: 'model_load',
@@ -297,6 +309,8 @@ async function switchModel(service, model, options = {}) {
         `Could not load ${requested} engine for model "${requestedModelName}": ${reason}`
       );
     }
+    // The helper starts once the cloud engine took; a failure is logged and never fails the load.
+    if (helper) await startLocalSubagentEngine(service, helper, 'model_load');
     // Persist only a switch that actually took (pin + autostart/preflight tag).
     // The two managed boot targets are mutually exclusive: a load on either
     // managed server clears the other's.
@@ -358,6 +372,16 @@ async function switchModel(service, model, options = {}) {
 }
 
 function autoLoadDefaultModel(service) {
+  if (service._startupIdleByChoice === true) {
+    // "Load model at startup" is off and no server was started: the boot's
+    // fallback is that choice, not a failed load. The first send loads it.
+    service._emitServiceLog('INFO', 'backend.default_model_deferred', {
+      model: String(service.defaultModel || ''),
+      engine: String(service.currentEngineType || ''),
+      reason: 'startup_model_load_off',
+    });
+    return;
+  }
   const fallback = service._lastEngineFallback;
   if (fallback) {
     service._emitServiceLog('WARN', 'backend.default_model_load_failed', {

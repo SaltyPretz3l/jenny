@@ -71,6 +71,7 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'runtime.gap_candidate',
   'session.mail_consumed',
   'session.job_notice_consumed',
+  'session.user_steer_consumed',
 ]);
 
 // ChatGPT plan-usage meter ingest (composer footer ring, additive/optional

@@ -102,8 +102,9 @@ test('temporary names: `as`, an alias-shaped name the board does not have, and a
 
 test('prose that looks like grammar goes back into the text; a made-up name does not', async (t) => {
   const board = await seeded(setup(t));
-  const out = read(board, ['note Ship it as planned', 'note Review the spec as t1', 'note Check the cache in g7', 'link https://example.org/a Title in g7', 'group Risks as usual']);
+  const out = read(board, ['note Ship it as planned', 'note Review the spec as t1', 'note Check the cache in g7', 'link https://example.org/a Title in g7', 'group Risks as usual', 'note Scales onto the canvas as c']);
   assert.equal(out.changes[0].ops[0].card.data.text, 'Ship it as planned');
+  assert.equal(out.changes[5].ops[0].card.data.text, 'Scales onto the canvas', 'one letter is a name even when nothing uses it');
   assert.equal(out.changes[1].ops[0].card.data.text, 'Review the spec');
   assert.equal(out.changes[2].ops[0].card.data.text, 'Check the cache in g7');
   assert.deepEqual([out.changes[3].state, out.changes[3].reason], ['refused', 'unknown_group']);
@@ -229,7 +230,7 @@ test('Accept additions applies them as one batch: one Undo takes all of it back,
     'move n3 in g1', 'tidy g1', 'edit n3 Ship on Monday', 'remove f4'), { sentWhole: ['n3'] });
   assert.deepEqual([proposal.counts.additions, proposal.counts.edits], [5, 3]);
   const listed = await env.proposals.list({ boardId: board.id });
-  assert.deepEqual(listed.proposals[0].preview.cards.map((c) => [c.n, c.kind]), [[2, 'note']]);
+  assert.deepEqual(listed.proposals[0].preview.cards.map((c) => [c.n, c.kind, c.text]), [[2, 'note', 'Decide token lifetime']]);
   assert.deepEqual(listed.proposals[0].preview.groups.map((g) => g.n), [1]);
   assert.deepEqual(listed.proposals[0].preview.connectors.map((c) => [c.n, c.style, c.ends, c.from.w > 0 && c.to.w > 0]), [[3, 'solid', 'end', true]], 'a new connection is in the preview with the boxes it joins');
 

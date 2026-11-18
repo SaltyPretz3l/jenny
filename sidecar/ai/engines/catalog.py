@@ -35,7 +35,11 @@ from sidecar.ai.engines.ollama_catalog_cache import (
     resolve_ollama_catalog_cache_path,
     write_ollama_catalog_cache,
 )
-from sidecar.ai.engines.provider_http import ProviderHttpError, ProviderHttpService
+from sidecar.ai.engines.provider_http import (
+    ProviderHttpError,
+    ProviderHttpService,
+    is_idle_local_server,
+)
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
@@ -683,7 +687,7 @@ def discover_openai_compatible_models(
         )
         log_event(
             logger,
-            logging.WARNING,
+            logging.INFO if is_idle_local_server(base_url, error) else logging.WARNING,
             component="ai.engines.catalog",
             event="ai.engines.catalog.openai_compatible_discovery_failed",
             message=reason,

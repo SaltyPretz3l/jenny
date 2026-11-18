@@ -263,3 +263,23 @@ def test_stdio_transport_logs_a_model_argument_miss_at_info(caplog) -> None:
         )
     levels = [record.levelno for record in caplog.records if "mcp call failed" in record.getMessage()]
     assert levels == [logging.INFO]
+
+
+def test_keeper_matches_a_named_path_printed_with_doubled_separators() -> None:
+    # 2026-11-17 review: a path the code named came back as <path> because repr() doubled its separators.
+    named = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    code = f"PS = r'{named}'\nprint([(PS, True)])"
+    keep = error_path_keeper(arguments={"code": code}, workspace_root="")
+    printed = repr([(named, True)])  # repr doubles every separator
+    assert "\\\\" in printed
+    assert redact_error_paths(printed, keep=keep) == printed
+    # A path the code never named stays hidden.
+    other = repr([r"C:\ProgramData\Microsoft\Windows\StartMenu"])
+    assert "<path>" in redact_error_paths(other, keep=keep)
+
+
+def test_fold_keeps_a_leading_unc_pair() -> None:
+    from sidecar.ai.tools.error_paths import _fold_windows_path
+
+    assert _fold_windows_path(r"\\server\\share") == r"\\server\share"
+    assert _fold_windows_path("C:/A//b") == r"c:\a\b"

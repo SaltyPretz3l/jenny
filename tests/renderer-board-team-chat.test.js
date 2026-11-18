@@ -179,6 +179,23 @@ test('chat column: the conversation of the team project, its picker, collapse, a
   assert.deepEqual([m.q('[data-board-chat-host] .board-team-conv'), inputs(m), m.captured.part.openChat()], [null, 0, false]);
 });
 
+test('chat column: Open in Team asks the Team notifier for the conversation shown; it is greyed with a reason while the team is offline or no conversation is shown', async (t) => {
+  const m = await teamChat(t);
+  const asked = [];
+  m.window.rendererTeamNotify = { request: (intent) => { asked.push(intent); return true; } };
+  const button = () => m.q('[data-board-team-conv="open-team"]');
+  assert.deepEqual([button().disabled, button().title, button().getAttribute('aria-label')], [false, 'Open in Team', 'Open in Team']);
+  button().click();
+  assert.deepEqual(asked, [{ kind: 'conversation', teamId: TEAM, projectId: PROJECT, sessionId: S1 }]);
+  m.window.rendererTeamStore.getTeamStore().seed({ teams: [host.memberTeam({ state: 'connecting' })] });
+  await m.flush();
+  assert.deepEqual([button().disabled, button().title], [true, 'The team is offline. Open it in the Team tab when it is back.']);
+  button().click();
+  assert.equal(asked.length, 1, 'a greyed button asks for nothing');
+  const empty = await teamChat(t, { answers: { projectList: host.listAnswer({ conversations: [] }) } });
+  assert.deepEqual([empty.q('[data-board-team-conv="open-team"]').disabled, empty.q('[data-board-team-conv="open-team"]').title], [true, 'There is no conversation to open.']);
+});
+
 test('chat column: New conversation makes one as the Team tab does and shows it; a reader gets the button disabled with the sentence', async (t) => {
   const created = { ok: true, session: { session_id: host.S3 } };
   const m = await teamChat(t, { answers: { conversationCreate: created } });

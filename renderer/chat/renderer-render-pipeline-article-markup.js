@@ -217,6 +217,9 @@
       return !(Array.isArray(reasoningEntries) && reasoningEntries.length > 0);
     }
 
+    const isSteerBubbleRow = (row, messages, ctx) => String(row?.kind || '').trim() === 'user_bubble' // row 180: sent mid-turn
+      && getMessageFromCollection(String(row.primary_message_id || '').trim(), messages, ctx)?.kind === 'steer';
+
     function canRenderProjectedTurnArticle(turn, rows) {
       const primaryAssistantMessageId = String(turn?.primary_assistant_message_id || '').trim();
       if (!primaryAssistantMessageId) {
@@ -233,9 +236,7 @@
     function buildTurnArticleMarkup(turn, rows, messages, options) {
       const renderOptions = options || {};
       const projectionContext = renderOptions.projectionContext || null;
-      const sourceRows = (Array.isArray(rows) ? rows : []).filter(function excludeUserBubble(row) {
-        return row && String(row.kind || '') !== 'user_bubble';
-      });
+      const sourceRows = (Array.isArray(rows) ? rows : []).filter((row) => row && (String(row.kind || '') !== 'user_bubble' || isSteerBubbleRow(row, messages, projectionContext)));
       const renderMessageId = String(renderOptions.renderMessageId || '').trim();
       const primaryMessageId = renderMessageId
         || String(turn && turn.primary_assistant_message_id || '').trim()
@@ -329,9 +330,9 @@
       // (isStreaming and activeTurnId both drop there); shared with the prediction.
       const liveTurnId = String(projectionContext?.liveTurnId || '').trim();
       const turnLive = liveTurnId !== '' && liveTurnId === String(turn?.turn_id || '').trim();
+      const renderSteerHoverRow = (steerMessage) => renderMessageHoverRow(steerMessage, actionOptions, '', ''); // Copy-only
       const rowListHtml = buildTurnRowListMarkup(sourceRows, messages, {
-        ...renderOptions,
-        transcriptView,
+        ...renderOptions, renderSteerHoverRow, transcriptView,
         isStreaming,
          projectionContext,
          messageById: projectionContext?.messageById,
@@ -372,7 +373,7 @@
       const predictedHeight = renderOptions.skipHeightPrediction === true || (turnLive && isFollowingLatest() === true)
         ? null
         : maybePredictTurnHeight(turn, sourceRows, messages, {
-          ...renderOptions, transcriptView, turnPhase: turnPhaseForMarkup, turnLive, rowListSegmentSink: null,
+          ...renderOptions, renderSteerHoverRow, transcriptView, turnPhase: turnPhaseForMarkup, turnLive, rowListSegmentSink: null,
           sessionId: renderOptions.sessionId || getPaneSessionId(),
         }, isStreaming ? null : rowListHtml);
       const extraAttributes = [
@@ -464,6 +465,8 @@
             })
           : '';
       }
+      if (turnId && message?.kind === 'steer' && canRenderProjectedTurnArticle(projectionContext?.turnById?.get?.(turnId), projectionContext?.rowsByTurnId?.get?.(turnId))
+        && isEnvelopeCoalescedTurn(turnId, projectionContext?.rowsByTurnId?.get?.(turnId), projectionContext)) return buildThreadCompatAnchor(message, { envelopeSibling: true });
       if (turnId && String(message?.role || '').trim() === 'assistant') {
         const turn = projectionContext?.turnById?.get?.(turnId) || null;
         const rows = projectionContext?.rowsByTurnId?.get?.(turnId) || [];

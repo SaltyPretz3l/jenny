@@ -16,6 +16,7 @@
 //   - the `team_chat_message`, `team_chat_channel` and `team_chat_read` events,
 //     always with an audience, and the ephemeral `team_chat_typing` (2a-3b);
 //   - search (team-chat-search.js) and the presence report (team-presence.js);
+//   - the four channel operations and their rules (team-chat-channel-ops.js, row 173);
 //   - the store's yielding first load, awaited before a channel is read.
 //
 // Chat never uses the shared receipt store or the admin limiter: the chat
@@ -27,6 +28,7 @@ const { hostFailure } = require('../../server/api-contract');
 const { chatBucket } = require('../../server/team/authorize');
 const { createRateLimiter } = require('../../server/team/rate-limit');
 const { safeLogger } = require('../../server/team/safe-logger');
+const { CHANNEL_OPERATIONS, createChannelOps } = require('./team-chat-channel-ops');
 const { boundEdits, boundPage, fitOne, overviewChannels, overviewMembers, pageBudget } = require('./team-chat-pages');
 const { LIMITS, dmChannelId } = require('./team-chat-schema');
 const { createTeamChatSearch } = require('./team-chat-search');
@@ -49,14 +51,14 @@ const OVERVIEW_LIMIT = Object.freeze({ limit: 20, windowMs: 10_000, maxKeys: KEY
 const TYPING_LIMIT = Object.freeze({ limit: 1, windowMs: 3_000, maxKeys: KEYS });
 const PRESENCE_LIMIT = Object.freeze({ limit: 30, windowMs: 60_000, maxKeys: KEYS });
 const OTHER_MUTATIONS = ['team.chat.edit', 'team.chat.delete', 'team.chat.mark_read', 'team.chat.set_notify',
-  'team.chat.follow', 'team.chat.dm_open'];
+  'team.chat.follow', 'team.chat.dm_open', ...CHANNEL_OPERATIONS];
 // Reactions and pins are the most frequent writes: their own table, so a burst never blocks a read mark or an edit.
 const MARKS = ['team.chat.react', 'team.chat.pin'];
 // Post and edit grow a record, and so do adding a reaction and pinning; removing one and delete shrink it and are never gated.
-const DISK_GATED = new Set(['team.chat.post', 'team.chat.edit']);
+const DISK_GATED = new Set(['team.chat.post', 'team.chat.edit', 'team.chat.channel_create']);
 const GATED_WHEN_ADDING = new Set(MARKS);
 const PUBLISHING = new Set(['team.chat.post', 'team.chat.edit', 'team.chat.delete', 'team.chat.typing',
-  'team.chat.react', 'team.chat.pin', 'team.chat.mark_read', 'team.chat.dm_open']);
+  'team.chat.react', 'team.chat.pin', 'team.chat.mark_read', 'team.chat.dm_open', ...CHANNEL_OPERATIONS]);
 // Operations that read a channel's messages before the store's own write
 // waits for its load: the yielding first load runs before them. Post waits
 // inside the store (the recorded limit: it lands); typing, search and the
@@ -109,7 +111,7 @@ function handles(operation) {
 
 function createTeamChatCommands({
   store, directory, audience, logger = null, limits = {}, clock = Date.now, unavailable = () => null,
-  presence = null, roster = null, search: { clock: searchClock = clock, ...searchBounds } = {},
+  presence = null, roster = null, search: { clock: searchClock = clock, ...searchBounds } = {}, audit = null,
 } = {}) {
   if (!directory || typeof directory.liveActor !== 'function') throw new TypeError('Team chat commands need a directory.');
   if (typeof audience !== 'function') throw new TypeError('Team chat commands need a channel audience.');
@@ -288,6 +290,8 @@ function createTeamChatCommands({
       }
       return { ok: true, channel_id: opened.channel_id };
     },
+    // Row 173: create, update, archive and delete a channel.
+    ...createChannelOps({ store, audience, audit }),
     // Ephemeral: never stored or replayed. After the header check (no segment
     // read), an early repeat from the device answers ok, publishes nothing
     // and reads nothing. The thread root is checked like any other id and

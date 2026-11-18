@@ -159,6 +159,24 @@ function buildHostConfig({ layout, name, directPort, lockPython = null, internet
   };
 }
 
+/**
+ * Row 123: a config writer that keeps a saved `team.file_tools: true` in a config a launch writes afresh, as
+ * host-model-relay's carry keeps its setting. Deploy finds no saved config, and restore and import write through
+ * writeHostConfig directly, so none of them carries it (I11: file tools start off there).
+ */
+function carryFileTools(write, userDataPath) {
+  return (layout, config) => {
+    let next = config;
+    try {
+      const saved = readSavedHostConfig(userDataPath);
+      if (saved?.team?.file_tools === true && config?.team && !Object.hasOwn(config.team, 'file_tools')) {
+        next = { ...config, team: { ...config.team, file_tools: true } };
+      }
+    } catch { /* nothing saved to keep */ }
+    return write(layout, next);
+  };
+}
+
 /** Atomic and durable (temp file, fsync, rename). */
 function writeHostConfig(layout, config) {
   writeJson(layout.configPath, config);
@@ -194,7 +212,7 @@ function probeDirectPort(port) {
 }
 
 module.exports = {
-  DEPLOY_POOL_CONTEXT_LENGTH, LOGS_DIR_NAME, buildHostConfig, hostWasDeployed, notDeployedReason, pickDirectPort,
+  DEPLOY_POOL_CONTEXT_LENGTH, LOGS_DIR_NAME, buildHostConfig, carryFileTools, hostWasDeployed, notDeployedReason, pickDirectPort,
   prepareHostLayout, probeDirectPort, readHostConfigState, readSavedHostConfig, savedDirectPort, savedInternet, savedTeamName,
   writeHostConfig,
 };

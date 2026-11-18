@@ -413,7 +413,13 @@ def _render_session_environment_block(
     else:
         workspace_root = context_builder.workspace_status().root
     root = Path(workspace_root) if workspace_root is not None else None
-    if root is None:
+    if host_policy_is_enforced(config):
+        # Not "not set": on a host that reads as something the user could configure.
+        workspace_line = (
+            "workspace_root: <hidden on a hosted server — file tools, when offered, "
+            "take paths relative to the project; there is nothing to configure>"
+        )
+    elif root is None:
         workspace_line = (
             "workspace_root: <not set — tools that need a workspace are blocked "
             "until one is configured>"

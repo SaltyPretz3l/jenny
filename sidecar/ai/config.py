@@ -50,7 +50,7 @@ from sidecar.ai.execution_policy import (
     desktop_policy_from_config,
 )
 from sidecar.ai.feature_flags import normalize_feature_flags
-from sidecar.ai.host_policy import host_policy_from_config
+from sidecar.ai.host_policy import HostPolicyError, host_policy_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +479,33 @@ def _apply_execution_policy_overrides(
         )
 
 
+def _parse_hosted_file_fields(
+    raw_config: dict[str, Any], *, server_mode: bool, tools_workspace_root: str | None,
+) -> dict[str, Any]:
+    """The root boundary and the Windows switch: only a rootless server host may
+    carry them, the switch only with a boundary, and nothing is coerced."""
+    boundary = raw_config.get("hosted_root_boundary")
+    win32_files = raw_config.get("hosted_win32_files", False)
+    if not isinstance(win32_files, bool):
+        raise HostPolicyError("hosted_win32_files must be a boolean")
+    if boundary is None:
+        if win32_files:
+            raise HostPolicyError("hosted_win32_files requires hosted_root_boundary")
+        return {"hosted_root_boundary": None, "hosted_win32_files": False}
+    if (
+        not server_mode
+        or tools_workspace_root is not None
+        or not isinstance(boundary, str)
+        or not boundary.strip()
+        or boundary != boundary.strip()
+        or not os.path.isabs(boundary)
+    ):
+        raise HostPolicyError("hosted_root_boundary needs a rootless server host")
+    # File text from a tool result never goes to the log as a snippet with a boundary set.
+    return {"hosted_root_boundary": boundary, "hosted_win32_files": win32_files,
+            "diagnostics_capture_mode": "redacted"}
+
+
 def parse_runtime_config(raw_config: Any) -> RuntimeConfig:
     if not isinstance(raw_config, dict):
         return RuntimeConfig()
@@ -494,6 +521,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:
         **parse_tool_fields(raw_config),
         "feature_flags": normalize_feature_flags(raw_config.get("feature_flags")),
     }
+    values.update(_parse_hosted_file_fields(
+        raw_config, server_mode=host_policy.enforced,
+        tools_workspace_root=values["tools_workspace_root"],
+    ))
     _apply_execution_policy_overrides(
         values,
         host_enforced=host_policy.enforced,

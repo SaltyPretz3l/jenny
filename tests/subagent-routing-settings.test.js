@@ -107,3 +107,20 @@ test('limits validate atomically and prototype patches are refused', () => {
   }
   assert.equal({}.polluted, undefined);
 });
+
+test('the api-provider preferences take full namespaced ids and keep the other providers unchanged', () => {
+  const full = 'api-provider/anthropic-api/claude-haiku-4-5';
+  const nested = 'api-provider/openrouter/openai/gpt-6-luna';
+  const saved = applySubagentRoutingPatch({}, { 'api-provider': { defaultModel: full, defaultEffort: 'low', allowedModels: [full, nested], preferredModels: [nested] } });
+  assert.deepEqual(saved['api-provider'], { defaultModel: full, defaultEffort: 'low', maxEffort: '', allowedModels: [full, nested], preferredModels: [nested] });
+  assert.deepEqual(normalizeSubagentRouting({ 'api-provider': { defaultModel: full } })['api-provider'].defaultModel, full);
+  assert.equal(normalizeSubagentRouting()['api-provider'].defaultModel, '');
+  for (const bad of ['claude-haiku-4-5', 'api-provider/anthropic-api', 'api-provider//model', 'api-provider/Bad_Id/model',
+    'api-provider/anthropic-api/ model', `api-provider/anthropic-api/${'m'.repeat(201)}`, 'codex-cli/default']) {
+    assert.throws(() => applySubagentRoutingPatch({}, { 'api-provider': { defaultModel: bad } }), /invalid/, bad);
+    assert.throws(() => applySubagentRoutingPatch({}, { 'api-provider': { allowedModels: [bad] } }), /invalid/, bad);
+    assert.equal(normalizeSubagentRouting({ 'api-provider': { defaultModel: bad } })['api-provider'].defaultModel, '', bad);
+  }
+  assert.throws(() => applySubagentRoutingPatch({}, { chatgpt: { defaultModel: full } }), /invalid/);
+  assert.throws(() => applySubagentRoutingPatch({}, { 'codex-cli': { defaultModel: full } }), /invalid/);
+});

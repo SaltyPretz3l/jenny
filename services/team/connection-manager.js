@@ -139,10 +139,7 @@ function createConnectionManager({
     }));
   }
 
-  function cancelTimer() {
-    if (timer !== null) timers.clearTimeout(timer);
-    timer = null;
-  }
+  function cancelTimer() { if (timer !== null) timers.clearTimeout(timer); timer = null; }
 
   function schedule(fn, ms, gen = null) {
     cancelTimer();
@@ -476,11 +473,11 @@ function createConnectionManager({
   }
 
   async function command(operation, params, options) {
-    try {
-      return await send(operation, params, options);
-    } catch (error) {
-      return failureOf(error);
-    }
+    let answer;
+    try { answer = await send(operation, params, options); } catch (error) { return failureOf(error); }
+    // The name is read at connect only: a rename this device made shows at once (other devices: at their next connect).
+    if (operation === 'team.rename' && answer?.ok === true && facts.team_name !== params.name) { facts = { ...facts, team_name: params.name }; notify(); }
+    return answer;
   }
 
   // One dial with the device key: 'admitted' (status answered), 'revoked' (status says so), 'refused' (the key was refused) or 'unknown'.
@@ -581,6 +578,9 @@ function createConnectionManager({
   return {
     teamId,
     start() { if (!stopped) run(attempt); },
+    // Only a wait between attempts (this PC's own host just came up) ends: the backoff starts over and one dial runs now.
+    retryNow() { if (stopped || timer === null || (current.state !== STATES.RECONNECTING && current.state !== STATES.OFFLINE)) return false;
+      cancelTimer(); failures = 0; run(attempt); return true; },
     stop, snapshot, command,
     // This connection while online: the team engine call (team-engine.js) and the node link (node/team-link.js) borrow it.
     borrow,

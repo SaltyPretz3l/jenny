@@ -454,8 +454,9 @@ def test_api_provider_runs_the_cloud_loop_profile() -> None:
     assert "api-provider" in _CLOUD_PROVIDER_ENGINE_TYPES
 
 
-def test_api_provider_is_not_a_subagent_cloud_route() -> None:
-    assert "api-provider" not in _CLOUD_PROVIDERS
+def test_api_provider_is_a_subagent_cloud_route() -> None:
+    # Row 179 P1 (row 166 P2d): an API-key parent routes children within its provider instance.
+    assert "api-provider" in _CLOUD_PROVIDERS
 
 
 # -- connections tool -------------------------------------------------------

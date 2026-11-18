@@ -32,8 +32,9 @@ function makeService({ engine, openaiCompatible = { port: 8033, apiUrl: '' } }) 
     ollamaManager: {
       _host: '127.0.0.1',
       _port: 11434,
-      async start() {
+      async start(options) {
         calls.push('ollama:start');
+        this.startOptions = options;
         await ollamaGate.promise;
         calls.push('ollama:settled');
         return { started: true };
@@ -67,6 +68,7 @@ for (const [label, engine] of [
   await startBackendService(service, { onProgress: (phase) => progress.push(phase) });
 
   assert.ok(service.calls.includes('ollama:start'), 'Ollama still starts for its own models');
+  assert.deepEqual(service.ollamaManager.startOptions, { optional: true }, 'a missing Ollama is not a fault for this engine');
   assert.ok(service.calls.includes('sidecar:initialize'));
   assert.equal(service.calls.includes('ollama:settled'), false);
   assert.equal(progress.includes('ollama_ready'), false);
@@ -88,6 +90,7 @@ for (const [label, engine, openaiCompatible] of [
     service.ollamaGate.resolve();
     await starting;
     assert.ok(service.calls.indexOf('ollama:settled') < service.calls.indexOf('sidecar:initialize'));
+    assert.deepEqual(service.ollamaManager.startOptions, { optional: false });
     assert.ok(progress.includes('ollama_ready'));
   });
 }

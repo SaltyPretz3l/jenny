@@ -92,8 +92,16 @@ def test_brokered_keys_are_a_strict_subset_that_excludes_telemetry_dsn() -> None
         "chatgpt_access_token",
         "openai_compatible_api_key",
         "api_provider_key",
+        "local_subagent_api_key",
         "tools_web_search_provider_keys",
     }
+
+
+def test_local_subagent_api_key_is_secret_and_brokered() -> None:
+    # Row 179: the local subagent engine's per-launch key reaches the sidecar and
+    # is scrubbed from any worker payload like the primary's local key.
+    assert "local_subagent_api_key" in SECRET_CONFIG_KEYS
+    assert "local_subagent_api_key" in BROKERED_SECRET_KEYS
 
 
 def test_openai_compatible_api_key_is_secret_and_brokered() -> None:

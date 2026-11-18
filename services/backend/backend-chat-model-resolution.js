@@ -171,12 +171,16 @@ async function resolveModel(service, preferredModel = '', preferredEngineType = 
     return await loadInstalledDefaultModel(service, 'team_model_not_chosen', { ownStreamId });
   }
   if (service.currentModel) return service.currentModel;
-  if (service._modelLifecycle?.state === 'unavailable') {
-    // A previous load latched 'unavailable' (engine down, model missing).
-    // Retry the configured default on this turn instead of demanding a
-    // manual load — the engine may be back by now, and a failed retry
-    // simply re-latches and surfaces on the turn as a terminal error.
-    const retried = await loadInstalledDefaultModel(service, 'model_unavailable_retry', { ownStreamId });
+  const idleByChoice = service._startupIdleByChoice === true;
+  if (idleByChoice || service._modelLifecycle?.state === 'unavailable') {
+    // A previous load latched 'unavailable' (engine down, model missing), or
+    // the boot started no server by choice ("Load model at startup" off) and
+    // the sidecar holds only its fallback engine. Load the configured default
+    // on this turn instead of demanding a manual load or listing the fallback's
+    // models; a failed load latches and surfaces on the turn as a terminal error.
+    const retried = await loadInstalledDefaultModel(
+      service, idleByChoice ? 'startup_model_load_off' : 'model_unavailable_retry', { ownStreamId }
+    );
     if (retried) return retried;
     throw Object.assign(
       new Error('The configured model is unavailable. Load a model to continue.'),

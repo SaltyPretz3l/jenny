@@ -80,6 +80,7 @@
    * @param {string} [opts.ariaLabel] - Optional aria-label override
    * @param {string} [opts.ariaHaspopup] - aria-haspopup token (true|menu|listbox|tree|grid|dialog)
    * @param {string} [opts.title] - Optional title attribute
+   * @param {string} [opts.ariaDescription] - Optional aria-description (why a control is disabled, for example)
    * @param {Object<string,string>} [opts.dataset] - Extra data-* attrs (key must match /^[a-z][a-z0-9-]*$/)
    * @param {string} [opts.className] - Extra class names
    * @param {boolean} [opts.plain] - Emit ONLY the caller className (no .btn/variant/size classes).
@@ -145,6 +146,7 @@
       + (ariaPressed ? ' aria-pressed="' + ariaPressed + '"' : '')
       + (ariaSelected ? ' aria-selected="' + ariaSelected + '"' : '')
       + (o.title ? ' title="' + escapeHtml(o.title) + '"' : '')
+      + (o.ariaDescription ? ' aria-description="' + escapeHtml(o.ariaDescription) + '"' : '')
       + (typeof o.style === 'string' && o.style ? ' style="' + escapeHtml(o.style) + '"' : '')
       + (tabIndex !== null ? ' tabindex="' + tabIndex + '"' : '')
       + dataset

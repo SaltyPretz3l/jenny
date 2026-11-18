@@ -446,8 +446,11 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     });
   }
 
-  // The gateway request closed. After [DONE] the job is complete and the lease
-  // stays active; before it, the job is cancelled and the lease fails.
+  // The gateway request closed. After [DONE] the job is complete. Before it, a
+  // claimed or streaming job is cancelled and its lease stays active: a turn
+  // closes a request it means to replace (a thinking-budget checkpoint) and its
+  // next request needs the lease; the turn's releaser or the `idle_timeout`
+  // sweep ends it. A queued job that closes ends its lease.
   function cancelJob(jobId) {
     const job = jobs.get(jobId);
     if (!job) return fail('forbidden', 'job_not_found');
@@ -462,7 +465,6 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
         if (leaseActive) moveLease(batch, lease, 'active', 'failed', 'cancelled', 'cancelled', now);
       } else {
         moveJob(batch, job, job.state, 'cancelled', 'request_closed', 'cancelled', now);
-        if (leaseActive) moveLease(batch, lease, 'active', 'failed', 'job_failed', 'cancelled', now);
       }
       dispatch(batch, now);
       return { ok: true };

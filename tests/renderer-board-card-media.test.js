@@ -232,6 +232,45 @@ test('a missing file is marked after fileStatus, and asked again when the window
   assert.equal(h.el(uid(901)).hasAttribute('data-missing'), false);
 });
 
+test('with the page hidden a window focus makes no fileStatus call; showing it again asks exactly once', async (t) => {
+  const h = await env(t, { seed: [fileCard('src/app.js')] });
+  let asked = 0;
+  const real = h.source.fileStatus;
+  h.source.fileStatus = (request) => { asked += 1; return real(request); };
+  h.canvas.setShown(false);
+  h.window.dispatchEvent(new h.window.Event('focus'));
+  await flush();
+  assert.equal(asked, 0, 'hidden: no read');
+  h.canvas.setShown(true);
+  await flush();
+  assert.equal(asked, 1, 'shown: the owed read, once');
+  h.canvas.setShown(true);
+  await flush();
+  assert.equal(asked, 1);
+  h.window.dispatchEvent(new h.window.Event('focus'));
+  await flush();
+  assert.equal(asked, 2, 'shown: focus reads again as before');
+});
+
+test('hiding the page ends an open gesture, so a later Escape has nothing to cancel', async (t) => {
+  const h = await env(t, { seed: [fileCard('src/app.js')] });
+  const card = h.el(uid(900));
+  const ptr = (type, target, x, y) => target.dispatchEvent(new h.window.PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, clientX: x, clientY: y }));
+  const escape = () => { const event = new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); h.doc.dispatchEvent(event); return event; };
+  const home = card.style.left;
+  ptr('pointerdown', card, 150, 120);
+  ptr('pointermove', h.canvas.surface.element, 250, 220);
+  assert.notEqual(card.style.left, home, 'the card follows the pointer');
+  h.canvas.setShown(false);
+  assert.equal(card.style.left, home, 'hiding put the card back');
+  assert.equal(escape().defaultPrevented, false, 'no gesture left for Escape');
+  h.canvas.setShown(true);
+  ptr('pointerdown', card, 150, 120);
+  ptr('pointermove', h.canvas.surface.element, 250, 220);
+  assert.equal(escape().defaultPrevented, true);
+  assert.equal(card.style.left, home, 'shown: Escape cancels as before');
+});
+
 test('Enter opens a file in the Workspace through openFile, and a chat on the Chat page; refusals are told', async (t) => {
   const sessions = [{ id: 'sess_1', title: 'Kickoff', project_id: 'project_alpha', updated_at: '2026-11-12T00:00:00Z' }];
   const h = await env(t, { sessions, seed: [fileCard('src/app.js'), fileCard('docs/gone.md'), chatCard('sess_1'), chatCard('sess_gone')] });

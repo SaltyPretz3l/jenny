@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from sidecar.protocol import SESSION_JOB_NOTICE_CONSUMED_METHOD, SESSION_MAIL_CONSUMED_METHOD
+from sidecar.protocol import (
+    SESSION_JOB_NOTICE_CONSUMED_METHOD,
+    SESSION_MAIL_CONSUMED_METHOD,
+    SESSION_USER_STEER_CONSUMED_METHOD,
+)
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.provider_metrics import InferencePerformance
@@ -65,6 +69,21 @@ class BackgroundJobNoticeConsumedEvent(LoopEvent):
 
     def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
         return {**ctx, "job_ids": list(self.job_ids), "iteration": int(self.iteration)}
+
+
+@dataclass
+class UserSteerConsumedEvent(LoopEvent):
+    """Mid-turn steer items (row 180) entered the working messages; ephemeral, never journaled.
+
+    Carries item ids only: the text and images are the person's, already held by Electron.
+    """
+
+    item_ids: list[str]
+    iteration: int
+    method: ClassVar[str] = SESSION_USER_STEER_CONSUMED_METHOD
+
+    def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        return {**ctx, "item_ids": list(self.item_ids), "iteration": int(self.iteration)}
 
 
 @dataclass

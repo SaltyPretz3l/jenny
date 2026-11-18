@@ -11,6 +11,10 @@
 // and the Jenny chat stays silent inside its quiet hours (Settings > Jenny chat).
 // Slice 2a-6c: team messages (`team`) count the same way per team and channel,
 // and a click hands the message's routing ids back to the renderer.
+// Row 175: `teamProject` toasts (a member's own project turn, an approval nobody who can answer is viewing) name the
+// team and the host conversation (`sessionId`, a host id: never a local chat's) and open that conversation on a click.
+// They pass the same gates and also need the Team category on; the local-chat gates (child session, the Jenny chat's
+// quiet hours) read only local sessions, so they do not apply.
 
 const { getBridgeChannel } = require('../ipc-contract');
 const { t } = require('../i18n-main');
@@ -18,11 +22,14 @@ const { quietRemainingMs } = require('../primary-digest');
 const { normalizeNotificationSettings } = require('../shell-config-notifications-schema');
 const { createTrustedSenderAuthorizer } = require('./ipc-sender-authorization');
 
-const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'jenny', 'team']);
+const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'jenny', 'team', 'teamProject']);
 const FIELD_LIMITS = Object.freeze({ key: 120, sessionId: 80, title: 120, body: 240, preview: 240, conversation: 120, sender: 80 });
 // A team toast's way back to its message (slice 2a-6c): ids the host made, never a key or a token.
 const ROUTE_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const ROUTE_FIELDS = Object.freeze(['teamId', 'channelId', 'messageId', 'threadRootId']);
+// A project toast's way back (row 175): the team, the host conversation and its project.
+const PROJECT_ROUTE_FIELDS = Object.freeze(['teamId', 'projectId', 'sessionId']);
+const HOST_SESSION_ID = /^sess_[A-Za-z0-9_-]{1,123}$/;
 const MAX_GROUP_SENDERS = 8;
 const MAX_LIVE_NOTIFICATIONS = 5;
 const MAX_FAILURE_MESSAGES = 32;
@@ -50,6 +57,7 @@ function normalizeNotificationCandidate(raw) {
   const key = clipField(raw.key, FIELD_LIMITS.key);
   const title = clipField(raw.title, FIELD_LIMITS.title);
   if (!key || !title) return null;
+  if (category === 'teamProject') return projectCandidate(raw, category);
   const sessionId = raw.sessionId == null ? '' : clipField(raw.sessionId, FIELD_LIMITS.sessionId);
   const body = raw.body == null ? '' : clipField(raw.body, FIELD_LIMITS.body);
   if (sessionId == null || body == null) return null;
@@ -76,6 +84,19 @@ function teamCandidate(raw, candidate) {
   candidate.conversation = clipField(raw.conversation, FIELD_LIMITS.conversation) || '';
   candidate.sender = clipField(raw.sender, FIELD_LIMITS.sender) || '';
   candidate.group = 'conversation';
+  return candidate;
+}
+
+// A project toast (row 175): its team and host conversation are required, its project optional; each field is checked
+// whole (a host id is never clipped into another one). It groups with nothing.
+function projectCandidate(raw, category) {
+  const key = clipField(raw.key, FIELD_LIMITS.key);
+  const title = clipField(raw.title, FIELD_LIMITS.title);
+  const body = raw.body == null ? '' : clipField(raw.body, FIELD_LIMITS.body);
+  if (!key || !title || body == null) return null;
+  if (typeof raw.teamId !== 'string' || !ROUTE_ID.test(raw.teamId) || typeof raw.sessionId !== 'string' || !HOST_SESSION_ID.test(raw.sessionId)) return null;
+  const candidate = { category, key, sessionId: raw.sessionId, title, body, teamId: raw.teamId };
+  if (typeof raw.projectId === 'string' && ROUTE_ID.test(raw.projectId)) candidate.projectId = raw.projectId;
   return candidate;
 }
 
@@ -227,6 +248,7 @@ function createDesktopNotifier({
         for (const field of ROUTE_FIELDS) if (candidate[field]) payload[field] = candidate[field];
         if (candidate.seq) payload.seq = candidate.seq;
       }
+      if (candidate.category === 'teamProject') for (const field of PROJECT_ROUTE_FIELDS) if (candidate[field]) payload[field] = candidate[field];
       sendBridgeEvent('notifications.onOpen', payload);
     } catch (error) {
       logFailure('desktop_notifier.open_failed', error);
@@ -288,14 +310,18 @@ function createDesktopNotifier({
     if (settings.categories[candidate.category] !== true) {
       return suppress('category_off', candidate);
     }
+    const project = candidate.category === 'teamProject';
+    if (project && settings.categories.team !== true) return suppress('category_off', candidate);
+    // A project toast's session is a host conversation: the local-chat gates below read local sessions only.
+    const localSession = project ? '' : candidate.sessionId;
     let childSession = false;
     try {
-      childSession = candidate.sessionId !== '' && isChildSession(candidate.sessionId) === true;
+      childSession = localSession !== '' && isChildSession(localSession) === true;
     } catch (error) {
       logFailure('desktop_notifier.child_lookup_failed', error);
     }
     if (childSession) return suppress('child_session', candidate);
-    if (inPrimaryQuietHours(candidate.sessionId)) return suppress('quiet_hours', candidate);
+    if (inPrimaryQuietHours(localSession)) return suppress('quiet_hours', candidate);
     let mainWindow;
     let focused = false;
     try {

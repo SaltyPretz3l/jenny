@@ -97,6 +97,14 @@ test('rule answers are rebuilt field by field: an extra field dropped, a missing
   const extraRow = projectAnswer('team.project.rules.list', { ok: true, ...cases['team.project.rules.list'][0],
     rules: [{ ...RULE, path: 'C:\\host' }] });
   assert.equal(JSON.stringify(extraRow).includes('host'), false, 'a row is rebuilt too');
+  // Row 123 (team host file tools, D5): the host says its rules are paused while project files are on.
+  const paused = projectAnswer('team.project.rules.list', { ok: true, ...cases['team.project.rules.list'][0], paused: 'file_tools' });
+  assert.equal(paused.paused, 'file_tools');
+  assert.equal(Object.hasOwn(list, 'paused'), false, 'absent when not paused');
+  for (const wrong of ['yes', true, 'run_command']) {
+    assert.ok(invalid(projectAnswer('team.project.rules.list', { ok: true, ...cases['team.project.rules.list'][0], paused: wrong })),
+      String(wrong));
+  }
   assert.ok(invalid(projectAnswer('team.project.rules.list', { ok: true, ...cases['team.project.rules.list'][0],
     rules: Array(33).fill(RULE) })), 'more than 32 rules');
   assert.ok(invalid(projectAnswer('team.project.rules.list', { ok: true, ...cases['team.project.rules.list'][0],

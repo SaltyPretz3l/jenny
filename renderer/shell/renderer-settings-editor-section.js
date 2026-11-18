@@ -124,8 +124,10 @@
     fontLigatures: true, insertSpaces: true, detectIndentation: true, autoSaveMode: 'off', autoSaveDelayMs: 1000,
     bracketPairColorization: true, indentGuides: true, stickyScroll: true, folding: true,
     scrollBeyondLastLine: false, mouseWheelZoom: true, inlineBlame: true, terminalScrollback: 1000, terminalDefaultProfile: '',
+    terminalStartFolder: '',
   });
-  const NORMALIZED_KEYS = ['fontFamily', 'cursorStyle', 'cursorBlinking', 'autoSaveMode', 'autoSaveDelayMs', 'terminalScrollback', 'terminalDefaultProfile'];
+  const NORMALIZED_KEYS = ['fontFamily', 'cursorStyle', 'cursorBlinking', 'autoSaveMode', 'autoSaveDelayMs', 'terminalScrollback', 'terminalDefaultProfile',
+    'terminalStartFolder'];
   function e1Prefs(source) {
     const ref = ideStateRef();
     const normalized = typeof ref?.normalizeEditorPrefs === 'function' ? ref.normalizeEditorPrefs(source) : {};
@@ -203,6 +205,38 @@
     });
   }
 
+  // Terminal start folder row: path or the Downloads default, Browse, Use Downloads; notes survive a repaint.
+  const START_FOLDER_ID = 'editorTerminalStartFolderField';
+  const START_FOLDER_BROWSE = 'terminal-start-folder-browse';
+  const START_FOLDER_RESET = 'terminal-start-folder-default';
+  const startFolderNotes = new WeakMap();
+
+  function inventoryPrimitives() {
+    const load = (path) => (typeof require === 'function' ? require(path) : null);
+    const inv = globalThis.inventory || {};
+    return {
+      settingsField: inv.settingsField || globalThis.inventorySettingsField || load('../inventory/settings-field'),
+      textField: inv.textField || globalThis.inventoryTextField || load('../inventory/text-field'),
+      actionButton: inv.actionButton || globalThis.inventoryActionButton || load('../inventory/action-button'),
+    };
+  }
+
+  function startFolderRow(descriptor, value, container) {
+    const { binding } = fieldModules();
+    const { settingsField, textField, actionButton } = inventoryPrimitives();
+    if (!settingsField || !textField || !actionButton || !descriptor) return '';
+    const copy = binding.resolveSettingCopy(descriptor);
+    const buttons = [actionButton({ id: START_FOLDER_BROWSE, label: jt('settings.editor.terminalStartFolderBrowse', 'Browse…'), size: 'sm' })];
+    if (value) buttons.push(actionButton({ id: START_FOLDER_RESET, label: jt('settings.editor.terminalStartFolderUseDownloads', 'Use Downloads'), variant: 'ghost', size: 'sm' }));
+    return settingsField({
+      id: descriptor.id, label: copy.label, help: copy.description, helpId: descriptor.controlId + 'Description', variant: 'row',
+      labelFor: descriptor.controlId + 'Path', error: startFolderNotes.get(container) || '',
+      controlHtml: textField({ id: descriptor.controlId + 'Path', ariaLabel: copy.label, describedBy: descriptor.controlId + 'Description', readonly: true,
+        value: value || jt('settings.editor.terminalStartFolderDefault', 'Downloads folder (default)') }) + buttons.join(''),
+      dataset: { 'setting-id': descriptor.id },
+    });
+  }
+
   // A top-level labelled run of rows (the Settings group markup).
   function group(id, label, rows) {
     return '<div class="settings-group" role="group" aria-labelledby="settingsEditorGroup-' + id + '" data-editor-group="' + id + '">'
@@ -218,7 +252,9 @@
     const form = readForm(ide);
     const byKey = {};
     editorDescriptors(() => form).forEach((d) => { byKey[d.key] = d; });
-    const row = (key) => binding.renderSettingRow(byKey[key], descriptors.normalizeSettingValue(byKey[key], form[key]));
+    const row = (key) => (key === 'terminalStartFolder'
+      ? startFolderRow(byKey[key], form[key], container)
+      : binding.renderSettingRow(byKey[key], descriptors.normalizeSettingValue(byKey[key], form[key])));
     const advanced = ['renderWhitespace', 'rulers', 'bracketPairColorization', 'indentGuides', 'stickyScroll', 'folding',
       'scrollBeyondLastLine', 'mouseWheelZoom', 'inlineBlame'].map(row);
     // The delay only applies to the after-delay mode: a dependent sub row, off otherwise.
@@ -231,7 +267,7 @@
       group('indentation', jt('settings.editor.group.indentation', 'Indentation'), ['insertSpaces', 'detectIndentation'].map(row)),
       group('autosave', jt('settings.editor.group.saving', 'Saving'),
         [row('autoSaveMode'), delayRow].concat(['formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline'].map(row))),
-      group('terminal', jt('settings.editor.group.terminal', 'Terminal'), ['terminalDefaultProfile', 'terminalScrollback'].map(row)),
+      group('terminal', jt('settings.editor.group.terminal', 'Terminal'), ['terminalDefaultProfile', 'terminalStartFolder', 'terminalScrollback'].map(row)),
       '<details class="settings-fold settings-editor-advanced"><summary>'
         + escapeHtml(jt('settings.editor.group.advanced', 'Advanced')) + '</summary>' + advanced.join('') + '</details>',
     ];
@@ -369,7 +405,7 @@
         });
       },
     });
-    binding.bindSettingFields({
+    const bound = binding.bindSettingFields({
       container,
       descriptors: editorDescriptors(() => readForm(state.ui && state.ui.ide)),
       registry,
@@ -384,6 +420,40 @@
         });
       },
     });
+
+    // Browse asks main for a folder and saves it through the same coordinator as every row.
+    let picking = false;
+    const startFolder = fieldModules().descriptors.getSettingDescriptor(START_FOLDER_ID);
+    function startFolderNote(text) {
+      if (text) startFolderNotes.set(container, text); else startFolderNotes.delete(container);
+      const row = container.querySelector('[data-settings-field="' + START_FOLDER_ID + '"]');
+      const setFieldError = inventoryPrimitives().settingsField?.setFieldError;
+      if (row && typeof setFieldError === 'function') setFieldError(row, text);
+    }
+    function pickStartFolder() {
+      const api = (typeof window !== 'undefined' && window.jennyShell && window.jennyShell.workspaceIde) || null;
+      const unavailable = jt('settings.editor.terminalStartFolderUnavailable', 'The folder picker is not available.');
+      startFolderNote('');
+      if (!api || typeof api.chooseTerminalStartFolder !== 'function') { startFolderNote(unavailable); return Promise.resolve(); }
+      picking = true;
+      return Promise.resolve().then(() => api.chooseTerminalStartFolder()).then((result) => {
+        if (result && result.ok === true && result.picked !== true) return null; // cancelled
+        if (result && result.ok === true && typeof result.path === 'string' && e1Prefs({ terminalStartFolder: result.path }).terminalStartFolder) {
+          return bound.commit(startFolder, result.path);
+        }
+        const network = result && result.reason === 'network_path';
+        startFolderNote(network ? jt('settings.editor.terminalStartFolderNetwork', 'Choose a folder on this PC; network folders are not supported.') : unavailable);
+        return null;
+      }).catch(() => { startFolderNote(unavailable); }).finally(() => { picking = false; });
+    }
+    if (bound && startFolder) {
+      registerListener(container, 'click', (event) => {
+        const button = event.target && typeof event.target.closest === 'function' ? event.target.closest('[data-settings-field="' + START_FOLDER_ID + '"] [data-action]') : null;
+        const action = button && button.getAttribute('data-action');
+        if (action === START_FOLDER_BROWSE && !picking) void pickStartFolder();
+        else if (action === START_FOLDER_RESET && !picking) { startFolderNote(''); void bound.commit(startFolder, ''); }
+      }, listenerOptions);
+    }
 
     // Lazy hydration: if the IDE has never run (no editor prefs on the slice),
     // pull the persisted values once so the controls show the real state.

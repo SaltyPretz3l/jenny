@@ -167,6 +167,13 @@ class MCPClient(
         value = getattr(transport, "server_generation_id", None)
         return value if isinstance(value, str) and value else None
 
+    def server_hosted_files(self, server_name: str) -> dict[str, object] | None:
+        """A connected root-boundary worker's file tools state, or None."""
+        with self._transport_registry_lock:
+            transport = self._transports.get(server_name)
+        value = getattr(transport, "server_hosted_files", None)
+        return dict(value) if isinstance(value, dict) else None
+
     def diagnostics(self) -> MCPServerDiagnostics:
         with self._transport_registry_lock:
             return MCPServerDiagnostics(

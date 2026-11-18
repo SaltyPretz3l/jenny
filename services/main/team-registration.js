@@ -33,6 +33,9 @@
 // `subscribeConfig` hears every saved config change; the mode is compared on each (never the reason). The gate
 // (services/team/force-local-hold.js) is made with the first service or host, and both always get it: nothing
 // under services/team/ loads for a change while neither exists. The listener goes with dispose.
+//
+// Owner report (Team page stuck on reconnecting): a host state that moves to `running` asks an already loaded member
+// service to dial that host's team now (`retryTeam`), so this PC's own row does not wait out its backoff.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -64,17 +67,23 @@ function hasSavedTeams(userDataPath) {
   }
 }
 
-// Calls `fn` once the backend is ready; returns a function that cancels the wait.
+// The backend's start is over: up with a model, up without one (startup loading off, or a load that failed), or
+// failed. A team's people and chat need no local model, so the saved teams start in each of them. Waiting for
+// 'ready' alone left a launch with no model holding no team: no team row, no names, and a Start that asked the
+// owner to reclaim a place this Jenny still held (owner, 2026-11-16).
+const STARTED_PHASES = new Set(['ready', 'model_unavailable', 'failed']);
+
+// Calls `fn` once the backend's start is over; returns a function that cancels the wait.
 function whenBackendReady(backendService, fn) {
   if (!backendService || typeof backendService.on !== 'function') return noop;
   let status;
   try { status = backendService.getBackendStatus?.() || null; } catch { status = null; }
-  if (status && status.phase === 'ready') {
+  if (status && STARTED_PHASES.has(status.phase)) {
     const handle = setImmediate(fn);
     return () => clearImmediate(handle);
   }
   const onStatus = (next) => {
-    if (next?.phase !== 'ready') return;
+    if (!STARTED_PHASES.has(next?.phase)) return;
     backendService.off?.('backend-status', onStatus);
     fn();
   };
@@ -194,6 +203,14 @@ function registerTeam(ipcMainLike, {
     return service;
   }
 
+  // The host's last pushed state: only a move to running asks, and only a service that exists (nothing loads for it).
+  let hostState = null;
+  function hostStateChanged(snapshot) {
+    const was = hostState;
+    hostState = snapshot?.state ?? null;
+    if (hostState === 'running' && was !== 'running' && typeof snapshot.team_id === 'string') service?.retryTeam?.(snapshot.team_id, 'host_running');
+  }
+
   function getHost() {
     if (!host && !disposed) {
       const launch = loadHostLaunch();
@@ -202,7 +219,7 @@ function registerTeam(ipcMainLike, {
         isPackaged: launch.electronIsPackaged, fork: launch.electronFork, entryPath: launch.HOST_ENTRY,
         environment: launch.hostEnvironment(), lockPython: () => launch.desktopPythonExecutable(backendService), log,
         pick: { folder: launch.electronPickFolder, file: launch.electronPickBackup, open: launch.electronOpenFolder },
-        sendState: (snapshot) => { if (!disposed) sendBridgeEvent('team.onHostState', snapshot); },
+        sendState: (snapshot) => { if (!disposed) { sendBridgeEvent('team.onHostState', snapshot); hostStateChanged(snapshot); } },
         ...hostOptions, gate: getGate(),
       });
     }
@@ -239,7 +256,11 @@ function registerTeam(ipcMainLike, {
 
   const cancelWait = whenBackendReady(backendService, () => {
     if (disposed || !hasSavedTeams(userDataPath)) return;
-    void Promise.resolve().then(() => getService()?.startExisting()).catch(() => log('WARN', 'team.start_failed'));
+    void Promise.resolve().then(() => getService()?.startExisting()).then(async () => {
+      // Start with Jenny (host-autostart.js): the host controller is made only when the owner turned it on.
+      const autostart = disposed ? null : require('../team/host/host-autostart');
+      if (autostart?.readAutostart(userDataPath)) await autostart.launchStart({ getHost, getService, log });
+    }).catch(() => log('WARN', 'team.start_failed'));
   });
 
   async function dispose() {

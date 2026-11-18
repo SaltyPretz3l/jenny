@@ -48,6 +48,25 @@ test('a refusal answer reports its reason; an unknown reason, false or a throw r
   assert.equal(JSON.stringify(throwing.logs).includes('private'), false);
 });
 
+test('the push place start_folder reaches runInTerminal as an options object; any other or missing place gives undefined', async () => {
+  const seen = [];
+  const h = harness({ runInTerminal: async (command, options) => { seen.push([command, options]); return { ok: true, session_id: 'pty-2' }; } });
+  await h.send({ request_id: 'trm-abc-1', command: 'ls', place: 'start_folder' });
+  await h.send({ request_id: 'trm-abc-2', command: 'ls' });
+  await h.send({ request_id: 'trm-abc-3', command: 'ls', place: 'C:\\private' });
+  await h.send({ request_id: 'trm-abc-4', command: 'ls', place: '' });
+  assert.deepEqual(seen, [['ls', { place: 'start_folder' }], ['ls', undefined], ['ls', undefined], ['ls', undefined]]);
+});
+
+test('root_missing and start_folder_unavailable pass through as the reported reasons', async () => {
+  for (const reason of ['root_missing', 'start_folder_unavailable']) {
+    const h = harness({ answer: { ok: false, reason } });
+    await h.send({ request_id: 'trm-abc-1', command: 'npm test' });
+    assert.deepEqual(h.reports, [{ request_id: 'trm-abc-1', ok: false, reason }]);
+    assert.deepEqual(h.logs, [['WARN', 'terminal_run.refused', { reason }]]);
+  }
+});
+
 test('a refusal is logged with its reason only', async () => {
   const h = harness({ answer: { ok: false, reason: 'no_free_terminal' } });
   await h.send({ request_id: 'trm-abc-1', command: 'npm test' });

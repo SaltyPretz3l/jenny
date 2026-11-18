@@ -7,6 +7,7 @@ import logging
 import re
 import ssl
 import threading
+import urllib.parse
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -135,6 +136,23 @@ class ProviderHttpError(RuntimeError):
         self.classification = classification
         self.body = body
         self.retry_after_seconds = retry_after_seconds
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def is_idle_local_server(base_url: str, error: BaseException) -> bool:
+    """True when nothing listens on a loopback server: it is not running, not failing.
+
+    The managed llama-server stays down until a model is loaded when startup model
+    loading is off, so its port refuses every probe. Callers log that at INFO; a
+    timeout, an auth or HTTP error, or a remote host stays a warning. A server that
+    should be up already warns through Electron's managed-initialize log.
+    """
+    if not isinstance(error, ProviderHttpError) or error.classification != "connection_error":
+        return False
+    hostname = (urllib.parse.urlsplit(base_url).hostname or "").casefold()
+    return hostname in _LOOPBACK_HOSTS
 
 
 class ProviderHttpService:

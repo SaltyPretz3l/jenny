@@ -32,6 +32,7 @@ from sidecar.runtime.turn_state import (
     bind_live_run_mode_state,
     bind_pending_mail,
 )
+from sidecar.runtime.turn_steers import PendingSteerQueue, bind_pending_steers
 
 ChatSendRunner = Callable[..., ProcessOutcome]
 FrameWriter = Callable[[dict[str, Any]], None]
@@ -179,10 +180,15 @@ def make_chat_send_worker(  # noqa: PLR0913
             job_notices = getattr(cancel_handle, "pending_job_notices", None)
             if not isinstance(job_notices, PendingJobNoticeQueue):
                 job_notices = PendingJobNoticeQueue()
+            # Mid-turn steering (row 180): session.user_steer_arrived fills it; the loop drains it.
+            pending_steers = getattr(cancel_handle, "pending_steers", None)
+            if not isinstance(pending_steers, PendingSteerQueue):
+                pending_steers = PendingSteerQueue()
             with (
                 bind_live_run_mode_state(live_run_mode),
                 bind_pending_mail(pending_mail),
                 bind_pending_job_notices(job_notices),
+                bind_pending_steers(pending_steers),
             ):
                 outcome = chat_send_runner(message, **runner_options)
             if getattr(outcome, "deliver_after_worker_cleanup", False):

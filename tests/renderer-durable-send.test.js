@@ -90,6 +90,21 @@ test('a Send behind an active stream is queued', async t => {
   assert.equal(h.state.runtimeSendController.listPending('session-1')[0].queued, true);
   ack.resolve(); await sending;
 });
+// Row 180: with the default durable runtime a Send behind a live turn must still reach the steer offer.
+test('a Send behind a live durable turn goes to the outbox and is offered to that turn', async t => {
+  const offers = []; const submits = [];
+  const h = createControllerHarness([], { durableRuntime: true,
+    chatBridge: { offerSteer: async (payload) => { offers.push(payload); return { ok: true }; }, withdrawSteer: async () => ({ ok: true }) },
+    shell: { sessionRuntime: { submit: async payload => { submits.push(payload); return receipt(payload, submits.length); } } } });
+  t.after(h.restore); t.after(() => h.controller.dispose());
+  await h.controller.startPromptSend('first');
+  h.multiStreamController.registerStream('session-1', 'stream_1');
+  const result = await h.controller.startPromptSend('change of plan'); await tick(); await tick();
+  assert.equal(submits.length, 1, 'the steer candidate is not submitted to the runtime queue');
+  assert.equal(result.queued, true);
+  assert.deepEqual(offers.map((offer) => offer.prompt), ['change of plan']);
+  assert.equal(offers[0].sessionId, 'session-1');
+});
 test('a second pending Send behind a first pending Send is queued', async t => {
   const ack = deferred(); let sequence = 0;
   const h = createControllerHarness([], { durableRuntime: true, shell: { sessionRuntime: { submit: async payload => {

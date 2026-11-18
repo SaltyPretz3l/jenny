@@ -7,11 +7,10 @@ in sibling mixins (``tool_loop_calls``, ``tool_loop_finalize``); the bound
 finish/settle/grant helpers live in ``tool_loop_run_lifecycle``. The public
 ``run_tool_loop`` in ``tool_loop`` remains a thin delegator over this class.
 
-Hub routing: names the hub module imports at module level are referenced via a
-function-local ``import sidecar.ai.routing.tool_loop as _tl_hub`` so this file
-stays within the per-module import-fanout budget (the three mixins and the hub
-are the only ``sidecar.ai.*`` module-level dependencies; ``router``,
-``iteration_limits`` and ``tool_quotas`` stay function-local).
+Hub routing: names the hub module imports at module level are referenced via a function-local
+``import sidecar.ai.routing.tool_loop as _tl_hub`` so this file stays within the per-module
+import-fanout budget (the three mixins and the hub are the only ``sidecar.ai.*`` module-level
+dependencies; ``router``, ``iteration_limits`` and ``tool_quotas`` stay function-local).
 """
 
 from __future__ import annotations
@@ -336,6 +335,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin, _RunLifecycleMixin
                         ),
                         reason="stop_policy",
                     )
+                _tl_hub.user_steers.drain_user_steers(self, _iteration)
 
                 _tl_hub.log_event(
                     logger,

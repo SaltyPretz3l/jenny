@@ -288,7 +288,12 @@
 
     function onDoubleClick(event) {
       if (disposed) return;
-      const target = event.target && event.target.closest ? event.target : null;
+      // The press captured the pointer on the canvas, so the double-click is aimed at it: read what is under the pointer.
+      let target = event.target && event.target.closest ? event.target : null;
+      if (target === element && typeof doc.elementFromPoint === 'function') {
+        const hit = doc.elementFromPoint(event.clientX, event.clientY);
+        if (hit && hit.closest && element.contains(hit)) target = hit;
+      }
       if (!target || target.closest('[data-board-editor]') || target.closest('[data-card-resize], [data-card-connect]')) return;
       const cardEl = target.closest('[data-card-id]');
       if (!cardEl || !surface.layer.contains(cardEl)) return;
@@ -332,6 +337,8 @@
         const result = await editor.addNote({ x: Math.round(info.x - NOTE_SIZE.w / 2), y: Math.round(info.y - NOTE_SIZE.h / 2) });
         if (result.ok && !disposed) host.startEdit(result.id, { fresh: true });
       },
+      // Parked (false): end any gesture, so no later Escape or pointer event finishes it.
+      setShown(isShown) { if (isShown === false) cancel(); },
       dispose() {
         if (disposed) return;
         disposed = true;

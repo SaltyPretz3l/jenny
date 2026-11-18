@@ -4,6 +4,8 @@ import json
 import logging
 import time
 
+import pytest
+
 from sidecar.ai.engines import catalog
 from sidecar.ai.engines.provider_http import ProviderHttpError
 
@@ -796,6 +798,41 @@ def test_discover_openai_compatible_models_uses_shared_transport(monkeypatch) ->
             },
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("api_url", "classification", "level"),
+    [
+        (None, "connection_error", logging.INFO),  # the managed port with no server: idle
+        ("http://localhost:8033/v1", "connection_error", logging.INFO),
+        (None, "api_timeout", logging.WARNING),  # something there but not answering
+        ("http://192.168.1.20:8033", "connection_error", logging.WARNING),  # a remote server
+    ],
+)
+def test_openai_compatible_discovery_logs_an_idle_local_port_at_info(
+    monkeypatch, caplog, api_url, classification, level
+) -> None:
+    def _failing_get_json(self, path: str):
+        raise ProviderHttpError(
+            provider="openai-compatible",
+            status_code=None,
+            code="CMP-CLOUD-1001",
+            message="boom",
+            retryable=False,
+            classification=classification,
+        )
+
+    monkeypatch.setattr(catalog.ProviderHttpService, "get_json", _failing_get_json)
+    with caplog.at_level(logging.DEBUG):
+        result = catalog.discover_openai_compatible_models(api_url=api_url)
+
+    assert result.available is False
+    levels = [
+        record.levelno
+        for record in caplog.records
+        if getattr(record, "event", "") == "ai.engines.catalog.openai_compatible_discovery_failed"
+    ]
+    assert levels == [level]
 
 
 def test_discover_openai_compatible_models_sends_bearer_header_when_keyed(monkeypatch) -> None:

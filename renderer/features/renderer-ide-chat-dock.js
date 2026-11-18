@@ -263,6 +263,9 @@
       if (!docked) sessionPicker?.close(false);
       const dockBody = dom.ideChatDockBody || null;
       const doc = dockBody?.ownerDocument || movable[0].ownerDocument || null;
+      // No chat surface on screen (Home, Team, Settings, Logs): a docked transcript stays docked, so coming back
+      // to its page moves and re-lays nothing. Showing Chat, or a page with its chat closed, takes it back.
+      if (!page && dockedHost && dockBody && state.ui?.activeView !== 'chat' && movable.every((node) => node.parentNode === dockBody)) return false;
       const targetSurface = docked && dockBody ? page.id : 'chat';
       const anchorTransition = prepareAnchorTransition(nodes, dockBody, targetSurface);
       if (docked && dockBody) {
@@ -275,6 +278,9 @@
             notifySubagentMonitorRehost();
             notifyComposerRehost(page.id);
           }
+          // Asked to open while already docked here (the Board's "Ask Jenny" with the chat column open): nothing
+          // moves, so the caret is put in the composer now and the wish does not wait for some later dock.
+          if (focusComposerOnDock) { focusComposerOnDock = false; nodes.chatInput?.focus?.(); }
           scheduleAnchorRestore(anchorTransition);
           return switched;
         }
@@ -403,6 +409,8 @@
         }
         focusComposerOnDock = true;
         host.workbench.setOpen(true);
+        // An open column whose layout did not change brings no reconcile of its own.
+        if (focusComposerOnDock && dockedHost === host && host.isActive()) reconcile();
       }
 
       function close() {

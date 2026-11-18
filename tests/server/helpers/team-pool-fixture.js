@@ -74,8 +74,9 @@ function sseData(text) {
 // A pool composition on the real scheduler and gateway, stopped after the test.
 // `clock: null` keeps the composition's default clock.
 function composePool(t, { clock = createClock(), logger = createLoggerSpy(), limits, createScheduler: makeScheduler,
-  createGateway, contextLength = 32768, mayUsePool = () => true } = {}) {
+  createGateway, contextLength = 32768, mayUsePool = () => true, nodesMustRead, mayReadConversation } = {}) {
   const pool = createPoolComposition({ contextLength, ...(clock ? { clock } : {}), logger, limits, mayUsePool,
+    ...(nodesMustRead === undefined ? {} : { nodesMustRead, mayReadConversation }),
     randomBytes: crypto.randomBytes,
     ...(makeScheduler ? { createScheduler: makeScheduler } : {}), ...(createGateway ? { createGateway } : {}) });
   t.after(() => pool.stop());
