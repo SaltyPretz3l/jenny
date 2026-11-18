@@ -33,6 +33,29 @@ long output, and Word and PDF reads.
 - Not yet covered by a person: the DOCX Read and Pages views in the real app, with a real Word and a real LibreOffice conversion; Python "Always for this chat" in a live chat; the artifact and subagent panel fixes in a long live session. The 1.8.6 list of owed checks still stands.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
 
+### 1.8.7 download checksums
+
+Published 2026-11-18 from public `402b9c84` (private `1ba700bcd`, cut `e05333be2`, tag `v1.8.7`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 1e2444ff80afd48302fca2a83c8e7240937cfa58cb4a95495523a74650ff1834 |
+| dist/Jenny-Setup-x64.exe.blockmap | 6b8318d7d5162763605ae2cb286eeb67a5ac20851dc8bba3375aebf8d9357960 |
+| dist/Jenny-amd64.deb | e594a395bcebf0fd93835beaf95dfc4525c693d0b597a9ec1b2478ba00f99742 |
+| dist/Jenny-arm64.dmg | eb76e655a219060fb824426145bc2ad05284505fadc5bc1113b62c69c848da80 |
+| dist/Jenny-arm64.zip | a11ce3142dd4b797a01478e9eecd0f31bc1bd28d89ded324706e37bb32f8f3df |
+| dist/Jenny-x86_64.AppImage | 973ee9fe218620673d613befca7dd090dd95a1a7883c9cd3ae2b06548fbfe06e |
+| dist/SHA256SUMS-linux.txt | 8e5967d8058bc3641b9884e906c8ad8f833b4b98652e2d9c58c0493311682966 |
+| dist/SHA256SUMS-mac.txt | 0ec075be850f8b3c62bd8372dba1888084a6a37e016477451c8606e7e85c6c06 |
+| dist/SHA256SUMS-windows.txt | fc3bf12dc8c98ee2edbbed6efe5a0b6797e746fc508779e9f62623751e0f8542 |
+| dist/latest-linux.yml | df7d4bf3c7fde14d67383a350350c977535ed3dda9bbda52d1dbb8fb56f027f9 |
+| dist/latest-mac.yml | ed77a1bc2a02a2098869bce75bf9b84f768e786ee764618080b569dc5cadce54 |
+| dist/latest.yml | b968ba2b6daedb773898cb4e085daf33bfb897cf3b5d26fa6d58def5389dbe98 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.8.6 - 2026-11-17
 
 Everything landed since 1.8.0, through private `main` on 2026-11-17: 79
@@ -104,7 +127,6 @@ Published 2026-11-18 from public `3120cad9` (private `d28033bf9`, tag `v1.8.6`):
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the build-only run and the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 0be9f84acf3e5788d5f1ef2bcc1916332a25b3c784814d485e16594c1560b9ee |
@@ -119,7 +141,6 @@ release jobs were green on the build-only run and the tagged run.
 | dist/latest-linux.yml | 81fb13a7665ae595232b4e3b226c9ef0e19d450a8c1754a976aca038a70e3483 |
 | dist/latest-mac.yml | 7726bc967b786ef5359865a4445c04fa60e075b19724196abf1ba7bc354ae0b4 |
 | dist/latest.yml | c0576e6c74ff96770e256eafdc57504195e6fc4e896ed8339c6b24b6c79ef71c |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.8.0 - 2026-11-15
 
