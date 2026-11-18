@@ -65,6 +65,29 @@ with English again.
 - Not yet covered by a person: team host file tools on Windows across two machines, and on OneDrive, ReFS or Dev Drive folders, an elevated launch and a signed build; the two-member runs of Team chat parity (the transcript panel while a turn streams, a notification that reopens a conversation, the file explorer and a picture, find over Jenny's work, plan mode's three choices, Regenerate, Edit and resend, Branch, Ask a teammate, Hand to, receipts after a reopen, dictation); the new Team screens (file previews, Overview and start page, conversation as a channel, model and tools controls, channels) with two members at three widths, light and dark, and in the Board's conversation column; Start with Jenny across a restart and a name change seen from a second PC; boards laid out along their arrows in the real app and with a real model; the chat terminal panel's Show in Workspace, a wrong-project chat and Add to message, and switching terminal tabs in the panel, where agent runs found the second terminal still shows the first; the look of agent steering's caption and of Servers in the session rail; an app-side refusal seen by the model in the Jenny chat; and delegation from a cloud model on a paid key. Agent runs on a local model have exercised agent steering, Servers, the chat terminal panel and the Jenny chat start folder.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
 
+### 1.8.6 download checksums
+
+Published 2026-11-18 from public `3120cad9` (private `d28033bf9`, tag `v1.8.6`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 0be9f84acf3e5788d5f1ef2bcc1916332a25b3c784814d485e16594c1560b9ee |
+| dist/Jenny-Setup-x64.exe.blockmap | f55ecedba13759427e3f3d4e26b408931412c0f28e8e21c4c0611f14ca964d77 |
+| dist/Jenny-amd64.deb | 5dbca6ef15de62beb0afc3500f4e512be47c70ec55a6523780674d6269828017 |
+| dist/Jenny-arm64.dmg | 57a07c312820e05c3c3096c89a073262a0c274a52da3b2aa3c0518ad3c12bf0a |
+| dist/Jenny-arm64.zip | 13d9311f5a97be55cc6c64517f62cf058b3701d5b88fbfa047cdd07e8e7346ab |
+| dist/Jenny-x86_64.AppImage | 4d49068d473f281d9508205389dc136b1ee0c3d9b946c527ac957387025ffb1b |
+| dist/SHA256SUMS-linux.txt | b9b4b8ee6bed5b4a85b7cd8e0fda178bfc970acb9a5b98454bd589b9a0af6f33 |
+| dist/SHA256SUMS-mac.txt | af79eb25909bb13c7efb4e62195cb8fdbfea184bb8644330e9a3880ae478f6db |
+| dist/SHA256SUMS-windows.txt | 3253544c9e998b3d52571be1bde7fa1b6a2af29564a8cf8b9775214791946eb0 |
+| dist/latest-linux.yml | 81fb13a7665ae595232b4e3b226c9ef0e19d450a8c1754a976aca038a70e3483 |
+| dist/latest-mac.yml | 7726bc967b786ef5359865a4445c04fa60e075b19724196abf1ba7bc354ae0b4 |
+| dist/latest.yml | c0576e6c74ff96770e256eafdc57504195e6fc4e896ed8339c6b24b6c79ef71c |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.8.0 - 2026-11-15
 
 Everything landed since 1.7.0, through private `main` on 2026-11-15: 713
@@ -142,7 +165,6 @@ release jobs were green on the build-only run and the tagged run. The first buil
 on every leg because the export left out the sketch bundle sources; the public commit before the
 tag adds them.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | fcf65743bba6cabe559e842fb7fbb00336658d4b12ec2689fa899971feedd017 |
@@ -157,7 +179,6 @@ tag adds them.
 | dist/latest-linux.yml | 12cf7048c4c30386e1da399ac51798f5bdfc6857449a0099f6d18830002af3e7 |
 | dist/latest-mac.yml | 57e7b5db56513bb00fb8acb41eee8a93e5ad464592ab35f8ac85fdc653a4d6b0 |
 | dist/latest.yml | 01e02cf6258d480d9d20d307ed76f45c31d331f9a5081dc7dc2ce2ff760860ca |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.7.0 - 2026-11-10
 
