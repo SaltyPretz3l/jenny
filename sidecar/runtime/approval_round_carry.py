@@ -1,10 +1,13 @@
-"""Keep the rest of a round's same-tool file edits when an approval resumes.
+"""Keep the rest of a round's same-tool calls when an approval resumes.
 
 One approval runs one call, plus the read-only calls around it that need none.
 The calls after that window used to be settled as not run, so a model that sent
 four edits in one round was asked to send three of them again. A run of calls of
 the approved tool straight after the window is now carried instead: the turn
 pauses on the next one with a fresh approval plan and no generation in between.
+The carried tools are typed file edits and Python runs (``python_execute`` and a
+``run_temp_script`` in Python); a Python run is asked for on its own card and is
+never listed on an edit card.
 
 What needs approval does not change. Every carried call is asked for on its own,
 through the same gate and the same reverse request as the first one. The carry
@@ -20,6 +23,7 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any
 
+from sidecar.ai.routing.tool_execution_admission import runs_python
 from sidecar.runtime.approval_plan import ApprovalPlan
 from sidecar.runtime.approval_resume_window import (
     GATE_ASKS,
@@ -32,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 # Typed file edits only: each shows its exact input on its own card.
 CARRY_TOOLS = frozenset({"edit_file", "write_file"})
+# Python runs: carried to their own approval, but never shown on an edit card.
+PYTHON_CARRY = "python"
 MAX_CARRIED_CALLS = 16
 # The hint is only what a card can show whole. These mirror the app's own limits
 # (services/backend/chat-stream-exact-approval.js and round-approval-gate.js), so
@@ -86,20 +92,34 @@ def round_call_hints(calls: tuple[Any, ...]) -> tuple[dict[str, object], ...]:
     return tuple(hints)
 
 
+def _carry_kind(call: Any) -> str:
+    """What a call is carried as: its edit tool, ``PYTHON_CARRY``, or ``""`` for no carry."""
+    tool_id = str(getattr(call, "tool_id", "") or "")
+    if tool_id in CARRY_TOOLS:
+        return tool_id
+    arguments = getattr(call, "arguments", None)
+    python = runs_python(tool_id, arguments if isinstance(arguments, dict) else {})
+    return PYTHON_CARRY if python else ""
+
+
 def same_tool_run(approved: Any, following: tuple[Any, ...]) -> tuple[Any, ...]:
-    """The calls straight after *approved* that use its tool, when it is a carried tool."""
-    tool_id = str(getattr(approved, "tool_id", "") or "")
-    if tool_id not in CARRY_TOOLS:
+    """The calls straight after *approved* that are carried as it is, when it is carried."""
+    kind = _carry_kind(approved)
+    if not kind:
         return ()
     run: list[Any] = []
     for call in following[:MAX_CARRIED_CALLS]:
-        if str(getattr(call, "tool_id", "") or "") != tool_id or not _call_id(call):
+        if _carry_kind(call) != kind or not _call_id(call):
             break
         run.append(call)
     return tuple(run)
 
 
 def _hinted(approval: Any, later: tuple[Any, ...]) -> Any:
+    # The edit card lists edits only: a Python run is asked for on its own card.
+    later = tuple(call for call in later if str(getattr(call, "tool_id", "") or "") in CARRY_TOOLS)
+    if not later:
+        return approval
     try:
         return replace(approval, round_calls=round_call_hints(later))
     except TypeError:  # a request type without the hint keeps working, one card per call
@@ -107,7 +127,7 @@ def _hinted(approval: Any, later: tuple[Any, ...]) -> Any:
 
 
 def with_round_hint(approval: Any, round_calls: tuple[Any, ...]) -> Any:
-    """*approval* naming the same-tool edits straight after its own call.
+    """*approval* naming the same-tool edits straight after its own call (never Python runs).
 
     For the first card of a round. It promises nothing: the resume decides what
     is carried, and the app checks each later request against what it showed.

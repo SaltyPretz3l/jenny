@@ -12,7 +12,7 @@ from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 # A `pages` token longer than this is refused before int() can see it.
-_MAX_PAGE_TOKEN_DIGITS = 12
+MAX_PAGE_TOKEN_DIGITS = 12
 # Pages per read_file call; three dense pages fit the response budget.
 MAX_PDF_PAGES = 3
 # `unread_pages` stays well inside every output-string clip so it remains valid syntax.
@@ -27,7 +27,7 @@ def _page_number(text: str) -> int:
     """A `pages` number: ASCII digits only ("²".isdigit() is True) and bounded for int()."""
 
     value = text.strip()
-    if not (value.isascii() and value.isdigit()) or len(value) > _MAX_PAGE_TOKEN_DIGITS:
+    if not (value.isascii() and value.isdigit()) or len(value) > MAX_PAGE_TOKEN_DIGITS:
         raise _pages_failure("tool argument 'pages' must contain only positive page numbers")
     return int(value)
 

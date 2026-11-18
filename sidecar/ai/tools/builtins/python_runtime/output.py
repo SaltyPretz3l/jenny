@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from sidecar.ai.tools.builtins.python_runtime.output_scratch import (
+    scratch_keeper,
+    scratch_renderer,
+)
+from sidecar.ai.tools.builtins.python_runtime.output_spill import spill_note, spill_stdout
 from sidecar.ai.tools.error_paths import PathKeeper, error_path_keeper, redact_error_paths
 from sidecar.ai.tools.trusted_attachments import (
     ATTACHMENT_KIND_CHART,
     TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES,
     build_trusted_attachment,
 )
+from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
 
 MAX_OUTPUT_CHARS = 20_000
+# The router serializes a tool result into at most this many characters and cuts any one
+# string in it to a third of that (``sidecar/ai/routing``). Mirrored here, not imported:
+# tools do not depend on the router. A result past both is cut for the model even when
+# this module did not truncate it, so its stdout is spilled too.
+ROUTER_RESULT_CHARS = 16_000
+ROUTER_STRING_CHARS = ROUTER_RESULT_CHARS // 3
 MAX_IMAGES = 4
 MAX_IMAGE_BYTES = 1 * 1024 * 1024
 # Aggregate chart-image budget per execution. Matches the typed-attachment
@@ -36,15 +50,26 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _URL_RE = re.compile(r"\b(?!(?i:file):)[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"'<>]+")
 
 
-def _redact_output_paths(text: str, keep: PathKeeper) -> str:
-    """Path-redact child output text (HB-017) without mangling URLs."""
+def _redact_output_paths(
+    text: str, keep: PathKeeper, render_scratch: Callable[[str], str] | None = None
+) -> str:
+    """Path-redact child output text (HB-017) without mangling URLs.
+
+    ``render_scratch`` names the run's own scratch paths ``<scratch>/name`` once
+    redaction has let them through (``keep`` must allow them).
+    """
+
+    def _redact(segment: str) -> str:
+        redacted = redact_error_paths(segment, keep=keep)
+        return render_scratch(redacted) if render_scratch is not None else redacted
+
     parts: list[str] = []
     last = 0
     for match in _URL_RE.finditer(text):
-        parts.append(redact_error_paths(text[last : match.start()], keep=keep))
+        parts.append(_redact(text[last : match.start()]))
         parts.append(match.group(0))
         last = match.end()
-    parts.append(redact_error_paths(text[last:], keep=keep))
+    parts.append(_redact(text[last:]))
     return "".join(parts)
 
 
@@ -150,20 +175,32 @@ def format_python_output(
     *,
     workspace_root: Path | None = None,
     arguments: object = None,
+    spill_store: GuardedWorkspaceStore | None = None,
 ) -> tuple[dict[str, object], tuple[dict[str, Any], ...]]:
     """Shape the model-visible payload plus the typed chart attachments.
 
     The returned payload NEVER embeds base64 — ``images`` carries safe
     attachment refs; full bytes ride the trusted-attachment side channel.
     Child text is untrusted: absolute paths outside the bound workspace and
-    the call's own arguments become ``<path>`` before truncation.
+    the call's own arguments become ``<path>`` before truncation, except paths under
+    ``work_dir`` (the run's own scratch root), which become ``<scratch>/name``.
+
+    With ``spill_store`` (a bound workspace) a stdout the model will not see whole is
+    also written, redacted and bounded, to a workspace file, and the payload names it.
     """
     keep = error_path_keeper(arguments=arguments, workspace_root=workspace_root)
+    render_scratch = scratch_renderer(work_dir, workspace_root)
+    if render_scratch is not None:
+        keep = scratch_keeper(keep, work_dir)
+
+    def _redacted(value: Any) -> str:
+        return _redact_output_paths(str(value or ""), keep, render_scratch)
 
     def _shaped(value: Any) -> tuple[str, bool]:
-        return _truncate(_redact_output_paths(str(value or ""), keep))
+        return _truncate(_redacted(value))
 
-    stdout, stdout_truncated = _shaped(raw_payload.get("stdout", ""))
+    full_stdout = _redacted(raw_payload.get("stdout", ""))
+    stdout, stdout_truncated = _truncate(full_stdout)
     stderr, stderr_truncated = _shaped(raw_payload.get("stderr", ""))
     raw_images = raw_payload.get("images", [])
     images, attachments, images_truncated = _chart_attachments(
@@ -207,7 +244,7 @@ def format_python_output(
         traceback_text, traceback_truncated = _shaped(error.get("traceback", ""))
         normalized_error = {
             "type": str(error.get("type", "")),
-            "message": _redact_output_paths(str(error.get("message", "")), keep),
+            "message": _redacted(error.get("message", "")),
             "traceback": traceback_text,
         }
 
@@ -230,4 +267,20 @@ def format_python_output(
             or expr_truncated
         ),
     }
+    if spill_store is not None and _router_cuts_stdout(payload, full_stdout, stdout_truncated):
+        spill_path = spill_stdout(spill_store, full_stdout)
+        if spill_path is not None:
+            payload["full_output_path"] = spill_path
+            payload["full_output_note"] = spill_note(spill_path)
     return payload, tuple(attachments)
+
+
+def _router_cuts_stdout(
+    payload: dict[str, object], full_stdout: str, stdout_truncated: bool
+) -> bool:
+    """True when the model will not see the whole stdout."""
+    if stdout_truncated:
+        return True
+    if len(full_stdout) <= ROUTER_STRING_CHARS:
+        return False
+    return len(json.dumps(payload, ensure_ascii=False, indent=2)) > ROUTER_RESULT_CHARS

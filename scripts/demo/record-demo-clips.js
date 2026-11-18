@@ -23,7 +23,7 @@ const {
   assertScenesValid,
 } = require('./demo-scenes');
 const { OVERLAY_INSTALL_SCRIPT, DEMO_STYLE_CSS, typingDelays } = require('./demo-presentation');
-const { seedDemoProfile, cleanupDemoProfile } = require('./demo-profile');
+const { seedDemoProfile, seedDemoBoard, cleanupDemoProfile } = require('./demo-profile');
 const { resolveDateTokens } = require('./demo-dates');
 const { trackDirectory, trackProcess } = require('../../tests/helpers/resource-cleanup');
 
@@ -136,6 +136,7 @@ async function runScene(scene, {
   try {
     await ensurePreloadBundle();
     trackDirectory(profile);
+    if (scene.seedBoard === true) await seedDemoBoard(profile, projectId);
 
     // Lazy so syntax checks and importing this owner-run driver do not force
     // playwright-core (a devDependency) to resolve.
@@ -232,6 +233,7 @@ async function runScene(scene, {
     };
     for (const [stepIndex, step] of scene.steps.entries()) {
       currentStep = { index: stepIndex, ...step };
+      const stepStartedAt = Date.now();
       switch (step.type) {
         case 'record-start': {
           // The presentation overlay goes in before the first frame so the
@@ -404,6 +406,12 @@ async function runScene(scene, {
           throw new Error(
             `scene ${scene.id}: unknown step type "${step.type}" (expected one of ${STEP_TYPES.join(', ')})`
           );
+      }
+      const stepMs = Date.now() - stepStartedAt;
+      const plannedMs = step.type === 'pause' ? step.ms : 0;
+      // A step that overruns its plan stretches the clip; name it.
+      if (stepMs - plannedMs > 2000) {
+        console.log(`scene ${scene.id}: step ${stepIndex} ${step.type} took ${stepMs} ms`);
       }
     }
 

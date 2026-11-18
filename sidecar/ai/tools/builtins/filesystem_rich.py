@@ -25,7 +25,9 @@ RICH_FILE_SUFFIXES = {
 _PAGING_HINTS = {
     "pdf": "page a PDF with 'pages' (at most 3 per call) or the 'cursor' a previous read returned",
     "document": (
-        "continue a Word document with the 'cursor' (continue_cursor) a previous read returned"
+        "read a Word document's paragraphs with 'pages' (a printed paragraph number or range "
+        "like '366-420') or continue it with the 'cursor' (continue_cursor) a previous read "
+        "returned"
     ),
 }
 
@@ -67,6 +69,8 @@ def read_rich_file(
             document_inspect_tool,
         )
 
+        if "pages" in arguments:
+            delegated_arguments["pages"] = arguments["pages"]
         if "cursor" in arguments:
             delegated_arguments["cursor"] = arguments["cursor"]
         return document_inspect_tool(delegated_arguments, workspace)

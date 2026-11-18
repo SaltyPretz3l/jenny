@@ -34,6 +34,7 @@ test('deriveApprovalReceipt names the decision from the call record', () => {
   assert.deepEqual(deriveApprovalReceipt(approved('once')), { decision: 'allowed', scope: 'once' });
   assert.deepEqual(deriveApprovalReceipt(approved('always')), { decision: 'allowed', scope: 'always' });
   assert.deepEqual(deriveApprovalReceipt(approved('full_auto')), { decision: 'allowed', scope: 'full_auto' });
+  assert.deepEqual(deriveApprovalReceipt(approved('chat_python')), { decision: 'allowed', scope: 'chat_python' });
   assert.deepEqual(deriveApprovalReceipt(approved('')), { decision: 'allowed' }, 'a chat saved before scopes were recorded');
   assert.deepEqual(deriveApprovalReceipt({ tool_name: 'run_command', state: 'denied' }), { decision: 'denied' });
   // The reader's answer outranks the call's own outcome (Astra, 2026-10-05).
@@ -75,6 +76,9 @@ test('a resolved approval renders one receipt line with no actions', () => {
 
   const fullAuto = receiptDom({ decision: 'allowed', approvalScope: 'full_auto', commandText: 'rm old.csv' });
   assert.equal(fullAuto.querySelector('.tool-approval-receipt-label').textContent, 'Ran in Full auto');
+
+  const chatPython = receiptDom({ decision: 'allowed', approvalScope: 'chat_python', commandText: 'print(1)' });
+  assert.equal(chatPython.querySelector('.tool-approval-receipt-label').textContent, 'Allowed for this chat');
 
   const denied = receiptDom({ decision: 'denied', commandText: '<b>git push</b>' });
   assert.equal(denied.querySelector('.tool-approval-receipt-label').textContent, 'Denied');
@@ -321,4 +325,24 @@ test('approval reconciliation treats a row morphed into its receipt as settled',
   assert.equal(row.getAttribute('data-approval-reconciliation'), 'settled');
   assert.equal(busy, true, 'a settled row is not re-enabled');
   controller.dispose();
+});
+
+function parseFragment(html) {
+  return new JSDOM(`<!doctype html><body><div id="root">${html}</div></body>`).window.document.getElementById('root');
+}
+
+test('renderApprovalBlock labels a chat-scoped Always (Python, session review 2026-11-17 D1)', () => {
+  const root = parseFragment(renderApprovalBlock({
+    toolCallId: 'call_py',
+    toolName: 'python_execute',
+    displayToolName: 'Python',
+    alwaysAllowScope: { kind: 'chat' },
+    mode: 'card',
+  }));
+  const alwaysBtn = root.querySelector('.tool-approve-always-btn');
+  assert.ok(alwaysBtn);
+  assert.equal(alwaysBtn.getAttribute('data-approval-scope'), 'always');
+  assert.equal(alwaysBtn.textContent, 'Always for this chat');
+  assert.match(alwaysBtn.getAttribute('aria-label'), /Always allow Python for this chat/);
+  assert.match(alwaysBtn.getAttribute('title'), /for the rest of this chat/);
 });

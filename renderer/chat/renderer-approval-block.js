@@ -397,12 +397,22 @@
     const commandCopy = commandScope && commandScope.kind !== 'none' ? commandAlwaysAllowCopy(commandScope, escapeHtml) : null;
     const alwaysWithheld = sendsMessage || ownCardOnly || withholdsAllow || oneOffOnly
       || (toolName === RUN_COMMAND_TOOL && !commandCopy);
+    // Session review 2026-11-17 D1: Python's Always is a grant for this chat only, and the button says so.
+    const chatGrant = !commandCopy && source.alwaysAllowScope?.kind === 'chat';
+    const alwaysTitle = commandCopy ? commandCopy.title : chatGrant
+      ? jt('approval.block.alwaysForChatTitle', 'Allow this call and stop asking for {tool} for the rest of this chat', { tool: displayToolName })
+      : jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName });
+    const alwaysAria = commandCopy ? commandCopy.ariaLabel : chatGrant
+      ? jt('approval.block.alwaysForChatAriaLabel', 'Always allow {tool} for this chat', { tool: displayToolName })
+      : jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName });
+    const alwaysLabelHtml = commandCopy ? commandCopy.labelHtml : escapeHtml(chatGrant
+      ? jt('approval.block.alwaysForChat', 'Always for this chat') : jt('approval.block.alwaysAllow', 'Always allow'));
     const alwaysAllowMarkup = alwaysWithheld ? ''
       : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
         + ` data-approval-scope="always"${buttonIdentity}`
-        + ` title="${escapeHtml(commandCopy ? commandCopy.title : jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
-        + ` aria-label="${escapeHtml(commandCopy ? commandCopy.ariaLabel : jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">`
-        + `${commandCopy ? commandCopy.labelHtml : escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`;
+        + ` title="${escapeHtml(alwaysTitle)}"`
+        + ` aria-label="${escapeHtml(alwaysAria)}">`
+        + `${alwaysLabelHtml}</button>`;
     const scopeNote = commandScope && commandScope.kind === 'none'
       ? scopeNoteMarkup(escapeHtml(jt('approval.block.scopeNoteChained', 'Chained commands can only be allowed once.')))
       : scopeNoteMarkup(alwaysAllowMarkup && commandCopy ? commandCopy.noteHtml : '');

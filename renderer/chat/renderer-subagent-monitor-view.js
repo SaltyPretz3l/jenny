@@ -221,10 +221,18 @@
     });
   }
 
+  // The report outgrew what reaches the renderer: say where the answer is.
+  function detailsUnavailableNote(viewModel) {
+    if (!viewModel.detailsUnavailable) return '';
+    return `<p class="subagent-detail-note">${stateDot('warning')}<span>${escapeHtml(jt('chat.subagentMonitor.detailsTooLarge',
+      'Subagent details were too large to show here. The answer is in the delegate tool result in the chat.'))}</span></p>`;
+  }
+
   function renderTreeBody(viewModel) {
     const rows = (viewModel.children || []).map((child) => renderChildRow(child, viewModel.selectedKey)).join('');
     const parentElapsed = elapsedSpan(viewModel.elapsedMs, viewModel.terminal ? '' : 'parent');
     return '<div class="subagent-monitor-body" data-subagent-page="tree">'
+      + detailsUnavailableNote(viewModel)
       + `<div class="subagent-tree" role="tree" aria-label="${escapeHtml(jt('chat.subagentMonitor.tasksAriaLabel', 'Subagent tasks'))}">`
       + '<div class="subagent-tree-parent" role="treeitem" aria-expanded="true" tabindex="-1">'
       + stateDot(viewModel.terminal ? viewModel.tone : 'pending')
@@ -392,6 +400,7 @@
       + `<h2 class="subagent-detail-title" id="subagentInspectorTitle${escapeHtml(idSuffix)}">${escapeHtml(child.label)}</h2>`
       + `<div class="subagent-detail-status">${stateDot(child.tone)}<span>${status.join(' · ')}</span></div>`
       + stepLimitNote(child)
+      + detailsUnavailableNote(viewModel)
       + (hasTranscript ? viewSwitch(child, showTranscript) : '')
       + '</div>'
       + (showTranscript ? activity.renderTranscript(child, idSuffix, helpers) : renderTask(child, idSuffix)

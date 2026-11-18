@@ -109,8 +109,12 @@ const APPROVE_ONCE_BUTTON = '#chatTimeline .tool-approval-block .tool-approve-bt
 const EDIT_ROW_COMPLETED = ':nth-match(#chatTimeline .tool-call-row[data-tool-status="completed"], 2)';
 const EDIT_ROW_TOGGLE = ':nth-match(#chatTimeline .tool-call-row, 2) >> [data-tool-row-toggle]';
 const EXPANDED_ROW = '#chatTimeline .tool-call-row[data-expanded="true"]';
-// Split view's second pane (pane 0 keeps the live #chatInput / #chatTimeline).
-const SECOND_PANE = '#chatView > .chat-pane[data-pane-id="1"]';
+// Board cards on the canvas (ghost previews carry ghost-N ids) and the
+// proposal bar's accept-additions button.
+const BOARD_CARD = '.inv-board-canvas .inv-board-card[data-card-id]:not([data-card-id^="ghost-"])';
+const BOARD_ACCEPT = '[data-board-proposal-bar] button[data-board-act="accept-additions"]';
+const BOARD_FIT = '#boardView [data-board-zoom="fit"]';
+const BOARD_TIDY = '#boardView [data-board-tool="kind-tidy"]';
 
 // The seeded profile boots into its most recent chat, so every scene starts a
 // fresh one first (pre-roll): the timeline is empty and the replay engine's
@@ -196,11 +200,8 @@ const DEMO_SCENES = Object.freeze([
       { type: 'caption', text: 'Every change shows its diff' },
       { type: 'click', selector: EDIT_ROW_TOGGLE },
       // The row must be open (a collapsed body still has boxes for Playwright's
-      // visibility check), and the diff card may already be open inside it.
-      { type: 'wait-selector', selector: `${EXPANDED_ROW} [data-file-diff-toggle]`, timeoutMs: UI_TIMEOUT_MS },
-      { type: 'pause', ms: 500 },
-      { type: 'click', selector: `${EXPANDED_ROW} [data-file-diff-toggle][aria-expanded="false"]`, optional: true },
-      { type: 'wait-selector', selector: `${EXPANDED_ROW} .file-diff-body[data-file-diff-materialized]`, timeoutMs: UI_TIMEOUT_MS },
+      // visibility check); the diff renders inside it without its own toggle.
+      { type: 'wait-selector', selector: `${EXPANDED_ROW} .file-diff-body`, timeoutMs: UI_TIMEOUT_MS },
       { type: 'pause', ms: 2400 },
       { type: 'caption', text: '' },
       { type: 'pause', ms: 300 },
@@ -316,7 +317,9 @@ const DEMO_SCENES = Object.freeze([
     leadInMs: 200,
     tailHoldMs: TAIL_HOLD_MS,
     env: REPLAY_ENV_PINS,
-    presentation: Object.freeze({ crossfade: true }),
+    // No crossfade: easing every element while the app re-reads its theme
+    // colours stalled each switch for seconds; the clip shows the real snap.
+    presentation: Object.freeze({ crossfade: false }),
     // The diagram turn is typed and sent in the pre-roll (the composer path,
     // which waits for the fresh session; the agent hook's send-button click
     // is dropped while it settles). Palettes are driven through the
@@ -325,21 +328,22 @@ const DEMO_SCENES = Object.freeze([
     // Grid comes on early and Circuit Trace takes over midway so both effects
     // are seen across several palettes, dark and light.
     steps: Object.freeze([
+      // Settings mounts the Appearance selects on its first render; visit it
+      // once so the reel can drive them with the chat in front.
+      { type: 'goto-view', view: 'settings' },
+      { type: 'wait-count', selector: '#appearancePaletteSelect option[value="midnight"]', count: 1, timeoutMs: UI_TIMEOUT_MS },
       ...FRESH_CHAT_PREROLL,
       { type: 'dom-click', selector: '#chatInput' },
-      { type: 'type', text: 'How does a command flow through ledger-cli? A quick diagram would help.', delayMs: 4, seed: 41 },
+      { type: 'type', text: 'How does a command flow through ledger-cli? A quick sketch would help.', delayMs: 4, seed: 41 },
       { type: 'pause', ms: 300 },
       { type: 'press', key: 'Enter' },
-      { type: 'wait-count', selector: '#chatTimeline .tool-call-row', count: 1, timeoutMs: SETTLE_TIMEOUT_MS },
       { type: 'wait-idle', timeoutMs: SETTLE_TIMEOUT_MS },
       // The settled turn is taller than the viewport at this layout and the
       // timeline virtualizer detaches rows scrolled out of view, so bring the
       // top of the turn back before gating on the tool row.
       { type: 'scroll-to', selector: '#chatTimeline', top: 0 },
-      { type: 'wait-selector', selector: '#chatTimeline .tool-call-row[data-tool-status="completed"]', timeoutMs: UI_TIMEOUT_MS },
-      // The diagram must actually render (in-page SVG), not fall back to source.
-      { type: 'wait-selector', selector: '#chatTimeline .markdown-mermaid-block[data-mermaid-rendered="true"] svg', timeoutMs: UI_TIMEOUT_MS },
-      { type: 'assert-absent', selector: '#chatTimeline .markdown-mermaid-preview-note' },
+      // The sketch must actually draw in its frame, not fall back to source.
+      { type: 'wait-selector', selector: '#chatTimeline .markdown-sketch-block[data-sketch-rendered="true"]', timeoutMs: UI_TIMEOUT_MS },
       // Frame the assistant turn from its top: thinking, the Mermaid row, the
       // diagram, and the start of the answer. The pause lets the live-follow
       // animator finish trailing the diagram's growth first; scrolling while
@@ -379,35 +383,53 @@ const DEMO_SCENES = Object.freeze([
   }),
 
   Object.freeze({
-    id: 'split-view',
-    title: 'Two chats side by side',
-    outputBasename: 'demo-split-view',
+    id: 'board-map',
+    title: 'A project board Jenny adds to',
+    outputBasename: 'demo-board-map',
     view: 'chat',
-    replayScript: 'split-view.json',
-    replayDelayMs: 34,
-    targetSeconds: [12, 24],
+    replayScript: 'board-map.json',
+    replayDelayMs: 30,
+    seedBoard: true,
+    targetSeconds: [12, 26],
     leadInMs: 200,
     tailHoldMs: TAIL_HOLD_MS,
     env: REPLAY_ENV_PINS,
     presentation: Object.freeze({ crossfade: false }),
-    // The split chord opens the most recent other tab (the pinned Q3 chat)
-    // beside the fresh one; the left pane then asks a follow-up and streams
-    // its answer with a real read_file while the right pane keeps its chat.
+    // The Board tab opens the project's seeded board (demo-profile.js
+    // seedDemoBoard) with its chat docked beside it. A question typed there
+    // comes back with a board proposal: the new cards show as ghosts until
+    // the cursor accepts the additions, then land on the canvas with arrows.
     steps: Object.freeze([
       ...FRESH_CHAT_PREROLL,
+      { type: 'dom-click', selector: '#boardTopRailTab' },
+      { type: 'wait-count', selector: `${BOARD_CARD}`, count: 5, timeoutMs: UI_TIMEOUT_MS },
+      { type: 'wait-selector', selector: '#ideChatDock:not(.hidden) #chatInput', timeoutMs: UI_TIMEOUT_MS },
+      { type: 'dom-click', selector: BOARD_FIT },
+      { type: 'pause', ms: 800 },
       { type: 'record-start' },
-      { type: 'pause', ms: 600 },
-      { type: 'caption', text: 'Split view · Ctrl+Shift+\\' },
-      { type: 'pause', ms: 500 },
-      { type: 'press', key: 'Control+Shift+Backslash' },
-      { type: 'wait-selector', selector: SECOND_PANE, timeoutMs: UI_TIMEOUT_MS },
+      { type: 'caption', text: 'Board · the project on one canvas' },
       { type: 'pause', ms: 1400 },
-      { type: 'caption', text: 'Two chats side by side' },
-      ...composerPromptSteps('Credit-tagged amounts come in positive. Where should ledger-cli flip their sign?', 31),
-      { type: 'wait-count', selector: '#chatTimeline .tool-call-row', count: 1, timeoutMs: SETTLE_TIMEOUT_MS },
-      { type: 'wait-idle', timeoutMs: SETTLE_TIMEOUT_MS },
+      ...composerPromptSteps('Add the list and total commands to the board.', 37),
       { type: 'caption', text: '' },
-      { type: 'pause', ms: 2000 },
+      { type: 'wait-selector', selector: BOARD_ACCEPT, timeoutMs: SETTLE_TIMEOUT_MS },
+      { type: 'pause', ms: 600 },
+      { type: 'caption', text: 'Jenny proposes, you accept' },
+      { type: 'pause', ms: 1200 },
+      { type: 'move', selector: BOARD_ACCEPT, ms: 800 },
+      { type: 'pause', ms: 250 },
+      { type: 'click', selector: BOARD_ACCEPT },
+      { type: 'wait-count', selector: `${BOARD_CARD}`, count: 8, timeoutMs: UI_TIMEOUT_MS },
+      { type: 'caption', text: '' },
+      { type: 'pause', ms: 1200 },
+      { type: 'caption', text: 'Tidy lays it out' },
+      { type: 'move', selector: BOARD_TIDY, ms: 700 },
+      { type: 'click', selector: BOARD_TIDY },
+      { type: 'pause', ms: 900 },
+      { type: 'move', selector: BOARD_FIT, ms: 700 },
+      { type: 'click', selector: BOARD_FIT },
+      { type: 'pause', ms: 2200 },
+      { type: 'caption', text: '' },
+      { type: 'pause', ms: 300 },
     ]),
   }),
 ]);

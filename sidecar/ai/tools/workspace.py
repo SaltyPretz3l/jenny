@@ -317,7 +317,8 @@ class WorkspaceGuard:
             )
 
         expanded_candidate = candidate
-        if candidate == "~" or candidate.startswith(("~/", "~" + os.sep)):
+        home_expanded = candidate == "~" or candidate.startswith(("~/", "~" + os.sep))
+        if home_expanded:
             # The prompt shows a root under home as "~". A literal "~"
             # directory remains reachable with ./~/...
             try:
@@ -393,6 +394,11 @@ class WorkspaceGuard:
                 message=(
                     "path is outside the workspace. Use a path relative to "
                     'the workspace root, such as src/app.py, or "." for the root.'
+                    + (
+                        ' "~" is your home folder, which is outside this project folder.'
+                        if home_expanded
+                        else ""
+                    )
                 ),
                 retryable=False,
             )

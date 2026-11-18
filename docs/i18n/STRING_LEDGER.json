@@ -2,8 +2,8 @@
   "schema": 1,
   "totals": {
     "pending": 111,
-    "migrated": 15336,
-    "excluded": 13825,
+    "migrated": 15354,
+    "excluded": 13878,
     "by_kind": {
       "config_copy": {
         "pending": 6,
@@ -23,7 +23,7 @@
       "dom_identity": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 5815
+        "excluded": 5858
       },
       "dom_text": {
         "pending": 2,
@@ -43,21 +43,21 @@
       "ipc_message": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 1101
+        "excluded": 1107
       },
       "prose": {
         "pending": 101,
         "migrated": 0,
-        "excluded": 746
+        "excluded": 749
       },
       "structural": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 3955
+        "excluded": 3956
       },
       "translation": {
         "pending": 0,
-        "migrated": 15068,
+        "migrated": 15086,
         "excluded": 0
       }
     },
@@ -74,7 +74,7 @@
       },
       "renderer/chat": {
         "pending": 20,
-        "migrated": 2844,
+        "migrated": 2849,
         "excluded": 3014
       },
       "renderer/features/setup-scenes": {
@@ -84,8 +84,8 @@
       },
       "renderer/features": {
         "pending": 68,
-        "migrated": 4566,
-        "excluded": 4315
+        "migrated": 4579,
+        "excluded": 4362
       },
       "renderer/shared": {
         "pending": 4,
@@ -105,7 +105,7 @@
       "services": {
         "pending": 0,
         "migrated": 291,
-        "excluded": 1102
+        "excluded": 1108
       }
     }
   },
@@ -10216,6 +10216,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-block.js|translation|1c03b2b1d473|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allow this call and stop asking for {tool} for the rest of this chat",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-approval-block.js|translation|1dfe110ecc02|1",
       "file": "renderer/chat/renderer-approval-block.js",
       "kind": "translation",
@@ -10304,6 +10312,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-block.js|translation|5445bccf2498|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always allow {tool} for this chat",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-approval-block.js|translation|54f6e39de62d|1",
       "file": "renderer/chat/renderer-approval-block.js",
       "kind": "translation",
@@ -10365,6 +10381,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Stop {title}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-block.js|translation|6e702d03cfad|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always for this chat",
       "disposition": "migrated"
     },
     {
@@ -10701,6 +10725,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Allowed",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-receipts.js|translation|dc55b45cb721|1",
+      "file": "renderer/chat/renderer-approval-receipts.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allowed for this chat",
       "disposition": "migrated"
     },
     {
@@ -49229,6 +49261,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Evidence",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-subagent-monitor-view.js|translation|826736668a46|1",
+      "file": "renderer/chat/renderer-subagent-monitor-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Subagent details were too large to show here. The answer is in the delegate tool result in the chat.",
       "disposition": "migrated"
     },
     {
@@ -88960,6 +89000,54 @@
       "disposition": "excluded:invariant"
     },
     {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|016bd50e2cec|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "template",
+      "text": "[name=\"{expr}\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|03ea215e5c07|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[style]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|26ec8d00fb6b|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "style",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|6adb71e3f4df|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[src^=\"blob:\"], [href^=\"blob:\"], style",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|86f7e437faa5|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "a",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-read-safety.js|dom_identity|d64d9845467e|1",
+      "file": "renderer/features/renderer-ide-docx-read-safety.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[src], [href], [*|href]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/features/renderer-ide-docx-render.js|dom_identity|18b76538c2c1|1",
       "file": "renderer/features/renderer-ide-docx-render.js",
       "kind": "dom_identity",
@@ -89366,6 +89454,438 @@
       "via": "literal",
       "text": "default",
       "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|0e78996cc8bf|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-mode=\"pages\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|1838b46d0fe0|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".ide-docx-view-status",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|18498df2dc51|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-pages-retry]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|18498df2dc51|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-pages-retry]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|220d19d1bc70|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "stylesheet",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|3",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|4",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|5",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|6",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|7",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|8",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|26021f1f4700|9",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|3e50d3f7fd4b|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "ide-docx-read-body",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|4f0aa52d656a|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "link",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|61747d255f4a|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "pane",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|6325f8c63097|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "span",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|735cf90f9555|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".ide-docx-modebar",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|830c86bbf267|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "identifier",
+      "text": "styles/ide-pdf-pane.css",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|830c86bbf267|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "identifier",
+      "text": "styles/ide-pdf-pane.css",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|8449d566b522|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "pdfViewer",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "concat",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|3",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|4",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|5",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|6",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|7",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|8",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|99d72c7fc3e2|9",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "hidden",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|cb8c157d4f74|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-open-default]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|cb8c157d4f74|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-open-default]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|cb8c157d4f74|3",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-open-default]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|d7f1c8c5d40f|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "template",
+      "text": "link[data-ide-document-style=\"{expr}\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|f54d2d104e5b|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-mode]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|dom_identity|f54d2d104e5b|2",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-ide-docx-mode]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|prose|4d436e506673|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "prose",
+      "via": "literal",
+      "text": "docx-preview is unavailable",
+      "disposition": "excluded:invariant"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|prose|6860f316d98f|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "prose",
+      "via": "literal",
+      "text": "the PDF viewer is unavailable",
+      "disposition": "excluded:invariant"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|prose|84f5d721edcf|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "prose",
+      "via": "literal",
+      "text": "document bytes are unavailable",
+      "disposition": "excluded:invariant"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|structural|5fc7e38bffe0|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "open",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|1161dad8fc2d|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Another document is being converted. Try again in a moment.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|33c1cd5594ab|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Document view",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|3b10d47bd68b|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Making pages took too long.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|5301648dcf6b|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Edit",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|600584c2d5cc|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Pages",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|751a22ae631a|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "This document is too large to convert.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|8116fba13eb7|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Making pages with {engine}...",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|852b438f91ad|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Read",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|86a2c6a3175d|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Open in default app",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|9f5cd8a2e880|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Retry",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|be0c609c5c5f|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Pages needs Microsoft Word or LibreOffice installed.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|dcdb5e807914|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "This document could not be shown in the reading view. Switch to Edit to work on it.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/renderer-ide-docx-views.js|translation|ea8cc499bdbc|1",
+      "file": "renderer/features/renderer-ide-docx-views.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Pages could not be made from this document.",
+      "disposition": "migrated"
     },
     {
       "id": "renderer/features/renderer-ide-docx-zip.js|prose|063681cdde18|1",
@@ -226773,6 +227293,54 @@
       "kind": "ipc_message",
       "via": "literal",
       "text": "packaged",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|07596f183f5e|1",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "disabled",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|56d3c9490be2|1",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "conditional",
+      "text": "timeout",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|5f5f8758f5f2|1",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "conditional",
+      "text": "failed",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|5f5f8758f5f2|2",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "failed",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|ae5b34bce979|1",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "no_engine",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/document-page-render.js|ipc_message|e18a89f9cc5b|1",
+      "file": "services/document-page-render.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "busy",
       "disposition": "excluded:wire"
     },
     {

@@ -54,7 +54,7 @@
       // A command's Always allow saved a program + subcommand prefix (row 103).
       const prefix = scope === 'always' ? normalizeText(last.always_allow_prefix) : '';
       if (prefix) return { decision: 'allowed', scope, alwaysAllowPrefix: prefix };
-      return scope === 'always' || scope === 'once' || scope === 'full_auto' || scope === 'round'
+      return scope === 'always' || scope === 'once' || scope === 'full_auto' || scope === 'round' || scope === 'chat_python'
         ? { decision: 'allowed', scope } : { decision: 'allowed' };
     }
     if (RECEIPT_HARD_OUTCOMES.has(resolved)) return { decision: resolved };
@@ -80,6 +80,7 @@
         if (scope === 'always') return jt('approval.receipt.alwaysAllowed', 'Always allowed');
         if (scope === 'full_auto') return jt('approval.receipt.fullAuto', 'Ran in Full auto');
         if (scope === 'round') return jt('approval.receipt.round', 'Allowed together'); // row 166 D10
+        if (scope === 'chat_python') return jt('approval.receipt.chatPython', 'Allowed for this chat'); // session review 2026-11-17 D1
         return scope === 'once' ? jt('approval.receipt.allowedOnce', 'Allowed once') : jt('approval.receipt.allowed', 'Allowed');
       case 'denied': return jt('approval.receipt.denied', 'Denied');
       case 'timed_out': return jt('approval.receipt.timedOut', 'Not answered in time');

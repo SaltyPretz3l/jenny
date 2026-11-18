@@ -136,7 +136,7 @@
       } else {
         artifactSessionCache.delete(key);
       }
-      artifactSurfaceController?.invalidateSessionArtifacts?.(key);
+      artifactSurfaceController?.invalidateSessionArtifacts?.(key, Array.isArray(messages) ? { messages } : undefined);
     }
 
     function rekeySessionArtifacts(oldSessionId, newSessionId) {

@@ -325,3 +325,52 @@ test('hasDelegationData names only messages that carry something the monitor ren
   assert.equal(hasDelegationData({ tool_result: { metadata: { other: 1 } } }), false);
   assert.equal(hasDelegationData(null), false);
 });
+
+test('a tool result whose report was externalized settles the delegation and keeps the live children', () => {
+  const live = { agent_status_steps: [
+    liveStep({ childCount: 2 }),
+    liveStep({ childTaskId: 'child-2', childOrdinal: 2, childLabel: 'Inspect renderer', childCount: 2 }),
+  ] };
+  const tooLarge = { role: 'assistant', tool_result: {
+    call_id: 'call-1', metadata: { _externalized: true, preview: '{"result_kind":"subagent_batch_report"' },
+  } };
+  const monitor = model.buildMonitorFromMessages([live, tooLarge], 'call-1', '', 5_000);
+  assert.equal(monitor.detailsUnavailable, true);
+  assert.equal(monitor.terminal, true);
+  assert.equal(monitor.status, 'completed');
+  assert.equal(monitor.childCount, 2);
+  assert.ok(monitor.children.every((child) => child.terminal && child.status === 'completed'));
+  assert.equal(monitor.runningCount, 0);
+  const failed = model.buildMonitorFromMessages(
+    [live, { ...tooLarge, tool_result: { ...tooLarge.tool_result, is_error: true } }], 'call-1',
+  );
+  assert.equal(failed.status, 'failed');
+  // Another delegation's oversized result does not settle this one.
+  const other = model.buildMonitorFromMessages(
+    [live, { tool_result: { call_id: 'call-2', metadata: { _externalized: true } } }], 'call-1',
+  );
+  assert.equal(other.detailsUnavailable, false);
+  assert.equal(other.terminal, false);
+});
+
+test('an externalized result with no live steps left carries the children the monitor already showed', () => {
+  const shown = model.buildMonitorViewModel({ steps: [liveStep()], key: 'call-1' });
+  const tooLarge = { tool_result: { call_id: 'call-1', metadata: { _externalized: true } } };
+  const monitor = model.buildMonitorFromMessages([tooLarge], 'call-1', '', 5_000, shown.children);
+  assert.equal(monitor.detailsUnavailable, true);
+  assert.equal(monitor.childCount, 1);
+  assert.equal(monitor.children[0].terminal, true);
+  assert.equal(model.buildMonitorFromMessages([tooLarge], 'call-1').childCount, 0, 'nothing to carry, nothing shown');
+});
+
+test('a full terminal report keeps every child answer and is never marked unavailable', () => {
+  const live = { agent_status_steps: [liveStep({ childCount: 2 })] };
+  const done = { tool_result: { call_id: 'call-1', metadata: { subagent_batch_report: { status: 'completed', tasks: [
+    { task_id: 'a', label: 'A', status: 'completed', summary: 'A.', answer: 'Answer from A.' },
+    { task_id: 'b', label: 'B', status: 'completed', summary: 'B.', answer: 'Answer from B.' },
+  ] } } } };
+  const monitor = model.buildMonitorFromMessages([live, done], 'call-1');
+  assert.equal(monitor.detailsUnavailable, false);
+  assert.equal(monitor.terminal, true);
+  assert.deepEqual(monitor.children.map((child) => child.answer), ['Answer from A.', 'Answer from B.']);
+});

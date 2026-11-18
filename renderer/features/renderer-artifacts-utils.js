@@ -339,12 +339,41 @@
       applySelection('', '');
       clearEditorDocuments();
     }
-    function invalidateSessionArtifacts(sessionId, { preserveLoaded = false } = {}) {
+    // What a reload of the selected artifact depends on: a rewrite gets a fresh id or source row.
+    function selectedArtifactFingerprint(artifact) {
+      if (!artifact) return '';
+      const file = artifact.generatedFile || {};
+      return JSON.stringify([artifact.id, artifact.sourceMessageId, artifact.status, artifact.timestamp,
+        file.artifactId, file.displayPath, file.status, file.editable]);
+    }
+    // Every streamed event replaces the session's messages. Only a change to the selected artifact
+    // itself reloads it; anything else keeps the loaded content, view mode and filter (no per-step
+    // "Loading artifact…" blink). A reset stashes a dirty edit first.
+    function invalidateSessionArtifacts(sessionId, { preserveLoaded = false, messages = null } = {}) {
       const key = String(sessionId || '').trim();
       if (!key) return;
-      artifactCache.delete(key);
-      state.artifacts.filter = 'all';
-      if (state.artifacts.selectedSessionId === key && !preserveLoaded) resetLoadedState();
+      const selectedHere = state.artifacts.selectedSessionId === key;
+      let keepLoaded = preserveLoaded;
+      // Built eagerly only when the comparison matters (an artifact is open in this chat);
+      // otherwise the cache is dropped and rebuilt lazily on the next render, as before.
+      if (Array.isArray(messages) && selectedHere && String(state.artifacts.selectedArtifactId || '').trim()) {
+        const previous = artifactCache.get(key);
+        const next = buildArtifactsFromMessages(messages, { sessionId: key });
+        artifactCache.set(key, { messagesRef: messages, artifacts: next });
+        const selectedId = String(state.artifacts.selectedArtifactId || '').trim();
+        if (!keepLoaded && selectedHere && previous && selectedId) {
+          const before = previous.artifacts.find((artifact) => artifact.id === selectedId);
+          const after = next.find((artifact) => artifact.id === selectedId);
+          keepLoaded = Boolean(before && after) && selectedArtifactFingerprint(before) === selectedArtifactFingerprint(after);
+        }
+      } else {
+        artifactCache.delete(key);
+      }
+      if (!keepLoaded) state.artifacts.filter = 'all';
+      if (selectedHere && !keepLoaded) {
+        stashDirtyArtifactIfNeeded();
+        resetLoadedState();
+      }
       clearImageArtifactDataForSession(key, { keepLoaded: true });
     }
     function rekeySessionArtifacts(oldSessionId, newSessionId) {

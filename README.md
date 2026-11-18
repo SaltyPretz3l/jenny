@@ -8,10 +8,12 @@ With a local model, Jenny processes your prompts locally; no cloud account is ne
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.8.6
+## Jenny 1.8.7
 
-**[Jenny 1.8.6 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.8.6)**.
-The headline is Team chats that work like the local chat: a project
+**[Jenny 1.8.7 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.8.7)**.
+New in 1.8.7: Word documents open in a Read view that shows them as
+authored, with a print-accurate Pages view beside the editor, and Python can
+be allowed for the rest of a chat. 1.8.6 brought Team chats that work like the local chat: a project
 conversation reads like a channel, with Jenny's work one click away, approvals
 that show the exact change, plan mode, find, export, a file explorer and a
 message menu, and a Windows team host can now turn project files on. The local
@@ -47,15 +49,15 @@ back to English.
 
 *The Workspace IDE: explorer, Monaco with the git gutter, the terminal running the project's tests, and Jenny docked beside the editor.*
 
-![Palettes and background effects switched live](docs/media/demo-palette-reel.gif)
+![A project board that Jenny adds to on request](docs/media/demo-board-map.gif)
 
-*Built-in palettes and animated background effects, switched live.*
+*Boards: a project on one canvas. Ask in the docked chat, Jenny proposes cards and arrows, you accept, and Tidy lays it out.*
 
-![Two chats side by side in split view](docs/media/demo-split-view.gif)
+![Palettes and background effects switched live over a sketch](docs/media/demo-palette-reel.gif)
 
-*Split view: two chats side by side, each with its own timeline and composer.*
+*A sketch drawn in chat, then built-in palettes and animated background effects switched live.*
 
-The clips are recorded from the real app driving a scripted replay engine (no live model); the history, calendar, and titlebar figures in frame are seeded for the recording. MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
+The clips are recorded from the real app driving a scripted replay engine (no live model); the history, calendar, board, and titlebar figures in frame are seeded for the recording. MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
 
 ## One-command installation (pending publication)
 
@@ -87,7 +89,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.8.6 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.8.7 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -95,9 +97,9 @@ The 1.8.6 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.8.6 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.8.7 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.8.6).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.8.7).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -298,7 +300,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.8.6
+### Source version 1.8.7
 
 This source tree includes guided setup, local coding tools with live command output, and experimental platform and Docker workflows. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. Crash reporting is optional and off by default.
 

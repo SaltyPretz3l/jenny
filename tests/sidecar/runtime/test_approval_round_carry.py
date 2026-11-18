@@ -569,3 +569,6 @@ def test_the_resume_runs_the_approved_write_and_asks_for_the_next_one(
         getattr(outcome, "error_code", None) != CMP_TOOL_APPROVAL_WINDOW_DROPPED
         for outcome in next_plan.outcomes
     )
+
+
+# -- python calls -------------------------------------------------------------

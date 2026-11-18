@@ -80,7 +80,7 @@ const CASES = [
   'reminders.snooze workspace.getState workspace.updateState workspaceIde.getState workspaceIde.updateSettings'
     + ' workspaceIde.updateState workspaceBackup.write workspaceBackup.remove workspaceBackup.list'
     + ' workspaceBackup.read backgroundJobs.getState backgroundJobs.kill backgroundJobs.readOutput'
-    + ' backgroundJobs.clearFinished'],
+    + ' backgroundJobs.clearFinished workspaceFs.getDocumentPageEngines workspaceFs.renderDocumentPages'],
   // knowledge_layer / semantic_catalog off: only the skills channels register.
   [guidanceIpc.registerGuidanceKnowledgeIpcHandlers, 'workspaceAuthorization', { backendService: {} },
     'skills.getState skills.updateSettings skills.openScopeFolder'],

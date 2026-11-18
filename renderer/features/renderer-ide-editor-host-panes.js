@@ -49,6 +49,9 @@
       scripts: [
         { src: 'renderer/inventory/file-input.js', global: 'inventoryFileInput' },
         { src: 'renderer/shared/bytes-base64.js', global: 'rendererBytesBase64' },
+        // The Read view's renderer: docx-preview reads the global JSZip.
+        { src: 'node_modules/jszip/dist/jszip.min.js', global: 'JSZip' },
+        { src: 'node_modules/docx-preview/dist/docx-preview.min.js', global: 'docx' },
         { src: 'renderer/features/renderer-ide-docx-zip.js', global: 'rendererIdeDocxZip' },
         { src: 'renderer/features/renderer-ide-docx-ooxml.js', global: 'rendererIdeDocxOoxml' },
         { src: 'renderer/features/renderer-ide-docx-image-model.js', global: 'rendererIdeDocxImageModel' },
@@ -56,6 +59,8 @@
         { src: 'renderer/features/renderer-ide-docx-rich.js', global: 'rendererIdeDocxRich' },
         { src: 'renderer/features/renderer-ide-docx-render.js', global: 'rendererIdeDocxRender' },
         { src: 'renderer/features/renderer-ide-docx-package.js', global: 'rendererIdeDocxPackage' },
+        { src: 'renderer/features/renderer-ide-docx-read-safety.js', global: 'rendererIdeDocxReadSafety' },
+        { src: 'renderer/features/renderer-ide-docx-views.js', global: 'rendererIdeDocxViews' },
         { src: 'renderer/features/renderer-ide-docx-host.js', global: 'rendererIdeDocxHost' },
       ],
       stylesheets: ['styles/ide-document-pane.css', 'styles/ide-docx-pane.css'],

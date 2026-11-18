@@ -199,7 +199,7 @@
           },
           "pages": {
             "type": "string",
-            "description": "Optional PDF page selection, at most 3 pages per call, e.g. '1-3' or '2,5'. Pages past the first 3 are not read; the result lists them in unread_pages for another call. Needs image/PDF reads enabled."
+            "description": "Optional PDF page selection, at most 3 pages per call, e.g. '1-3' or '2,5'. Pages past the first 3 are not read; the result lists them in unread_pages for another call; a range that ends past the last page is clamped to it. For a Word document it selects paragraphs instead: one printed paragraph number or a range such as '366-420' (the index shown on each paragraph; body_index is the position among top-level body paragraphs), at most 100 per call. PDF reads need image/PDF reads enabled."
           },
           "cursor": {
             "type": "string",

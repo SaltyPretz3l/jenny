@@ -43,6 +43,9 @@ module.exports = Object.freeze({
   'workspaceFs.searchInFiles': invokeMethod('workspace-fs:search-in-files'),
   'workspaceFs.revealInFolder': invokeMethod('workspace-fs:reveal-in-folder'),
   'workspaceFs.openInDefaultApp': invokeMethod('workspace-fs:open-in-default-app'),
+  // Row 181: the DOCX pane's Pages view (desktop only; Word or LibreOffice makes a PDF).
+  'workspaceFs.getDocumentPageEngines': invokeMethod('workspace-fs:get-document-page-engines'),
+  'workspaceFs.renderDocumentPages': invokeMethod('workspace-fs:render-document-pages'),
   'workspaceFs.readPreChange': invokeMethod('workspace-fs:read-pre-change'),
   'workspaceFs.watchStart': invokeMethod('workspace-fs:watch-start'),
   'workspaceFs.watchStop': invokeMethod('workspace-fs:watch-stop'),

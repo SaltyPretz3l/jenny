@@ -529,6 +529,8 @@ async function deleteSession(service, sessionId) {
   if (isPrimarySession(service.sessionStore, sessionId)) {
     return { object: 'session', id: sessionId, deleted: false, reason: PRIMARY_PROTECTED };
   }
+  // A deleted chat's "Always for this chat" Python grant ends with it.
+  service.chatPythonGrants?.clearSession?.(sessionId);
   let artifactDeletion = null;
   let artifactPreparationError = null;
   if (service.artifactService?.forSessionAuthority) {

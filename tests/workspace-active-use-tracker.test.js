@@ -292,3 +292,46 @@ test('chat.send carries a known active-use value and omits an unknown value', as
   assert.equal(known.workspace_active_use_seconds, 37);
   assert.equal(Object.hasOwn(unknown, 'workspace_active_use_seconds'), false);
 });
+
+// Session review 2026-11-17 (L2): a failing store logged a bare "Error" on every tick.
+test('a failing flush names its error code and logs once per distinct failure until a write succeeds', () => {
+  const logs = [];
+  let failWith = Object.assign(new Error('EPERM: operation not permitted, rename C:/secret/path'), { code: 'EPERM' });
+  const store = new MemoryStore();
+  const write = store.write.bind(store);
+  store.write = (value) => { if (failWith) throw failWith; return write(value); };
+  const windowRef = new FakeWindow();
+  const state = { nowMs: 0 };
+  const tracker = new WorkspaceActiveUseTracker({
+    store,
+    getWorkspaceRoot: () => 'G:\\workspace',
+    getBackendStatus: () => ({ phase: 'ready' }),
+    getWindow: () => windowRef,
+    now: () => state.nowMs,
+    setIntervalImpl: () => ({ unref() {} }),
+    clearIntervalImpl: () => {},
+    logger: (level, event, details) => logs.push({ level, event, details }),
+  }).start();
+  const tick = () => { state.nowMs += 5_000; return tracker.flush(); };
+  try {
+    assert.equal(tick(), false);
+    assert.equal(tick(), false);
+    assert.equal(tick(), false);
+    assert.equal(logs.length, 1, 'one warning for three identical failures');
+    assert.deepEqual(logs[0].details, { errorType: 'Error', errorCode: 'EPERM' });
+    assert.equal(JSON.stringify(logs).includes('secret'), false, 'the message (and its path) is never logged');
+
+    failWith = Object.assign(new Error('busy'), { code: 'EBUSY' });
+    assert.equal(tick(), false);
+    assert.equal(logs.length, 2, 'a different failure logs again');
+
+    failWith = null;
+    assert.equal(tick(), true);
+    failWith = Object.assign(new Error('busy'), { code: 'EBUSY' });
+    assert.equal(tick(), false);
+    assert.equal(logs.length, 3, 'after a success the same failure logs again');
+  } finally {
+    failWith = null;
+    tracker.dispose();
+  }
+});

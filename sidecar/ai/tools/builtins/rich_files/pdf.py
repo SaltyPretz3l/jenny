@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sidecar.ai.tools.builtins import filesystem_content, pdf_text
+from sidecar.ai.tools.builtins.pdf_page_selection import MAX_PAGE_TOKEN_DIGITS
 from sidecar.ai.tools.builtins.rich_files.base import (
     MAX_RICH_INSPECT_OUTPUT_CHARS,
     MAX_RICH_INSPECT_STRING_CHARS,
@@ -66,6 +67,42 @@ def pdf_inspect_tool(
         )
 
 
+def _clamp_pages_past_end(pages: object, *, page_count: int) -> tuple[object, str]:
+    """Clamp a `pages` range that starts inside the PDF but ends past its last page.
+
+    Returns the (possibly rewritten) argument and a note naming the clamp, or
+    the argument unchanged with no note. A start past the end, a malformed token
+    and a lone page number are left for ``select_pages`` to refuse as before.
+    """
+
+    if not isinstance(pages, str):
+        return pages, ""
+    tokens: list[str] = []
+    clamped = False
+    for chunk in pages.split(","):
+        token = chunk.strip()
+        start_text, dash, end_text = token.partition("-")
+        start_text, end_text = start_text.strip(), end_text.strip()
+        if (
+            dash
+            and start_text.isascii()
+            and start_text.isdigit()
+            and end_text.isascii()
+            and end_text.isdigit()
+            and max(len(start_text), len(end_text)) <= MAX_PAGE_TOKEN_DIGITS
+            and 1 <= int(start_text) <= page_count < int(end_text)
+        ):
+            token = start_text if int(start_text) == page_count else f"{start_text}-{page_count}"
+            clamped = True
+        tokens.append(token)
+    if not clamped:
+        return pages, ""
+    shown = ",".join(token for token in tokens if token)
+    has = f"{page_count} page" + ("" if page_count == 1 else "s")
+    showing = ("page " if shown.isdigit() else "pages ") + shown
+    return shown, f"The PDF has {has}; showing {showing}."
+
+
 def _inspect_pdf_with_fitz(
     *,
     arguments: dict[str, object],
@@ -90,9 +127,12 @@ def _inspect_pdf_with_fitz(
         page_count = int(document.page_count)
         if page_count <= 0:
             raise ValueError("PDF has no pages")
+        pages_argument, clamp_note = _clamp_pages_past_end(
+            arguments.get("pages"), page_count=page_count
+        )
         selected_pages, starts, cursor, unread_pages = pdf_text.resolve_selection(
             cursor_argument=arguments.get("cursor"),
-            pages_argument=arguments.get("pages"),
+            pages_argument=pages_argument,
             digest=digest,
             page_count=page_count,
         )
@@ -157,7 +197,11 @@ def _inspect_pdf_with_fitz(
         }
         if unread_pages:
             summary["unread_pages"] = unread_pages
-        summary["note"] = pdf_text.read_note(ocr_note, unread_pages=unread_pages)
+        summary["note"] = " ".join(
+            part
+            for part in (clamp_note, pdf_text.read_note(ocr_note, unread_pages=unread_pages))
+            if part
+        )
         return RichInspectResult(
             status="inspected",
             adapter="pdf",

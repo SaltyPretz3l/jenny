@@ -1,5 +1,38 @@
 # Release Notes
 
+## 1.8.7 - 2026-11-18
+
+Everything landed since 1.8.6, through private `main` on 2026-11-18: a short
+patch release. The headline is Word documents in the Workspace: a DOCX tab now
+opens in a Read view that shows the document as authored, with a print-accurate
+Pages view beside the editor. It also fixes frictions seen in a long agent
+session: the artifact and subagent panels, the Python tool's approvals and its
+long output, and Word and PDF reads.
+
+### Changelog
+
+**Features**
+
+- DOCX Read and Pages views: a Word document in the Workspace opens in Read, which shows styles, headers, footers, footnotes, tables and tracked changes as authored. Edit is the existing editor and stays the only way to save. Pages is a read-only, print-accurate view: Jenny converts the document to PDF with Microsoft Word or LibreOffice, whichever is installed, and shows it in the PDF viewer. Read keeps only pictures and styles from inside the document, and links in it never navigate. Kill switch for Pages `JENNY_ENABLE_DOCX_PAGE_VIEW=0`.
+- Python "Always for this chat": the Python tool's approval card can allow it for the rest of one chat. The grant lives in memory only, is cleared when the chat is deleted or reset or Jenny restarts, and never applies on a server host, in Strict safety, during an idle pause, or in a turn of the Jenny chat that is not on Full auto.
+
+**Fixes**
+
+- The artifact panel keeps the open artifact while a message streams, unless that artifact itself changed; an unsaved edit is kept instead of being overwritten from disk.
+- A subagent's report is trimmed to fit, transcripts first, so the subagent monitor shows every answer; a finished subagent panel stays open when the live entries leave the messages.
+- One approval for a round of edits now carries a batch's later Python calls too.
+- Long Python output is saved to a file in the project's `.jenny` folder instead of filling the chat, and scratch paths are shown masked.
+- Reading a Word file can take a range of paragraphs, a PDF page past the end is clamped with a note, and a path starting with `~` gets a clearer message.
+
+### Migration and qualification
+
+- Canonical sessions stay at schema 29, the memory store at 10 and shell configuration at 59. The sidecar `API_VERSION` stays `2026-10-15`; Electron and its sidecar still ship together.
+- New default-on flag with a kill switch: `DOCX_PAGE_VIEW`, as `JENNY_ENABLE_DOCX_PAGE_VIEW=0`. The DOCX Read view uses docx-preview 0.4.1 (Apache-2.0) with JSZip 3.10.1.
+- A translation pass brought all 18 shipped languages level with English for the new strings, with no native-speaker review.
+- The full local CI gate on the cut tree passed 8 of its 9 stages: 47 policy checks, 3,428 Node test files, 17,911 Python tests, 284 backend contracts, typing, 92.4% sidecar coverage and the packaged-flow smoke. The ninth, lint, found one needless escape in a test string; it is fixed, and ESLint over the whole repository and that test file pass. Before the cut, a review of the new DOCX views found the Read view could not load its library in the app (it worked only in tests), and the startup script budget was over by 6 KB; both are fixed, the budget by a re-base the owner approved. The real-app GUI suite and the packaged smoke in a Linux container were not run for this cut.
+- Not yet covered by a person: the DOCX Read and Pages views in the real app, with a real Word and a real LibreOffice conversion; Python "Always for this chat" in a live chat; the artifact and subagent panel fixes in a long live session. The 1.8.6 list of owed checks still stands.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
+
 ## 1.8.6 - 2026-11-17
 
 Everything landed since 1.8.0, through private `main` on 2026-11-17: 79

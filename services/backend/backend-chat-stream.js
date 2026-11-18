@@ -18,6 +18,7 @@ const { requestRuntimeInference } = require('./backend-runtime-inference');
 const { resolveForcedLocalRoute } = require('./local-engine-requests');
 const { assertTeamModelUsable, liveTeamSelection } = require('./team-engine-models');
 const { NEVER_PERSIST_ALWAYS_ALLOW } = require('../tools/tool-permission-store');
+const { CHAT_PYTHON_SCOPE, isPythonRequest, noteChatPythonGrant } = require('./chat-python-grant-gate');
 const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 const {
   assertSessionLockdownAllowsEngine,
@@ -277,6 +278,9 @@ function alwaysAllowApplies(pending, options = {}) {
     return false;
   }
   const toolName = String(pending?.toolName || '').trim();
+  // D1 (session review 2026-11-17): Python's Always is a grant for this chat, never a persisted policy
+  // (the sidecar asks for every Python run regardless, so a persisted one would never be honoured).
+  if (isPythonRequest(toolName, pending?.toolInput)) return false;
   return Boolean(toolName) && !NEVER_PERSIST_ALWAYS_ALLOW.has(toolName);
 }
 
@@ -454,7 +458,13 @@ function approveToolCall(service, approvalRef, options = {}) {
   const remember = options?.remember === 'linked_children' ? ['linked_children'] : [];
   // D10: "Allow all" on a card that offered a round of edits; the waiter honours it only on its own offer.
   const round = options?.round === true && Array.isArray(entry.pending.roundOffer) && entry.pending.roundOffer.length > 0;
-  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : (round ? 'round' : 'once'), ...remember);
+  // D1: "Always for this chat" on a Python card records an in-memory grant for this chat and root.
+  const chatPython = options?.alwaysAllow === true && noteChatPythonGrant(service, {
+    toolName: entry.pending.toolName, input: entry.pending.toolInput, sessionId: entry.pending.sessionId,
+    executionAuthority: entry.pending.executionAuthority, oneOffOnly: entry.pending.oneOffOnly === true,
+  });
+  const scope = granted ? 'always' : (chatPython ? CHAT_PYTHON_SCOPE : (round ? 'round' : 'once'));
+  entry.pending.resolve(true, decision, feedback, options?.plan, scope, ...remember);
   service.pendingToolApprovals.delete(entry.key);
   return true;
 }

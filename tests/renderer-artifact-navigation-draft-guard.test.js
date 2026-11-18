@@ -157,3 +157,74 @@ test('editing artifact A then selecting artifact B defers A\'s draft instead of 
   }
 });
 
+// Session review 2026-11-17 (A1/A2): every streamed event replaces the session messages. The open
+// artifact must not be re-read (no per-step "Loading artifact…" blink), and an unsaved edit must
+// survive, unless the selected artifact itself was rewritten.
+async function emitUnrelatedToolRow(shell, sessionId, callId) {
+  await shell.__emitChat({
+    type: 'tool_use', sessionId, streamId: 'stream-1', callId,
+    toolName: 'list_dir', summary: 'list_dir .', input: { path: '.' }, status: 'running',
+  });
+  await shell.__emitChat({
+    type: 'tool_result', sessionId, streamId: 'stream-1', callId, toolName: 'list_dir',
+    summary: 'list_dir .', content: 'entries: 0', isError: false, approvalState: 'auto', durationMs: 1,
+  });
+}
+
+async function openArtifactA(t) {
+  const reads = [];
+  const { app, sessionId } = await makeApp();
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  const read = shell.artifacts.read.bind(shell.artifacts);
+  shell.artifacts.read = async (readSessionId, artifactId) => { reads.push(artifactId); return read(readSessionId, artifactId); };
+  const doc = window.document;
+  doc.getElementById('chatInput').value = 'start';
+  doc.getElementById('chatInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 20);
+  await seedTwoArtifacts(shell, sessionId);
+  await waitForUi(window, 40);
+  const idA = `artifact_file_${sessionId}_doc-a`;
+  doc.querySelector(`[data-inv-artifact-action="panel"][data-artifact-id="${idA}"]`).click();
+  await waitForUi(window, 30);
+  return { app, window, shell, doc, sessionId, idA, reads };
+}
+
+test('an unrelated streamed tool row neither re-reads the open artifact nor drops an unsaved edit', async (t) => {
+  const { window, shell, doc, sessionId, idA, reads } = await openArtifactA(t);
+  const editor = doc.getElementById('artifactReviewEditorFallback');
+  assert.match(editor.value, new RegExp(idA));
+  const readsBefore = reads.length;
+  assert.ok(readsBefore >= 1, 'opening A reads it once');
+
+  editor.value = '# EDIT DURING A LIVE TURN';
+  editor.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await waitForUi(window, 20);
+
+  await emitUnrelatedToolRow(shell, sessionId, 'call-unrelated-1');
+  await emitUnrelatedToolRow(shell, sessionId, 'call-unrelated-2');
+  await waitForUi(window, 40);
+
+  assert.equal(reads.length, readsBefore, 'unrelated rows must not re-read the selected artifact');
+  assert.equal(editor.value, '# EDIT DURING A LIVE TURN', 'the unsaved edit must survive streamed rows');
+  assert.equal(doc.getElementById('artifactReviewSaveButton').disabled, false, 'A must still read as dirty');
+});
+
+test('a new write of the selected artifact still reloads it', async (t) => {
+  const { window, shell, sessionId, idA, reads } = await openArtifactA(t);
+  const readsBefore = reads.length;
+  await shell.__emitChat({
+    type: 'tool_use', sessionId, streamId: 'stream-1', callId: 'call-a-again',
+    toolName: 'CreateArtifact', summary: 'Update doc A', input: { artifact_kind: 'document', title: 'Doc A' }, status: 'running',
+  });
+  await shell.__emitChat({
+    type: 'tool_result', sessionId, streamId: 'stream-1', callId: 'call-a-again', toolName: 'CreateArtifact',
+    summary: 'Update doc A', content: 'Updated document A', isError: false, approvalState: 'auto', durationMs: 5,
+    generatedArtifacts: [codeArtifact(sessionId, 'doc-a', 'Doc A')],
+  });
+  await waitForUi(window, 40);
+  assert.ok(reads.length > readsBefore, 'a rewrite of the selected artifact must re-read it');
+  assert.ok(reads.slice(readsBefore).includes(idA));
+});
+

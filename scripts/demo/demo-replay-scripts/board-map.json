@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "reasoning": "The board already shows the add path. The other two commands go through the same entry point and read the same ledger file, so they belong beside add, and the rounding rule matters most for total.",
+      "text": "The board has the `add` path. Here are the other two commands, wired the same way:\n\n```board\nfile src/commands/list.js as list\nfile src/commands/total.js as total\nnote Totals round once, after summing cents as rounding\nf2 -> list dispatches\nf2 -> total dispatches\nlist -> f5 reads\ntotal -> f5 reads\nrounding --> total\n```\n\n`list` and `total` both read `ledger.txt` through `ledger-file.js`; only `add` writes. Accept the additions to put them on the board."
+    }
+  ]
+}

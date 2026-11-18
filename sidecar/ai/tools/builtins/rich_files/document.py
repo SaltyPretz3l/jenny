@@ -46,6 +46,8 @@ MAX_PARAGRAPHS = 100
 PARAGRAPH_EXCERPT_CHARS = 1_500
 SLICE_EXCERPT_CHARS = 7_000
 _CURSOR = re.compile(r"docx:([0-9a-f]{16}):([1-9][0-9]{0,8})")
+# `pages` for a Word document: one printed paragraph number or an inclusive range.
+_PARAGRAPH_RANGE = re.compile(r"([0-9]{1,9})(?:-([0-9]{1,9}))?")
 TEXT_LOCAL_NAMES = {"t"}
 TRACKED_CHANGE_TAGS = {
     "del",
@@ -83,7 +85,9 @@ def document_inspect_tool(
 
     # read_file's dispatcher forwards only path/pages/cursor: caps stay at their defaults.
     caps = _inspect_caps(arguments)
-    start_index = _cursor_start(arguments.get("cursor"), digest=_digest(source))
+    start_index, end_index = _read_window(arguments, digest=_digest(source))
+    if end_index is not None:
+        caps = {"max_paragraphs": MAX_PARAGRAPHS}
     try:
         element_tree = load_defused_element_tree()
     except ModuleNotFoundError:
@@ -108,8 +112,10 @@ def document_inspect_tool(
             raw_document=raw_document,
             caps=caps,
             element_tree=element_tree,
-            start_index=start_index,
+            window=(start_index, end_index),
         )
+    except ToolExecutionFailure:
+        raise
     except Exception:  # noqa: BLE001
         return rich_inspect_result_to_tool_result(
             build_unsupported_result(
@@ -127,8 +133,9 @@ def _inspect_document(
     raw_document: bytes,
     caps: dict[str, int],
     element_tree: Any,
-    start_index: int = 1,
+    window: tuple[int, int | None] = (1, None),
 ) -> RichInspectResult:
+    start_index, end_index = window
     with zipfile.ZipFile(io.BytesIO(raw_document)) as archive:
         part_names = preflight_ooxml_archive(archive)
         root = read_xml_root(archive, "word/document.xml", element_tree)
@@ -149,8 +156,18 @@ def _inspect_document(
             max_paragraphs=caps["max_paragraphs"],
             hidden_style_ids=hidden_style_ids,
             start_index=start_index,
+            end_index=end_index,
         )
         sampled, visible_count, paragraph_count, hidden_text_present, next_index = sample
+        if end_index is not None and start_index > paragraph_count:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_EXECUTION_FAILED,
+                message=(
+                    f"tool argument 'pages' references paragraph {start_index}, "
+                    f"but the document has {paragraph_count} paragraphs"
+                ),
+                retryable=False,
+            )
         table_count, tracked_changes_present = _document_flags(root)
         summary = {
             "paragraph_count": paragraph_count,
@@ -169,7 +186,7 @@ def _inspect_document(
             "omitted_paragraph_count": max(0, visible_count - len(sampled)),
             "sample_caps": caps,
             "paragraphs": sampled,
-            **_continuation_fields(source, sampled, next_index),
+            **_continuation_fields(source, sampled, next_index, end_index),
         }
     return RichInspectResult(
         status="inspected",
@@ -209,10 +226,47 @@ def _cursor_start(value: object | None, *, digest: str) -> int:
     return int(match.group(2))
 
 
+def _read_window(arguments: dict[str, object], *, digest: str) -> tuple[int, int | None]:
+    """The first paragraph index to read and, for a ``pages`` range, the last.
+
+    ``pages`` ("366" or "366-420") uses the reader's own printed (raw) index;
+    ``cursor`` continues a previous read. They are mutually exclusive.
+    """
+    pages = arguments.get("pages")
+    if pages is None:
+        return _cursor_start(arguments.get("cursor"), digest=digest), None
+    if arguments.get("cursor") is not None:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="tool arguments 'cursor' and 'pages' are mutually exclusive",
+            retryable=False,
+        )
+    match = _PARAGRAPH_RANGE.fullmatch(pages.strip()) if isinstance(pages, str) else None
+    if match is None:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message=(
+                "tool argument 'pages' must be a paragraph number or range like '366' or "
+                "'366-420' for a Word document"
+            ),
+            retryable=False,
+        )
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) is not None else start
+    if start < 1 or end < start:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="tool argument 'pages' contains an invalid paragraph range",
+            retryable=False,
+        )
+    return start, end
+
+
 def _continuation_fields(
     source: RichFileSource,
     sampled: list[dict[str, object]],
     next_index: int | None,
+    end_index: int | None = None,
 ) -> dict[str, object]:
     if next_index is None:
         return {}
@@ -225,7 +279,12 @@ def _continuation_fields(
         "continuation_hint": (
             # knowledge_view rewrites "call read_file again" to its own tool name.
             f"This read shows {shown}; more of the document follows. To continue, "
-            f"call read_file again with the same path and cursor={cursor}."
+            f"call read_file again with the same path and cursor={cursor}"
+            + (
+                f" (or pages='{next_index}-{end_index}' for the rest of the requested range)."
+                if end_index is not None
+                else "."
+            )
         ),
     }
 
@@ -236,11 +295,15 @@ def _sample_document_paragraphs(
     max_paragraphs: int,
     hidden_style_ids: set[str],
     start_index: int = 1,
+    end_index: int | None = None,
 ) -> tuple[list[dict[str, object]], int, int, bool, int | None]:
     """Whole visible paragraphs from ``start_index`` within the slice budget.
 
-    Also returns the index of the first visible paragraph left for the next
-    read, or None when the slice reached the end of the document.
+    ``end_index`` bounds a ``pages`` range. The visible count covers only the
+    paragraphs from ``start_index`` (to ``end_index``), so the caller's omitted
+    count is what this slice left out, not what precedes it. Also returns the
+    index of the first visible paragraph left for the next read, or None when
+    the slice reached the end of the document (or of the range).
     """
     sampled: list[dict[str, object]] = []
     visible_count = 0
@@ -248,6 +311,7 @@ def _sample_document_paragraphs(
     hidden_text_present = False
     next_index: int | None = None
     used_chars = 0
+    body_positions = _body_positions(root)
     for index, paragraph in enumerate(iter_local(root, "p"), start=1):
         paragraph_count += 1
         text, paragraph_has_hidden_text = _paragraph_text(
@@ -257,8 +321,10 @@ def _sample_document_paragraphs(
         hidden_text_present = hidden_text_present or paragraph_has_hidden_text
         if not text:
             continue
+        if index < start_index or (end_index is not None and index > end_index):
+            continue
         visible_count += 1
-        if index < start_index or next_index is not None:
+        if next_index is not None:
             continue
         if len(sampled) >= max_paragraphs:
             next_index = index
@@ -270,14 +336,27 @@ def _sample_document_paragraphs(
             next_index = index
             continue
         used_chars += len(excerpt)
-        sampled.append(
-            {
-                "index": index,
-                "text_excerpt": excerpt,
-                "text_truncated": truncated,
-            }
-        )
+        entry: dict[str, object] = {"index": index}
+        body_index = body_positions.get(id(paragraph))
+        if body_index is not None:
+            # python-docx `doc.paragraphs` position; table-cell paragraphs have none.
+            entry["body_index"] = body_index
+        sampled.append({**entry, "text_excerpt": excerpt, "text_truncated": truncated})
     return sampled, visible_count, paragraph_count, hidden_text_present, next_index
+
+
+def _body_positions(root: Any) -> dict[int, int]:
+    """id(paragraph) -> 1-based position among the direct ``w:p`` children of ``w:body``."""
+    positions: dict[int, int] = {}
+    for body in root:
+        if local_name_of(body.tag) != "body":
+            continue
+        count = 0
+        for child in body:
+            if local_name_of(child.tag) == "p":
+                count += 1
+                positions[id(child)] = count
+    return positions
 
 
 def _paragraph_text(

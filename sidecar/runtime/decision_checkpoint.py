@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -230,8 +231,29 @@ def _prepare_decision(
     except (
         ValueError, TypeError, IndexError, AttributeError, OverflowError, ToolExecutionFailure
     ) as error:
-        logger.warning("decision_snapshot_unavailable", extra={"reason": type(error).__name__})
+        log_snapshot_unavailable(error)
         return None
+
+
+_DESIGNED_REASON_RE = re.compile(r"^decision_[a-z_]{1,60}$")
+
+
+def log_snapshot_unavailable(error: BaseException) -> None:
+    """Name why no snapshot was frozen; the human wait keeps its live waiter either way.
+
+    A ``ValueError`` carrying one of this module's fixed ``decision_*`` codes is a designed
+    fallback (an unsupported transient state), logged at INFO with its code. Anything else is
+    unexpected and stays a WARNING; it is logged by type and error code only, never by message.
+    """
+    message = str(error.args[0]) if isinstance(error, ValueError) and error.args else ""
+    if _DESIGNED_REASON_RE.match(message):
+        logger.info("decision_snapshot_unavailable", extra={"reason": message, "designed": True})
+        return
+    code = getattr(error, "code", "")
+    extra = {"reason": type(error).__name__, "designed": False}
+    if isinstance(code, str) and code:
+        extra["code"] = code[:40]
+    logger.warning("decision_snapshot_unavailable", extra=extra)
 
 
 @dataclass(frozen=True)

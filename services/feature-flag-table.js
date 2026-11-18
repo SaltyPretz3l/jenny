@@ -426,6 +426,9 @@ const FEATURE_FLAG_ROWS = [
   { key: 'chat_terminal_panel', env: 'CHAT_TERMINAL_PANEL', default: true },
   // Row 140: Get drafter / Get vision in the Tune drawer (main-process downloads beside the model).
   { key: 'gguf_companions', env: 'GGUF_COMPANIONS', default: true },
+  // Row 181: the DOCX pane's Pages view (Word or LibreOffice converts to PDF in main);
+  // =0 answers every conversion `disabled` and the Pages button stays greyed out.
+  { key: 'docx_page_view', env: 'DOCX_PAGE_VIEW', default: true },
 ];
 
 const FEATURE_FLAG_TABLE = Object.freeze(FEATURE_FLAG_ROWS.map((row) => Object.freeze(row)));

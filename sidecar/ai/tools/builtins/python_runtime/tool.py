@@ -57,6 +57,14 @@ def _bound_roots(workspace: WorkspaceGuard) -> tuple[Path, Path | None]:
     return scratch_root, scratch_root
 
 
+def _spill_store(workspace: WorkspaceGuard) -> Any:
+    """The guarded ``.jenny`` store for a cut stdout, or None when it cannot be opened."""
+    try:
+        return workspace.internal_store()
+    except ToolExecutionFailure:
+        return None
+
+
 def python_execute_tool(
     arguments: dict[str, object], workspace: WorkspaceGuard
 ) -> ToolHandlerResult:
@@ -144,6 +152,7 @@ def python_execute_tool(
             sandbox_result.work_dir,
             workspace_root=None if scratch_root is not None else authority_root,
             arguments=arguments,
+            spill_store=None if scratch_root is not None else _spill_store(workspace),
         )
         success = payload.get("error") is None and sandbox_result.returncode == 0
         return ToolHandlerResult(

@@ -6,6 +6,8 @@ only in the report metadata, never in the parent model's tool output.
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 from typing import Any
 
@@ -270,9 +272,99 @@ def _scrub_paths(text: str, input_paths: list[str]) -> str:
     return text
 
 
+# --- Report metadata budget (session review 2026-11-17, S1) -----------------
+# Byte budget for delegate report metadata.
+#
+# The IPC externalizer (``sidecar/runtime/ipc_payloads.py``) replaces any inline
+# payload over 64 KiB with a file path and a cut preview, and nothing reads the
+# file back. A three-child report with full transcripts passed that threshold,
+# so the renderer received no report at all. These helpers trim the UI-only
+# detail of the report first, so the answers always travel inline:
+#
+# 1. transcript entries, oldest first, round-robin from the longest transcript
+#    (``transcript_dropped``);
+# 2. evidence entries from the end (``evidence_dropped``);
+# 3. step entries from the front (``steps_dropped``).
+#
+# Answers, summaries and the identity, status and usage fields are never touched.
+
+REPORT_METADATA_BUDGET_BYTES = 56 * 1024
+
+_REPORT_KEYS = ("subagent_batch_report", "subagent_report")
+
+
+def _byte_size(value: Any) -> int:
+    # Same measure as ipc_payloads._byte_size.
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    return len(text.encode("utf-8", errors="surrogatepass"))
+
+
+def _report_tasks(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    batch = metadata.get("subagent_batch_report")
+    if isinstance(batch, dict) and isinstance(batch.get("tasks"), list):
+        tasks.extend(task for task in batch["tasks"] if isinstance(task, dict))
+    single = metadata.get("subagent_report")
+    if isinstance(single, dict):
+        tasks.append(single)
+    return tasks
+
+
+def _drop(task: dict[str, Any], field: str, counter: str, *, front: bool) -> None:
+    entries = task[field]
+    del entries[0 if front else -1]
+    task[counter] = int(task.get(counter) or 0) + 1
+
+
+def _longest(tasks: list[dict[str, Any]], field: str) -> dict[str, Any] | None:
+    # The longest by serialized size, so the drops level the children in bytes.
+    best: dict[str, Any] | None = None
+    best_size = 0
+    for task in tasks:
+        entries = task.get(field)
+        if not isinstance(entries, list) or not entries:
+            continue
+        size = _byte_size(entries)
+        if size > best_size:
+            best, best_size = task, size
+    return best
+
+
+def bound_report_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return ``metadata`` within the report budget.
+
+    A report already under budget, or metadata that carries no report, comes
+    back as the same object. Otherwise a trimmed deep copy is returned and the
+    input is left alone.
+    """
+
+    if not isinstance(metadata, dict) or not any(key in metadata for key in _REPORT_KEYS):
+        return metadata
+    size = _byte_size(metadata)
+    if size <= REPORT_METADATA_BUDGET_BYTES:
+        return metadata
+    bounded = copy.deepcopy(metadata)
+    tasks = _report_tasks(bounded)
+    # (field, drop from the front, counter key), in the order they are shed.
+    for field, front, counter in (
+        ("transcript", True, "transcript_dropped"),
+        ("evidence", False, "evidence_dropped"),
+        ("steps", True, "steps_dropped"),
+    ):
+        while size > REPORT_METADATA_BUDGET_BYTES:
+            task = _longest(tasks, field)
+            if task is None:
+                break
+            _drop(task, field, counter, front=front)
+            size = _byte_size(bounded)
+    return bounded
+
+
 __all__ = [
     "MAX_CHILD_ANSWER_CHARS",
     "MAX_CHILD_STEPS",
+    "REPORT_METADATA_BUDGET_BYTES",
+    "bound_report_metadata",
     "build_child_steps",
     "child_answer",
     "scrub_failed_paths",

@@ -71,6 +71,7 @@ const {
 } = require('./chat-stream-terminal-utils');
 const { isolateActiveStreamAbort } = require('./active-stream-shutdown-drain');
 const { createApprovedCallGrants } = require('./runtime-approved-call-grants');
+const { createChatPythonGrants } = require('./chat-python-grant-gate');
 const { getOllamaModelBlob: _getOllamaModelBlob } = require('./backend-ollama-blob');
 const {
   refreshStatusSnapshot: _refreshStatusSnapshot,
@@ -185,6 +186,8 @@ class BackendService extends EventEmitter {
     this.activeStreams = new Map();
     this.pendingToolApprovals = new Map();
     this.approvedCallGrants = createApprovedCallGrants();
+    // D1 (session review 2026-11-17): per-chat Python grants, in memory only.
+    this.chatPythonGrants = createChatPythonGrants();
     this.pendingUserQuestions = new Map();
     this.on('chat-stream', (event) => _handleChatStreamEnd(this, event));
     this.enableInteractiveStreamDebug = Boolean(options.enableInteractiveStreamDebug);

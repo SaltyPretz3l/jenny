@@ -27,6 +27,7 @@
   }
 
   const packageUtils = resolveModule('rendererIdeDocxPackage', './renderer-ide-docx-package');
+  const viewsUtils = resolveModule('rendererIdeDocxViews', './renderer-ide-docx-views');
 
   // Native Uint8Array base64 where the engine has it (shared with the PDF pane).
   const { decodeBase64, encodeBase64 } = resolveModule('rendererBytesBase64', '../shared/bytes-base64');
@@ -59,6 +60,11 @@
     const fileInput = resolveModule('inventoryFileInput', '../inventory/file-input');
     const documents = new Map();
     const loadGenerations = new Map();
+    // Read / Pages views (docx-preview, the converted PDF); Edit is this module's editor.
+    const views = viewsUtils.createDocxViews({
+      ...deps, onSaveRequest, log, exportBytes,
+      getPane: () => paneEl, getCurrentPath: () => currentPath, getRecord: (path) => documents.get(path) || null,
+    });
     let generationCounter = 0;
 
     let paneEl = null;
@@ -108,7 +114,7 @@
       if (!host || !documentRef || disposed) return null;
       paneEl = documentRef.createElement('div');
       paneEl.className = 'ide-docx-pane hidden';
-      paneEl.innerHTML = buildToolbarMarkup()
+      paneEl.innerHTML = views.barMarkup() + buildToolbarMarkup()
         + '<div class="ide-docx-notes hidden" role="status"></div>'
         + '<div class="ide-docx-notes ide-docx-review-lock hidden" role="status"><span class="ide-docx-review-lock-text"></span>'
         + actionButton({
@@ -124,6 +130,7 @@
       reviewEl.querySelector('.ide-docx-review-lock-text').textContent = jt('ide.docx.reviewLocked',
         'This document tracks changes. Edits made here are not recorded as revisions, so reviewers will not see them as changes.');
       documentsEl = paneEl.querySelector('.ide-docx-documents');
+      views.mount();
       paneEl.addEventListener('click', handleToolbarClick);
       paneEl.addEventListener('mousedown', handleToolbarMouseDown);
       paneEl.querySelector('.ide-docx-image-input')?.addEventListener('change', handleImageInput);
@@ -205,8 +212,9 @@
       let zip;
       let model;
       let reviewed;
+      let bytes;
       try {
-        const bytes = decodeBase64(source?.base64);
+        bytes = decodeBase64(source?.base64);
         zip = await zipUtils.readZip(bytes);
         if (!zip.entries.has('word/document.xml')) {
           return makeFailure('document_unsupported', jt('ide.docx.notWordDocument', 'not a Word document'));
@@ -249,12 +257,14 @@
       const wasVisible = currentPath === normalizedPath && !paneEl.classList.contains('hidden');
       if (existing?.dirty) onDirtyChange(normalizedPath, false);
       removeRecord(existing);
+      views.release(normalizedPath);
       const handlers = createContainer(normalizedPath, documentRef);
       // A document under review opens read-only until the user opts in; the
       // opt-in lasts for this open document, across reloads, and is never stored.
       const reviewOptIn = existing?.reviewOptIn === true;
       const record = {
         path: normalizedPath, zip, model, mediaUrls, dirty: false, stateVersion: model.getStateVersion(),
+        sourceBytes: bytes, sourceVersion: model.getStateVersion(),
         locked: reviewed && !reviewOptIn, reviewOptIn, ...handlers,
       };
       record.container.setAttribute('contenteditable', String(!record.locked));
@@ -903,6 +913,7 @@
       refreshNotes(record);
       paneEl.classList.remove('hidden');
       refreshToolbar();
+      views.show(normalizedPath);
       return true;
     }
 
@@ -920,6 +931,7 @@
       if (selectedImage?.path === normalizedPath) selectedImage = null;
       documents.delete(normalizedPath);
       removeRecord(record);
+      views.release(normalizedPath);
       if (currentPath === normalizedPath) {
         currentPath = null;
         paneEl?.classList.add('hidden');
@@ -966,6 +978,7 @@
       endTyping();
       const documentRef = paneEl?.ownerDocument;
       for (const path of [...documents.keys()]) close(path);
+      views.dispose();
       loadGenerations.clear();
       paneEl?.removeEventListener('click', handleToolbarClick);
       paneEl?.removeEventListener('mousedown', handleToolbarMouseDown);

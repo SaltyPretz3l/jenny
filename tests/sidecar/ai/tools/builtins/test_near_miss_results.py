@@ -215,3 +215,29 @@ def test_a_failed_browser_step_is_not_saved_as_finished() -> None:
         "browser", "page text", {"failure_class": "denied", "step_summary": "Opened x"}
     ) == "Opened x"
     assert saved_tool_output("read_file", "text", {"failure_class": "denied"}) == "text"
+
+
+def test_a_home_path_outside_the_workspace_says_what_the_tilde_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    home = tmp_path / "home"
+    (home / "Desktop" / "Test").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    guard = WorkspaceGuard(str(root))
+
+    for requested in ("~/Desktop/Test", "~"):
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            guard.resolve_read_path(requested)
+        assert excinfo.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+        assert excinfo.value.message.startswith("path is outside the workspace. ")
+        assert excinfo.value.message.endswith(
+            ' "~" is your home folder, which is outside this project folder.'
+        )
+        assert str(home) not in excinfo.value.message
+
+    # A plain outside path keeps the original message with no home-folder note.
+    with pytest.raises(ToolExecutionFailure) as plain:
+        guard.resolve_read_path("../home")
+    assert "home folder" not in plain.value.message

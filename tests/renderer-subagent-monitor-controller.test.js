@@ -67,8 +67,9 @@ function setup({ tasks = [ONE_CHILD], rail = false, dock = false, bareAside = fa
   if (dock) doc.getElementById('ideChatDock').appendChild(doc.getElementById('chatThreadStage'));
   const railStub = rail ? fakeRail(doc) : null;
   let messages = messagesFor(tasks);
+  const state = { currentSessionId: 'session-1' };
   const controller = createSubagentMonitorController({
-    state: { currentSessionId: 'session-1' },
+    state,
     windowRef: dom.window,
     documentRef: doc,
     inspector,
@@ -78,8 +79,9 @@ function setup({ tasks = [ONE_CHILD], rail = false, dock = false, bareAside = fa
   });
   controller.bind();
   return {
-    dom, doc, inspector, controller, rail: railStub,
+    dom, doc, inspector, controller, rail: railStub, state,
     setTasks(next) { messages = messagesFor(next); },
+    setMessages(next) { messages = next; },
     dispose() { controller.dispose(); dom.window.close(); },
   };
 }
@@ -273,5 +275,82 @@ test('the Overview | Transcript switch flips the drill-in through the control\'s
   const left = new rig.dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true });
   rig.inspector.querySelector('[data-subagent-view] [data-value="overview"]').dispatchEvent(left);
   assert.ok(rig.inspector.querySelector('.subagent-detail-title'), 'ArrowLeft on the switch is not "back"');
+  rig.dispose();
+});
+
+const LIVE = () => [{ agent_status_steps: [
+  { source: 'subagent_batch', toolCallId: 'call-1', childTaskId: 'a', childOrdinal: 1, childCount: 2, childLabel: 'Survey renderer', status: 'running', startedAt: 1_000, updatedAt: 1_500 },
+  { source: 'subagent_batch', toolCallId: 'call-1', childTaskId: 'b', childOrdinal: 2, childCount: 2, childLabel: 'Survey sidecar', status: 'running', startedAt: 1_000, updatedAt: 1_500 },
+] }];
+const answered = (tasks) => ({ tool_result: { call_id: 'call-1', metadata: { subagent_batch_report: { status: 'completed', tasks } } } });
+const tooLarge = { tool_result: { call_id: 'call-1', metadata: { _externalized: true, preview: '{"result_kind":' } } };
+const closeCalls = (rig) => rig.rail.calls.filter((call) => call[0] === 'close').length;
+
+test('live children then the full terminal report: the panel stays open and shows each answer', () => {
+  const rig = setup({ rail: true });
+  rig.setMessages(LIVE());
+  rig.doc.getElementById('origin').click();
+  assert.ok(rig.doc.querySelector('#artifactReviewPanel .subagent-monitor-shell'));
+  rig.setMessages([...LIVE(), answered(TWO_CHILDREN.map((task) => ({ ...task, answer: `Full answer from ${task.task_id}.` })))]);
+  rig.controller.reconcile();
+  assert.equal(closeCalls(rig), 0);
+  rig.controller.select('b');
+  assert.match(rig.doc.querySelector('#artifactReviewPanel').textContent, /Full answer from b\./);
+  rig.dispose();
+});
+
+test('live children then an externalized result: the panel stays open, settled, with the too-large note', () => {
+  const rig = setup({ rail: true });
+  rig.setMessages(LIVE());
+  rig.doc.getElementById('origin').click();
+  assert.equal(rig.doc.querySelectorAll('#artifactReviewPanel [data-subagent-select]').length, 2);
+  // The live steps are not persisted: the tool result lands alone.
+  rig.setMessages([tooLarge]);
+  rig.controller.reconcile();
+  assert.equal(closeCalls(rig), 0, 'the panel is not closed');
+  const text = rig.doc.querySelector('#artifactReviewPanel').textContent;
+  assert.match(text, /Subagent details were too large to show here/);
+  assert.equal(rig.doc.querySelectorAll('#artifactReviewPanel [data-subagent-select]').length, 2, 'both children stay listed');
+  assert.doesNotMatch(text, /Running/);
+  rig.dispose();
+});
+
+test('a settled panel stays when the messages lose its children', () => {
+  const rig = setup({ rail: true });
+  rig.setMessages([...LIVE(), answered(TWO_CHILDREN)]);
+  rig.doc.getElementById('origin').click();
+  rig.setMessages([]);
+  rig.controller.reconcile();
+  assert.equal(closeCalls(rig), 0);
+  assert.ok(rig.doc.querySelector('#artifactReviewPanel .subagent-monitor-shell'));
+  assert.ok(rig.rail.handle.panelMarkup(), 'a later pull still gets the last parts');
+  rig.dispose();
+});
+
+test('a still-running panel whose children vanish closes rather than show Running forever', () => {
+  const rig = setup({ rail: true });
+  rig.setMessages(LIVE());
+  rig.doc.getElementById('origin').click();
+  rig.setMessages([]);
+  rig.controller.reconcile();
+  assert.equal(closeCalls(rig), 1);
+  rig.dispose();
+});
+
+test('switching sessions and Escape still close it', () => {
+  const rig = setup({ rail: true });
+  rig.setMessages(LIVE());
+  rig.doc.getElementById('origin').click();
+  rig.state.currentSessionId = 'session-2';
+  rig.setMessages([]);
+  rig.controller.reconcile();
+  assert.equal(rig.rail.calls.at(-1)[0], 'close', 'a session change closes');
+  assert.equal(rig.doc.querySelector('#artifactReviewPanel .subagent-monitor-shell'), null);
+  rig.state.currentSessionId = 'session-1';
+  rig.setMessages(LIVE());
+  rig.doc.getElementById('origin').click();
+  const escape = new rig.dom.window.KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+  rig.rail.handle.handleKeydown(escape);
+  assert.equal(rig.rail.calls.at(-1)[0], 'close');
   rig.dispose();
 });

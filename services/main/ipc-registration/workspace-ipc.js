@@ -1,6 +1,7 @@
 // Builds the workspace service graph (IDE, git, pty, run tasks, watcher) and registers its IPC
 // through the per-area registrars in ../workspace-ipc-registration.js.
 const { registerIpcInvokeHandlers } = require('../../ipc-contract');
+const { createDocumentPageRenderer } = require('../../document-page-render');
 const { WorkspaceIdeService } = require('../../workspace-ide-service');
 const { WorkspaceImportService } = require('../../workspace-import-service');
 const { VersionedWorkspaceFileService } = require('../../versioned-workspace-file-service');
@@ -55,6 +56,15 @@ function registerWorkspaceStateIpcHandlers(ipcMain, {
       || { ok: false, reason: 'unavailable' },
     'backgroundJobs.clearFinished': (_, sessionId) => backendService.backgroundJobTracker?.clearFinished?.(sessionId)
       || { ok: false, reason: 'unavailable' },
+  }, workspaceAuthorization);
+  // Row 181: the DOCX Pages view converts the pane's bytes with Word or LibreOffice;
+  // desktop only (the hosted host never registers it), JENNY_ENABLE_DOCX_PAGE_VIEW=0 disables.
+  const documentPageRenderer = createDocumentPageRenderer({
+    isEnabled: () => backendService.featureFlags?.docx_page_view !== false,
+  });
+  registerIpcInvokeHandlers(ipcMain, {
+    'workspaceFs.getDocumentPageEngines': () => documentPageRenderer.getEngines(),
+    'workspaceFs.renderDocumentPages': (_, payload) => documentPageRenderer.render(payload),
   }, workspaceAuthorization);
 }
 

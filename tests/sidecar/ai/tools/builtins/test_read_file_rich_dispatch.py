@@ -298,6 +298,36 @@ def test_read_file_forwards_cursor_to_document_adapter(
     assert seen == [{"path": "memo.docx", "cursor": "docx:0123456789abcdef:21"}]
 
 
+def test_read_file_forwards_pages_to_document_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sidecar.ai.tools.builtins.rich_files import document as document_module
+
+    _configure(rich=True)
+    (tmp_path / "memo.docx").write_bytes(b"PK")
+    seen: list[dict[str, object]] = []
+
+    def _recorder(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:
+        seen.append(dict(arguments))
+        return ToolHandlerResult(output="{}", success=True, metadata={})
+
+    monkeypatch.setattr(document_module, "document_inspect_tool", _recorder)
+
+    read_file_tool({"path": "memo.docx", "pages": "366-420"}, _guard(tmp_path))
+
+    assert seen == [{"path": "memo.docx", "pages": "366-420"}]
+
+
+def test_word_paging_hint_names_the_paragraph_range(tmp_path: Path) -> None:
+    _configure(rich=True)
+    (tmp_path / "memo.docx").write_bytes(b"PK")
+
+    with pytest.raises(ToolExecutionFailure) as failure:
+        read_file_tool({"path": "memo.docx", "offset": 1}, _guard(tmp_path))
+
+    assert "'pages'" in failure.value.message
+
+
 @pytest.mark.parametrize(
     ("name", "arguments", "hint"),
     [

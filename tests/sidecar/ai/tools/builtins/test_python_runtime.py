@@ -2211,3 +2211,148 @@ def test_ensure_runtime_venv_warm_cache_skips_wheelhouse_resolution(
 
     assert ensure_runtime_venv(config) == python_path
     assert phases == [], "a warm call must not re-log wheelhouse_resolved"
+
+
+def _run_tool_with_fake_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    workspace_root: Path,
+    work_dir: Path,
+    stdout: str,
+) -> dict[str, object]:
+    class _Result:
+        payload = {
+            "stdout": stdout,
+            "stderr": "",
+            "error": None,
+            "images": [],
+            "tables": [],
+            "last_expr_repr": None,
+        }
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.work_dir = work_dir
+
+        def cleanup(self) -> None:
+            return None
+
+    monkeypatch.setattr(tool_module.sys, "platform", "win32")
+    monkeypatch.setattr(tool_module, "_PYTHON_RUNTIME_CONFIG", {})
+    monkeypatch.setattr(
+        tool_module, "ensure_runtime_venv", lambda _config, **_kwargs: work_dir / "python.exe"
+    )
+    monkeypatch.setattr(tool_module, "execute_sandboxed", lambda **_kwargs: _Result())
+    result = tool_module.python_execute_tool(
+        {"code": "print('dump')"}, WorkspaceGuard(str(workspace_root))
+    )
+    return json.loads(result.output)
+
+
+@pytest.mark.parametrize("stdout_chars", [25_000, 17_000], ids=["python_cut", "router_cut"])
+def test_python_execute_spills_cut_stdout_to_a_workspace_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stdout_chars: int
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    work_dir = tmp_path / "scratch"
+    work_dir.mkdir()
+    stdout = "".join(f"row {index:05d}\n" for index in range(stdout_chars // 10))
+
+    payload = _run_tool_with_fake_sandbox(
+        monkeypatch, workspace_root=workspace_root, work_dir=work_dir, stdout=stdout
+    )
+
+    spill_path = str(payload["full_output_path"])
+    assert spill_path.startswith(".jenny/")
+    assert not Path(spill_path).is_absolute()
+    assert spill_path in str(payload["full_output_note"])
+    spilled = (workspace_root / spill_path).resolve()
+    assert spilled.is_relative_to(workspace_root.resolve())
+    assert spilled.read_text(encoding="utf-8") == stdout
+
+
+def test_python_execute_leaves_a_short_result_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    work_dir = tmp_path / "scratch"
+    work_dir.mkdir()
+
+    payload = _run_tool_with_fake_sandbox(
+        monkeypatch, workspace_root=workspace_root, work_dir=work_dir, stdout="x" * 3000
+    )
+
+    assert "full_output_path" not in payload
+    assert "full_output_note" not in payload
+    assert not (workspace_root / ".jenny").exists()
+
+
+def test_python_execute_spill_is_bounded_and_marks_the_cut(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    work_dir = tmp_path / "scratch"
+    work_dir.mkdir()
+    stdout = "z" * (2 * 1024 * 1024 + 5000)
+
+    payload = _run_tool_with_fake_sandbox(
+        monkeypatch, workspace_root=workspace_root, work_dir=work_dir, stdout=stdout
+    )
+
+    spilled = (workspace_root / str(payload["full_output_path"])).read_text(encoding="utf-8")
+    assert spilled.startswith("z" * 1000)
+    assert len(spilled.encode("utf-8")) <= 2 * 1024 * 1024 + 200
+    assert "cut" in spilled[-200:]
+
+
+def test_python_execute_renders_paths_under_its_scratch_root_as_scratch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    work_dir = tmp_path / "scratch"
+    work_dir.mkdir()
+    outside = "C:\\Users\\someone\\AppData\\secret.txt"
+
+    payload = _run_tool_with_fake_sandbox(
+        monkeypatch,
+        workspace_root=workspace_root,
+        work_dir=work_dir,
+        stdout=(
+            f"WROTE {work_dir / 'dump.txt'} 142 lines\n"
+            f"nested '{work_dir / 'sub' / 'a.csv'}'\n"
+            f"read {outside}\n"
+        ),
+    )
+
+    stdout = str(payload["stdout"])
+    assert "WROTE <scratch>/dump.txt 142 lines" in stdout
+    assert "'<scratch>/sub/a.csv'" in stdout
+    assert "read <path>" in stdout
+    assert str(work_dir) not in stdout
+    assert "someone" not in stdout
+
+
+def test_format_python_output_keeps_outside_paths_redacted_beside_scratch_paths(
+    tmp_path: Path,
+) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    payload, _attachments = format_python_output(
+        {
+            "stdout": f"{scratch / 'out.txt'} and /home/someone/.cache/secret.txt\n",
+            "stderr": "",
+            "error": None,
+            "images": [],
+            "tables": [],
+            "last_expr_repr": None,
+        },
+        scratch,
+    )
+
+    assert payload["stdout"] == "<scratch>/out.txt and <path>\n"
+    assert "full_output_path" not in payload

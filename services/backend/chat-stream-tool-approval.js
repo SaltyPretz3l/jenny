@@ -24,6 +24,9 @@ const { TEAM_RULE_SCOPE, noteTeamRuleUse, teamRuleApproves } = require('./team-r
 const {
   ROUND_SCOPE, noteRoundAllowed, roundApprovalEventFields, roundGrantApproves, roundOfferFor,
 } = require('./round-approval-gate');
+const {
+  CHAT_ALWAYS_ALLOW_SCOPE, CHAT_PYTHON_SCOPE, chatPythonGrantApproves, chatPythonGrantEligible, isPythonRequest,
+} = require('./chat-python-grant-gate');
 const { RULE_DENIED_MESSAGE } = require('../primary-action-rules');
 const { MID_TOOL_CONSENT_TOOLS } = require('../tools/mid-tool-consent');
 const {
@@ -81,12 +84,18 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       : toolName === SCHEDULE_CHANGE_TOOL ? SCHEDULE_CHANGE_SCOPE : presentation.policyScope;
   const { policyConsequence } = presentation;
   const input = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input : {};
-  const alwaysAllowScope = commandAlwaysAllowScope(toolName, input);
+  const commandScope = commandAlwaysAllowScope(toolName, input);
   // A settings batch and a scheduled-check change are approved once, never always (rows 88 / 85; also NEVER_PERSIST_ALWAYS_ALLOW),
   // and so is a chained command (row 103).
-  const oneOffOnly = toolName === 'session_message' || toolName === SETTINGS_CHANGE_TOOL || toolName === SCHEDULE_CHANGE_TOOL
+  const askedOnce = toolName === 'session_message' || toolName === SETTINGS_CHANGE_TOOL || toolName === SCHEDULE_CHANGE_TOOL
     || toolName === PROJECT_CREATE_TOOL || hasCardStep(toolName)
-    || params.one_off_only === true || alwaysAllowScope?.kind === 'none';
+    || params.one_off_only === true || commandScope?.kind === 'none';
+  // D1 (session review 2026-11-17): Python's Always is a grant for this chat. Where that grant cannot apply
+  // (team host, paranoid mode), the card offers Allow once only: it never offers an Always nothing honours.
+  const pythonCall = isPythonRequest(toolName, input);
+  const chatGrantable = pythonCall && chatPythonGrantEligible(service, { toolName, input, oneOffOnly: askedOnce });
+  const oneOffOnly = askedOnce || (pythonCall && !chatGrantable);
+  const alwaysAllowScope = commandScope || (chatGrantable ? CHAT_ALWAYS_ALLOW_SCOPE : null);
   const persistedInputSnapshot = buildPersistedToolInputSnapshot(input);
   const exactApproval = buildExactApprovalPresentation(toolName, input);
   const exactApprovalSha256 = exactApproval?.sha256 || '';
@@ -169,7 +178,10 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     : teamRuleApproves(service, { toolName, sessionId, input: params.tool_input, oneOffOnly, executionAuthority });
   // D10 (row 166): the next edit of a round the user allowed on its first card, asking for exactly what was shown.
   const answeredByRound = roundGranted && !answeredByFullAuto && teamRule === null;
-  const answeredWithoutCard = answeredByFullAuto || teamRule !== null || answeredByRound;
+  // D1: a Python call in a chat whose person pressed "Always for this chat" on an earlier Python card.
+  const answeredByChatPython = !answeredByFullAuto && teamRule === null && !answeredByRound && chatGrantable
+    && chatPythonGrantApproves(service, { toolName, input, sessionId, executionAuthority, oneOffOnly, controller });
+  const answeredWithoutCard = answeredByFullAuto || teamRule !== null || answeredByRound || answeredByChatPython;
   // What this card may offer with its own call: the round's later edits, each shown whole.
   const roundOffer = answeredWithoutCard ? []
     : roundOfferFor(service, { toolName, callId, params, oneOffOnly, exactApproval });
@@ -325,7 +337,8 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       let normalizedApproved = Boolean(approved) && resolvedState !== 'denied';
       const roundScoped = scope === ROUND_SCOPE && (answeredByRound || roundOffer.length > 0);
       const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once'
-        || scope === FULL_AUTO_SCOPE || scope === TEAM_RULE_SCOPE || roundScoped) ? scope : '';
+        || scope === FULL_AUTO_SCOPE || scope === TEAM_RULE_SCOPE || roundScoped
+        || (scope === CHAT_PYTHON_SCOPE && pythonCall)) ? scope : '';
       const ruleFields = approvalScope === TEAM_RULE_SCOPE ? { teamRuleSeq: teamRule.rule_seq } : {};
       // The receipt names the saved command prefix (row 103); an exact grant quotes the command.
       const alwaysAllowPrefix = approvalScope === 'always' && alwaysAllowScope?.kind === 'prefix' ? alwaysAllowScope.prefix : '';
@@ -437,7 +450,8 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     }
     if (answeredWithoutCard) {
       finish(true, 'approved', '', null,
-        answeredByFullAuto ? FULL_AUTO_SCOPE : (teamRule !== null ? TEAM_RULE_SCOPE : ROUND_SCOPE));
+        answeredByFullAuto ? FULL_AUTO_SCOPE : (teamRule !== null ? TEAM_RULE_SCOPE
+          : (answeredByChatPython ? CHAT_PYTHON_SCOPE : ROUND_SCOPE)));
       return;
     }
     controller.signal.addEventListener('abort', handleAbort, { once: true });

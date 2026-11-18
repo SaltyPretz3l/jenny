@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "companion-sidecar"
-version = "1.8.6"
+version = "1.8.7"
 description = "Python AI sidecar for the Companion desktop app"
 requires-python = ">=3.11"
 license = { text = "MIT" }

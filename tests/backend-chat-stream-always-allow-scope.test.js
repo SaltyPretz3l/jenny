@@ -136,13 +136,13 @@ test('always allow during an active turn persists the grant but defers the sidec
   const run = createDeferredRun();
   service.activeStreams.set('stream-turn', { _pendingPromise: run.promise });
 
-  addApproval('approval-first', 'python_execute');
+  addApproval('approval-first', 'web_fetch');
   assert.equal(approveToolCall(service, 'approval-first', { alwaysAllow: true }), true);
   addApproval('approval-second', 'run_command');
   assert.equal(approveToolCall(service, 'approval-second', { alwaysAllow: true }), true);
   await drainAsyncWork();
 
-  assert.deepEqual(grants, ['python_execute', 'run_command']);
+  assert.deepEqual(grants, ['web_fetch', 'run_command']);
   assert.deepEqual(refreshes, [], 'no sidecar reinitialize while the turn is admitted');
   assert.equal(
     logs.filter((entry) => entry.event === 'tool_permission.config_refresh_deferred').length,
@@ -156,7 +156,7 @@ test('always allow during an active turn persists the grant but defers the sidec
   assert.deepEqual(refreshes, ['tool_permission_updated'], 'one coalesced flush after the turn');
 
   // A later idle always-allow refreshes immediately, as before.
-  addApproval('approval-idle', 'python_execute');
+  addApproval('approval-idle', 'web_fetch');
   assert.equal(approveToolCall(service, 'approval-idle', { alwaysAllow: true }), true);
   await drainAsyncWork();
   assert.deepEqual(refreshes, ['tool_permission_updated', 'tool_permission_updated']);
@@ -169,7 +169,7 @@ test('deferred permission refresh waits for every concurrently active stream', a
   service.activeStreams.set('stream-a', { _pendingPromise: first.promise });
   service.activeStreams.set('stream-b', { _pendingPromise: second.promise });
 
-  addApproval('approval-concurrent', 'python_execute');
+  addApproval('approval-concurrent', 'web_fetch');
   assert.equal(approveToolCall(service, 'approval-concurrent', { alwaysAllow: true }), true);
 
   service.activeStreams.delete('stream-a');
@@ -187,7 +187,7 @@ test('deferred permission refresh polls a stream that exposes no run promise', a
   const { service, refreshes, addApproval } = createAlwaysAllowTurnService();
   service.activeStreams.set('stream-bare', {});
 
-  addApproval('approval-bare', 'python_execute');
+  addApproval('approval-bare', 'web_fetch');
   assert.equal(approveToolCall(service, 'approval-bare', { alwaysAllow: true }), true);
   await drainAsyncWork();
   assert.deepEqual(refreshes, []);
@@ -202,7 +202,7 @@ test('a deferred permission refresh is dropped when shutdown drains the turn', a
   const run = createDeferredRun();
   service.activeStreams.set('stream-turn', { _pendingPromise: run.promise });
 
-  addApproval('approval-shutdown', 'python_execute');
+  addApproval('approval-shutdown', 'web_fetch');
   assert.equal(approveToolCall(service, 'approval-shutdown', { alwaysAllow: true }), true);
 
   // Quitting: the service is stopping, then the drain settles the turn.

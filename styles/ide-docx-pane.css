@@ -1,9 +1,91 @@
-/* Workspace IDE DOCX editor pane. Loaded lazily by editor-host-panes after
+/* Workspace IDE DOCX pane: the Read / Edit / Pages mode bar, the patch editor
+ * and the read-only views. Loaded lazily by editor-host-panes after
  * ide-document-pane.css, which holds the pane box, clipping, button
  * hover/pressed/focus and separator basics shared with the PDF pane. */
 
 .ide-docx-pane {
   font-family: var(--font-family-body);
+}
+
+.ide-docx-modebar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.ide-docx-modebar-spacer {
+  flex: 1 1 0;
+}
+
+/* Read and Pages show the document, never the editor: the toolbar, the
+ * preserved-content and review-lock notes and the contenteditable pages stay
+ * mounted (their state is the document's) but are not shown. */
+.ide-docx-pane:not([data-mode="edit"]) :is(.ide-docx-toolbar, .ide-docx-notes, .ide-docx-documents) {
+  display: none;
+}
+
+.ide-docx-views {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.ide-docx-read,
+.ide-docx-pages {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-base) 88%, var(--text-muted));
+}
+
+.ide-docx-read {
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.ide-docx-read:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The shadow host: the document's own CSS lives inside it and cannot reach out. */
+.ide-docx-read-body {
+  min-height: 100%;
+}
+
+.ide-docx-view-status:not(.hidden) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-docx-pages .ide-docx-view-status:not(.hidden) {
+  position: relative;
+  z-index: 1;
+}
+
+.ide-docx-pages-retry {
+  border-color: var(--line);
+  color: var(--text-primary);
+}
+
+.ide-docx-pages-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
 .ide-docx-toolbar {

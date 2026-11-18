@@ -361,6 +361,11 @@
       if (!current || child.updatedAt >= current.updatedAt) liveByKey.set(child.key, child);
     });
     let children = [...liveByKey.values()];
+    // The live steps are not kept on messages: a monitor already on screen
+    // hands its last children back so a settled-but-too-large delegation keeps them.
+    if (!children.length && input.detailsUnavailable === true && Array.isArray(input.carryChildren)) {
+      children = input.carryChildren.slice();
+    }
     let status = 'running';
     let usage = null;
     let authoritative = false;
@@ -375,6 +380,15 @@
       status = children[0].status;
       usage = children[0].usage;
       authoritative = true;
+    } else if (input.detailsUnavailable === true) {
+      // The report was too large to reach the renderer: the delegation is over
+      // and any child still shown as running settles with it.
+      status = input.detailsFailed === true ? 'failed' : 'completed';
+      children = children.map((child) => (child.terminal ? child : {
+        ...child, status, terminal: true, success: status === 'completed',
+        statusLabel: statusLabel(status), tone: toneForStatus(status),
+        terminalCopy: terminalCopy(child.terminalReason, status),
+      }));
     } else if (children.length) {
       if (children.some((child) => ['running', 'queued'].includes(child.status))) status = 'running';
       else if (children.some((child) => child.status === 'failed')) status = 'failed';
@@ -418,8 +432,10 @@
       toolCallId: normalizeText(input.toolCallId, 200) || selected?.toolCallId || '',
       status,
       tone: toneForStatus(status),
-      terminal: authoritative || (children.length > 0 && children.every((child) => child.terminal)),
+      terminal: authoritative || input.detailsUnavailable === true
+        || (children.length > 0 && children.every((child) => child.terminal)),
       authoritative,
+      detailsUnavailable: input.detailsUnavailable === true,
       children,
       childCount: children.length,
       partialUsage,
@@ -442,11 +458,12 @@
     };
   }
 
-  function buildMonitorFromMessages(messages, key, selectedKey, now) {
+  function buildMonitorFromMessages(messages, key, selectedKey, now, carryChildren) {
     const list = Array.isArray(messages) ? messages : [];
     let terminal = null;
     let toolCallId = '';
     let terminalMessageIndex = -1;
+    let tooLarge = null;
     const steps = [];
     for (let messageIndex = 0; messageIndex < list.length; messageIndex += 1) {
       const message = list[messageIndex];
@@ -465,8 +482,15 @@
         terminal = report;
         toolCallId = callId;
         terminalMessageIndex = messageIndex;
+      } else if (!report && result?.metadata?._externalized === true
+        && (key ? callId === key : String(result?.tool_name || '') === 'delegate')) {
+        // The sidecar's inline limit moved the whole report to a file the
+        // renderer never reads: the delegation finished, its details did not arrive.
+        tooLarge = { callId, isError: result.is_error === true };
+        terminalMessageIndex = messageIndex;
       }
     }
+    if (terminal) tooLarge = null;
     // The parent's answer after the report: "Responding" only while it still
     // streams; once it settled the delegation is simply done (HB-019).
     const parentAnswer = terminalMessageIndex >= 0 ? list.slice(terminalMessageIndex + 1).find((message) => (
@@ -474,9 +498,30 @@
     )) : null;
     const parentResponding = Boolean(parentAnswer) && String(parentAnswer.status || '') === 'streaming';
     return buildMonitorViewModel({
-      steps, terminal, key: key || toolCallId, toolCallId, selectedKey, now, parentResponding,
+      steps, terminal, key: key || toolCallId || tooLarge?.callId || '', toolCallId: toolCallId || tooLarge?.callId || '',
+      selectedKey, now, parentResponding,
       parentDone: Boolean(parentAnswer) && !parentResponding,
+      detailsUnavailable: tooLarge !== null, detailsFailed: tooLarge?.isError === true, carryChildren,
     });
+  }
+
+  // What a repaint depends on: every model field but the clock ones (the tick
+  // owns elapsed text). A transcript stands in by its length and live version:
+  // a settled one never changes, a live one bumps its version on every change.
+  function signatureState(monitor) {
+    return {
+      selected: monitor.selectedKey,
+      status: monitor.status,
+      tone: monitor.tone,
+      terminal: monitor.terminal,
+      detailsUnavailable: monitor.detailsUnavailable,
+      parentState: monitor.parentState,
+      usage: monitor.usage,
+      children: monitor.children.map((child) => ({
+        ...child, elapsedMs: 0, startedAt: 0, updatedAt: 0, transcript: child.transcript.length,
+        activity: child.activity && { ...child.activity, transcript: child.activity.transcript_version },
+      })),
+    };
   }
 
   function formatElapsed(ms) {
@@ -508,6 +553,7 @@
     normalizeChildActivity,
     carryTranscript,
     selectLiveDelegationSteps,
+    signatureState,
     terminalCopy,
     toneForStatus,
   };

@@ -307,3 +307,133 @@ def test_document_cursor_is_refused_after_the_file_changes(tmp_path: Path) -> No
         _document_tool()({"path": "memo.docx", "cursor": cursor}, guard)
     with pytest.raises(ToolExecutionFailure, match="invalid for a Word document"):
         _document_tool()({"path": "memo.docx", "cursor": "pdf:0123456789abcdef:2:17"}, guard)
+
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _write_body_and_table_docx(path: Path) -> None:
+    """Raw order: P1 body1, P2 body2, P3-P4 table cells, P5 body3, P6 body4."""
+
+    def paragraph(text: str) -> str:
+        return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+
+    table = (
+        "<w:tbl><w:tr>"
+        f"<w:tc>{paragraph('Cell A')}</w:tc><w:tc>{paragraph('Cell B')}</w:tc>"
+        "</w:tr></w:tbl>"
+    )
+    body = (
+        paragraph("Body one")
+        + paragraph("Body two")
+        + table
+        + paragraph("Body three")
+        + paragraph("Body four")
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<w:document xmlns:w="{_W_NS}"><w:body>{body}</w:body></w:document>',
+        )
+
+
+def test_document_pages_selects_paragraphs_by_printed_index(tmp_path: Path) -> None:
+    _write_body_and_table_docx(tmp_path / "mix.docx")
+    guard = WorkspaceGuard(str(tmp_path))
+
+    ranged = _document_tool()({"path": "mix.docx", "pages": "3-5"}, guard)
+    single = _document_tool()({"path": "mix.docx", "pages": "6"}, guard)
+
+    summary = ranged.metadata["summary"]
+    assert [p["index"] for p in summary["paragraphs"]] == [3, 4, 5]
+    assert [p["text_excerpt"] for p in summary["paragraphs"]] == [
+        "Cell A",
+        "Cell B",
+        "Body three",
+    ]
+    assert "continue_cursor" not in summary
+    assert [p["index"] for p in single.metadata["summary"]["paragraphs"]] == [6]
+
+
+def test_document_prints_body_index_only_for_top_level_paragraphs(tmp_path: Path) -> None:
+    _write_body_and_table_docx(tmp_path / "mix.docx")
+
+    result = _document_tool()({"path": "mix.docx"}, WorkspaceGuard(str(tmp_path)))
+
+    paragraphs = result.metadata["summary"]["paragraphs"]
+    assert [(p["index"], p.get("body_index")) for p in paragraphs] == [
+        (1, 1),
+        (2, 2),
+        (3, None),
+        (4, None),
+        (5, 3),
+        (6, 4),
+    ]
+
+
+def test_document_pages_range_is_capped_and_continues_with_a_cursor(tmp_path: Path) -> None:
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.document")
+    _write_long_docx(tmp_path / "long.docx", paragraphs=150, chars=5)
+    guard = WorkspaceGuard(str(tmp_path))
+
+    capped = _document_tool()({"path": "long.docx", "pages": "11-150"}, guard)
+    inside = _document_tool()({"path": "long.docx", "pages": "11-60"}, guard)
+
+    summary = capped.metadata["summary"]
+    indexes = [p["index"] for p in summary["paragraphs"]]
+    assert indexes == list(range(11, 11 + module.MAX_PARAGRAPHS))
+    assert summary["continue_cursor"].endswith(f":{11 + module.MAX_PARAGRAPHS}")
+    assert [p["index"] for p in inside.metadata["summary"]["paragraphs"]] == list(range(11, 61))
+    assert "continue_cursor" not in inside.metadata["summary"]
+
+
+def test_document_omitted_count_starts_at_the_slice_not_the_document(tmp_path: Path) -> None:
+    _write_long_docx(tmp_path / "memo.docx", paragraphs=64, chars=300)
+    guard = WorkspaceGuard(str(tmp_path))
+    first = _document_tool()({"path": "memo.docx"}, guard).metadata["summary"]
+    second = _document_tool()(
+        {"path": "memo.docx", "cursor": first["continue_cursor"]}, guard
+    ).metadata["summary"]
+
+    shown_before = len(first["paragraphs"])
+    assert first["omitted_paragraph_count"] == 64 - shown_before
+    assert second["omitted_paragraph_count"] == 64 - shown_before - len(second["paragraphs"])
+
+
+@pytest.mark.parametrize(
+    "pages",
+    ["5-3", "0", "abc", "1-x", "1,3", "", "-4", "7", "7-9", "1" * 30],
+)
+def test_document_pages_rejects_invalid_ranges(tmp_path: Path, pages: str) -> None:
+    from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
+    from sidecar.ai.tools.contracts import ToolExecutionFailure
+
+    _write_body_and_table_docx(tmp_path / "mix.docx")
+
+    with pytest.raises(ToolExecutionFailure) as failure:
+        _document_tool()({"path": "mix.docx", "pages": pages}, WorkspaceGuard(str(tmp_path)))
+
+    assert failure.value.code == CMP_TOOL_EXECUTION_FAILED
+    assert "'pages'" in failure.value.message
+
+
+def test_document_pages_clamps_an_end_past_the_last_paragraph(tmp_path: Path) -> None:
+    _write_body_and_table_docx(tmp_path / "mix.docx")
+
+    result = _document_tool()(
+        {"path": "mix.docx", "pages": "5-99"}, WorkspaceGuard(str(tmp_path))
+    )
+
+    assert [p["index"] for p in result.metadata["summary"]["paragraphs"]] == [5, 6]
+
+
+def test_document_pages_and_cursor_are_mutually_exclusive(tmp_path: Path) -> None:
+    from sidecar.ai.tools.contracts import ToolExecutionFailure
+
+    _write_long_docx(tmp_path / "memo.docx", paragraphs=64, chars=300)
+    guard = WorkspaceGuard(str(tmp_path))
+    cursor = _document_tool()({"path": "memo.docx"}, guard).metadata["summary"]["continue_cursor"]
+
+    with pytest.raises(ToolExecutionFailure, match="mutually exclusive"):
+        _document_tool()({"path": "memo.docx", "pages": "1-3", "cursor": cursor}, guard)

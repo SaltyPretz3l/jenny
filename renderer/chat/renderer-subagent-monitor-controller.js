@@ -66,6 +66,9 @@
     let elapsedTimer = null;
     let lastSignature = '';
     let cachedParts = null;
+    // The last model that had children. A delegation whose steps and report
+    // both fail to reach the messages keeps this on screen instead of closing.
+    let lastModel = null;
     let lastAsideHtml = '';
     let lastDockStage = null;
     let hadResponseSelection = false;
@@ -114,8 +117,9 @@
     }
 
     function viewModel(now = Date.now()) {
+      const carry = lastModel && lastModel.key === openKey ? lastModel.children : undefined;
       return modelUtils.buildMonitorFromMessages?.(
-        currentMessages(), openKey, selectedKey, now
+        currentMessages(), openKey, selectedKey, now, carry
       ) || null;
     }
 
@@ -124,31 +128,23 @@
     // scroll position.
     function signature(model) {
       if (!model) return '';
-      return JSON.stringify({
-        page,
-        hosted,
-        selected: model.selectedKey,
-        status: model.status,
-        tone: model.tone,
-        terminal: model.terminal,
-        parentState: model.parentState,
-        usage: model.usage,
-        transcript: [...transcriptKeys],
-        // Every child field but the clock ones: the tick owns elapsed text. A
-        // transcript stands in by its length and live version: a settled one
-        // never changes, a live one bumps its version on every change.
-        children: model.children.map((child) => ({
-          ...child, elapsedMs: 0, startedAt: 0, updatedAt: 0, transcript: child.transcript.length,
-          activity: child.activity && { ...child.activity, transcript: child.activity.transcript_version },
-        })),
-      });
+      return JSON.stringify({ page, hosted, transcript: [...transcriptKeys], model: modelUtils.signatureState(model) });
     }
 
     // The markup for the current state; unchanged state returns the SAME
     // strings, which lets the panel rail skip the write entirely.
     function compute(now) {
-      const model = viewModel(now);
-      if (!model?.childCount) return null;
+      let model = viewModel(now);
+      if (model?.childCount) {
+        lastModel = model;
+      } else if (lastModel && lastModel.key === openKey && readSessionId().trim() === openSessionId
+        && (lastModel.terminal || lastModel.detailsUnavailable)) {
+        // Once shown, the panel stays: the messages lost the children (the
+        // live steps are not persisted), but the delegation did not vanish.
+        model = lastModel;
+      } else {
+        return null;
+      }
       if (!manualSelection && model.selectedKey) selectedKey = model.selectedKey;
       const nextSignature = signature(model);
       if (cachedParts && nextSignature === lastSignature) return { model, parts: cachedParts, changed: false };
@@ -289,6 +285,7 @@
       hosted = '';
       lastSignature = '';
       cachedParts = null;
+      lastModel = null;
       transcriptKeys.clear();
     }
 

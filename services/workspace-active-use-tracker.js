@@ -82,6 +82,7 @@ class WorkspaceActiveUseTracker {
     this.intervalHandle = null;
     this.listeners = [];
     this.accrualDirty = false;
+    this.lastFlushFailure = '';
     this.started = false;
   }
 
@@ -138,11 +139,22 @@ class WorkspaceActiveUseTracker {
     try {
       this.store.write({ ...readStore(this.store), [STORE_KEY]: counters });
       this.accrualDirty = false;
+      this.lastFlushFailure = '';
       return true;
     } catch (error) {
-      this.logger?.('WARN', 'workspace.active_use_flush_failed', {
-        errorType: String(error?.name || 'Error'),
-      });
+      // Session review 2026-11-17 (L2): every tick retried and re-logged a bare "Error". Name the
+      // error code (never the message, which can hold a path) and log once per distinct failure
+      // until a write succeeds.
+      const errorType = String(error?.name || 'Error').slice(0, 40);
+      const errorCode = typeof error?.code === 'string' ? error.code.slice(0, 40) : '';
+      const failure = `${errorType}:${errorCode}`;
+      if (failure !== this.lastFlushFailure) {
+        this.lastFlushFailure = failure;
+        this.logger?.('WARN', 'workspace.active_use_flush_failed', {
+          errorType,
+          ...(errorCode ? { errorCode } : {}),
+        });
+      }
       return false;
     }
   }

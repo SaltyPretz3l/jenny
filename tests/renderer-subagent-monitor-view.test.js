@@ -372,3 +372,15 @@ test('a running child shows the switch before its first transcript entry', () =>
   }], key: 'call-new' });
   assert.match(view.renderMonitor(model, { page: 'detail' }).body, /subagent-view-switch/);
 });
+
+test('a delegation whose details were too large says where the answer is, on both pages', () => {
+  const model = require('../renderer/chat/renderer-subagent-monitor-model');
+  const step = { source: 'delegate', toolCallId: 'call-1', childTaskId: 'a', childOrdinal: 1, childCount: 1, childLabel: 'Survey', status: 'running', startedAt: 1, updatedAt: 2 };
+  const tooLarge = { tool_result: { call_id: 'call-1', metadata: { _externalized: true } } };
+  const settled = model.buildMonitorFromMessages([{ agent_status_steps: [step] }, tooLarge], 'call-1');
+  const note = /Subagent details were too large to show here\. The answer is in the delegate tool result in the chat\./;
+  assert.match(view.renderMonitor(settled, { page: 'tree' }).body, note);
+  assert.match(view.renderMonitor(settled, { page: 'detail' }).body, note);
+  const live = model.buildMonitorFromMessages([{ agent_status_steps: [step] }], 'call-1');
+  assert.doesNotMatch(view.renderMonitor(live, { page: 'tree' }).body, /too large/);
+});

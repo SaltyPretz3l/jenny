@@ -8,7 +8,11 @@ import threading
 import time
 from typing import Any
 
-from sidecar.ai.routing.delegate_child_steps import build_child_steps, child_answer
+from sidecar.ai.routing.delegate_child_steps import (
+    bound_report_metadata,
+    build_child_steps,
+    child_answer,
+)
 from sidecar.ai.routing.delegate_contracts import (
     DELEGATE_EXECUTION_FAILURE_CODE as CMP_TOOL_EXECUTION_FAILED,
 )
@@ -298,16 +302,28 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
         tool_input=visible_tool_arguments or dict(arguments),
         content_type="application/json",
         error_code=error_code,
-        metadata={
-            "result_kind": "subagent_batch_report",
-            "subagent_batch_report": rich_report,
-            "invocation_kind": INVOCATION_KIND_RESEARCH,
+        metadata=_report_metadata(
+            rich_report,
             # Router-local tool: no PhaseTrace, so report the wall time here.
-            "phase_timings_json": json.dumps(
+            phase_timings_json=json.dumps(
                 {"execute": {"elapsed_ms": rich_report["budget"]["elapsed_ms"]}}
             ),
-        },
+        ),
         call_id=canonical_call_id,
+    )
+
+
+def _report_metadata(report: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """Result metadata for a batch report, held under the IPC inline budget so
+    the monitor keeps its answers (delegate_child_steps.bound_report_metadata)."""
+
+    return bound_report_metadata(
+        {
+            "result_kind": "subagent_batch_report",
+            "subagent_batch_report": report,
+            "invocation_kind": INVOCATION_KIND_RESEARCH,
+            **extra,
+        }
     )
 
 
@@ -739,11 +755,7 @@ def _raise_interrupted_keeping_report(runtime: Any, call_id: str, report: dict[s
         # the interrupted tool result; the parent still stops without synthesis.
         record = (getattr(runtime, "emitted_tool_calls", None) or {}).get(call_id)
         if isinstance(record, dict):
-            record["result_metadata"] = {
-                "result_kind": "subagent_batch_report",
-                "subagent_batch_report": report,
-                "invocation_kind": INVOCATION_KIND_RESEARCH,
-            }
+            record["result_metadata"] = _report_metadata(report)
         raise
 
 

@@ -455,3 +455,53 @@ def test_pdf_inspect_scanned_page_uses_ocr_textpage_lines(
         "positioned",
         "text",
     ]
+
+
+def test_pdf_inspect_clamps_a_range_that_ends_past_the_last_page(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    _write_pdf(workspace_root / "sample.pdf")
+
+    result = _pdf_tool()(
+        {"path": "sample.pdf", "pages": "1-2"}, WorkspaceGuard(str(workspace_root))
+    )
+
+    summary = result.metadata["summary"]
+    assert result.success is True
+    assert summary["selected_pages"] == [1]
+    assert "unread_pages" not in summary
+    assert summary["note"].startswith("The PDF has 1 page; showing page 1.")
+    assert summary["note"].endswith(pdf_text.SOURCES_NOTE)
+
+
+def test_pdf_inspect_clamp_keeps_the_range_start_and_other_tokens(tmp_path: Path) -> None:
+    import fitz
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    document = fitz.open()
+    for number in range(1, 5):
+        document.new_page(width=160, height=90).insert_text((20, 40), f"Page {number}")
+    document.save(workspace_root / "sample.pdf")
+    document.close()
+    guard = WorkspaceGuard(str(workspace_root))
+
+    tail = _pdf_tool()({"path": "sample.pdf", "pages": "3-99"}, guard).metadata["summary"]
+    mixed = _pdf_tool()({"path": "sample.pdf", "pages": "1,4-9"}, guard).metadata["summary"]
+    exact = _pdf_tool()({"path": "sample.pdf", "pages": "3-4"}, guard).metadata["summary"]
+
+    assert tail["selected_pages"] == [3, 4]
+    assert tail["note"].startswith("The PDF has 4 pages; showing pages 3-4.")
+    assert mixed["selected_pages"] == [1, 4]
+    assert "The PDF has 4 pages" in mixed["note"]
+    assert exact["note"] == pdf_text.SOURCES_NOTE
+
+
+@pytest.mark.parametrize("pages", ["2", "2-3", "5-9"])
+def test_pdf_inspect_range_wholly_past_the_end_still_errors(tmp_path: Path, pages: str) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    _write_pdf(workspace_root / "sample.pdf")
+
+    with pytest.raises(ToolExecutionFailure, match="references page"):
+        _pdf_tool()({"path": "sample.pdf", "pages": pages}, WorkspaceGuard(str(workspace_root)))

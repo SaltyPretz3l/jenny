@@ -420,6 +420,8 @@ async function resetPrimaryChat(service, {
   if (controlsDisabled(service)) return refuse('disabled');
   const sessionId = primaryId(service);
   if (!sessionId) return refuse('not_found');
+  // A reset chat starts over: its "Always for this chat" Python grant ends.
+  service.chatPythonGrants?.clearSession?.(sessionId);
   if (typeof service.sessionTurnActors?.runSessionMutation !== 'function'
     || typeof service.sessionStore?.replaceMessages !== 'function'
     || !service.options?.userDataPath) return refuse('unavailable');

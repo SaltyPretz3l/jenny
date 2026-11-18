@@ -243,6 +243,51 @@ function populateDemoProfile(scene, { base, profile, workspace, recording, now }
   };
 }
 
+// The board clip's starting board for the demo project, written through the
+// app's own board service before launch: the entry point, one command, the
+// parser and the ledger file with their arrows, plus the rule they share.
+// Aliases follow add order (n1, f2, f3, f4, f5); the board replay script's
+// proposal names them.
+async function seedDemoBoard(profile, projectId) {
+  const crypto = require('node:crypto');
+  const { createBoardStore } = require('../../services/boards/board-store');
+  const { createBoardService } = require('../../services/boards/board-service');
+  const service = createBoardService({
+    store: createBoardStore({ userDataPath: profile }),
+    makeId: () => crypto.randomUUID(),
+  });
+  const made = await service.create({ projectId, name: 'How a command runs' });
+  if (!made.ok) throw new Error(`demo board create: ${made.reason}`);
+  const boardId = made.board.id;
+  const id = () => crypto.randomUUID();
+  const [rule, entry, add, parser, ledger] = [id(), id(), id(), id(), id()];
+  const card = (cardId, kind, x, y, data) => ({ op: 'card.add', card: { id: cardId, kind, x, y, data } });
+  const arrow = (from, to, label, style = 'solid') => ({
+    op: 'connector.add',
+    connector: { id: id(), from, to, label, style, ends: 'end' },
+  });
+  const applied = await service.apply({
+    boardId,
+    batch: {
+      batch_id: 'demo-seed-1',
+      board_id: boardId,
+      ops: [
+        card(rule, 'note', 340, -220, { text: 'Amounts are stored as integer cents' }),
+        card(entry, 'file', 0, 120, { path: 'src/index.js', title: '' }),
+        card(add, 'file', 340, 0, { path: 'src/commands/add.js', title: '' }),
+        card(parser, 'file', 680, 0, { path: 'src/parser.js', title: '' }),
+        card(ledger, 'file', 680, 220, { path: 'src/ledger-file.js', title: '' }),
+        arrow(entry, add, 'dispatches'),
+        arrow(add, parser, 'parses with'),
+        arrow(add, ledger, 'appends via'),
+        arrow(rule, parser, '', 'dashed'),
+      ],
+    },
+  });
+  if (!applied.ok) throw new Error(`demo board apply: ${applied.reason} ${applied.detail || ''}`.trim());
+  return boardId;
+}
+
 function cleanupDemoProfile({ base, workspace }) {
   for (const dir of [base, workspace]) {
     const owned = ownedDemoDirectories.get(dir);
@@ -263,6 +308,7 @@ function cleanupDemoProfile({ base, workspace }) {
 
 module.exports = {
   seedDemoProfile,
+  seedDemoBoard,
   cleanupDemoProfile,
   demoWorkspaceDir,
   seedDemoSessions,
